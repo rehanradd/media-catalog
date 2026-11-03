@@ -2197,7 +2197,12 @@ class DatabaseSaveTests(unittest.TestCase):
     def test_resolve_live_source_unwraps_a_cached_fastdl_bridge(self):
         """A stored FastDL `embed.php` page is HTML, not video. The resolver must
         re-resolve it to the Google CDN address and persist that instead of
-        handing ExoPlayer the landing page."""
+        handing ExoPlayer the landing page.
+
+        Stage-1: the re-resolve runs through the probed current_hosts path,
+        so this test mocks a passing probe result there instead of the old
+        unprobed legacy unwrapper, which stage-1 deliberately no longer
+        serves from."""
         media_data = self.media("vegamovies", "https://vegamovies.example/film/")
         media_data["releases"][0]["sources"] = [{
             "source_name": "FastDL",
@@ -2212,8 +2217,13 @@ class DatabaseSaveTests(unittest.TestCase):
             source = conn.execute("SELECT id FROM download_sources LIMIT 1").fetchone()
 
         direct = "https://video-downloads.googleusercontent.com/abc/file.mp4"
-        with patch.object(fast_fetch, "unwrap_fastdl",
-                          return_value=(direct, "abc123", 1)), \
+        stage1_copy = {"ok": True, "backend": "fastdl-beer",
+                       "group": "fastdl-beer", "kind": "file", "url": direct,
+                       "mime": "video/mp4", "size": 123456, "resumable": False,
+                       "renditions": [], "failure": None,
+                       "failure_dead": False, "temporary": True}
+        with patch.object(current_hosts, "resolve_copy",
+                          return_value=stage1_copy), \
              patch.object(fast_fetch, "probe_url_ttl",
                           return_value=(None, {"observed": False,
                                                "reason": "no_directive"})):

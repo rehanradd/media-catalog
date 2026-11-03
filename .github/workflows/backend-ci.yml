@@ -505,6 +505,8 @@ jobs:
 
       - name: 🧪 test_detail_projection.py
         run: python3 -S Fast_Fetch/test_detail_projection.py
+      - name: 🧪 test_resolver_stage1.py
+        run: python3 -S Fast_Fetch/test_resolver_stage1.py
 
       - name: 🧪 test_catalog_api.py
         run: python3 -S Fast_Fetch/test_catalog_api.py

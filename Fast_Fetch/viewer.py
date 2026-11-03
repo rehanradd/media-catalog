@@ -378,7 +378,11 @@ def download_filename(stream_id: str, mime_type, url_hint=None) -> str:
     """A safe attachment name for the file behind a stream handle.
 
     The handle is already opaque and URL-safe; the only variable part is the
-    extension, chosen from [_DOWNLOAD_EXTENSIONS] rather than copied."""
+    extension, chosen from [_DOWNLOAD_EXTENSIONS] rather than copied.
+    Stage-1: when the mime is unknown, a known video container suffix on
+    the resolved URL still earns its real extension, so a known video
+    never downloads as `.bin` (flaw 6). The hint is used for its suffix
+    only and never appears in the public answer."""
     mime = str(mime_type or "").split(";", 1)[0].strip().lower()
     extension = _DOWNLOAD_EXTENSIONS.get(mime)
     if extension is None and url_hint:
