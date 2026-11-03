@@ -8877,6 +8877,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self.send_json(_plain_stream_error(blocked), status=402)
                 return
 
+
             redirect_flag = query_params.get("redirect", ["1"])[0]
 
             # Phase-1 resolved_cache: a fresh, probe-accepted row answers the
