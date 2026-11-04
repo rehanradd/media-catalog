@@ -42,9 +42,14 @@ import com.raddstream.app.brand.Brand
 import com.raddstream.app.viewmodel.SetupUiState
 import com.raddstream.app.viewmodel.SetupViewModel
 
+/**
+ * First-run server connection. [onConnected] receives whether the viewer still has to answer
+ * the region question — a fresh install goes through Region on its FIRST launch, and the caller
+ * owns the routing.
+ */
 @Composable
 fun SetupScreen(
-    onConnected: () -> Unit,
+    onConnected: (askRegion: Boolean) -> Unit,
     viewModel: SetupViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -176,7 +181,7 @@ internal fun SetupScreenContent(
 
         Spacer(Modifier.height(12.dp))
         Button(
-            onClick = onConnected,
+            onClick = { viewModel.continuePressed(onConnected) },
             enabled = state.isConnected && !state.isChecking,
             modifier = Modifier.fillMaxWidth().height(56.dp),
             colors = ButtonDefaults.buttonColors(
