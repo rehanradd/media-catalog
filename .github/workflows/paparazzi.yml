@@ -19,7 +19,11 @@ name: 📸 Paparazzi — render UI snapshots
 on:
   workflow_dispatch:
   push:
-    branches: ["paparazzi-trial-20261115"]
+    # Every paparazzi-* branch records its own goldens — the trial branch
+    # name was pinned here by accident (2026-11-15: the Detail branch's
+    # push never triggered a record run). Main is deliberately excluded:
+    # recording on main would silently re-record goldens on every merge.
+    branches: ["paparazzi-*"]
     paths:
       - "App/**"
       - ".github/workflows/paparazzi.yml"
