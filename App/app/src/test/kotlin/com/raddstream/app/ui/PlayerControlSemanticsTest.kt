@@ -111,7 +111,10 @@ class PlayerControlSemanticsTest {
 
     @Test
     fun `a borderless press is still a press an accessibility service can take`() {
-        val body = functionBody("private fun Modifier.clickableNoRipple(")
+        // The lookup drops the visibility word: clickableNoRipple went private -> internal
+        // in the redesign fixup 2 so PlayerSheet.kt can use it, and the rule this test pins
+        // is the body (a real clickable with a Button role), not the visibility.
+        val body = functionBody("fun Modifier.clickableNoRipple(")
         assertTrue(
             "a raw tap detector publishes no click action, so sheet rows and chips cannot be " +
                 "activated by a screen reader",
