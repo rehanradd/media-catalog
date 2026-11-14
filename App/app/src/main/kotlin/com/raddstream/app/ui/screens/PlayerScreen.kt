@@ -5,6 +5,7 @@ import android.app.ActivityManager
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.res.Configuration
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.graphics.Typeface
@@ -133,13 +134,13 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
@@ -3316,13 +3317,62 @@ private fun parseTimeToMs(raw: String): Long {
 // ── Sheets ─────────────────────────────────────────────────────────────────────
 
 @OptIn(ExperimentalMaterial3Api::class)
+/**
+ * One container for every player sheet. Portrait keeps the bottom sheet;
+ * landscape opens a right-side panel (~40% wide, max 380dp) so the video
+ * stays visible and playing on the left — a sheet over the whole picture
+ * is the YouTube-landscape complaint, and a panel clipped at the right
+ * edge is the MX defect. The panel scrolls inside its capped width, the
+ * video side is never dimmed, and tapping it (or Back) dismisses.
+ */
+@Composable
+internal fun PlayerSheet(
+    onDismiss: () -> Unit,
+    containerColor: Color = RaddPlayerSheet,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    if (!isLandscape) {
+        ModalBottomSheet(
+            onDismissRequest = onDismiss,
+            sheetState = rememberModalBottomSheetState(),
+            containerColor = containerColor,
+        ) {
+            content()
+        }
+    } else {
+        BackHandler(onBack = onDismiss)
+        Box(Modifier.fillMaxSize()) {
+            // The video side: tapping it dismisses the panel, nothing else.
+            Box(
+                Modifier
+                    .fillMaxHeight()
+                    .fillMaxWidth(0.6f)
+                    .clickableNoRipple { onDismiss() },
+            )
+            Box(
+                Modifier
+                    .align(Alignment.CenterEnd)
+                    .fillMaxHeight()
+                    .fillMaxWidth(0.4f)
+                    .widthIn(max = 380.dp)
+                    .background(containerColor),
+            ) {
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    content()
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun SpeedSheet(state: PlayerUiState, vm: PlayerViewModel) {
-    ModalBottomSheet(
-        onDismissRequest = { vm.hideSpeedSheet() },
-        sheetState = rememberModalBottomSheetState(),
-        containerColor = RaddPlayerSheet,
-    ) {
+    PlayerSheet(onDismiss = { vm.hideSpeedSheet() }) {
         Column(Modifier.padding(bottom = 20.dp)) {
             SheetTitle(stringResource(R.string.player_speed_title))
             Row(
@@ -3378,11 +3428,7 @@ private fun SpeedSheet(state: PlayerUiState, vm: PlayerViewModel) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun QualitySheet(state: PlayerUiState, vm: PlayerViewModel) {
-    ModalBottomSheet(
-        onDismissRequest = { vm.hideQualitySheet() },
-        sheetState = rememberModalBottomSheetState(),
-        containerColor = RaddPlayerSheet,
-    ) {
+    PlayerSheet(onDismiss = { vm.hideQualitySheet() }) {
         Column(Modifier.padding(bottom = 20.dp)) {
             SheetTitle(stringResource(R.string.player_quality_title))
             QualityRow(
@@ -3470,11 +3516,7 @@ private fun QualityRow(title: String, detail: String?, selected: Boolean, onClic
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SleepSheet(state: PlayerUiState, vm: PlayerViewModel) {
-    ModalBottomSheet(
-        onDismissRequest = { vm.hideSleepSheet() },
-        sheetState = rememberModalBottomSheetState(),
-        containerColor = RaddPlayerSheet,
-    ) {
+    PlayerSheet(onDismiss = { vm.hideSleepSheet() }) {
         Column(Modifier.padding(bottom = 20.dp)) {
             SheetTitle(stringResource(R.string.player_sleep_timer))
             if (state.sleep.mode == SleepMode.COUNTDOWN) {
@@ -3511,11 +3553,7 @@ private fun SubtitleSettingsSheet(state: PlayerUiState, vm: PlayerViewModel) {
             vm.addExternalSubtitle(url = uri.toString(), label = name, formatHint = hint)
         }
     }
-    ModalBottomSheet(
-        onDismissRequest = { vm.hideSubtitleSheet() },
-        sheetState = rememberModalBottomSheetState(),
-        containerColor = RaddPlayerSheet,
-    ) {
+    PlayerSheet(onDismiss = { vm.hideSubtitleSheet() }) {
         Column(
             Modifier
                 .verticalScroll(rememberScrollState())
@@ -3654,11 +3692,7 @@ private fun SubtitleSettingsSheet(state: PlayerUiState, vm: PlayerViewModel) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TracksSheet(state: PlayerUiState, vm: PlayerViewModel) {
-    ModalBottomSheet(
-        onDismissRequest = { vm.hideTracksSheet() },
-        sheetState = rememberModalBottomSheetState(),
-        containerColor = RaddPlayerSheet,
-    ) {
+    PlayerSheet(onDismiss = { vm.hideTracksSheet() }) {
         Column(
             Modifier
                 .verticalScroll(rememberScrollState())
@@ -3759,11 +3793,7 @@ private fun TracksSheet(state: PlayerUiState, vm: PlayerViewModel) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MoreSheet(state: PlayerUiState, vm: PlayerViewModel, onEnterPip: () -> Unit) {
-    ModalBottomSheet(
-        onDismissRequest = { vm.hideMoreSheet() },
-        sheetState = rememberModalBottomSheetState(),
-        containerColor = RaddPlayerSheet,
-    ) {
+    PlayerSheet(onDismiss = { vm.hideMoreSheet() }) {
         Column(
             Modifier
                 .verticalScroll(rememberScrollState())
@@ -3919,11 +3949,7 @@ private fun PrintLogSheet(state: PlayerUiState, vm: PlayerViewModel) {
     // viewer-facing — they sit behind a long-press on the "Prints" title. The
     // sheet itself shows only quality, format and which print is playing.
     var debugVisible by remember { mutableStateOf(false) }
-    ModalBottomSheet(
-        onDismissRequest = { vm.hidePrintSheet() },
-        sheetState = rememberModalBottomSheetState(),
-        containerColor = RaddPlayerSheet,
-    ) {
+    PlayerSheet(onDismiss = { vm.hidePrintSheet() }) {
         Column(
             Modifier
                 .verticalScroll(rememberScrollState())

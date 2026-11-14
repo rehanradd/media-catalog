@@ -14,17 +14,16 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.raddstream.app.ui.screens.PlayerSheet
 import kotlin.math.abs
 import kotlin.math.roundToLong
 
@@ -92,11 +91,7 @@ fun SubtitleOffsetSheet(
     onDismiss: () -> Unit,
 ) {
     val offset = SubtitleOffset.clamp(offsetMs)
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(),
-        containerColor = MaterialTheme.colorScheme.surface,
-    ) {
+    PlayerSheet(onDismiss = onDismiss, containerColor = MaterialTheme.colorScheme.surface) {
         Column(
             Modifier
                 .fillMaxWidth()
