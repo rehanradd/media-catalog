@@ -15,10 +15,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import app.cash.paparazzi.DeviceConfig
 import app.cash.paparazzi.Paparazzi
+import com.raddstream.app.network.models.FacetEntry
+import com.raddstream.app.network.models.FacetsResponse
+import com.raddstream.app.network.models.PanelBroadcast
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.ui.components.PosterCard
 import com.raddstream.app.ui.components.raddFilterChipColors
+import com.raddstream.app.ui.screens.HomeContent
 import com.raddstream.app.ui.theme.RaddStreamTheme
+import com.raddstream.app.viewmodel.HomeSection
+import com.raddstream.app.viewmodel.HomeUiState
+import com.raddstream.app.viewmodel.ResumeTile
 import org.junit.Rule
 import org.junit.Test
 
@@ -160,6 +167,121 @@ class PaparazziPreviewTest {
                         modifier = Modifier.heightIn(min = 48.dp),
                     )
                 }
+            }
+        }
+    }
+
+    // ── HomeContent: the assembled Home page from fake state ─────────────────
+    // lastHomeSyncMs stays null on purpose: the sync line dates rows from the
+    // wall clock, and a relative "x min ago" would make the golden flaky.
+    // heroAutoplay is off: the carousel's timer never settles in a snapshot.
+
+    private val homePosts = listOf(jawan, salaars, mclintock) + fakePost(
+        id = 4,
+        title = "Pushpa 2: The Rule",
+        year = 2024,
+        contentType = "movie",
+        rating = "7.1",
+        genres = "Action, Crime",
+        industry = "Tollywood",
+        language = "Telugu",
+    )
+
+    private val loadedHome = HomeUiState(
+        sections = listOf(
+            HomeSection(
+                key = "trending",
+                title = "Most versions",
+                type = null,
+                items = homePosts,
+                sort = "trending",
+            ),
+            HomeSection(
+                key = "bollywood",
+                title = "Bollywood",
+                type = "movie",
+                items = listOf(jawan, salaars),
+                industry = "bollywood",
+            ),
+        ),
+        continueWatching = listOf(
+            ResumeTile(
+                post = jawan,
+                season = 1,
+                episode = 3,
+                positionMs = 1_500_000L,
+                durationMs = 2_700_000L,
+                workRef = "work:jawan",
+            ),
+        ),
+        broadcasts = listOf(
+            PanelBroadcast(
+                id = 1,
+                title = "Live TV is here",
+                body = "Watch 23 channels free.",
+                severity = "info",
+            ),
+        ),
+        trialDaysRemaining = 5,
+        streakCount = 2,
+        serverStreak = 2,
+        streakLadder = mapOf(1 to 5, 2 to 10, 3 to 15, 7 to 50),
+        coinBalance = 120,
+        signedIn = true,
+        favoriteIds = setOf(1),
+        facets = FacetsResponse(
+            genres = listOf(FacetEntry("action", "Action", 120), FacetEntry("drama", "Drama", 98)),
+            languages = listOf(FacetEntry("hindi", "Hindi", 210)),
+            industries = listOf(
+                FacetEntry("bollywood", "Bollywood", 4275),
+                FacetEntry("tollywood", "Tollywood", 856),
+            ),
+        ),
+    )
+
+    @Test
+    fun homeLoaded() {
+        paparazzi.snapshot {
+            themed {
+                HomeContent(state = loadedHome, heroAutoplay = false)
+            }
+        }
+    }
+
+    @Test
+    fun homeLoading() {
+        paparazzi.snapshot {
+            themed {
+                HomeContent(
+                    state = HomeUiState(
+                        sections = listOf(
+                            HomeSection(key = "trending", title = "Most versions", type = null, loading = true),
+                            HomeSection(key = "bollywood", title = "Bollywood", type = "movie", loading = true),
+                        ),
+                    ),
+                    heroAutoplay = false,
+                )
+            }
+        }
+    }
+
+    @Test
+    fun homeError() {
+        paparazzi.snapshot {
+            themed {
+                HomeContent(
+                    state = HomeUiState(fatal = "Server did not respond."),
+                    heroAutoplay = false,
+                )
+            }
+        }
+    }
+
+    @Test
+    fun homeEmpty() {
+        paparazzi.snapshot {
+            themed {
+                HomeContent(state = HomeUiState(), heroAutoplay = false)
             }
         }
     }

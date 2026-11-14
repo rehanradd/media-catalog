@@ -103,6 +103,8 @@ import com.raddstream.app.ui.theme.RaddMotion
 import com.raddstream.app.ui.theme.RaddStreamMark
 import com.raddstream.app.update.InAppUpdate
 import com.raddstream.app.viewmodel.HomeSection
+import com.raddstream.app.viewmodel.HomeUiState
+import com.raddstream.app.viewmodel.ResumeTile
 import com.raddstream.app.viewmodel.HomeViewModel
 import com.raddstream.app.viewmodel.homeSyncLine
 import com.raddstream.app.viewmodel.visibleHomeRows
@@ -204,273 +206,32 @@ fun HomeScreen(
             )
         },
     ) { contentPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(contentPadding)
-                .verticalScroll(rememberScrollState()),
-        ) {
-            if (state.isRefreshing) {
-                LinearProgressIndicator(Modifier.fillMaxWidth())
-            }
-
-            // Search first: a plain movie-search bar (audit #17, reworked
-            // 2026-11-12: the browser identity is dropped — this searches the
-            // catalog only, it takes no address and opens no web page). The
-            // viewer types here, and Enter opens Search with the query
-            // applied. The top-bar icon stays as the empty-search door, and
-            // the bar hides with the operator's search flag, exactly like
-            // the icon does.
-            if (searchEnabled) {
-                var homeQuery by remember { mutableStateOf("") }
-                SearchField(
-                    query = homeQuery,
-                    onQueryChanged = { homeQuery = it },
-                    onSubmit = { onSearchQuery(homeQuery) },
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    label = "Search movies and shows",
-                )
-                Spacer(Modifier.height(12.dp))
-            }
-
-            // Gap A5: the sync/status line — how fresh the rows below are, or
-            // that they are saved rows on an offline phone. Nothing until Home
-            // has ever loaded, so a first launch never dates an empty page.
-            homeSyncLine(state.lastHomeSyncMs, state.isOffline, System.currentTimeMillis())?.let { line ->
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = line,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.weight(1f),
-                    )
-                    // P1-H6: the top-bar refresh icon had no visible meaning —
-                    // a mystery circular arrow. The sync line now carries a
-                    // plain "Refresh" button next to the freshness it refreshes.
-                    TextButton(onClick = viewModel::refresh) { Text("Refresh") }
-                }
-                Spacer(Modifier.height(8.dp))
-            }
-
-            // The operator's channel to every phone: a broadcast shows above the
-            // catalog, even when the catalog itself failed to load — that is
-            // exactly when the operator has something to say.
-            state.broadcasts.forEach { broadcast ->
-                BroadcastBanner(
-                    broadcast = broadcast,
-                    onDismiss = { viewModel.dismissBroadcast(broadcast.id) },
-                )
-                Spacer(Modifier.height(8.dp))
-            }
-
-            // Fatal error only when *every* rail failed and none has data to show.
-            val anyVisible = state.sections.any { it.visible }
-            if (state.fatal != null && !anyVisible) {
-                ErrorState(
-                    message = state.fatal ?: "Server did not respond.",
-                    onRetry = viewModel::refresh,
-                    // The address is the one thing a person can fix themselves, and
-                    // Settings is four taps away. Offer it where the failure is seen.
-                    secondaryLabel = "Set up a server",
-                    onSecondary = onSetupServerClick,
-                )
-            } else {
-                // Continue Watching is first and pinned: it is the one rail
-                // this device owns outright, and the research rule is that
-                // Home opens on it — the hero carousel is discovery, not the
-                // first thing. The hero still rides the first rail that has
-                // rows, only now it rides behind the rail that remembers.
-                val shownRows = visibleHomeRows(state.sections, state.continueWatching.isNotEmpty())
-                val hasSaved = state.continueWatching.isNotEmpty() || anyVisible
-                if (state.isOffline && hasSaved) {
-                    OfflineBanner()
-                    Spacer(Modifier.height(8.dp))
-                }
-                if (state.continueWatching.isNotEmpty()) {
-                    Column {
-                        SectionHeader(
-                            title = "Continue watching",
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                        )
-                        // Keyed on the scope, not the work: two rows of the same series are two
-                        // different episodes, and a duplicate key would crash the rail.
-                        MediaRail(
-                            items = state.continueWatching,
-                            key = { "${it.post.id}|${it.season}|${it.episode}" },
-                        ) { tile ->
-                            PosterCard(
-                                post = tile.post,
-                                onClick = { onPostClick(tile.post) },
-                                progressFraction = tile.progressFraction,
-                                progressLabel = tile.resumeLabel,
-                                // Phase 7 (D1): the × removes this scope from
-                                // Continue Watching — server row first, then
-                                // the local rows, with Undo on the snackbar.
-                                onRemove = { viewModel.removeFromContinueWatching(tile) },
-                            )
-                        }
-                        Spacer(Modifier.height(8.dp))
-                    }
-                }
-                // The banner rides the first rail that actually has rows, so it is real
-                // catalog data (freshest additions) and not a hand-picked fake "featured" set.
-                // heroMax 0 hides the slot entirely — no carousel, no skeleton — because
-                // the operator asked for no hero, not for a hero that never loads.
-                // HO-1: the hero IS that rail's presentation, so its posters are
-                // de-duplicated out of the rail below — the same six titles must
-                // not appear twice on one screen.
-                val heroSection = if (heroMax > 0) state.sections.firstOrNull { it.visible } else null
-                val heroItems = heroSection?.items.orEmpty().take(heroMax)
-                if (heroMax > 0) {
-                    if (heroItems.isNotEmpty()) {
-                        HeroCarousel(
-                            posts = heroItems,
-                            onPostClick = onPostClick,
-                            onWatchNow = { post -> onWatchNowClick(post) },
-                            isFavorite = { post ->
-                                post.id in state.favoriteIds ||
-                                    (post.workRef != null && post.workRef in state.favoriteWorkRefs)
-                            },
-                            onToggleFavorite = { post -> viewModel.toggleFavorite(post) },
-                            autoplay = heroAutoplay,
-                            intervalMs = heroIntervalMs,
-                        )
-                        Spacer(Modifier.height(12.dp))
-                    } else if (state.sections.any { it.loading }) {
-                        // Hold the hero's footprint while the first rail lands, so the page
-                        // never flashes a bare background and then jumps when it fills in.
-                        HeroSkeleton()
-                        Spacer(Modifier.height(12.dp))
-                    }
-                }
-                // Gap A6: the first-run card now rides BELOW the hero — a
-                // new viewer meets a movie first, and the picks are still
-                // the first thing that asks anything of them.
-                if (state.showPickThree) {
-                    PickThreeCard(
-                        candidates = state.pickThreeCandidates,
-                        isFavorite = { post ->
-                            post.id in state.favoriteIds ||
-                                (post.workRef != null && post.workRef in state.favoriteWorkRefs)
-                        },
-                        onToggleFavorite = { post -> viewModel.toggleFavorite(post) },
-                        onPostClick = onPostClick,
-                        onDismiss = viewModel::dismissPickThree,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                }
-
-                // Your library, below the hero where it can still be seen:
-                // the phone's own videos, and downloads.
-                if (searchEnabled) {
-                    LibraryStrip(
-                        onOpenLocalFiles = onOpenLocalFiles,
-                        onOpenDownloads = onOpenDownloads,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                }
-
-                // The free trial note, as one dismissible line below the
-                // hero instead of a card above it. A dismissed note never
-                // returns.
-                state.trialDaysRemaining?.let { days ->
-                    TrialNoteLine(
-                        daysRemaining = days,
-                        onDismiss = viewModel::dismissTrialNote,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                }
-
-                // P1-H3: one "Browse" row, not two near-identical chip rows.
-                BrowseSection(
-                    facets = state.facets,
-                    onBrowseType = onBrowseType,
-                    onFacetSelected = onFacetSelected,
-                )
-                Spacer(Modifier.height(8.dp))
-
-                // Small #2: keep Home centered on catalog discovery — place
-                // the toned-down check-in strip quietly after Browse rather
-                // than competing right below the Hero banner.
-                if (state.streakLadder.isNotEmpty()) {
-                    CheckInNudge(
-                        streakCount = state.streakCount,
-                        serverStreak = state.serverStreak,
-                        streakLadder = state.streakLadder,
-                        coinBalance = state.coinBalance,
-                        signedIn = state.signedIn,
-                        claimedToday = state.claimedToday,
-                        isClaiming = state.isClaiming,
-                        claimMessage = state.claimMessage,
-                        onClaim = viewModel::claimDailyLogin,
-                        onOpenCheckIn = onOpenCheckIn,
-                        onOpenSignIn = onOpenSignIn,
-                    )
-                    Spacer(Modifier.height(10.dp))
-                }
-
-                // At most 10 rows total, CW included: a panel that publishes 12
-                // sections does not get 12 rails on a phone, and the first rails win.
-                // Audit #18: the same title never appears twice on Home. The seen
-                // set is seeded with Continue Watching and the hero, so a rail
-                // never repeats a tile or a hero poster; HO-1 (hero out of its
-                // own rail) is now a special case of the same rule, by work
-                // identity — not by row id, because one film filed twice has
-                // two row ids.
-                var seenWorks = state.continueWatching
-                    .map { UserWords.workKey(it.post.workRef, it.post.displayTitle, it.post.year) }
-                    .toSet() + heroItems.map { UserWords.workKey(it.workRef, it.displayTitle, it.year) }
-                val renderedRows = shownRows.filter { it.visible || it.loading || it.error != null }
-                    .map { section ->
-                        val (kept, next) = UserWords.dedupeAcrossRails(
-                            section.items,
-                            seenWorks,
-                        ) { post -> UserWords.workKey(post.workRef, post.displayTitle, post.year) }
-                        seenWorks = next
-                        section.copy(items = kept)
-                    }
-                renderedRows.forEachIndexed { index, section ->
-                    HomeRailSection(
-                        section = section,
-                        index = index,
-                        onPostClick = onPostClick,
-                        onSeeAll = {
-                            if (section.industry != null) {
-                                onFacetSelected(null, section.industry, null)
-                            } else {
-                                onBrowseType(section.type)
-                            }
-                        },
-                        // A sorted rail has no Browse equivalent (Browse takes a
-                        // type but no sort), so "See all" would silently re-sort
-                        // it to freshest-first. Offer it only where the order
-                        // survives the jump.
-                        showSeeAll = section.browseEquivalent,
-                        onRetry = { viewModel.retrySection(section.key) },
-                    )
-                }
-                // A successful empty load is a blank page today: no rails, no
-                // error, nothing to tap. Say so, and point at the one fix the
-                // viewer can do — the server address in Settings.
-                if (renderedRows.isEmpty() && state.continueWatching.isEmpty() &&
-                    state.sections.none { it.loading } && state.fatal == null
-                ) {
-                    EmptyState(
-                        title = "Nothing here yet",
-                        message = "This catalog has no titles to show. Check your server in Settings.",
-                        action = {
-                            OutlinedButton(onClick = onSetupServerClick) {
-                                Text("Set up a server")
-                            }
-                        },
-                    )
-                }
-                Spacer(Modifier.height(24.dp))
-            }
-        }
+        HomeContent(
+            state = state,
+            modifier = Modifier.padding(contentPadding),
+            searchEnabled = searchEnabled,
+            heroMax = heroMax,
+            heroAutoplay = heroAutoplay,
+            heroIntervalMs = heroIntervalMs,
+            onSearchQuery = onSearchQuery,
+            onPostClick = onPostClick,
+            onWatchNowClick = onWatchNowClick,
+            onBrowseType = onBrowseType,
+            onFacetSelected = onFacetSelected,
+            onSetupServerClick = onSetupServerClick,
+            onOpenLocalFiles = onOpenLocalFiles,
+            onOpenDownloads = onOpenDownloads,
+            onOpenCheckIn = onOpenCheckIn,
+            onOpenSignIn = onOpenSignIn,
+            onRefresh = viewModel::refresh,
+            onRetrySection = viewModel::retrySection,
+            onDismissBroadcast = { viewModel.dismissBroadcast(it) },
+            onToggleFavorite = { viewModel.toggleFavorite(it) },
+            onRemoveFromContinueWatching = { viewModel.removeFromContinueWatching(it) },
+            onDismissPickThree = viewModel::dismissPickThree,
+            onDismissTrialNote = viewModel::dismissTrialNote,
+            onClaimDailyLogin = viewModel::claimDailyLogin,
+        )
 
         state.updateNotice?.let { update ->
             // A required update the viewer walked away from mid-flow
@@ -509,6 +270,310 @@ fun HomeScreen(
                 },
                 onDismiss = viewModel::dismissUpdate,
             )
+        }
+    }
+}
+
+/**
+ * The Home page content, stateless: everything the scrollable column shows,
+ * driven by [HomeUiState] plus callbacks. HomeScreen owns the ViewModel, the
+ * Scaffold, the snackbar and the update dialog; this owns the layout, so it
+ * can be rendered in Paparazzi from fake state with no ViewModel, no
+ * navigation and no network. Behaviour is unchanged — this is a pure move
+ * of the Column body out of HomeScreen (2026-11-15).
+ */
+@Composable
+internal fun HomeContent(
+    state: HomeUiState,
+    modifier: Modifier = Modifier,
+    searchEnabled: Boolean = true,
+    heroMax: Int = HERO_LIMIT,
+    heroAutoplay: Boolean = true,
+    heroIntervalMs: Long = 8_000L,
+    onSearchQuery: (String) -> Unit = {},
+    onPostClick: (Post) -> Unit = {},
+    onWatchNowClick: (Post) -> Unit = onPostClick,
+    onBrowseType: (String?) -> Unit = {},
+    onFacetSelected: (genre: String?, industry: String?, language: String?) -> Unit = { _, _, _ -> },
+    onSetupServerClick: () -> Unit = {},
+    onOpenLocalFiles: () -> Unit = {},
+    onOpenDownloads: () -> Unit = {},
+    onOpenCheckIn: () -> Unit = {},
+    onOpenSignIn: () -> Unit = {},
+    onRefresh: () -> Unit = {},
+    onRetrySection: (String) -> Unit = {},
+    onDismissBroadcast: (Int) -> Unit = {},
+    onToggleFavorite: (Post) -> Unit = {},
+    onRemoveFromContinueWatching: (ResumeTile) -> Unit = {},
+    onDismissPickThree: () -> Unit = {},
+    onDismissTrialNote: () -> Unit = {},
+    onClaimDailyLogin: () -> Unit = {},
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .then(modifier)
+            .verticalScroll(rememberScrollState()),
+    ) {
+        if (state.isRefreshing) {
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+        }
+
+        // Search first: a plain movie-search bar (audit #17, reworked
+        // 2026-11-12: the browser identity is dropped — this searches the
+        // catalog only, it takes no address and opens no web page). The
+        // viewer types here, and Enter opens Search with the query
+        // applied. The top-bar icon stays as the empty-search door, and
+        // the bar hides with the operator's search flag, exactly like
+        // the icon does.
+        if (searchEnabled) {
+            var homeQuery by remember { mutableStateOf("") }
+            SearchField(
+                query = homeQuery,
+                onQueryChanged = { homeQuery = it },
+                onSubmit = { onSearchQuery(homeQuery) },
+                modifier = Modifier.padding(horizontal = 16.dp),
+                label = "Search movies and shows",
+            )
+            Spacer(Modifier.height(12.dp))
+        }
+
+        // Gap A5: the sync/status line — how fresh the rows below are, or
+        // that they are saved rows on an offline phone. Nothing until Home
+        // has ever loaded, so a first launch never dates an empty page.
+        homeSyncLine(state.lastHomeSyncMs, state.isOffline, System.currentTimeMillis())?.let { line ->
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = line,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                // P1-H6: the top-bar refresh icon had no visible meaning —
+                // a mystery circular arrow. The sync line now carries a
+                // plain "Refresh" button next to the freshness it refreshes.
+                TextButton(onClick = onRefresh) { Text("Refresh") }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+
+        // The operator's channel to every phone: a broadcast shows above the
+        // catalog, even when the catalog itself failed to load — that is
+        // exactly when the operator has something to say.
+        state.broadcasts.forEach { broadcast ->
+            BroadcastBanner(
+                broadcast = broadcast,
+                onDismiss = { onDismissBroadcast(broadcast.id) },
+            )
+            Spacer(Modifier.height(8.dp))
+        }
+
+        // Fatal error only when *every* rail failed and none has data to show.
+        val anyVisible = state.sections.any { it.visible }
+        if (state.fatal != null && !anyVisible) {
+            ErrorState(
+                message = state.fatal ?: "Server did not respond.",
+                onRetry = onRefresh,
+                // The address is the one thing a person can fix themselves, and
+                // Settings is four taps away. Offer it where the failure is seen.
+                secondaryLabel = "Set up a server",
+                onSecondary = onSetupServerClick,
+            )
+        } else {
+            // Continue Watching is first and pinned: it is the one rail
+            // this device owns outright, and the research rule is that
+            // Home opens on it — the hero carousel is discovery, not the
+            // first thing. The hero still rides the first rail that has
+            // rows, only now it rides behind the rail that remembers.
+            val shownRows = visibleHomeRows(state.sections, state.continueWatching.isNotEmpty())
+            val hasSaved = state.continueWatching.isNotEmpty() || anyVisible
+            if (state.isOffline && hasSaved) {
+                OfflineBanner()
+                Spacer(Modifier.height(8.dp))
+            }
+            if (state.continueWatching.isNotEmpty()) {
+                Column {
+                    SectionHeader(
+                        title = "Continue watching",
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    )
+                    // Keyed on the scope, not the work: two rows of the same series are two
+                    // different episodes, and a duplicate key would crash the rail.
+                    MediaRail(
+                        items = state.continueWatching,
+                        key = { "${it.post.id}|${it.season}|${it.episode}" },
+                    ) { tile ->
+                        PosterCard(
+                            post = tile.post,
+                            onClick = { onPostClick(tile.post) },
+                            progressFraction = tile.progressFraction,
+                            progressLabel = tile.resumeLabel,
+                            // Phase 7 (D1): the × removes this scope from
+                            // Continue Watching — server row first, then
+                            // the local rows, with Undo on the snackbar.
+                            onRemove = { onRemoveFromContinueWatching(tile) },
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+            }
+            // The banner rides the first rail that actually has rows, so it is real
+            // catalog data (freshest additions) and not a hand-picked fake "featured" set.
+            // heroMax 0 hides the slot entirely — no carousel, no skeleton — because
+            // the operator asked for no hero, not for a hero that never loads.
+            // HO-1: the hero IS that rail's presentation, so its posters are
+            // de-duplicated out of the rail below — the same six titles must
+            // not appear twice on one screen.
+            val heroSection = if (heroMax > 0) state.sections.firstOrNull { it.visible } else null
+            val heroItems = heroSection?.items.orEmpty().take(heroMax)
+            if (heroMax > 0) {
+                if (heroItems.isNotEmpty()) {
+                    HeroCarousel(
+                        posts = heroItems,
+                        onPostClick = onPostClick,
+                        onWatchNow = { post -> onWatchNowClick(post) },
+                        isFavorite = { post ->
+                            post.id in state.favoriteIds ||
+                                (post.workRef != null && post.workRef in state.favoriteWorkRefs)
+                        },
+                        onToggleFavorite = { post -> onToggleFavorite(post) },
+                        autoplay = heroAutoplay,
+                        intervalMs = heroIntervalMs,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                } else if (state.sections.any { it.loading }) {
+                    // Hold the hero's footprint while the first rail lands, so the page
+                    // never flashes a bare background and then jumps when it fills in.
+                    HeroSkeleton()
+                    Spacer(Modifier.height(12.dp))
+                }
+            }
+            // Gap A6: the first-run card now rides BELOW the hero — a
+            // new viewer meets a movie first, and the picks are still
+            // the first thing that asks anything of them.
+            if (state.showPickThree) {
+                PickThreeCard(
+                    candidates = state.pickThreeCandidates,
+                    isFavorite = { post ->
+                        post.id in state.favoriteIds ||
+                            (post.workRef != null && post.workRef in state.favoriteWorkRefs)
+                    },
+                    onToggleFavorite = { post -> onToggleFavorite(post) },
+                    onPostClick = onPostClick,
+                    onDismiss = onDismissPickThree,
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+
+            // Your library, below the hero where it can still be seen:
+            // the phone's own videos, and downloads.
+            if (searchEnabled) {
+                LibraryStrip(
+                    onOpenLocalFiles = onOpenLocalFiles,
+                    onOpenDownloads = onOpenDownloads,
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+
+            // The free trial note, as one dismissible line below the
+            // hero instead of a card above it. A dismissed note never
+            // returns.
+            state.trialDaysRemaining?.let { days ->
+                TrialNoteLine(
+                    daysRemaining = days,
+                    onDismiss = onDismissTrialNote,
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+
+            // P1-H3: one "Browse" row, not two near-identical chip rows.
+            BrowseSection(
+                facets = state.facets,
+                onBrowseType = onBrowseType,
+                onFacetSelected = onFacetSelected,
+            )
+            Spacer(Modifier.height(8.dp))
+
+            // Small #2: keep Home centered on catalog discovery — place
+            // the toned-down check-in strip quietly after Browse rather
+            // than competing right below the Hero banner.
+            if (state.streakLadder.isNotEmpty()) {
+                CheckInNudge(
+                    streakCount = state.streakCount,
+                    serverStreak = state.serverStreak,
+                    streakLadder = state.streakLadder,
+                    coinBalance = state.coinBalance,
+                    signedIn = state.signedIn,
+                    claimedToday = state.claimedToday,
+                    isClaiming = state.isClaiming,
+                    claimMessage = state.claimMessage,
+                    onClaim = onClaimDailyLogin,
+                    onOpenCheckIn = onOpenCheckIn,
+                    onOpenSignIn = onOpenSignIn,
+                )
+                Spacer(Modifier.height(10.dp))
+            }
+
+            // At most 10 rows total, CW included: a panel that publishes 12
+            // sections does not get 12 rails on a phone, and the first rails win.
+            // Audit #18: the same title never appears twice on Home. The seen
+            // set is seeded with Continue Watching and the hero, so a rail
+            // never repeats a tile or a hero poster; HO-1 (hero out of its
+            // own rail) is now a special case of the same rule, by work
+            // identity — not by row id, because one film filed twice has
+            // two row ids.
+            var seenWorks = state.continueWatching
+                .map { UserWords.workKey(it.post.workRef, it.post.displayTitle, it.post.year) }
+                .toSet() + heroItems.map { UserWords.workKey(it.workRef, it.displayTitle, it.year) }
+            val renderedRows = shownRows.filter { it.visible || it.loading || it.error != null }
+                .map { section ->
+                    val (kept, next) = UserWords.dedupeAcrossRails(
+                        section.items,
+                        seenWorks,
+                    ) { post -> UserWords.workKey(post.workRef, post.displayTitle, post.year) }
+                    seenWorks = next
+                    section.copy(items = kept)
+                }
+            renderedRows.forEachIndexed { index, section ->
+                HomeRailSection(
+                    section = section,
+                    index = index,
+                    onPostClick = onPostClick,
+                    onSeeAll = {
+                        if (section.industry != null) {
+                            onFacetSelected(null, section.industry, null)
+                        } else {
+                            onBrowseType(section.type)
+                        }
+                    },
+                    // A sorted rail has no Browse equivalent (Browse takes a
+                    // type but no sort), so "See all" would silently re-sort
+                    // it to freshest-first. Offer it only where the order
+                    // survives the jump.
+                    showSeeAll = section.browseEquivalent,
+                    onRetry = { onRetrySection(section.key) },
+                )
+            }
+            // A successful empty load is a blank page today: no rails, no
+            // error, nothing to tap. Say so, and point at the one fix the
+            // viewer can do — the server address in Settings.
+            if (renderedRows.isEmpty() && state.continueWatching.isEmpty() &&
+                state.sections.none { it.loading } && state.fatal == null
+            ) {
+                EmptyState(
+                    title = "Nothing here yet",
+                    message = "This catalog has no titles to show. Check your server in Settings.",
+                    action = {
+                        OutlinedButton(onClick = onSetupServerClick) {
+                            Text("Set up a server")
+                        }
+                    },
+                )
+            }
+            Spacer(Modifier.height(24.dp))
         }
     }
 }
