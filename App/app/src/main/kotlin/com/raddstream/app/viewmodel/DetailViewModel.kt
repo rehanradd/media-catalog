@@ -1798,14 +1798,23 @@ fun formatRuntimeMinutes(minutes: Int?): String? {
  */
 internal fun filterSimilarTitles(candidates: List<Post>, current: PostDetail): List<Post> {
     val selfTitle = current.cleanTitle?.takeIf { it.isNotBlank() } ?: current.title
+    // workKey prefers the work ref, so a candidate without one never matches
+    // a current title that has one — the title+year key must be tracked too,
+    // or "Jawan!" would show as similar to "Jawan". Both keys go in the seen
+    // set, for the current title and for every kept candidate.
     val selfKey = UserWords.workKey(current.workRef, selfTitle, current.year)
-    val seen = mutableSetOf(selfKey)
+    val selfTitleKey = UserWords.workKey(null, selfTitle, current.year)
+    val seen = mutableSetOf(selfKey, selfTitleKey)
     val out = ArrayList<Post>(candidates.size)
     for (post in candidates) {
         if (current.id > 0 && post.id == current.id) continue
         if (!current.workRef.isNullOrBlank() && post.workRef == current.workRef) continue
         val key = UserWords.workKey(post.workRef, post.displayTitle, post.year)
-        if (seen.add(key)) out.add(post)
+        val titleKey = UserWords.workKey(null, post.displayTitle, post.year)
+        if (key in seen || titleKey in seen) continue
+        seen.add(key)
+        seen.add(titleKey)
+        out.add(post)
     }
     return out
 }

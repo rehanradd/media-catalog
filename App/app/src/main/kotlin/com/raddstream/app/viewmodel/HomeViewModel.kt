@@ -309,9 +309,11 @@ internal fun regionalHomeSections(): List<HomeSection> = listOf(
  * v1 answers "south_indian" from its own broad clause.
  */
 internal fun industryWireValues(industry: String?): List<String>? =
-    IndustryFilter.entries.firstOrNull { it.wireValue == industry }
-        ?.wireValues?.takeIf { it.isNotEmpty() }
-        ?: listOfNotNull(industry)
+    industry?.let {
+        IndustryFilter.entries.firstOrNull { filter -> filter.wireValue == it }
+            ?.wireValues?.takeIf { values -> values.isNotEmpty() }
+            ?: listOf(it)
+    }
 
 /**
  * D2.7: the Home trial note, as a pure decision. The note shows only while the
