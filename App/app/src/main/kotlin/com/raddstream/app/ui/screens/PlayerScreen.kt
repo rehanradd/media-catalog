@@ -1379,7 +1379,7 @@ private fun DoubleTapRipple(state: PlayerUiState) {
     }
 }
 
-private sealed class Hud {
+internal sealed class Hud {
     data class Brightness(val value: Float) : Hud()
     data class Volume(val value: Float) : Hud()
     object Boost : Hud()
@@ -1393,7 +1393,7 @@ private sealed class Hud {
  * percent, nothing else to read while a movie is playing.
  */
 @Composable
-private fun EdgeFeedbackLine(hud: Hud) {
+internal fun EdgeFeedbackLine(hud: Hud) {
     val isLeft = hud is Hud.Brightness
     val fraction = when (hud) {
         is Hud.Brightness -> hud.value

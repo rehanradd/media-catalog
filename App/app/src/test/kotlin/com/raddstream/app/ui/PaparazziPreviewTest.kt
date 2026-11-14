@@ -42,8 +42,10 @@ import com.raddstream.app.ui.screens.FilterRail
 import com.raddstream.app.ui.screens.FilterSheetBody
 import com.raddstream.app.ui.screens.BottomControls
 import com.raddstream.app.ui.screens.CenterSpinner
+import com.raddstream.app.ui.screens.EdgeFeedbackLine
 import com.raddstream.app.ui.screens.EdgeHud
 import com.raddstream.app.ui.screens.HomeContent
+import com.raddstream.app.ui.screens.Hud
 import com.raddstream.app.ui.screens.TopBar
 import com.raddstream.app.ui.screens.SearchContent
 import com.raddstream.app.ui.screens.RungActions
@@ -809,7 +811,8 @@ class PaparazziPreviewTest {
     // strip (paused only) and the keep chip; TopBar the title + lock +
     // print sheet; CenterSpinner the buffering spinner only — there is no
     // centre play/pause button anymore, so the playing/paused shots are
-    // empty frames, which is the proof.
+    // empty frames, which is the proof. EdgeFeedbackLine is the slim edge
+    // track that replaced the centre HUD card.
     private val playerRendition = PlaybackRendition(
         print = PrintInfo(resolution = "1080p"),
         playback = PlaybackInfo(label = "Fast direct"),
@@ -908,6 +911,24 @@ class PaparazziPreviewTest {
                 CenterSpinner(
                     state = playerBase().copy(isBuffering = true),
                 )
+            }
+        }
+    }
+
+    @Test
+    fun playerEdgeFeedbackVolume() {
+        paparazzi.snapshot {
+            themed {
+                EdgeFeedbackLine(Hud.Volume(0.6f))
+            }
+        }
+    }
+
+    @Test
+    fun playerEdgeFeedbackBrightness() {
+        paparazzi.snapshot {
+            themed {
+                EdgeFeedbackLine(Hud.Brightness(0.4f))
             }
         }
     }
