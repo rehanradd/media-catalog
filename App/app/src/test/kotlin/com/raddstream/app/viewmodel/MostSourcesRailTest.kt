@@ -107,4 +107,25 @@ class MostSourcesRailTest {
     }
 
     private fun post(id: Int) = Post(id = id, title = "Title $id", cleanTitle = "Title $id")
+
+    @Test
+    fun `regional rails carry server industry filters and keep see all`() {
+        val regional = regionalHomeSections()
+        assertEquals(listOf("bollywood", "south_indian"), regional.map { it.key })
+        assertEquals(listOf("bollywood", "south_indian"), regional.map { it.industry })
+        assertTrue(regional.all { it.browseEquivalent })
+    }
+
+    @Test
+    fun `south indian expands to the four southern industries the catalog carries`() {
+        // "south_indian" is not a catalog value — v2 exact-matches the
+        // industry column and answers it with 0 rows (measured live
+        // 2026-11-15). The rail must send the real values instead.
+        assertEquals(
+            listOf("Tollywood", "Kollywood", "Mollywood", "Sandalwood"),
+            industryWireValues("south_indian"),
+        )
+        assertEquals(listOf("Bollywood"), industryWireValues("bollywood"))
+        assertNull(industryWireValues(null))
+    }
 }

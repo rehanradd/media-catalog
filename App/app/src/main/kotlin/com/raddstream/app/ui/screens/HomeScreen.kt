@@ -437,7 +437,13 @@ fun HomeScreen(
                         section = section,
                         index = index,
                         onPostClick = onPostClick,
-                        onSeeAll = { onBrowseType(section.type) },
+                        onSeeAll = {
+                            if (section.industry != null) {
+                                onFacetSelected(null, section.industry, null)
+                            } else {
+                                onBrowseType(section.type)
+                            }
+                        },
                         // A sorted rail has no Browse equivalent (Browse takes a
                         // type but no sort), so "See all" would silently re-sort
                         // it to freshest-first. Offer it only where the order
@@ -1162,8 +1168,14 @@ private fun HomeRailSection(
                         null
                     },
                 )
-                MediaRail(items = section.items, key = { it.id }) { post ->
-                    PosterCard(post = post, onClick = { onPostClick(post) })
+                val isRanked = section.sort == "trending"
+                val indexedItems = section.items.mapIndexed { itemIndex, post -> itemIndex to post }
+                MediaRail(items = indexedItems, key = { (_, post) -> post.id }) { (itemIndex, post) ->
+                    PosterCard(
+                        post = post,
+                        onClick = { onPostClick(post) },
+                        rank = if (isRanked && itemIndex < 10) itemIndex + 1 else null,
+                    )
                 }
                 // The rows here are real and from this page; the refresh that failed is a
                 // separate fact and has to be said, or the screen claims a freshness it

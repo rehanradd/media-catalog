@@ -121,4 +121,31 @@ class V2DetailRepositoryTest {
         )
         assertNull(repository.getWorkDetailV2(7681))
     }
+
+    @Test
+    fun `fetchWorkDetailV2 surfaces TransientFailure on IOException instead of conflating with Unavailable`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val settings = ServerSettingsRepository(context)
+        runBlocking { settings.saveServerUrl("https://raddstream.duckdns.org") }
+        val failingProvider = object : ApiProvider(settings) {
+            override suspend fun current(): RaddStreamApi {
+                @Suppress("UNCHECKED_CAST")
+                return Proxy.newProxyInstance(
+                    javaClass.classLoader,
+                    arrayOf(RaddStreamApi::class.java),
+                ) { _, method, args ->
+                    val continuation = args!!.last() as Continuation<Any?>
+                    if (method.name == "getWorkDetail") {
+                        continuation.resumeWithException(IOException("timeout"))
+                    } else {
+                        continuation.resumeWithException(UnsupportedOperationException(method.name))
+                    }
+                    COROUTINE_SUSPENDED
+                } as RaddStreamApi
+            }
+        }
+        val repo = CatalogRepository(failingProvider, settings)
+        val result = repo.fetchWorkDetailV2(7681)
+        assertTrue(result is V2DetailResult.TransientFailure)
+    }
 }

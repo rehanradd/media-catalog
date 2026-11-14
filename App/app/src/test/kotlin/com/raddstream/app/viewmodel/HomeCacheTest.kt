@@ -63,4 +63,21 @@ class HomeCacheTest {
         assertTrue(restored.none { it.loading })
         assertEquals(listOf(1, 2), restored.first().items.map { it.id })
     }
+
+    @Test
+    fun `industry filter survives home cache round-trip`() {
+        val regional = listOf(
+            HomeSection(
+                key = "bollywood",
+                title = "Bollywood",
+                type = null,
+                industry = "bollywood",
+                items = listOf(post(5)),
+            ),
+        )
+        val decoded = decodeHomeCache(encodeHomeCache(regional, updatedAtMs = 2_000L))!!
+        val restored = restoreHomeSections(decoded)
+
+        assertEquals("bollywood", restored.single().industry)
+    }
 }

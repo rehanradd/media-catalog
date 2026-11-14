@@ -1,6 +1,7 @@
 package com.raddstream.app.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -45,6 +46,7 @@ import androidx.compose.ui.unit.sp
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.ui.layout.CardGeometry
 import com.raddstream.app.ui.theme.PressHaptics
+import com.raddstream.app.ui.theme.RaddArtScrim
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.ui.theme.pressScale
 
@@ -84,6 +86,11 @@ fun PosterCard(
      * slipping thumb.
      */
     onRemove: (() -> Unit)? = null,
+    /**
+     * 1-based server ranking position (1..10) when rendered inside the ranked rail.
+     * Null everywhere else — no synthetic rank numbers are ever invented.
+     */
+    rank: Int? = null,
 ) {
     val title = post.cleanTitle?.takeIf { it.isNotBlank() } ?: post.title
     val typeLabel = post.typeLabel
@@ -98,6 +105,7 @@ fun PosterCard(
     // is paint-only, so a screen reader hears each tile once.
     val tileBadges = TileAudioBadges.forPost(post)
     val a11y = buildString {
+        if (rank != null && rank in 1..10) append("Rank ").append(rank).append(", ")
         append(title)
         if (details.isNotBlank()) append(", ").append(details)
         post.imdbRating?.let { UserWords.displayRating(it) }?.let { rating ->
@@ -236,6 +244,30 @@ fun PosterCard(
                             .align(Alignment.BottomStart)
                             .padding(start = 6.dp, bottom = 8.dp),
                     )
+                }
+
+                if (rank != null && rank in 1..10) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(6.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(RaddArtScrim)
+                            .border(
+                                width = 1.dp,
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.75f),
+                                shape = RoundedCornerShape(8.dp),
+                            )
+                            .padding(horizontal = 7.dp, vertical = 2.dp)
+                            .clearAndSetSemantics { },
+                    ) {
+                        Text(
+                            text = "#$rank",
+                            color = MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.ExtraBold,
+                        )
+                    }
                 }
             }
 

@@ -58,4 +58,22 @@ class CatalogPostCacheTest {
         )
         assertNull(repository.cachedPost(0))
     }
+
+    @Test
+    fun `a v2 browse row resolves from workCache by workId when post id is sentinel`() {
+        val repository = repository()
+        repository.cachePosts(
+            listOf(
+                Post(
+                    id = -77,
+                    workId = 77L,
+                    title = "Pathaan",
+                    cleanTitle = "Pathaan",
+                    year = 2023,
+                    contentType = "movie",
+                ),
+            ),
+        )
+        assertEquals("Pathaan", repository.cachedPost(postId = -77, workId = 77L)?.cleanTitle)
+    }
 }

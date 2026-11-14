@@ -322,4 +322,19 @@ class PlayerControlSemanticsTest {
         // which is the one that can strand a stale id.
         assertEquals(OFF_WORD, subtitleStatusLabel(PlayerUiState(selectedSubtitleId = "9"), OFF_WORD))
     }
+
+    @Test
+    fun `the top bar carries the lock action and the coach overlay covers scrub and pinch`() {
+        val topBarStart = source.indexOf("private fun TopBar(")
+        val topBarEnd = source.indexOf("\n@Composable\nprivate fun CenterControls(", topBarStart)
+        assertTrue("TopBar bounds missing", topBarStart >= 0 && topBarEnd > topBarStart)
+        val topBar = source.substring(topBarStart, topBarEnd)
+        assertTrue("TopBar must offer the Lock control", topBar.contains("vm.setLocked(true)"))
+        assertTrue("TopBar Lock control must announce player_lock", topBar.contains("R.string.player_lock"))
+
+        val coach = functionBody("private fun PlayerCoachOverlay(")
+        assertTrue("Coach overlay must include scrub hint", coach.contains("R.string.player_coach_scrub"))
+        assertTrue("Coach overlay must include pinch hint", coach.contains("R.string.player_coach_pinch"))
+        assertTrue("Coach overlay must offer Got it dismiss action", coach.contains("R.string.player_coach_got_it"))
+    }
 }

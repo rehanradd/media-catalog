@@ -12,6 +12,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -331,6 +333,7 @@ private fun HeroAmbientGlow(currentPage: Int, modifier: Modifier = Modifier) {
     )
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun HeroSlide(
     post: Post,
@@ -347,11 +350,15 @@ private fun HeroSlide(
 ) {
     val title = post.displayTitle
     val languages = remember(post.language) { heroLanguagePills(post.language) }
+    val genres = remember(post.genres) { post.genreList.take(2) }
+    val rating = remember(post.imdbRating) { UserWords.displayRating(post.imdbRating) }
     // The slide merges its children, so TalkBack reads this line and then the Watch Now button
     // inside it. Saying "watch now" here as well would announce the same action twice.
     val a11y = buildString {
         append(title)
+        rating?.let { append(", rating ").append(it) }
         post.yearLabel?.let { append(", ").append(it) }
+        if (genres.isNotEmpty()) append(", ").append(genres.joinToString())
         if (languages.isNotEmpty()) append(", languages ").append(languages.joinToString())
     }
 
@@ -377,20 +384,19 @@ private fun HeroSlide(
             )
         }
 
-        // 2 — vertical scrim: clear at the crest, page background under the text.
-        // Session 121 (P-20): the old scrim stayed near-clear until 45% down, so the
-        // hero title collided with the poster's own baked-in title art. The scrim
-        // now starts earlier and ends darker, so the words sit on background,
-        // not on artwork.
+        // 2 — vertical scrims: subtle top scrim behind indicator, deep bottom fade into background.
+        // Session 121 (P-20): the scrim protects the title/badges against bright art and blends
+        // smoothly into the page canvas at the bottom of the full-bleed hero.
         Box(
             Modifier
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
-                        0f to MaterialTheme.colorScheme.background.copy(alpha = 0f),
-                        0.35f to MaterialTheme.colorScheme.background.copy(alpha = 0.25f),
-                        0.7f to MaterialTheme.colorScheme.background.copy(alpha = 0.65f),
-                        1f to MaterialTheme.colorScheme.background.copy(alpha = 0.95f),
+                        0f to MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f),
+                        0.22f to MaterialTheme.colorScheme.background.copy(alpha = 0f),
+                        0.45f to MaterialTheme.colorScheme.background.copy(alpha = 0.22f),
+                        0.72f to MaterialTheme.colorScheme.background.copy(alpha = 0.72f),
+                        1f to MaterialTheme.colorScheme.background,
                     )
                 ),
         )
@@ -420,12 +426,14 @@ private fun HeroSlide(
                 )
             }
 
-            Row(
+            FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
+                rating?.let { RatingBadge(rating = it) }
                 post.yearLabel?.let { HeroBadge(it) }
                 post.typeLabel?.let { HeroBadge(it) }
+                genres.forEach { HeroBadge(it, subdued = true) }
                 languages.forEach { HeroBadge(it, subdued = true) }
             }
 
@@ -725,7 +733,7 @@ private fun heroHeight(): Dp {
     return if (width < 400) 320.dp else 400.dp
 }
 
-/** The glow shows through this gutter — enough to read, not enough to look like a border. */
-private val heroInset = PaddingValues(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 10.dp)
+/** Full-bleed edge-to-edge cinematic hero: artwork fills the viewport width and blends into the canvas. */
+private val heroInset = PaddingValues(0.dp)
 
-private val HERO_CORNER: Dp = 28.dp
+private val HERO_CORNER: Dp = 0.dp

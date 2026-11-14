@@ -38,6 +38,7 @@ import com.raddstream.app.player.SubtitleTrackInfo
 import com.raddstream.app.player.creditDownloadUrl
 import com.raddstream.app.repository.CatalogRepository
 import com.raddstream.app.repository.FavoritesRepository
+import com.raddstream.app.repository.V2DetailResult
 import com.raddstream.app.repository.V2PlayResult
 import com.raddstream.app.sync.SyncAccountRepository
 import com.raddstream.app.ui.navigation.Screen
@@ -133,6 +134,9 @@ data class DetailUiState(
     /** The answer to a [directDownloadUrlFor] ask that could not open a link. */
     val directLinkMessage: String? = null,
     val isReportingIssue: Boolean = false,
+    /** F18: related titles from GET /api/v1/related, excluding the active work. */
+    val similarTitles: List<Post> = emptyList(),
+    val similarLoading: Boolean = false,
 )
 
 /**
@@ -511,7 +515,11 @@ class DetailViewModel @Inject constructor(
                     // audio word, so the warmed auto tier could be a different
                     // audio than the ladder Play presses. Name the preferred
                     // audio here too, exactly as the v1 path does.
-                    catalogRepository.getWorkDetailV2(workId, audio = detailWarmAudio(userRegion))
+                    when (val res = catalogRepository.fetchWorkDetailV2(workId, audio = detailWarmAudio(userRegion))) {
+                        is V2DetailResult.Found -> res.detail
+                        V2DetailResult.Unavailable -> null
+                        is V2DetailResult.TransientFailure -> throw res.error
+                    }
                 } else {
                     // Audit #1: warm the auto tier on detail open and name
                     // the preferred audio, so the Play press answers from
@@ -596,6 +604,9 @@ class DetailViewModel @Inject constructor(
                             observeFavorite()
                         }
                         syncAccountRepository.adoptWorkRef(detail.id, detail.workRef)
+                        loadSimilarTitles(detail.id, detail)
+                    } else if (postId > 0) {
+                        loadSimilarTitles(postId, detail)
                     }
                 } else {
                     // F9 (Batch B): the server answered "no such title" — the
@@ -604,7 +615,7 @@ class DetailViewModel @Inject constructor(
                         it.copy(
                             isLoading = false,
                             error = "This title is not available on the connected server.",
-                            fallbackPost = catalogRepository.cachedPost(postId),
+                            fallbackPost = catalogRepository.cachedPost(postId, workId),
                         )
                     }
                 }
@@ -616,17 +627,36 @@ class DetailViewModel @Inject constructor(
             } catch (ex: Exception) {
                 // F9 (Batch B): the call failed — the list row still names
                 // the title, when this process has it.
-                    _uiState.update {
-                        it.copy(
-                            isLoading = false,
-                            error = friendlyNetworkError(
-                                ex,
-                                "We couldn't load this title right now. Please check your connection and try again.",
-                            ),
-                            fallbackPost = catalogRepository.cachedPost(postId),
-                        )
-                    }
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        error = friendlyNetworkError(
+                            ex,
+                            "We couldn't load this title right now. Please check your connection and try again.",
+                        ),
+                        fallbackPost = catalogRepository.cachedPost(postId, workId),
+                    )
+                }
             }
+        }
+    }
+
+    private var similarJob: Job? = null
+
+    private fun loadSimilarTitles(seedPostId: Int, current: PostDetail) {
+        if (seedPostId <= 0) return
+        similarJob?.cancel()
+        similarJob = viewModelScope.launch {
+            _uiState.update { it.copy(similarLoading = true) }
+            val items = try {
+                val resp = catalogRepository.getRelated(workId = seedPostId, page = 1, limit = 18)
+                filterSimilarTitles(resp.results, current)
+            } catch (ex: CancellationException) {
+                throw ex
+            } catch (_: Exception) {
+                emptyList()
+            }
+            _uiState.update { it.copy(similarTitles = items, similarLoading = false) }
         }
     }
 
@@ -1759,4 +1789,22 @@ fun formatRuntimeMinutes(minutes: Int?): String? {
         val rest = minutes % 60
         if (rest == 0) "$hours h" else "$hours h $rest m"
     }
+}
+
+/**
+ * Filters related titles so the currently viewed work (matched by id, workRef,
+ * or normalized title+year) and duplicate works never repeat in the Similar rail.
+ */
+internal fun filterSimilarTitles(candidates: List<Post>, current: PostDetail): List<Post> {
+    val selfTitle = current.cleanTitle?.takeIf { it.isNotBlank() } ?: current.title
+    val selfKey = UserWords.workKey(current.workRef, selfTitle, current.year)
+    val seen = mutableSetOf(selfKey)
+    val out = ArrayList<Post>(candidates.size)
+    for (post in candidates) {
+        if (current.id > 0 && post.id == current.id) continue
+        if (!current.workRef.isNullOrBlank() && post.workRef == current.workRef) continue
+        val key = UserWords.workKey(post.workRef, post.displayTitle, post.year)
+        if (seen.add(key)) out.add(post)
+    }
+    return out
 }

@@ -751,6 +751,7 @@ fun RaddStreamNavGraph(
                     onActorClick = { actor ->
                         navController.navigate(Screen.Search.createRoute(actor))
                     },
+                    onPostClick = { similar -> navController.navigateToPost(similar) },
                 )
             }
 

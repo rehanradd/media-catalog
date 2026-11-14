@@ -48,15 +48,20 @@ class CatalogRepository @Inject constructor(
      * never used as a substitute for the detail itself.
      */
     private val postCache = ConcurrentHashMap<Int, Post>()
+    private val workCache = ConcurrentHashMap<Long, Post>()
 
     fun cachePosts(posts: List<Post>) {
         if (postCache.size > POST_CACHE_MAX) postCache.clear()
+        if (workCache.size > POST_CACHE_MAX) workCache.clear()
         for (post in posts) {
             if (post.id > 0) postCache[post.id] = post
+            val wId = post.workId
+            if (wId != null && wId > 0) workCache[wId] = post
         }
     }
 
-    fun cachedPost(postId: Int): Post? = postCache[postId]
+    fun cachedPost(postId: Int, workId: Long = -1L): Post? =
+        postCache[postId] ?: workId.takeIf { it > 0 }?.let { workCache[it] }
 
     suspend fun testAndSaveServer(serverUrl: String): StatsResponse {
         val normalizedUrl = com.raddstream.app.network.normalizeServerUrl(serverUrl)
@@ -269,9 +274,16 @@ class CatalogRepository @Inject constructor(
         sort: String? = null,
         limit: Int = 20,
         cursor: String? = null,
+        industries: List<String>? = null,
     ): V2BrowsePage? {
         val response = try {
-            apiProvider.current().browseWorks(type = type, sort = sort, limit = limit, cursor = cursor)
+            apiProvider.current().browseWorks(
+                type = type,
+                sort = sort,
+                limit = limit,
+                cursor = cursor,
+                industries = industries,
+            )
         } catch (_: HttpException) {
             return null
         } catch (_: IOException) {
@@ -341,7 +353,16 @@ class CatalogRepository @Inject constructor(
      * A bridge failure never fails the detail: the cast section simply hides,
      * exactly as it does on a v1 row with no cast data.
      */
-    suspend fun getWorkDetailV2(workId: Long, audio: String? = null): PostDetail? {
+    suspend fun getWorkDetailV2(workId: Long, audio: String? = null): PostDetail? =
+        (fetchWorkDetailV2(workId, audio) as? V2DetailResult.Found)?.detail
+
+    /**
+     * Fetches v2 work detail while distinguishing transient network/server errors
+     * ([V2DetailResult.TransientFailure]) from "not found" / readiness failures
+     * ([V2DetailResult.Unavailable]), so [DetailViewModel] can show offline vs server
+     * messages on v2 taps without breaking [getWorkDetailV2]'s null-on-error contract.
+     */
+    suspend fun fetchWorkDetailV2(workId: Long, audio: String? = null): V2DetailResult {
         val response = try {
             apiProvider.current().getWorkDetail(workId)
         } catch (ex: CancellationException) {
@@ -356,17 +377,21 @@ class CatalogRepository @Inject constructor(
             // would answer null and retry instead of aborting (Session 156
             // parent fixup).
             throw ex
-        } catch (_: HttpException) {
-            return null
-        } catch (_: IOException) {
-            return null
+        } catch (ex: HttpException) {
+            return if (ex.code() == 404) {
+                V2DetailResult.Unavailable
+            } else {
+                V2DetailResult.TransientFailure(ex)
+            }
+        } catch (ex: IOException) {
+            return V2DetailResult.TransientFailure(ex)
         } catch (_: IllegalStateException) {
             // Session 155 (S2): the provider throwing "Connect to a catalog
             // server first" is a first-call readiness failure, not a server
             // refusal — the server IS configured (the brand default), and a
             // re-call succeeds. Null so the caller's null-retry re-asks
             // instead of hard-failing the first tap.
-            return null
+            return V2DetailResult.Unavailable
         } catch (_: RuntimeException) {
             // Session 157 (S4): a provider or client-build failure that is
             // not the not-ready error — a bad address, a client build that
@@ -377,7 +402,7 @@ class CatalogRepository @Inject constructor(
             // instead of hard-failing the first tap. A dead socket still
             // throws (IOException is not a RuntimeException), so the caller
             // can still tell a refusal from a failure to ask.
-            return null
+            return V2DetailResult.Unavailable
         } catch (ex: Exception) {
             // Session 158 (S5): the last failure-to-ask class — a CHECKED
             // exception the catches above do not name (a TimeoutException,
@@ -390,9 +415,9 @@ class CatalogRepository @Inject constructor(
             // IOException and RuntimeException are already caught above,
             // so only a checked non-IO throw lands here.
             Log.w("CatalogRepository", "detail ask failed without a request: ${ex::class.java.simpleName}: ${ex.message}")
-            return null
+            return V2DetailResult.Unavailable
         }
-        if (!response.ok) return null
+        if (!response.ok) return V2DetailResult.Unavailable
         val baseUrl = try {
             apiProvider.currentBaseUrl()
         } catch (ex: CancellationException) {
@@ -410,7 +435,7 @@ class CatalogRepository @Inject constructor(
             // detail cannot name is a failure to ask, like the catches above:
             // null so the caller's null-retry re-asks instead of hard-failing
             // the tap. (Cancellation is rethrown, never swallowed into null.)
-            return null
+            return V2DetailResult.Unavailable
         }
         var v1PostId = 0
         var castNames: String? = null
@@ -440,7 +465,7 @@ class CatalogRepository @Inject constructor(
                 }
             }
         }
-        return response.toPostDetail(baseUrl, v1PostId, castNames, seasonArtwork)
+        return V2DetailResult.Found(response.toPostDetail(baseUrl, v1PostId, castNames, seasonArtwork))
     }
 
     /**
@@ -686,3 +711,10 @@ data class V2BrowsePage(
     /** The server's rough total for this query, or null when it did not say. */
     val totalEstimate: Int? = null,
 )
+
+/** Outcome of [CatalogRepository.fetchWorkDetailV2], distinguishing transient failure from 404/unavailable. */
+sealed interface V2DetailResult {
+    data class Found(val detail: PostDetail) : V2DetailResult
+    data object Unavailable : V2DetailResult
+    data class TransientFailure(val error: Exception) : V2DetailResult
+}

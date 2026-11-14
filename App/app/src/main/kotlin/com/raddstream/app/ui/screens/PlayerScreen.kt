@@ -81,11 +81,13 @@ import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.VolumeMute
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.WifiOff
+import androidx.compose.material.icons.filled.ZoomOutMap
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -1568,6 +1570,9 @@ private fun TopBar(vm: PlayerViewModel, state: PlayerUiState, onBack: () -> Unit
         // Session 121 (P-35): the keep chip lived here and squeezed the title to a
         // stub ("Ali Baba …") on a narrow phone. It now rides its own row above
         // the scrubber in BottomControls, where it cannot crowd anything.
+        IconButton(onClick = { vm.setLocked(true) }) {
+            Icon(Icons.Default.Lock, stringResource(R.string.player_lock), tint = Color.White)
+        }
         IconButton(onClick = { vm.showPrintSheet() }) {
             Icon(Icons.Default.ListAlt, stringResource(R.string.player_prints_tools), tint = Color.White)
         }
@@ -2581,42 +2586,88 @@ private fun PlayerCoachOverlay(onDismiss: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.55f))
-            .clickableNoRipple(onDismiss),
+            .background(Color.Black.copy(alpha = 0.65f))
+            .clickableNoRipple(onDismiss)
+            .padding(24.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(horizontal = 32.dp),
+        Surface(
+            color = RaddPlayerDialog.copy(alpha = 0.94f),
+            shape = RoundedCornerShape(20.dp),
+            border = BorderStroke(1.dp, RaddCurrent500.copy(alpha = 0.45f)),
+            modifier = Modifier.widthIn(max = 420.dp),
         ) {
-            Text(
-                stringResource(R.string.player_coach_title),
-                color = Color.White,
-                style = MaterialTheme.typography.titleMedium,
-                textAlign = TextAlign.Center,
-            )
-            Spacer(Modifier.height(12.dp))
-            Text(
-                stringResource(R.string.player_coach_double_tap),
-                color = Color.White.copy(alpha = 0.85f),
-                style = MaterialTheme.typography.bodyMedium,
-                textAlign = TextAlign.Center,
-            )
-            Spacer(Modifier.height(6.dp))
-            Text(
-                stringResource(R.string.player_coach_swipe),
-                color = Color.White.copy(alpha = 0.85f),
-                style = MaterialTheme.typography.bodyMedium,
-                textAlign = TextAlign.Center,
-            )
-            Spacer(Modifier.height(6.dp))
-            Text(
-                stringResource(R.string.player_coach_long_press),
-                color = Color.White.copy(alpha = 0.85f),
-                style = MaterialTheme.typography.bodyMedium,
-                textAlign = TextAlign.Center,
-            )
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    stringResource(R.string.player_coach_title),
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                CoachHintRow(
+                    icon = Icons.Default.Forward10,
+                    text = stringResource(R.string.player_coach_double_tap),
+                )
+                CoachHintRow(
+                    icon = Icons.Default.BrightnessHigh,
+                    text = stringResource(R.string.player_coach_swipe),
+                )
+                CoachHintRow(
+                    icon = Icons.Default.SwapHoriz,
+                    text = stringResource(R.string.player_coach_scrub),
+                )
+                CoachHintRow(
+                    icon = Icons.Default.ZoomOutMap,
+                    text = stringResource(R.string.player_coach_pinch),
+                )
+                CoachHintRow(
+                    icon = Icons.Default.Speed,
+                    text = stringResource(R.string.player_coach_long_press),
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.heightIn(min = MinControlTarget),
+                    ) {
+                        Text(
+                            stringResource(R.string.player_coach_got_it),
+                            color = RaddCurrent500,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+            }
         }
+    }
+}
+
+@Composable
+private fun CoachHintRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    text: String,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = RaddCurrent500,
+            modifier = Modifier.size(20.dp),
+        )
+        Text(
+            text = text,
+            color = Color.White.copy(alpha = 0.90f),
+            style = MaterialTheme.typography.bodyMedium,
+        )
     }
 }
 

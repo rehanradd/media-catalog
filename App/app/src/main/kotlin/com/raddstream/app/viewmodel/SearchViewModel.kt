@@ -61,12 +61,30 @@ enum class SearchSort(val label: String, val wireValue: String) {
     }
 }
 
-enum class IndustryFilter(val label: String, val wireValue: String?) {
+/**
+ * The v1 `industry=` value ([wireValue]) and the v2 `industry=` values
+ * ([wireValues]). They differ for South Indian: v1 answers "south_indian"
+ * from its own broad OR clause (`viewer.py` `INDUSTRY_FILTER_SQL`), but v2
+ * exact-matches the industry column, which carries no such value — the
+ * catalog's southern industries are Tollywood, Kollywood, Mollywood and
+ * Sandalwood (measured live 2026-11-15: `industry=south_indian` answers 0
+ * on v2, the four values answer 878 works). Every other filter's v2 values
+ * are just its v1 value.
+ */
+enum class IndustryFilter(
+    val label: String,
+    val wireValue: String?,
+    val wireValues: List<String> = listOfNotNull(wireValue),
+) {
     ALL("All", null),
     BOLLYWOOD("Bollywood", "bollywood"),
     HOLLYWOOD("Hollywood", "hollywood"),
     PAKISTANI("Pakistani", "pakistani"),
-    SOUTH_INDIAN("South Indian", "south_indian"),
+    SOUTH_INDIAN(
+        "South Indian",
+        "south_indian",
+        listOf("Tollywood", "Kollywood", "Mollywood", "Sandalwood"),
+    ),
     // F10 (Batch B): NO Anime here. The server answers `type=anime` and
     // `industry=anime` with the identical fragment — `(is_animated = 1 OR
     // industry LIKE '%anime%')` (Fast_Fetch/viewer.py
@@ -479,7 +497,7 @@ class SearchViewModel @Inject constructor(
                         cursor = v2Cursor,
                         type = state.filters.type,
                         genres = state.filters.genre.wireValue?.let { listOf(it) },
-                        industries = state.filters.industry.wireValue?.let { listOf(it) },
+                        industries = state.filters.industry.wireValues.takeIf { it.isNotEmpty() },
                         qualities = state.filters.quality.wireValue?.let { listOf(it) },
                     )
                     if (generation != searchGeneration) return@launch
@@ -615,7 +633,7 @@ class SearchViewModel @Inject constructor(
                         limit = PAGE_SIZE,
                         type = filters.type,
                         genres = filters.genre.wireValue?.let { listOf(it) },
-                        industries = filters.industry.wireValue?.let { listOf(it) },
+                        industries = filters.industry.wireValues.takeIf { it.isNotEmpty() },
                         qualities = filters.quality.wireValue?.let { listOf(it) },
                     )
                     if (generation != searchGeneration) return@launch

@@ -98,6 +98,8 @@ data class HomeSection(
      * fetch rebuilds it.
      */
     val panelManaged: Boolean = false,
+    /** Server `industry=` filter (`bollywood`, `south_indian`, etc.), or null when unfiltered. */
+    val industry: String? = null,
 ) {
     val visible: Boolean get() = items.isNotEmpty() && error == null
 
@@ -288,6 +290,30 @@ internal fun initialHomeSections(): List<HomeSection> = listOf(
 )
 
 /**
+ * Regional cinema rails backed directly by `GET /api/v2/browse?industry=` and
+ * `GET /api/v1/posts?industry=`. Kept separate from [initialHomeSections] so
+ * [initialHomeSections] preserves its pinned 5-rail contract, while live Home
+ * exposes Bollywood and South Indian rails right behind them.
+ */
+internal fun regionalHomeSections(): List<HomeSection> = listOf(
+    HomeSection(key = "bollywood", title = "Bollywood", type = null, industry = "bollywood", loading = true),
+    HomeSection(key = "south_indian", title = "South Indian", type = null, industry = "south_indian", loading = true),
+)
+
+/**
+ * The v2 `industry=` values a Home rail's [HomeSection.industry] key
+ * actually filters on. "south_indian" is not a catalog value — the catalog
+ * carries the four southern industries — so it expands through
+ * [IndustryFilter]; every other key passes through as its single server
+ * value, and null stays unfiltered. The v1 fallback keeps the raw key:
+ * v1 answers "south_indian" from its own broad clause.
+ */
+internal fun industryWireValues(industry: String?): List<String>? =
+    IndustryFilter.entries.firstOrNull { it.wireValue == industry }
+        ?.wireValues?.takeIf { it.isNotEmpty() }
+        ?: listOfNotNull(industry)
+
+/**
  * D2.7: the Home trial note, as a pure decision. The note shows only while the
  * trial is genuinely running (seconds left above zero), the viewer is not already
  * VIP (a VIP has nothing to be warned about), and the viewer has not dismissed it
@@ -371,7 +397,7 @@ class HomeViewModel @Inject constructor(
         observeDailyCheckIn()
         observeTrialNote()
         observePickThreeDone()
-        _uiState.update { it.copy(sections = initialHomeSections()) }
+        _uiState.update { it.copy(sections = initialHomeSections() + regionalHomeSections()) }
         // Gap A5: cache-first — the saved Home renders before the network
         // answers, and the refresh runs behind it. The restore is awaited
         // first so a fresh load can never be overwritten by stale rows.
@@ -632,8 +658,11 @@ class HomeViewModel @Inject constructor(
     private suspend fun restoreCachedHome() {
         val json = runCatching { settingsRepository.homeCacheJson.first() }.getOrNull() ?: return
         val payload = decodeHomeCache(json) ?: return
+        val restored = restoreHomeSections(payload)
+        val existingKeys = restored.mapTo(HashSet()) { it.key }
+        val merged = restored + regionalHomeSections().filter { it.key !in existingKeys }
         _uiState.update {
-            it.copy(sections = restoreHomeSections(payload), lastHomeSyncMs = payload.updatedAtMs)
+            it.copy(sections = merged, lastHomeSyncMs = payload.updatedAtMs)
         }
     }
 
@@ -906,8 +935,13 @@ class HomeViewModel @Inject constructor(
                     // with the v1 list as the fallback. An empty v2 page falls back too:
                     // a section type the v2 side cannot serve must not read as "no titles".
                     // A rail that asks for a server sort (only "Most versions" today) keeps
-                    // it on both paths; the others keep the v2 default sort.
-                    val page = catalogRepository.browseWorksV2(type = section.type, sort = section.sort ?: "trending", limit = 18)
+                    // it on both paths; the others ask for freshest-first ("newest").
+                    val page = catalogRepository.browseWorksV2(
+                        type = section.type,
+                        sort = section.sort ?: "newest",
+                        limit = 18,
+                        industries = industryWireValues(section.industry),
+                    )
                     if (page != null && page.posts.isNotEmpty()) {
                         page.posts
                     } else if (section.sort == "trending") {
@@ -920,10 +954,22 @@ class HomeViewModel @Inject constructor(
                         } catch (cancelled: CancellationException) {
                             throw cancelled
                         } catch (_: Exception) {
-                            catalogRepository.getPosts(type = section.type, sort = section.sort, page = 1, limit = 18).results
+                            catalogRepository.getPosts(
+                                type = section.type,
+                                industry = section.industry,
+                                sort = section.sort,
+                                page = 1,
+                                limit = 18,
+                            ).results
                         }
                     } else {
-                        catalogRepository.getPosts(type = section.type, sort = section.sort, page = 1, limit = 18).results
+                        catalogRepository.getPosts(
+                            type = section.type,
+                            industry = section.industry,
+                            sort = section.sort,
+                            page = 1,
+                            limit = 18,
+                        ).results
                     }
                 }
             }

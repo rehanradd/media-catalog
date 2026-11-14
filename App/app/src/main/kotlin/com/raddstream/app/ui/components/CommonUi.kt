@@ -412,8 +412,14 @@ fun EmptyState(
     message: String? = null,
     icon: @Composable (() -> Unit)? = null,
     action: @Composable (() -> Unit)? = null,
+    fillScreen: Boolean = true,
 ) {
-    Box(modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
+    val containerModifier = if (fillScreen) {
+        modifier.fillMaxSize().padding(32.dp)
+    } else {
+        modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 20.dp)
+    }
+    Box(containerModifier, contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             if (icon != null) {
                 icon()
@@ -453,11 +459,13 @@ fun ErrorState(
     title: String = "Something went wrong",
     secondaryLabel: String? = null,
     onSecondary: (() -> Unit)? = null,
+    fillScreen: Boolean = true,
 ) {
     EmptyState(
         title = title,
         modifier = modifier,
         message = message,
+        fillScreen = fillScreen,
         icon = {
             // F9 (Batch A): the icon wears the brand tint, not the error red.
             // Every caller of this state is a retryable load failure — a dead
@@ -544,11 +552,12 @@ fun InlineLoadFailure(
 fun <T> MediaRail(
     items: List<T>,
     key: (T) -> Any,
+    contentPadding: PaddingValues = PaddingValues(horizontal = 16.dp),
     itemContent: @Composable (T) -> Unit,
 ) {
     LazyRow(
         modifier = Modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(horizontal = 16.dp),
+        contentPadding = contentPadding,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         items(items, key = key) { item ->

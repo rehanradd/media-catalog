@@ -41,6 +41,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Download
@@ -83,8 +84,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -111,7 +114,9 @@ import com.raddstream.app.ui.components.HdrBadge
 import com.raddstream.app.ui.components.ImageFallbackCard
 import com.raddstream.app.ui.components.InlineLoadFailure
 import com.raddstream.app.ui.components.isKnownLanguage
+import com.raddstream.app.ui.components.MediaRail
 import com.raddstream.app.ui.components.Pill
+import com.raddstream.app.ui.components.PosterCard
 import com.raddstream.app.ui.components.UserWords
 import com.raddstream.app.ui.components.PrintQualityBadge
 import com.raddstream.app.ui.components.PrintSourceBadge
@@ -156,6 +161,8 @@ fun DetailScreen(
     onOpenVipUpgrade: () -> Unit = {},
     /** An actor chip in the cast row: open that actor's titles in Search. */
     onActorClick: (String) -> Unit = {},
+    /** F18: tap on a tile in the Similar titles rail. */
+    onPostClick: (Post) -> Unit = {},
     /** Session 121 (P-26): the hero's Watch Now — start the best print once the title loads. */
     autoplay: Boolean = false,
     viewModel: DetailViewModel = hiltViewModel(),
@@ -307,7 +314,12 @@ fun DetailScreen(
         val post = state.post
         when {
             state.isLoading -> DetailSkeleton(Modifier.padding(detailPadding))
-            state.error != null && post == null -> Column(Modifier.padding(detailPadding)) {
+            state.error != null && post == null -> Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(detailPadding)
+                    .verticalScroll(rememberScrollState()),
+            ) {
                 // F9 (Batch B): the failure names the title when the list row
                 // is still in this process — a poster + title above the error,
                 // instead of a bare "Couldn't load this title" for a title the
@@ -327,6 +339,7 @@ fun DetailScreen(
                     // their own words); this branch only adds the exit.
                     secondaryLabel = "Back to browse",
                     onSecondary = onBackClick,
+                    fillScreen = false,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(4.dp))
@@ -334,7 +347,8 @@ fun DetailScreen(
                     onClick = { showReportDialog = true },
                     modifier = Modifier
                         .align(Alignment.CenterHorizontally)
-                        .heightIn(min = 48.dp),
+                        .heightIn(min = 48.dp)
+                        .testTag("detail_report_broken_button"),
                 ) {
                     Text("Report broken stream")
                 }
@@ -374,6 +388,8 @@ fun DetailScreen(
                 hasRungs = { season, episode -> !viewModel.ladderFor(season, episode).isEmpty },
                 onOpenVipUpgrade = onOpenVipUpgrade,
                 onActorClick = onActorClick,
+                similarTitles = state.similarTitles,
+                onPostClick = onPostClick,
                 reloadError = state.error,
                 onRetryReload = viewModel::loadDetail,
                 isFavorite = state.isFavorite,
@@ -591,11 +607,37 @@ internal fun detailContentPadding(
  * the server's own but minutes old, and only the retry below can say what
  * the title actually holds now.
  */
+/**
+ * Metadata summary shown when Detail fails from a cached list row, built strictly
+ * from already-known catalog fields without inventing absent values.
+ */
+internal fun detailErrorMetadataLine(post: Post): String? {
+    val langs = WireText.listOf(post.language)
+        .map { it.trim() }
+        .filter(::isKnownLanguage)
+        .take(2)
+        .joinToString(", ")
+        .takeIf { it.isNotBlank() }
+    val parts = listOfNotNull(
+        post.yearLabel,
+        post.typeLabel,
+        langs,
+    )
+    return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+}
+
 @Composable
 private fun DetailErrorHeader(post: Post, modifier: Modifier = Modifier) {
     val title = post.cleanTitle?.takeIf { it.isNotBlank() } ?: post.title
+    val metaLine = remember(post) { detailErrorMetadataLine(post) }
+    val rating = remember(post.imdbRating) { UserWords.displayRating(post.imdbRating) }
+    val genres = remember(post.genreList) { post.genreList.take(3) }
     Row(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -608,7 +650,7 @@ private fun DetailErrorHeader(post: Post, modifier: Modifier = Modifier) {
                 .clip(RoundedCornerShape(8.dp)),
             fallbackLabel = title,
         )
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleMedium,
@@ -616,12 +658,23 @@ private fun DetailErrorHeader(post: Post, modifier: Modifier = Modifier) {
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
-            post.yearLabel?.let {
+            metaLine?.let {
                 Text(
                     text = it,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
+            }
+            if (rating != null || genres.isNotEmpty()) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    rating?.let { RatingBadge(rating = "$it IMDb") }
+                    genres.take(2).forEach { genre -> CapabilityChip(genre) }
+                }
             }
         }
     }
@@ -663,6 +716,8 @@ private fun DetailContent(
     onOpenVipUpgrade: () -> Unit,
     /** An actor chip in the cast row: open that actor's titles in Search. */
     onActorClick: (String) -> Unit = {},
+    similarTitles: List<Post> = emptyList(),
+    onPostClick: (Post) -> Unit = {},
     /**
      * A reload of a title that is already on screen. Null in the normal case. It arrives here
      * rather than through the full-screen error because the viewer can already read the
@@ -697,7 +752,7 @@ private fun DetailContent(
         }
 
         item {
-            PosterHeader(
+            DetailHeroSection(
                 post = post,
                 capabilities = capabilities,
                 seasonCount = if (isSeries) seasons.size else 0,
@@ -848,6 +903,81 @@ private fun DetailContent(
                     }
                 }
             }
+        }
+
+        if (similarTitles.isNotEmpty()) {
+            item(contentType = "similar-titles") {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SectionHeader(title = "Similar titles")
+                    MediaRail(
+                        items = similarTitles,
+                        key = { it.id },
+                        contentPadding = PaddingValues(0.dp),
+                    ) { similar ->
+                        PosterCard(
+                            post = similar,
+                            onClick = { onPostClick(similar) },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DetailHeroSection(
+    post: PostDetail,
+    capabilities: List<String>,
+    seasonCount: Int,
+    includedLine: String?,
+) {
+    val backdropUrl = remember(post.backdropList) {
+        post.backdropList.firstOrNull { it.isNotBlank() }
+    }
+    if (backdropUrl == null) {
+        PosterHeader(
+            post = post,
+            capabilities = capabilities,
+            seasonCount = seasonCount,
+            includedLine = includedLine,
+        )
+        return
+    }
+    Box(modifier = Modifier.fillMaxWidth()) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(176.dp)
+                .clip(RoundedCornerShape(16.dp)),
+        ) {
+            CatalogImage(
+                url = backdropUrl,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+                fallbackLabel = post.cleanTitle ?: post.title,
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            0f to MaterialTheme.colorScheme.background.copy(alpha = 0.08f),
+                            0.55f to MaterialTheme.colorScheme.background.copy(alpha = 0.58f),
+                            1f to MaterialTheme.colorScheme.background,
+                        ),
+                    ),
+            )
+        }
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Spacer(Modifier.height(92.dp))
+            PosterHeader(
+                post = post,
+                capabilities = capabilities,
+                seasonCount = seasonCount,
+                includedLine = includedLine,
+            )
         }
     }
 }

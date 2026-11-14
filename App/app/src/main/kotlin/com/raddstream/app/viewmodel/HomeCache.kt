@@ -22,6 +22,7 @@ internal data class CachedHomeSection(
     val sort: String?,
     val relatedWorkId: Int? = null,
     val items: List<Post> = emptyList(),
+    val industry: String? = null,
 )
 
 internal data class CachedHomePayload(
@@ -40,6 +41,7 @@ internal fun cachedSectionsOf(sections: List<HomeSection>): List<CachedHomeSecti
             sort = section.sort,
             relatedWorkId = section.relatedWorkId,
             items = section.items,
+            industry = section.industry,
         )
     }
 
@@ -61,5 +63,6 @@ internal fun restoreHomeSections(payload: CachedHomePayload): List<HomeSection> 
             sort = cached.sort,
             relatedWorkId = cached.relatedWorkId,
             loading = false,
+            industry = cached.industry,
         )
     }
