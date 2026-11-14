@@ -149,7 +149,7 @@ data class SubtitleUiSettings(
     val delayMs: Long = 0,
     /** Vertical gap from the bottom edge, fraction of video height (native + overlay). */
     val bottomFraction: Float = 0.05f,
-    val bold: Boolean = false,
+    val bold: Boolean = true,
     val textBackground: Boolean = true,
     val colour: SubtitleColor = SubtitleColor.WHITE,
 ) {

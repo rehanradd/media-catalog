@@ -37,8 +37,8 @@ import kotlin.math.roundToLong
  */
 object SubtitleOffset {
 
-    /** The slider and the two fine buttons move in tenths of a second. */
-    const val FINE_STEP_MS = 100L
+    /** The slider and the two fine buttons move in fiftieths of a second (50 ms). */
+    const val FINE_STEP_MS = 50L
 
     /** The two coarse buttons move in half seconds. */
     const val COARSE_STEP_MS = 500L
@@ -52,21 +52,21 @@ object SubtitleOffset {
 
     fun reset(): Long = 0L
 
-    /** Slider output is rounded to a tenth of a second so the readout never shows noise. */
+    /** Slider output is rounded to fifty milliseconds so the readout never shows noise. */
     fun quantize(offsetMs: Long): Long =
         clamp((offsetMs.toDouble() / FINE_STEP_MS).roundToLong() * FINE_STEP_MS)
 
-    /** `In sync`, `+0.5s` or `-0.1s`; values finer than 100 ms keep two decimals. */
+    /** `In sync`, `+0.5s` or `+0.05s`; the grid is 50 ms, so the readout keeps hundredths. */
     fun format(offsetMs: Long): String {
         val clamped = clamp(offsetMs)
         if (clamped == 0L) return "In sync"
         val sign = if (clamped > 0) "+" else "-"
         val absMs = abs(clamped)
         val remainder = absMs % 1000
-        val fraction = if (remainder % FINE_STEP_MS == 0L) {
-            (remainder / FINE_STEP_MS).toString()
+        val fraction = if (remainder % 100L == 0L) {
+            (remainder / 100L).toString()
         } else {
-            (remainder / 10).toString().padStart(2, '0')
+            (remainder / 10L).toString().padStart(2, '0')
         }
         return "$sign${absMs / 1000}.${fraction}s"
     }
@@ -178,9 +178,9 @@ fun SubtitleOffsetSheet(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 OffsetButton("-0.5s") { onOffsetChange(SubtitleOffset.shift(offset, -SubtitleOffset.COARSE_STEP_MS)) }
-                OffsetButton("-0.1s") { onOffsetChange(SubtitleOffset.shift(offset, -SubtitleOffset.FINE_STEP_MS)) }
+                OffsetButton("-0.05s") { onOffsetChange(SubtitleOffset.shift(offset, -SubtitleOffset.FINE_STEP_MS)) }
                 ResetButton { onOffsetChange(SubtitleOffset.reset()) }
-                OffsetButton("+0.1s") { onOffsetChange(SubtitleOffset.shift(offset, SubtitleOffset.FINE_STEP_MS)) }
+                OffsetButton("+0.05s") { onOffsetChange(SubtitleOffset.shift(offset, SubtitleOffset.FINE_STEP_MS)) }
                 OffsetButton("+0.5s") { onOffsetChange(SubtitleOffset.shift(offset, SubtitleOffset.COARSE_STEP_MS)) }
             }
 

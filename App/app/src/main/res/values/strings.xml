@@ -158,6 +158,8 @@
     <string name="player_sleep_note">Volume fades down over the last %1$ds, then playback pauses (MX behaviour).</string>
     <string name="player_external_subtitle">external subtitle</string>
     <string name="player_subtitles_title">Subtitles</string>
+    <string name="player_sheet_section_tracks">Tracks</string>
+    <string name="player_sheet_section_appearance">Appearance</string>
     <string name="player_subtitle_none">No subtitle tracks for this title yet.</string>
     <string name="player_subtitle_browse">Browse subtitle file</string>
     <string name="player_subtitle_turn_off">Turn subtitles off</string>

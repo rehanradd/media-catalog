@@ -24,7 +24,7 @@ class SubtitleStylePersistenceTest {
         assertEquals(DEFAULT_SUBTITLE_STYLE, stored)
         assertEquals(100, stored.sizePercent)
         assertEquals(0.05f, stored.bottomFraction, 0f)
-        assertFalse(stored.bold)
+        assertTrue(stored.bold)
         assertTrue(stored.textBackground)
         assertEquals(SubtitleColor.WHITE, stored.colour)
         assertEquals(0L, stored.delayMs)

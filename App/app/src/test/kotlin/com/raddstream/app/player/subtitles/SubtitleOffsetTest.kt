@@ -15,7 +15,7 @@ class SubtitleOffsetTest {
     @Test
     fun `shift moves by the requested step and keeps the clamp`() {
         assertEquals(500L, SubtitleOffset.shift(0L, SubtitleOffset.COARSE_STEP_MS))
-        assertEquals(-100L, SubtitleOffset.shift(0L, -SubtitleOffset.FINE_STEP_MS))
+        assertEquals(-50L, SubtitleOffset.shift(0L, -SubtitleOffset.FINE_STEP_MS))
         assertEquals(60_000L, SubtitleOffset.shift(59_800L, SubtitleOffset.COARSE_STEP_MS))
     }
 
@@ -25,12 +25,12 @@ class SubtitleOffsetTest {
     }
 
     @Test
-    fun `quantize snaps slider noise to a tenth of a second`() {
-        assertEquals(100L, SubtitleOffset.quantize(149L))
-        assertEquals(200L, SubtitleOffset.quantize(150L))
-        assertEquals(-100L, SubtitleOffset.quantize(-149L))
-        assertEquals(0L, SubtitleOffset.quantize(49L))
-        assertEquals(0L, SubtitleOffset.quantize(-49L))
+    fun `quantize snaps slider noise to fifty milliseconds`() {
+        assertEquals(150L, SubtitleOffset.quantize(149L))
+        assertEquals(150L, SubtitleOffset.quantize(150L))
+        assertEquals(-150L, SubtitleOffset.quantize(-149L))
+        assertEquals(50L, SubtitleOffset.quantize(49L))
+        assertEquals(-50L, SubtitleOffset.quantize(-49L))
     }
 
     @Test
@@ -63,7 +63,7 @@ class SubtitleOffsetTest {
         var offset = 0L
         offset = SubtitleOffset.shift(offset, -SubtitleOffset.COARSE_STEP_MS)
         offset = SubtitleOffset.shift(offset, -SubtitleOffset.FINE_STEP_MS)
-        assertEquals(-600L, offset)
+        assertEquals(-550L, offset)
         offset = SubtitleOffset.shift(offset, SubtitleOffset.FINE_STEP_MS)
         offset = SubtitleOffset.shift(offset, SubtitleOffset.COARSE_STEP_MS)
         assertEquals(0L, offset)

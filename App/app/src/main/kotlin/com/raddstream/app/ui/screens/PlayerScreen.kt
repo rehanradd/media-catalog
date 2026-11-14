@@ -3583,6 +3583,7 @@ private fun SubtitleSettingsSheet(state: PlayerUiState, vm: PlayerViewModel) {
                 Spacer(Modifier.height(8.dp))
                 return@Column
             }
+            SheetSection(stringResource(R.string.player_sheet_section_tracks))
             state.subtitleTracks.forEach { track ->
                 SheetRow(label = track.label, selected = track.id == state.selectedSubtitleId) {
                     vm.selectSubtitleTrack(track)
@@ -3593,10 +3594,11 @@ private fun SubtitleSettingsSheet(state: PlayerUiState, vm: PlayerViewModel) {
             }
 
             Spacer(Modifier.height(8.dp))
+            SheetSection(stringResource(R.string.player_sheet_section_appearance))
             Text(
                 stringResource(R.string.player_subtitle_size, state.subtitle.sizePercent),
                 color = Color.White,
-                fontSize = brandSp(14),
+                fontSize = brandSp(15),
                 modifier = Modifier.padding(horizontal = 16.dp),
             )
             Slider(
@@ -3609,7 +3611,7 @@ private fun SubtitleSettingsSheet(state: PlayerUiState, vm: PlayerViewModel) {
             Text(
                 stringResource(R.string.player_subtitle_position, (state.subtitle.bottomFraction * 100).toInt()),
                 color = Color.White,
-                fontSize = brandSp(14),
+                fontSize = brandSp(15),
                 modifier = Modifier.padding(horizontal = 16.dp),
             )
             Slider(
@@ -3620,14 +3622,14 @@ private fun SubtitleSettingsSheet(state: PlayerUiState, vm: PlayerViewModel) {
             )
 
             // One control owns the offset: this row hands over to the sheet with the live
-            // slider and the ±0.1s/±0.5s buttons, so the two can never disagree.
+            // slider and the ±0.05s/±0.5s buttons, so the two can never disagree.
             SheetRow(label = stringResource(R.string.player_subtitle_sync, SubtitleOffset.format(state.subtitle.delayMs))) {
                 vm.showSubtitleOffsetSheet()
             }
 
             val switchHaptics = LocalHapticFeedback.current
             Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(stringResource(R.string.player_subtitle_bold), color = Color.White, fontSize = brandSp(14), modifier = Modifier.weight(1f))
+                Text(stringResource(R.string.player_subtitle_bold), color = Color.White, fontSize = brandSp(15), modifier = Modifier.weight(1f))
                 Switch(
                     checked = state.subtitle.bold,
                     onCheckedChange = {
@@ -3640,7 +3642,7 @@ private fun SubtitleSettingsSheet(state: PlayerUiState, vm: PlayerViewModel) {
                 )
             }
             Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(stringResource(R.string.player_subtitle_background), color = Color.White, fontSize = brandSp(14), modifier = Modifier.weight(1f))
+                Text(stringResource(R.string.player_subtitle_background), color = Color.White, fontSize = brandSp(15), modifier = Modifier.weight(1f))
                 Switch(
                     checked = state.subtitle.textBackground,
                     onCheckedChange = {
@@ -3656,7 +3658,7 @@ private fun SubtitleSettingsSheet(state: PlayerUiState, vm: PlayerViewModel) {
             Text(
                 stringResource(R.string.player_subtitle_colour),
                 color = Color.White,
-                fontSize = brandSp(14),
+                fontSize = brandSp(15),
                 modifier = Modifier.padding(horizontal = 16.dp),
             )
             Row(
@@ -3751,7 +3753,7 @@ private fun TracksSheet(state: PlayerUiState, vm: PlayerViewModel) {
             //    range nothing can act on is a promise broken on every drag, caption or no caption.
             //    A build that grows a DynamicsProcessing stage widens this from AudioBoostUi alone.
             Spacer(Modifier.height(14.dp))
-            SheetTitle(stringResource(R.string.player_audio_level))
+            SheetSection(stringResource(R.string.player_audio_level))
             Row(
                 Modifier.padding(horizontal = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -3799,7 +3801,7 @@ private fun MoreSheet(state: PlayerUiState, vm: PlayerViewModel, onEnterPip: () 
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = 24.dp),
         ) {
-            SheetTitle(stringResource(R.string.player_more_playback))
+            SheetSection(stringResource(R.string.player_more_playback))
             SheetRow(label = stringResource(R.string.player_speed_label, state.speed)) {
                 vm.hideMoreSheet()
                 vm.showSpeedSheet()
@@ -3860,7 +3862,7 @@ private fun MoreSheet(state: PlayerUiState, vm: PlayerViewModel, onEnterPip: () 
                     vm.toggleViewMode()
                 }
             }
-            SheetTitle(stringResource(R.string.player_subtitles_title))
+            SheetSection(stringResource(R.string.player_subtitles_title))
             SheetRow(
                 label = stringResource(
                     R.string.player_subtitles_label,
@@ -3879,7 +3881,7 @@ private fun MoreSheet(state: PlayerUiState, vm: PlayerViewModel, onEnterPip: () 
                 vm.hideMoreSheet()
                 vm.showSubtitleOffsetSheet()
             }
-            SheetTitle(stringResource(R.string.player_audio_title))
+            SheetSection(stringResource(R.string.player_audio_title))
             SheetRow(label = stringResource(R.string.player_audio_tracks)) {
                 vm.hideMoreSheet()
                 vm.showTracksSheet()
@@ -3896,7 +3898,7 @@ private fun MoreSheet(state: PlayerUiState, vm: PlayerViewModel, onEnterPip: () 
                 vm.hideMoreSheet()
                 vm.toggleStereoOnly()
             }
-            SheetTitle(stringResource(R.string.player_more_tools))
+            SheetSection(stringResource(R.string.player_more_tools))
             // PL-11: "Next episode" and "Calibrate" are series rows — a movie or
             // a local file has no next episode to play and nothing to calibrate.
             if (state.isSeriesScope) {
@@ -4011,7 +4013,7 @@ private fun PrintLogSheet(state: PlayerUiState, vm: PlayerViewModel) {
             }
             if (chapters.isNotEmpty()) {
                 Spacer(Modifier.height(10.dp))
-                SheetTitle(stringResource(R.string.player_chapters_title))
+                SheetSection(stringResource(R.string.player_chapters_title))
                 chapters.forEach { tick ->
                     SheetRow(label = stringResource(R.string.player_chapter_row, tick.title, tick.offsetMs.formatTime())) {
                         vm.hidePrintSheet()
@@ -4024,7 +4026,7 @@ private fun PrintLogSheet(state: PlayerUiState, vm: PlayerViewModel) {
             // only behind the long-press on the "Prints" title.
             if (debugVisible && state.failoverLog.isNotEmpty()) {
                 Spacer(Modifier.height(10.dp))
-                SheetTitle(stringResource(R.string.player_failover_log))
+                SheetSection(stringResource(R.string.player_failover_log))
                 state.failoverLog.forEach { record ->
                     Text(
                         stringResource(
@@ -4076,6 +4078,22 @@ private fun SheetTitle(text: String, modifier: Modifier = Modifier) {
     )
 }
 
+/**
+ * A section break inside a sheet — 12sp, Semibold, dimmed — where a second
+ * SheetTitle would shout with the same weight as the sheet's own title.
+ * Sheet titles name the sheet; sections organise what is inside it.
+ */
+@Composable
+private fun SheetSection(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text,
+        color = Color.White.copy(alpha = 0.6f),
+        fontSize = brandSp(12),
+        fontWeight = FontWeight.SemiBold,
+        modifier = modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
+    )
+}
+
 @Composable
 private fun SheetRow(label: String, selected: Boolean = false, enabled: Boolean = true, onClick: () -> Unit) {
     ListItem(
@@ -4087,7 +4105,7 @@ private fun SheetRow(label: String, selected: Boolean = false, enabled: Boolean 
                     !enabled -> Color.White.copy(alpha = 0.4f)
                     else -> Color.White
                 },
-                fontSize = brandSp(14),
+                fontSize = brandSp(15),
             )
         },
         leadingContent = if (selected) {
