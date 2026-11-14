@@ -50,6 +50,7 @@ import com.raddstream.app.ui.components.CatalogImage
 import com.raddstream.app.ui.components.EmptyState
 import com.raddstream.app.ui.components.ErrorState
 import com.raddstream.app.ui.components.PosterGridSkeleton
+import com.raddstream.app.ui.components.isKnownLanguage
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.layout.CardGeometry
 import com.raddstream.app.viewmodel.LiveTvViewModel
@@ -258,19 +259,30 @@ internal fun countryLabel(code: String?): String? {
     }
 }
 
+internal fun channelMetaLine(channel: LiveTvChannel): String =
+    listOfNotNull(
+        categoryLabel(channel.category).takeIf { it.isNotBlank() },
+        countryLabel(channel.country),
+        channel.language.trim()
+            .takeIf(::isKnownLanguage)
+            ?.replaceFirstChar { it.uppercase() },
+    )
+        .distinctBy { it.lowercase() }
+        .joinToString(" · ")
+
 @Composable
-private fun LiveTvChannelCard(
+internal fun LiveTvChannelCard(
     channel: LiveTvChannel,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val metaLine = channelMetaLine(channel)
     // Robo run 2: every card announced its name three times (logo description,
     // name text, and the "LIVE" badge on every card) — the same words on all
     // ~18 channels. One sentence per card; the logo, badge and texts are paint.
     val a11y = listOfNotNull(
         "${channel.name}, live",
-        categoryLabel(channel.category),
-        countryLabel(channel.country),
+        metaLine.takeIf { it.isNotBlank() },
     ).joinToString(" · ")
     Card(
         onClick = onClick,
@@ -342,11 +354,7 @@ private fun LiveTvChannelCard(
                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp).clearAndSetSemantics { },
             )
             Text(
-                text = listOfNotNull(
-                    categoryLabel(channel.category),
-                    countryLabel(channel.country),
-                ).joinToString(" · "),
-                // P2-6: no trailing separator when the country is blank.
+                text = metaLine,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,

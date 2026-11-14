@@ -104,7 +104,7 @@ fun RegionSelectionScreen(
         RaddStreamMark(diameter = 56.dp)
         Spacer(Modifier.height(20.dp))
         Text(
-            text = "What do you love to watch?",
+            text = "What do you prefer to watch?",
             style = MaterialTheme.typography.headlineSmall,
             color = MaterialTheme.colorScheme.onBackground,
             fontWeight = FontWeight.SemiBold,
@@ -112,8 +112,7 @@ fun RegionSelectionScreen(
         )
         Spacer(Modifier.height(6.dp))
         Text(
-            // Audit #40: one line — what picking does, nothing else.
-            text = "Pick what you love. It only sets your audio and subtitles.",
+            text = "Sets your default audio and subtitles. You can browse all titles anytime.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,

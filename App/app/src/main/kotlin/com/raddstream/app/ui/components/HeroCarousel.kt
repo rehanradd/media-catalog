@@ -2,6 +2,7 @@ package com.raddstream.app.ui.components
 
 import android.os.SystemClock
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -44,9 +46,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.contentDescription
@@ -445,7 +450,7 @@ private fun HeroSlide(
                         contentColor = MaterialTheme.colorScheme.onPrimary,
                     ),
                     interactionSource = watchNowSource,
-                    modifier = Modifier.height(HERO_BUTTON_HEIGHT_DP.dp).pressScale(watchNowSource),
+                    modifier = Modifier.heightIn(min = HERO_BUTTON_HEIGHT_DP.dp).pressScale(watchNowSource),
                 ) {
                     Icon(
                         imageVector = Icons.Default.PlayArrow,
@@ -469,7 +474,7 @@ private fun HeroSlide(
                     // as the nav tab — so it announces what the tap does instead:
                     // "Save to My List", or "Saved to My List" once saved.
                     modifier = Modifier
-                        .height(HERO_BUTTON_HEIGHT_DP.dp)
+                        .heightIn(min = HERO_BUTTON_HEIGHT_DP.dp)
                         .semantics { contentDescription = if (isFavorite) "Saved to My List" else "Save to My List" },
                 ) {
                     Icon(
@@ -531,25 +536,54 @@ private fun HeroBadge(text: String, subdued: Boolean = false) {
  * that used to show which slide is up.
  */
 @Composable
-private fun HeroIndicator(
+internal fun HeroIndicator(
     count: Int,
     current: Int,
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    if (count <= 1) return
     val scheme = MaterialTheme.colorScheme
+    val reduceMotion = rememberReduceMotion()
     Row(
         modifier = modifier
-            // Session 154 (N-1): the indicator pill is fully round — 24dp is
-            // not on the M3 shape scale (20 → 28).
-            .clip(RaddTokens.Shape.Pill)
-            .background(scheme.surface.copy(alpha = 0.72f))
-            .padding(horizontal = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
+            .drawBehind {
+                // Visual capsule is a compact 18dp-tall pill centered over the
+                // dot strip while every dot retains its full 48x48dp touch target.
+                val pillHeight = 18.dp.toPx().coerceAtMost(size.height)
+                val insetX = 12.dp.toPx().coerceAtMost(size.width * 0.15f)
+                val pillWidth = (size.width - insetX * 2f).coerceAtLeast(pillHeight)
+                val top = (size.height - pillHeight) / 2f
+                val corner = CornerRadius(pillHeight / 2f, pillHeight / 2f)
+                drawRoundRect(
+                    color = scheme.scrim.copy(alpha = 0.56f),
+                    topLeft = Offset(insetX, top),
+                    size = Size(pillWidth, pillHeight),
+                    cornerRadius = corner,
+                )
+                drawRoundRect(
+                    color = scheme.onSurface.copy(alpha = 0.14f),
+                    topLeft = Offset(insetX, top),
+                    size = Size(pillWidth, pillHeight),
+                    cornerRadius = corner,
+                    style = Stroke(width = 0.75.dp.toPx()),
+                )
+            },
+        horizontalArrangement = Arrangement.spacedBy(0.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         repeat(count) { index ->
             val active = index == current
+            val dotWidth by animateDpAsState(
+                targetValue = if (active) 16.dp else 6.dp,
+                animationSpec = if (reduceMotion) snap() else RaddMotion.fastSpatial(),
+                label = "heroDotWidth",
+            )
+            val dotColor by animateColorAsState(
+                targetValue = if (active) scheme.primary else scheme.onSurface.copy(alpha = 0.50f),
+                animationSpec = if (reduceMotion) snap() else RaddMotion.defaultEffects(),
+                label = "heroDotColor",
+            )
             Box(
                 modifier = Modifier
                     .size(width = DOT_TOUCH_WIDTH, height = DOT_TOUCH_HEIGHT)
@@ -562,9 +596,9 @@ private fun HeroIndicator(
             ) {
                 Box(
                     Modifier
-                        .size(width = if (active) 12.dp else 5.dp, height = 5.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(scheme.onBackground.copy(alpha = if (active) 0.95f else 0.45f)),
+                        .size(width = dotWidth, height = 5.dp)
+                        .clip(RaddTokens.Shape.Pill)
+                        .background(dotColor),
                 )
             }
         }

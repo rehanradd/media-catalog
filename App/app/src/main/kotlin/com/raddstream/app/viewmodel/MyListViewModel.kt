@@ -115,12 +115,14 @@ class MyListViewModel @Inject constructor(
             refusedOf = { it.id in refused },
         )
         val sorted = sortMyList(visible, sort, watchedTitles(history))
+        val favoriteIds = visible.mapTo(HashSet()) { it.id }
+        val curatedShelf = popular.filterNot { it.id in favoriteIds }.take(3)
         MyListUiState(
             favorites = sorted.map(FavoritePost::toPost),
             sort = sort,
             isLoading = false,
             hiddenCount = list.size - visible.size,
-            popular = popular,
+            popular = curatedShelf,
             removedTitle = removedTitle,
             syncLine = myListSyncLine(list, signedIn, System.currentTimeMillis()),
         )
@@ -152,21 +154,17 @@ class MyListViewModel @Inject constructor(
             }
         }
         viewModelScope.launch {
-            // The empty state needs something to point at, and the only honest
-            // "popular" this app can name is the server's own trending order —
-            // most prints and mirrors first. Loaded once, only when the visible
-            // list is empty, and never allowed to fail the screen: no server,
-            // no titles, the text-only empty state stands.
+            // The empty/starter list needs something to point at, and the only honest
+            // order this app can name is the server's own trending order —
+            // most prints and mirrors first. Loaded once when <= 1 favorite is visible,
+            // fetching 6 candidates so excluding an already-saved favorite still leaves 3.
             uiState.collect { state ->
-                if (!state.isLoading && state.favorites.isEmpty() && !popularLoaded) {
+                if (!state.isLoading && state.favorites.size <= 1 && !popularLoaded) {
                     popularLoaded = true
-                    // Phase 7 (M1): the v2 trending list first, v1 as the
-                    // fallback — an empty v2 page falls back, so a v2 outage
-                    // never leaves the empty state pointing at nothing.
                     popularFlow.value = runCatching {
-                        catalogRepository.browseWorksV2(sort = "trending", limit = 3)?.posts
+                        catalogRepository.browseWorksV2(sort = "trending", limit = 6)?.posts
                             ?.takeIf { it.isNotEmpty() }
-                            ?: catalogRepository.getPosts(sort = "trending", page = 1, limit = 3).results
+                            ?: catalogRepository.getPosts(sort = "trending", page = 1, limit = 6).results
                     }.getOrNull() ?: emptyList()
                 }
             }

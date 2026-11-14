@@ -1,6 +1,8 @@
 package com.raddstream.app.ui.navigation
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -16,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -36,6 +39,8 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -117,12 +122,22 @@ internal fun RowScope.BottomNavTab(
     selected: Boolean,
     onClick: () -> Unit,
 ) {
+    val reduceMotion = rememberReduceMotion()
     // Restyle 2026-11-13: the selected icon settles onto its spring (M3
     // Expressive fast spatial) instead of snapping to 1.12x.
     val iconScale by animateFloatAsState(
         targetValue = if (selected) 1.12f else 1f,
-        animationSpec = RaddMotion.fastSpatial(),
+        animationSpec = if (reduceMotion) snap() else RaddMotion.fastSpatial(),
         label = "navIconScale",
+    )
+    val pillColor by animateColorAsState(
+        targetValue = if (selected) {
+            MaterialTheme.colorScheme.primaryContainer
+        } else {
+            Color.Transparent
+        },
+        animationSpec = if (reduceMotion) snap() else RaddMotion.defaultEffects(),
+        label = "navPillColor",
     )
     Box(
         modifier = Modifier
@@ -140,28 +155,22 @@ internal fun RowScope.BottomNavTab(
         contentAlignment = Alignment.Center,
     ) {
         Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 2.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             Box(
                 modifier = Modifier
-                    // Session 154 (N-2): the 64×48dp pill is the app's own
-                    // token, not the M3 56×32dp spec — Robo runs 4–6 measured
-                    // the 32dp pill under the 48dp touch-target floor.
-                    .size(
-                        width = RaddTokens.Touch.NavIndicatorWidth,
-                        height = RaddTokens.Touch.NavIndicatorHeight,
-                    )
+                    // Session 154 (N-2): keep 48dp height and cap width at 64dp
+                    // while allowing 2dp breathing room on narrow 320dp screens.
+                    .padding(horizontal = 2.dp)
+                    .widthIn(max = RaddTokens.Touch.NavIndicatorWidth)
+                    .fillMaxWidth()
+                    .height(RaddTokens.Touch.NavIndicatorHeight)
                     .background(
-                        // Restyle: the active pill is primaryContainer, not
-                        // surfaceContainerHighest — the jade tint says
-                        // "you are here" at a glance, and the icon/label
-                        // pair with onPrimaryContainer (never raw hex).
-                        color = if (selected) {
-                            MaterialTheme.colorScheme.primaryContainer
-                        } else {
-                            Color.Transparent
-                        },
+                        color = pillColor,
                         // Session 154 (N-1): the indicator pill is fully
                         // round — 24dp is not on the M3 shape scale (20 → 28).
                         shape = RaddTokens.Shape.Pill,
@@ -185,6 +194,10 @@ internal fun RowScope.BottomNavTab(
             Text(
                 label,
                 style = MaterialTheme.typography.labelMedium,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
                 color = if (selected) {
                     MaterialTheme.colorScheme.onPrimaryContainer
                 } else {

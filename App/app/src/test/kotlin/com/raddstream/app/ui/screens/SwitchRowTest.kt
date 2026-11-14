@@ -5,6 +5,7 @@ import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.performClick
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import org.junit.Rule
 import org.junit.Test
@@ -76,5 +77,22 @@ class SwitchRowTest {
             .assertIsOff()
         compose.onNode(hasContentDescription("On")).assertDoesNotExist()
         compose.onNode(hasContentDescription("Off")).assertDoesNotExist()
+    }
+
+    @Test
+    fun togglingSwitchRowInvokesCallbackWithNewValue() {
+        var latestValue = false
+        compose.setContent {
+            RaddStreamTheme {
+                SwitchRow(
+                    checked = false,
+                    onCheckedChange = { latestValue = it },
+                    label = "Download only on Wi-Fi",
+                )
+            }
+        }
+        compose.onNode(hasContentDescription("Download only on Wi-Fi"))
+            .performClick()
+        org.junit.Assert.assertTrue(latestValue)
     }
 }

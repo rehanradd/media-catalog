@@ -398,6 +398,8 @@ data class PlayerUiState(
             resumeOfferMs != null -> StartPhase.NONE
             isPlaying -> StartPhase.NONE
             isEnded -> StartPhase.NONE
+            lastFirstFrameMs != null -> StartPhase.NONE
+            isLive -> StartPhase.NONE
             !connected -> StartPhase.CONNECTING_PLAYER
             durationMs == 0L -> StartPhase.STARTING
             else -> StartPhase.NONE

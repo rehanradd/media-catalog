@@ -14,6 +14,7 @@ import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -24,6 +25,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -40,9 +42,11 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -359,26 +363,6 @@ fun HomeScreen(
                     Spacer(Modifier.height(8.dp))
                 }
 
-                // P0-3 / P1-H1: the coins economy no longer owns the top of
-                // Home. The wallet lives on the CheckIn / VIP screens; Home
-                // keeps at most this one-line nudge, below the hero.
-                if (state.streakLadder.isNotEmpty()) {
-                    CheckInNudge(
-                        streakCount = state.streakCount,
-                        serverStreak = state.serverStreak,
-                        streakLadder = state.streakLadder,
-                        coinBalance = state.coinBalance,
-                        signedIn = state.signedIn,
-                        claimedToday = state.claimedToday,
-                        isClaiming = state.isClaiming,
-                        claimMessage = state.claimMessage,
-                        onClaim = viewModel::claimDailyLogin,
-                        onOpenCheckIn = onOpenCheckIn,
-                        onOpenSignIn = onOpenSignIn,
-                    )
-                    Spacer(Modifier.height(12.dp))
-                }
-
                 // Your library, below the hero where it can still be seen:
                 // the phone's own videos, and downloads.
                 if (searchEnabled) {
@@ -407,6 +391,26 @@ fun HomeScreen(
                     onFacetSelected = onFacetSelected,
                 )
                 Spacer(Modifier.height(8.dp))
+
+                // Small #2: keep Home centered on catalog discovery — place
+                // the toned-down check-in strip quietly after Browse rather
+                // than competing right below the Hero banner.
+                if (state.streakLadder.isNotEmpty()) {
+                    CheckInNudge(
+                        streakCount = state.streakCount,
+                        serverStreak = state.serverStreak,
+                        streakLadder = state.streakLadder,
+                        coinBalance = state.coinBalance,
+                        signedIn = state.signedIn,
+                        claimedToday = state.claimedToday,
+                        isClaiming = state.isClaiming,
+                        claimMessage = state.claimMessage,
+                        onClaim = viewModel::claimDailyLogin,
+                        onOpenCheckIn = onOpenCheckIn,
+                        onOpenSignIn = onOpenSignIn,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                }
 
                 // At most 10 rows total, CW included: a panel that publishes 12
                 // sections does not get 12 rails on a phone, and the first rails win.
@@ -831,7 +835,7 @@ internal fun claimButtonLabel(
  * button states the amount today pays from the server's ladder.
  */
 @Composable
-private fun CheckInNudge(
+internal fun CheckInNudge(
     streakCount: Int,
     serverStreak: Int?,
     streakLadder: Map<Int, Int>,
@@ -847,37 +851,54 @@ private fun CheckInNudge(
     val targetDays = streakLadder.keys.maxOrNull() ?: 7
     Surface(
         onClick = onOpenCheckIn,
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Icon(Icons.Default.DateRange, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Icon(
+                Icons.Default.DateRange,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
+                modifier = Modifier.size(18.dp),
+            )
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                 Text(
                     text = "Daily check-in",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
                 )
                 Text(
                     text = when {
                         !signedIn -> "Sign in to claim your coins."
                         claimedToday -> claimMessage ?: "Claimed for today."
                         signedIn && serverStreak != null ->
-                            "Day $serverStreak of $targetDays · $coinBalance coins in your wallet."
+                            "Day $serverStreak of $targetDays · $coinBalance coins"
                         else -> checkInDayLine(signedIn, serverStreak, streakCount, targetDays)
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
             when {
                 !signedIn -> {
-                    Button(onClick = onOpenSignIn) { Text("Sign in") }
+                    TextButton(
+                        onClick = onOpenSignIn,
+                        modifier = Modifier.heightIn(min = 48.dp),
+                    ) {
+                        Text("Sign in")
+                    }
                 }
                 claimedToday -> {
                     Text(
@@ -887,8 +908,21 @@ private fun CheckInNudge(
                     )
                 }
                 else -> {
-                    Button(onClick = onClaim, enabled = !isClaiming) {
-                        Text(claimButtonLabel(serverStreak, streakLadder, isClaiming))
+                    FilledTonalButton(
+                        onClick = onClaim,
+                        enabled = !isClaiming,
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            contentColor = MaterialTheme.colorScheme.primary,
+                        ),
+                        modifier = Modifier.heightIn(min = 48.dp),
+                    ) {
+                        Text(
+                            claimButtonLabel(serverStreak, streakLadder, isClaiming),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
                 }
             }
