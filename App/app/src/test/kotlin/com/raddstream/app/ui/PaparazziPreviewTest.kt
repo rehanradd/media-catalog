@@ -33,7 +33,6 @@ import com.raddstream.app.player.PlaybackInfo
 import com.raddstream.app.player.PlaybackRendition
 import com.raddstream.app.player.PlayerUiState
 import com.raddstream.app.player.PrintInfo
-import com.raddstream.app.player.StartPhase
 import com.raddstream.app.player.QualityOption
 import com.raddstream.app.ui.components.PosterCard
 import com.raddstream.app.ui.components.raddFilterChipColors
@@ -819,6 +818,10 @@ class PaparazziPreviewTest {
         positionMs: Long = 2_730_000L,
         durationMs: Long = 9_540_000L,
     ) = PlayerUiState(
+        // startPhase is derived, never stored: connected + a known duration
+        // (and not playing) is what makes it NONE, so the centre controls
+        // show the transport button instead of the start spinner.
+        connected = true,
         isPlaying = isPlaying,
         positionMs = positionMs,
         bufferedMs = 3_000_000L,
@@ -903,7 +906,7 @@ class PaparazziPreviewTest {
         paparazzi.snapshot {
             themed {
                 CenterControls(
-                    state = playerBase().copy(isBuffering = true, startPhase = StartPhase.STARTING),
+                    state = playerBase().copy(isBuffering = true),
                     onTogglePlayPause = {},
                 )
             }
