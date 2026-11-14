@@ -18,6 +18,11 @@ plugins {
     // catalog (libs.versions.toml).
     alias(libs.plugins.google.services)
     alias(libs.plugins.crashlytics)
+    // Paparazzi 1.3.5 (trial 2026-11-15): JVM screenshot tests — renders real
+    // Compose UI via Layoutlib in CI, no emulator. Test-only wiring; no main
+    // source changes. Snapshots live in src/test/snapshots (recorded by
+    // :app:recordPaparazziDebug, verified by :app:verifyPaparazziDebug).
+    alias(libs.plugins.paparazzi)
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
