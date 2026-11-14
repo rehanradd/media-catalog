@@ -268,7 +268,7 @@ fun SearchScreen(
             }
             // The rail stays up whatever is pasted: a link replaces the
             // results, never the whole search UI.
-            FilterRail(state = state, viewModel = viewModel, onOpenFilters = { showSheet = true })
+            FilterRail(state = state, onSelectType = viewModel::selectType, onOpenFilters = { showSheet = true })
 
             if (pasted is PastedText.NotAUrl) {
                 // Type-ahead titles for what is being typed. A tap searches for
@@ -306,16 +306,25 @@ fun SearchScreen(
                 // stay empty until results arrive — the screen never
                 // apologises for a missing feature inside the feature.
 
-                SearchBody(
+                SearchContent(
                     state = state,
-                    viewModel = viewModel,
+                    onRunQuery = viewModel::runRecent,
+                    onClearRecents = viewModel::clearRecents,
+                    onSelectGenre = viewModel::selectGenre,
+                    onSubmitCurrentQuery = viewModel::submitCurrentQuery,
+                    onResetFilters = viewModel::resetFilters,
+                    onQueryChanged = viewModel::onQueryChanged,
+                    onShowCloseMatches = viewModel::showCloseMatches,
+                    onShowExactOnly = viewModel::showExactOnly,
+                    onRunSuggestion = viewModel::runSuggestion,
+                    onLoadMore = viewModel::loadMore,
                     onPostClick = onPostClick,
                 )
             } else if (state.recents.isNotEmpty()) {
                 // A pasted link replaces the results, not the history: the
                 // recents stay reachable so the viewer is never stranded on
                 // a link row with nowhere to go.
-                RecentsSection(state = state, viewModel = viewModel)
+                RecentsSection(state = state, onRunRecent = viewModel::runRecent, onClearRecents = viewModel::clearRecents)
             }
         }
 
@@ -446,7 +455,7 @@ private fun DirectVideoRow(url: String, title: String, onPlay: () -> Unit) {
  * type choice behind captions; the sheet owns the rest.
  */
 @Composable
-private fun FilterRail(state: SearchUiState, viewModel: SearchViewModel, onOpenFilters: () -> Unit) {
+internal fun FilterRail(state: SearchUiState, onSelectType: (String?) -> Unit, onOpenFilters: () -> Unit) {
     LazyRow(
         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -460,7 +469,7 @@ private fun FilterRail(state: SearchUiState, viewModel: SearchViewModel, onOpenF
             FilterChip(
                 colors = raddFilterChipColors(),
                 selected = state.filters.type == value,
-                onClick = { viewModel.selectType(value) },
+                onClick = { onSelectType(value) },
                 label = { Text(label) },
                 // CL-3, same as the sheet: the rail's "All" chip is the Type
                 // group's "All", and it must say so — bare "All" is the bug.
@@ -512,11 +521,11 @@ private fun FilterRail(state: SearchUiState, viewModel: SearchViewModel, onOpenF
  * pasted link, where it is the way back.
  */
 @Composable
-private fun RecentsSection(state: SearchUiState, viewModel: SearchViewModel) {
+internal fun RecentsSection(state: SearchUiState, onRunRecent: (String) -> Unit, onClearRecents: () -> Unit) {
     RecentsRow(
         recents = state.recents,
-        onRunRecent = viewModel::runRecent,
-        onClearRecents = viewModel::clearRecents,
+        onRunRecent = onRunRecent,
+        onClearRecents = onClearRecents,
     )
 }
 
@@ -667,9 +676,18 @@ internal fun SearchDiscoveryContent(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SearchBody(
+internal fun SearchContent(
     state: SearchUiState,
-    viewModel: SearchViewModel,
+    onRunQuery: (String) -> Unit,
+    onClearRecents: () -> Unit,
+    onSelectGenre: (GenreFilter) -> Unit,
+    onSubmitCurrentQuery: () -> Unit,
+    onResetFilters: () -> Unit,
+    onQueryChanged: (String) -> Unit,
+    onShowCloseMatches: () -> Unit,
+    onShowExactOnly: () -> Unit,
+    onRunSuggestion: (String) -> Unit,
+    onLoadMore: () -> Unit,
     onPostClick: (Post) -> Unit,
 ) {
     // Session 121 (P-12): scrolling the results dismisses the keyboard — the open
@@ -687,9 +705,9 @@ private fun SearchBody(
         !state.hasSearchIntent -> {
             SearchDiscoveryContent(
                 state = state,
-                onRunQuery = viewModel::runRecent,
-                onClearRecents = viewModel::clearRecents,
-                onSelectGenre = viewModel::selectGenre,
+                onRunQuery = onRunQuery,
+                onClearRecents = onClearRecents,
+                onSelectGenre = onSelectGenre,
                 onPostClick = onPostClick,
             )
         }
@@ -702,7 +720,7 @@ private fun SearchBody(
             // would disagree with the grid again the moment the rule moves.
             contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp),
         )
-        state.error != null && state.groups.isEmpty() -> ErrorState(title = "Couldn't search", message = state.error ?: "Search failed.", onRetry = viewModel::submitCurrentQuery)
+        state.error != null && state.groups.isEmpty() -> ErrorState(title = "Couldn't search", message = state.error ?: "Search failed.", onRetry = onSubmitCurrentQuery)
         // Audit #36: "No matches" only after a completed search returns zero
         // rows — never while a search is still in flight (the skeleton owns
         // that window), and never before the first search.
@@ -716,11 +734,11 @@ private fun SearchBody(
             },
             action = {
                 if (state.hasActiveFilters) {
-                    OutlinedButton(onClick = viewModel::resetFilters) { Text("Clear filters") }
+                    OutlinedButton(onClick = onResetFilters) { Text("Clear filters") }
                 } else {
                     // An empty result screen with no way out is a dead end: the viewer either
                     // loosens a filter or starts from a different word. Both are one tap.
-                    OutlinedButton(onClick = { viewModel.onQueryChanged("") }) {
+                    OutlinedButton(onClick = { onQueryChanged("") }) {
                         Text("Search another title")
                     }
                 }
@@ -734,7 +752,7 @@ private fun SearchBody(
             message = "No titles exactly match \"${state.query}\".",
             icon = { Icon(Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(40.dp)) },
             action = {
-                OutlinedButton(onClick = viewModel::showCloseMatches) { Text("Show close matches") }
+                OutlinedButton(onClick = onShowCloseMatches) { Text("Show close matches") }
             },
         )
         else -> LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
@@ -755,7 +773,7 @@ private fun SearchBody(
             state.didYouMean?.let { suggestion ->
                 item {
                     TextButton(
-                        onClick = { viewModel.runSuggestion(suggestion) },
+                        onClick = { onRunSuggestion(suggestion) },
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text("Did you mean $suggestion?")
@@ -775,7 +793,7 @@ private fun SearchBody(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        TextButton(onClick = viewModel::showExactOnly) { Text("Show exact matches only") }
+                        TextButton(onClick = onShowExactOnly) { Text("Show exact matches only") }
                     }
                 }
             }
@@ -820,7 +838,7 @@ private fun SearchBody(
             if (state.hasMore) {
                 item {
                     Box(Modifier.fillMaxWidth().padding(vertical = 16.dp), contentAlignment = Alignment.Center) {
-                        OutlinedButton(onClick = viewModel::loadMore, enabled = !state.isLoadingMore) {
+                        OutlinedButton(onClick = onLoadMore, enabled = !state.isLoadingMore) {
                             Text(if (state.isLoadingMore) "Loading…" else "Load more")
                         }
                     }
@@ -831,7 +849,7 @@ private fun SearchBody(
             // every group was empty, so a search that died on page 3 looked like a catalog that
             // simply had three pages.
             state.error?.let { failure ->
-                item { InlineLoadFailure(message = failure, onRetry = viewModel::loadMore) }
+                item { InlineLoadFailure(message = failure, onRetry = onLoadMore) }
             }
         }
     }

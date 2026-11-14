@@ -32,13 +32,22 @@ import com.raddstream.app.ui.components.PosterCard
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.screens.DetailContent
 import com.raddstream.app.ui.screens.EpisodeRow
+import com.raddstream.app.ui.screens.FilterRail
+import com.raddstream.app.ui.screens.FilterSheetBody
 import com.raddstream.app.ui.screens.HomeContent
+import com.raddstream.app.ui.screens.SearchContent
 import com.raddstream.app.ui.screens.RungActions
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.EpisodeGroup
 import com.raddstream.app.viewmodel.EpisodeProgress
 import com.raddstream.app.viewmodel.HomeSection
+import com.raddstream.app.viewmodel.GenreFilter
 import com.raddstream.app.viewmodel.HomeUiState
+import com.raddstream.app.viewmodel.IndustryFilter
+import com.raddstream.app.viewmodel.SearchFilters
+import com.raddstream.app.viewmodel.SearchSort
+import com.raddstream.app.viewmodel.SearchUiState
+import com.raddstream.app.viewmodel.TypeGroup
 import com.raddstream.app.viewmodel.RankedLink
 import com.raddstream.app.viewmodel.RankedPrint
 import com.raddstream.app.viewmodel.ResumePoint
@@ -55,9 +64,10 @@ import org.junit.Test
  * `testDebugUnitTest`).
  *
  * Each screen gets its own stateless content composable fed with fake state:
- * `HomeContent` (extracted from HomeScreen) and `DetailContent` (made
- * internal with its `RungActions` bundle). Search and Player still need the
- * same extraction before they can be shot here.
+ * `HomeContent` (extracted from HomeScreen), `DetailContent` (made
+ * internal with its `RungActions` bundle) and `SearchContent` (extracted
+ * from SearchScreen). Player still needs the same extraction before it can
+ * be shot here.
  *
  * Poster art is a null URL on purpose: Coil cannot load network images under
  * Layoutlib, so the placeholder shows — the layout, type, badges and rank
@@ -641,4 +651,145 @@ class PaparazziPreviewTest {
             }
         }
     }
+    // Search: SearchContent is the body below the rail — the discovery page,
+    // the results grid, and the loading / error / empty states all live here.
+    // FilterRail and FilterSheetBody are shot on their own: the rail lives in
+    // SearchScreen's column, the sheet in a ModalBottomSheet.
+    private fun shotSearch(state: SearchUiState) {
+        paparazzi.snapshot {
+            themed {
+                SearchContent(
+                    state = state,
+                    onRunQuery = {},
+                    onClearRecents = {},
+                    onSelectGenre = {},
+                    onSubmitCurrentQuery = {},
+                    onResetFilters = {},
+                    onQueryChanged = {},
+                    onShowCloseMatches = {},
+                    onShowExactOnly = {},
+                    onRunSuggestion = {},
+                    onLoadMore = {},
+                    onPostClick = {},
+                )
+            }
+        }
+    }
+
+    private val searchDiscovery = SearchUiState(
+        recents = listOf("Jawan", "Salaar", "Money Heist"),
+        trending = homePosts,
+    )
+
+    private val searchResults = SearchUiState(
+        query = "jwan",
+        groups = listOf(
+            TypeGroup(label = "Movies", typeKey = "movie", items = listOf(jawan, salaars)),
+            TypeGroup(label = "Series", typeKey = "series", items = listOf(mclintock)),
+        ),
+        resultCount = 3,
+        serverTotal = 3,
+        hasMore = true,
+        hasSearched = true,
+        // The query is one edit away from a real title, so both the
+        // did-you-mean line and the fuzzy banner render in this shot.
+        didYouMean = "jawan",
+        isFuzzy = true,
+    )
+
+    @Test
+    fun searchDiscovery() {
+        shotSearch(searchDiscovery)
+    }
+
+    @Test
+    fun searchResults() {
+        shotSearch(searchResults)
+    }
+
+    @Test
+    fun searchLoading() {
+        shotSearch(SearchUiState(query = "jawan", isLoading = true, hasSearched = true))
+    }
+
+    @Test
+    fun searchError() {
+        shotSearch(
+            SearchUiState(
+                query = "jawan",
+                error = "Couldn't reach the server. Check your connection and try again.",
+                hasSearched = true,
+            ),
+        )
+    }
+
+    @Test
+    fun searchEmpty() {
+        shotSearch(SearchUiState(query = "zzzzqqq", hasSearched = true))
+    }
+
+    @Test
+    fun searchEmptyFiltered() {
+        shotSearch(
+            SearchUiState(
+                query = "jawan",
+                hasSearched = true,
+                filters = SearchFilters(
+                    genre = GenreFilter.ACTION,
+                    industry = IndustryFilter.BOLLYWOOD,
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun searchFilterRail() {
+        paparazzi.snapshot {
+            themed {
+                FilterRail(
+                    state = SearchUiState(
+                        filters = SearchFilters(
+                            type = "movie",
+                            genre = GenreFilter.ACTION,
+                            industry = IndustryFilter.BOLLYWOOD,
+                        ),
+                        sort = SearchSort.HIGHEST_IMDB,
+                    ),
+                    onSelectType = {},
+                    onOpenFilters = {},
+                )
+            }
+        }
+    }
+
+    @Test
+    fun searchFilterSheet() {
+        paparazzi.snapshot {
+            themed {
+                FilterSheetBody(
+                    state = SearchUiState(
+                        filters = SearchFilters(
+                            type = "movie",
+                            genre = GenreFilter.ACTION,
+                            industry = IndustryFilter.BOLLYWOOD,
+                            yearFrom = 2020,
+                            yearTo = 2024,
+                        ),
+                        sort = SearchSort.HIGHEST_IMDB,
+                    ),
+                    onSelectType = {},
+                    onSelectIndustry = {},
+                    onSelectGenre = {},
+                    onSelectLanguage = {},
+                    onSelectQuality = {},
+                    onSetIncludedOnly = {},
+                    onSelectSort = {},
+                    onSetYearRange = { _, _ -> },
+                    onResetFilters = {},
+                    onDone = {},
+                )
+            }
+        }
+    }
+
 }
