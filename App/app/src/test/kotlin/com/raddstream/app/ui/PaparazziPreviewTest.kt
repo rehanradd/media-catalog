@@ -41,7 +41,7 @@ import com.raddstream.app.ui.screens.EpisodeRow
 import com.raddstream.app.ui.screens.FilterRail
 import com.raddstream.app.ui.screens.FilterSheetBody
 import com.raddstream.app.ui.screens.BottomControls
-import com.raddstream.app.ui.screens.CenterControls
+import com.raddstream.app.ui.screens.CenterSpinner
 import com.raddstream.app.ui.screens.EdgeHud
 import com.raddstream.app.ui.screens.HomeContent
 import com.raddstream.app.ui.screens.TopBar
@@ -76,7 +76,7 @@ import org.junit.Test
  * Each screen gets its own stateless content composable fed with fake state:
  * `HomeContent` (extracted from HomeScreen), `DetailContent` (made
  * internal with its `RungActions` bundle), `SearchContent` (extracted
- * from SearchScreen) and the player chrome (`TopBar`, `CenterControls`,
+ * from SearchScreen) and the player chrome (`TopBar`, `CenterSpinner`,
  * `EdgeHud`, `BottomControls`, `KeepChip` — all internal with callbacks).
  * The volume dialog is not shot: it opens only on a long-press, which a
  * snapshot cannot perform.
@@ -807,7 +807,9 @@ class PaparazziPreviewTest {
     // Player chrome: the standard three zones plus Ghost mode's EdgeHud.
     // BottomControls carries the six primaries, the scrubber, the cast
     // strip (paused only) and the keep chip; TopBar the title + lock +
-    // print sheet; CenterControls the big play/pause or the spinner.
+    // print sheet; CenterSpinner the buffering spinner only — there is no
+    // centre play/pause button anymore, so the playing/paused shots are
+    // empty frames, which is the proof.
     private val playerRendition = PlaybackRendition(
         print = PrintInfo(resolution = "1080p"),
         playback = PlaybackInfo(label = "Fast direct"),
@@ -881,9 +883,8 @@ class PaparazziPreviewTest {
     fun playerCenterPlaying() {
         paparazzi.snapshot {
             themed {
-                CenterControls(
+                CenterSpinner(
                     state = playerBase(isPlaying = true),
-                    onTogglePlayPause = {},
                 )
             }
         }
@@ -893,9 +894,8 @@ class PaparazziPreviewTest {
     fun playerCenterPaused() {
         paparazzi.snapshot {
             themed {
-                CenterControls(
+                CenterSpinner(
                     state = playerBase(isPlaying = false),
-                    onTogglePlayPause = {},
                 )
             }
         }
@@ -905,9 +905,8 @@ class PaparazziPreviewTest {
     fun playerCenterBuffering() {
         paparazzi.snapshot {
             themed {
-                CenterControls(
+                CenterSpinner(
                     state = playerBase().copy(isBuffering = true),
-                    onTogglePlayPause = {},
                 )
             }
         }

@@ -240,7 +240,7 @@ import kotlin.math.roundToInt
  *  - [GestureOverlay] — the researched gesture table (PLAYER_SPEC §2.1), decisions delegated
  *    to the pure `GestureMapper`; tap / boost-release / drag / pinch live in independent
  *    `pointerInput` lanes so they never fight over events.
- *  - [TopBar] / [CenterControls] / [BottomControls] — three-zone fading chrome with the MX
+ *  - [TopBar] / [CenterSpinner] / [BottomControls] — three-zone fading chrome with the MX
  *    bottom button row (subtitles, audio, speed, lock, ±10s, frame-step, next episode,
  *    sleep, aspect, rotate, audio-only, stereo-select, cinema, PiP).
  *  - [EdgeHud] — what the same three zones collapse to in Ghost mode
@@ -640,7 +640,7 @@ private fun PlayerScreenContent(
         if (state.boosting) BoostBadge()
 
         // 5 — chrome. Ghost mode paints only the edge strip; everything else keeps the
-        // three-zone MX bars, the pause scrim and the big centre button.
+        // three-zone MX bars, with no centre button and no scrim on the picture.
         // Session 121 (P-17): while the player is still starting there is no picture
         // to protect and no back button anywhere — the top bar (or the edge strip
         // in Ghost mode) stays up until the start phase ends, even if the viewer
@@ -653,7 +653,7 @@ private fun PlayerScreenContent(
             } else {
                 TopBar(state = state, onBack = onBackClick, onLock = { vm.setLocked(true) }, onShowPrintSheet = { vm.showPrintSheet() })
                 if (controlsVisible) {
-                    CenterControls(state, onTogglePlayPause = { vm.togglePlayPause() })
+                    CenterSpinner(state)
                     BottomControls(
                         state = state,
                         onPlayFromStart = { vm.playFrom(0) },
@@ -1593,44 +1593,29 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
     }
 }
 
+/**
+ * The centre of the picture holds exactly one thing, and only while the picture is not
+ * there yet: the buffering spinner. There is no centre play/pause button — everybody
+ * knows when a video is stopped or playing, and the frozen picture is the feedback;
+ * transport lives only in the bottom bar. (Ghost mode already proved this shape.)
+ */
 @Composable
-internal fun CenterControls(state: PlayerUiState, onTogglePlayPause: () -> Unit) {
+internal fun CenterSpinner(state: PlayerUiState) {
+    if (state.startPhase == StartPhase.NONE && !state.isBuffering) return
     val chrome = PlayerChromeTheme.forId(state.playerTheme)
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        // App-design audit #4: three distinct states, never a bare play
-        // triangle while nothing is playing and nothing is paused. While
-        // the start is in flight or the player is rebuffering, the centre
-        // is a spinner; while playing it is pause; while paused it is play.
-        if (state.startPhase != StartPhase.NONE || state.isBuffering) {
-            Surface(color = chrome.chip, shape = CircleShape) {
-                // F4 (Batch B): the centre spinner was 44dp in a 72dp chip —
-                // the round-2 re-review read it as very small against the
-                // playback area, with no visible buffering progress. The ring
-                // is 56dp in an 88dp chip now, and the buffering notice below
-                // carries the buffered percent.
-                Box(Modifier.size(88.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(
-                        color = Color.White,
-                        strokeWidth = 4.dp,
-                        modifier = Modifier.size(56.dp),
-                    )
-                }
-            }
-        } else {
-            Surface(color = chrome.chip, shape = CircleShape) {
-                IconButton(onClick = onTogglePlayPause, modifier = Modifier.size(72.dp)) {
-                    Icon(
-                        painter = if (state.isPlaying) painterResource(R.drawable.ic_player_pause) else painterResource(R.drawable.ic_player_play),
-                        // CL-5: the centre control says "Pause video"/"Play video",
-                        // not bare "Pause"/"Play" — the bottom bar's button is
-                        // visible at the same time, and two controls with the
-                        // same name is the bug. Robo run 4 flagged the paused
-                        // pair (two "Play"); the playing pair already differed.
-                        contentDescription = if (state.isPlaying) stringResource(R.string.player_pause_centre) else stringResource(R.string.player_play_centre),
-                        tint = Color.White,
-                        modifier = Modifier.size(44.dp),
-                    )
-                }
+        Surface(color = chrome.chip, shape = CircleShape) {
+            // F4 (Batch B): the centre spinner was 44dp in a 72dp chip —
+            // the round-2 re-review read it as very small against the
+            // playback area, with no visible buffering progress. The ring
+            // is 56dp in an 88dp chip now, and the buffering notice below
+            // carries the buffered percent.
+            Box(Modifier.size(88.dp), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(
+                    color = Color.White,
+                    strokeWidth = 4.dp,
+                    modifier = Modifier.size(56.dp),
+                )
             }
         }
     }

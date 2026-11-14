@@ -326,7 +326,7 @@ class PlayerControlSemanticsTest {
     @Test
     fun `the top bar carries the lock action and the coach overlay covers scrub and pinch`() {
         val topBarStart = source.indexOf("internal fun TopBar(")
-        val topBarEnd = source.indexOf("\n@Composable\ninternal fun CenterControls(", topBarStart)
+        val topBarEnd = source.indexOf("\n@Composable\ninternal fun CenterSpinner(", topBarStart)
         assertTrue("TopBar bounds missing", topBarStart >= 0 && topBarEnd > topBarStart)
         val topBar = source.substring(topBarStart, topBarEnd)
         // onLock is passed as a function reference (onClick = onLock), not
