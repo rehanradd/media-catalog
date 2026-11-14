@@ -24,7 +24,6 @@
     <string name="player_more">More</string>
     <string name="player_more_playback">Playback</string>
     <string name="player_more_tools">Tools</string>
-    <string name="player_boost_hint">Boosting — release to restore</string>
     <string name="player_time_of">%1$s / %2$s</string>
     <string name="player_boost_badge">Boosting speed</string>
     <string name="player_back">Back</string>
@@ -123,10 +122,6 @@
     <string name="player_back_to_details">Back to details</string>
     <string name="player_subtitles_for_colour">%1$s subtitles</string>
     <string name="player_selected_suffix">, selected</string>
-    <string name="player_resume_title">Resume playback?</string>
-    <string name="player_resume_body">You stopped at %1$s on “%2$s”.</string>
-    <string name="player_this_print">this version</string>
-    <string name="player_resume">Resume</string>
     <string name="player_start_over">Start over</string>
     <string name="player_resume_chip">Resume from %1$s</string>
     <string name="player_calibration_title">Calibrate episode start</string>

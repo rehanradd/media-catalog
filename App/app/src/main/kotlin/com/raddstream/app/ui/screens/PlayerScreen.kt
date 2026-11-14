@@ -5,7 +5,6 @@ import android.app.ActivityManager
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.ContextWrapper
-import android.content.res.Configuration
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.graphics.Typeface
@@ -100,7 +99,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
@@ -109,7 +107,6 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -135,7 +132,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
@@ -3345,60 +3341,6 @@ private fun parseTimeToMs(raw: String): Long {
 
 // ── Sheets ─────────────────────────────────────────────────────────────────────
 
-@OptIn(ExperimentalMaterial3Api::class)
-/**
- * One container for every player sheet. Portrait keeps the bottom sheet;
- * landscape opens a right-side panel (~40% wide, max 380dp) so the video
- * stays visible and playing on the left — a sheet over the whole picture
- * is the YouTube-landscape complaint, and a panel clipped at the right
- * edge is the MX defect. The panel scrolls inside its capped width, the
- * video side is never dimmed, and tapping it (or Back) dismisses.
- */
-@Composable
-internal fun PlayerSheet(
-    onDismiss: () -> Unit,
-    containerColor: Color = RaddPlayerSheet,
-    content: @Composable ColumnScope.() -> Unit,
-) {
-    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-    if (!isLandscape) {
-        ModalBottomSheet(
-            onDismissRequest = onDismiss,
-            sheetState = rememberModalBottomSheetState(),
-            containerColor = containerColor,
-        ) {
-            content()
-        }
-    } else {
-        BackHandler(onBack = onDismiss)
-        Box(Modifier.fillMaxSize()) {
-            // The video side: tapping it dismisses the panel, nothing else.
-            Box(
-                Modifier
-                    .fillMaxHeight()
-                    .fillMaxWidth(0.6f)
-                    .clickableNoRipple { onDismiss() },
-            )
-            Box(
-                Modifier
-                    .align(Alignment.CenterEnd)
-                    .fillMaxHeight()
-                    .fillMaxWidth(0.4f)
-                    .widthIn(max = 380.dp)
-                    .background(containerColor),
-            ) {
-                Column(
-                    Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState()),
-                ) {
-                    content()
-                }
-            }
-        }
-    }
-}
-
 @Composable
 private fun SpeedSheet(state: PlayerUiState, vm: PlayerViewModel) {
     PlayerSheet(onDismiss = { vm.hideSpeedSheet() }) {
@@ -4279,7 +4221,7 @@ private fun Context.findActivity(): Activity? {
  * exactly what it was and the press is now an action a screen reader can take.
  */
 @Composable
-private fun Modifier.clickableNoRipple(onClick: () -> Unit): Modifier =
+internal fun Modifier.clickableNoRipple(onClick: () -> Unit): Modifier =
     this.then(
         Modifier.clickable(
             interactionSource = remember { MutableInteractionSource() },
