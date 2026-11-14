@@ -23,6 +23,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -38,6 +39,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -98,6 +101,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -117,13 +121,17 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
@@ -648,6 +656,12 @@ private fun PlayerScreenContent(
                         vm = vm,
                         onEnterPip = launchPip,
                         onActivity = { interactTick = System.nanoTime() },
+                        onScrubPreview = { scrubPreviewMs = it },
+                        onScrubCommit = {
+                            vm.seekTo(it)
+                            scrubPreviewMs = null
+                            interactTick = System.nanoTime()
+                        },
                         onActorClick = onActorClick,
                         onMessage = { snackbar = it },
                     )
@@ -1455,16 +1469,22 @@ private fun BoostBadge() {
 @Composable
 private fun TopBar(vm: PlayerViewModel, state: PlayerUiState, onBack: () -> Unit) {
     val print = state.activeRendition
-    val chrome = PlayerChromeTheme.forId(state.playerTheme)
-    // Restyle 2026-11-13: the bar ends in a 1dp specular line where it meets
-    // the picture — the same glass edge the bottom bar carries on its top —
-    // so the chrome reads as a sheet over the frame, not a black slab.
-    Column(Modifier.fillMaxWidth()) {
-    Row(
+    val topGradient = Brush.verticalGradient(
+        colors = listOf(
+            Color.Black.copy(alpha = 0.85f),
+            Color.Black.copy(alpha = 0.45f),
+            Color.Transparent,
+        )
+    )
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .background(chrome.bar)
-            .padding(start = 4.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+            .background(topGradient)
+            .padding(start = 4.dp, end = 4.dp, top = 8.dp, bottom = 12.dp),
+    ) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IconButton(onClick = onBack) {
@@ -1551,13 +1571,7 @@ private fun TopBar(vm: PlayerViewModel, state: PlayerUiState, onBack: () -> Unit
         IconButton(onClick = { vm.showPrintSheet() }) {
             Icon(Icons.Default.ListAlt, stringResource(R.string.player_prints_tools), tint = Color.White)
         }
-    }
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(1.dp)
-                .background(Color.White.copy(alpha = 0.08f)),
-        )
+        }
     }
 }
 
@@ -1758,6 +1772,8 @@ private fun BottomControls(
     vm: PlayerViewModel,
     onEnterPip: () -> Unit,
     onActivity: () -> Unit,
+    onScrubPreview: (Long) -> Unit = {},
+    onScrubCommit: (Long) -> Unit = { vm.seekTo(it) },
     // SC §3: tapping an actor on the pause strip searches them, the same
     // route the detail screen's cast chips take.
     onActorClick: (String) -> Unit = {},
@@ -1768,21 +1784,20 @@ private fun BottomControls(
     var showVolumeDialog by remember { mutableStateOf(false) }
     val chrome = PlayerChromeTheme.forId(state.playerTheme)
     val context = LocalContext.current
+    val bottomGradient = Brush.verticalGradient(
+        colors = listOf(
+            Color.Transparent,
+            Color.Black.copy(alpha = 0.5f),
+            Color.Black.copy(alpha = 0.85f),
+        )
+    )
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
         Column(
             Modifier
                 .fillMaxWidth()
-                .background(chrome.bar),
+                .background(bottomGradient)
+                .padding(bottom = 8.dp),
         ) {
-            // Restyle 2026-11-13: a 1dp specular line on the bar's top edge,
-            // where it meets the picture — the same glass edge the top bar
-            // carries on its bottom.
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(1.dp)
-                    .background(Color.White.copy(alpha = 0.08f)),
-            )
             // SC §3: pause is discovery — the cast strip. Tapping an actor
             // searches them. Only while paused: a strip that appears mid-play
             // is a strip that steals the picture. The cast list itself is the
@@ -1840,6 +1855,8 @@ private fun BottomControls(
                     durationMs = state.durationMs,
                     enabled = state.seekEnabled,
                     onSeek = { vm.seekTo(it) },
+                    onScrubPreview = onScrubPreview,
+                    onScrubCommit = onScrubCommit,
                     onActivity = onActivity,
                     episodes = state.activeRendition?.coverage?.episodes.orEmpty(),
                 )
@@ -2164,31 +2181,35 @@ private fun Scrubber(
     durationMs: Long,
     enabled: Boolean,
     onSeek: (Long) -> Unit,
+    onScrubPreview: (Long) -> Unit = {},
+    onScrubCommit: (Long) -> Unit = onSeek,
     onActivity: () -> Unit,
     episodes: List<EpisodeCoverage> = emptyList(),
 ) {
+    var draggingTargetMs by remember { mutableStateOf<Long?>(null) }
+    val displayPositionMs = draggingTargetMs ?: positionMs
     // Chapter ticks (plan §5 step 11): the pack's episode boundaries, from the same
     // pure function the print sheet's chapter list uses, so the two can never disagree.
     val ticks = remember(episodes, durationMs) { chapterTicks(episodes, durationMs) }
     // PL-8: the scrubber is a progress bar to a screen reader — its description
     // names the position and the chapter the position is inside, and setProgress
     // lets a switch or voice user seek without ever touching the track.
-    val currentChapter = ticks.lastOrNull { it.offsetMs <= positionMs }?.title
+    val currentChapter = ticks.lastOrNull { it.offsetMs <= displayPositionMs }?.title
     val seekDescription = stringResource(
         R.string.player_seek,
-        positionMs.formatTime(),
+        displayPositionMs.formatTime(),
         durationMs.formatTime(),
     ) + (currentChapter?.let { stringResource(R.string.player_seek_chapter, it) } ?: "")
     BoxWithConstraints(
         Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 10.dp)
-            .height(20.dp)
+            .height(24.dp)
             .semantics(mergeDescendants = true) {
                 contentDescription = seekDescription
                 if (enabled && durationMs > 0) {
                     progressBarRangeInfo = ProgressBarRangeInfo(
-                        current = positionMs.toFloat() / durationMs.coerceAtLeast(1L),
+                        current = displayPositionMs.toFloat() / durationMs.coerceAtLeast(1L),
                         range = 0f..1f,
                     )
                     setProgress { value ->
@@ -2200,7 +2221,7 @@ private fun Scrubber(
     ) {
         val trackWidthPx = constraints.maxWidth.toFloat().coerceAtLeast(1f)
         val duration = durationMs.coerceAtLeast(1L)
-        val posFraction = (positionMs.toFloat() / duration).coerceIn(0f, 1f)
+        val posFraction = (displayPositionMs.toFloat() / duration).coerceIn(0f, 1f)
         val bufFraction = (bufferedMs.toFloat() / duration).coerceIn(0f, 1f)
 
         Box(
@@ -2237,11 +2258,20 @@ private fun Scrubber(
                     .background(Color.White.copy(alpha = 0.85f)),
             )
         }
+        val isDragging = draggingTargetMs != null
+        val thumbSize = if (isDragging) 20.dp else 16.dp
         Box(
             Modifier
                 .align(Alignment.CenterStart)
-                .offset(x = maxWidth * posFraction.coerceIn(0f, 0.98f))
-                .size(16.dp)
+                .offset(x = (maxWidth * posFraction.coerceIn(0f, 0.98f)) - (thumbSize - 16.dp) / 2)
+                .size(thumbSize)
+                .then(
+                    if (isDragging) {
+                        Modifier.border(2.dp, Color.White, CircleShape)
+                    } else {
+                        Modifier
+                    },
+                )
                 .background(chrome.played, shape = CircleShape),
         )
         if (enabled && durationMs > 0) {
@@ -2253,18 +2283,26 @@ private fun Scrubber(
                             val down = awaitFirstDown(requireUnconsumed = false)
                             fun targetFor(x: Float): Long =
                                 ((x / trackWidthPx).coerceIn(0f, 1f) * durationMs).toLong().coerceAtLeast(0)
+                            var latestTarget = targetFor(down.position.x)
+                            draggingTargetMs = latestTarget
                             onActivity()
-                            onSeek(targetFor(down.position.x))
-                            while (true) {
-                                val event = awaitPointerEvent(PointerEventPass.Main)
-                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                                if (!change.pressed) {
-                                    onSeek(targetFor(change.position.x))
-                                    break
+                            onScrubPreview(latestTarget)
+                            try {
+                                while (true) {
+                                    val event = awaitPointerEvent(PointerEventPass.Main)
+                                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                    latestTarget = targetFor(change.position.x)
+                                    if (!change.pressed) {
+                                        break
+                                    }
+                                    draggingTargetMs = latestTarget
+                                    onActivity()
+                                    onScrubPreview(latestTarget)
+                                    change.consume()
                                 }
-                                onActivity()
-                                onSeek(targetFor(change.position.x))
-                                change.consumed.positionChange = true
+                            } finally {
+                                draggingTargetMs = null
+                                onScrubCommit(latestTarget)
                             }
                         }
                     },
@@ -2690,13 +2728,17 @@ private fun StartNoticeCard(
         // it is gone.
         Surface(
             color = RaddPlayerStage,
-            shape = MaterialTheme.shapes.medium,
-            modifier = Modifier.padding(horizontal = 32.dp),
+            shape = RoundedCornerShape(16.dp),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+            modifier = Modifier
+                .padding(horizontal = 24.dp, vertical = 16.dp)
+                .widthIn(max = 420.dp),
         ) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
-                    .padding(horizontal = 16.dp, vertical = 12.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp, vertical = 16.dp)
                     .semantics(mergeDescendants = true) { contentDescription = spoken },
             ) {
             PlayerLoadingIndicator()
@@ -2715,6 +2757,7 @@ private fun StartNoticeCard(
                     // plate read 1.06:1. Full white on the solid plate.
                     color = Color.White,
                     style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Medium,
                     textAlign = TextAlign.Center,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
@@ -2779,21 +2822,23 @@ private fun StartNoticeCard(
             // viewer can see is a press target the viewer will find.
             if (onRetry != null || onTryAnother != null || onCancel != null) {
                 Spacer(Modifier.height(12.dp))
-                Row(
+                @OptIn(ExperimentalLayoutApi::class)
+                FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     onRetry?.let {
-                        OutlinedButton(onClick = it) {
+                        OutlinedButton(onClick = it, modifier = Modifier.heightIn(min = MinControlTarget)) {
                             Text(stringResource(R.string.player_retry), color = Color.White)
                         }
                     }
                     onTryAnother?.let {
-                        OutlinedButton(onClick = it) {
+                        OutlinedButton(onClick = it, modifier = Modifier.heightIn(min = MinControlTarget)) {
                             Text(stringResource(R.string.player_start_try_another), color = Color.White)
                         }
                     }
                     onCancel?.let {
-                        TextButton(onClick = it) {
+                        TextButton(onClick = it, modifier = Modifier.heightIn(min = MinControlTarget)) {
                             Text(stringResource(R.string.player_cancel), color = Color.White)
                         }
                     }
@@ -3023,7 +3068,28 @@ private fun SubtitleColourSwatch(colour: SubtitleColor, selected: Boolean, onSel
                 .background(if (selected) paint.copy(alpha = 0.26f) else Color.Transparent, CircleShape),
             contentAlignment = Alignment.Center,
         ) {
-            Box(Modifier.size(18.dp).background(paint, CircleShape))
+            Box(
+                modifier = Modifier
+                    .size(20.dp)
+                    .background(paint, CircleShape)
+                    .then(
+                        if (selected) {
+                            Modifier.border(2.dp, Color.White, CircleShape)
+                        } else {
+                            Modifier.border(1.dp, Color.White.copy(alpha = 0.35f), CircleShape)
+                        },
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (selected) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = null,
+                        tint = if (paint.luminance() > 0.5f) Color.Black else Color.White,
+                        modifier = Modifier.size(12.dp),
+                    )
+                }
+            }
         }
     }
 }
@@ -3231,16 +3297,26 @@ private fun SpeedSheet(state: PlayerUiState, vm: PlayerViewModel) {
                             .padding(end = 6.dp)
                             .clickableNoRipple { vm.setSpeed(preset) },
                     ) {
-                        Box(
+                        Row(
                             Modifier
                                 .heightIn(min = MinControlTarget)
                                 .padding(horizontal = 12.dp),
-                            contentAlignment = Alignment.Center,
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
+                            if (selected) {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = null,
+                                    tint = Color.Black,
+                                    modifier = Modifier.size(14.dp),
+                                )
+                            }
                             Text(
                                 stringResource(R.string.player_speed_short, preset),
                                 color = if (selected) Color.Black else Color.White,
                                 fontSize = brandSp(14),
+                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
                             )
                         }
                     }
@@ -3469,18 +3545,31 @@ private fun SubtitleSettingsSheet(state: PlayerUiState, vm: PlayerViewModel) {
                 vm.showSubtitleOffsetSheet()
             }
 
+            val switchHaptics = LocalHapticFeedback.current
             Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(stringResource(R.string.player_subtitle_bold), color = Color.White, fontSize = brandSp(14), modifier = Modifier.weight(1f))
                 Switch(
                     checked = state.subtitle.bold,
-                    onCheckedChange = { vm.setSubtitleSettings(state.subtitle.copy(bold = it)) },
+                    onCheckedChange = {
+                        switchHaptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        vm.setSubtitleSettings(state.subtitle.copy(bold = it))
+                    },
+                    thumbContent = if (state.subtitle.bold) {
+                        { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(SwitchDefaults.IconSize)) }
+                    } else null,
                 )
             }
             Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(stringResource(R.string.player_subtitle_background), color = Color.White, fontSize = brandSp(14), modifier = Modifier.weight(1f))
                 Switch(
                     checked = state.subtitle.textBackground,
-                    onCheckedChange = { vm.setSubtitleSettings(state.subtitle.copy(textBackground = it)) },
+                    onCheckedChange = {
+                        switchHaptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        vm.setSubtitleSettings(state.subtitle.copy(textBackground = it))
+                    },
+                    thumbContent = if (state.subtitle.textBackground) {
+                        { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(SwitchDefaults.IconSize)) }
+                    } else null,
                 )
             }
 

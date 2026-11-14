@@ -3,6 +3,8 @@ package com.raddstream.app.ui.screens
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.unit.dp
 import com.raddstream.app.network.models.PanelDisclaimer
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import org.junit.Rule
@@ -56,6 +58,18 @@ class DisclaimerDialogTest {
         compose.onNodeWithText("Decline").assertIsDisplayed()
         compose.onNodeWithText("Version 1").assertExists()
         compose.onNodeWithText("Contact: radddao1@gmail.com").assertExists()
+        val contactNode = compose.onNode(
+            androidx.compose.ui.test.hasClickAction() and
+                androidx.compose.ui.test.hasText("Contact: radddao1@gmail.com"),
+        )
+        contactNode.performScrollTo()
+        val contactBounds = contactNode.fetchSemanticsNode().boundsInRoot
+        with(compose.density) {
+            org.junit.Assert.assertTrue(
+                "Contact link touch height below 48dp",
+                contactBounds.height.toDp() >= 48.dp,
+            )
+        }
     }
 
     @Test

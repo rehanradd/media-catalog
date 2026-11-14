@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
@@ -169,12 +170,7 @@ fun MyListScreen(
                 }
                 LazyVerticalGrid(
                     columns = CatalogGridColumns,
-                    // F12 (Batch B): the grid takes only the height its rows
-                    // need (weight 1f, fill false) instead of the whole
-                    // column — with one favorite the single card used to sit
-                    // alone on a full screen of nothing, and the PopularRow
-                    // below it had no height left to show in.
-                    modifier = Modifier.weight(1f, fill = false),
+                    modifier = Modifier.weight(1f),
                     contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp, start = 16.dp, end = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -186,14 +182,21 @@ fun MyListScreen(
                             onRemove = { viewModel.remove(post.id) },
                         )
                     }
-                }
-                // F12 (Batch B): one favorite is a list that has barely
-                // started — the "Most versions" row sits under the grid so
-                // the next save is one tap away instead of a trip back to
-                // Home. Two or more favorites already fill the screen; the
-                // row would only push the list down.
-                if (state.favorites.size == 1 && state.popular.isNotEmpty()) {
-                    PopularRow(popular = state.popular, onPostClick = onPostClick)
+                    // F12 & Small #9: place the starter shelf inside the scrolling grid as
+                    // a full-span footer when 1 favorite exists so compact or scaled screens
+                    // never clip either the favorite or the suggestions.
+                    if (state.favorites.size == 1 && state.popular.isNotEmpty()) {
+                        item(
+                            key = "my_list_starter_shelf",
+                            span = { GridItemSpan(maxLineSpan) },
+                        ) {
+                            PopularRow(
+                                popular = state.popular,
+                                onPostClick = onPostClick,
+                                horizontalPadding = 0.dp,
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -244,18 +247,29 @@ internal fun MyListEmptyContent(
  * from there is what fills the list.
  */
 @Composable
-private fun PopularRow(popular: List<Post>, onPostClick: (Post) -> Unit) {
+internal fun PopularRow(
+    popular: List<Post>,
+    onPostClick: (Post) -> Unit,
+    horizontalPadding: androidx.compose.ui.unit.Dp = 16.dp,
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+            .padding(horizontal = horizontalPadding, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text(
-            "Most versions",
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onBackground,
-        )
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                "Most versions",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+            Text(
+                "Well-stocked catalog picks to start your list",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp),

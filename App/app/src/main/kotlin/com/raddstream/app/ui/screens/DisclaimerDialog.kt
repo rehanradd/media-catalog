@@ -1,17 +1,19 @@
 package com.raddstream.app.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -25,8 +27,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
@@ -122,38 +126,42 @@ internal fun DisclaimerDialog(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     if (disclaimer.email.isNotBlank()) {
-                        // F13 (Batch B): the address is a link, not a line
-                        // to copy by hand — one tap opens the mail app
-                        // addressed to it. One text node, with the email
-                        // annotated inside it: splitting it into two Texts
-                        // broke the "Contact: <email>" line the test pins,
-                        // and a screen reader should hear the whole line.
+                        // F13 (Batch B) & Small #5: ClickableText ignores LocalContentColor
+                        // and rendered "Contact: " in dark ink on a dark surface. Use M3 Text
+                        // with explicit high-contrast styling inside a 48dp touch target, while
+                        // preserving the single "Contact: <email>" semantics node.
                         val contactText = buildAnnotatedString {
-                            append("Contact: ")
-                            pushStringAnnotation(tag = "mailto", annotation = disclaimer.email)
+                            withStyle(SpanStyle(color = MaterialTheme.colorScheme.onSurfaceVariant)) {
+                                append("Contact: ")
+                            }
                             withStyle(
                                 SpanStyle(
                                     color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Medium,
                                     textDecoration = TextDecoration.Underline,
                                 ),
                             ) {
                                 append(disclaimer.email)
                             }
-                            pop()
                         }
-                        ClickableText(
-                            text = contactText,
-                            style = MaterialTheme.typography.bodyMedium,
-                            onClick = { offset ->
-                                contactText.getStringAnnotations(
-                                    tag = "mailto",
-                                    start = offset,
-                                    end = offset,
-                                ).firstOrNull()?.let { annotation ->
-                                    uriHandler.openUri("mailto:${annotation.item}")
-                                }
-                            },
-                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
+                                .clickable(
+                                    role = Role.Button,
+                                    onClickLabel = "Send email to ${disclaimer.email}",
+                                ) {
+                                    runCatching { uriHandler.openUri("mailto:${disclaimer.email}") }
+                                },
+                            contentAlignment = Alignment.CenterStart,
+                        ) {
+                            Text(
+                                text = contactText,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
                     }
                 }
                 // F13 (Batch B): the scroll cue — a small line that says the

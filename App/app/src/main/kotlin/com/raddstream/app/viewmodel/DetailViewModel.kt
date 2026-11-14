@@ -132,6 +132,7 @@ data class DetailUiState(
     val coinBalance: Int = 0,
     /** The answer to a [directDownloadUrlFor] ask that could not open a link. */
     val directLinkMessage: String? = null,
+    val isReportingIssue: Boolean = false,
 )
 
 /**
@@ -615,13 +616,16 @@ class DetailViewModel @Inject constructor(
             } catch (ex: Exception) {
                 // F9 (Batch B): the call failed — the list row still names
                 // the title, when this process has it.
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        error = friendlyNetworkError(ex, "Failed to load details. Check connection."),
-                        fallbackPost = catalogRepository.cachedPost(postId),
-                    )
-                }
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            error = friendlyNetworkError(
+                                ex,
+                                "We couldn't load this title right now. Please check your connection and try again.",
+                            ),
+                            fallbackPost = catalogRepository.cachedPost(postId),
+                        )
+                    }
             }
         }
     }
@@ -1604,6 +1608,65 @@ class DetailViewModel @Inject constructor(
             handle = link.streamId,
             printLabel = print.qualityLabel,
         )
+    }
+
+    /**
+     * Submits a genuine broken-stream or load failure report to the server
+     * (never exposes raw upstream URLs or host names). Uses `reportLink`
+     * when a stream handle is loaded and `submitContact` with valid server
+     * categories (`"bug"` on detail load failure, `"content"` on stream issue).
+     */
+    fun reportBrokenStream(note: String = "") {
+        val current = _uiState.value
+        if (current.isReportingIssue) return
+        _uiState.update { it.copy(isReportingIssue = true) }
+        viewModelScope.launch {
+            val title = current.post?.cleanTitle?.takeIf(String::isNotBlank)
+                ?: current.post?.title
+                ?: current.fallbackPost?.cleanTitle?.takeIf(String::isNotBlank)
+                ?: current.fallbackPost?.title
+                ?: "Title"
+            val idTag = when {
+                workId > 0L -> "work=$workId"
+                resolvedPostId > 0 -> "post=$resolvedPostId"
+                else -> "unknown"
+            }
+            val layout = current.layout
+            val sampleHandle = layout?.workPrints?.firstOrNull()?.links?.firstOrNull()?.streamId
+                ?: layout?.seasons?.firstOrNull()?.episodes?.firstOrNull()?.prints?.firstOrNull()?.links?.firstOrNull()?.streamId
+            val cleanNote = note.trim()
+            val linkReported = if (!sampleHandle.isNullOrBlank()) {
+                catalogRepository.reportLink(
+                    handle = sampleHandle,
+                    event = "dead_manual",
+                    error = cleanNote.ifBlank { "user_reported_broken" },
+                )
+            } else {
+                false
+            }
+            val bodyParts = buildList {
+                add("Title: $title ($idTag)")
+                current.error?.let { add("Load error: $it") }
+                if (cleanNote.isNotBlank()) add("Viewer note: $cleanNote")
+                else add("Reported broken stream from detail screen.")
+            }
+            val contactSaved = catalogRepository.submitContact(
+                category = if (current.error != null) "bug" else "content",
+                subject = "Broken stream report: $title",
+                body = bodyParts.joinToString("\n"),
+                accountHint = null,
+            )
+            _uiState.update {
+                it.copy(
+                    isReportingIssue = false,
+                    actionMessage = if (contactSaved || linkReported) {
+                        "Thanks — we've sent your report."
+                    } else {
+                        "Couldn't send the report right now. Please try again."
+                    },
+                )
+            }
+        }
     }
 }
 

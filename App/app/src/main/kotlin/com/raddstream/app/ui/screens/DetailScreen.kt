@@ -46,6 +46,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
@@ -61,6 +62,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -253,6 +255,8 @@ fun DetailScreen(
         }
     }
 
+    var showReportDialog by remember { mutableStateOf(false) }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -276,7 +280,17 @@ fun DetailScreen(
                         Icon(Icons.Default.ArrowBack, contentDescription = "Back")
                     }
                 },
-                actions = {},
+                actions = {
+                    if (!state.isLoading) {
+                        IconButton(onClick = { showReportDialog = true }) {
+                            Icon(
+                                Icons.Default.Flag,
+                                contentDescription = "Report broken stream",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
             )
         },
@@ -315,6 +329,15 @@ fun DetailScreen(
                     onSecondary = onBackClick,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                Spacer(Modifier.height(4.dp))
+                TextButton(
+                    onClick = { showReportDialog = true },
+                    modifier = Modifier
+                        .align(Alignment.CenterHorizontally)
+                        .heightIn(min = 48.dp),
+                ) {
+                    Text("Report broken stream")
+                }
             }
             post != null -> DetailContent(
                 post = post,
@@ -374,6 +397,72 @@ fun DetailScreen(
             // credit can download in-app through the same DownloadService.
         )
     }
+
+    if (showReportDialog) {
+        val title = state.post?.cleanTitle?.takeIf(String::isNotBlank)
+            ?: state.post?.title
+            ?: state.fallbackPost?.cleanTitle?.takeIf(String::isNotBlank)
+            ?: state.fallbackPost?.title
+            ?: "this title"
+        ReportBrokenStreamDialog(
+            title = title,
+            isSubmitting = state.isReportingIssue,
+            onSubmit = { note ->
+                viewModel.reportBrokenStream(note)
+                showReportDialog = false
+            },
+            onDismiss = { showReportDialog = false },
+        )
+    }
+}
+
+@Composable
+internal fun ReportBrokenStreamDialog(
+    title: String,
+    isSubmitting: Boolean,
+    onSubmit: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var note by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = { if (!isSubmitting) onDismiss() },
+        title = { RaddDialogTitle("Report an issue") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Let us know if \"$title\" isn't playing, has missing audio, or failed to load.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                OutlinedTextField(
+                    value = note,
+                    onValueChange = { note = it.take(300) },
+                    label = { Text("Details (optional)") },
+                    placeholder = { Text("e.g., won't start, wrong audio, missing subtitles") },
+                    maxLines = 3,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onSubmit(note) },
+                enabled = !isSubmitting,
+                modifier = Modifier.heightIn(min = 48.dp),
+            ) {
+                Text(if (isSubmitting) "Sending…" else "Send report")
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                enabled = !isSubmitting,
+                modifier = Modifier.heightIn(min = 48.dp),
+            ) {
+                Text("Cancel")
+            }
+        },
+    )
 }
 
 /**
@@ -902,7 +991,7 @@ private fun PrimaryActions(
                 interactionSource = playSource,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(56.dp)
+                    .heightIn(min = 56.dp)
                     .pressScale(playSource),
                 // D-29: a disabled Play keeps the same shape and language as the
                 // enabled one — a tonal fill, not a dead grey slab. The reason it
@@ -916,7 +1005,7 @@ private fun PrimaryActions(
                 Spacer(Modifier.width(8.dp))
                 Text(
                     text = resume?.label ?: "Play",
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
@@ -925,13 +1014,13 @@ private fun PrimaryActions(
                 onClick = onPlay,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(56.dp),
+                    .heightIn(min = 56.dp),
             ) {
                 Icon(Icons.Default.OpenInNew, contentDescription = null, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
                 Text(
                     text = "Watch on the provider's page",
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
@@ -959,7 +1048,7 @@ private fun PrimaryActions(
                 enabled = hasAnyPrint,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(56.dp),
+                    .heightIn(min = 56.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     disabledContainerColor = MaterialTheme.colorScheme.primaryContainer,
@@ -970,7 +1059,7 @@ private fun PrimaryActions(
                 Spacer(Modifier.width(8.dp))
                 Text(
                     text = "Download",
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
@@ -987,7 +1076,7 @@ private fun PrimaryActions(
                 onClick = onToggleFavorite,
                 modifier = Modifier
                     .weight(1f)
-                    .height(48.dp)
+                    .heightIn(min = 48.dp)
                     // Round-2 (Batch B): the full "Save to My List" never fit
                     // a third of the row and truncated mid-word. The visible
                     // label is the short verb; the full phrase is the spoken
@@ -1016,7 +1105,7 @@ private fun PrimaryActions(
                     enabled = hasAnyPrint,
                     modifier = Modifier
                         .weight(1f)
-                        .height(48.dp),
+                        .heightIn(min = 48.dp),
                     contentPadding = PaddingValues(horizontal = 4.dp),
                 ) {
                     Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -1034,7 +1123,7 @@ private fun PrimaryActions(
                 onClick = onShare,
                 modifier = Modifier
                     .weight(1f)
-                    .height(48.dp),
+                    .heightIn(min = 48.dp),
                 contentPadding = PaddingValues(horizontal = 4.dp),
             ) {
                 Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))

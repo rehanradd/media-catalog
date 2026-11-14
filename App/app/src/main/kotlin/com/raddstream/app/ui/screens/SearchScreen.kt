@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -28,6 +29,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.CardMembership
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Close
@@ -80,6 +82,7 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -95,8 +98,6 @@ import com.raddstream.app.ui.components.MediaRail
 import com.raddstream.app.ui.components.PosterCard
 import com.raddstream.app.ui.components.PosterGridSkeleton
 import com.raddstream.app.ui.components.Pill
-import com.raddstream.app.ui.components.SectionHeader
-import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.components.SectionHeader
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.viewmodel.GenreFilter
@@ -472,9 +473,20 @@ private fun FilterRail(state: SearchUiState, viewModel: SearchViewModel, onOpenF
             )
         }
         item {
+            val activeFilterCount = listOf(
+                state.filters.industry != IndustryFilter.ALL,
+                state.filters.genre != GenreFilter.ALL,
+                state.filters.quality != QualityFilter.ALL,
+                state.filters.language != LanguageFilter.ALL,
+                state.filters.yearFrom != null || state.filters.yearTo != null,
+                state.filters.includedOnly,
+                state.sort != SearchSort.DEFAULT,
+            ).count { it }
+            val filtersLabel = if (activeFilterCount > 0) "Filters ($activeFilterCount)" else "Filters"
+            val filtersA11y = if (activeFilterCount > 0) "Filters, $activeFilterCount active" else "Filters"
             FilterChip(
                 colors = raddFilterChipColors(),
-                selected = false,
+                selected = activeFilterCount > 0,
                 onClick = onOpenFilters,
                 label = {
                     Row(
@@ -482,11 +494,13 @@ private fun FilterRail(state: SearchUiState, viewModel: SearchViewModel, onOpenF
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Text("Filters")
+                        Text(filtersLabel)
                     }
                 },
                 // Audit #54: a FilterChip is 32 dp tall — the touch-target floor is 48 dp, so the chip itself carries it.
-                modifier = Modifier.heightIn(min = 48.dp),
+                modifier = Modifier
+                    .heightIn(min = 48.dp)
+                    .semantics { contentDescription = filtersA11y },
             )
         }
     }
@@ -499,12 +513,28 @@ private fun FilterRail(state: SearchUiState, viewModel: SearchViewModel, onOpenF
  */
 @Composable
 private fun RecentsSection(state: SearchUiState, viewModel: SearchViewModel) {
+    RecentsRow(
+        recents = state.recents,
+        onRunRecent = viewModel::runRecent,
+        onClearRecents = viewModel::clearRecents,
+    )
+}
+
+@Composable
+private fun RecentsRow(
+    recents: List<String>,
+    onRunRecent: (String) -> Unit,
+    onClearRecents: () -> Unit,
+) {
     Column(Modifier.fillMaxWidth()) {
         SectionHeader(
             title = "Recent searches",
             modifier = Modifier.padding(top = 8.dp),
             action = {
-                TextButton(onClick = viewModel::clearRecents) { Text("Clear") }
+                TextButton(
+                    onClick = onClearRecents,
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) { Text("Clear") }
             },
         )
         LazyRow(
@@ -512,17 +542,126 @@ private fun RecentsSection(state: SearchUiState, viewModel: SearchViewModel) {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             contentPadding = PaddingValues(start = 0.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
         ) {
-            items(state.recents, key = { it }) { recent ->
+            items(recents, key = { it }) { recent ->
                 FilterChip(
                     colors = raddFilterChipColors(),
                     selected = false,
-                    onClick = { viewModel.runRecent(recent) },
+                    onClick = { onRunRecent(recent) },
                     label = { Text(recent) },
                     // Audit #54: a FilterChip is 32 dp tall — the touch-target floor is 48 dp, so the chip itself carries it.
                     modifier = Modifier.heightIn(min = 48.dp),
                 )
             }
         }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun SearchDiscoveryContent(
+    state: SearchUiState,
+    onRunQuery: (String) -> Unit,
+    onClearRecents: () -> Unit,
+    onSelectGenre: (GenreFilter) -> Unit,
+    onPostClick: (Post) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val trendingQueries = remember(state.trending) {
+        state.trending.mapNotNull { it.displayTitle.takeIf(String::isNotBlank) }.distinct().take(6)
+    }
+    Column(
+        modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+    ) {
+        if (state.recents.isNotEmpty()) {
+            RecentsRow(
+                recents = state.recents,
+                onRunRecent = onRunQuery,
+                onClearRecents = onClearRecents,
+            )
+        } else {
+            Spacer(Modifier.height(28.dp))
+            Icon(
+                Icons.Default.Search,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(40.dp).align(Alignment.CenterHorizontally),
+            )
+            Spacer(Modifier.height(12.dp))
+            Text(
+                text = "Search your catalog",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onBackground,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "Type a title or an actor's name, or pick a filter to begin. Recent searches will show up here.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            )
+        }
+        if (trendingQueries.isNotEmpty()) {
+            SectionHeader(
+                title = "Trending searches",
+                modifier = Modifier.padding(top = 16.dp),
+            )
+            LazyRow(
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(start = 0.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
+            ) {
+                items(trendingQueries, key = { it }) { term ->
+                    FilterChip(
+                        colors = raddFilterChipColors(),
+                        selected = false,
+                        onClick = { onRunQuery(term) },
+                        leadingIcon = {
+                            Icon(
+                                Icons.AutoMirrored.Filled.TrendingUp,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        },
+                        label = { Text(term, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        modifier = Modifier.heightIn(min = 48.dp),
+                    )
+                }
+            }
+        }
+        if (state.trending.isNotEmpty()) {
+            SectionHeader(
+                title = "Trending now",
+                modifier = Modifier.padding(top = 20.dp),
+            )
+            Spacer(Modifier.height(8.dp))
+            MediaRail(items = state.trending, key = { it.id }) { post ->
+                PosterCard(post = post, onClick = { onPostClick(post) })
+            }
+        }
+        SectionHeader(
+            title = "Browse by genre",
+            modifier = Modifier.padding(top = 20.dp),
+        )
+        Spacer(Modifier.height(8.dp))
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            GenreFilter.entries.filter { it != GenreFilter.ALL }.forEach { genre ->
+                FilterChip(
+                    selected = false,
+                    onClick = { onSelectGenre(genre) },
+                    label = { Text(genre.label) },
+                    modifier = Modifier.heightIn(min = 48.dp),
+                    colors = raddFilterChipColors(),
+                )
+            }
+        }
+        Spacer(Modifier.height(24.dp))
     }
 }
 
@@ -546,75 +685,13 @@ private fun SearchBody(
     }
     when {
         !state.hasSearchIntent -> {
-            if (state.recents.isNotEmpty()) {
-                RecentsSection(state = state, viewModel = viewModel)
-            } else {
-                // F14 (Batch B): an empty search is not a dead end. The
-                // screen keeps the "Search your catalog" headline, then
-                // shows what is trending and the genre doors, so the first
-                // tap is one away instead of a typed query away. When the
-                // trending load failed, the row is simply absent — a
-                // suggestion that failed is not a search that failed, and
-                // the screen must not say so.
-                Column(
-                    Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
-                ) {
-                    Spacer(Modifier.height(32.dp))
-                    Icon(
-                        Icons.Default.Search,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(40.dp).align(Alignment.CenterHorizontally),
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    Text(
-                        text = "Search your catalog",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp),
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        text = "Type a title or an actor's name, or pick a filter to begin. Recent searches will show up here.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp),
-                    )
-                    if (state.trending.isNotEmpty()) {
-                        SectionHeader(
-                            title = "Trending now",
-                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 28.dp),
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        MediaRail(items = state.trending, key = { it.id }) { post ->
-                            PosterCard(post = post, onClick = { onPostClick(post) })
-                        }
-                    }
-                    SectionHeader(
-                        title = "Browse by genre",
-                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 24.dp),
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        GenreFilter.entries.filter { it != GenreFilter.ALL }.forEach { genre ->
-                            FilterChip(
-                                selected = false,
-                                onClick = { viewModel.selectGenre(genre) },
-                                label = { Text(genre.label) },
-                                modifier = Modifier.heightIn(min = 48.dp),
-                                colors = raddFilterChipColors(),
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(24.dp))
-                }
-            }
+            SearchDiscoveryContent(
+                state = state,
+                onRunQuery = viewModel::runRecent,
+                onClearRecents = viewModel::clearRecents,
+                onSelectGenre = viewModel::selectGenre,
+                onPostClick = onPostClick,
+            )
         }
         state.isLoading && state.groups.isEmpty() -> PosterGridSkeleton(
             // F21 (Batch B): the loading state is a grid skeleton — the
@@ -760,12 +837,42 @@ private fun SearchBody(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun FilterSheetContent(
     state: SearchUiState,
     viewModel: SearchViewModel,
     onDone: () -> Unit,
+) {
+    FilterSheetBody(
+        state = state,
+        onSelectType = viewModel::selectType,
+        onSelectIndustry = viewModel::selectIndustry,
+        onSelectGenre = viewModel::selectGenre,
+        onSelectLanguage = viewModel::selectLanguage,
+        onSelectQuality = viewModel::selectQuality,
+        onSetIncludedOnly = viewModel::setIncludedOnly,
+        onSelectSort = viewModel::setSort,
+        onSetYearRange = viewModel::setYearRange,
+        onResetFilters = viewModel::resetFilters,
+        onDone = onDone,
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+internal fun FilterSheetBody(
+    state: SearchUiState,
+    onSelectType: (String?) -> Unit,
+    onSelectIndustry: (IndustryFilter) -> Unit,
+    onSelectGenre: (GenreFilter) -> Unit,
+    onSelectLanguage: (LanguageFilter) -> Unit,
+    onSelectQuality: (QualityFilter) -> Unit,
+    onSetIncludedOnly: (Boolean) -> Unit,
+    onSelectSort: (SearchSort) -> Unit,
+    onSetYearRange: (Int?, Int?) -> Unit,
+    onResetFilters: () -> Unit,
+    onDone: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     // F10 (Batch B): the sheet is two parts — a scrolling list of sections
     // and a footer that never scrolls away. The old sheet scrolled the
@@ -776,8 +883,10 @@ private fun FilterSheetContent(
     // so the sheet opens on Type, not on a wall of language chips.
     var languageExpanded by remember { mutableStateOf(false) }
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
+            .imePadding()
+            .navigationBarsPadding()
             .padding(horizontal = 20.dp),
     ) {
         Column(
@@ -795,7 +904,7 @@ private fun FilterSheetContent(
                 options = typeChips,
                 label = { it.first },
                 isSelected = { state.filters.type == it.second },
-                onSelect = { viewModel.selectType(it.second) },
+                onSelect = { onSelectType(it.second) },
                 allDescription = "All types",
                 icon = Icons.Default.Category,
             )
@@ -804,7 +913,7 @@ private fun FilterSheetContent(
                 options = IndustryFilter.entries,
                 label = { it.label },
                 isSelected = { state.filters.industry == it },
-                onSelect = viewModel::selectIndustry,
+                onSelect = onSelectIndustry,
                 allDescription = "All industries",
                 icon = Icons.Default.Movie,
             )
@@ -813,7 +922,7 @@ private fun FilterSheetContent(
                 options = GenreFilter.entries,
                 label = { it.label },
                 isSelected = { state.filters.genre == it },
-                onSelect = viewModel::selectGenre,
+                onSelect = onSelectGenre,
                 allDescription = "All genres",
                 icon = Icons.Default.Theaters,
             )
@@ -863,7 +972,7 @@ private fun FilterSheetContent(
                         // English name; only the paint carries both.
                         label = { displayLanguageName(it.label) },
                         isSelected = { state.filters.language == it },
-                        onSelect = viewModel::selectLanguage,
+                        onSelect = onSelectLanguage,
                         allDescription = "All languages",
                         showHeader = false,
                     )
@@ -876,7 +985,7 @@ private fun FilterSheetContent(
                 options = QualityFilter.entries,
                 label = { it.label },
                 isSelected = { state.filters.quality == it },
-                onSelect = viewModel::selectQuality,
+                onSelect = onSelectQuality,
                 allDescription = "All qualities",
                 icon = Icons.Default.HighQuality,
             )
@@ -889,7 +998,7 @@ private fun FilterSheetContent(
                     FilterChip(
                         colors = raddFilterChipColors(),
                         selected = state.filters.includedOnly,
-                        onClick = { viewModel.setIncludedOnly(!state.filters.includedOnly) },
+                        onClick = { onSetIncludedOnly(!state.filters.includedOnly) },
                         label = { Text("Included in my plan") },
                         // Audit #54: a FilterChip is 32 dp tall — the touch-target floor is 48 dp, so the chip itself carries it.
                         modifier = Modifier.heightIn(min = 48.dp),
@@ -899,45 +1008,61 @@ private fun FilterSheetContent(
             }
 
             FacetHeader(title = "Sort results", icon = Icons.Default.Sort)
-            // F1 (Batch A): the old copy explained the paging model in implementation
-            // words ("facets", "run on the server before paging"). One plain sentence.
-            Text(
-                stringResource(R.string.search_filters_help),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
             SearchSort.entries.forEach { sort ->
                 SortOptionRow(
                     sort = sort,
                     selected = state.sort == sort,
-                    onSelect = viewModel::setSort,
+                    onSelect = onSelectSort,
                 )
             }
             HorizontalDivider(Modifier.padding(top = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
 
             FacetHeader(title = "Year range", icon = Icons.Default.DateRange)
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                stringResource(R.string.search_filters_help),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 YearField(
                     label = "From",
                     value = state.filters.yearFrom?.toString() ?: "",
-                    onSet = { it?.let { n -> viewModel.setYearRange(n, state.filters.yearTo) } ?: viewModel.setYearRange(null, state.filters.yearTo) },
+                    onSet = { it?.let { n -> onSetYearRange(n, state.filters.yearTo) } ?: onSetYearRange(null, state.filters.yearTo) },
+                    modifier = Modifier.weight(1f),
                 )
                 YearField(
                     label = "To",
                     value = state.filters.yearTo?.toString() ?: "",
-                    onSet = { it?.let { n -> viewModel.setYearRange(state.filters.yearFrom, n) } ?: viewModel.setYearRange(state.filters.yearFrom, null) },
+                    onSet = { it?.let { n -> onSetYearRange(state.filters.yearFrom, n) } ?: onSetYearRange(state.filters.yearFrom, null) },
+                    modifier = Modifier.weight(1f),
                 )
             }
             Spacer(Modifier.height(8.dp))
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Row(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp, bottom = 12.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TextButton(onClick = viewModel::resetFilters) { Text("Reset") }
-            Button(onClick = onDone) { Text("Apply") }
+            TextButton(
+                onClick = onResetFilters,
+                modifier = Modifier.heightIn(min = 48.dp),
+            ) {
+                Text("Reset")
+            }
+            Button(
+                onClick = onDone,
+                modifier = Modifier.heightIn(min = 48.dp),
+            ) {
+                Text("Apply")
+            }
         }
     }
 }
@@ -1058,12 +1183,20 @@ private fun FacetHeader(title: String, icon: ImageVector?) {
 }
 
 @Composable
-private fun YearField(label: String, value: String, onSet: (Int?) -> Unit) {
+private fun YearField(
+    label: String,
+    value: String,
+    onSet: (Int?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val focusManager = LocalFocusManager.current
     OutlinedTextField(
         value = value,
-        onValueChange = { raw -> onSet(raw.filter(Char::isDigit).takeIf { it.isNotBlank() }?.toIntOrNull()) },
+        onValueChange = { raw -> onSet(raw.filter(Char::isDigit).take(4).takeIf { it.isNotBlank() }?.toIntOrNull()) },
         label = { Text(label) },
         singleLine = true,
-        modifier = Modifier.width(140.dp),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
+        keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
+        modifier = modifier,
     )
 }
