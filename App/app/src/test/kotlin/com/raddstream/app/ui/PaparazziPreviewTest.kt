@@ -98,6 +98,7 @@ class PaparazziPreviewTest {
     )
 
     /** Dark-first, like the shipped app: RaddStreamTheme defaults to the brand scheme. */
+    @Composable
     private fun themed(content: @Composable () -> Unit) {
         RaddStreamTheme(darkTheme = true) {
             Surface(color = MaterialTheme.colorScheme.background) { content() }
