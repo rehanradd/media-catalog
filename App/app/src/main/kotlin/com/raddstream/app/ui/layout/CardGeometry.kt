@@ -34,6 +34,16 @@ object CardGeometry {
     /** Rail tile width. A rail cell and its placeholder both draw from this one number. */
     const val RAIL_CARD_WIDTH_DP: Int = 132
 
+    /**
+     * Continue Watching tiles: wider than a rail tile, because the text row
+     * carries a 48 dp remove × beside the title (F12) — at the 132 dp rail
+     * width the column left for text is 68 dp and "2023 · Movie" /
+     * "S1:E3 · 20 min left" clip mid-word (caught by the Paparazzi
+     * homeLoaded shot, 2026-11-15). At 180 dp the text column is 116 dp
+     * and both lines fit, with the 48 dp touch target kept.
+     */
+    const val CONTINUE_WATCHING_CARD_WIDTH_DP: Int = 180
+
     /** The detail header's poster column: the same ratio, a fixed column instead of a rail cell. */
     const val DETAIL_POSTER_WIDTH_DP: Int = 120
 

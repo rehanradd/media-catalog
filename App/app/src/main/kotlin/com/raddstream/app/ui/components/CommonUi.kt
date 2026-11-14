@@ -553,6 +553,9 @@ fun <T> MediaRail(
     items: List<T>,
     key: (T) -> Any,
     contentPadding: PaddingValues = PaddingValues(horizontal = 16.dp),
+    /** Per-rail cell width; the rail default, or [CardGeometry.CONTINUE_WATCHING_CARD_WIDTH_DP]
+     *  for the Continue Watching rail, whose tiles carry a remove × beside the title. */
+    itemWidthDp: Int = CardGeometry.RAIL_CARD_WIDTH_DP,
     itemContent: @Composable (T) -> Unit,
 ) {
     LazyRow(
@@ -561,7 +564,7 @@ fun <T> MediaRail(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         items(items, key = key) { item ->
-            Box(Modifier.width(CardGeometry.RAIL_CARD_WIDTH_DP.dp)) { itemContent(item) }
+            Box(Modifier.width(itemWidthDp.dp)) { itemContent(item) }
         }
     }
 }

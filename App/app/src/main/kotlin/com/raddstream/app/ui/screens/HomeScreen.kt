@@ -99,6 +99,7 @@ import com.raddstream.app.ui.components.SectionHeader
 import com.raddstream.app.ui.components.SeeAllButton
 import com.raddstream.app.ui.components.UserWords
 import com.raddstream.app.ui.components.rememberReduceMotion
+import com.raddstream.app.ui.layout.CardGeometry
 import com.raddstream.app.ui.theme.RaddMotion
 import com.raddstream.app.ui.theme.RaddStreamMark
 import com.raddstream.app.update.InAppUpdate
@@ -402,9 +403,13 @@ internal fun HomeContent(
                     )
                     // Keyed on the scope, not the work: two rows of the same series are two
                     // different episodes, and a duplicate key would crash the rail.
+                    // Wider cells than a catalog rail: the tile carries a 48 dp remove ×
+                    // beside the title, and at 132 dp the text column clips "2023 · Movie"
+                    // and the resume label mid-word (Paparazzi homeLoaded, 2026-11-15).
                     MediaRail(
                         items = state.continueWatching,
                         key = { "${it.post.id}|${it.season}|${it.episode}" },
+                        itemWidthDp = CardGeometry.CONTINUE_WATCHING_CARD_WIDTH_DP,
                     ) { tile ->
                         PosterCard(
                             post = tile.post,
