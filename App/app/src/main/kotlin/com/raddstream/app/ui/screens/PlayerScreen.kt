@@ -606,7 +606,7 @@ private fun PlayerScreenContent(
                 vm.setUserVolume(v)
                 hud = Hud.Volume(v)
             },
-            onScrubPreview = { scrubPreviewMs = it },
+            onScrubPreview = { scrubPreviewMs = it; interactTick = System.nanoTime() },
             onScrubCommit = {
                 vm.seekTo(it)
                 scrubPreviewMs = null
@@ -644,8 +644,8 @@ private fun PlayerScreenContent(
         // Session 121 (P-17): while the player is still starting there is no picture
         // to protect and no back button anywhere — the top bar (or the edge strip
         // in Ghost mode) stays up until the start phase ends, even if the viewer
-        // tapped the chrome away. The centre controls and the bottom bar still
-        // obey the tap; only the way out is forced visible.
+        // tapped the chrome away. The bottom bar still obeys the tap; only the
+        // way out is forced visible.
         val chromeVisible = controlsVisible || state.startPhase != StartPhase.NONE
         if (chromeVisible && !state.locked) {
             if (state.pureCinema) {
@@ -1486,8 +1486,8 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
     val print = state.activeRendition
     val topGradient = Brush.verticalGradient(
         colors = listOf(
-            Color.Black.copy(alpha = 0.85f),
-            Color.Black.copy(alpha = 0.45f),
+            Color.Black.copy(alpha = 0.70f),
+            Color.Black.copy(alpha = 0.30f),
             Color.Transparent,
         )
     )
@@ -1495,7 +1495,7 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
         modifier = Modifier
             .fillMaxWidth()
             .background(topGradient)
-            .padding(start = 4.dp, end = 4.dp, top = 8.dp, bottom = 12.dp),
+            .padding(start = 4.dp, end = 4.dp, top = 4.dp, bottom = 8.dp),
     ) {
     Row(
         modifier = Modifier
@@ -1932,7 +1932,7 @@ internal fun BottomControls(
                 PlayerControlButton(
                     { if (state.isEnded) onPlayFromStart() else onTogglePlayPause() },
                     if (state.isPlaying) stringResource(R.string.player_pause) else stringResource(R.string.player_play),
-                    shortLabel = if (state.isPlaying) stringResource(R.string.player_pause) else stringResource(R.string.player_play),
+                    iconSize = 40.dp,
                 ) {
                     Icon(
                         painter = if (state.isPlaying) painterResource(R.drawable.ic_player_pause) else painterResource(R.drawable.ic_player_play),
@@ -1945,7 +1945,6 @@ internal fun BottomControls(
                     if (state.userVolume > 0f) stringResource(R.string.player_volume, volumePercent)
                     else stringResource(R.string.player_volume_muted),
                     onLongClick = { showVolumeDialog = true },
-                    shortLabel = stringResource(R.string.player_volume_title),
                 ) {
                     if (state.userVolume > 0f) {
                         Icon(
@@ -1967,7 +1966,6 @@ internal fun BottomControls(
                     { onShowSubtitleSheet() },
                     stringResource(R.string.player_subtitles_label, subtitleWord),
                     selected = subtitleActive(state),
-                    shortLabel = stringResource(R.string.player_subtitles_title),
                 ) {
                     Icon(painterResource(R.drawable.ic_player_subtitles), null, tint = if (subtitleActive(state)) RaddCurrent500 else Color.White)
                 }
@@ -1979,7 +1977,6 @@ internal fun BottomControls(
                         { onShowQualitySheet() },
                         stringResource(R.string.player_quality_label, state.qualityLabel),
                         selected = !state.qualityAuto,
-                        shortLabel = stringResource(R.string.player_quality_title),
                     ) {
                         Icon(
                             painterResource(R.drawable.ic_player_quality),
@@ -1994,7 +1991,6 @@ internal fun BottomControls(
                     PlayerControlButton(
                         { onMessage(context.getString(R.string.player_quality_single)) },
                         stringResource(R.string.player_quality_label, state.qualityLabel),
-                        shortLabel = stringResource(R.string.player_quality_title),
                     ) {
                         Icon(
                             painterResource(R.drawable.ic_player_quality),
@@ -2007,7 +2003,6 @@ internal fun BottomControls(
                     { onToggleFullscreen() },
                     if (state.fullscreen) stringResource(R.string.player_exit_fullscreen)
                     else stringResource(R.string.player_fullscreen),
-                    shortLabel = stringResource(R.string.player_fullscreen),
                 ) {
                     if (state.fullscreen) {
                         // No brand icon for exit: the expand-corners mark would lie
@@ -2020,7 +2015,6 @@ internal fun BottomControls(
                 PlayerControlButton(
                     { onShowMoreSheet() },
                     stringResource(R.string.player_more),
-                    shortLabel = stringResource(R.string.player_more),
                 ) {
                     Icon(Icons.Default.MoreVert, null, tint = Color.White)
                 }
@@ -2160,31 +2154,17 @@ private fun PlayerControlButton(
     onClick: () -> Unit,
     label: String,
     onLongClick: (() -> Unit)? = null,
-    // D-43: the filled selected state, and the visible label under the icon —
-    // the control bar finally says what each glyph does, where space allows.
-    // The label duplicates the button's spoken label, so it is cleared from the
-    // semantics tree rather than announced twice.
+    // The redesign removed the visible label under the icon (D-43): the bar is
+    // one thin icon row now, and the spoken label on the button still says
+    // what each glyph does. The icon box grows for the play/pause primary
+    // (40dp) while the 48dp press target stays.
     selected: Boolean = false,
     enabled: Boolean = true,
-    shortLabel: String? = null,
+    iconSize: Dp = 26.dp,
     content: @Composable () -> Unit,
 ) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        ControlTarget(label = label, onClick = onClick, onLongClick = onLongClick, selected = selected, enabled = enabled) {
-            Box(Modifier.size(26.dp), contentAlignment = Alignment.Center) { content() }
-        }
-        if (shortLabel != null) {
-            Text(
-                shortLabel,
-                // E-C3: 10sp white at 75% over the bar was ~3.3:1 over a bright
-                // frame. 0.85f is the floor the audit allows for these labels.
-                // Session 154: 11sp now — 10sp is off the M3 type scale.
-                color = if (selected) RaddCurrent500 else Color.White.copy(alpha = 0.85f),
-                fontSize = brandSp(11),
-                maxLines = 1,
-                modifier = Modifier.clearAndSetSemantics { },
-            )
-        }
+    ControlTarget(label = label, onClick = onClick, onLongClick = onLongClick, selected = selected, enabled = enabled) {
+        Box(Modifier.size(iconSize), contentAlignment = Alignment.Center) { content() }
     }
 }
 
