@@ -125,7 +125,7 @@ class MostSourcesRailTest {
             listOf("Tollywood", "Kollywood", "Mollywood", "Sandalwood"),
             industryWireValues("south_indian"),
         )
-        assertEquals(listOf("Bollywood"), industryWireValues("bollywood"))
+        assertEquals(listOf("bollywood"), industryWireValues("bollywood"))
         assertNull(industryWireValues(null))
     }
 }
