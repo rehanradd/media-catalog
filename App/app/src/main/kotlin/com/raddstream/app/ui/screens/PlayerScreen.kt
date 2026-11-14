@@ -43,6 +43,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -620,7 +621,7 @@ private fun PlayerScreenContent(
 
         // 4 — transient feedback layers
         DoubleTapRipple(state)
-        hud?.let { HudToast(it, chrome) }
+        hud?.let { EdgeFeedbackLine(it) }
         scrubPreviewMs?.let { target ->
             ScrubToast(
                 target = target,
@@ -1366,48 +1367,50 @@ private sealed class Hud {
     object Boost : Hud()
 }
 
+/**
+ * Gesture feedback as a slim line on the screen edge — never a card in the middle of the
+ * picture. Brightness rides the LEFT edge, volume the RIGHT (the gesture halves); the
+ * long-press speed boost rides the right edge in jade. The 800 ms lifetime lives in the
+ * caller's `LaunchedEffect(hud)`, so this is paint only: a 4 dp vertical track and a small
+ * percent, nothing else to read while a movie is playing.
+ */
 @Composable
-private fun HudToast(hud: Hud, chrome: PlayerChromeTheme) {
-    val icon = when (hud) {
-        is Hud.Brightness -> Icons.Default.BrightnessHigh
-        is Hud.Volume -> if (hud.value <= 0.01f) Icons.Default.VolumeMute else Icons.Default.VolumeUp
-        is Hud.Boost -> Icons.Default.FastForward
+private fun EdgeFeedbackLine(hud: Hud) {
+    val isLeft = hud is Hud.Brightness
+    val fraction = when (hud) {
+        is Hud.Brightness -> hud.value
+        is Hud.Volume -> hud.value
+        is Hud.Boost -> 1f
     }
     val label = when (hud) {
         is Hud.Brightness -> stringResource(R.string.player_brightness, (hud.value * 100).toInt())
         is Hud.Volume -> stringResource(R.string.player_volume, (hud.value * 100).toInt())
-        is Hud.Boost -> stringResource(R.string.player_boost_hint)
+        is Hud.Boost -> "2×"
     }
-    val fraction = when (hud) {
-        is Hud.Brightness -> hud.value
-        is Hud.Volume -> hud.value
-        is Hud.Boost -> -1f
-    }
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Surface(color = chrome.card, shape = MaterialTheme.shapes.medium) {
-            Column(
-                Modifier.padding(horizontal = 22.dp, vertical = 14.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
+    val trackColor = if (hud is Hud.Boost) RaddCurrent500 else Color.White
+    Box(
+        Modifier.fillMaxSize(),
+        contentAlignment = if (isLeft) Alignment.CenterStart else Alignment.CenterEnd,
+    ) {
+        Column(
+            Modifier.padding(horizontal = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(label, color = Color.White, fontSize = brandSp(12), fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(8.dp))
+            Box(
+                Modifier
+                    .width(4.dp)
+                    .height(120.dp)
+                    .background(Color.White.copy(alpha = 0.25f)),
             ) {
-                Icon(icon, null, tint = Color.White, modifier = Modifier.size(30.dp))
-                if (fraction >= 0f) {
-                    Spacer(Modifier.height(8.dp))
-                    Box(
-                        Modifier
-                            .width(110.dp)
-                            .height(4.dp)
-                            .background(Color.White.copy(alpha = 0.25f)),
-                    ) {
-                        Box(
-                            Modifier
-                                .fillMaxWidth(fraction.coerceIn(0f, 1f))
-                                .height(4.dp)
-                                .background(Color.White),
-                        )
-                    }
-                }
-                Spacer(Modifier.height(6.dp))
-                Text(label, color = Color.White, fontSize = brandSp(12))
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .fillMaxHeight(fraction.coerceIn(0f, 1f))
+                        .align(Alignment.BottomCenter)
+                        .background(trackColor),
+                )
             }
         }
     }
