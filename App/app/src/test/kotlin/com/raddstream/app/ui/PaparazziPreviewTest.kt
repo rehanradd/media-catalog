@@ -26,7 +26,14 @@ import com.raddstream.app.network.models.Playability
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.network.models.PostDetail
 import com.raddstream.app.network.models.ReleaseLabelParsing
+import com.raddstream.app.player.KeepUiState
 import com.raddstream.app.player.LadderForScope
+import com.raddstream.app.player.LadderRung
+import com.raddstream.app.player.PlaybackInfo
+import com.raddstream.app.player.PlaybackRendition
+import com.raddstream.app.player.PlayerUiState
+import com.raddstream.app.player.PrintInfo
+import com.raddstream.app.player.StartPhase
 import com.raddstream.app.player.QualityOption
 import com.raddstream.app.ui.components.PosterCard
 import com.raddstream.app.ui.components.raddFilterChipColors
@@ -34,7 +41,11 @@ import com.raddstream.app.ui.screens.DetailContent
 import com.raddstream.app.ui.screens.EpisodeRow
 import com.raddstream.app.ui.screens.FilterRail
 import com.raddstream.app.ui.screens.FilterSheetBody
+import com.raddstream.app.ui.screens.BottomControls
+import com.raddstream.app.ui.screens.CenterControls
+import com.raddstream.app.ui.screens.EdgeHud
 import com.raddstream.app.ui.screens.HomeContent
+import com.raddstream.app.ui.screens.TopBar
 import com.raddstream.app.ui.screens.SearchContent
 import com.raddstream.app.ui.screens.RungActions
 import com.raddstream.app.ui.theme.RaddStreamTheme
@@ -65,9 +76,11 @@ import org.junit.Test
  *
  * Each screen gets its own stateless content composable fed with fake state:
  * `HomeContent` (extracted from HomeScreen), `DetailContent` (made
- * internal with its `RungActions` bundle) and `SearchContent` (extracted
- * from SearchScreen). Player still needs the same extraction before it can
- * be shot here.
+ * internal with its `RungActions` bundle), `SearchContent` (extracted
+ * from SearchScreen) and the player chrome (`TopBar`, `CenterControls`,
+ * `EdgeHud`, `BottomControls`, `KeepChip` — all internal with callbacks).
+ * The volume dialog is not shot: it opens only on a long-press, which a
+ * snapshot cannot perform.
  *
  * Poster art is a null URL on purpose: Coil cannot load network images under
  * Layoutlib, so the placeholder shows — the layout, type, badges and rank
@@ -787,6 +800,168 @@ class PaparazziPreviewTest {
                     onSetYearRange = { _, _ -> },
                     onResetFilters = {},
                     onDone = {},
+                )
+            }
+        }
+    }
+
+    // Player chrome: the standard three zones plus Ghost mode's EdgeHud.
+    // BottomControls carries the six primaries, the scrubber, the cast
+    // strip (paused only) and the keep chip; TopBar the title + lock +
+    // print sheet; CenterControls the big play/pause or the spinner.
+    private val playerRendition = PlaybackRendition(
+        print = PrintInfo(resolution = "1080p"),
+        playback = PlaybackInfo(label = "Fast direct"),
+    )
+
+    private fun playerBase(
+        isPlaying: Boolean = true,
+        positionMs: Long = 2_730_000L,
+        durationMs: Long = 9_540_000L,
+    ) = PlayerUiState(
+        isPlaying = isPlaying,
+        positionMs = positionMs,
+        bufferedMs = 3_000_000L,
+        durationMs = durationMs,
+        userVolume = 0.8f,
+        pendingTitle = "Jawan",
+        titleYear = 2023,
+        activeRendition = playerRendition,
+        qualityBand = "1080p",
+        qualityAuto = true,
+        autoQualityBand = "1080p",
+        qualityRungs = listOf(
+            LadderRung(band = "1080p", streamId = "h-1080p"),
+            LadderRung(band = "720p", streamId = "h-720p"),
+        ),
+    )
+
+    private fun shotBottom(state: PlayerUiState) {
+        paparazzi.snapshot {
+            themed {
+                BottomControls(
+                    state = state,
+                    onPlayFromStart = {},
+                    onTogglePlayPause = {},
+                    onToggleMute = {},
+                    onShowSubtitleSheet = {},
+                    onShowQualitySheet = {},
+                    onToggleFullscreen = {},
+                    onShowMoreSheet = {},
+                    onSeekTo = {},
+                    onSetUserVolume = {},
+                    onSetAudioBoostLevel = {},
+                    onKeepCurrent = {},
+                    onEnterPip = {},
+                    onActivity = {},
+                    onScrubCommit = {},
+                )
+            }
+        }
+    }
+
+    @Test
+    fun playerTopBar() {
+        paparazzi.snapshot {
+            themed {
+                TopBar(
+                    state = playerBase(),
+                    onBack = {},
+                    onLock = {},
+                    onShowPrintSheet = {},
+                )
+            }
+        }
+    }
+
+    @Test
+    fun playerCenterPlaying() {
+        paparazzi.snapshot {
+            themed {
+                CenterControls(
+                    state = playerBase(isPlaying = true),
+                    onTogglePlayPause = {},
+                )
+            }
+        }
+    }
+
+    @Test
+    fun playerCenterPaused() {
+        paparazzi.snapshot {
+            themed {
+                CenterControls(
+                    state = playerBase(isPlaying = false),
+                    onTogglePlayPause = {},
+                )
+            }
+        }
+    }
+
+    @Test
+    fun playerCenterBuffering() {
+        paparazzi.snapshot {
+            themed {
+                CenterControls(
+                    state = playerBase().copy(isBuffering = true, startPhase = StartPhase.STARTING),
+                    onTogglePlayPause = {},
+                )
+            }
+        }
+    }
+
+    @Test
+    fun playerBottomPlaying() {
+        shotBottom(playerBase())
+    }
+
+    @Test
+    fun playerBottomPaused() {
+        shotBottom(
+            playerBase(isPlaying = false).copy(
+                castNames = listOf("Shah Rukh Khan", "Nayanthara", "Vijay Sethupathi"),
+                keep = KeepUiState.Stored(playableOffline = true, note = null),
+            ),
+        )
+    }
+
+    @Test
+    fun playerBottomLive() {
+        // F29: a live HLS playlist can report a finite DVR-window duration
+        // (Discover Pakistan: 2:00:12) — the shot must show the LIVE mark
+        // and no scrubber, whatever the duration claims.
+        shotBottom(
+            playerBase().copy(
+                isLive = true,
+                durationMs = 7_200_000L,
+                positionMs = 3_600_000L,
+            ),
+        )
+    }
+
+    @Test
+    fun playerBottomSingleRung() {
+        // 25c: one rung only — the Quality primary stays visible, dimmed,
+        // instead of vanishing.
+        shotBottom(
+            playerBase().copy(
+                qualityAuto = false,
+                qualityRungs = listOf(LadderRung(band = "1080p", streamId = "h-1080p")),
+            ),
+        )
+    }
+
+    @Test
+    fun playerGhost() {
+        paparazzi.snapshot {
+            themed {
+                EdgeHud(
+                    state = playerBase(),
+                    onBack = {},
+                    onPlayFromStart = {},
+                    onTogglePlayPause = {},
+                    onToggleViewMode = {},
+                    onLock = {},
                 )
             }
         }

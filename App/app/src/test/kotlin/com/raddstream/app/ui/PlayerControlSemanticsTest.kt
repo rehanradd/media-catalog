@@ -139,7 +139,7 @@ class PlayerControlSemanticsTest {
         )
         assertTrue(
             "the slider must write the same volume the gesture writes",
-            source.contains("onValueChange = { vm.setUserVolume(it) }"),
+            source.contains("onValueChange = { onSetUserVolume(it) }"),
         )
     }
 
@@ -148,7 +148,7 @@ class PlayerControlSemanticsTest {
      * `functionBody` helper would stop at the first blank line inside this long body.
      */
     private fun bottomControlsBody(): String {
-        val start = source.indexOf("private fun BottomControls(")
+        val start = source.indexOf("internal fun BottomControls(")
         assertTrue("PlayerScreen.kt no longer declares BottomControls", start >= 0)
         val end = source.indexOf("\nprivate fun subtitleActive(", start)
         assertTrue("cannot find the end of BottomControls", end >= 0)
@@ -171,12 +171,12 @@ class PlayerControlSemanticsTest {
     fun `the bottom row is exactly the six primaries`() {
         val row = bottomControlsBody()
         listOf(
-            "vm.togglePlayPause()" to "Play/Pause",
-            "vm.toggleMute()" to "Volume",
-            "vm.showSubtitleSheet()" to "Subtitles",
-            "vm.showQualitySheet()" to "Quality",
-            "vm.toggleFullscreen()" to "Fullscreen",
-            "vm.showMoreSheet()" to "More",
+            "onTogglePlayPause()" to "Play/Pause",
+            "onToggleMute()" to "Volume",
+            "onShowSubtitleSheet()" to "Subtitles",
+            "onShowQualitySheet()" to "Quality",
+            "onToggleFullscreen()" to "Fullscreen",
+            "onShowMoreSheet()" to "More",
         ).forEach { (call, name) ->
             assertTrue("the bottom row lost its $name primary", row.contains(call))
         }
@@ -325,11 +325,11 @@ class PlayerControlSemanticsTest {
 
     @Test
     fun `the top bar carries the lock action and the coach overlay covers scrub and pinch`() {
-        val topBarStart = source.indexOf("private fun TopBar(")
-        val topBarEnd = source.indexOf("\n@Composable\nprivate fun CenterControls(", topBarStart)
+        val topBarStart = source.indexOf("internal fun TopBar(")
+        val topBarEnd = source.indexOf("\n@Composable\ninternal fun CenterControls(", topBarStart)
         assertTrue("TopBar bounds missing", topBarStart >= 0 && topBarEnd > topBarStart)
         val topBar = source.substring(topBarStart, topBarEnd)
-        assertTrue("TopBar must offer the Lock control", topBar.contains("vm.setLocked(true)"))
+        assertTrue("TopBar must offer the Lock control", topBar.contains("onLock()"))
         assertTrue("TopBar Lock control must announce player_lock", topBar.contains("R.string.player_lock"))
 
         val coach = functionBody("private fun PlayerCoachOverlay(")

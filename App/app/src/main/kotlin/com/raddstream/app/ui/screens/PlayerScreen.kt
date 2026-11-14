@@ -648,14 +648,24 @@ private fun PlayerScreenContent(
         val chromeVisible = controlsVisible || state.startPhase != StartPhase.NONE
         if (chromeVisible && !state.locked) {
             if (state.pureCinema) {
-                EdgeHud(state = state, vm = vm, onBack = onBackClick)
+                EdgeHud(state = state, onBack = onBackClick, onPlayFromStart = { vm.playFrom(0) }, onTogglePlayPause = { vm.togglePlayPause() }, onToggleViewMode = { vm.toggleViewMode() }, onLock = { vm.setLocked(true) })
             } else {
-                TopBar(vm = vm, state = state, onBack = onBackClick)
+                TopBar(state = state, onBack = onBackClick, onLock = { vm.setLocked(true) }, onShowPrintSheet = { vm.showPrintSheet() })
                 if (controlsVisible) {
-                    CenterControls(state, vm)
+                    CenterControls(state, onTogglePlayPause = { vm.togglePlayPause() })
                     BottomControls(
                         state = state,
-                        vm = vm,
+                        onPlayFromStart = { vm.playFrom(0) },
+                        onTogglePlayPause = { vm.togglePlayPause() },
+                        onToggleMute = { vm.toggleMute() },
+                        onShowSubtitleSheet = { vm.showSubtitleSheet() },
+                        onShowQualitySheet = { vm.showQualitySheet() },
+                        onToggleFullscreen = { vm.toggleFullscreen() },
+                        onShowMoreSheet = { vm.showMoreSheet() },
+                        onSeekTo = { vm.seekTo(it) },
+                        onSetUserVolume = { vm.setUserVolume(it) },
+                        onSetAudioBoostLevel = { vm.setAudioBoostLevel(it) },
+                        onKeepCurrent = { vm.keepCurrent() },
                         onEnterPip = launchPip,
                         onActivity = { interactTick = System.nanoTime() },
                         onScrubPreview = { scrubPreviewMs = it },
@@ -1469,7 +1479,7 @@ private fun BoostBadge() {
 // ── 5. Chrome bars ─────────────────────────────────────────────────────────────
 
 @Composable
-private fun TopBar(vm: PlayerViewModel, state: PlayerUiState, onBack: () -> Unit) {
+internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit, onShowPrintSheet: () -> Unit) {
     val print = state.activeRendition
     val topGradient = Brush.verticalGradient(
         colors = listOf(
@@ -1570,10 +1580,10 @@ private fun TopBar(vm: PlayerViewModel, state: PlayerUiState, onBack: () -> Unit
         // Session 121 (P-35): the keep chip lived here and squeezed the title to a
         // stub ("Ali Baba …") on a narrow phone. It now rides its own row above
         // the scrubber in BottomControls, where it cannot crowd anything.
-        IconButton(onClick = { vm.setLocked(true) }) {
+        IconButton(onClick = onLock) {
             Icon(Icons.Default.Lock, stringResource(R.string.player_lock), tint = Color.White)
         }
-        IconButton(onClick = { vm.showPrintSheet() }) {
+        IconButton(onClick = onShowPrintSheet) {
             Icon(Icons.Default.ListAlt, stringResource(R.string.player_prints_tools), tint = Color.White)
         }
         }
@@ -1581,7 +1591,7 @@ private fun TopBar(vm: PlayerViewModel, state: PlayerUiState, onBack: () -> Unit
 }
 
 @Composable
-private fun CenterControls(state: PlayerUiState, vm: PlayerViewModel) {
+internal fun CenterControls(state: PlayerUiState, onTogglePlayPause: () -> Unit) {
     val chrome = PlayerChromeTheme.forId(state.playerTheme)
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         // App-design audit #4: three distinct states, never a bare play
@@ -1605,7 +1615,7 @@ private fun CenterControls(state: PlayerUiState, vm: PlayerViewModel) {
             }
         } else {
             Surface(color = chrome.chip, shape = CircleShape) {
-                IconButton(onClick = { vm.togglePlayPause() }, modifier = Modifier.size(72.dp)) {
+                IconButton(onClick = onTogglePlayPause, modifier = Modifier.size(72.dp)) {
                     Icon(
                         painter = if (state.isPlaying) painterResource(R.drawable.ic_player_pause) else painterResource(R.drawable.ic_player_play),
                         // CL-5: the centre control says "Pause video"/"Play video",
@@ -1642,10 +1652,13 @@ private fun CenterControls(state: PlayerUiState, vm: PlayerViewModel) {
  * never a hunt: one tap returns the full MX chrome.
  */
 @Composable
-private fun EdgeHud(
+internal fun EdgeHud(
     state: PlayerUiState,
-    vm: PlayerViewModel,
     onBack: () -> Unit,
+    onPlayFromStart: () -> Unit,
+    onTogglePlayPause: () -> Unit,
+    onToggleViewMode: () -> Unit,
+    onLock: () -> Unit,
 ) {
     val played = if (state.durationMs > 0) {
         (state.positionMs.toFloat() / state.durationMs).coerceIn(0f, 1f)
@@ -1717,7 +1730,7 @@ private fun EdgeHud(
                 // centre button now says "Play video", and this one is the
                 // centre button in Ghost mode, so it says the same.
                 label = if (state.isPlaying) stringResource(R.string.player_pause_centre) else stringResource(R.string.player_play_centre),
-                onClick = { if (state.isEnded) vm.playFrom(0) else vm.togglePlayPause() },
+                onClick = { if (state.isEnded) onPlayFromStart() else onTogglePlayPause() },
             ) {
                 Icon(
                     painter = if (state.isPlaying && !state.isBuffering) painterResource(R.drawable.ic_player_pause) else painterResource(R.drawable.ic_player_play),
@@ -1756,7 +1769,7 @@ private fun EdgeHud(
                 .padding(horizontal = 4.dp, vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            ControlTarget(label = stringResource(R.string.player_leave_cinema), onClick = { vm.toggleViewMode() }) {
+            ControlTarget(label = stringResource(R.string.player_leave_cinema), onClick = onToggleViewMode) {
                 Icon(
                     Icons.Default.LocalMovies,
                     null,
@@ -1764,7 +1777,7 @@ private fun EdgeHud(
                     modifier = Modifier.size(20.dp),
                 )
             }
-            ControlTarget(label = stringResource(R.string.player_lock), onClick = { vm.setLocked(true) }) {
+            ControlTarget(label = stringResource(R.string.player_lock), onClick = onLock) {
                 Icon(Icons.Default.Lock, null, tint = Color.White, modifier = Modifier.size(18.dp))
             }
         }
@@ -1772,13 +1785,23 @@ private fun EdgeHud(
 }
 
 @Composable
-private fun BottomControls(
+internal fun BottomControls(
     state: PlayerUiState,
-    vm: PlayerViewModel,
+    onPlayFromStart: () -> Unit,
+    onTogglePlayPause: () -> Unit,
+    onToggleMute: () -> Unit,
+    onShowSubtitleSheet: () -> Unit,
+    onShowQualitySheet: () -> Unit,
+    onToggleFullscreen: () -> Unit,
+    onShowMoreSheet: () -> Unit,
+    onSeekTo: (Long) -> Unit,
+    onSetUserVolume: (Float) -> Unit,
+    onSetAudioBoostLevel: (Float) -> Unit,
+    onKeepCurrent: () -> Unit,
     onEnterPip: () -> Unit,
     onActivity: () -> Unit,
     onScrubPreview: (Long) -> Unit = {},
-    onScrubCommit: (Long) -> Unit = { vm.seekTo(it) },
+    onScrubCommit: (Long) -> Unit,
     // SC §3: tapping an actor on the pause strip searches them, the same
     // route the detail screen's cast chips take.
     onActorClick: (String) -> Unit = {},
@@ -1836,7 +1859,7 @@ private fun BottomControls(
                         .fillMaxWidth()
                         .padding(start = 12.dp, end = 12.dp, top = 8.dp),
                 ) {
-                    KeepChip(state, vm)
+                    KeepChip(state, onKeepCurrent)
                 }
             }
             // F19b (Batch A): the seek bar and its time row only exist once the
@@ -1859,7 +1882,7 @@ private fun BottomControls(
                     bufferedMs = state.bufferedMs,
                     durationMs = state.durationMs,
                     enabled = state.seekEnabled,
-                    onSeek = { vm.seekTo(it) },
+                    onSeek = { onSeekTo(it) },
                     onScrubPreview = onScrubPreview,
                     onScrubCommit = onScrubCommit,
                     onActivity = onActivity,
@@ -1919,7 +1942,7 @@ private fun BottomControls(
                 // longer scrolls: six 48 dp buttons fit every phone, and a hidden
                 // seventh button would be a button that lies.
                 PlayerControlButton(
-                    { if (state.isEnded) vm.playFrom(0) else vm.togglePlayPause() },
+                    { if (state.isEnded) onPlayFromStart() else onTogglePlayPause() },
                     if (state.isPlaying) stringResource(R.string.player_pause) else stringResource(R.string.player_play),
                     shortLabel = if (state.isPlaying) stringResource(R.string.player_pause) else stringResource(R.string.player_play),
                 ) {
@@ -1930,7 +1953,7 @@ private fun BottomControls(
                     )
                 }
                 PlayerControlButton(
-                    { vm.toggleMute() },
+                    { onToggleMute() },
                     if (state.userVolume > 0f) stringResource(R.string.player_volume, volumePercent)
                     else stringResource(R.string.player_volume_muted),
                     onLongClick = { showVolumeDialog = true },
@@ -1953,7 +1976,7 @@ private fun BottomControls(
                     }
                 }
                 PlayerControlButton(
-                    { vm.showSubtitleSheet() },
+                    { onShowSubtitleSheet() },
                     stringResource(R.string.player_subtitles_label, subtitleWord),
                     selected = subtitleActive(state),
                     shortLabel = stringResource(R.string.player_subtitles_title),
@@ -1965,7 +1988,7 @@ private fun BottomControls(
                 // opening a sheet with one row. Six primaries, always.
                 if (state.canSwitchQuality) {
                     PlayerControlButton(
-                        { vm.showQualitySheet() },
+                        { onShowQualitySheet() },
                         stringResource(R.string.player_quality_label, state.qualityLabel),
                         selected = !state.qualityAuto,
                         shortLabel = stringResource(R.string.player_quality_title),
@@ -1993,7 +2016,7 @@ private fun BottomControls(
                     }
                 }
                 PlayerControlButton(
-                    { vm.toggleFullscreen() },
+                    { onToggleFullscreen() },
                     if (state.fullscreen) stringResource(R.string.player_exit_fullscreen)
                     else stringResource(R.string.player_fullscreen),
                     shortLabel = stringResource(R.string.player_fullscreen),
@@ -2007,7 +2030,7 @@ private fun BottomControls(
                     }
                 }
                 PlayerControlButton(
-                    { vm.showMoreSheet() },
+                    { onShowMoreSheet() },
                     stringResource(R.string.player_more),
                     shortLabel = stringResource(R.string.player_more),
                 ) {
@@ -2039,7 +2062,7 @@ private fun BottomControls(
                         )
                         Slider(
                             value = state.userVolume,
-                            onValueChange = { vm.setUserVolume(it) },
+                            onValueChange = { onSetUserVolume(it) },
                             valueRange = 0f..1f,
                             modifier = Modifier.fillMaxWidth(),
                         )
@@ -2057,7 +2080,7 @@ private fun BottomControls(
                             value = requestedBoost,
                             onValueChange = {
                                 requestedBoost = it
-                                vm.setAudioBoostLevel(it)
+                                onSetAudioBoostLevel(it)
                             },
                             valueRange = 0f..AudioBoost.MAX,
                             modifier = Modifier.fillMaxWidth(),
@@ -3148,7 +3171,7 @@ private fun SubtitleColourSwatch(colour: SubtitleColor, selected: Boolean, onSel
 // ── Keep chip — the signature "watching → keeping" affordance ─────────────────
 
 @Composable
-private fun KeepChip(state: PlayerUiState, vm: PlayerViewModel) {
+internal fun KeepChip(state: PlayerUiState, onKeepCurrent: () -> Unit) {
     val keep = state.keep
     if (keep is KeepUiState.Unavailable) return
     // App-design audit #7: pressing Play must never announce a background
@@ -3173,7 +3196,7 @@ private fun KeepChip(state: PlayerUiState, vm: PlayerViewModel) {
         shape = MaterialTheme.shapes.small,
         modifier = Modifier
             .padding(end = 6.dp)
-            .clickableNoRipple(onClick = { vm.keepCurrent() }),
+            .clickableNoRipple(onClick = onKeepCurrent),
     ) {
         Row(
             Modifier
