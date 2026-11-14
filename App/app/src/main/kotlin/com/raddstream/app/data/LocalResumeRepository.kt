@@ -84,7 +84,7 @@ class LocalResumeRepository @Inject constructor(
         if (durationMs <= 0) return
         dataStore.edit { preferences ->
             val key = stringPreferencesKey(localResumeKey(uri))
-            if (positionMs > 5_000 && positionMs < durationMs) {
+            if (positionMs > 0 && positionMs < durationMs) {
                 preferences[key] = formatLocalResume(positionMs, System.currentTimeMillis())
                 // asMap() keys are Key<*>: name them before pruning, which is keyed by name.
                 val stored = preferences.asMap()

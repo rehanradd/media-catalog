@@ -128,6 +128,7 @@
     <string name="player_this_print">this version</string>
     <string name="player_resume">Resume</string>
     <string name="player_start_over">Start over</string>
+    <string name="player_resume_chip">Resume from %1$s</string>
     <string name="player_calibration_title">Calibrate episode start</string>
     <string name="player_calibration_body">This file packs several episodes. Pause exactly where the target episode starts, then confirm.</string>
     <string name="player_episode_number">Episode number</string>

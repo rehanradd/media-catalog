@@ -1270,7 +1270,10 @@ class PlayerViewModel @Inject constructor(
             resume > RESUME_PROMPT_THRESHOLD_MS ->
                 _ui.update { it.copy(resumeOfferMs = resume, pendingResumeKey = resumeKey, pendingTitle = title) }
 
-            else -> loadNow(title, resumeKey, resumePosition = 0, override = null)
+            // Below the ask threshold the position is still real — a 4 s stop
+            // resumes silently at 4 s instead of being thrown away. The
+            // threshold only decides whether to ASK, never whether to keep.
+            else -> loadNow(title, resumeKey, resumePosition = resume, override = null)
         }
     }
 
@@ -1345,10 +1348,12 @@ class PlayerViewModel @Inject constructor(
         // Write under the key every reader consults — the opened handle, not the work key.
         val key = activeResumeKey ?: bundle.target.workKey ?: c.currentMediaItem?.mediaId ?: return
         val pos = c.currentPosition
-        if (pos > 5_000 && pos < c.duration) resumeByTarget[key] = pos else resumeByTarget.remove(key)
+        // Resume is exact: any position past 0 is kept (the old 5 s floor threw
+        // away a real stop 4 s in). A finished file still clears it.
+        if (pos > 0 && pos < c.duration) resumeByTarget[key] = pos else resumeByTarget.remove(key)
         // A local file's position must survive the process: the in-memory map dies
         // with it, so a device address is also written to the local resume store
-        // under the same guards (a finished or barely-started file clears it).
+        // under the same guards (a finished file clears it).
         if (isLocalResumeUri(key)) {
             viewModelScope.launch { localResumeRepository.savePosition(key, pos, c.duration) }
         }

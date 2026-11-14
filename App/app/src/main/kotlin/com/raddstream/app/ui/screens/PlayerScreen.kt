@@ -66,6 +66,7 @@ import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.BrightnessHigh
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.Forward10
@@ -493,6 +494,16 @@ private fun PlayerScreenContent(
             hud = null
         }
     }
+    // Resume chip (redesign): the offer auto-resolves to Resume after 3 s —
+    // playback already waits on the answer, so a viewer who does nothing is
+    // a viewer who wants to keep watching from where they stopped.
+    // resolveResume is idempotent, so a tap and the timer cannot double-fire.
+    LaunchedEffect(state.resumeOfferMs) {
+        if (state.resumeOfferMs != null) {
+            delay(3000)
+            vm.resolveResume(true)
+        }
+    }
     LaunchedEffect(snackbar) {
         if (snackbar != null) {
             delay(3000)
@@ -918,7 +929,13 @@ private fun PlayerScreenContent(
         }
 
         // 7 — dialogs & sheets (VM-flag driven so every entry point is centralized)
-        ResumeDialog(state, vm)
+        state.resumeOfferMs?.let { offer ->
+            ResumeChip(
+                offerMs = offer,
+                onResume = { vm.resolveResume(true) },
+                onStartOver = { vm.resolveResume(false) },
+            )
+        }
         state.calibration?.let { cal ->
             CalibrationDialog(
                 state = cal,
@@ -3203,31 +3220,42 @@ internal fun KeepChip(state: PlayerUiState, onKeepCurrent: () -> Unit) {
 
 // ── Dialogs ────────────────────────────────────────────────────────────────────
 
+/**
+ * The resume offer as a small chip above the bottom bar — never a centre
+ * dialog, never over the subtitle band. Tapping the chip (or the X, or
+ * doing nothing for ~3 s) resumes from where viewing stopped; "Start over"
+ * is the only way back to the beginning. The 3 s auto-dismiss lives in the
+ * caller's LaunchedEffect, so this is paint only.
+ */
 @Composable
-private fun ResumeDialog(state: PlayerUiState, vm: PlayerViewModel) {
-    val ms = state.resumeOfferMs ?: return
-    AlertDialog(
-        onDismissRequest = { vm.resolveResume(false) },
-        containerColor = RaddPlayerDialog,
-        title = { RaddDialogTitle(stringResource(R.string.player_resume_title), color = Color.White) },
-        text = {
-            Text(
-                stringResource(
-                    R.string.player_resume_body,
-                    ms.formatTime(),
-                    state.pendingTitle ?: stringResource(R.string.player_this_print),
-                ),
-                color = Color.White.copy(alpha = 0.8f),
-                fontSize = brandSp(14),
-            )
-        },
-        confirmButton = {
-            TextButton(onClick = { vm.resolveResume(true) }) { Text(stringResource(R.string.player_resume), color = RaddCurrent500) }
-        },
-        dismissButton = {
-            TextButton(onClick = { vm.resolveResume(false) }) { Text(stringResource(R.string.player_start_over), color = Color.White.copy(alpha = 0.7f)) }
-        },
-    )
+private fun ResumeChip(offerMs: Long, onResume: () -> Unit, onStartOver: () -> Unit) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
+        Surface(
+            color = RaddPlayerSnackbarPlate,
+            shape = MaterialTheme.shapes.large,
+            modifier = Modifier
+                .padding(start = 16.dp, end = 16.dp, bottom = 140.dp)
+                .clickableNoRipple(onResume),
+        ) {
+            Row(
+                Modifier.padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    stringResource(R.string.player_resume_chip, offerMs.formatTime()),
+                    color = Color.White,
+                    fontSize = brandSp(14),
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                TextButton(onClick = onStartOver) {
+                    Text(stringResource(R.string.player_start_over), color = RaddCurrent500)
+                }
+                IconButton(onClick = onResume, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Default.Close, stringResource(R.string.player_close), tint = Color.White.copy(alpha = 0.7f))
+                }
+            }
+        }
+    }
 }
 
 /**
