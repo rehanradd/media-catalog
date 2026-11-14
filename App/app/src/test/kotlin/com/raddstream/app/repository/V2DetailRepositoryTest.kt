@@ -123,6 +123,16 @@ class V2DetailRepositoryTest {
     }
 
     @Test
+    fun `a 200 response with no work is Unavailable instead of a null crash`() = runBlocking {
+        // CI on the round-2 branch: fetchWorkDetailV2 passed the nullable
+        // toPostDetail straight into V2DetailResult.Found, which needs a
+        // non-null detail. A response with no work cannot become a detail.
+        val (repository, _) = repositoryFor(WireWorkDetailResponse(ok = true, work = null))
+        assertTrue(repository.fetchWorkDetailV2(7681) is V2DetailResult.Unavailable)
+        assertNull(repository.getWorkDetailV2(7681))
+    }
+
+    @Test
     fun `fetchWorkDetailV2 surfaces TransientFailure on IOException instead of conflating with Unavailable`() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val settings = ServerSettingsRepository(context)

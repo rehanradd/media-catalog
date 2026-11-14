@@ -465,7 +465,11 @@ class CatalogRepository @Inject constructor(
                 }
             }
         }
-        return V2DetailResult.Found(response.toPostDetail(baseUrl, v1PostId, castNames, seasonArtwork))
+        // toPostDetail answers null when the v2 response carries no work —
+        // a 200 that cannot become a detail is unavailable, not a crash.
+        val detail = response.toPostDetail(baseUrl, v1PostId, castNames, seasonArtwork)
+            ?: return V2DetailResult.Unavailable
+        return V2DetailResult.Found(detail)
     }
 
     /**
