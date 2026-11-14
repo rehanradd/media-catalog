@@ -1,6 +1,7 @@
 package com.raddstream.app.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.heightIn
@@ -19,7 +20,9 @@ import app.cash.paparazzi.Paparazzi
 import com.raddstream.app.network.models.CoverageType
 import com.raddstream.app.network.models.FacetEntry
 import com.raddstream.app.network.models.FacetsResponse
+import com.raddstream.app.network.models.LinkState
 import com.raddstream.app.network.models.PanelBroadcast
+import com.raddstream.app.network.models.Playability
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.network.models.PostDetail
 import com.raddstream.app.network.models.ReleaseLabelParsing
@@ -28,6 +31,7 @@ import com.raddstream.app.player.QualityOption
 import com.raddstream.app.ui.components.PosterCard
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.screens.DetailContent
+import com.raddstream.app.ui.screens.EpisodeRow
 import com.raddstream.app.ui.screens.HomeContent
 import com.raddstream.app.ui.screens.RungActions
 import com.raddstream.app.ui.theme.RaddStreamTheme
@@ -35,6 +39,7 @@ import com.raddstream.app.viewmodel.EpisodeGroup
 import com.raddstream.app.viewmodel.EpisodeProgress
 import com.raddstream.app.viewmodel.HomeSection
 import com.raddstream.app.viewmodel.HomeUiState
+import com.raddstream.app.viewmodel.RankedLink
 import com.raddstream.app.viewmodel.RankedPrint
 import com.raddstream.app.viewmodel.ResumePoint
 import com.raddstream.app.viewmodel.ResumeTile
@@ -317,7 +322,23 @@ class PaparazziPreviewTest {
             season = season,
             episodeFrom = null,
             episodeTo = null,
-            links = emptyList(),
+            // One healthy, directly playable link: a print with no links renders
+            // as "Not available to stream yet", which is the download-only
+            // state — the shot must judge the Play state real viewers see.
+            links = listOf(
+                RankedLink(
+                    streamId = "h-$releaseId",
+                    linkId = releaseId,
+                    health = LinkState.ACTIVE,
+                    ephemeral = false,
+                    resumable = true,
+                    playUrl = "http://example.invalid/play/$releaseId",
+                    label = "Fast direct",
+                    kind = "direct",
+                    playability = Playability.STREAM,
+                    score = 100,
+                ),
+            ),
         )
 
     private fun fakeOption(band: String, title: String = band, playsHere: Boolean = true) =
@@ -556,6 +577,67 @@ class PaparazziPreviewTest {
                     onShare = {},
                     contentPadding = PaddingValues(0.dp),
                 )
+            }
+        }
+    }
+
+    // The episode rows live below the fold of the full detail page (the
+    // LazyColumn only composes the viewport), so they get their own shot:
+    // a watched episode, one in progress, and one never started.
+    @Test
+    fun detailSeriesEpisodes() {
+        val season1 = seriesSeasons.first()
+        paparazzi.snapshot {
+            themed {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    EpisodeRow(
+                        episode = season1.episodes[0],
+                        progress = EpisodeProgress(fraction = 1.0f, watched = true, remainingLabel = null),
+                        onPlayPrint = {},
+                        onOpenExternal = {},
+                        onKeep = {},
+                        scopeLabel = "Season 1 · Episode 1",
+                        canChooseQuality = true,
+                        showQuality = false,
+                        onChooseQuality = {},
+                        rungs = movieRungs,
+                    )
+                    EpisodeRow(
+                        episode = season1.episodes[1],
+                        progress = EpisodeProgress(fraction = 0.4f, watched = false, remainingLabel = "20 min left"),
+                        onPlayPrint = {},
+                        onOpenExternal = {},
+                        onKeep = {},
+                        scopeLabel = "Season 1 · Episode 2",
+                        canChooseQuality = true,
+                        showQuality = false,
+                        onChooseQuality = {},
+                        rungs = movieRungs,
+                    )
+                    EpisodeRow(
+                        episode = EpisodeGroup(
+                            season = 1,
+                            numberWithinSeason = 3,
+                            absoluteNumber = 3,
+                            title = "Part 3",
+                            prints = listOf(
+                                fakePrint(206, "Money Heist S01E03 1080p WEB-DL", "1080p", season = 1),
+                            ),
+                        ),
+                        progress = null,
+                        onPlayPrint = {},
+                        onOpenExternal = {},
+                        onKeep = {},
+                        scopeLabel = "Season 1 · Episode 3",
+                        canChooseQuality = false,
+                        showQuality = false,
+                        onChooseQuality = {},
+                        rungs = movieRungs,
+                    )
+                }
             }
         }
     }

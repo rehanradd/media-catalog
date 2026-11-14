@@ -122,6 +122,17 @@ jobs:
           ./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug \
             --no-daemon --stacktrace --continue --console=plain
 
+      - name: "📸 Verify Paparazzi goldens (explicit gate)"
+        working-directory: App
+        # testDebugUnitTest does NOT fail on missing or stale goldens (proven
+        # 2026-11-15: main-ci went green twice with uncommitted snapshots),
+        # so the goldens gate on nothing unless this task runs. verify fails
+        # the build when a render differs from its golden or one is missing —
+        # that is the onboarding flow: record, commit the PNGs, then green.
+        run: |
+          ./gradlew :app:verifyPaparazziDebug \
+            --no-daemon --stacktrace --console=plain
+
       - name: 📤 Upload debug APK
         if: always()   # assembleDebug may succeed while tests/lint fail — the APK is the most useful output
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2

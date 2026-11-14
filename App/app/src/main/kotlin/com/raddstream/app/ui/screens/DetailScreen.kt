@@ -1610,7 +1610,7 @@ private fun PackedSeasonBanner(season: SeasonGroup, onPlay: (RankedPrint) -> Uni
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun EpisodeRow(
+internal fun EpisodeRow(
     episode: EpisodeGroup,
     /** This episode's progress on this device — null when never watched. */
     progress: EpisodeProgress?,
