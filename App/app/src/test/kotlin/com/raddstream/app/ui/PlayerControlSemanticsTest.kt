@@ -329,7 +329,9 @@ class PlayerControlSemanticsTest {
         val topBarEnd = source.indexOf("\n@Composable\ninternal fun CenterControls(", topBarStart)
         assertTrue("TopBar bounds missing", topBarStart >= 0 && topBarEnd > topBarStart)
         val topBar = source.substring(topBarStart, topBarEnd)
-        assertTrue("TopBar must offer the Lock control", topBar.contains("onLock()"))
+        // onLock is passed as a function reference (onClick = onLock), not
+        // invoked in the body, so the check names the wiring, not a call.
+        assertTrue("TopBar must offer the Lock control", topBar.contains("onClick = onLock"))
         assertTrue("TopBar Lock control must announce player_lock", topBar.contains("R.string.player_lock"))
 
         val coach = functionBody("private fun PlayerCoachOverlay(")
