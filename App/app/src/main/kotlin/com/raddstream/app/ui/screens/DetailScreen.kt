@@ -527,8 +527,11 @@ private fun KeepConfirmDialog(
 /**
  * The quality switch and the download card as one bundle: the same rows render under the work
  * and under an episode, so a series never inherits another episode's links by accident.
+ *
+ * Internal (not private) so the Paparazzi snapshots can build a Detail page from fake
+ * state — the same reason DetailContent is internal.
  */
-private data class RungActions(
+internal data class RungActions(
     val ladder: LadderForScope,
     val selectedBand: String?,
     val onPlay: (QualityOption) -> Unit,
@@ -681,7 +684,7 @@ private fun DetailErrorHeader(post: Post, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun DetailContent(
+internal fun DetailContent(
     post: PostDetail,
     seasons: List<SeasonGroup>,
     workPrints: List<RankedPrint>,
