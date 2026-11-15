@@ -342,22 +342,18 @@ internal fun HomeContent(
         // Gap A5: the sync/status line — how fresh the rows below are, or
         // that they are saved rows on an offline phone. Nothing until Home
         // has ever loaded, so a first launch never dates an empty page.
+        // M10 (home review, Nov 2026): one refresh control. This line used
+        // to carry its own "Refresh" button next to the freshness it
+        // refreshes — a duplicate of the top-bar refresh icon that read as
+        // a debug leftover. The line now carries freshness only; the
+        // top-bar icon is the single refresh control.
         homeSyncLine(state.lastHomeSyncMs, state.isOffline, System.currentTimeMillis())?.let { line ->
-            Row(
+            Text(
+                text = line,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = line,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f),
-                )
-                // P1-H6: the top-bar refresh icon had no visible meaning —
-                // a mystery circular arrow. The sync line now carries a
-                // plain "Refresh" button next to the freshness it refreshes.
-                TextButton(onClick = onRefresh) { Text("Refresh") }
-            }
+            )
             Spacer(Modifier.height(8.dp))
         }
 
