@@ -729,6 +729,40 @@ class TiersQuarantineTests(unittest.TestCase):
         self.assertEqual(mixed["tiers"][0]["link"]["stream_id"], "good")
 
 
+class GetDbOptimizeTests(unittest.TestCase):
+    """viewer.get_db() runs PRAGMA optimize on close (Session 153): the
+    close path must stay clean even when optimize has nothing to do."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.db_path = Path(self.tmp.name) / "viewer.db"
+        conn = sqlite3.connect(str(self.db_path))
+        conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)")
+        conn.execute("CREATE INDEX idx_t_v ON t (v)")
+        conn.execute("INSERT INTO t VALUES (1, 'a'), (2, 'b')")
+        conn.commit()
+        conn.close()
+        for patcher in (mock.patch.object(viewer, "DB_PATH", self.db_path),):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_close_is_clean_and_the_connection_reopens(self):
+        with viewer.get_db() as conn:
+            rows = conn.execute("SELECT COUNT(*) FROM t").fetchone()[0]
+        self.assertEqual(rows, 2)
+        with viewer.get_db() as conn:
+            rows = conn.execute("SELECT COUNT(*) FROM t").fetchone()[0]
+        self.assertEqual(rows, 2)
+
+    def test_optimize_runs_on_a_real_connection(self):
+        conn = sqlite3.connect(str(self.db_path))
+        try:
+            conn.execute("PRAGMA optimize")
+        finally:
+            conn.close()
+
+
 class OptionGroupsVerifyTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

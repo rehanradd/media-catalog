@@ -1963,6 +1963,19 @@ def _finalize(conn, works, work_ids, now, counters) -> None:
         )
         """
     )
+    # 2026-11-15, SQLite report #4: ANALYZE after the bulk load, so the
+    # planner's stats (sqlite_stat1) reflect the tables the projection just
+    # rebuilt — the FTS/needle/bridge rebuilds and the roll-ups all change
+    # row counts, and stale stats are what turn an indexed lookup into a
+    # full scan. Runs after every write in this function, before the final
+    # commit. A failure is a warning, never a gate (same pattern as the FTS
+    # / needle / bridge blocks above).
+    try:
+        conn.execute("ANALYZE")
+        stat_rows = conn.execute("SELECT COUNT(*) FROM sqlite_stat1").fetchone()[0]
+        _stage(conn, "analyze: %d stat rows" % stat_rows)
+    except Exception as ex:  # noqa: BLE001 — stats are an accelerator, not a gate
+        _progress(f"analyze skipped: {ex}")
     conn.commit()
 
 

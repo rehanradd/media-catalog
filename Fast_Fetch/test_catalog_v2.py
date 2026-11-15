@@ -1944,6 +1944,28 @@ class NeedleSnapshotProjectionTests(ProjectionTestCase):
         self.assertIn("zzsnapshotprobe", redact.site_needles(str(self.db_path)))
 
 
+class AnalyzeProjectionTests(ProjectionTestCase):
+    """The projection runs ANALYZE after the bulk load (Session 153), so the
+    planner's stats reflect the tables it just rebuilt."""
+
+    def test_projection_writes_planner_stats(self):
+        self.add_post("vegamovies", "https://vega.test/analyze-film/",
+                      clean_title="Analyze Film", year=2024,
+                      releases=[{"release_title": "Analyze Film 1080p",
+                                 "quality": "1080p",
+                                 "sources": [{"source_name": "Analyze Mirror",
+                                              "service": "analyzesvc",
+                                              "resource_id": "x",
+                                              "source_url": "https://an.test/f/1",
+                                              "final_url": "https://an.test/f/1",
+                                              "playback_type": "direct",
+                                              "is_temporary": 0,
+                                              "status": "active"}]}])
+        self.project()
+        rows = self.conn.execute("SELECT COUNT(*) FROM sqlite_stat1").fetchone()[0]
+        self.assertGreater(rows, 0)
+
+
 class LanguageBridgeProjectionTests(ProjectionTestCase):
     """The projection builds the language bridge (Session 151) so a Hindi
     browse reads one indexed EXISTS instead of a correlated scan over 1.7M

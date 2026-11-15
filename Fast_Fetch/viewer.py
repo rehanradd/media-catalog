@@ -243,6 +243,15 @@ def get_db():
         conn.rollback()
         raise
     finally:
+        # 2026-11-15, SQLite report #4: PRAGMA optimize on connection close.
+        # It is designed for exactly this — it only does work when the
+        # planner's stats are stale (a few microseconds when there is nothing
+        # to do), and it keeps the query plans honest between ANALYZE runs.
+        # Guarded so a failed optimize can never break the close path.
+        try:
+            conn.execute("PRAGMA optimize")
+        except Exception:  # noqa: BLE001 — optimize is best-effort
+            pass
         conn.close()
 
 
