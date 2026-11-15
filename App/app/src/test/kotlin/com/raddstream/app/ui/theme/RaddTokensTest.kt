@@ -49,14 +49,17 @@ class RaddTokensTest {
     }
 
     @Test
-    fun navIndicatorKeepsTheRoboMeasuredSizes() {
-        // Session 154 (N-2): the 64×48dp pill and 80dp tab are deliberate,
-        // not spec drift — Robo runs 4–6 measured the 32dp pill under the
-        // 48dp touch floor. These pin the token; BottomNavTouchTargetTest
-        // pins the rendered bar.
-        assertEquals(64.dp, RaddTokens.Touch.NavIndicatorWidth)
-        assertEquals(48.dp, RaddTokens.Touch.NavIndicatorHeight)
-        assertEquals(80.dp, RaddTokens.Touch.NavTabHeight)
+    fun navIndicatorKeepsTheExpressivePillSizes() {
+        // Density-nav (2026-11-15): the 56x32dp pill and 64dp tab are the
+        // M3 Expressive sizes. The Session 154 (N-2) pin (64x48 pill, 80dp
+        // tab) is superseded: it treated the pill as the touch target, but
+        // the pill is visual only — the TAB is the touch target (64dp,
+        // above the 48dp floor, pinned by BottomNavTouchTargetTest). Visual
+        // size is not touch size; a 32dp-tall pill inside a 64dp tab is a
+        // 64dp target.
+        assertEquals(56.dp, RaddTokens.Touch.NavIndicatorWidth)
+        assertEquals(32.dp, RaddTokens.Touch.NavIndicatorHeight)
+        assertEquals(64.dp, RaddTokens.Touch.NavTabHeight)
     }
 
     @Test
