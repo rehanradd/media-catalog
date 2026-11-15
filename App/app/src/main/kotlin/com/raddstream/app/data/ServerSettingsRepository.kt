@@ -435,24 +435,6 @@ class ServerSettingsRepository @Inject constructor(
     }
 
     /**
-     * The app major version the first-run gesture coach was last shown for, or null
-     * when it has never been shown. The coach shows once per major version (plan §5
-     * step 7): first open ever, and once again after a major version change — a
-     * minor update must not re-teach gestures the viewer already knows. The stored
-     * value is a major version ("1"), never the full version name, so 1.0.4 → 1.1.0
-     * does not re-show. Written when the coach is dismissed or its 4 s timer ends.
-     */
-    val coachSeenVersion: Flow<String?> = dataStore.data.map { preferences ->
-        preferences[COACH_SEEN_VERSION_KEY]
-    }
-
-    suspend fun saveCoachSeenVersion(majorVersion: String) {
-        dataStore.edit { preferences ->
-            preferences[COACH_SEEN_VERSION_KEY] = majorVersion
-        }
-    }
-
-    /**
      * Player defaults (plan §5 step 10, P36): the viewer's own switches, not the
      * operator's. Autoplay-next defaults ON (plan D4, Netflix's default) — the switch
      * in Settings is the promise, and the player reads this flow before advancing.
@@ -1137,7 +1119,6 @@ class ServerSettingsRepository @Inject constructor(
         private val FIRST_BROWSE_DONE_KEY = booleanPreferencesKey("first_browse_done")
         private val LOGIN_STREAK_LAST_DAY_KEY = longPreferencesKey("login_streak_last_day")
         private val LOGIN_STREAK_COUNT_KEY = intPreferencesKey("login_streak_count")
-        private val COACH_SEEN_VERSION_KEY = stringPreferencesKey("player_coach_seen_version")
         private val AUTOPLAY_NEXT_KEY = booleanPreferencesKey("player_autoplay_next")
         private val AUTO_PIP_KEY = booleanPreferencesKey("player_auto_pip")
         private val AUTOPLAY_PREVIEWS_KEY = booleanPreferencesKey("player_autoplay_previews")

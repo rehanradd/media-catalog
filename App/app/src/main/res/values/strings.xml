@@ -47,6 +47,8 @@
     <!-- F29 (Batch B): the mark in place of the scrubber on a live stream — a
          live picture has no time row, so the viewer still sees what it is. -->
     <string name="player_live">Live</string>
+    <!-- Mockup: a live channel's top-bar subtitle — "Live Broadcast • HLS". -->
+    <string name="player_live_broadcast">Live Broadcast</string>
     <string name="player_paused">Paused</string>
     <string name="player_leave_cinema">Leave cinema mode</string>
     <string name="player_lock">Lock controls</string>
@@ -137,13 +139,6 @@
     <string name="player_go">Go</string>
     <string name="player_speed_title">Playback speed (pitch preserved)</string>
     <string name="player_boost_note">Long-press the video any time for a 2× boost — releasing restores this speed.</string>
-    <string name="player_coach_title">Quick gestures</string>
-    <string name="player_coach_double_tap">Double-tap the sides to skip 10 seconds</string>
-    <string name="player_coach_swipe">Swipe the left edge for brightness, the right edge for volume</string>
-    <string name="player_coach_scrub">Drag sideways anywhere to scrub through the timeline</string>
-    <string name="player_coach_pinch">Pinch to zoom between Fit and Fill</string>
-    <string name="player_coach_long_press">Long-press to play at 2× speed</string>
-    <string name="player_coach_got_it">Got it</string>
     <string name="player_quality_title">Quality</string>
     <string name="player_quality_auto">Auto (recommended)</string>
     <string name="player_quality_auto_detail">Chosen from what your connection is actually moving</string>

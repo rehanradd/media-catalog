@@ -245,7 +245,7 @@ class PlayerControlSemanticsTest {
             "onTogglePlayPause()" to "Play/Pause",
             "onToggleMute()" to "Volume",
             "onShowSubtitleSheet()" to "Subtitles",
-            "onShowQualitySheet()" to "Quality",
+            "QualityPill(" to "Quality",
             "onToggleFullscreen()" to "Fullscreen",
             "onShowMoreSheet()" to "More",
         ).forEach { (call, name) ->
@@ -437,7 +437,7 @@ class PlayerControlSemanticsTest {
     }
 
     @Test
-    fun `the top bar carries the lock action and the coach overlay covers scrub and pinch`() {
+    fun `the top bar carries the lock action and the gesture coach is gone`() {
         val topBarStart = source.indexOf("internal fun TopBar(")
         val topBarEnd = source.indexOf("\n@Composable\ninternal fun CenterSpinner(", topBarStart)
         assertTrue("TopBar bounds missing", topBarStart >= 0 && topBarEnd > topBarStart)
@@ -447,9 +447,21 @@ class PlayerControlSemanticsTest {
         assertTrue("TopBar must offer the Lock control", topBar.contains("onClick = onLock"))
         assertTrue("TopBar Lock control must announce player_lock", topBar.contains("R.string.player_lock"))
 
-        val coach = functionBody("private fun PlayerCoachOverlay(")
-        assertTrue("Coach overlay must include scrub hint", coach.contains("R.string.player_coach_scrub"))
-        assertTrue("Coach overlay must include pinch hint", coach.contains("R.string.player_coach_pinch"))
-        assertTrue("Coach overlay must offer Got it dismiss action", coach.contains("R.string.player_coach_got_it"))
+        // Mockup (Stitch player redesign): the first-run gesture coach is
+        // deleted — the gestures stay, the popup never shows again. Nothing
+        // in the screen may reference it, its strings, or its ViewModel half.
+        listOf(
+            "PlayerCoachOverlay", "CoachHintRow", "player_coach_", "showCoach",
+            "markCoachSeen", "coachVisible", "coachDismissed",
+        ).forEach { gone ->
+            assertFalse(
+                "PlayerScreen still carries $gone — the gesture coach was removed",
+                source.contains(gone),
+            )
+        }
+        // The mockup's centre transport exists, and the top bar names live.
+        assertTrue("the centre play/pause button is missing", source.contains("CenterPlayPause("))
+        assertTrue("TopBar must badge a live channel", topBar.contains("state.isLive"))
+        assertTrue("TopBar live badge must say Live", topBar.contains("R.string.player_live"))
     }
 }

@@ -64,7 +64,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Bedtime
-import androidx.compose.material.icons.filled.BrightnessHigh
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
@@ -83,13 +82,10 @@ import androidx.compose.material.icons.filled.PictureInPicture
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.Speed
-import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.VolumeMute
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.WifiOff
-import androidx.compose.material.icons.filled.ZoomOutMap
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -355,9 +351,6 @@ private fun PlayerScreenContent(
         onDispose { scrubPreviewPlayer?.release() }
     }
 
-    val showCoach by vm.showCoach.collectAsState()
-    var coachDismissed by remember { mutableStateOf(false) }
-
     // PL-10: the PiP window follows the video's own shape, and the source rect is
     // the surface's own bounds — the window grows out of the picture, not the corner.
     var pipSourceRect by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
@@ -460,19 +453,6 @@ private fun PlayerScreenContent(
         if (controlsVisible && state.isPlaying && !state.dialogBlocking) {
             delay(3000)
             if (state.isPlaying) controlsVisible = false
-        }
-    }
-
-    // First-run gesture coach (plan §5 step 7): owed once per major version, shown
-    // only once the picture is actually moving — never over a loading notice, an error,
-    // a dialog, a sheet, or a locked player. Four seconds, then never again this version.
-    val coachVisible = showCoach && !coachDismissed && !state.dialogBlocking &&
-        !state.moreSheetVisible && !state.locked && state.connectionError == null && state.isPlaying
-    LaunchedEffect(coachVisible) {
-        if (coachVisible) {
-            delay(4000)
-            coachDismissed = true
-            vm.markCoachSeen()
         }
     }
 
@@ -663,6 +643,11 @@ private fun PlayerScreenContent(
                 TopBar(state = state, onBack = onBackClick, onLock = { vm.setLocked(true) }, onShowPrintSheet = { vm.showPrintSheet() })
                 if (controlsVisible) {
                     CenterSpinner(state)
+                    CenterPlayPause(
+                        state,
+                        onTogglePlayPause = { vm.togglePlayPause() },
+                        onPlayFromStart = { vm.playFrom(0) },
+                    )
                     BottomControls(
                         state = state,
                         onPlayFromStart = { vm.playFrom(0) },
@@ -994,17 +979,6 @@ private fun PlayerScreenContent(
             }
         }
 
-        // 9 — first-run gesture coach (plan §5 step 7): once per major version, 4 s,
-        // any tap dismisses. Sits above the chrome and the narration cards; sheets and
-        // dialogs are gated out by the visibility rule above, so it never covers one.
-        if (coachVisible) {
-            PlayerCoachOverlay(
-                onDismiss = {
-                    coachDismissed = true
-                    vm.markCoachSeen()
-                },
-            )
-        }
     }
 }
 
@@ -1559,25 +1533,38 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
                 // is a rank ("Rank #1"), not a rung — printing it would repeat the
                 // title's job badly. The tags are still worth showing on their own,
                 // and the line is dropped entirely when there is nothing to say.
-                val subtitle = buildString {
-                    state.titleYear?.let { append(it.toString()) }
-                    print.displayLabel().takeIf { looksLikeQualityLabel(it) }?.let {
-                        if (isNotEmpty()) append(" · ")
-                        append(it)
+                // Mockup: a live channel's subtitle is the broadcast, not the
+                // title's metadata — "Live Broadcast • HLS". No year, no rung:
+                // a live picture has neither to print.
+                val subtitle = if (state.isLive) {
+                    buildString {
+                        append(stringResource(R.string.player_live_broadcast))
+                        if (print.playback.isHls()) {
+                            append(" · ")
+                            append(hlsTag)
+                        }
                     }
-                    if (print.playback.isHls()) {
-                        if (isNotEmpty()) append(" · ")
-                        append(hlsTag)
-                    }
-                    if (print.playback.ephemeral) {
-                        if (isNotEmpty()) append(" · ")
-                        append(expiringTag)
-                    }
-                    // Says out loud that the rung shown is Auto's current choice, so a
-                    // quality that moves on its own is never mistaken for a hand-picked one.
-                    autoTag?.let {
-                        if (isNotEmpty()) append(" · ")
-                        append(it)
+                } else {
+                    buildString {
+                        state.titleYear?.let { append(it.toString()) }
+                        print.displayLabel().takeIf { looksLikeQualityLabel(it) }?.let {
+                            if (isNotEmpty()) append(" · ")
+                            append(it)
+                        }
+                        if (print.playback.isHls()) {
+                            if (isNotEmpty()) append(" · ")
+                            append(hlsTag)
+                        }
+                        if (print.playback.ephemeral) {
+                            if (isNotEmpty()) append(" · ")
+                            append(expiringTag)
+                        }
+                        // Says out loud that the rung shown is Auto's current choice, so a
+                        // quality that moves on its own is never mistaken for a hand-picked one.
+                        autoTag?.let {
+                            if (isNotEmpty()) append(" · ")
+                            append(it)
+                        }
                     }
                 }
                 if (subtitle.isNotBlank()) {
@@ -1592,6 +1579,32 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
                     )
                 }
             }
+        }
+        // Mockup: the live badge rides the top bar, jade on dark — the same
+        // live fact the bottom row prints, so a viewer who opens the chrome
+        // sees it at the top too. Never on a VOD.
+        if (state.isLive) {
+            Row(
+                modifier = Modifier
+                    .border(1.dp, RaddCurrent500, RoundedCornerShape(8.dp))
+                    .background(Color.Black.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Box(
+                    Modifier
+                        .size(6.dp)
+                        .background(RaddCurrent500, CircleShape),
+                )
+                Text(
+                    text = stringResource(R.string.player_live).uppercase(),
+                    color = RaddCurrent500,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            Spacer(Modifier.width(6.dp))
         }
         if (state.sleep.mode == SleepMode.COUNTDOWN) {
             Icon(
@@ -1626,10 +1639,12 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
 }
 
 /**
- * The centre of the picture holds exactly one thing, and only while the picture is not
- * there yet: the buffering spinner. There is no centre play/pause button — everybody
- * knows when a video is stopped or playing, and the frozen picture is the feedback;
- * transport lives only in the bottom bar. (Ghost mode already proved this shape.)
+ * The centre of the picture holds exactly one thing while the picture is not
+ * there yet: the buffering spinner. Once playback is under way the centre
+ * belongs to [CenterPlayPause] — the frosted play/pause button — and this
+ * spinner stands down, so the two never overlap. (Ghost mode already proved
+ * the spinner-only shape; the mockup redesign puts transport on the picture
+ * too, where the thumb already is.)
  */
 @Composable
 internal fun CenterSpinner(state: PlayerUiState) {
@@ -1655,6 +1670,53 @@ internal fun CenterSpinner(state: PlayerUiState) {
                     color = Color.White,
                     strokeWidth = 4.dp,
                     modifier = Modifier.size(56.dp),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The mockup's centre transport: one large frosted play/pause button on the
+ * picture, visible whenever the chrome is up and the picture is actually
+ * playing or paused — never over a start card (the card narrates the wait)
+ * and never over the buffering spinner (the two would stack). A tap here
+ * toggles play/pause only: the button sits in the chrome layer above the
+ * gesture plane, so the tap is consumed here and never also toggles the
+ * chrome. When the chrome auto-hides, the button goes with it and the
+ * picture is clean. An ended title restarts from the beginning, the same
+ * rule the bottom bar's play button follows.
+ */
+@Composable
+internal fun CenterPlayPause(
+    state: PlayerUiState,
+    onTogglePlayPause: () -> Unit,
+    onPlayFromStart: () -> Unit,
+) {
+    if (state.startPhase != StartPhase.NONE || state.isBuffering) return
+    val label = stringResource(
+        if (state.isPlaying) R.string.player_pause else R.string.player_play,
+    )
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Surface(
+            color = Color.Black.copy(alpha = 0.55f),
+            shape = CircleShape,
+            modifier = Modifier
+                .size(88.dp)
+                .clickable(
+                    onClick = { if (state.isEnded) onPlayFromStart() else onTogglePlayPause() },
+                    role = Role.Button,
+                )
+                .semantics { contentDescription = label },
+        ) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Icon(
+                    painter = painterResource(
+                        if (state.isPlaying) R.drawable.ic_player_pause else R.drawable.ic_player_play,
+                    ),
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(40.dp),
                 )
             }
         }
@@ -1839,7 +1901,6 @@ internal fun BottomControls(
 ) {
     var showVolumeDialog by remember { mutableStateOf(false) }
     val chrome = PlayerChromeTheme.forId(state.playerTheme)
-    val context = LocalContext.current
     val bottomGradient = Brush.verticalGradient(
         colors = listOf(
             Color.Transparent,
@@ -1951,7 +2012,7 @@ internal fun BottomControls(
                     )
                 }
             } else if (state.isLive) {
-                LiveMark()
+                LiveProgressRow(state)
             }
             Row(
                 Modifier
@@ -2011,34 +2072,14 @@ internal fun BottomControls(
                 }
                 // 25c: the Quality primary never vanishes — on a single-rung title
                 // it stays visible, dimmed, and tapping it says why instead of
-                // opening a sheet with one row. Six primaries, always.
-                if (state.canSwitchQuality) {
-                    PlayerControlButton(
-                        { onShowQualitySheet() },
-                        stringResource(R.string.player_quality_label, state.qualityLabel),
-                        selected = !state.qualityAuto,
-                    ) {
-                        Icon(
-                            painterResource(R.drawable.ic_player_quality),
-                            null,
-                            tint = if (state.qualityAuto) Color.White else RaddCurrent500,
-                        )
-                    }
-                } else {
-                    // Single rung: the button stays, dimmed, and tapping it says
-                    // why instead of opening a sheet with one row. It is not
-                    // disabled in the clickable sense — a dead tap explains nothing.
-                    PlayerControlButton(
-                        { onMessage(context.getString(R.string.player_quality_single)) },
-                        stringResource(R.string.player_quality_label, state.qualityLabel),
-                    ) {
-                        Icon(
-                            painterResource(R.drawable.ic_player_quality),
-                            null,
-                            tint = Color.White.copy(alpha = 0.4f),
-                        )
-                    }
-                }
+                // opening a sheet with one row. Six primaries, always. The
+                // mockup prints the rung as a text pill ("1080P") instead of
+                // an icon, so the quality reads without opening the sheet.
+                QualityPill(
+                    state = state,
+                    onShowQualitySheet = onShowQualitySheet,
+                    onMessage = onMessage,
+                )
                 PlayerControlButton(
                     { onToggleFullscreen() },
                     if (state.fullscreen) stringResource(R.string.player_exit_fullscreen)
@@ -2208,6 +2249,61 @@ private fun PlayerControlButton(
     }
 }
 
+/**
+ * Mockup: quality is a text pill, not an icon — the rung itself ("1080P",
+ * "Auto") is the label, so the viewer reads the quality without opening
+ * the sheet. Same press contract as the other primaries (48dp minimum,
+ * Button role, spoken label), only the shape is a rounded rectangle, so it
+ * cannot ride [ControlTarget]'s circle clip. Single rung: the pill stays,
+ * dimmed, and tapping it says why instead of opening a sheet with one row
+ * — the 25c rule, unchanged. A hand-picked rung prints jade, Auto white.
+ */
+@Composable
+private fun QualityPill(
+    state: PlayerUiState,
+    onShowQualitySheet: () -> Unit,
+    onMessage: (String) -> Unit,
+) {
+    val context = LocalContext.current
+    val label = stringResource(R.string.player_quality_label, state.qualityLabel)
+    val dimmed = !state.canSwitchQuality
+    val textColor = when {
+        dimmed -> Color.White.copy(alpha = 0.4f)
+        !state.qualityAuto -> RaddCurrent500
+        else -> Color.White
+    }
+    val borderColor = when {
+        dimmed -> Color.White.copy(alpha = 0.25f)
+        !state.qualityAuto -> RaddCurrent500
+        else -> Color.White.copy(alpha = 0.4f)
+    }
+    Box(
+        modifier = Modifier
+            .heightIn(min = MinControlTarget)
+            .clip(RoundedCornerShape(8.dp))
+            .border(1.dp, borderColor, RoundedCornerShape(8.dp))
+            .background(Color.Black.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+            .clickable(
+                onClick = {
+                    if (state.canSwitchQuality) onShowQualitySheet()
+                    else onMessage(context.getString(R.string.player_quality_single))
+                },
+                role = Role.Button,
+            )
+            .semantics { contentDescription = label }
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = state.qualityLabel,
+            color = textColor,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
+    }
+}
+
 /** Thin MX scrubber: grey track, brighter buffered segment, theme played segment + thumb. */
 @Composable
 private fun Scrubber(
@@ -2296,18 +2392,15 @@ private fun Scrubber(
         }
         val isDragging = draggingTargetMs != null
         val thumbSize = if (isDragging) 20.dp else 16.dp
+        // Mockup: the thumb carries its white ring at rest, not only while
+        // dragging — the ring is what separates the jade dot from the jade
+        // line underneath it.
         Box(
             Modifier
                 .align(Alignment.CenterStart)
                 .offset(x = (maxWidth * posFraction.coerceIn(0f, 0.98f)) - (thumbSize - 16.dp) / 2)
                 .size(thumbSize)
-                .then(
-                    if (isDragging) {
-                        Modifier.border(2.dp, Color.White, CircleShape)
-                    } else {
-                        Modifier
-                    },
-                )
+                .border(2.dp, Color.White, CircleShape)
                 .background(chrome.played, shape = CircleShape),
         )
         if (enabled && durationMs > 0) {
@@ -2606,103 +2699,6 @@ private fun LockedTimeChip(positionMs: Long, durationMs: Long, lowRam: Boolean, 
 }
 
 /**
- * First-run gesture coach (plan §5 step 7): the three hints the player teaches nowhere
- * else, on a dimmed scrim so they read over any frame. Any tap dismisses — the tap is
- * the lesson ending, not a control press — and the 4 s timer in [PlayerScreenContent]
- * dismisses it the same way. No icons: the words are the whole hint, and a fourth
- * visual language would be decoration on a teaching moment.
- */
-@Composable
-private fun PlayerCoachOverlay(onDismiss: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.65f))
-            .clickableNoRipple(onDismiss)
-            .padding(24.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Surface(
-            color = RaddPlayerDialog.copy(alpha = 0.94f),
-            shape = RoundedCornerShape(20.dp),
-            border = BorderStroke(1.dp, RaddCurrent500.copy(alpha = 0.45f)),
-            modifier = Modifier.widthIn(max = 420.dp),
-        ) {
-            Column(
-                modifier = Modifier.padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Text(
-                    stringResource(R.string.player_coach_title),
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                )
-                CoachHintRow(
-                    icon = Icons.Default.Forward10,
-                    text = stringResource(R.string.player_coach_double_tap),
-                )
-                CoachHintRow(
-                    icon = Icons.Default.BrightnessHigh,
-                    text = stringResource(R.string.player_coach_swipe),
-                )
-                CoachHintRow(
-                    icon = Icons.Default.SwapHoriz,
-                    text = stringResource(R.string.player_coach_scrub),
-                )
-                CoachHintRow(
-                    icon = Icons.Default.ZoomOutMap,
-                    text = stringResource(R.string.player_coach_pinch),
-                )
-                CoachHintRow(
-                    icon = Icons.Default.Speed,
-                    text = stringResource(R.string.player_coach_long_press),
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                    horizontalArrangement = Arrangement.End,
-                ) {
-                    TextButton(
-                        onClick = onDismiss,
-                        modifier = Modifier.heightIn(min = MinControlTarget),
-                    ) {
-                        Text(
-                            stringResource(R.string.player_coach_got_it),
-                            color = RaddCurrent500,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun CoachHintRow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    text: String,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = RaddCurrent500,
-            modifier = Modifier.size(20.dp),
-        )
-        Text(
-            text = text,
-            color = Color.White.copy(alpha = 0.90f),
-            style = MaterialTheme.typography.bodyMedium,
-        )
-    }
-}
-
-/**
  * The player's loading indicator (Session 123, D-36): a real indeterminate
  * progress ring, not the brand mark. The three-wave mark is the logo — a
  * viewer cannot tell whether it is a spinner or a picture — so the wait
@@ -2712,30 +2708,68 @@ private fun CoachHintRow(
  */
 
 /**
- * F29 (Batch B): the live mark — a red dot and the word Live, in place of the
- * scrubber + time row a live stream does not have. It says what the stream
- * is; it promises no position, because a live window has none to show.
+ * Mockup: the live row — a thin jade line at the live edge, the elapsed time
+ * on the left, "• LIVE" on the right, and no total, because a live channel
+ * has none. F29 (Batch B) still holds: a live HLS playlist can report a
+ * finite DVR-window duration (Discover Pakistan: 2:00:12), so the line is
+ * NOT a scrubber — it never seeks, and its fill is pinned at the live edge
+ * (full), never at a position inside a window we do not trust. The elapsed
+ * time is the player's own window position, which ticks as you watch.
  */
 @Composable
-private fun LiveMark(modifier: Modifier = Modifier) {
-    Row(
-        modifier = modifier
+private fun LiveProgressRow(state: PlayerUiState) {
+    Column(
+        Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        // The line is the live edge itself: full jade, thumb pinned at the
+        // end. No drag, no tap-to-seek — a live row that sought would seek
+        // inside a DVR window the player may have invented.
         Box(
-            modifier = Modifier
-                .size(8.dp)
-                .background(MaterialTheme.colorScheme.error, CircleShape),
-        )
-        Text(
-            text = stringResource(R.string.player_live),
-            color = Color.White,
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.SemiBold,
-        )
+            Modifier
+                .fillMaxWidth()
+                .height(16.dp),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(4.dp)
+                    .background(RaddCurrent500),
+            )
+            Box(
+                Modifier
+                    .align(Alignment.CenterEnd)
+                    .size(16.dp)
+                    .border(2.dp, Color.White, CircleShape)
+                    .background(RaddCurrent500, CircleShape),
+            )
+        }
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = state.positionMs.formatTime(),
+                color = Color.White,
+                style = MaterialTheme.typography.labelMedium,
+            )
+            Spacer(Modifier.weight(1f))
+            Box(
+                Modifier
+                    .size(6.dp)
+                    .background(RaddCurrent500, CircleShape),
+            )
+            Spacer(Modifier.width(4.dp))
+            Text(
+                text = stringResource(R.string.player_live).uppercase(),
+                color = RaddCurrent500,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
     }
 }
 

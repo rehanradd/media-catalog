@@ -796,11 +796,11 @@ class PaparazziPreviewTest {
 
     // Player chrome: the standard three zones plus Ghost mode's EdgeHud.
     // BottomControls carries the six primaries, the scrubber, the cast
-    // strip (paused only) and the keep chip; TopBar the title + lock +
-    // print sheet; CenterSpinner the buffering spinner only — there is no
-    // centre play/pause button anymore, so the playing/paused shots are
-    // empty frames, which is the proof. EdgeFeedbackLine is the slim edge
-    // track that replaced the centre HUD card.
+    // strip (paused only) and the keep chip; TopBar the title + live badge +
+    // lock + print sheet; CenterSpinner the buffering spinner only;
+    // CenterPlayPause the frosted centre transport, so the playing/paused
+    // shots show the button and the buffering shot shows the ring.
+    // EdgeFeedbackLine is the slim edge track that replaced the centre HUD card.
     private val playerRendition = PlaybackRendition(
         print = PrintInfo(resolution = "1080p"),
         playback = PlaybackInfo(label = "Fast direct"),
@@ -871,11 +871,35 @@ class PaparazziPreviewTest {
     }
 
     @Test
+    fun playerTopBarLive() {
+        paparazzi.snapshot {
+            themed {
+                TopBar(
+                    state = playerBase().copy(
+                        isLive = true,
+                        pendingTitle = "Madani Channel Urdu",
+                        titleYear = null,
+                        activeRendition = PlaybackRendition(
+                            print = PrintInfo(resolution = "1080p"),
+                            playback = PlaybackInfo(label = "Live", playUrl = "https://example.com/live.m3u8"),
+                        ),
+                    ),
+                    onBack = {},
+                    onLock = {},
+                    onShowPrintSheet = {},
+                )
+            }
+        }
+    }
+
+    @Test
     fun playerCenterPlaying() {
         paparazzi.snapshot {
             themed {
-                CenterSpinner(
+                CenterPlayPause(
                     state = playerBase(isPlaying = true),
+                    onTogglePlayPause = {},
+                    onPlayFromStart = {},
                 )
             }
         }
@@ -885,8 +909,10 @@ class PaparazziPreviewTest {
     fun playerCenterPaused() {
         paparazzi.snapshot {
             themed {
-                CenterSpinner(
+                CenterPlayPause(
                     state = playerBase(isPlaying = false),
+                    onTogglePlayPause = {},
+                    onPlayFromStart = {},
                 )
             }
         }
@@ -939,8 +965,9 @@ class PaparazziPreviewTest {
     @Test
     fun playerBottomLive() {
         // F29: a live HLS playlist can report a finite DVR-window duration
-        // (Discover Pakistan: 2:00:12) — the shot must show the LIVE mark
-        // and no scrubber, whatever the duration claims.
+        // (Discover Pakistan: 2:00:12) — the shot must show the live row
+        // (elapsed + LIVE, no total) and no seekable scrubber, whatever the
+        // duration claims.
         shotBottom(
             playerBase().copy(
                 isLive = true,
