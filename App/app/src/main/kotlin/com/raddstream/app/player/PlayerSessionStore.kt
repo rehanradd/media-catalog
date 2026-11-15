@@ -293,6 +293,32 @@ class PlayerSessionStore(
     fun peekManifestMime(streamId: String): String? = stagedManifestMimes[streamId]
 
     /**
+     * The handles the Live TV screen staged as live channels. A channel's
+     * HLS playlist can carry an end tag (a closed DVR window), so Media3's
+     * `isCurrentMediaItemLive` reads false and the player shows the window
+     * length (Discover Pakistan: 2:00:12) as a VOD duration with a seek bar.
+     * The tap knows it is a channel before the first frame, so the flag
+     * travels with the handle the same way the manifest MIME does — the
+     * ticker ORs it with the Media3 value, and the duration/seek UI gates
+     * on the result. Same discipline as [stageManifestMime]: in memory
+     * only, nothing survives a process death. A handle with no entry — a
+     * movie, a deep link — is not live, so it builds exactly as before.
+     */
+    private val stagedLiveChannels = LinkedHashSet<String>()
+
+    fun stageLiveChannel(streamId: String) {
+        if (streamId.isBlank()) return
+        stagedLiveChannels.remove(streamId)
+        stagedLiveChannels.add(streamId)
+        while (stagedLiveChannels.size > MAX_STAGED_FAILOVERS) {
+            stagedLiveChannels.remove(stagedLiveChannels.first())
+        }
+    }
+
+    /** Read without consuming: re-opening the same channel is still live. */
+    fun isLiveChannel(streamId: String): Boolean = stagedLiveChannels.contains(streamId)
+
+    /**
      * The print's coverage — the episode boundaries and chapter titles — staged by the
      * detail screen next to the runner-ups of the launched rung and read by the player
      * when it opens the handle.

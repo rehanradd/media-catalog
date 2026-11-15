@@ -187,5 +187,11 @@ class LiveTvViewModel @Inject constructor(
      */
     fun stageLiveChannel(streamId: String) {
         PlayerSessionStore.Instance.stageManifestMime(streamId, MimeTypes.APPLICATION_M3U8)
+        // The player must not trust Media3 alone for live-ness: a channel
+        // whose HLS playlist carries an end tag reads as VOD with the DVR
+        // window as its duration (Discover Pakistan: 2:00:12 + seek bar).
+        // The tap stages the live flag next to the MIME; the ticker ORs
+        // it with `isCurrentMediaItemLive`.
+        PlayerSessionStore.Instance.stageLiveChannel(streamId)
     }
 }

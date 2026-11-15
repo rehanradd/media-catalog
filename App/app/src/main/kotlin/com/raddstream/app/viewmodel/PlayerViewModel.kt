@@ -278,6 +278,18 @@ class PlayerViewModel @Inject constructor(
     private var activeResumeKey: String? = null
 
     /**
+     * Whether the bundle now playing is a staged live channel. Set in
+     * [beginBundle] from the store's per-handle flag — the Live TV tap
+     * staged it — and cleared for every other bundle, so a movie opened
+     * after a channel in the same session is VOD again. The ticker ORs
+     * it with Media3's `isCurrentMediaItemLive`, which reads false for a
+     * channel whose HLS playlist carries an end tag (Discover Pakistan's
+     * 2:00:12 DVR window). A quality switch re-begins the bundle with the
+     * same handle, so the flag survives it.
+     */
+    private var stagedLiveChannel = false
+
+    /**
      * Whether this device has a sync key, mirrored so a twice-a-second tick can read a boolean
      * instead of suspending on a Flow. False is the ordinary case, and then every account call
      * below returns before it builds a request — the player is exactly what it was before the
@@ -666,15 +678,24 @@ class PlayerViewModel @Inject constructor(
                 if (c != null && c.isConnected) {
                     val now = System.currentTimeMillis()
                     val wasStarting = _ui.value.startPhase != StartPhase.NONE
+                    // The live flag is the staged channel flag OR Media3's
+                    // own read: a channel whose playlist carries an end tag
+                    // reports false to Media3 and a DVR window as its
+                    // duration (Discover Pakistan: 2:00:12). Live never
+                    // adopts that window as a duration — the UI gates the
+                    // seek bar and the time row on isLive, and a stale VOD
+                    // duration must not ride along if the flag flips.
+                    val live = stagedLiveChannel || c.isCurrentMediaItemLive
                     _ui.update {
                         it.copy(
                             positionMs = c.currentPosition,
                             bufferedMs = bufferedOf(c),
-                            durationMs = if (c.duration > 0) c.duration else it.durationMs,
+                            durationMs = if (live) it.durationMs
+                                else if (c.duration > 0) c.duration else it.durationMs,
                             // F29 (Batch B): the live flag rides the same tick
                             // as the position — a live window stays live for
                             // the whole stream, and a VOD never flips to it.
-                            isLive = c.isCurrentMediaItemLive,
+                            isLive = live,
                             // P-3: the notice card's elapsed line counts from
                             // the request (Play press), so the resolve wait is
                             // counted too — published on every tick, whatever
@@ -1242,6 +1263,12 @@ class PlayerViewModel @Inject constructor(
         }
         store.installBundle(bundle)
         activeResumeKey = resumeKey
+        // The live flag for this bundle: the Live TV tap staged the handle,
+        // every other launch path staged nothing. Read here, once per
+        // bundle, not in the ticker — the store is in-memory and keyed by
+        // handle, and the ticker must not re-decide it 5 times a second.
+        stagedLiveChannel = bundle.renditions.firstOrNull()?.playback?.streamId
+            ?.let { store.isLiveChannel(it) } == true
         // Gap A3: the bundle's own SRT/VTT subtitle loads into the overlay
         // here (and again when the tracks report, below) — the preference
         // may not be in state yet at install time, and the fire-once gate

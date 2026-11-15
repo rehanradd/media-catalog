@@ -103,4 +103,35 @@ class LiveTvHlsDeclareTest {
         val store = PlayerSessionStore()
         assertNull(store.peekManifestMime("nope"))
     }
+
+    @Test
+    fun stagedLiveChannelReadsBackUnderItsHandle() {
+        // Discover Pakistan (2026-11-15): the player showed a 2:00:12
+        // duration with a seek bar on a live channel, because Media3's
+        // `isCurrentMediaItemLive` reads false when the HLS playlist
+        // carries an end tag — the DVR window poses as a VOD. The tap
+        // stages the live flag next to the MIME; the ticker ORs it with
+        // the Media3 value, so the seek bar hides and only LIVE shows.
+        val store = PlayerSessionStore()
+        store.stageLiveChannel("abc123")
+        assertTrue(store.isLiveChannel("abc123"))
+        assertFalse(store.isLiveChannel("nope"))
+    }
+
+    @Test
+    fun liveFlagReadsBackWithoutConsuming() {
+        val store = PlayerSessionStore()
+        store.stageLiveChannel("abc123")
+        assertTrue(store.isLiveChannel("abc123"))
+        assertTrue(store.isLiveChannel("abc123"))
+    }
+
+    @Test
+    fun blankHandleStagesNoLiveFlag() {
+        val store = PlayerSessionStore()
+        store.stageLiveChannel("")
+        store.stageLiveChannel("   ")
+        assertFalse(store.isLiveChannel(""))
+        assertFalse(store.isLiveChannel("   "))
+    }
 }
