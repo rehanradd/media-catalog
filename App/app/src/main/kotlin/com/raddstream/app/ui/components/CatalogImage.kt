@@ -127,7 +127,12 @@ fun CatalogImage(
             imagesAllowedOnMobileData = sizing.imagesAllowedOnMobileData,
             metered = metered,
         )
+        // B2 (home review, 2026-11-15): a TMDB /original/ poster is a
+        // full-size file Coil downloads whole and downsamples locally —
+        // rewrite it to the smallest TMDB width covering this tile before
+        // the request is built, so the bytes match the pixels on screen.
         val clean = url?.takeIf { it.isNotBlank() }
+            ?.let { PosterUrlPolicy.sizedForTile(it, decision.widthPx) }
         val allowed = allowAnyHost || ArtUrlPolicy.isAllowed(clean, serverHost)
         if (clean != null && decision.shouldLoad && allowed) {
             ImageRequest.Builder(context)
