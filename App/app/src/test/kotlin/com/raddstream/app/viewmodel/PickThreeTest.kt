@@ -141,6 +141,7 @@ class PickThreeTest {
         val staleHero = HomeSection(
             key = "hero",
             title = "Hero",
+            type = null,
             items = listOf(post(101, year = 1963), post(102, year = 1946)),
             panelManaged = true,
         )
