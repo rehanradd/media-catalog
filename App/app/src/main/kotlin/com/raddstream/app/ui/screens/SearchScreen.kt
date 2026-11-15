@@ -910,6 +910,15 @@ internal fun FilterSheetBody(
     ) {
         Column(
             modifier = Modifier
+                // Robo #6 (APK 571): opening the filter sheet crashed with
+                // "Vertically scrollable component was measured with an
+                // infinity maximum height constraints". The scrolling middle
+                // is weight(1f) inside a wrap-content Column, so when the
+                // sheet hands it unbounded height the scrollable is measured
+                // with infinite constraints and Compose throws. The cap sits
+                // above any phone screen, so it only binds on that unbounded
+                // path — the bounded path (and the goldens) are untouched.
+                .heightIn(max = 1200.dp)
                 .weight(1f, fill = false)
                 .verticalScroll(rememberScrollState())
                 .padding(top = 4.dp),
