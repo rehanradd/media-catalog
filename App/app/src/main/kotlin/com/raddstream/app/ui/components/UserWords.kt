@@ -83,6 +83,24 @@ object UserWords {
         .replace("_", "_\u200B")
 
     /**
+     * M2 (home review, Nov 2026): Compose's Ellipsis cuts at the last
+     * fitting character, not the last word ("Strange New W…"). Given the
+     * index where the layout cut the text (the first character not shown),
+     * back off to the previous word boundary and append "…" — so the cut
+     * lands between words. Returns the input unchanged when the cut is
+     * already at a boundary, or when there is no earlier boundary to back
+     * off to (one long word fills the line). Pure string work, so the
+     * boundary rule is assertable without a layout.
+     */
+    fun trimToWordBoundary(text: String, cutIndex: Int): String {
+        if (cutIndex <= 0 || cutIndex >= text.length) return text
+        if (text[cutIndex].isWhitespace() || text[cutIndex - 1].isWhitespace()) return text
+        val boundary = text.lastIndexOf(' ', cutIndex - 1)
+        if (boundary <= 0) return text
+        return text.substring(0, boundary) + "…"
+    }
+
+    /**
      * The work identity for cross-rail dedupe: the catalog's work ref when
      * it has one, else the normalised title + year. Two rows of one film —
      * two prints, two mirrors — share one key, so the same title can never

@@ -28,7 +28,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -286,13 +289,31 @@ fun PosterCard(
                     modifier = Modifier.weight(1f).clearAndSetSemantics { },
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
+                    // M2 (home review, Nov 2026): Compose's Ellipsis cuts at
+                    // the last fitting character, not the last word
+                    // ("Strange New W…"). When the second line is ellipsized
+                    // mid-word, back the text off to the previous word
+                    // boundary once — the trimmed string is strictly shorter
+                    // and the guard below keeps the state from ever looping.
+                    var displayTitle by remember(title) {
+                        mutableStateOf(UserWords.breakableTitle(title))
+                    }
                     Text(
-                        text = UserWords.breakableTitle(title),
+                        text = displayTitle,
                         color = MaterialTheme.colorScheme.onSurface,
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
+                        onTextLayout = { result ->
+                            if (result.lineCount > 1 && result.isLineEllipsized(1)) {
+                                val trimmed = UserWords.trimToWordBoundary(
+                                    displayTitle,
+                                    result.getLineEnd(1, visibleEnd = true),
+                                )
+                                if (trimmed != displayTitle) displayTitle = trimmed
+                            }
+                        },
                         modifier = Modifier.height(titleSlotHeight),
                     )
                     if (details.isNotBlank()) {

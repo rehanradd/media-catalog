@@ -91,4 +91,33 @@ class UserWordsTest {
         )
         assertEquals(listOf("d"), second)
     }
+
+    @Test
+    fun trimToWordBoundaryBacksOffAMidWordCut() {
+        // "Strange New W…" — the layout cut inside "World".
+        assertEquals(
+            "Strange New…",
+            UserWords.trimToWordBoundary("Strange New World", 13),
+        )
+        assertEquals(
+            "Accident Man: Hitman's…",
+            UserWords.trimToWordBoundary("Accident Man: Hitman's Holiday", 24),
+        )
+    }
+
+    @Test
+    fun trimToWordBoundaryLeavesABoundaryCutAlone() {
+        assertEquals("Strange New World", UserWords.trimToWordBoundary("Strange New World", 11))
+        assertEquals("Strange New World", UserWords.trimToWordBoundary("Strange New World", 12))
+        assertEquals("Strange New World", UserWords.trimToWordBoundary("Strange New World", 17))
+        assertEquals("Strange New World", UserWords.trimToWordBoundary("Strange New World", 0))
+    }
+
+    @Test
+    fun trimToWordBoundaryCannotBackOffOneLongWord() {
+        assertEquals(
+            "Supercalifragilistic",
+            UserWords.trimToWordBoundary("Supercalifragilistic", 10),
+        )
+    }
 }
