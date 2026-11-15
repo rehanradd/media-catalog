@@ -1629,7 +1629,11 @@ class PlayerViewModel @Inject constructor(
      */
     fun switchRendition(rendition: PlaybackRendition) {
         val active = _ui.value.activeRendition
-        val handle = rendition.playback.streamId
+        // The handle is nullable by design (PlayBundle: a rank can carry
+        // no address of ours at all) — a tap on such a rendition loads
+        // nothing, so it is a no-op and the sheet stays open for another
+        // pick, instead of crashing the compile's non-null contract.
+        val handle = rendition.playback.streamId ?: return
         if (handle == active?.playback?.streamId) {
             hidePrintSheet()
             return
