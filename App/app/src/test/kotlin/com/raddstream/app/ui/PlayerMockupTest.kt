@@ -1,6 +1,9 @@
 package com.raddstream.app.ui
 
 import android.content.Context
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -171,7 +174,10 @@ class PlayerMockupTest {
         compose.onNodeWithContentDescription(
             context.getString(R.string.player_quality_label, "1080P"),
         ).assertIsDisplayed()
-        compose.onNodeWithContentDescription(context.getString(R.string.player_fullscreen)).assertIsDisplayed()
+        // The fixture is fullscreen (PlayerUiState's default — the player
+        // starts immersive), so the toggle reads "Exit fullscreen", not
+        // "Fullscreen". The primary is there either way.
+        compose.onNodeWithContentDescription(context.getString(R.string.player_exit_fullscreen)).assertIsDisplayed()
         compose.onNodeWithContentDescription(context.getString(R.string.player_more)).assertIsDisplayed()
         // The pill itself prints the rung as text, not an icon.
         compose.onNodeWithText("1080P").assertIsDisplayed()
@@ -179,10 +185,14 @@ class PlayerMockupTest {
 
     @Test
     fun `centre button shows pause while playing, play while paused`() {
+        // One content, driven by state: a second setContent in the same
+        // test throws (IllegalStateException), so the pause→play flip
+        // goes through a state holder instead.
+        var playing by mutableStateOf(true)
         compose.setContent {
             RaddStreamTheme {
                 CenterPlayPause(
-                    state = vodBase(isPlaying = true),
+                    state = vodBase(isPlaying = playing),
                     onTogglePlayPause = {},
                     onPlayFromStart = {},
                     onSeekBy = {},
@@ -190,16 +200,7 @@ class PlayerMockupTest {
             }
         }
         compose.onNodeWithContentDescription(context.getString(R.string.player_pause)).assertIsDisplayed()
-        compose.setContent {
-            RaddStreamTheme {
-                CenterPlayPause(
-                    state = vodBase(isPlaying = false),
-                    onTogglePlayPause = {},
-                    onPlayFromStart = {},
-                    onSeekBy = {},
-                )
-            }
-        }
+        compose.runOnIdle { playing = false }
         compose.onNodeWithContentDescription(context.getString(R.string.player_play)).assertIsDisplayed()
     }
 
