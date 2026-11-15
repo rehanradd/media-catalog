@@ -1944,5 +1944,47 @@ class NeedleSnapshotProjectionTests(ProjectionTestCase):
         self.assertIn("zzsnapshotprobe", redact.site_needles(str(self.db_path)))
 
 
+class LanguageBridgeProjectionTests(ProjectionTestCase):
+    """The projection builds the language bridge (Session 151) so a Hindi
+    browse reads one indexed EXISTS instead of a correlated scan over 1.7M
+    `cat_releases` rows (113s cold / 4-6s warm on the live catalog)."""
+
+    def test_projection_builds_the_language_bridge(self):
+        self.add_post("vegamovies", "https://vega.test/bridge-film/",
+                      clean_title="Bridge Film", year=2024,
+                      releases=[{"release_title": "Bridge Film 1080p",
+                                 "quality": "1080p",
+                                 "sources": [{"source_name": "Bridge Mirror",
+                                             "service": "bridgesvc",
+                                             "resource_id": "x",
+                                             "source_url": "https://br.test/f/1",
+                                             "final_url": "https://br.test/f/1",
+                                             "playback_type": "direct",
+                                             "is_temporary": 0,
+                                             "status": "active"}]}])
+        self.project()
+        work_id = self.conn.execute(
+            "SELECT id FROM cat_works WHERE title LIKE 'Bridge Film%'").fetchone()[0]
+        rows = {r[1] for r in self.conn.execute(
+            "SELECT work_id, language FROM cat_work_languages WHERE work_id = ?",
+            (work_id,))}
+        self.assertIn("hindi", rows)
+        stamp = self.conn.execute(
+            "SELECT value FROM cat_projection_meta "
+            "WHERE key = 'language_bridge_at'").fetchone()
+        projected = self.conn.execute(
+            "SELECT value FROM cat_projection_meta "
+            "WHERE key = 'projected_at'").fetchone()
+        self.assertIsNotNone(stamp)
+        self.assertEqual(stamp[0], projected[0])
+        # A second projection rebuilds, it does not duplicate: the PK holds.
+        before = self.conn.execute(
+            "SELECT COUNT(*) FROM cat_work_languages").fetchone()[0]
+        self.project()
+        after = self.conn.execute(
+            "SELECT COUNT(*) FROM cat_work_languages").fetchone()[0]
+        self.assertEqual(after, before)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

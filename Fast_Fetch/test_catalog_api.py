@@ -116,7 +116,7 @@ class CatalogApiTestCase(unittest.TestCase):
     # ---- ledger helpers ---------------------------------------------------- #
     def add_post(self, site, url, *, title=None, clean_title, year=2024,
                  content_type="movie", imdb_id=None, tmdb_id=None, is_18_plus=0,
-                 is_animated=0, releases=()):
+                 is_animated=0, language="Hindi", releases=()):
         data = {
             "url": url,
             "slug": url.rstrip("/").split("/")[-1],
@@ -135,7 +135,7 @@ class CatalogApiTestCase(unittest.TestCase):
             "source_site": site,
             "industry": "Bollywood",
             "country": "India",
-            "language": "Hindi",
+            "language": language,
             "canonical_key": fast_fetch.generate_canonical_key(clean_title, year),
             "tmdb_id": tmdb_id,
             "imdb_id": imdb_id,
@@ -1982,6 +1982,153 @@ class PublicStatsGuardTests(CatalogApiTestCase):
         self.assertEqual(after.get("active"), 1,
                          "the adult link's fresh verdict leaked into the published number")
         self.assertEqual(sum(after.values()), self.stats()["sources"])
+
+
+class LanguageBridgeUnitTests(unittest.TestCase):
+    """The builder, on a hand-built DB: item rows AND word rows, exactly
+    `_list_has` — "Hindi Dubbed" matches Hindi, "Hindistani" does not."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = sqlite3.connect(Path(self.tmp.name) / "bridge.db")
+        self.conn.row_factory = sqlite3.Row
+        self.conn.execute("CREATE TABLE cat_works (id INTEGER PRIMARY KEY, languages TEXT)")
+        self.conn.execute(
+            "CREATE TABLE cat_releases (id INTEGER PRIMARY KEY,"
+            " work_id INTEGER, audio_languages TEXT)")
+        self.conn.execute(
+            "CREATE TABLE cat_projection_meta (key TEXT PRIMARY KEY, value TEXT)")
+        self.conn.executemany(
+            "INSERT INTO cat_works VALUES (?, ?)",
+            [(1, '["Hindi", "English"]'),
+             (2, "Hindi Dubbed"),
+             (3, '["Hindistani"]'),
+             (4, None)])
+        self.conn.executemany(
+            "INSERT INTO cat_releases VALUES (?, ?, ?)",
+            [(1, 1, '["Hindi"]'),
+             (2, 3, '["English"]'),
+             (3, 4, '["Hindi"]')])
+        self.conn.commit()
+
+    def tearDown(self):
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def test_builder_stores_items_and_words(self):
+        count = catalog_api.rebuild_language_bridge(self.conn)
+        rows = {(r[0], r[1]) for r in
+                self.conn.execute("SELECT work_id, language FROM cat_work_languages")}
+        self.assertEqual(rows, {
+            (1, "hindi"), (1, "english"),
+            (2, "hindi dubbed"), (2, "hindi"), (2, "dubbed"),
+            (3, "hindistani"), (3, "english"),
+            (4, "hindi"),
+        })
+        self.assertEqual(count, len(rows))
+
+    def test_usable_only_with_a_matching_stamp(self):
+        catalog_api.rebuild_language_bridge(self.conn)
+        self.assertFalse(catalog_api._bridge_usable(self.conn))
+        self.conn.execute(
+            "INSERT INTO cat_projection_meta VALUES ('projected_at', '2026-11-15T00:00:00')")
+        self.assertFalse(catalog_api._bridge_usable(self.conn))
+        self.conn.execute(
+            "INSERT INTO cat_projection_meta VALUES ('language_bridge_at', '2026-11-15T00:00:00')")
+        self.assertTrue(catalog_api._bridge_usable(self.conn))
+        self.conn.execute(
+            "UPDATE cat_projection_meta SET value = '2026-11-14T00:00:00'"
+            " WHERE key = 'language_bridge_at'")
+        self.assertFalse(catalog_api._bridge_usable(self.conn))
+
+
+class LanguageBridgeTests(CatalogApiTestCase):
+    """The serve path, end to end: the projection builds the bridge and
+    `browse(languages=[...])` answers from it, equal to the `_list_has` rule
+    — including the cases where the old `instr()` shape disagrees."""
+
+    def _add_bridge_posts(self):
+        self.add_post("vegamovies", "https://vega.test/hindi-film/",
+                      clean_title="Hindi Film", year=2024, language="Hindi",
+                      releases=[{"release_title": "Hindi Film 1080p",
+                                 "quality": "1080p",
+                                 "sources": [cdn("LB-HINDI")]}])
+        self.add_post("vegamovies", "https://vega.test/dubbed-film/",
+                      clean_title="Dubbed Film", year=2024, language="English",
+                      releases=[{"release_title": "Dubbed Film 1080p Hindi",
+                                 "quality": "1080p", "languages": '["Hindi"]',
+                                 "sources": [cdn("LB-DUBBED")]}])
+        self.add_post("vegamovies", "https://vega.test/dubbed-words-film/",
+                      clean_title="Dubbed Words Film", year=2024, language="English",
+                      releases=[{"release_title": "Dubbed Words Film 1080p",
+                                 "quality": "1080p", "languages": '["Hindi Dubbed"]',
+                                 "sources": [cdn("LB-DUBWORDS")]}])
+        self.add_post("vegamovies", "https://vega.test/near-miss-film/",
+                      clean_title="Near Miss Film", year=2024, language="Hindistani",
+                      releases=[{"release_title": "Near Miss Film 1080p",
+                                 "quality": "1080p", "languages": '["English"]',
+                                 "sources": [cdn("LB-NEARMISS")]}])
+        self.add_post("vegamovies", "https://vega.test/english-film/",
+                      clean_title="English Film", year=2024, language="English",
+                      releases=[{"release_title": "English Film 1080p",
+                                 "quality": "1080p", "languages": '["English"]',
+                                 "sources": [cdn("LB-ENGLISH")]}])
+
+    def _expected_hindi(self):
+        expected = set()
+        for row in self.conn.execute(
+                "SELECT id, title, languages FROM cat_works"
+                " WHERE COALESCE(is_18_plus, 0) = 0"):
+            if catalog_api._list_has(row["languages"], "Hindi"):
+                expected.add(row["title"])
+                continue
+            for (audio,) in self.conn.execute(
+                    "SELECT audio_languages FROM cat_releases WHERE work_id = ?",
+                    (row["id"],)):
+                if catalog_api._list_has(audio, "Hindi"):
+                    expected.add(row["title"])
+                    break
+        return expected
+
+    def test_bridge_matches_list_has(self):
+        self._add_bridge_posts()
+        self.project()
+        self.assertTrue(catalog_api._bridge_usable(self.conn))
+        page = catalog_api.browse(self.conn, languages=["Hindi"], limit=100)
+        found = {i["title"] for i in page["items"]}
+        self.assertEqual(found, self._expected_hindi())
+        self.assertIn("Hindi Film", found)
+        self.assertIn("Dubbed Film", found)
+        self.assertIn("Dubbed Words Film", found)
+        # The old instr() shape would include this one (substring "hindistani"
+        # contains "hindi"); the bridge must not — that is the proof the
+        # bridge, not the old shape, answered.
+        self.assertNotIn("Near Miss Film", found)
+        self.assertNotIn("English Film", found)
+
+    def test_stale_stamp_falls_back_to_the_old_shape(self):
+        self._add_bridge_posts()
+        self.project()
+        self.conn.execute(
+            "UPDATE cat_projection_meta SET value = 'stale'"
+            " WHERE key = 'language_bridge_at'")
+        self.conn.commit()
+        self.assertFalse(catalog_api._bridge_usable(self.conn))
+        page = catalog_api.browse(self.conn, languages=["Hindi"], limit=100)
+        found = {i["title"] for i in page["items"]}
+        # The fallback still serves Hindi, via the old instr() shape — which
+        # over-matches the near miss, as the old shape always did.
+        self.assertIn("Hindi Film", found)
+        self.assertIn("Near Miss Film", found)
+
+    def test_missing_table_falls_back(self):
+        self._add_bridge_posts()
+        self.project()
+        self.conn.execute("DROP TABLE cat_work_languages")
+        self.conn.commit()
+        self.assertFalse(catalog_api._bridge_usable(self.conn))
+        page = catalog_api.browse(self.conn, languages=["Hindi"], limit=100)
+        self.assertIn("Hindi Film", {i["title"] for i in page["items"]})
 
 
 if __name__ == "__main__":

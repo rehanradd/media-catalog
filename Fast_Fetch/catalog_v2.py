@@ -1881,6 +1881,23 @@ def _finalize(conn, works, work_ids, now, counters) -> None:
         _stage(conn, "needle snapshot: %d values" % count)
     except Exception as ex:      # noqa: BLE001 — the snapshot is an accelerator, not a gate
         _progress(f"needle snapshot skipped: {ex}")
+    # The language bridge (Session 151): a Hindi browse paid 113s cold / 4-6s
+    # warm on the live catalog (measured 2026-11-15) — the correlated EXISTS
+    # over 1.7M cat_releases rows, which sqlite3 .expert says no index fixes.
+    # The projection rebuilds cat_work_languages here, when cat_works and
+    # cat_releases are final; browse() reads one indexed EXISTS over it
+    # instead, and stamps the bridge with the same `now` the outer projection
+    # stamps `projected_at` with, so a stale bridge is detected and ignored.
+    # A build failure is a warning, never a gate: the EXISTS is the fallback.
+    try:
+        count = _catalog_api().rebuild_language_bridge(conn)
+        conn.execute(
+            "INSERT OR REPLACE INTO cat_projection_meta (key, value) VALUES ('language_bridge_at', ?)",
+            (str(now),),
+        )
+        _stage(conn, "language bridge: %d rows" % count)
+    except Exception as ex:      # noqa: BLE001 — the bridge is an accelerator, not a gate
+        _progress(f"language bridge skipped: {ex}")
     conn.execute(
         """
         UPDATE cat_works SET
@@ -2329,6 +2346,20 @@ def _redact():
     except ImportError:  # pragma: no cover - package-relative fallback
         from Fast_Fetch import redact  # type: ignore
     return redact
+
+
+def _catalog_api():
+    """Lazy sibling import, so the projector stays loadable without the read layer.
+
+    `catalog_api` imports `catalog_v2` at module level, so this must stay lazy
+    (same pattern as `_redact`): the import resolves at call time, when both
+    modules are loaded.
+    """
+    try:
+        import catalog_api
+    except ImportError:  # pragma: no cover - package-relative fallback
+        from Fast_Fetch import catalog_api  # type: ignore
+    return catalog_api
 
 
 def safe_link_rollup(conn) -> dict | None:

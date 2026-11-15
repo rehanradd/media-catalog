@@ -310,6 +310,71 @@ def _meta_value(conn, key: str):
     return row["value"] if row else None
 
 
+def _add_bridge_terms(rows, work_id, item) -> None:
+    """One bridge row per language item AND one per word inside it.
+
+    `_list_has` matches a needle when it equals the whole normalized item or
+    one whole word inside it, so the bridge stores both granularities: the
+    item (serves multi-word needles like "Hindi Dubbed") and each word
+    (serves single-word needles like "Hindi" against "Hindi Dubbed"). Then
+    `bl.language = :lang` is exactly `_list_has` — and strictly narrower
+    than the old `instr()` substring, which also matched "Hindistani".
+    """
+    norm = normalize_text(item)
+    if not norm:
+        return
+    rows.add((work_id, norm))
+    for word in norm.split():
+        rows.add((work_id, word))
+
+
+def rebuild_language_bridge(conn) -> int:
+    """Rebuild `cat_work_languages` from `cat_works.languages` + every
+    release's `audio_languages`, split with `_json_list` (JSON array or
+    comma/semicolon/pipe/slash list — the same splitter the facet-equivalence
+    test trusts). Runs inside the caller's transaction (the projection calls
+    it from `_finalize`); WAL readers see the pre-transaction state, so a
+    concurrent browse never sees a half-built bridge. Returns the row count.
+    """
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS cat_work_languages ("
+        " work_id INTEGER NOT NULL, language TEXT NOT NULL,"
+        " PRIMARY KEY (work_id, language))")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_work_languages_lang"
+        " ON cat_work_languages (language, work_id)")
+    conn.execute("DELETE FROM cat_work_languages")
+    rows = set()
+    for work_id, languages in conn.execute("SELECT id, languages FROM cat_works"):
+        for item in _json_list(languages):
+            _add_bridge_terms(rows, work_id, item)
+    for work_id, audio in conn.execute(
+            "SELECT work_id, audio_languages FROM cat_releases"):
+        for item in _json_list(audio):
+            _add_bridge_terms(rows, work_id, item)
+    conn.executemany(
+        "INSERT OR IGNORE INTO cat_work_languages (work_id, language)"
+        " VALUES (?, ?)",
+        sorted(rows))
+    return len(rows)
+
+
+def _bridge_usable(conn) -> bool:
+    """True only when the bridge table exists and its stamp matches the
+    projection's `projected_at` — the same stamp discipline as the needle
+    snapshot (`redact._snapshot_needle_values`). A merge that ran without
+    rebuilding the bridge leaves a stale stamp, and the old shape is the
+    honest answer then. Any error means unusable, never a crash.
+    """
+    try:
+        if not _has_table(conn, "cat_work_languages"):
+            return False
+        stamp = _meta_value(conn, "language_bridge_at")
+        return stamp is not None and stamp == _meta_value(conn, "projected_at")
+    except Exception:
+        return False
+
+
 # ── cursors ──────────────────────────────────────────────────────────────────
 
 def _fingerprint(where_sql: str, params: dict) -> str:
@@ -376,7 +441,8 @@ def _sort_expr(sort: str) -> str:
 
 def _facet_clauses(content_type, genres, languages, qualities, available,
                    year_from, year_to, min_quality, animated=None,
-                   country=(), industry=()) -> tuple[list[str], dict]:
+                   country=(), industry=(),
+                   use_language_bridge: bool = False) -> tuple[list[str], dict]:
     clauses: list[str] = []
     params: dict = {}
     types: list[str] = []
@@ -405,12 +471,22 @@ def _facet_clauses(content_type, genres, languages, qualities, available,
     for index, language in enumerate(_iter_terms(languages)):
         # Work-level declared language OR any print that actually carries that audio
         # track — a Hindi-dubbed print of an English work must be findable in Hindi.
-        # Same C-level instr() as genres (the UDF was the cost here too).
-        clauses.append(
-            f"(instr(lower(COALESCE(w.languages, '')), :lang{index}) > 0"
-            " OR EXISTS (SELECT 1 FROM cat_releases lr"
-            f"  WHERE lr.work_id = w.id AND instr(lower(lr.audio_languages), :lang{index}) > 0))"
-        )
+        # 2026-11-15, language bridge: when the projection built cat_work_languages
+        # the clause is one indexed EXISTS over it (the bridge stores each language
+        # item AND its words, so `bl.language = :lang` is exactly _list_has — the
+        # old instr() also matched substrings, e.g. "Hindistani" for "hindi").
+        # Without the bridge the old instr() + correlated-EXISTS shape runs unchanged.
+        if use_language_bridge:
+            clauses.append(
+                f"EXISTS (SELECT 1 FROM cat_work_languages bl"
+                f" WHERE bl.work_id = w.id AND bl.language = :lang{index})"
+            )
+        else:
+            clauses.append(
+                f"(instr(lower(COALESCE(w.languages, '')), :lang{index}) > 0"
+                " OR EXISTS (SELECT 1 FROM cat_releases lr"
+                f"  WHERE lr.work_id = w.id AND instr(lower(lr.audio_languages), :lang{index}) > 0))"
+            )
         params[f"lang{index}"] = normalize_text(language)
     resolutions: list[str] = []
     if qualities not in (None, "", "all"):
@@ -1387,7 +1463,8 @@ def browse(conn, *, content_type=None, genres=(), languages=(), qualities=(),
     limit = _clamp_limit(limit)
     facet_clauses, facet_params = _facet_clauses(
         content_type, genres, languages, qualities, available, year_from, year_to,
-        min_quality, animated=animated, country=country, industry=industry)
+        min_quality, animated=animated, country=country, industry=industry,
+        use_language_bridge=_bridge_usable(conn))
     query_norm = normalize_text(q)
     tokens = query_norm.split()
     decoded = None
@@ -1475,7 +1552,8 @@ def search(conn, *, q, limit=DEFAULT_LIMIT, include_adult=False, content_type=No
     browse_genres = (list(dict.fromkeys([*genre_list, *mood_genres]))
                      if pure_mood else genre_list)
     facet_clauses, facet_params = _facet_clauses(
-        content_type, browse_genres, languages, qualities, None, None, None, None)
+        content_type, browse_genres, languages, qualities, None, None, None, None,
+        use_language_bridge=_bridge_usable(conn))
     result = _run_listing(
         conn, sort=effective_sort, order=order, limit=limit,
         include_adult=bool(include_adult),
@@ -1494,7 +1572,8 @@ def search(conn, *, q, limit=DEFAULT_LIMIT, include_adult=False, content_type=No
             # Mixed query, literal missed: answer the mood.
             mood_clauses, mood_params = _facet_clauses(
                 content_type, list(dict.fromkeys([*genre_list, *mood_genres])),
-                languages, qualities, None, None, None, None)
+                languages, qualities, None, None, None, None,
+                use_language_bridge=_bridge_usable(conn))
             mood_result = _run_listing(
                 conn, sort=effective_sort, order=order, limit=limit,
                 include_adult=bool(include_adult), cursor=None,
