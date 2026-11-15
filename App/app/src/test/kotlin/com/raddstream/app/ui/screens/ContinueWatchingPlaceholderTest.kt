@@ -65,10 +65,13 @@ class ContinueWatchingPlaceholderTest {
     fun placeholderShowsWhenCatalogLoadedButNothingWatchedYet() {
         setHome(HomeUiState(sections = listOf(loadedSection())))
 
-        // The slot sits below the hero, so the header is below the first
-        // fold — scroll it into view before asserting it (the paywall tests
-        // do the same for their below-fold cards).
-        compose.onNodeWithText("Continue watching").performScrollTo().assertIsDisplayed()
+        // The slot sits below the hero, so the placeholder is below the
+        // first fold — scroll its bottom-most element into view, which
+        // brings the whole placeholder (header, line, CTA) with it.
+        // Scrolling to the header alone leaves the line below it still
+        // off-screen: performScrollTo scrolls only the minimum.
+        compose.onNodeWithText("Browse titles").performScrollTo()
+        compose.onNodeWithText("Continue watching").assertIsDisplayed()
         compose.onNodeWithText("Start watching").assertIsDisplayed()
         compose.onNodeWithText("Browse titles").assertIsDisplayed()
     }
