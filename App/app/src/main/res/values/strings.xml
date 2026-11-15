@@ -105,8 +105,6 @@
     <string name="player_seek">Seek: %1$s of %2$s</string>
     <string name="player_seek_chapter">, %1$s</string>
     <string name="player_up_next_title">%1$s: %2$s</string>
-    <!-- Parent fixup 2: the saved-on-device pill lives on the downloads screen, not the player. -->
-    <string name="downloads_saved_on_device">Saved on device</string>
     <string name="player_quality_single">Only one quality is available for this title</string>
     <!-- Session 126 (NAV-4/NAV-5): the catch-all deep-link destination. -->
     <string name="dead_link_title">This link didn’t lead anywhere</string>
