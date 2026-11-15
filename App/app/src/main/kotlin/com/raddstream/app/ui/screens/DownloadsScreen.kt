@@ -107,7 +107,7 @@ fun DownloadsScreen(
                     Text(
                         text = msg,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
@@ -211,7 +211,7 @@ private fun LocalFilesEntry(onOpenLocalFiles: () -> Unit) {
         Icon(
             Icons.Default.Folder,
             contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.size(28.dp),
         )
         Column(
@@ -280,7 +280,7 @@ private fun StorageCard(storage: StorageInfo?) {
         LinearProgressIndicator(
             progress = { storage.usedFraction },
             modifier = Modifier.fillMaxWidth(),
-            color = if (storage.lowSpace) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+            color = if (storage.lowSpace) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(
             "${formatGib(storage.freeBytes)} free of ${formatGib(storage.totalBytes)}",
@@ -356,7 +356,7 @@ internal fun DeviceDownloadRow(
             LinearProgressIndicator(
                 progress = { item.progress },
                 modifier = Modifier.fillMaxWidth(),
-                color = MaterialTheme.colorScheme.primary,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 trackColor = MaterialTheme.colorScheme.surfaceVariant,
                 strokeCap = StrokeCap.Round,
             )
@@ -492,7 +492,7 @@ internal fun KeptItemRow(
             LinearProgressIndicator(
                 progress = { item.progress },
                 modifier = Modifier.fillMaxWidth(),
-                color = MaterialTheme.colorScheme.primary,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 trackColor = MaterialTheme.colorScheme.surfaceVariant,
                 strokeCap = StrokeCap.Round,
             )

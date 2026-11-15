@@ -216,7 +216,7 @@ fun CoinsScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Bold,
                             color = if (entry.delta >= 0) {
-                                MaterialTheme.colorScheme.primary
+                                MaterialTheme.colorScheme.onSurfaceVariant
                             } else {
                                 MaterialTheme.colorScheme.onSurface
                             },

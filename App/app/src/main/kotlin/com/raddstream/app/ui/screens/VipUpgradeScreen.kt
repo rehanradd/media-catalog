@@ -1196,7 +1196,7 @@ private fun PendingCard(
 ) {
     val plan = VipPlan.fromStorage(pending.plan)
     Surface(
-        color = MaterialTheme.colorScheme.primaryContainer,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
         shape = RoundedCornerShape(16.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
@@ -1208,20 +1208,20 @@ private fun PendingCard(
                 Icon(
                     Icons.Default.Info,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
                     "Not sent to the operator yet",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    color = MaterialTheme.colorScheme.onSurface,
                 )
             }
             Text(
                 "${plan.label} · ${amountLabel(currency, pending.amountPkr)}",
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
                 listOfNotNull(
@@ -1229,13 +1229,13 @@ private fun PendingCard(
                     VipMethod.fromWire(pending.method)?.label,
                 ).joinToString(" · "),
                 style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             if (pending.submittedAt > 0L) {
                 Text(
                     "Entered ${submittedLabel(pending.submittedAt)}",
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             Text(
@@ -1243,7 +1243,7 @@ private fun PendingCard(
                     "sent again the next time this screen loads with a connection. Removing it " +
                     "does not cancel a transfer you have already made.",
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             TextButton(onClick = onCancel) { Text("Remove request") }
         }
@@ -1290,7 +1290,7 @@ private fun LoadingCard() {
         CircularProgressIndicator(
             modifier = Modifier.size(24.dp),
             strokeWidth = 2.dp,
-            color = MaterialTheme.colorScheme.primary,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.width(12.dp))
         Text(

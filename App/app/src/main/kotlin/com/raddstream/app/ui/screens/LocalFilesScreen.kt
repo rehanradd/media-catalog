@@ -220,7 +220,7 @@ private fun LocalVideoRow(file: LocalVideoFile, onPlay: () -> Unit) {
         Icon(
             Icons.Default.PlayArrow,
             contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.size(28.dp),
         )
         Column(

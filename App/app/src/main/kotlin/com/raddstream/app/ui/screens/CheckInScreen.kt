@@ -133,7 +133,7 @@ fun CheckInScreen(
                                 Icon(
                                     Icons.Default.Check,
                                     contentDescription = "Claimed",
-                                    tint = MaterialTheme.colorScheme.primary,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.padding(start = 8.dp),
                                 )
                             }
@@ -151,7 +151,7 @@ fun CheckInScreen(
                 Text(
                     state.claimMessage ?: "Claimed for today — come back tomorrow.",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
                 Button(

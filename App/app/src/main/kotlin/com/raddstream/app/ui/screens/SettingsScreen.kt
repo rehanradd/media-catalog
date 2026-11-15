@@ -281,7 +281,7 @@ fun SettingsScreen(
                     Text(
                         AudioBoost.labelFor(state.prefs.audioBoost),
                         style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = MaterialTheme.colorScheme.onSurface,
                     )
                     Slider(
                         value = state.prefs.audioBoost.coerceIn(0f, AudioBoostUi.MAX_OFFERED_LEVEL),
@@ -381,7 +381,7 @@ fun SettingsScreen(
                     Text(
                         "${state.prefs.subtitleSizePercent}%",
                         style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = MaterialTheme.colorScheme.onSurface,
                     )
                     Slider(
                         value = state.prefs.subtitleSizePercent.toFloat(),
@@ -577,11 +577,7 @@ fun SettingsScreen(
                     Text(
                         if (daysLeft > 0) AccountCardCopy.trialActive(daysLeft) else AccountCardCopy.TRIAL_ENDED,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = if (daysLeft > 0) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontWeight = FontWeight.Medium,
                     )
                     if (daysLeft > 0) {
@@ -753,7 +749,7 @@ fun SettingsScreen(
                         Text(
                             AccountCardCopy.LINK_BONUS,
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Text(
                             AccountCardCopy.LINK_PIN_MEANING,
@@ -965,7 +961,7 @@ fun SettingsScreen(
                                     state.testMessage?.let { msg ->
                                         Text(
                                             text = msg,
-                                            color = if (state.testIsError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                                            color = if (state.testIsError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                                             style = MaterialTheme.typography.bodySmall,
                                         )
                                     }
@@ -1037,7 +1033,7 @@ private fun SettingsCard(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (icon != null) {
-                Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onBackground)
         }

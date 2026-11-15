@@ -98,7 +98,7 @@ fun SetupScreen(
             Spacer(Modifier.height(12.dp))
             Text(
                 text = message,
-                color = if (state.messageIsError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                color = if (state.messageIsError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodySmall,
                 textAlign = TextAlign.Center,
             )

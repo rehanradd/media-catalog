@@ -287,7 +287,7 @@ fun PosterCard(
                             Modifier
                                 .fillMaxWidth(fraction.coerceIn(0f, 1f))
                                 .fillMaxHeight()
-                                .background(MaterialTheme.colorScheme.primary),
+                                .background(MaterialTheme.colorScheme.onSurfaceVariant),
                         )
                     }
                 }
@@ -315,7 +315,7 @@ fun PosterCard(
                             .background(RaddArtScrim)
                             .border(
                                 width = 1.dp,
-                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.75f),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
                                 shape = RoundedCornerShape(8.dp),
                             )
                             .padding(horizontal = 7.dp, vertical = 2.dp)
@@ -323,7 +323,7 @@ fun PosterCard(
                     ) {
                         Text(
                             text = "#$rank",
-                            color = MaterialTheme.colorScheme.primary,
+                            color = MaterialTheme.colorScheme.onSurface,
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.ExtraBold,
                         )
@@ -423,7 +423,7 @@ fun PosterCard(
                     progressLabel?.let { label ->
                         Text(
                             text = label,
-                            color = MaterialTheme.colorScheme.primary,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,

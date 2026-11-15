@@ -2750,7 +2750,7 @@ private fun PlayerLoadingIndicator(
     ) {
         CircularProgressIndicator(
             modifier = Modifier.size(RaddTokens.Touch.MinTarget),
-            color = MaterialTheme.colorScheme.primary,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             strokeWidth = 3.dp,
         )
         if (!label.isNullOrBlank()) {

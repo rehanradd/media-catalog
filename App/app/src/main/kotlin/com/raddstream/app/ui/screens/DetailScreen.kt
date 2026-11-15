@@ -1073,7 +1073,7 @@ private fun PosterHeader(
                 Text(meta.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             includedLine?.let { line ->
-                Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
             }
             UserWords.displayRating(post.imdbRating)?.let { rating ->
                 RatingBadge(rating = "$rating IMDb")
@@ -1329,13 +1329,13 @@ private fun SponsorCard(onOpenVipUpgrade: () -> Unit) {
             modifier = Modifier
                 .size(38.dp)
                 .clip(RoundedCornerShape(20.dp))
-                .background(MaterialTheme.colorScheme.primaryContainer),
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 Icons.Default.Star,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(20.dp),
             )
         }
@@ -1786,7 +1786,7 @@ internal fun EpisodeRow(
                 Text(
                     text = "Watched",
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else if (p.fraction != null) {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {

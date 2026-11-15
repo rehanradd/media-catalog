@@ -138,7 +138,7 @@ fun LanguagesScreen(
                     Text(
                         "${state.subtitleSizePercent}%",
                         style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = MaterialTheme.colorScheme.onSurface,
                     )
                     Slider(
                         value = state.subtitleSizePercent.toFloat(),

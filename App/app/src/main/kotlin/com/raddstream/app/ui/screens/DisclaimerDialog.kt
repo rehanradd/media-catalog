@@ -136,7 +136,7 @@ internal fun DisclaimerDialog(
                             }
                             withStyle(
                                 SpanStyle(
-                                    color = MaterialTheme.colorScheme.primary,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontWeight = FontWeight.Medium,
                                     textDecoration = TextDecoration.Underline,
                                 ),

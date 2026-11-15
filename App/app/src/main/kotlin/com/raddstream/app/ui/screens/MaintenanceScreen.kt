@@ -57,7 +57,7 @@ fun MaintenanceScreen(
             imageVector = Icons.Default.Info,
             contentDescription = null,
             modifier = Modifier.size(56.dp),
-            tint = MaterialTheme.colorScheme.primary,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(modifier = Modifier.height(20.dp))
         Text(

@@ -931,7 +931,7 @@ internal fun CheckInNudge(
             Icon(
                 Icons.Default.DateRange,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
                 modifier = Modifier.size(18.dp),
             )
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
@@ -967,7 +967,7 @@ internal fun CheckInNudge(
                     Text(
                         text = "Claimed",
                         style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 else -> {

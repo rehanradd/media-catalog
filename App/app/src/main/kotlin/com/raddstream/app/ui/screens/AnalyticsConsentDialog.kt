@@ -91,7 +91,7 @@ private fun Reassurance(text: String) {
         Icon(
             Icons.Default.Check,
             contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.width(RaddTokens.Space.Sm))
         Text(
