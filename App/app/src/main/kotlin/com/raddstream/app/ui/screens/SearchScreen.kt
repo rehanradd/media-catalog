@@ -68,6 +68,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -457,7 +458,39 @@ private fun DirectVideoRow(url: String, title: String, onPlay: () -> Unit) {
  */
 @Composable
 internal fun FilterRail(state: SearchUiState, onSelectType: (String?) -> Unit, onOpenFilters: () -> Unit) {
+    // Robo #7: the last chip ("Complete series") was cut off at the right edge — and when it
+    // was the SELECTED chip it stayed cut off ("Comp…"), because nothing ever scrolled the
+    // rail to it. The rail already scrolls (LazyRow) with end padding (Session 121 P-29);
+    // what it never did was reveal its own selection. When the selected type changes, scroll
+    // just enough to bring that chip fully into view — nothing when it is already visible,
+    // so tapping a visible chip never moves the row.
+    val listState = rememberLazyListState()
+    LaunchedEffect(state.filters.type) {
+        val selectedIndex = typeChips.indexOfFirst { it.second == state.filters.type }
+        if (selectedIndex < 0) return@LaunchedEffect
+        // The effect launches before the row's first layout pass, so wait a frame:
+        // layoutInfo is empty until the row is measured.
+        withFrameNanos { }
+        val info = listState.layoutInfo
+        val visible = info.visibleItemsInfo
+        if (visible.isEmpty()) return@LaunchedEffect
+        val item = visible.firstOrNull { it.index == selectedIndex }
+        if (item == null) {
+            // Not composed yet (far off-screen) — bring it to the start.
+            listState.animateScrollToItem(selectedIndex)
+            return@LaunchedEffect
+        }
+        val start = info.viewportStartOffset
+        val end = info.viewportEndOffset
+        val itemStart = item.offset
+        val itemEnd = item.offset + item.size
+        when {
+            itemStart < start -> listState.animateScrollBy((itemStart - start).toFloat())
+            itemEnd > end -> listState.animateScrollBy((itemEnd - end).toFloat())
+        }
+    }
     LazyRow(
+        state = listState,
         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
