@@ -495,6 +495,44 @@ def iter_pending(conn: sqlite3.Connection, *, after_id: int = 0, batch_size: int
     return selected, seen
 
 
+#: The column list of :data:`_SELECT_PENDING_SQL`, repeated for the ids walk:
+#: keep the two in step — a column added to one belongs in the other.
+_IDS_PAGE_SQL = """
+    SELECT id, release_id, source_url, final_url, service, source_name,
+           playback_type, is_temporary, status, http_status, is_resumable,
+           last_checked_at{extra}
+      FROM download_sources
+     WHERE id IN ({placeholders})
+     ORDER BY id
+"""
+
+
+def _iter_ids_page(conn: sqlite3.Connection, ids: list[int], offset: int,
+                   batch_size: int, evidence: list[str] | None = None):
+    """One page of an explicit id list, mirroring :func:`iter_pending`.
+
+    Returns ``(rows, page_end_id, new_offset, exhausted)``: at most
+    ``batch_size`` *probeable* rows from ``ids[offset:]``. ``page_end_id`` is
+    the highest id in the slice, probed or not, so un-probeable ids
+    (magnet:, empty) cannot wedge the walk; ``exhausted`` is true when the
+    slice consumed the list.
+    """
+    batch_size = max(1, min(int(batch_size), MAX_BATCH_SIZE))
+    evidence = _available_evidence(conn) if evidence is None else list(evidence)
+    page = [int(i) for i in ids[offset:offset + batch_size]]
+    if not page:
+        return [], int(ids[-1]) if ids else 0, offset, True
+    extra = ", checked_at" if "checked_at" in evidence else ""
+    sql = _IDS_PAGE_SQL.format(
+        extra=extra, placeholders=", ".join("?" for _ in page))
+    rows = [dict(row) for row in conn.execute(sql, page)]
+    selected, seen = [], int(page[-1])
+    for row in rows:
+        if should_probe(row):
+            selected.append(row)
+    return selected, seen, offset + len(page), offset + len(page) >= len(ids)
+
+
 def default_prober(rows, *, workers: int = 4, timeout: float | None = None,
                    sample_bytes: int | None = None):
     """Knock on every row through ``link_health.probe_many`` (ordered like input).
@@ -674,7 +712,8 @@ def propagate(conn: sqlite3.Connection, *, scope: str = "default", prober=None,
               stale_after_seconds: float | None = DEFAULT_STALE_AFTER_SECONDS,
               site: str | None = None, sync_projection: bool | None = None,
               resume: bool = True, progress=None, dry_run: bool = False,
-              max_rows: int | None = None, timeout: float | None = None) -> dict:
+              max_rows: int | None = None, timeout: float | None = None,
+              ids: list[int] | None = None) -> dict:
     """Walk the ledger in bounded pages and write real verdicts. resumable by design.
 
     Args:
@@ -694,6 +733,12 @@ def propagate(conn: sqlite3.Connection, *, scope: str = "default", prober=None,
             counts the rows that need a verdict and makes no request at all, so an
             operator can point it at 3M rows and read the number safely. Pass a
             ``prober`` with ``dry_run`` only when knocking is intended.
+        ids: an explicit row list to walk instead of the id-ordered pending
+            scan (2026-11-15, link sweep: the demand-first phase probes the
+            pressed rows from ``resolved_cache``). The list is deduped and
+            sorted; the stored cursor is ignored for this walk — the list IS
+            the work — and an exhausted list reports ``complete``. Pages of
+            only un-probeable ids advance the offset without counting a batch.
 
     Returns a summary dict: rows_checked / rows_updated / batches / by_status /
     last_id / state ('complete' or 'running').
@@ -716,6 +761,13 @@ def propagate(conn: sqlite3.Connection, *, scope: str = "default", prober=None,
     started = float(existing["started_at"] or time.time()) if existing else time.time()
     if resume and existing is not None and str(existing["state"]) != "complete":
         cursor = int(existing["last_id"] or 0)
+    # An explicit id list is its own work: the stored cursor is ignored, and
+    # the walk starts at the head of the (deduped, sorted) list.
+    ids_list: list[int] | None = None
+    ids_offset = 0
+    if ids is not None:
+        cursor = 0
+        ids_list = sorted({int(i) for i in ids if int(i) > 0})
     run_id = f"{int(time.time() * 1000)}-{scope}"
     if not dry_run:
         conn.execute(
@@ -739,13 +791,26 @@ def propagate(conn: sqlite3.Connection, *, scope: str = "default", prober=None,
                 break
             if max_rows is not None and summary["rows_checked"] >= int(max_rows):
                 break
-            rows, page_end = iter_pending(conn, after_id=cursor, batch_size=batch_size,
-                                          only_unchecked=only_unchecked,
-                                          stale_after_seconds=stale_after_seconds, site=site,
-                                          evidence=evidence)
-            if not rows:
-                summary["state"] = "complete"
-                break
+            if ids_list is not None:
+                rows, page_end, ids_offset, exhausted = _iter_ids_page(
+                    conn, ids_list, ids_offset, batch_size, evidence)
+                if not rows and exhausted:
+                    summary["state"] = "complete"
+                    break
+                if not rows:
+                    # A page of only un-probeable ids: advance past it
+                    # without counting a batch or a probe.
+                    cursor = int(page_end)
+                    summary["last_id"] = cursor
+                    continue
+            else:
+                rows, page_end = iter_pending(conn, after_id=cursor, batch_size=batch_size,
+                                              only_unchecked=only_unchecked,
+                                              stale_after_seconds=stale_after_seconds, site=site,
+                                              evidence=evidence)
+                if not rows:
+                    summary["state"] = "complete"
+                    break
             if plan_only:
                 summary["rows_pending"] = summary.get("rows_pending", 0) + len(rows)
                 summary["rows_checked"] += len(rows)

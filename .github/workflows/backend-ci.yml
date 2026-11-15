@@ -16,6 +16,7 @@ name: 🐍 Backend CI — Stdlib Python Tests
 #                                             throwaway HTTP server on 127.0.0.1
 #                                             only — NO external network)
 #     - Fast_Fetch/test_link_state.py        (ledger verdicts + cat_links propagation)
+#     - Fast_Fetch/test_link_state_runner.py (out-of-process sweep runner + ids-mode walk)
 #     - Fast_Fetch/test_evidence_writeback.py(probe evidence folded onto cat_links)
 #     - Fast_Fetch/test_api_v2.py            (every /api/v2 route head)
 #     - Fast_Fetch/test_redact.py            (deny-by-default provenance edge)
@@ -280,6 +281,11 @@ jobs:
 
       - name: 🧪 test_link_state.py
         run: python3 -S Fast_Fetch/test_link_state.py
+
+      # The out-of-process sweep runner (Session 2026-11-15): demand-first
+      # verdicts for pressed rows, then the background pending scan.
+      - name: 🧪 test_link_state_runner.py
+        run: python3 -S Fast_Fetch/test_link_state_runner.py
 
       - name: 🧪 test_evidence_writeback.py
         run: python3 -S Fast_Fetch/test_evidence_writeback.py

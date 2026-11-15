@@ -1,0 +1,33 @@
+[Unit]
+Description=Out-of-process link-health sweep: demand-first verdicts, then the background scan (Phase 1 sweep rate)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/radd-stream
+# The live catalog path, the same value radd-stream.service carries. The
+# runner reads it through RADD_DB_PATH at import (config.py freezes DB_PATH),
+# so it must be set here rather than left to a --db flag.
+Environment=RADD_DB_PATH=/home/ubuntu/radd-stream-data/merged_catalog_20261025.db
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+# One sweep: up to 200 pressed rows first (scope sweep-demand), then up to
+# 500 background rows (scope sweep). The runner's own load gate
+# (--load-ceiling 4.0, --max-wait-seconds 300) pauses or yields while the
+# box is busy, and it yields outright when the prefetch sweep or the backup
+# is running; Nice=19 + idle IO class (the same deprioritisation as the
+# backup and prefetch units) keeps it from stealing CPU or disk from the
+# live API either way. A run at ~1-2s/row finishes well inside the 1h
+# start timeout; the timer is the loop, the runner is --once only.
+ExecStart=/usr/bin/python3 -S /opt/radd-stream/Fast_Fetch/link_state_runner.py --once --max-rows 500 --demand-limit 200 --load-ceiling 4.0 --max-wait-seconds 300
+Nice=19
+IOSchedulingClass=idle
+TimeoutStartSec=3600
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
