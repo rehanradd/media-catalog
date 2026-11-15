@@ -9,7 +9,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
-import androidx.compose.ui.test.fetchSemanticsNodes
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
@@ -55,9 +54,9 @@ class MyListMockupScreenTest {
         posterUrl = null,
     )
 
-    // The singular fetchSemanticsNode() is not in this project's pinned
-    // compose-ui-test version — the repo pattern (BottomNavTouchTargetTest)
-    // is the collection form, .single() because each tag is unique.
+    // fetchSemanticsNodes() is a member of SemanticsNodeInteractionCollection,
+    // not a top-level function — it needs no import (BottomNavTouchTargetTest
+    // uses it the same way). .single() because each tag is unique.
     private fun chipNode(tag: String) =
         compose.onAllNodesWithTag(tag).fetchSemanticsNodes().single()
 
