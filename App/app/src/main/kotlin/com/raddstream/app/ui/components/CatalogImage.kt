@@ -34,6 +34,8 @@ import com.raddstream.app.images.ArtUrlPolicy
 import com.raddstream.app.images.ImageSizingHolder
 import com.raddstream.app.images.ImageSizingPolicy
 import com.raddstream.app.images.PosterUrlPolicy
+import com.raddstream.app.ui.theme.RaddHeroPlaceholderHigh
+import com.raddstream.app.ui.theme.RaddHeroPlaceholderLow
 import com.raddstream.app.ui.theme.RaddPlaceholderHigh
 import com.raddstream.app.ui.theme.RaddPlaceholderLow
 import com.raddstream.app.ui.theme.RaddStreamMark
@@ -107,6 +109,12 @@ fun CatalogImage(
      * registry's own (live-TV channel logos). Catalog art never passes this.
      */
     allowAnyHost: Boolean = false,
+    /**
+     * B1 (home review, Nov 2026): the hero's failed backdrop paints the
+     * [FallbackTone.Hero] gradient instead of the tile one, so a missing
+     * backdrop reads as a designed brand surface, not a black void.
+     */
+    fallbackTone: FallbackTone = FallbackTone.Tile,
 ) {
     val context = LocalContext.current
     val holder = remember(context) { imageSizingHolder(context) }
@@ -156,6 +164,7 @@ fun CatalogImage(
         ImageFallbackCard(
             label = fallbackLabel,
             modifier = modifier,
+            tone = fallbackTone,
         )
         return
     }
@@ -187,7 +196,11 @@ fun CatalogImage(
                     .fillMaxSize()
                     .clickable(onClickLabel = "Retry loading image") { attempt++ },
             ) {
-                ImageFallbackCard(label = fallbackLabel, modifier = Modifier.fillMaxSize())
+                ImageFallbackCard(
+                    label = fallbackLabel,
+                    modifier = Modifier.fillMaxSize(),
+                    tone = fallbackTone,
+                )
             }
         },
         // The artwork-accent hook: only a caller that passed onBitmap pays the
@@ -221,6 +234,15 @@ internal fun shouldAutoRetryImage(attempt: Int, maxAutoRetries: Int = MAX_IMAGE_
     attempt < maxAutoRetries
 
 /**
+ * Which surface the fallback paints for. A poster tile is small, so the
+ * near-black tile gradient reads as a designed tile; the full-bleed hero
+ * is the one surface big enough that the same gradient reads as an empty
+ * black void (B1, home review Nov 2026), so the hero gets a jade-tinted
+ * gradient and a full-strength mark instead.
+ */
+enum class FallbackTone { Tile, Hero }
+
+/**
  * The dark placeholder every failed catalog image falls back to. Colours come only from
  * the theme, never a literal, so a re-brand from `brand.properties` restyles this with the
  * rest of the app.
@@ -229,6 +251,7 @@ internal fun shouldAutoRetryImage(attempt: Int, maxAutoRetries: Int = MAX_IMAGE_
 fun ImageFallbackCard(
     modifier: Modifier = Modifier,
     label: String? = null,
+    tone: FallbackTone = FallbackTone.Tile,
 ) {
     Box(
         modifier = modifier
@@ -238,7 +261,11 @@ fun ImageFallbackCard(
                 // surface — a failed or missing poster still reads as a designed
                 // tile, and the title under the mark says which title it is.
                 Brush.verticalGradient(
-                    listOf(RaddPlaceholderHigh, RaddPlaceholderLow),
+                    if (tone == FallbackTone.Hero) {
+                        listOf(RaddHeroPlaceholderHigh, RaddHeroPlaceholderLow)
+                    } else {
+                        listOf(RaddPlaceholderHigh, RaddPlaceholderLow)
+                    },
                 ),
             ),
         contentAlignment = Alignment.Center,
@@ -248,8 +275,10 @@ fun ImageFallbackCard(
             modifier = Modifier.padding(8.dp),
         ) {
             RaddStreamMark(
-                diameter = 30.dp,
-                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
+                diameter = if (tone == FallbackTone.Hero) 48.dp else 30.dp,
+                color = MaterialTheme.colorScheme.primary.copy(
+                    alpha = if (tone == FallbackTone.Hero) 1f else 0.55f,
+                ),
             )
             // Session 121 (P-15): the label is the title itself, never punctuation.
             // A label with no letter or digit in it — a "?" from a mistyped title, or

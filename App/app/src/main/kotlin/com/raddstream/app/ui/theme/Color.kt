@@ -198,6 +198,12 @@ val RaddScrim            = Color(0xFF000000)
 /** Poster placeholder shimmer endpoints (use with a sweep gradient). */
 val RaddPlaceholderLow   = Color(0xFF10191C)
 val RaddPlaceholderHigh  = Color(0xFF1C2A2E)
+/** Hero fallback endpoints (B1, home review Nov 2026): the hero is the one
+ *  surface big enough that the near-black tile gradient reads as an empty
+ *  void when the backdrop fails. The hero fallback is jade-tinted instead,
+ *  so a missing backdrop reads as a designed brand surface, not a hole. */
+val RaddHeroPlaceholderLow   = Color(0xFF0A1F1A)
+val RaddHeroPlaceholderHigh  = Color(0xFF14332B)
 /** Adult-blocked / locked empty state — deliberately DESATURATED: blocked
  *  content is greyed to outline tiers, never tinted with the action color. */
 val RaddBlockedStroke    = RaddInk600   // 3:1 graphics vs 950 — same brand paint, one source

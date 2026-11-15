@@ -373,7 +373,7 @@ private fun HeroSlide(
         // a bare gradient with no title at all. It now names the title, like the
         // failed-load fallback below it.
         if (backdropUrl.isNullOrBlank()) {
-            ImageFallbackCard(label = title)
+            ImageFallbackCard(label = title, tone = FallbackTone.Hero)
         } else {
             CatalogImage(
                 url = backdropUrl,
@@ -388,6 +388,10 @@ private fun HeroSlide(
                 // carries the title on this branch (hasArt), so the fallback
                 // is mark + gradient only.
                 fallbackLabel = null,
+                // B1 (home review, Nov 2026): a failed backdrop paints the
+                // hero-tinted gradient, so the slide reads as a designed
+                // brand surface instead of a black void.
+                fallbackTone = FallbackTone.Hero,
             )
         }
 
