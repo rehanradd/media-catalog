@@ -9,8 +9,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
-import androidx.compose.ui.test.fetchSemanticsNode
+import androidx.compose.ui.test.fetchSemanticsNodes
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -54,13 +55,16 @@ class MyListMockupScreenTest {
         posterUrl = null,
     )
 
-    private fun chipLeft(tag: String): Float =
-        compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot.left
+    // The singular fetchSemanticsNode() is not in this project's pinned
+    // compose-ui-test version — the repo pattern (BottomNavTouchTargetTest)
+    // is the collection form, .single() because each tag is unique.
+    private fun chipNode(tag: String) =
+        compose.onAllNodesWithTag(tag).fetchSemanticsNodes().single()
+
+    private fun chipLeft(tag: String): Float = chipNode(tag).boundsInRoot.left
 
     private fun chipHeightDp(tag: String) =
-        with(compose.density) {
-            compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot.height.toDp()
-        }
+        with(compose.density) { chipNode(tag).boundsInRoot.height.toDp() }
 
     @Test
     fun sortChipsAreInMockupOrderWithRecentlyAddedSelected() {
