@@ -115,6 +115,13 @@ fun CatalogImage(
      * backdrop reads as a designed brand surface, not a black void.
      */
     fallbackTone: FallbackTone = FallbackTone.Tile,
+    /**
+     * Hero (Nov 2026): what the loading slot paints instead of the bare
+     * shimmer. Only the hero passes one — a full-bleed slide's shimmer reads
+     * as a black void on first paint, while a poster's does not. Null keeps
+     * the shimmer everywhere else.
+     */
+    loadingContent: (@Composable () -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val holder = remember(context) { imageSizingHolder(context) }
@@ -184,9 +191,10 @@ fun CatalogImage(
         contentDescription = contentDescription,
         modifier = modifier.then(if (loaded) Modifier else Modifier.clearAndSetSemantics { }),
         contentScale = contentScale,
-        // A real request in flight gets the moving shimmer; a gated or blank URL never
+        // A real request in flight gets the moving shimmer — or the caller's
+        // branded frame, when it passed one (the hero); a gated or blank URL never
         // reaches this slot, so the surface behind the card stays the truth in that case.
-        loading = { ShimmerBox(Modifier.fillMaxSize()) },
+        loading = { loadingContent?.invoke() ?: ShimmerBox(Modifier.fillMaxSize()) },
         // A failed load shows the branded fallback — and the fallback is
         // tappable to try again, because a tile that failed once must not
         // stay failed for the whole visit when the URL itself is alive.
@@ -303,14 +311,14 @@ fun ImageFallbackCard(
 
 /** Reaches the Application-owned sizing singleton from any composable — the [com.raddstream.app.brand.Brand]
  *  "read it anywhere" convenience, but for a DI object that must observe DataStore rather than BuildConfig. */
-private fun imageSizingHolder(context: Context): ImageSizingHolder =
+internal fun imageSizingHolder(context: Context): ImageSizingHolder =
     EntryPointAccessors.fromApplication(
         context.applicationContext,
         ImageSizingEntryPoint::class.java,
     ).imageSizingHolder()
 
 /** Phase 7 (M4): the server settings, read the same way — the art policy needs the configured host. */
-private fun serverSettingsRepository(context: Context): ServerSettingsRepository =
+internal fun serverSettingsRepository(context: Context): ServerSettingsRepository =
     EntryPointAccessors.fromApplication(
         context.applicationContext,
         ImageSizingEntryPoint::class.java,

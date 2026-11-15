@@ -88,6 +88,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.raddstream.app.network.models.FacetsResponse
 import com.raddstream.app.network.models.PanelBroadcast
 import com.raddstream.app.network.models.Post
+import com.raddstream.app.network.models.currentCalendarYear
 import com.raddstream.app.ui.components.CatalogImage
 import com.raddstream.app.ui.components.EmptyState
 import com.raddstream.app.ui.components.ErrorState
@@ -101,6 +102,7 @@ import com.raddstream.app.ui.components.RaddDialogTitle
 import com.raddstream.app.ui.components.SectionHeader
 import com.raddstream.app.ui.components.SeeAllButton
 import com.raddstream.app.ui.components.UserWords
+import com.raddstream.app.ui.components.prefetchHeroArt
 import com.raddstream.app.ui.components.rememberReduceMotion
 import com.raddstream.app.ui.layout.CardGeometry
 import com.raddstream.app.ui.theme.RaddMotion
@@ -111,6 +113,7 @@ import com.raddstream.app.viewmodel.HomeUiState
 import com.raddstream.app.viewmodel.ResumeTile
 import com.raddstream.app.viewmodel.HomeViewModel
 import com.raddstream.app.viewmodel.homeSyncLine
+import com.raddstream.app.viewmodel.selectHeroSection
 import com.raddstream.app.viewmodel.visibleHomeRows
 
 private data class JumpOff(val label: String, val type: String?)
@@ -409,14 +412,24 @@ internal fun HomeContent(
                 Spacer(Modifier.height(8.dp))
             }
             // The banner rides the first rail that actually has rows, so it is real
-            // catalog data (freshest additions) and not a hand-picked fake "featured" set.
-            // heroMax 0 hides the slot entirely — no carousel, no skeleton — because
-            // the operator asked for no hero, not for a hero that never loads.
+            // catalog data and not a hand-picked fake "featured" set — except a
+            // stale panel hero loses the slot to "Recently added" ([selectHeroSection]):
+            // the operator's curated list once showed 1963 films while the newest
+            // feed walked 2027s. heroMax 0 hides the slot entirely — no carousel,
+            // no skeleton — because the operator asked for no hero, not for a hero
+            // that never loads.
             // HO-1: the hero IS that rail's presentation, so its posters are
             // de-duplicated out of the rail below — the same six titles must
             // not appear twice on one screen.
-            val heroSection = if (heroMax > 0) state.sections.firstOrNull { it.visible } else null
+            val heroSection = if (heroMax > 0) selectHeroSection(state.sections, currentCalendarYear()) else null
             val heroItems = heroSection?.items.orEmpty().take(heroMax)
+            // Hero (Nov 2026): warm the hero art the moment the hero items are
+            // known, so first paint has art, not placeholders. The helper is a
+            // no-op for art-less items and never throws.
+            val prefetchContext = LocalContext.current
+            LaunchedEffect(heroItems) {
+                if (heroItems.isNotEmpty()) prefetchHeroArt(prefetchContext, heroItems)
+            }
             if (heroMax > 0) {
                 if (heroItems.isNotEmpty()) {
                     HeroCarousel(

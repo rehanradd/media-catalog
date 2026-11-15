@@ -16,6 +16,7 @@ import com.raddstream.app.network.models.FacetsResponse
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.network.models.PanelBroadcast
 import com.raddstream.app.network.models.VipRemoteConfig
+import com.raddstream.app.network.models.displayYearLabel
 import com.raddstream.app.network.models.WireText
 import com.raddstream.app.player.AdCadenceGovernor
 import com.raddstream.app.player.AdSurface
@@ -389,6 +390,59 @@ internal fun mergePanelFeed(
             BroadcastTargeting.visible(it, regionId, isVip, appVersion)
     }
     return (panelSections + builtIn) to broadcasts
+}
+
+/** The built-in rail the hero falls back to when the panel's hero is stale. */
+internal const val RECENT_SECTION_KEY = "recent"
+
+/**
+ * Hero (Nov 2026): which rail the banner rides. The panel's sections come
+ * first by [mergePanelFeed], so the banner's default is the operator's hero
+ * list — but that list is curation, and curation goes stale: the panel once
+ * published McLintock! (1963), Tarzan's Revenge, The Stranger (1946) as the
+ * six-slide hero while the newest feed walked 2027s. A stale hero shows old
+ * films on the first screen, which is exactly the bug the newest sort was
+ * built to fix — so a stale panel hero loses the slot to "Recently added".
+ *
+ * Stale means [isStaleHero]: no title from this year or last. Fresh panel
+ * curation is used as-is — the operator may feature a title on purpose, and
+ * this never second-guesses a fresh list. A built-in first rail is newest
+ * by construction, so it is never stale-checked.
+ *
+ * Returns null only while the fallback is still in flight: a stale panel
+ * hero plus a loading Recent rail means hold the skeleton, never flash the
+ * old hero for one frame and then swap it. A Recent rail that failed or came
+ * back empty is different — then the stale hero is still better than no
+ * hero at all, and it shows.
+ */
+internal fun selectHeroSection(sections: List<HomeSection>, currentYear: Int): HomeSection? {
+    val first = sections.firstOrNull { it.visible } ?: return null
+    if (!first.panelManaged) return first
+    if (!isStaleHero(first.items, currentYear)) return first
+    val recent = sections.firstOrNull {
+        it.key == RECENT_SECTION_KEY || it.key == "panel:$RECENT_SECTION_KEY"
+    }
+    return when {
+        recent?.visible == true -> recent
+        recent?.loading == true -> null
+        else -> first
+    }
+}
+
+/**
+ * True when a hero list carries no recent title. Plausibility reuses
+ * [displayYearLabel]: a year outside 1900..currentYear+1 is not a release
+ * year at all (a site mis-parse, never a film), so it cannot make the list
+ * fresh — an all-null-year list is stale by the same rule. Fresh means at
+ * least one title from this year or last: a 2027 title in 2026 is fresh
+ * (an announced release belongs in the hero), a 2025 title in 2026 is
+ * fresh, a 1963 list is not.
+ */
+internal fun isStaleHero(items: List<Post>, currentYear: Int): Boolean {
+    val newest = items
+        .mapNotNull { displayYearLabel(it.year, currentYear)?.toIntOrNull() }
+        .maxOrNull() ?: return true
+    return newest < currentYear - 1
 }
 
 @HiltViewModel

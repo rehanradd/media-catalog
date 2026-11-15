@@ -1,0 +1,81 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="360dp"
+    android:height="200dp"
+    android:viewportWidth="360"
+    android:viewportHeight="200">
+    <!-- Hero fallback frame (Nov 2026): the branded surface the hero paints while its
+         artwork is still in flight, and the surface that stays when the art URL is dead —
+         so the hero is never a black void. Dark green-black, the brand mark in jade,
+         nothing that could be mistaken for a movie poster: no raster art, no fake
+         title art, a few hundred bytes. The gradient depth comes from the slide's
+         own scrim (HeroSlide layer 2), which fades this frame into the page exactly
+         as it fades real art — this vector only carries the flat brand surface.
+         Colours are pre-blended hex (vectors cannot read the theme): the jade is
+         the standing brand jade #2BC79A at 55% for the mark, 18% for its echo. -->
+    <path
+        android:fillColor="#FF0C1210"
+        android:pathData="M0,0 L360,0 L360,200 L0,200 Z" />
+    <!-- Faint echo of the mark, down-right, for depth. -->
+    <group
+        android:scaleX="2.4"
+        android:scaleY="2.4"
+        android:translateX="95"
+        android:translateY="18">
+        <path
+            android:fillColor="@android:color/transparent"
+            android:pathData="M12,30 Q24,21 36,30 T60,30 T84,30"
+            android:strokeWidth="5"
+            android:strokeColor="#2E2BC79A"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+        <path
+            android:fillColor="@android:color/transparent"
+            android:pathData="M12,48 Q24,39 36,48 T60,48 T84,48"
+            android:strokeWidth="5"
+            android:strokeColor="#2EFF7A6B"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+        <path
+            android:fillColor="@android:color/transparent"
+            android:pathData="M12,66 Q24,57 36,66 T60,66 T84,66"
+            android:strokeWidth="5"
+            android:strokeColor="#2E9AA5FF"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+    </group>
+    <!-- The mark itself, centred: the same waves + play triangle as ic_logo_mark,
+         scaled 2.4x into the middle of the frame. -->
+    <group
+        android:scaleX="2.4"
+        android:scaleY="2.4"
+        android:translateX="65"
+        android:translateY="-8">
+        <path
+            android:fillColor="@android:color/transparent"
+            android:pathData="M12,30 Q24,21 36,30 T60,30 T84,30"
+            android:strokeWidth="5"
+            android:strokeColor="#8C2BC79A"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+        <path
+            android:fillColor="@android:color/transparent"
+            android:pathData="M12,48 Q24,39 36,48 T60,48 T84,48"
+            android:strokeWidth="5"
+            android:strokeColor="#66FF7A6B"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+        <path
+            android:fillColor="@android:color/transparent"
+            android:pathData="M12,66 Q24,57 36,66 T60,66 T84,66"
+            android:strokeWidth="5"
+            android:strokeColor="#669AA5FF"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+        <path
+            android:fillColor="#8C2BC79A"
+            android:pathData="M40,33 L63,48 L40,63 Z"
+            android:strokeWidth="2"
+            android:strokeColor="#8C2BC79A"
+            android:strokeLineJoin="round" />
+    </group>
+</vector>

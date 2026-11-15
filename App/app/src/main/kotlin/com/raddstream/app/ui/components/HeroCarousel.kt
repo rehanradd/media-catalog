@@ -1,10 +1,12 @@
 package com.raddstream.app.ui.components
 
+import android.content.Context
 import android.os.SystemClock
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -54,6 +56,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
@@ -64,7 +67,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import coil.imageLoader
+import coil.request.ImageRequest
+import com.raddstream.app.R
 import com.raddstream.app.brand.Brand
+import com.raddstream.app.images.ArtUrlPolicy
+import com.raddstream.app.images.ImageSizingPolicy
+import com.raddstream.app.images.PosterUrlPolicy
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.network.models.WireText
 import com.raddstream.app.ui.theme.PressHaptics
@@ -74,6 +83,7 @@ import com.raddstream.app.ui.theme.RaddStreamMark
 import com.raddstream.app.ui.theme.RaddTokens
 import com.raddstream.app.ui.theme.pressScale
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -254,6 +264,68 @@ fun HeroCarousel(
 }
 
 /**
+ * The branded frame the hero paints while its artwork is still in flight
+ * ([CatalogImage]'s loading slot): the [R.drawable.hero_fallback] vector —
+ * dark surface, jade mark — full-bleed under the slide's own scrim, so the
+ * wait reads as a designed brand surface, never a black void. No title text
+ * here on purpose: the slide's headline already prints the title in big type
+ * (displaySmall) through the whole load, and printing it on the frame too
+ * duplicates it (M1, Appetize-proven). The no-URL branch is different — there
+ * the headline is dropped, so the fallback card carries the title instead.
+ */
+@Composable
+internal fun HeroFallbackFrame(modifier: Modifier = Modifier) {
+    Image(
+        imageVector = ImageVector.vectorResource(R.drawable.hero_fallback),
+        contentDescription = null,
+        contentScale = ContentScale.Crop,
+        modifier = modifier.fillMaxSize().testTag("heroFallbackFrame"),
+    )
+}
+
+/**
+ * The hero's art URLs, in slide order: the widest artwork each row carries
+ * (first backdrop, else poster), blanks dropped, duplicates dropped. Pure,
+ * so the selection is testable without Coil.
+ */
+internal fun heroArtUrls(posts: List<Post>): List<String> =
+    posts.mapNotNull { it.heroArtUrl?.takeIf { url -> url.isNotBlank() } }.distinct()
+
+/**
+ * Hero art prefetch (Nov 2026): when Home lands, warm the hero items' art so
+ * first paint has art, not placeholders. Hero items only — the caller passes
+ * the capped hero list (HERO_LIMIT = 6), never the whole rail. The request is
+ * built exactly like the slide's own ([CatalogImage]): the same TMDB sizing
+ * rewrite, the same host allowlist, the same metered gate — so the prefetched
+ * bytes are the bytes the slide shows, and a metered connection the viewer
+ * never granted image loading to fetches nothing. Coil dedupes an in-flight
+ * request for the same URL, so this never double-fetches the slide that is
+ * already loading. Never throws: a prefetch is an optimisation, and a failed
+ * one must leave Home exactly as it was.
+ */
+internal suspend fun prefetchHeroArt(context: Context, posts: List<Post>) {
+    val urls = heroArtUrls(posts)
+    if (urls.isEmpty()) return
+    runCatching {
+        val holder = imageSizingHolder(context)
+        val sizing = holder.sizing.value
+        if (!ImageSizingPolicy.shouldLoad(sizing.imagesAllowedOnMobileData, holder.isMetered())) return
+        val serverHost = ArtUrlPolicy.hostOf(serverSettingsRepository(context).serverUrl.first())
+        val loader = context.imageLoader
+        urls.forEach { url ->
+            val clean = PosterUrlPolicy.sizedForTile(url, sizing.posterMaxWidthPx)
+            if (!ArtUrlPolicy.isAllowed(clean, serverHost)) return@forEach
+            loader.enqueue(
+                ImageRequest.Builder(context)
+                    .data(clean)
+                    .size(sizing.posterMaxWidthPx, sizing.posterMaxWidthPx)
+                    .build(),
+            )
+        }
+    }
+}
+
+/**
  * The banner's own placeholder while the first rail is still in flight. It keeps the real
  * hero's footprint ([heroHeight]) so the page does not jump when artwork lands, and a few
  * shimmering bars stand in for the title, badges and Watch Now button.
@@ -425,6 +497,10 @@ private fun HeroSlide(
                 // hero-tinted gradient, so the slide reads as a designed
                 // brand surface instead of a black void.
                 fallbackTone = FallbackTone.Hero,
+                // Hero (Nov 2026): while the art is in flight the slide shows
+                // the branded frame, not the bare shimmer — the shimmer is
+                // what read as a black void on first paint.
+                loadingContent = { HeroFallbackFrame() },
             )
         }
 

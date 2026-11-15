@@ -34,6 +34,7 @@ import com.raddstream.app.player.PlaybackRendition
 import com.raddstream.app.player.PlayerUiState
 import com.raddstream.app.player.PrintInfo
 import com.raddstream.app.player.QualityOption
+import com.raddstream.app.ui.components.HeroCarousel
 import com.raddstream.app.ui.components.PosterCard
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.screens.DetailContent
@@ -301,6 +302,24 @@ class PaparazziPreviewTest {
                         ),
                     ),
                     heroAutoplay = false,
+                )
+            }
+        }
+    }
+
+    /**
+     * Hero (Nov 2026): the slide with a real art URL under Layoutlib — Coil
+     * cannot load network images here, so the slide stays in its loading slot
+     * and the branded fallback frame shows. Pins the frame's look, not a photo.
+     */
+    @Test
+    fun heroLoadingFrame() {
+        paparazzi.snapshot {
+            themed {
+                HeroCarousel(
+                    posts = listOf(jawan.copy(posterUrl = "https://image.tmdb.org/t/p/original/abc123.jpg")),
+                    onPostClick = {},
+                    autoplay = false,
                 )
             }
         }
