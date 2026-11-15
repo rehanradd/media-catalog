@@ -1689,6 +1689,9 @@ def site_needles(db_path=None) -> frozenset[str]:
 #: Snapshot of the download_sources vocabulary, rebuilt by the catalog
 #: projection and read by site_needles() at process start.
 SNAPSHOT_TABLE = "site_needle_values"
+#: Snapshot of the source_site vocabulary, rebuilt alongside it and read
+#: by site_text_needles() — the same stamp covers both tables.
+TEXT_SNAPSHOT_TABLE = "site_text_needle_values"
 SNAPSHOT_STAMP_KEY = "needle_snapshot_at"
 
 
@@ -1699,8 +1702,14 @@ def rebuild_site_needle_snapshot(conn) -> int:
     download_sources is final. Stores the raw `service` values and the
     head-token of each `source_name` — the same two DISTINCT queries
     site_needles() used to run live; the length/generic-token filter still
-    applies at read time, in site_needles() itself. Returns the number of
-    values stored. The caller commits. Returns 0 when there is no
+    applies at read time, in site_needles() itself. Alongside it, stores
+    the `source_site` vocabulary site_text_needles() used to scan live
+    from posts at every process start — from cat_work_sites when that
+    table exists (413k rows on the live catalog vs 4.45M posts), else
+    from posts; the UNATTRIBUTED default is filtered at read time, in
+    site_text_needles() itself, exactly like the live scan. Returns the
+    number of service-vocabulary values stored (the text count is not
+    included). The caller commits. Returns 0 when there is no
     download_sources table to read (a fixture DB that never had one).
     """
     has_table = conn.execute(
@@ -1725,11 +1734,40 @@ def rebuild_site_needle_snapshot(conn) -> int:
         "INSERT OR IGNORE INTO site_needle_values (value) VALUES (?)",
         [(v,) for v in sorted(values)],
     )
+    # The text vocabulary alongside it (self-check 2026-11-16): the same
+    # build, the same stamp — site_text_needles() reads this table instead
+    # of scanning posts at process start. At projection time the scan
+    # cost is fine; at serve time it was the other half of _ensure_schema's
+    # ~14s fresh-process cost. A DB with neither cat_work_sites nor posts
+    # stores an empty table, which reads as "no live vocabulary".
+    text_values = set()
+    has_cat_sites = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cat_work_sites'"
+    ).fetchone()
+    has_posts = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='posts'"
+    ).fetchone()
+    if has_cat_sites or has_posts:
+        rows = conn.execute(
+            "SELECT DISTINCT source_site FROM cat_work_sites" if has_cat_sites
+            else "SELECT DISTINCT source_site FROM posts")
+        for (value,) in rows:
+            text = str(value or "").strip().lower()
+            if text:
+                text_values.add(text)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS site_text_needle_values (value TEXT PRIMARY KEY)"
+    )
+    conn.execute("DELETE FROM site_text_needle_values")
+    conn.executemany(
+        "INSERT OR IGNORE INTO site_text_needle_values (value) VALUES (?)",
+        [(v,) for v in sorted(text_values)],
+    )
     return len(values)
 
 
-def _snapshot_needle_values(conn):
-    """The projected needle snapshot, or None when absent or stale.
+def _snapshot_values(conn, table):
+    """One projected snapshot table, or None when absent or stale.
 
     Stale means its stamp does not match the projection's `projected_at`:
     the projection rebuilds the snapshot and stamps both in the same run,
@@ -1740,7 +1778,8 @@ def _snapshot_needle_values(conn):
     """
     try:
         has_table = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='site_needle_values'"
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (table,),
         ).fetchone()
         if not has_table:
             return None
@@ -1752,9 +1791,20 @@ def _snapshot_needle_values(conn):
         ).fetchone()
         if not stamp or not projected or stamp[0] != projected[0]:
             return None
-        return {str(row[0]) for row in conn.execute("SELECT value FROM site_needle_values")}
+        return {str(row[0]) for row in conn.execute(
+            f"SELECT value FROM {table}")}
     except Exception:
         return None
+
+
+def _snapshot_needle_values(conn):
+    """The projected service-vocabulary snapshot, or None when absent/stale."""
+    return _snapshot_values(conn, SNAPSHOT_TABLE)
+
+
+def _snapshot_text_needle_values(conn):
+    """The projected source_site-vocabulary snapshot, or None when absent/stale."""
+    return _snapshot_values(conn, TEXT_SNAPSHOT_TABLE)
 
 
 #: `posts.source_site` also holds the literal 'vegamovies' as a schema default on
@@ -1773,10 +1823,34 @@ def site_text_needles(db_path=None) -> frozenset[str]:
             with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
                 # Session 125: serve-path pragmas.
                 db_pragmas.apply_serve_pragmas(conn)
-                for (value,) in conn.execute("SELECT DISTINCT source_site FROM posts"):
-                    text = str(value or "").strip().lower()
-                    if text and text != UNATTRIBUTED:
-                        needles.add(text)
+                # Self-check 2026-11-16: the projected snapshot is the fast
+                # path — the projection rebuilds `site_text_needle_values`
+                # when the ledger is final, so process start reads ~30 rows
+                # instead of a DISTINCT scan over 4.45M posts. When the
+                # snapshot is absent or stale, fall back to the live scan.
+                snapshot = _snapshot_text_needle_values(conn)
+                if snapshot is not None:
+                    for value in snapshot:
+                        text = str(value or "").strip().lower()
+                        if text and text != UNATTRIBUTED:
+                            needles.add(text)
+                else:
+                    # Prefer cat_work_sites (413k rows on the live catalog)
+                    # over posts (4.45M) — the same preference site_needles()
+                    # already makes; scan posts only when that table is absent.
+                    has_cat_sites = conn.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cat_work_sites'"
+                    ).fetchone()
+                    if has_cat_sites:
+                        rows = conn.execute(
+                            "SELECT DISTINCT source_site FROM cat_work_sites")
+                    else:
+                        rows = conn.execute(
+                            "SELECT DISTINCT source_site FROM posts")
+                    for (value,) in rows:
+                        text = str(value or "").strip().lower()
+                        if text and text != UNATTRIBUTED:
+                            needles.add(text)
         except Exception:
             pass
     return frozenset(

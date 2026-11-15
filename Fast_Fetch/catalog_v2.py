@@ -1863,12 +1863,14 @@ def _finalize(conn, works, work_ids, now, counters) -> None:
         _stage(conn, "fts index: %s" % (fts_search.rebuild_fts(conn),))
     except Exception as ex:      # noqa: BLE001 — the index is an accelerator, not a gate
         _progress(f"fts index skipped: {ex}")
-    # The needle-vocabulary snapshot (Session 147): _ensure_schema() runs
-    # site_needles() at every process start, and its two DISTINCT scans over
-    # download_sources cost ~12.8s on the live catalog (measured 2026-11-15)
-    # — the first request after a restart 504s. The projection rebuilds the
-    # snapshot here, when download_sources is final; site_needles() reads
-    # ~1,300 rows from it instead, and stamps the snapshot with the same
+    # The needle-vocabulary snapshot (Session 147, text half self-check
+    # 2026-11-16): _ensure_schema() runs site_needles() and
+    # site_text_needles() at every process start, and their DISTINCT scans
+    # over download_sources and posts cost ~14s on the live catalog
+    # (measured 2026-11-15) — the first request after a restart 504s. The
+    # projection rebuilds both snapshots here, when the ledger is final;
+    # site_needles() reads ~1,300 rows from one and site_text_needles()
+    # ~30 from the other instead, and stamps both snapshots with the same
     # `now` the outer projection stamps `projected_at` with, so a stale
     # snapshot is detected and ignored. A build failure is a warning, never
     # a gate: the live scan is the fallback.

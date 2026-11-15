@@ -894,6 +894,106 @@ class NeedleSnapshotTests(FixtureMixin):
             with sqlite3.connect(path) as conn:
                 self.assertEqual(redact.rebuild_site_needle_snapshot(conn), 0)
                 self.assertIsNone(redact._snapshot_needle_values(conn))
+                self.assertIsNone(redact._snapshot_text_needle_values(conn))
+
+
+class TextNeedleSnapshotTests(FixtureMixin):
+    """The text-vocabulary snapshot (self-check 2026-11-16): site_text_needles()
+    at process start reads ~30 rows from `site_text_needle_values` instead of
+    a DISTINCT scan over posts — the other half of _ensure_schema's ~14s
+    fresh-process cost. Same stamp, same fallback rules as the service snapshot."""
+
+    def setUp(self):
+        self.make_ledger()
+        self._plant_distinctive_site()
+
+    def _plant_distinctive_site(self):
+        """Give one ledger row a source_site that exists nowhere else — not
+        in BASE_NEEDLES, not in the registry — so the test can tell the
+        snapshot apart from every other vocabulary source."""
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute("SELECT id FROM posts LIMIT 1").fetchone()
+            conn.execute(
+                "UPDATE posts SET source_site = 'zztextprobe' WHERE id = ?",
+                (row[0],))
+
+    def _build_snapshot(self, stamp="T1", projected="T1"):
+        with sqlite3.connect(self.db_path) as conn:
+            count = redact.rebuild_site_needle_snapshot(conn)
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS cat_projection_meta "
+                "(key TEXT PRIMARY KEY, value TEXT)")
+            conn.execute(
+                "INSERT OR REPLACE INTO cat_projection_meta VALUES "
+                "('needle_snapshot_at', ?)", (stamp,))
+            conn.execute(
+                "INSERT OR REPLACE INTO cat_projection_meta VALUES "
+                "('projected_at', ?)", (projected,))
+            conn.commit()
+        return count
+
+    def test_text_snapshot_matches_the_live_scan(self):
+        before = redact.site_text_needles(self.db_path)
+        self.assertIn("zztextprobe", before)
+        count = self._build_snapshot()
+        self.assertGreater(count, 0)
+        after = redact.site_text_needles(self.db_path)
+        self.assertEqual(before, after)
+        with sqlite3.connect(self.db_path) as conn:
+            stored = {r[0] for r in
+                      conn.execute("SELECT value FROM site_text_needle_values")}
+        self.assertIn("zztextprobe", stored)
+
+    def test_text_snapshot_serves_after_the_rows_are_gone(self):
+        self._build_snapshot()
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM posts")
+            conn.commit()
+        # The live scan now finds nothing, but the snapshot still serves it.
+        self.assertIn("zztextprobe", redact.site_text_needles(self.db_path))
+
+    def test_stale_text_snapshot_falls_back_to_the_live_scan(self):
+        self._build_snapshot(stamp="T1", projected="T2")
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM posts")
+            conn.commit()
+        # Stamps disagree, so the snapshot is ignored and the live scan —
+        # which now finds nothing — is the honest answer.
+        self.assertNotIn("zztextprobe", redact.site_text_needles(self.db_path))
+
+    def test_text_needles_prefers_cat_work_sites_over_posts(self):
+        # A site recorded only in cat_work_sites is found; a site recorded
+        # only in posts is not — the posts scan is skipped when the work
+        # table exists, the same preference site_needles() already makes.
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS cat_work_sites "
+                "(work_id INTEGER, source_site TEXT)")
+            conn.execute(
+                "INSERT INTO cat_work_sites VALUES (1, 'zzworksite')")
+            conn.commit()
+        text = redact.site_text_needles(self.db_path)
+        self.assertIn("zzworksite", text)
+        self.assertNotIn("zztextprobe", text)
+        broad = redact.site_needles(self.db_path)
+        self.assertIn("zzworksite", broad)
+        self.assertNotIn("zztextprobe", broad)
+
+    def test_text_snapshot_built_from_cat_work_sites(self):
+        # The rebuild takes the site vocabulary from cat_work_sites when
+        # that table exists, so the snapshot and the serve path agree.
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS cat_work_sites "
+                "(work_id INTEGER, source_site TEXT)")
+            conn.execute(
+                "INSERT INTO cat_work_sites VALUES (1, 'zzworksite')")
+            conn.execute("DELETE FROM posts")
+            conn.commit()
+        self._build_snapshot()
+        text = redact.site_text_needles(self.db_path)
+        self.assertIn("zzworksite", text)
+        self.assertNotIn("zztextprobe", text)
 
 
 # ── 2. the live HTTP edge ────────────────────────────────────────────────────
