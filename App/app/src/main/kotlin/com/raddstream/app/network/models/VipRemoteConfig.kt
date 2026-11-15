@@ -254,7 +254,11 @@ data class PanelTheme(
     @SerializedName("dynamic_color")
     val dynamicColor: Boolean = false,
     @SerializedName("hero_autoplay")
-    val heroAutoplay: Boolean = true,
+    /** M5 (home review, Nov 2026): the hero is manual-swipe unless the
+     *  operator publishes true — a rotating banner made Watch Now a moving
+     *  target and pushed the first content row out of reach. The viewer's
+     *  own autoplay-previews switch still gates it when it is on. */
+    val heroAutoplay: Boolean = false,
     @SerializedName("hero_interval_s")
     /** Samsung RTL (v1.1.2, Issue 3): the shipped default is 8 s, not 5 —
      *  a 5 s rotation made Watch Now a moving target. The panel can still

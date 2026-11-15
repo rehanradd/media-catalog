@@ -525,7 +525,10 @@ class VipRemoteConfigTest {
         assertEquals("dark", config.theme.mode)
         assertEquals("", config.theme.accent)
         assertFalse(config.theme.dynamicColor)
-        assertTrue(config.theme.heroAutoplay)
+        // M5 (home review, Nov 2026): the hero is manual-swipe unless the
+        // operator publishes autoplay — a rotating banner made Watch Now a
+        // moving target and pushed the first content row out of reach.
+        assertFalse(config.theme.heroAutoplay)
         // Samsung RTL (v1.1.2, Issue 3): the shipped default interval is 8 s.
         assertEquals(8, config.theme.heroIntervalS)
         assertEquals(6, config.theme.heroMax)

@@ -123,8 +123,11 @@ fun HeroCarousel(
     onPostClick: (Post) -> Unit,
     modifier: Modifier = Modifier,
     backdropFor: (Post) -> String? = { it.heroArtUrl },
-    /** The operator's theme: false pauses the auto-advance, the interval is in ms. */
-    autoplay: Boolean = true,
+    /** M5 (home review, Nov 2026): the hero is manual-swipe unless the
+     *  operator opts into rotation — a rotating banner made Watch Now a
+     *  moving target and pushed the first content row out of reach. False
+     *  pauses the auto-advance; the interval is in ms. */
+    autoplay: Boolean = false,
     intervalMs: Long = AUTO_ADVANCE_MS,
     /** Session 121 (P-26): Watch Now starts the title instead of only opening it. */
     onWatchNow: (Post) -> Unit = onPostClick,

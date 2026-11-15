@@ -144,7 +144,8 @@ fun HomeScreen(
     onOpenSignIn: () -> Unit = {},
     /** The operator's hero knobs from the panel theme: 0 hides the hero slot. */
     heroMax: Int = HERO_LIMIT,
-    heroAutoplay: Boolean = true,
+    /** M5 (home review, Nov 2026): manual-swipe by default — see [HeroCarousel]. */
+    heroAutoplay: Boolean = false,
     /** Samsung RTL (v1.1.2, Issue 3): 8 s, not 5 — the operator's panel value
      *  still wins when published; this is the default when it has not been. */
     heroIntervalMs: Long = 8_000L,
@@ -288,7 +289,8 @@ internal fun HomeContent(
     modifier: Modifier = Modifier,
     searchEnabled: Boolean = true,
     heroMax: Int = HERO_LIMIT,
-    heroAutoplay: Boolean = true,
+    /** M5 (home review, Nov 2026): manual-swipe by default — see [HeroCarousel]. */
+    heroAutoplay: Boolean = false,
     heroIntervalMs: Long = 8_000L,
     onPostClick: (Post) -> Unit = {},
     onWatchNowClick: (Post) -> Unit = onPostClick,
