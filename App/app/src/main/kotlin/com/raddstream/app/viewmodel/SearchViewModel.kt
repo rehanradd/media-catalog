@@ -46,13 +46,13 @@ import kotlinx.coroutines.launch
  * whole result set before paging — so they stay opt-in and the default never pays
  * for them.
  *
- * "Most versions" names what the sort actually measures: how many prints and mirrors
+ * "Most copies" names what the sort actually measures: how many prints and mirrors
  * the catalog holds for a work. The ledger has no play-count column, so no label here
  * may promise popularity — never "Trending", never "Most watched".
  */
 enum class SearchSort(val label: String, val wireValue: String) {
     NEWEST("Newest", "newest"),
-    MOST_SOURCES("Most versions", "trending"),
+    MOST_SOURCES("Most copies", "trending"),
     HIGHEST_IMDB("Highest IMDb", "rating"),
     TITLE("Title A–Z", "title");
 
@@ -256,7 +256,7 @@ data class SearchUiState(
     val suggestions: List<SuggestItem> = emptyList(),
     /**
      * F14 (Batch B): the trending row for the empty state — the server's own
-     * "Most versions" order, loaded once per screen. Empty when the route is
+     * "Most copies" order, loaded once per screen. Empty when the route is
      * blocked or the server is old; the empty state simply shows no row
      * then, never an error for a suggestion that failed to load.
      */

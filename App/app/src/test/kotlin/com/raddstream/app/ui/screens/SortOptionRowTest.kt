@@ -55,12 +55,12 @@ class SortOptionRowTest {
                 SortOptionRow(sort = SearchSort.MOST_SOURCES, selected = false, onSelect = {})
             }
         }
-        compose.onNode(hasContentDescription("Sort by Most versions"))
+        compose.onNode(hasContentDescription("Sort by Most copies"))
             .assertExists()
             .assertIsNotSelected()
-        compose.onNode(hasContentDescription("Sort by Most versions, selected"))
+        compose.onNode(hasContentDescription("Sort by Most copies, selected"))
             .assertDoesNotExist()
-        compose.onNode(hasContentDescription("Sort by Most versions, not selected"))
+        compose.onNode(hasContentDescription("Sort by Most copies, not selected"))
             .assertDoesNotExist()
     }
 }

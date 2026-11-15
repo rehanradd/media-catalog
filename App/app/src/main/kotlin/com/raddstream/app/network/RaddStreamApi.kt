@@ -116,7 +116,7 @@ interface RaddStreamApi {
     ): PostsResponse
 
     /**
-     * GET /api/v1/trending — the "Most versions" order as its own route.
+     * GET /api/v1/trending — the "Most copies" order as its own route.
      * The same page `sort=trending` on /api/v1/posts returns (most prints
      * and mirrors — no play counts exist, so it is not popularity); the
      * label names the count, never "Trending" and never "Most watched".

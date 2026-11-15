@@ -204,7 +204,7 @@ fun MyListScreen(
 }
 
 /**
- * Robo run 8: the My List empty state never showed its "Most versions"
+ * Robo run 8: the My List empty state never showed its "Most copies"
  * row — and Robo measured three 32dp clickables just above the nav bar.
  * Both are the same layout bug: [EmptyState] is a fillMaxSize Box, so inside
  * the Column it took the whole height and the [PopularRow] below it was laid
@@ -260,7 +260,7 @@ internal fun PopularRow(
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
-                "Most versions",
+                "Most copies",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onBackground,
             )

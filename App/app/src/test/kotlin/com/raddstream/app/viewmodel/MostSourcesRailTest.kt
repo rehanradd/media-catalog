@@ -10,10 +10,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * D2.2 Shape C: the "Most versions" rail is `sort=trending` on the live
+ * D2.2 Shape C: the "Most copies" rail is `sort=trending` on the live
  * `/api/v1/posts` route — no new endpoint, no nginx allow, no Browse call.
  * These pin the rail itself, not the network: five rails in order, only
- * "Most versions" asks for a sort, and only it hides "See all" (Browse takes
+ * "Most copies" asks for a sort, and only it hides "See all" (Browse takes
  * a type but no sort, so it cannot reproduce that order). The label is
  * pinned too: "Trending" would promise popularity data that does not exist
  * — the ledger has no play-count column, so the order is prints + mirrors.
@@ -29,7 +29,7 @@ class MostSourcesRailTest {
             sections.map { it.key },
         )
         assertEquals(
-            listOf("Recently added", "Movies", "Series", "Complete series", "Most versions"),
+            listOf("Recently added", "Movies", "Series", "Complete series", "Most copies"),
             sections.map { it.title },
         )
         assertTrue(sections.all { it.loading })
@@ -48,7 +48,7 @@ class MostSourcesRailTest {
     fun `the rail is named for its input not for popularity`() {
         val rail = initialHomeSections().last()
 
-        assertEquals("Most versions", rail.title)
+        assertEquals("Most copies", rail.title)
         assertFalse(rail.title.contains("Trending", ignoreCase = true))
     }
 

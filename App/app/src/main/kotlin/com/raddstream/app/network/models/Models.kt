@@ -48,7 +48,7 @@ internal fun currentCalendarYear(): Int = Calendar.getInstance().get(Calendar.YE
  *                               each release with `sources[]` projected by the link view)
  *  GET /api/v1/stream           → [StreamResponse]           (our own redirector, `redirect=0`)
  *  GET /api/v1/stats            → [StatsResponse]            (scale only, no per-site rows)
- *  GET /api/v1/trending         → [PostsResponse]            (the "Most versions" order,
+ *  GET /api/v1/trending         → [PostsResponse]            (the "Most copies" order,
  *                               `sort=trending` on /api/v1/posts, as its own route)
  *  GET /api/v1/related          → [PostsResponse]            ("Because you watch", scored
  *                               on the seed post's genres, cast, industry, type and year)
