@@ -7,7 +7,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
@@ -73,6 +72,9 @@ class SearchFilterSheetTest {
         // footer) instead of throwing during measure. assertExists, not
         // assertIsDisplayed: under unbounded height the footer sits past
         // the viewport fold, which is fine — the crash is the failure.
+        // NOTE: assertExists is a member of the node interaction here, NOT
+        // an import — `import androidx.compose.ui.test.assertExists` does
+        // not resolve in this Compose version (failed CI 580 at compile).
         compose.setContent {
             RaddStreamTheme {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
