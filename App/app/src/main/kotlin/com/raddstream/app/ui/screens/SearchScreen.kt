@@ -96,7 +96,7 @@ import com.raddstream.app.ui.components.InlineLoadFailure
 import com.raddstream.app.ui.components.ErrorState
 import com.raddstream.app.ui.components.MediaRail
 import com.raddstream.app.ui.components.PosterCard
-import com.raddstream.app.ui.components.PosterGridSkeleton
+import com.raddstream.app.ui.components.SearchResultsSkeleton
 import com.raddstream.app.ui.components.Pill
 import com.raddstream.app.ui.components.SectionHeader
 import com.raddstream.app.ui.components.raddFilterChipColors
@@ -712,14 +712,10 @@ internal fun SearchContent(
                 onPostClick = onPostClick,
             )
         }
-        state.isLoading && state.groups.isEmpty() -> PosterGridSkeleton(
-            // F21 (Batch B): the loading state is a grid skeleton — the
-            // results arrive as a grid, so the wait looks like the answer
-            // instead of a rail that never comes. The columns are the shared
-            // CatalogGridColumns rule (the skeleton's default): a literal
-            // count here would be a second column rule, and the skeleton
-            // would disagree with the grid again the moment the rule moves.
-            contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp),
+        state.isLoading && state.groups.isEmpty() -> SearchResultsSkeleton(
+            // The results arrive as a summary line, a group header and a
+            // 2-wide grid — the bare grid skeleton let the summary and the
+            // header appear out of nowhere and push every row down.
         )
         state.error != null && state.groups.isEmpty() -> ErrorState(title = "Couldn't search", message = state.error ?: "Search failed.", onRetry = onSubmitCurrentQuery)
         // Audit #36: "No matches" only after a completed search returns zero

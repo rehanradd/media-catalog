@@ -2,8 +2,11 @@ package com.raddstream.app.ui.components
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertHeightIsEqualTo
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.unit.dp
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import org.junit.Rule
 import org.junit.Test
@@ -47,5 +50,56 @@ class SkeletonPlaceholderTest {
         // Session 131 trap — no import); hasText is a top-level matcher.
         compose.onAllNodes(hasText("", substring = true), useUnmergedTree = true)
             .assertCountEquals(0)
+    }
+
+    /**
+     * A rail cell must be the same height as the [PosterCard] that replaces
+     * it, or the rail grows when its rows arrive. The card is a 112dp poster
+     * (168dp tall at 2:3) over a 100dp text column — 6dp gap, a 40dp title
+     * slot, 2dp, a 16dp details line, 2dp, the always-24dp badge slot and
+     * the card's 10dp bottom padding. The old skeleton drew a 14dp title
+     * line and a 10dp details line and no badge slot: 204dp against the
+     * card's 268dp, a ~64dp jump per rail.
+     */
+    @Test
+    fun railCellsMatchPosterCardHeight() {
+        compose.mainClock.autoAdvance = false
+        compose.setContent {
+            RaddStreamTheme {
+                PosterRailSkeleton()
+            }
+        }
+        compose.onNodeWithTag("posterRailSkeleton").assertHeightIsEqualTo(268.dp)
+    }
+
+    /**
+     * The detail Play placeholder must be the real Play button's 48dp min
+     * ([SkeletonParityTest] pins the two numbers together in source); the
+     * old skeleton drew 44dp.
+     */
+    @Test
+    fun detailPlaySkeletonMatchesRealButtonHeight() {
+        compose.mainClock.autoAdvance = false
+        compose.setContent {
+            RaddStreamTheme {
+                DetailSkeleton()
+            }
+        }
+        compose.onNodeWithTag("detailPlaySkeleton").assertHeightIsEqualTo(48.dp)
+    }
+
+    /**
+     * The hero title placeholder must be displaySmall's own 44dp line
+     * height, not a guessed 36dp.
+     */
+    @Test
+    fun heroTitleSkeletonMatchesDisplaySmallLineHeight() {
+        compose.mainClock.autoAdvance = false
+        compose.setContent {
+            RaddStreamTheme {
+                HeroSkeleton()
+            }
+        }
+        compose.onNodeWithTag("heroTitleSkeleton").assertHeightIsEqualTo(44.dp)
     }
 }

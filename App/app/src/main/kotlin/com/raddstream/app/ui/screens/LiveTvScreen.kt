@@ -49,7 +49,7 @@ import com.raddstream.app.ui.components.CatalogGridColumns
 import com.raddstream.app.ui.components.CatalogImage
 import com.raddstream.app.ui.components.EmptyState
 import com.raddstream.app.ui.components.ErrorState
-import com.raddstream.app.ui.components.PosterGridSkeleton
+import com.raddstream.app.ui.components.LiveTvLoadingSkeleton
 import com.raddstream.app.ui.components.isKnownLanguage
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.layout.CardGeometry
@@ -87,7 +87,7 @@ fun LiveTvScreen(
         },
     ) { contentPadding ->
         when {
-            state.isLoading && state.channels.isEmpty() -> PosterGridSkeleton(
+            state.isLoading && state.channels.isEmpty() -> LiveTvLoadingSkeleton(
                 modifier = Modifier.fillMaxSize().padding(contentPadding),
             )
             // Audit #13: a down server with a saved list still shows the

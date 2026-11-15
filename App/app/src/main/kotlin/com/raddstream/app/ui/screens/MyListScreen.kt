@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.ui.components.CatalogGridColumns
+import com.raddstream.app.ui.components.ChipRowSkeleton
 import com.raddstream.app.ui.components.EmptyState
 import com.raddstream.app.ui.components.PosterCard
 import com.raddstream.app.ui.components.PosterGridSkeleton
@@ -104,7 +105,13 @@ fun MyListScreen(
         },
     ) { contentPadding ->
         when {
-            state.isLoading -> PosterGridSkeleton(modifier = Modifier.fillMaxSize().padding(contentPadding))
+            state.isLoading -> Column(Modifier.fillMaxSize().padding(contentPadding)) {
+                // The sort chips row sits above the grid when the list lands
+                // (48dp + 4dp vertical padding) — the bare grid let it appear
+                // late and push every row down.
+                ChipRowSkeleton(widths = listOf(128, 80, 112))
+                PosterGridSkeleton(modifier = Modifier.weight(1f))
+            }
             state.favorites.isEmpty() && state.hiddenCount > 0 -> EmptyState(
                 // Nothing here is "empty" — the rows exist and this build may not show them.
                 // Saying "your list is empty" would be a second loss on top of the first one.

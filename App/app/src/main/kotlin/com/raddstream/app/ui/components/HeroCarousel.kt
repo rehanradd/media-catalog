@@ -56,6 +56,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -275,26 +276,55 @@ fun HeroSkeleton(modifier: Modifier = Modifier) {
                 color = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
                 modifier = Modifier.align(Alignment.Center),
             )
+            // The page dots: the real indicator is a 6-dot row of 48dp touch
+            // boxes at the top end (16dp from the top), its painted pill
+            // 18dp tall and inset 12dp from the row's edges — 264dp wide,
+            // 31dp from the top, 28dp from the right. Six dots is the
+            // hero's default count; a smaller hero shows no dots at all.
+            ShimmerBox(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 31.dp, end = 28.dp)
+                    .width(264.dp)
+                    .height(18.dp),
+                shape = RaddTokens.Shape.Pill,
+                highlightAlpha = HERO_SKELETON_SHIMMER_ALPHA,
+            )
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp)
                     .padding(bottom = 20.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                // The real slide's text column is 8dp-spaced, not 10dp.
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                // Title: displaySmall, one 44dp line. The real title allows
+                // two lines, but a one-line title is the common case — a
+                // second bar would over-reserve every short title.
                 ShimmerBox(
-                    Modifier.fillMaxWidth(0.55f).height(36.dp),
+                    Modifier.fillMaxWidth(0.55f).height(44.dp).testTag("heroTitleSkeleton"),
                     shape = RoundedCornerShape(8.dp),
                 )
+                // Badges row: HeroBadge pills are labelMedium (16dp) with
+                // 3dp vertical padding — 22dp tall, not 16dp.
                 ShimmerBox(
-                    Modifier.width(120.dp).height(16.dp),
+                    Modifier.width(180.dp).height(22.dp),
                     shape = RoundedCornerShape(8.dp),
                 )
-                ShimmerBox(
-                    Modifier.width(150.dp).height(HERO_BUTTON_HEIGHT_DP.dp),
-                    shape = RoundedCornerShape(28.dp),
-                )
+                // Action row: Watch Now AND My List, each 40dp min, 8dp
+                // apart, 28dp corners — the old skeleton drew one bar and
+                // the second button appeared out of nowhere on load.
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ShimmerBox(
+                        Modifier.width(150.dp).height(HERO_BUTTON_HEIGHT_DP.dp),
+                        shape = RoundedCornerShape(28.dp),
+                    )
+                    ShimmerBox(
+                        Modifier.width(130.dp).height(HERO_BUTTON_HEIGHT_DP.dp),
+                        shape = RoundedCornerShape(28.dp),
+                    )
+                }
             }
         }
     }

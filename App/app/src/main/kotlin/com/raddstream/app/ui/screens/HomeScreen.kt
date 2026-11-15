@@ -1507,6 +1507,9 @@ private fun HomeRailSection(
             Column {
                 SectionHeader(title = section.title, modifier = Modifier.padding(horizontal = 16.dp))
                 PosterRailSkeleton()
+                // The loaded rail ends with this 8dp spacer — without it the
+                // page grows 8dp at this rail when its rows arrive.
+                Spacer(Modifier.height(8.dp))
             }
         }
         section.items.isNotEmpty() -> {

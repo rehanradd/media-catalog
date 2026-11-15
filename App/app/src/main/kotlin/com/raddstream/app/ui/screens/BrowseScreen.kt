@@ -85,6 +85,10 @@ fun BrowseScreen(
         when {
             state.loading && state.items.isEmpty() -> PosterGridSkeleton(
                 modifier = Modifier.fillMaxSize().padding(contentPadding),
+                // The real grid's bottom breathing is 32dp, not the
+                // skeleton's 24dp default — a short category would jump
+                // 8dp at the bottom when its rows arrived.
+                contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp, start = 16.dp, end = 16.dp),
             )
             state.error != null && state.items.isEmpty() ->
                 ErrorState(title = "Couldn't load this category", message = state.error ?: "Could not load.", onRetry = viewModel::load,

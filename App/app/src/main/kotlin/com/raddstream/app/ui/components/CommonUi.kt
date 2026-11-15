@@ -55,6 +55,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -271,18 +272,62 @@ fun ShimmerBox(
 /**
  * Lazy placeholder that shimmers when motion is allowed, or draws a static block when
  * the user reduced motion — never a blank gap during load.
+ *
+ * [shape] is the placeholder's own outline, not a shared one: a poster tile is a
+ * 12dp card, a text line reads as a line with an 8dp pill, a button is a full
+ * stadium. The old code forced 12dp on everything, so text lines read as cards.
  */
 @Composable
 fun SkeletonBox(
     modifier: Modifier = Modifier,
     aspectRatioValue: Float? = null,
+    shape: Shape = RoundedCornerShape(12.dp),
 ) {
     val boxModifier = if (aspectRatioValue != null) {
         modifier.fillMaxWidth().aspectRatio(aspectRatioValue)
     } else {
         modifier
     }
-    ShimmerBox(boxModifier, shape = RoundedCornerShape(12.dp))
+    ShimmerBox(boxModifier, shape = shape)
+}
+
+/**
+ * The text column under a poster tile, exactly as [PosterCard] draws it — the
+ * one shared shape for every rail cell and grid cell, so a tile and its
+ * placeholder are the same height:
+ * - title slot: titleSmall's 20dp line, twice (40dp) — a one-line title
+ *   leaves the same slot, so two bars stand in for the two lines;
+ * - details line ("2023 · Movie"): labelSmall, 16dp;
+ * - badge slot: always 24dp, whether or not this title carries a badge;
+ * - the card's 10dp bottom padding, inside the column like the real Row's.
+ * The old skeleton drew a 14dp title line, a 10dp details line and no badge
+ * slot at all, so every rail and grid grew ~64dp when its cards landed.
+ */
+@Composable
+private fun PosterCellTextSkeleton() {
+    Column(
+        modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SkeletonBox(
+                Modifier.fillMaxWidth().height(16.dp),
+                shape = RoundedCornerShape(8.dp),
+            )
+            SkeletonBox(
+                Modifier.fillMaxWidth(0.6f).height(16.dp),
+                shape = RoundedCornerShape(8.dp),
+            )
+        }
+        SkeletonBox(
+            Modifier.width(80.dp).height(16.dp),
+            shape = RoundedCornerShape(8.dp),
+        )
+        SkeletonBox(
+            Modifier.width(96.dp).height(24.dp),
+            shape = RoundedCornerShape(8.dp),
+        )
+    }
 }
 
 private const val SHIMMER_PERIOD_MS = 1_400
@@ -332,8 +377,7 @@ fun PosterGridSkeleton(
         items(SKELETON_CELLS) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 SkeletonBox(aspectRatioValue = CardGeometry.POSTER_ASPECT)
-                SkeletonBox(Modifier.height(14.dp))
-                SkeletonBox(Modifier.height(10.dp).width(60.dp))
+                PosterCellTextSkeleton()
             }
         }
     }
@@ -352,7 +396,7 @@ fun PosterRailSkeleton(
     cells: Int = 4,
 ) {
     Row(
-        modifier = modifier.padding(horizontal = 16.dp),
+        modifier = modifier.padding(horizontal = 16.dp).testTag("posterRailSkeleton"),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         repeat(cells) {
@@ -365,43 +409,334 @@ fun PosterRailSkeleton(
                         .fillMaxWidth()
                         .aspectRatio(CardGeometry.POSTER_ASPECT)
                 )
-                SkeletonBox(Modifier.height(14.dp))
-                SkeletonBox(Modifier.height(10.dp).width(60.dp))
+                PosterCellTextSkeleton()
             }
         }
     }
 }
 
 /**
- * The loading stand-in for the detail header: poster box on the left, the title and metadata
- * lines on the right, and the shape of the action row underneath. Detail used to answer a tap
- * on a tile with one spinner floating in the middle of an empty screen, which told the viewer
- * nothing about what was arriving and left the whole page to be re-laid out when it did.
+ * The loading stand-in for the detail page, mirroring [DetailContent]'s item
+ * order block for block — hero, Play, secondary row, quality rungs, synopsis,
+ * cast, print summary, similar titles — with each block the same height as
+ * the real one, so nothing below the fold reflows when the data lands.
+ * Blocks are 16dp apart, the LazyColumn's own spacing.
+ *
+ * No own padding: the caller applies `detailPadding` (16dp sides, the
+ * scaffold top, 40dp bottom breathing) — the same padding the real list
+ * gets. The old skeleton added its own 16dp sides and 8dp vertical on top
+ * of that, so its poster column sat 32dp in from the edge and 8dp low.
+ *
+ * The hero mirrors the backdrop branch (176dp band, 92dp spacer, poster
+ * header) — the common case, since most titles carry a TMDB backdrop. A
+ * title without one renders 92dp shorter; that jump is the price of not
+ * knowing at load time, and it is smaller than the old whole-page reflow.
  */
 @Composable
 fun DetailSkeleton(modifier: Modifier = Modifier) {
-    Column(modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        // Hero: backdrop band behind, poster header overlapping it.
+        Box(Modifier.fillMaxWidth()) {
             SkeletonBox(
-                Modifier
-                    .width(CardGeometry.DETAIL_POSTER_WIDTH_DP.dp)
-                    .aspectRatio(CardGeometry.POSTER_ASPECT)
+                Modifier.fillMaxWidth().height(176.dp),
+                shape = RoundedCornerShape(16.dp),
             )
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                SkeletonBox(Modifier.fillMaxWidth().height(22.dp))
-                SkeletonBox(Modifier.width(140.dp).height(14.dp))
-                SkeletonBox(Modifier.width(96.dp).height(14.dp))
+            Column(Modifier.fillMaxWidth()) {
+                Spacer(Modifier.height(92.dp))
+                DetailHeaderSkeleton()
             }
         }
-        Spacer(Modifier.height(16.dp))
-        SkeletonBox(Modifier.fillMaxWidth().height(44.dp))
+        // Play — 48dp, the same min the real hero button carries
+        // ([SkeletonParityTest] pins the two together).
+        SkeletonBox(
+            Modifier.fillMaxWidth().height(48.dp).testTag("detailPlaySkeleton"),
+            shape = RoundedCornerShape(24.dp),
+        )
+        // Secondary row: Save / Download / Share, each 48dp min, 8dp apart.
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            repeat(3) {
+                SkeletonBox(
+                    Modifier.weight(1f).height(48.dp),
+                    shape = RoundedCornerShape(24.dp),
+                )
+            }
+        }
+        // Quality rungs: "Quality" + subtitle + three rung rows.
+        QualityRungsSkeleton()
+        // Synopsis: four bodyMedium lines.
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            repeat(3) {
+                SkeletonBox(
+                    Modifier.fillMaxWidth().height(20.dp),
+                    shape = RoundedCornerShape(8.dp),
+                )
+            }
+            SkeletonBox(
+                Modifier.fillMaxWidth(0.6f).height(20.dp),
+                shape = RoundedCornerShape(8.dp),
+            )
+        }
+        // Cast: "Cast" title + one row of 48dp chips.
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SkeletonBox(
+                Modifier.width(64.dp).height(24.dp),
+                shape = RoundedCornerShape(8.dp),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SkeletonBox(
+                    Modifier.width(88.dp).height(48.dp),
+                    shape = RoundedCornerShape(8.dp),
+                )
+                SkeletonBox(
+                    Modifier.width(72.dp).height(48.dp),
+                    shape = RoundedCornerShape(8.dp),
+                )
+                SkeletonBox(
+                    Modifier.width(96.dp).height(48.dp),
+                    shape = RoundedCornerShape(8.dp),
+                )
+            }
+        }
+        // Print summary: titleMedium line + bodySmall line.
+        Column {
+            SkeletonBox(
+                Modifier.fillMaxWidth(0.5f).height(24.dp),
+                shape = RoundedCornerShape(8.dp),
+            )
+            SkeletonBox(
+                Modifier.fillMaxWidth(0.65f).height(16.dp),
+                shape = RoundedCornerShape(8.dp),
+            )
+        }
+        // Similar titles: section header + rail.
+        Column {
+            Spacer(Modifier.height(8.dp))
+            SkeletonBox(
+                Modifier.fillMaxWidth(0.4f).height(24.dp),
+                shape = RoundedCornerShape(8.dp),
+            )
+            Spacer(Modifier.height(8.dp))
+            PosterRailSkeleton()
+        }
+    }
+}
+
+/**
+ * The detail header as [DetailHeroSection]'s `PosterHeader` draws it: a
+ * 120dp poster (2:3, 12dp corner) beside a 6dp-spaced column — title at
+ * headlineMedium (36dp a line, two lines is the common case), meta line and
+ * included line at bodySmall (16dp), the 20dp rating badge, and the 22dp
+ * chips row. The column totals 176dp against the poster's 180dp, so the
+ * poster sets the row height exactly as the real one does.
+ */
+@Composable
+private fun DetailHeaderSkeleton() {
+    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        SkeletonBox(
+            Modifier
+                .width(CardGeometry.DETAIL_POSTER_WIDTH_DP.dp)
+                .aspectRatio(CardGeometry.POSTER_ASPECT)
+        )
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            SkeletonBox(
+                Modifier.fillMaxWidth().height(36.dp),
+                shape = RoundedCornerShape(8.dp),
+            )
+            SkeletonBox(
+                Modifier.fillMaxWidth(0.7f).height(36.dp),
+                shape = RoundedCornerShape(8.dp),
+            )
+            SkeletonBox(
+                Modifier.fillMaxWidth(0.85f).height(16.dp),
+                shape = RoundedCornerShape(8.dp),
+            )
+            SkeletonBox(
+                Modifier.fillMaxWidth(0.6f).height(16.dp),
+                shape = RoundedCornerShape(8.dp),
+            )
+            SkeletonBox(
+                Modifier.width(72.dp).height(20.dp),
+                shape = RoundedCornerShape(4.dp),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                SkeletonBox(
+                    Modifier.width(64.dp).height(22.dp),
+                    shape = RoundedCornerShape(8.dp),
+                )
+                SkeletonBox(
+                    Modifier.width(48.dp).height(22.dp),
+                    shape = RoundedCornerShape(8.dp),
+                )
+                SkeletonBox(
+                    Modifier.width(72.dp).height(22.dp),
+                    shape = RoundedCornerShape(8.dp),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The quality-rung card as [QualityRungCard] draws it: "Quality"
+ * (titleMedium, 24dp) + the Auto subtitle (bodySmall, 16dp) + one row per
+ * band, 6dp apart, with the card's own 8dp bottom padding. Three rows is
+ * the common ladder (4K / 1080p / 720p / 480p folds to three visible
+ * bands on most titles).
+ */
+@Composable
+private fun QualityRungsSkeleton() {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        SkeletonBox(
+            Modifier.fillMaxWidth(0.35f).height(24.dp),
+            shape = RoundedCornerShape(8.dp),
+        )
+        SkeletonBox(
+            Modifier.fillMaxWidth(0.7f).height(16.dp),
+            shape = RoundedCornerShape(8.dp),
+        )
+        repeat(3) {
+            // One rung row, outer shape only: the row is a 12dp Surface,
+            // 76dp tall (10dp vertical padding around a 24dp title line, a
+            // 16dp detail line and a 16dp facts line). The inner bars would
+            // nest one shimmer inside another; the slot is what must not move.
+            SkeletonBox(
+                Modifier.fillMaxWidth().height(76.dp),
+                shape = RoundedCornerShape(12.dp),
+            )
+        }
         Spacer(Modifier.height(8.dp))
-        SkeletonBox(Modifier.fillMaxWidth().height(14.dp))
-        SkeletonBox(Modifier.fillMaxWidth().height(14.dp))
-        SkeletonBox(Modifier.width(200.dp).height(14.dp))
+    }
+}
+
+/**
+ * One row of filter chips as the screens draw them: 48dp tall (the
+ * touch-target floor the real `FilterChip` carries with `heightIn`), 8dp
+ * apart, in the same 16dp-side / 4dp-vertical padding. [widths] are the
+ * chips' approximate label widths in dp — "Recently added" is wider than
+ * "Title A–Z".
+ */
+@Composable
+fun ChipRowSkeleton(widths: List<Int>) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        widths.forEach { widthDp ->
+            SkeletonBox(
+                Modifier.width(widthDp.dp).height(48.dp),
+                shape = RoundedCornerShape(8.dp),
+            )
+        }
+    }
+}
+
+/**
+ * The search loading state as the results list draws it: the results
+ * summary line (bodyMedium, 20dp, 8dp vertical padding), the first group's
+ * section header (title 24dp + subtitle 16dp, 8dp top and bottom), then
+ * the grid. The old skeleton was the bare grid — the summary and the
+ * header appeared out of nowhere and pushed every row down when the
+ * search landed.
+ */
+@Composable
+fun SearchResultsSkeleton(modifier: Modifier = Modifier) {
+    Column(modifier = modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+            SkeletonBox(
+                Modifier.fillMaxWidth(0.55f).height(20.dp),
+                shape = RoundedCornerShape(8.dp),
+            )
+        }
+        Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+            SkeletonBox(
+                Modifier.fillMaxWidth(0.4f).height(24.dp),
+                shape = RoundedCornerShape(8.dp),
+            )
+            SkeletonBox(
+                Modifier.fillMaxWidth(0.25f).height(16.dp),
+                shape = RoundedCornerShape(8.dp),
+            )
+        }
+        PosterGridSkeleton(
+            modifier = Modifier.weight(1f),
+            contentPadding = PaddingValues(top = 0.dp, bottom = 24.dp),
+        )
+    }
+}
+
+/**
+ * The Live TV loading state as the screen draws it: the channel search
+ * field (56dp, 4dp corner), the category chips row, then the channel grid.
+ * The old skeleton was the bare poster grid — the field and the chips
+ * appeared late and pushed the grid down, and the cells themselves were
+ * poster-shaped (2:3) while a channel card is a 16:9 logo plate.
+ */
+@Composable
+fun LiveTvLoadingSkeleton(modifier: Modifier = Modifier) {
+    Column(modifier = modifier.fillMaxSize()) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+        ) {
+            SkeletonBox(
+                Modifier.fillMaxWidth().height(56.dp),
+                shape = RoundedCornerShape(4.dp),
+            )
+        }
+        ChipRowSkeleton(widths = listOf(56, 72, 88, 64))
+        LazyVerticalGrid(
+            columns = CatalogGridColumns,
+            modifier = Modifier.weight(1f),
+            contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp, start = 16.dp, end = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            userScrollEnabled = false,
+        ) {
+            items(SKELETON_CELLS) {
+                ChannelCardSkeleton()
+            }
+        }
+    }
+}
+
+/**
+ * One channel card as [LiveTvChannelCard] draws it: a 16:9 logo plate, the
+ * name at titleSmall (20dp, 6dp vertical padding) and the meta line at
+ * bodySmall (16dp, 10dp bottom padding) — 58dp under the logo.
+ */
+@Composable
+private fun ChannelCardSkeleton() {
+    Column {
+        SkeletonBox(aspectRatioValue = CardGeometry.WIDE_ART_ASPECT)
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+        ) {
+            SkeletonBox(
+                Modifier.fillMaxWidth(0.7f).height(20.dp),
+                shape = RoundedCornerShape(8.dp),
+            )
+        }
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 10.dp, end = 10.dp, bottom = 10.dp),
+        ) {
+            SkeletonBox(
+                Modifier.fillMaxWidth(0.55f).height(16.dp),
+                shape = RoundedCornerShape(8.dp),
+            )
+        }
     }
 }
 
