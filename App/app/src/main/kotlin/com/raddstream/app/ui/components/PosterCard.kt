@@ -109,8 +109,9 @@ fun PosterCard(
     val title = post.cleanTitle?.takeIf { it.isNotBlank() } ?: post.title
     val typeLabel = post.typeLabel
     // M11 (home review, Nov 2026): the tile is a new release when its year
-    // is plausible and within the last two calendar years — the same bound
-    // [Post.yearLabel] uses, so a mis-parsed 2027 can never earn the badge.
+    // is plausible and within the last two calendar years. The bound is
+    // stricter than [Post.yearLabel]'s — display allows next year's films,
+    // NEW means released — so a mis-parsed 2027 can never earn the badge.
     val isNewRelease = remember(post.year) {
         isNewReleaseYear(post.year, currentCalendarYear())
     }

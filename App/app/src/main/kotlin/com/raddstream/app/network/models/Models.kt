@@ -21,13 +21,15 @@ internal fun displayYearLabel(year: Int?, currentYear: Int): String? {
 
 /**
  * M11 (home review, Nov 2026): a title is a new release when its year is
- * plausible — the same [displayYearLabel] bound, so a mis-parsed 2027 or
- * 20215 can never earn the badge — and within the last two calendar years.
- * Next year's film is not new yet: it has not been released.
+ * plausible and within the last two calendar years. The upper bound is
+ * stricter than [displayYearLabel]'s: display allows next year's films
+ * (announced releases), but NEW means released — a 2027 film in 2026 has
+ * not come out yet, so it never earns the badge. A mis-parsed 2027 or
+ * 20215 can never earn it either.
  */
 internal fun isNewReleaseYear(year: Int?, currentYear: Int): Boolean {
     val y = year ?: return false
-    if (y < 1900 || y > currentYear + 1) return false
+    if (y < 1900 || y > currentYear) return false
     return y >= currentYear - 1
 }
 
