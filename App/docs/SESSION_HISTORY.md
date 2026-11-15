@@ -3023,3 +3023,7 @@ verdict on this commit (run 43553350196 in_progress); merge to main (parent's ca
 
 **Home top bar: the search bar is gone (M6) (branch home-topbar-m6-20261115, 2026-11-15):** the Home SearchField was a third door to the same place — the Search tab is the empty-query door, the bar only carried a typed query into it — and Netflix 2026 ships no bar on Home. The first content is now the hero (or the sync line when Home has loaded before). SearchField itself stays: the Search screen still uses it, and SearchFieldHintTest still passes. HomeContent's now-unused `onSearchQuery` param is removed; HomeScreen keeps its own (NavGraph wiring, untouched). Expected golden impact: homeLoaded, homeLoading, homeEmpty, homeError (all render HomeContent) — re-record and accept by eye.
 
+
+
+**Home top bar M6, goldens (same branch, 2026-11-15):** CI 43687303252 failed ONLY on the Paparazzi verify step, as expected. Record run 43688019507 SUCCESS; artifact paparazzi-snapshots-29 (id 14151197211). Exactly 4 of 30 goldens changed, all as designed and accepted by eye: homeLoaded, homeLoading, homeEmpty, homeError — the SearchField is gone from the top of Home in every state (the broadcast card / hero skeleton / library strip is now first), and nothing else moved. The other 26 are byte-identical.
+
