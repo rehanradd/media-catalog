@@ -22,11 +22,18 @@ name: 🔨 CI — Android Build & Test
 #       - GitHub-hosted ubuntu-24.04 images ship an SDK, but which
 #         platforms/build-tools are preinstalled drifts with image updates;
 #         pinning the packages we need (android-35, 35.0.0) is deterministic.
-#   * Gradle is invoked ONCE with `--continue` so the fleet sees ALL of
-#     assembleDebug + testDebugUnitTest + lintDebug results in one log, not
-#     just the first failure. Task names are the AGP-generated per-variant
-#     tasks (`:app:assembleDebug`, `:app:testDebugUnitTest`, `:app:lintDebug`);
+#   * Gradle is invoked ONCE per job with `--continue` so the fleet sees
+#     ALL of that job's task results in one log, not just the first failure.
+#     Task names are the AGP-generated per-variant tasks
+#     (`:app:assembleDebug`, `:app:testDebugUnitTest`, `:app:lintDebug`);
 #     `:app` is the only module in settings.gradle.kts.
+#   * Lint runs as its OWN job in parallel with the build job (2026-11-15):
+#     lint is 1–2 min of a 4–7 min run, and steps inside one job run
+#     sequentially while jobs run in parallel. The workflow verdict is
+#     unchanged — GitHub fails the run if EITHER job fails — and the lint
+#     report is uploaded from the lint job, so a lint failure is still one
+#     click away in the same run. The build job keeps its single invocation
+#     (assemble + tests) and the Paparazzi verify step.
 #   * Cache poisoning: we cache ONLY ~/.gradle (dependency modules, wrapper
 #     dists, transform + build caches — all content-addressed by Gradle).
 #     We deliberately DO NOT cache the project's App/.gradle directory, which
@@ -69,7 +76,7 @@ concurrency:
 
 jobs:
   build:
-    name: assembleDebug + testDebugUnitTest + lintDebug
+    name: assembleDebug + testDebugUnitTest
     runs-on: ubuntu-24.04   # pinned, not `ubuntu-latest`, so runner drift is visible
     timeout-minutes: 45     # first cold-cache run downloads Gradle + SDK; be generous
 
@@ -113,13 +120,13 @@ jobs:
           if [ -z "$GOOGLE_SERVICES_JSON" ]; then echo "GOOGLE_SERVICES_JSON secret is empty" >&2; exit 1; fi
           echo "$GOOGLE_SERVICES_JSON" | base64 -d > App/app/google-services.json
 
-      - name: "🏗️🧪🔍 Gradle: debug APK + unit tests + lint (single invocation)"
+      - name: "🏗️🧪 Gradle: debug APK + unit tests (single invocation)"
         working-directory: App
         # --continue: report every task's failures in one run.
         # --no-daemon/--stacktrace per project standard.
         # --console=plain: unadorned file:line Kotlin errors, no ANSI noise.
         run: |
-          ./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug \
+          ./gradlew :app:assembleDebug :app:testDebugUnitTest \
             --no-daemon --stacktrace --continue --console=plain
 
       - name: "📸 Verify Paparazzi goldens (explicit gate)"
@@ -168,3 +175,60 @@ jobs:
             echo ""
             echo "Debug APK is in the Artifacts tab of this run."
           } >> "$GITHUB_STEP_SUMMARY"
+
+  lint:
+    name: lintDebug
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: ☕ Set up JDK 17 (temurin)
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad  # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: 📦 Restore Gradle caches
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-java17-${{ hashFiles('App/gradle/wrapper/gradle-wrapper.properties', 'App/gradle/libs.versions.toml', 'App/**/*.gradle.kts', 'App/**/*.gradle', 'App/settings.gradle.kts') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-java17-
+            gradle-${{ runner.os }}-
+
+      - name: 📱 Install Android SDK (platform-tools, android-35, build-tools 35.0.0)
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd  # v4.0.4
+        with:
+          packages: "platform-tools platforms;android-35 build-tools;35.0.0"
+
+      - name: 🔧 Make gradlew executable
+        run: chmod +x App/gradlew
+
+      - name: 🔑 Restore google-services.json (CI secret, never committed)
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -z "$GOOGLE_SERVICES_JSON" ]; then echo "GOOGLE_SERVICES_JSON secret is empty" >&2; exit 1; fi
+          echo "$GOOGLE_SERVICES_JSON" | base64 -d > App/app/google-services.json
+
+      - name: "🔍 Gradle: lintDebug"
+        working-directory: App
+        run: |
+          ./gradlew :app:lintDebug \
+            --no-daemon --stacktrace --console=plain
+
+      - name: 📤 Upload lint reports (diagnostics)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: ci-lint-${{ github.run_number }}
+          path: |
+            App/app/build/reports
+          if-no-files-found: ignore
+          retention-days: 7
