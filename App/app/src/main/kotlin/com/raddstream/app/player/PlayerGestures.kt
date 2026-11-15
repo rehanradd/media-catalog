@@ -206,5 +206,16 @@ object GestureMapper {
     val SPEED_PRESETS: List<Float> =
         listOf(0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f, 2.5f, 3.0f, 3.5f, 4.0f)
 
+    /**
+     * The speeds the sheet offers (Stitch playback-speed sheet): the six a
+     * viewer actually picks, 0.5×–2×. The full [SPEED_PRESETS] range stays
+     * for the long-press 2× boost and the tests; the sheet reads this
+     * subset — filtered from the one list, never a second copy — so the
+     * two can never drift apart. 1.75× is deliberately not in it: the
+     * mockup's six rows skip it.
+     */
+    val SHEET_PRESETS: List<Float> =
+        SPEED_PRESETS.filter { it in listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f) }
+
     fun clampedSpeed(speed: Float): Float = speed.coerceIn(0.25f, 4.0f)
 }

@@ -33,7 +33,6 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -80,6 +79,7 @@ import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PictureInPicture
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material.icons.filled.SkipNext
@@ -89,6 +89,7 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -161,6 +162,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import com.raddstream.app.R
 import com.raddstream.app.brand.Brand
+import com.raddstream.app.player.AUTOPLAY_COUNTDOWN_SECONDS
 import com.raddstream.app.player.AspectMode
 import com.raddstream.app.player.AudioBoost
 import com.raddstream.app.player.AudioBoostUi
@@ -183,6 +185,7 @@ import com.raddstream.app.player.PinchCommand
 import com.raddstream.app.player.PlayerOrientation
 import com.raddstream.app.player.PlayerStatusWord
 import com.raddstream.app.player.PlayerUiState
+import com.raddstream.app.player.QualityOption
 import com.raddstream.app.player.bufferingPercent
 import com.raddstream.app.player.playerStatusWord
 import com.raddstream.app.player.ScreenZone
@@ -908,6 +911,8 @@ private fun PlayerScreenContent(
                     secondsLeft = countdown,
                     onCancel = { vm.cancelAutoplayCountdown() },
                     nextEpisodeTitle = state.nextEpisodeTitle,
+                    nextEpisodeSeason = state.nextEpisodeSeason,
+                    nextEpisodeEpisode = state.nextEpisodeEpisode,
                     onPlayNow = { vm.requestNextEpisode() },
                 )
             } else {
@@ -2625,12 +2630,17 @@ private fun EndedButtons(
 
 /**
  * The autoplay-next countdown (Session 123, PL-1): what the viewer sees for
- * the ten seconds between an episode's end and the advance. One line stating
- * the wait, one Cancel that stops it — the same card language as the ended
- * buttons, so it reads as part of the player, not a popup.
+ * the ten seconds between an episode's end and the advance — now the
+ * up-next end card (Stitch popups mockup), a bottom card, not a centred
+ * one: a thin jade ring counting the seconds down around the "10s",
+ * "Up next: S2:E5" bold with the episode title under it, an X that
+ * cancels, and two pills: Cancel (dark) and Play now (jade).
  *
  * Session 126 (PL-12): the countdown names the episode it is counting toward,
  * and Play now skips the wait — the countdown is a convenience, not a hold.
+ * The 10s countdown and the off switch are untouched — only the chrome
+ * changed. The ring reads the same total the countdown was started
+ * with ([AUTOPLAY_COUNTDOWN_SECONDS]), never a second number.
  */
 @Composable
 private fun AutoplayCountdownCard(
@@ -2638,50 +2648,114 @@ private fun AutoplayCountdownCard(
     secondsLeft: Int,
     onCancel: () -> Unit,
     nextEpisodeTitle: String? = null,
+    nextEpisodeSeason: Int? = null,
+    nextEpisodeEpisode: Int? = null,
     onPlayNow: (() -> Unit)? = null,
 ) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Surface(
-                color = chrome.card,
-                shape = MaterialTheme.shapes.medium,
-            ) {
-                Row(
-                    Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(Icons.Default.SkipNext, null, tint = Color.White)
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        stringResource(R.string.player_autoplay_countdown, secondsLeft),
-                        color = Color.White,
-                        fontSize = brandSp(14),
-                    )
-                }
-            }
-            if (nextEpisodeTitle != null) {
-                Text(
-                    text = stringResource(
-                        R.string.player_up_next_title,
-                        stringResource(R.string.player_up_next),
-                        nextEpisodeTitle,
-                    ),
-                    color = Color.White.copy(alpha = 0.85f),
-                    fontSize = brandSp(14),
-                    textAlign = TextAlign.Center,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(horizontal = 32.dp),
-                )
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                onPlayNow?.let {
-                    TextButton(onClick = it) {
-                        Text(stringResource(R.string.player_autoplay_play_now), color = RaddCurrent500, fontSize = brandSp(14))
+    val seasonEpisode = if (nextEpisodeSeason != null && nextEpisodeEpisode != null) {
+        stringResource(R.string.player_season_episode, nextEpisodeSeason, nextEpisodeEpisode)
+    } else {
+        null
+    }
+    val headline = if (seasonEpisode != null) {
+        stringResource(
+            R.string.player_up_next_title,
+            stringResource(R.string.player_up_next),
+            seasonEpisode,
+        )
+    } else {
+        stringResource(R.string.player_up_next)
+    }
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
+        Surface(
+            color = chrome.card,
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 16.dp, bottom = 120.dp),
+        ) {
+            Column(Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // The countdown as a ring, not a sentence: the seconds
+                    // are the text, the ring is the progress.
+                    Box(Modifier.size(56.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(
+                            progress = { secondsLeft / AUTOPLAY_COUNTDOWN_SECONDS.toFloat() },
+                            color = RaddCurrent500,
+                            trackColor = Color.White.copy(alpha = 0.2f),
+                            strokeWidth = 3.dp,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                        Text(
+                            "${secondsLeft}s",
+                            color = Color.White,
+                            fontSize = brandSp(14),
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            headline,
+                            color = Color.White,
+                            fontSize = brandSp(16),
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        if (nextEpisodeTitle != null) {
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                nextEpisodeTitle,
+                                color = Color.White.copy(alpha = 0.7f),
+                                fontSize = brandSp(14),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                    IconButton(
+                        onClick = onCancel,
+                        modifier = Modifier.size(32.dp).align(Alignment.Top),
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            stringResource(R.string.player_close),
+                            tint = Color.White.copy(alpha = 0.7f),
+                        )
                     }
                 }
-                TextButton(onClick = onCancel) {
-                    Text(stringResource(R.string.player_cancel), color = Color.White, fontSize = brandSp(14))
+                Spacer(Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = onCancel,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = RaddHudPillIdle,
+                            contentColor = Color.White,
+                        ),
+                        shape = RoundedCornerShape(28.dp),
+                        modifier = Modifier.weight(1f).heightIn(min = MinControlTarget),
+                    ) {
+                        Text(stringResource(R.string.player_cancel))
+                    }
+                    onPlayNow?.let {
+                        Button(
+                            onClick = it,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = RaddCurrent500,
+                                contentColor = Color.Black,
+                            ),
+                            shape = RoundedCornerShape(28.dp),
+                            modifier = Modifier.weight(1f).heightIn(min = MinControlTarget),
+                        ) {
+                            Icon(Icons.Default.PlayArrow, null, tint = Color.Black, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                stringResource(R.string.player_autoplay_play_now),
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -2824,7 +2898,9 @@ private fun PlayerLoadingIndicator(
     ) {
         CircularProgressIndicator(
             modifier = Modifier.size(RaddTokens.Touch.MinTarget),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            // The ring is jade: the finding card's spinner (Stitch popups
+            // mockup), and jade is the only accent anywhere in the player.
+            color = RaddCurrent500,
             strokeWidth = 3.dp,
         )
         if (!label.isNullOrBlank()) {
@@ -2862,16 +2938,6 @@ private fun StartNoticeCard(
     val label = stepLabel ?: phase.label
     val spoken = if (title.isNullOrBlank()) label else stringResource(R.string.player_notice_spaced, label, title)
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        // The logo-mark (§4.7): 32 dp, top-left, only while nothing is playing.
-        Icon(
-            painter = painterResource(R.drawable.ic_logo_mark),
-            contentDescription = null,
-            tint = Color.Unspecified,
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(16.dp)
-                .size(32.dp),
-        )
         // LC-1: the notice floats over the live video frame, so it gets its own
         // solid plate — bare white over a bright frame was ~1:1. Robo run 7
         // flagged the notice's title at 1.06:1: the old plate was RaddHudCard,
@@ -2884,7 +2950,7 @@ private fun StartNoticeCard(
         // it is gone.
         Surface(
             color = RaddPlayerStage,
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(24.dp),
             border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
             modifier = Modifier
                 .padding(horizontal = 24.dp, vertical = 16.dp)
@@ -2902,9 +2968,27 @@ private fun StartNoticeCard(
             Text(
                 label,
                 color = Color.White,
-                style = MaterialTheme.typography.bodyMedium,
+                // The mockup's "Finding your video…" is the card's bold
+                // headline, not body text.
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center,
             )
+            // The finding card's reassurance (Stitch popups mockup): while
+            // the wait is still finding — the best version, then the video —
+            // say what it is doing. Buffering is past finding, so the line
+            // does not follow it there.
+            if (label == stringResource(R.string.player_step_finding) ||
+                label == stringResource(R.string.player_step_warming)
+            ) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    stringResource(R.string.player_finding_note),
+                    color = Color.White.copy(alpha = 0.6f),
+                    style = MaterialTheme.typography.bodySmall,
+                    textAlign = TextAlign.Center,
+                )
+            }
             if (!title.isNullOrBlank()) {
                 Spacer(Modifier.height(4.dp))
                 Text(
@@ -2989,7 +3073,18 @@ private fun StartNoticeCard(
                         }
                     }
                     onTryAnother?.let {
-                        OutlinedButton(onClick = it, modifier = Modifier.heightIn(min = MinControlTarget)) {
+                        // The mockup's dark pill, not an outline: this is
+                        // the card's one action, and the pill is the shape
+                        // the viewer is meant to find.
+                        Button(
+                            onClick = it,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = RaddHudPillIdle,
+                                contentColor = Color.White,
+                            ),
+                            shape = RoundedCornerShape(28.dp),
+                            modifier = Modifier.heightIn(min = MinControlTarget),
+                        ) {
                             Text(stringResource(R.string.player_start_try_another), color = Color.White)
                         }
                     }
@@ -3317,37 +3412,63 @@ internal fun KeepChip(state: PlayerUiState, onKeepCurrent: () -> Unit) {
 // ── Dialogs ────────────────────────────────────────────────────────────────────
 
 /**
- * The resume offer as a small chip above the bottom bar — never a centre
- * dialog, never over the subtitle band. Tapping the chip (or the X, or
- * doing nothing for ~3 s) resumes from where viewing stopped; "Start over"
- * is the only way back to the beginning. The 3 s auto-dismiss lives in the
- * caller's LaunchedEffect, so this is paint only.
+ * The resume offer as a centred card (Stitch popups mockup): "Resume
+ * from 01:12:44?" bold, a jade-filled Resume pill, and a dark Start over
+ * pill beneath. Tapping the card or Resume (or doing nothing for ~3 s)
+ * resumes from where viewing stopped; "Start over" is the only way back
+ * to the beginning. The 3 s auto-dismiss lives in the caller's
+ * LaunchedEffect, so this is paint only. The old chip's X is gone — its
+ * job (resume now) is the Resume pill.
  */
 @Composable
 private fun ResumeChip(offerMs: Long, onResume: () -> Unit, onStartOver: () -> Unit) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Surface(
-            color = RaddPlayerSnackbarPlate,
-            shape = MaterialTheme.shapes.large,
+            color = RaddPlayerStage,
+            shape = RoundedCornerShape(24.dp),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
             modifier = Modifier
-                .padding(start = 16.dp, end = 16.dp, bottom = 140.dp)
+                .padding(horizontal = 24.dp)
+                .widthIn(max = 420.dp)
                 .clickableNoRipple(onResume),
         ) {
-            Row(
-                Modifier.padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            Column(
+                Modifier.padding(horizontal = 20.dp, vertical = 20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
                     stringResource(R.string.player_resume_chip, offerMs.formatTime()),
                     color = Color.White,
-                    fontSize = brandSp(14),
-                    modifier = Modifier.weight(1f, fill = false),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
                 )
-                TextButton(onClick = onStartOver) {
-                    Text(stringResource(R.string.player_start_over), color = RaddCurrent500)
+                Spacer(Modifier.height(16.dp))
+                Button(
+                    onClick = onResume,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = RaddCurrent500,
+                        contentColor = Color.Black,
+                    ),
+                    shape = RoundedCornerShape(28.dp),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = MinControlTarget),
+                ) {
+                    Text(
+                        stringResource(R.string.player_resume),
+                        fontWeight = FontWeight.SemiBold,
+                    )
                 }
-                IconButton(onClick = onResume, modifier = Modifier.size(32.dp)) {
-                    Icon(Icons.Default.Close, stringResource(R.string.player_close), tint = Color.White.copy(alpha = 0.7f))
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = onStartOver,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = RaddHudPillIdle,
+                        contentColor = Color.White,
+                    ),
+                    shape = RoundedCornerShape(28.dp),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = MinControlTarget),
+                ) {
+                    Text(stringResource(R.string.player_start_over))
                 }
             }
         }
@@ -3440,49 +3561,24 @@ private fun parseTimeToMs(raw: String): Long {
 
 // ── Sheets ─────────────────────────────────────────────────────────────────────
 
+/**
+ * The playback-speed sheet (Stitch popups mockup): a bottom sheet with
+ * a drag handle (ModalBottomSheet's own, via PlayerSheet), a title with
+ * an X, and the six speeds as vertical rows — the current one jade with
+ * a check. The old horizontal chip strip is gone. The speed itself is
+ * untouched: it still resets to 1.0 per title, and the 2× boost note
+ * stays below the rows.
+ */
 @Composable
 private fun SpeedSheet(state: PlayerUiState, vm: PlayerViewModel) {
     PlayerSheet(onDismiss = { vm.hideSpeedSheet() }) {
         Column(Modifier.padding(bottom = 20.dp)) {
-            SheetTitle(stringResource(R.string.player_speed_title))
-            Row(
-                Modifier
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 12.dp),
-            ) {
-                GestureMapper.SPEED_PRESETS.forEach { preset ->
-                    val selected = state.speed == preset
-                    Surface(
-                        color = if (selected) RaddCurrent500 else RaddHudPillIdle,
-                        shape = MaterialTheme.shapes.small,
-                        modifier = Modifier
-                            .padding(end = 6.dp)
-                            .clickableNoRipple { vm.setSpeed(preset) },
-                    ) {
-                        Row(
-                            Modifier
-                                .heightIn(min = MinControlTarget)
-                                .padding(horizontal = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            if (selected) {
-                                Icon(
-                                    imageVector = Icons.Default.Check,
-                                    contentDescription = null,
-                                    tint = Color.Black,
-                                    modifier = Modifier.size(14.dp),
-                                )
-                            }
-                            Text(
-                                stringResource(R.string.player_speed_short, preset),
-                                color = if (selected) Color.Black else Color.White,
-                                fontSize = brandSp(14),
-                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                            )
-                        }
-                    }
-                }
+            SheetTitle(stringResource(R.string.player_speed_title), onDismiss = { vm.hideSpeedSheet() })
+            GestureMapper.SHEET_PRESETS.forEach { preset ->
+                SheetRow(
+                    label = stringResource(R.string.player_speed_short, preset),
+                    selected = state.speed == preset,
+                ) { vm.setSpeed(preset) }
             }
             Spacer(Modifier.height(12.dp))
             Text(
@@ -3583,12 +3679,77 @@ private fun QualityRow(title: String, detail: String?, selected: Boolean, onClic
     }
 }
 
+/**
+ * One source in the Switch source sheet (Stitch popups mockup): the
+ * quality label, the file's real size when the bundle knows it, a small
+ * grey "Playing" pill on the print that is playing now, and the jade
+ * check — the same selected-row language as [QualityRow], with the pill
+ * the mockup draws instead of a plain "Playing" suffix. No size is ever
+ * invented: sizeBytes 0 means the bundle never measured it, so the row
+ * shows the label alone. Internal, like the other mockup surfaces, so
+ * the row can be composed in a test.
+ */
+@Composable
+internal fun SwitchSourceRow(title: String, sizeText: String?, playing: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickableNoRipple(onClick)
+            .heightIn(min = MinControlTarget)
+            .background(
+                if (playing) RaddCurrent500.copy(alpha = 0.15f) else Color.Transparent,
+                MaterialTheme.shapes.small,
+            )
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            title,
+            color = if (playing) RaddCurrent500 else Color.White,
+            fontSize = brandSp(15),
+            fontWeight = if (playing) FontWeight.SemiBold else FontWeight.Normal,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        if (sizeText != null) {
+            Spacer(Modifier.width(8.dp))
+            Text(sizeText, color = Color.White.copy(alpha = 0.5f), fontSize = brandSp(12))
+        }
+        if (playing) {
+            Spacer(Modifier.width(8.dp))
+            Surface(
+                color = Color.White.copy(alpha = 0.12f),
+                shape = RoundedCornerShape(10.dp),
+            ) {
+                Text(
+                    stringResource(R.string.player_playing),
+                    color = Color.White.copy(alpha = 0.7f),
+                    fontSize = brandSp(11),
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                )
+            }
+        }
+        Spacer(Modifier.weight(1f))
+        if (playing) Icon(Icons.Default.Check, null, tint = RaddCurrent500, modifier = Modifier.size(18.dp))
+    }
+}
+
+/**
+ * The sleep-timer sheet (Stitch popups mockup): a bottom sheet with a
+ * drag handle, a title with an X, and the rows in the mockup's order —
+ * Off first (checked while the timer is off), then 15/30/45/60 minutes,
+ * then End of episode. A running countdown marks its own preset: the
+ * smallest offered preset the remaining time still fits in, so the check
+ * follows the timer instead of freezing at the pick. The fading line and
+ * the fade note stay; the behaviour is untouched.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SleepSheet(state: PlayerUiState, vm: PlayerViewModel) {
     PlayerSheet(onDismiss = { vm.hideSleepSheet() }) {
         Column(Modifier.padding(bottom = 20.dp)) {
-            SheetTitle(stringResource(R.string.player_sleep_timer))
+            SheetTitle(stringResource(R.string.player_sleep_timer), onDismiss = { vm.hideSleepSheet() })
             if (state.sleep.mode == SleepMode.COUNTDOWN) {
                 Text(
                     stringResource(R.string.player_sleep_fading, state.sleep.remainingMs.formatTime()),
@@ -3597,11 +3758,28 @@ private fun SleepSheet(state: PlayerUiState, vm: PlayerViewModel) {
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
                 )
             }
-            SleepTimerState.PRESETS_MS.forEach { preset ->
-                SheetRow(label = stringResource(R.string.player_sleep_minutes, preset / 60_000)) { vm.startSleepCountdown(preset) }
+            // The preset the countdown is running from: remaining time only
+            // ever falls, so it is the smallest offered preset it still
+            // fits in. Zero remaining means the timer fired — no preset.
+            val runningPreset = if (state.sleep.mode == SleepMode.COUNTDOWN && state.sleep.remainingMs > 0) {
+                SleepTimerState.SHEET_PRESETS_MS.filter { it >= state.sleep.remainingMs }.minOrNull()
+            } else {
+                null
             }
-            SheetRow(label = stringResource(R.string.player_sleep_at_end)) { vm.sleepAtVideoEnd() }
-            SheetRow(label = stringResource(R.string.player_off_label)) { vm.cancelSleep() }
+            SheetRow(
+                label = stringResource(R.string.player_off_label),
+                selected = state.sleep.mode == SleepMode.OFF,
+            ) { vm.cancelSleep() }
+            SleepTimerState.SHEET_PRESETS_MS.forEach { preset ->
+                SheetRow(
+                    label = stringResource(R.string.player_sleep_minutes, preset / 60_000),
+                    selected = preset == runningPreset,
+                ) { vm.startSleepCountdown(preset) }
+            }
+            SheetRow(
+                label = stringResource(R.string.player_sleep_at_end),
+                selected = state.sleep.mode == SleepMode.END_OF_VIDEO,
+            ) { vm.sleepAtVideoEnd() }
             Text(
                 stringResource(R.string.player_sleep_note, state.sleep.fadeMs / 1000),
                 color = Color.White.copy(alpha = 0.55f),
@@ -4062,12 +4240,7 @@ private fun PrintLogSheet(state: PlayerUiState, vm: PlayerViewModel) {
                     onClick = {},
                     onLongClick = { debugVisible = !debugVisible },
                 ),
-            )
-            Text(
-                stringResource(R.string.player_prints_note),
-                color = Color.White.copy(alpha = 0.6f),
-                fontSize = brandSp(12),
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                onDismiss = { vm.hidePrintSheet() },
             )
             // The start budget's proof (§5 P5): route-open → first-frame, measured on this
             // device. Absent until the first start lands — a switch mid-scene must not
@@ -4090,14 +4263,30 @@ private fun PrintLogSheet(state: PlayerUiState, vm: PlayerViewModel) {
                 // behind the long-press above. Hate-audit H12/H17: the rows
                 // are tappable now — the sheet is "Switch source", and a tap
                 // loads that print at the current position; the HLS tag is
-                // gone (jargon — the quality label is enough). The selected
-                // row's jade fill + check carry the "playing" mark.
+                // gone (jargon — the quality label is enough). The row is a
+                // SwitchSourceRow (Stitch popups mockup): the file's real
+                // size when the bundle knows it, a small grey "Playing" pill
+                // on the print that is playing, and the jade check.
                 val rowText = buildString {
                     append(r.displayLabel())
                     if (debugVisible) append("  ·  #").append(r.rank)
                 }
-                SheetRow(label = rowText, selected = active) { vm.switchRendition(r) }
+                SwitchSourceRow(
+                    title = rowText,
+                    sizeText = r.print.sizeBytes.takeIf { it > 0 }?.let { QualityOption.formatBytes(it) },
+                    playing = active,
+                    onClick = { vm.switchRendition(r) },
+                )
             }
+            // The note the header used to carry, as the mockup's footer:
+            // switching keeps the viewer's place. It sits right under the
+            // source rows, before the chapters and the debug sections.
+            Text(
+                stringResource(R.string.player_switch_keeps_place),
+                color = Color.White.copy(alpha = 0.6f),
+                fontSize = brandSp(12),
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
             // Chapters (plan §5 step 11): the pack's episode boundaries as rows that
             // seek on tap. Absent for a single-episode file — no boundaries, no list.
             // The ticks come from the same pure function the scrubber draws, so the
@@ -4161,15 +4350,37 @@ private fun PrintLogSheet(state: PlayerUiState, vm: PlayerViewModel) {
     }
 }
 
+/**
+ * A sheet's title row — the name on the left, and an X on the right
+ * where the sheet takes one (speed, sleep, switch-source: the Stitch
+ * sheets all carry it). Sheets without an X (subtitle, tracks, quality,
+ * more) pass nothing and look exactly as before. The caller's modifier
+ * (the switch-source sheet's long-press debug toggle) stays on the
+ * title text, not the X.
+ */
 @Composable
-private fun SheetTitle(text: String, modifier: Modifier = Modifier) {
-    Text(
-        text,
-        color = Color.White,
-        fontSize = brandSp(16),
-        fontWeight = FontWeight.SemiBold,
-        modifier = modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-    )
+private fun SheetTitle(text: String, modifier: Modifier = Modifier, onDismiss: (() -> Unit)? = null) {
+    Row(
+        Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text,
+            color = Color.White,
+            fontSize = brandSp(16),
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.weight(1f).then(modifier),
+        )
+        if (onDismiss != null) {
+            IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+                Icon(
+                    Icons.Default.Close,
+                    stringResource(R.string.player_close),
+                    tint = Color.White.copy(alpha = 0.7f),
+                )
+            }
+        }
+    }
 }
 
 /**

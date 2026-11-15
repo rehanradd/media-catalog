@@ -21,6 +21,15 @@ data class SleepTimerState(
     companion object {
         const val DEFAULT_FADE_MS = 30_000L
         val PRESETS_MS: List<Long> = listOf(5, 10, 15, 30, 45, 60, 90, 120).map { it * 60_000L }
+
+        /**
+         * The presets the sheet offers (Stitch sleep-timer sheet): 15/30/45/60
+         * minutes. The full [PRESETS_MS] range stays for the API; the sheet
+         * reads this subset — filtered from the one list, never a second
+         * copy — so the two can never drift apart.
+         */
+        val SHEET_PRESETS_MS: List<Long> =
+            PRESETS_MS.filter { it / 60_000L in listOf(15L, 30L, 45L, 60L) }
     }
 }
 

@@ -100,12 +100,14 @@
     <string name="player_data_saver">Data Saver</string>
     <string name="player_data_saver_detail">Cap Auto at 480p on mobile data</string>
     <string name="player_step_finding">Finding the best version</string>
-    <string name="player_step_warming">Finding your video</string>
+    <string name="player_step_warming">Finding your video…</string>
     <string name="player_step_buffering">Buffering</string>
+    <string name="player_finding_note">Trying the best source first</string>
     <string name="player_volume_boost">Volume boost</string>
     <string name="player_seek">Seek: %1$s of %2$s</string>
     <string name="player_seek_chapter">, %1$s</string>
     <string name="player_up_next_title">%1$s: %2$s</string>
+    <string name="player_season_episode">S%1$d:E%2$d</string>
     <string name="player_quality_single">Only one quality is available for this title</string>
     <!-- Session 126 (NAV-4/NAV-5): the catch-all deep-link destination. -->
     <!-- Flow mockup (Nov 2026): the words are the mockup's — the title was
@@ -126,17 +128,17 @@
     <string name="player_subtitles_for_colour">%1$s subtitles</string>
     <string name="player_selected_suffix">, selected</string>
     <string name="player_start_over">Start over</string>
-    <string name="player_resume_chip">Resume from %1$s</string>
+    <string name="player_resume_chip">Resume from %1$s?</string>
+    <string name="player_resume">Resume</string>
     <string name="player_calibration_title">Calibrate episode start</string>
     <string name="player_calibration_body">This file packs several episodes. Pause exactly where the target episode starts, then confirm.</string>
     <string name="player_episode_number">Episode number</string>
     <string name="player_mark_position">Mark current position</string>
     <string name="player_cancel">Cancel</string>
-    <string name="player_autoplay_countdown">Next episode in %1$d s</string>
     <string name="player_play_from_title">Play from</string>
     <string name="player_play_from_hint">mm:ss or h:mm:ss</string>
     <string name="player_go">Go</string>
-    <string name="player_speed_title">Playback speed (pitch preserved)</string>
+    <string name="player_speed_title">Playback speed</string>
     <string name="player_boost_note">Long-press the video any time for a 2× boost — releasing restores this speed.</string>
     <string name="player_quality_title">Quality</string>
     <string name="player_quality_auto">Auto (recommended)</string>
@@ -180,7 +182,7 @@
     <string name="player_chapters_title">Chapters</string>
     <string name="player_chapter_row">"%1$s  ·  %2$s"</string>
     <string name="player_failover_log">Failover log</string>
-    <string name="player_prints_note">Sources, best first — tap one to switch, keeping your position; switches also happen automatically on playback errors.</string>
+    <string name="player_switch_keeps_place">Switching keeps your place.</string>
     <string name="player_failover_record">#%1$d %2$s: %3$s → %4$s</string>
     <string name="player_failover_policy">Policy: retry same ×%1$d, backoff %2$d ms, then next rank, max %3$d ranks.</string>
     <string name="player_play_from_row">Play from a position…</string>

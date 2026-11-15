@@ -76,6 +76,86 @@ class PlayerControlSemanticsTest {
         assertTrue("statusBarsPadding is missing from the chrome", source.contains("statusBarsPadding()"))
     }
 
+    /**
+     * The Stitch popups restyle, pinned so a later pass cannot silently
+     * undo it: the up-next card is a bottom card with a ring, the resume
+     * prompt is a centred card, the finding card is jade with a bold
+     * headline, the speed and sleep sheets are vertical rows in the
+     * mockup's order, and the switch-source sheet rows carry the size
+     * and the Playing pill. The sheets are private and take the
+     * ViewModel, so this is a source test — the one row that can be
+     * composed (SwitchSourceRow) is pinned in PlayerMockupTest instead.
+     */
+    @Test
+    fun `popups match the Stitch sheets`() {
+        // Up-next: a bottom card with a jade countdown ring, "Up next:
+        // S2:E5" bold, an X, and Cancel + Play now pills. The old
+        // centred pill + text buttons are gone.
+        val upNext = functionBody("private fun AutoplayCountdownCard(")
+        assertTrue("the up-next card must sit at the bottom", upNext.contains("Alignment.BottomCenter"))
+        assertTrue("the ring must read the countdown total", upNext.contains("AUTOPLAY_COUNTDOWN_SECONDS"))
+        assertTrue("the headline needs the season and episode", upNext.contains("player_season_episode"))
+        assertTrue("the card needs its X", upNext.contains("Icons.Default.Close"))
+        assertTrue("the card needs the Play now pill", upNext.contains("player_autoplay_play_now"))
+        assertFalse("the old countdown sentence is back", upNext.contains("player_autoplay_countdown"))
+        assertFalse("the old centred layout is back", upNext.contains("CenterHorizontally"))
+        // Resume: a centred card with a jade Resume pill and a dark Start
+        // over pill. The old bottom chip and its X are gone.
+        val resume = functionBody("private fun ResumeChip(")
+        assertTrue("the resume prompt must be a centred card", resume.contains("Alignment.Center"))
+        assertTrue("the resume prompt needs its Resume pill", resume.contains("R.string.player_resume)"))
+        assertTrue("the resume prompt needs Start over", resume.contains("player_start_over"))
+        assertFalse("the resume chip's X is back", resume.contains("Icons.Default.Close"))
+        assertFalse("the resume chip is back at the bottom", resume.contains("Alignment.BottomCenter"))
+        assertTrue("the resume title needs its question mark", stringsSource.contains("Resume from %1\$s?"))
+        // Finding: a jade spinner ring, a bold headline, the "Trying the
+        // best source first" line while finding, a dark Try-another pill,
+        // and no logo mark on the card.
+        val finding = functionBody("private fun StartNoticeCard(")
+        assertTrue("the finding card needs its subtitle", finding.contains("player_finding_note"))
+        assertTrue("the finding headline must be bold", finding.contains("FontWeight.Bold"))
+        assertTrue("Try another must be the dark pill", finding.contains("RaddHudPillIdle"))
+        assertFalse("the logo mark is back on the finding card", finding.contains("ic_logo_mark"))
+        assertTrue("the finding card must be rounder", finding.contains("RoundedCornerShape(24.dp)"))
+        val spinner = functionBody("private fun PlayerLoadingIndicator(")
+        assertTrue("the spinner ring must be jade", spinner.contains("RaddCurrent500"))
+        assertFalse("the spinner is grey again", spinner.contains("onSurfaceVariant"))
+        // Speed: vertical rows over the mockup's six speeds, with the
+        // boost note kept; the horizontal chip strip is gone.
+        val speed = functionBody("private fun SpeedSheet(")
+        assertTrue("the speed sheet must read its six rows", speed.contains("GestureMapper.SHEET_PRESETS"))
+        assertTrue("the speed rows must be vertical", speed.contains("SheetRow("))
+        assertFalse("the horizontal chip strip is back", speed.contains("horizontalScroll"))
+        assertTrue("the boost note must stay", speed.contains("player_boost_note"))
+        // Sleep: Off first, then the four presets, then End of episode;
+        // the fading line and the fade note stay.
+        val sleep = functionBody("private fun SleepSheet(")
+        val offAt = sleep.indexOf("player_off_label")
+        val presetsAt = sleep.indexOf("SHEET_PRESETS_MS.forEach")
+        val endAt = sleep.indexOf("player_sleep_at_end")
+        assertTrue("the sleep sheet must put Off first", offAt >= 0 && offAt < presetsAt && presetsAt < endAt)
+        assertTrue("the sleep sheet must read its four presets", sleep.contains("SHEET_PRESETS_MS"))
+        assertTrue("the sleep note must stay", sleep.contains("player_sleep_note"))
+        // Switch source: rows with size + Playing pill, a footer that
+        // switching keeps the viewer's place, and an X on the title.
+        val switch = functionBody("private fun PrintLogSheet(")
+        assertTrue("the source rows must be SwitchSourceRows", switch.contains("SwitchSourceRow("))
+        assertTrue("the sheet needs its footer", switch.contains("player_switch_keeps_place"))
+        assertFalse("the old header note is back", switch.contains("player_prints_note"))
+        assertFalse("the old plain rendition rows are back", switch.contains("SheetRow(label = rowText"))
+        val title = functionBody("private fun SheetTitle(")
+        assertTrue("sheet titles must take an X", title.contains("onDismiss"))
+        assertTrue("the X must be drawn", title.contains("Icons.Default.Close"))
+        // Strings: the two dropped notes are gone from the file, and the
+        // trimmed titles read as the mockups do.
+        assertFalse("the prints note string is back", stringsSource.contains("player_prints_note"))
+        assertFalse("the autoplay countdown string is back", stringsSource.contains("player_autoplay_countdown"))
+        assertTrue("the speed title must be plain", stringsSource.contains(">Playback speed<"))
+        assertTrue("the finding headline needs its ellipsis", stringsSource.contains("Finding your video…"))
+        assertTrue("the finding subtitle is missing", stringsSource.contains("Trying the best source first"))
+        assertTrue("the switch footer is missing", stringsSource.contains("Switching keeps your place."))
+    }
+
     private val stringsSource: String by lazy {
         var dir: File? = File("").absoluteFile
         while (dir != null) {

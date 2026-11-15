@@ -8,13 +8,17 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
 import com.raddstream.app.R
+import com.raddstream.app.player.GestureMapper
 import com.raddstream.app.player.LadderRung
 import com.raddstream.app.player.PlaybackInfo
 import com.raddstream.app.player.PlaybackRendition
 import com.raddstream.app.player.PlayerUiState
 import com.raddstream.app.player.PrintInfo
+import com.raddstream.app.player.QualityOption
+import com.raddstream.app.player.SleepTimerState
 import com.raddstream.app.ui.screens.BottomControls
 import com.raddstream.app.ui.screens.CenterPlayPause
+import com.raddstream.app.ui.screens.SwitchSourceRow
 import com.raddstream.app.ui.screens.TopBar
 import com.raddstream.app.ui.screens.subtitleStatusLabel
 import com.raddstream.app.ui.theme.RaddStreamTheme
@@ -30,7 +34,11 @@ import org.robolectric.RobolectricTestRunner
  * prints current + total, the quality control is a text pill showing the
  * rung, and the centre of the picture carries a play/pause button flanked
  * by ±10s skip buttons. Fixtures mirror PaparazziPreviewTest's playerBase
- * so the two suites can never drift apart silently.
+ * so the two suites can never drift apart silently. The popups restyle
+ * (Stitch sheets) is pinned the same way where a piece can be composed —
+ * the switch-source row — and by its preset lists where it cannot: the
+ * sheets themselves are private and take the ViewModel, so their chrome
+ * lives in PlayerControlSemanticsTest's source-drift test.
  */
 @RunWith(RobolectricTestRunner::class)
 class PlayerMockupTest {
@@ -248,5 +256,57 @@ class PlayerMockupTest {
         }
         compose.onNodeWithContentDescription(context.getString(R.string.player_pause)).assertDoesNotExist()
         compose.onNodeWithContentDescription(context.getString(R.string.player_play)).assertDoesNotExist()
+    }
+
+    @Test
+    fun `switch source row shows size and the playing pill on the active print`() {
+        var tapped = false
+        compose.setContent {
+            RaddStreamTheme {
+                SwitchSourceRow(
+                    title = "1080p",
+                    sizeText = QualityOption.formatBytes(1024L * 1024 * 1024),
+                    playing = true,
+                    onClick = { tapped = true },
+                )
+            }
+        }
+        compose.onNodeWithText("1080p").assertIsDisplayed()
+        compose.onNodeWithText("1.0 GB").assertIsDisplayed()
+        compose.onNodeWithText(context.getString(R.string.player_playing)).assertIsDisplayed()
+        compose.onNodeWithText("1080p").performClick()
+        org.junit.Assert.assertTrue(tapped)
+    }
+
+    @Test
+    fun `switch source row shows no pill and no size when the print is not playing or unmeasured`() {
+        compose.setContent {
+            RaddStreamTheme {
+                SwitchSourceRow(
+                    title = "720p",
+                    sizeText = null,
+                    playing = false,
+                    onClick = {},
+                )
+            }
+        }
+        compose.onNodeWithText("720p").assertIsDisplayed()
+        compose.onNodeWithText(context.getString(R.string.player_playing)).assertDoesNotExist()
+    }
+
+    @Test
+    fun `the speed sheet offers the mockup six speeds`() {
+        org.junit.Assert.assertEquals(
+            listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f),
+            GestureMapper.SHEET_PRESETS,
+        )
+    }
+
+    @Test
+    fun `the sleep sheet offers the mockup four presets`() {
+        org.junit.Assert.assertEquals(
+            listOf(15L, 30L, 45L, 60L).map { it * 60_000L },
+            SleepTimerState.SHEET_PRESETS_MS,
+        )
     }
 }
