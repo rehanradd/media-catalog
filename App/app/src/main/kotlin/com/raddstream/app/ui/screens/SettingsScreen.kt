@@ -492,7 +492,11 @@ fun SettingsScreen(
 
             SettingsSectionHeading("Account")
             // ── VIP membership ─────────────────────────────────────────
-            SettingsCard(title = "VIP Membership", icon = Icons.Default.Star) {
+            // Free launch: the whole card (prices, payment instructions,
+            // upgrade button) hides while the quality gate is OFF — every
+            // viewer is premium then, and there is nothing to sell.
+            if (state.paywallVisible) {
+                SettingsCard(title = "VIP Membership", icon = Icons.Default.Star) {
                 // The plan summary: what this install actually has (VIP with its
                 // date, a payment waiting, the free VIP days, or free) plus the
                 // operator's published prices when the server sent any. The
@@ -533,6 +537,7 @@ fun SettingsScreen(
                 )
                 Button(onClick = onOpenVipUpgrade, modifier = Modifier.fillMaxWidth()) {
                     Text(if (state.planIsVip) "View membership" else "Upgrade to VIP")
+                }
                 }
             }
 

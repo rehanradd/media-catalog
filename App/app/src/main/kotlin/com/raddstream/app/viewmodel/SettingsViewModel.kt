@@ -153,6 +153,15 @@ data class SettingsUiState(
     val planVipUntilMillis: Long = 0L,
     val planPaymentPending: Boolean = false,
     /**
+     * Free launch: the VIP Membership card renders only while the
+     * operator's quality gate is ON. The gate flag is the free-launch
+     * switch — gate OFF means every viewer is premium, so the card (its
+     * prices, payment instructions and upgrade button) hides. Defaults
+     * true (gate on) so a build that has not heard from the panel yet
+     * behaves exactly as today.
+     */
+    val paywallVisible: Boolean = true,
+    /**
      * The operator's published prices, in PKR, from the remote config — 0
      * means "not published", and the card hides the price line rather than
      * printing a zero. Fetched once when Settings opens; a failed fetch
@@ -283,6 +292,13 @@ class SettingsViewModel @Inject constructor(
         observeAccount()
         observeTrial()
         observePlan()
+        // Free launch: the quality-gate flag is the free-launch switch.
+        // Gate OFF hides the VIP Membership card on Settings.
+        viewModelScope.launch {
+            settingsRepository.qualityGateEnabled.collect { enabled ->
+                _uiState.update { it.copy(paywallVisible = enabled) }
+            }
+        }
         measurePosterCache()
     }
 

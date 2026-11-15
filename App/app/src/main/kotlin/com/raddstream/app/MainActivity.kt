@@ -110,6 +110,20 @@ class MainActivity : ComponentActivity() {
     private var pendingDeepLink by mutableStateOf<DeepLink?>(null)
     private var pendingUnknownDeepLink by mutableStateOf<String?>(null)
 
+    /**
+     * Free launch: a panel change lands live. The watcher already polls
+     * /remote-config every 5 minutes, but a flip made while the app sits
+     * in the background would wait for the next tick — coming back to the
+     * foreground re-checks now, so the paywall surfaces appear or vanish
+     * on return. refreshNow() coalesces (one in-flight fetch at a time),
+     * and a failed or degraded fetch keeps the last good config, so a
+     * resume never flashes the wrong state.
+     */
+    override fun onResume() {
+        super.onResume()
+        remoteConfigWatcher.refreshNow()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         takeLocalVideoFrom(intent)

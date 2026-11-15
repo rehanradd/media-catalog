@@ -384,6 +384,7 @@ fun DetailScreen(
                 ladderScope = rungScopeLabel(state.ladderSeason, state.ladderEpisode),
                 adFree = state.adFree,
                 premiumSourcesLocked = state.premiumSourcesLocked,
+                paywallVisible = state.paywallVisible,
                 onAskRungs = viewModel::showRungsFor,
                 hasRungs = { season, episode -> !viewModel.ladderFor(season, episode).isEmpty },
                 onOpenVipUpgrade = onOpenVipUpgrade,
@@ -714,6 +715,8 @@ internal fun DetailContent(
     adFree: Boolean,
     /** True when this title has 4K/1080p sources the current viewer may not take. */
     premiumSourcesLocked: Boolean,
+    /** Free launch: false hides the sponsor card — every viewer is premium then. */
+    paywallVisible: Boolean = true,
     onAskRungs: (season: Int?, episode: Int?) -> Unit,
     hasRungs: (season: Int?, episode: Int?) -> Boolean,
     onOpenVipUpgrade: () -> Unit,
@@ -787,7 +790,9 @@ internal fun DetailContent(
         // Audit #30: neither upsell shows on a title with no playable copy —
         // selling VIP on a title the viewer cannot watch is the wrong pitch.
         val playable = resume != null || bestPrint?.canStart == true
-        if (!adFree && !premiumSourcesLocked && playable) {
+        // Free launch: the sponsor card hides while the quality gate is
+        // OFF — every viewer is premium then, and there is nothing to sell.
+        if (!adFree && !premiumSourcesLocked && playable && paywallVisible) {
             item { SponsorCard(onOpenVipUpgrade = onOpenVipUpgrade) }
         }
 

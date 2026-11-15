@@ -99,6 +99,14 @@ data class DetailUiState(
     val vip: Boolean = false,
     /** True when this title has 4K/1080p sources that the current viewer cannot play. */
     val premiumSourcesLocked: Boolean = false,
+    /**
+     * Free launch: the paywall surfaces (the sponsor card on this page)
+     * render only while the operator's quality gate is ON. The gate flag
+     * is the free-launch switch — gate OFF means every viewer is premium.
+     * Defaults true (gate on) so a build that has not heard from the
+     * panel yet behaves exactly as today.
+     */
+    val paywallVisible: Boolean = true,
     /** The latest scope this device stopped in, if any — the Resume button. */
     val resume: ResumePoint? = null,
     /** True when the Resume button has a print to play; false shows plain Play. */
@@ -430,6 +438,8 @@ class DetailViewModel @Inject constructor(
                 ladder = VipQualityGate.gate(scope, premiumAccess, freeQualityCap),
                 vip = serverVip,
                 premiumSourcesLocked = premiumLocked,
+                // Free launch: the gate flag is the paywall's visibility.
+                paywallVisible = qualityGateEnabled,
                 includedLine = includedLine,
                 adFree = RewardedVipPass.isAdFree(serverVip, rewardedExpiresAt),
             )
