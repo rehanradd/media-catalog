@@ -2131,5 +2131,89 @@ class LanguageBridgeTests(CatalogApiTestCase):
         self.assertIn("Hindi Film", {i["title"] for i in page["items"]})
 
 
+class SearchDedupTests(CatalogApiTestCase):
+    """v2 search shows one row per film (Session 152): the same film filed
+    by several sites is one search row, not several — the same
+    `title_clean.group_work_rows` grouping v1 uses, so the two surfaces
+    agree on what "the same film" means."""
+
+    def _add_split_film(self):
+        # Three works for one film, years within 1 of each other, different
+        # keys — the Salaar shape. The middle one carries two prints, so it
+        # is the representative (most prints wins).
+        self.add_post("vegamovies", "https://vega.test/salaar-a/",
+                      clean_title="Salaar", year=2023,
+                      releases=[{"release_title": "Salaar 1080p",
+                                 "quality": "1080p",
+                                 "sources": [cdn("DD-SALAAR-A")]}])
+        self.add_post("vegamovies", "https://vega.test/salaar-b/",
+                      clean_title="Salaar - Part 1 Ceasefire", year=2024,
+                      releases=[{"release_title": "Salaar Part 1 Ceasefire 1080p",
+                                 "quality": "1080p",
+                                 "sources": [cdn("DD-SALAAR-B1")]},
+                                {"release_title": "Salaar Part 1 Ceasefire 720p",
+                                 "quality": "720p",
+                                 "sources": [cdn("DD-SALAAR-B2")]}])
+        self.add_post("vegamovies", "https://vega.test/salaar-c/",
+                      clean_title="Salaar Cease Fire", year=2023,
+                      releases=[{"release_title": "Salaar Cease Fire 1080p",
+                                 "quality": "1080p",
+                                 "sources": [cdn("DD-SALAAR-C")]}])
+
+    def test_split_film_searches_as_one_row(self):
+        self._add_split_film()
+        self.project()
+        found = catalog_api.search(self.conn, q="salaar", limit=100)
+        titles = [i["title"] for i in found["items"]]
+        self.assertEqual(len(titles), 1, titles)
+        self.assertEqual(titles[0], "Salaar - Part 1 Ceasefire")
+        self.assertEqual(found["count"], 1)
+        # The total still counts works (v1's rule): the page shows films.
+        self.assertEqual(found["total_estimate"], 3)
+
+    def test_remake_twenty_years_later_keeps_its_own_row(self):
+        self.add_post("vegamovies", "https://vega.test/dune-1984/",
+                      clean_title="Dune", year=1984,
+                      releases=[{"release_title": "Dune 1984 1080p",
+                                 "quality": "1080p",
+                                 "sources": [cdn("DD-DUNE-1984")]}])
+        self.add_post("vegamovies", "https://vega.test/dune-2021/",
+                      clean_title="Dune", year=2021,
+                      releases=[{"release_title": "Dune 2021 1080p",
+                                 "quality": "1080p",
+                                 "sources": [cdn("DD-DUNE-2021")]}])
+        self.project()
+        found = catalog_api.search(self.conn, q="dune", limit=100)
+        years = sorted(i["year"] for i in found["items"])
+        # The corpus already has Dune 2024; 1984 and 2021 must both survive.
+        self.assertEqual(years, [1984, 2021, 2024])
+
+    def test_episode_posts_are_one_work_before_search_sees_them(self):
+        # The projection mints one work_key for a series' episode posts
+        # (normalize_title strips episode markers), so search returns one
+        # work for two episode posts — the dedup never sees two rows. This
+        # pins the reason the dedup needs no episode handling.
+        self.add_post("vegamovies", "https://vega.test/test-show-e1/",
+                      clean_title="Test Show S01E01", year=2024, content_type="series",
+                      releases=[{"release_title": "Test Show S01E01 720p",
+                                 "season": "1", "episode": "1", "quality": "720p",
+                                 "sources": [cdn("DD-SHOW-E1")]}])
+        self.add_post("vegamovies", "https://vega.test/test-show-e2/",
+                      clean_title="Test Show S01E02", year=2024, content_type="series",
+                      releases=[{"release_title": "Test Show S01E02 720p",
+                                 "season": "1", "episode": "2", "quality": "720p",
+                                 "sources": [cdn("DD-SHOW-E2")]}])
+        self.project()
+        found = catalog_api.search(self.conn, q="test show", limit=100)
+        self.assertEqual(len(found["items"]), 1)
+
+    def test_dedup_is_pure_and_never_drops_a_row_it_cannot_read(self):
+        self.assertEqual(catalog_api._dedupe_search_items([]), [])
+        single = [{"id": 1, "title": "Solo", "year": 2024, "work_type": "movie",
+                   "prints": 1}]
+        self.assertEqual(catalog_api._dedupe_search_items(single), single)
+        broken = [{"title": "No id here"}]
+        self.assertEqual(catalog_api._dedupe_search_items(broken), broken)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

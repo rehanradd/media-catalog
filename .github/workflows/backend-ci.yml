@@ -17,6 +17,7 @@ name: 🐍 Backend CI — Stdlib Python Tests
 #                                             only — NO external network)
 #     - Fast_Fetch/test_link_state.py        (ledger verdicts + cat_links propagation)
 #     - Fast_Fetch/test_link_state_runner.py (out-of-process sweep runner + ids-mode walk)
+#     - Fast_Fetch/test_title_clean.py      (work grouping: same film folds, remakes split)
 #     - Fast_Fetch/test_evidence_writeback.py(probe evidence folded onto cat_links)
 #     - Fast_Fetch/test_api_v2.py            (every /api/v2 route head)
 #     - Fast_Fetch/test_redact.py            (deny-by-default provenance edge)
@@ -286,6 +287,10 @@ jobs:
       # verdicts for pressed rows, then the background pending scan.
       - name: 🧪 test_link_state_runner.py
         run: python3 -S Fast_Fetch/test_link_state_runner.py
+
+      # The work grouping shared by v1 and v2 search dedup (Session 152).
+      - name: 🧪 test_title_clean.py
+        run: python3 -S Fast_Fetch/test_title_clean.py
 
       - name: 🧪 test_evidence_writeback.py
         run: python3 -S Fast_Fetch/test_evidence_writeback.py

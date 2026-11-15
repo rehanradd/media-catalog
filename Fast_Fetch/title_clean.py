@@ -304,31 +304,67 @@ def group_work_rows(candidates):
             return True
         return any(abs(a - b) <= 1 for a in ly for b in ry)
 
+    # 2026-11-15: split each core bucket by year before anything else. A
+    # bucket is one (family, core) — so identical titles ("Dune" 1984 /
+    # 2021 / 2024) land in the SAME bucket, and without this split the
+    # years check below (which only guards the subset merge between
+    # DIFFERENT cores) never sees them: the remake folds into the original
+    # and the user can never pick it. The docstring's promise — a remake
+    # twenty years later keeps its own group — only holds with this split.
+    # Years link transitively (2020-2021-2022 is one chain: slightly-off
+    # years for the same film); a row with no year joins any cluster.
+    def _split_by_year(rows):
+        parent = list(range(len(rows)))
+
+        def find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        for i in range(len(rows)):
+            for j in range(i + 1, len(rows)):
+                if years_compatible([rows[i]], [rows[j]]):
+                    ri, rj = find(i), find(j)
+                    if ri != rj:
+                        parent[ri] = rj
+        clusters: dict[int, list] = {}
+        for i, row in enumerate(rows):
+            clusters.setdefault(find(i), []).append(row)
+        return list(clusters.values())
+
+    # One entry per year-cluster: the split keeps the (family, core) key
+    # but lets one core hold several entries, so the merge below (which
+    # keys on family + core) still works unchanged.
+    entries = []
+    for (family, core), rows in buckets.items():
+        for part in _split_by_year(rows):
+            entries.append([family, core, list(part)])
+
     # Subset merge: a smaller core folds into the SMALLEST larger core that
     # contains it (same family), largest first, so "salaar" joins "1 ceasefire
     # salaar" rather than a junk superset — but "avatar" never joins "avatar
     # the way of water" (years differ).
-    keys = sorted(buckets, key=lambda k: (-len(k[1]), k))
-    merged_keys: list[tuple] = []
-    for key in keys:
-        family, core = key
+    entries.sort(key=lambda e: (-len(e[1]), e[0], e[1]))
+    merged: list = []
+    for family, core, rows in entries:
         core_set = set(core)
         best = None
         best_diff = None
-        for mkey in merged_keys:
-            mfamily, mcore = mkey
+        for m in merged:
+            mfamily, mcore, mrows = m
             if mfamily != family or not core_set <= set(mcore):
                 continue
-            if not years_compatible(buckets[key], buckets[mkey]):
+            if not years_compatible(rows, mrows):
                 continue
             diff = len(set(mcore) - core_set)
             if best_diff is None or diff < best_diff:
-                best, best_diff = mkey, diff
+                best, best_diff = m, diff
         if best is not None:
-            buckets[best].extend(buckets[key])
+            best[2].extend(rows)
         else:
-            merged_keys.append(key)
-    groups = [list(buckets[k]) for k in merged_keys] + blank
+            merged.append([family, core, list(rows)])
+    groups = [list(m[2]) for m in merged] + blank
     # Order groups by their best representative, best first.
     groups.sort(key=lambda g: (
         -int(representative(g).get("release_count") or 0),

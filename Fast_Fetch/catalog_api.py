@@ -61,6 +61,7 @@ import mood_search
 import redact
 import subtitle_tracks
 import tiers
+import title_clean
 
 DEFAULT_LIMIT = 24
 MAX_LIMIT = 100
@@ -438,6 +439,47 @@ def _sort_expr(sort: str) -> str:
 
 
 # ── facet filters (shared by browse + search) ────────────────────────────────
+
+def _dedupe_search_items(items) -> list:
+    """One item per work within a search page, in the page's own order.
+
+    2026-11-15, v2 work dedup: the same film filed by eight sites is one
+    search row, not eight (measured: movies-only carry 17.5% extra works by
+    exact normalized title). The grouping is `title_clean.group_work_rows`
+    — the SAME grouping v1's `_dedupe_search_page` uses, so v1 and v2 agree
+    on what "the same film" means: token cores match (one a subset of the
+    other) in the same family, years within 1 of each other, so a remake
+    twenty years later keeps its own group. The representative is the row
+    with the most prints, then the newest id. `total_estimate` is untouched,
+    so a deduped page may simply be shorter than `limit` — the count counts
+    works, the page shows films. Cross-page repeats are out of scope: the
+    trending order is a join, so a whole-catalog grouping would cost the
+    scan the search fix just removed. A shape surprise returns the page
+    unchanged — dedup must never drop a row it cannot read.
+    """
+    if len(items) < 2:
+        return list(items)
+    candidates = []
+    try:
+        for item in items:
+            candidates.append({
+                "id": int(item["id"]),
+                "title": item.get("title") or "",
+                "year": item.get("year"),
+                "content_type": item.get("work_type") or "",
+                "release_count": int(item.get("prints") or 0),
+                "source_count": 0,
+            })
+    except (KeyError, TypeError, ValueError):
+        return list(items)
+    if len(candidates) != len(items):
+        return list(items)
+    position = {int(c["id"]): i for i, c in enumerate(candidates)}
+    groups = title_clean.group_work_rows(candidates)
+    groups.sort(key=lambda g: min(position[int(c["id"])] for c in g))
+    keep = {int(title_clean.representative(g)["id"]) for g in groups}
+    return [item for item in items if int(item["id"]) in keep]
+
 
 def _facet_clauses(content_type, genres, languages, qualities, available,
                    year_from, year_to, min_quality, animated=None,
@@ -1503,6 +1545,9 @@ def search(conn, *, q, limit=DEFAULT_LIMIT, include_adult=False, content_type=No
     first pages are the prefix hits the relevance sort already ranked first.
     The total is capped at `total_cap` (default 1000) with `total_capped=True`
     above it, because the exact COUNT re-scans the whole match set.
+    The page itself is deduped to one row per work (`_dedupe_search_items`,
+    the same `title_clean.group_work_rows` grouping v1 uses) — the total
+    still counts works, so a deduped page may be shorter than `limit`.
 
     Gap A4 — forgiving search. A mood or descriptive word in the query
     ("funny", "sad love story", "mazahiya") is not a title token: it maps
@@ -1614,6 +1659,13 @@ def search(conn, *, q, limit=DEFAULT_LIMIT, include_adult=False, content_type=No
     result["mood_genres"] = mood_genres
     result["sort"] = sort
     result["fields"] = fields or None
+    # 2026-11-15, v2 work dedup: one row per film on the page (the same film
+    # filed by eight sites is one search row, not eight). Runs after the
+    # fallback resolution (a fallback replaces the result dict) and before
+    # the fields filter (which strips the prints/year/type the grouping
+    # reads). `total_estimate` still counts works — see `_dedupe_search_items`.
+    result["items"] = _dedupe_search_items(result.get("items") or [])
+    result["count"] = len(result["items"])
     if fields:
         wanted = {str(f).strip() for f in (fields if isinstance(fields, (list, tuple))
                                            else re.split(r"[,\s]+", str(fields))) if str(f).strip()}
