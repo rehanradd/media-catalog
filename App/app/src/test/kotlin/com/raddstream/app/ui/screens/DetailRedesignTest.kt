@@ -169,8 +169,13 @@ class DetailRedesignTest {
             )
         }
         content(isSeries = true, seasons = seasons, selectedSeason = 1)
-        // The dropdown sits below the fold in the test window: it is
-        // composed (the node exists) but not displayed until scrolled to.
+        // The dropdown sits below the fold in the test window, so like
+        // the similar rail it may not even be composed yet — swipe until
+        // it appears, then bring it fully into view.
+        for (i in 0 until 5) {
+            if (compose.onAllNodesWithText("Season 1 · 1 episode").fetchSemanticsNodes().isNotEmpty()) break
+            compose.onRoot().performTouchInput { swipeUp() }
+        }
         compose.onNodeWithText("Season 1 · 1 episode").performScrollTo().assertIsDisplayed()
         // The chip strip would paint a bare "Season 2" chip; the dropdown
         // keeps the other seasons behind its closed menu.
