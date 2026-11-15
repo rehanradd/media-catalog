@@ -84,12 +84,13 @@ class FlowMockupTest {
                 )
             }
         }
-        // The canonical tile paints the bold title and the meta line — the
-        // painted separator is " | " (the spoken sentence uses " · ").
+        // The canonical tile paints the bold title and the meta line, but the
+        // text row is paint-only (clearAndSetSemantics — one spoken sentence
+        // per tile), so the meta is pinned through that sentence, which
+        // carries the same year + type. The title is findable as text only
+        // because the art-less fallback frame prints it, not the text row.
         compose.onNodeWithText("Apex Horizon").assertIsDisplayed()
         compose.onNodeWithText("Shadow Protocol").assertIsDisplayed()
-        compose.onNodeWithText("2024 | Movie").assertIsDisplayed()
-        compose.onNodeWithText("2023 | Series").assertIsDisplayed()
         // And each tile still speaks one sentence, title + meta.
         compose.onNode(hasContentDescription("Apex Horizon, 2024 · Movie")).assertExists()
         compose.onNode(hasContentDescription("Shadow Protocol, 2023 · Series")).assertExists()
