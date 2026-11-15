@@ -3,6 +3,8 @@ package com.raddstream.app.ui.screens
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -18,10 +20,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Help
@@ -46,6 +50,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -67,6 +72,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -74,12 +81,14 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.raddstream.app.brand.Brand
 import com.raddstream.app.data.RegionChoices
 import com.raddstream.app.data.RemoteFeatures
+import com.raddstream.app.network.models.DEFAULT_DISCLAIMER_EMAIL
 import com.raddstream.app.player.AudioBoost
 import com.raddstream.app.player.AudioBoostUi
 import com.raddstream.app.share.LanShareStatus
@@ -88,9 +97,9 @@ import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.components.rememberReduceMotion
 import com.raddstream.app.ui.theme.RaddMotion
 import com.raddstream.app.ui.theme.RaddTokens
+import com.raddstream.app.ui.theme.brandSp
 import com.raddstream.app.viewmodel.AccountCardCopy
 import com.raddstream.app.viewmodel.AccountUiState
-import com.raddstream.app.viewmodel.ContactUiState
 import com.raddstream.app.viewmodel.ImageQuality
 import com.raddstream.app.viewmodel.KeepTtl
 import com.raddstream.app.viewmodel.MembershipCardCopy
@@ -861,7 +870,10 @@ fun SettingsScreen(
                     )
                 }
                 if (state.contact.showForm) {
-                    ContactDialog(contact = state.contact, viewModel = viewModel)
+                    ContactDialog(
+                        email = state.disclaimer.effective().email,
+                        onDismiss = viewModel::closeContactForm,
+                    )
                 }
             }
 
@@ -1023,7 +1035,7 @@ private fun SettingsSectionHeading(text: String) {
     // "DOWNLOADS", "ACCOUNT"), not title-sized text — the cards carry the weight.
     Text(
         text.uppercase(),
-        style = MaterialTheme.typography.labelMedium.copy(letterSpacing = 1.2.sp),
+        style = MaterialTheme.typography.labelMedium.copy(letterSpacing = brandSp(1.2)),
         fontWeight = FontWeight.SemiBold,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(top = 16.dp),
@@ -1341,92 +1353,134 @@ internal fun ProfileLinkDialog(account: AccountUiState, viewModel: SettingsViewM
 }
 
 /**
- * The contact form. Five categories, one message, one optional email.
+ * The contact dialog, restyled to the Stitch mockup (2026-11-15):
+ * centred, mail icon, "Contact us", the helper line, a jade pill with
+ * the app's contact address + copy, dark "Close" + jade "Write email".
  *
- * The chips wrap (FlowRow) because five of them do not fit one row on a
- * narrow phone, and the plain Row the language chips use would clip the
- * last one. The email is optional and the line under it says what the
- * server does with it — stores it shortened — because a form that quietly
- * collects an address is a form that harvests one.
+ * The address is the disclaimer's email — the same address the
+ * disclaimer names for takedowns, served by the panel (default
+ * radddao1@gmail.com) — never hard-coded, and never the
+ * support@raddstream.com the mockup invented. A blank panel email
+ * falls back to the shipped default, the same fallback `effective()`
+ * itself uses. "Write email" opens the mail app with that address,
+ * the same mailto wiring the disclaimer dialog uses.
+ *
+ * This REPLACES the in-app contact form (five categories, subject,
+ * body, POST /api/v1/contact): contact now goes by email to the same
+ * address the disclaimer already names. The form state
+ * (ContactUiState, submitContact) and the endpoint stay in the
+ * ViewModel/API, unused — so the form can come back if the owner
+ * wants it, and this slice deletes no machinery.
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun ContactDialog(contact: ContactUiState, viewModel: SettingsViewModel) {
-    AlertDialog(
-        onDismissRequest = viewModel::closeContactForm,
-        title = { RaddDialogTitle("Write to us") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
+internal fun ContactDialog(
+    email: String,
+    onDismiss: () -> Unit,
+) {
+    // A blank panel email is never shown as an empty pill: the shipped
+    // default is the app's real contact address.
+    val shownEmail = email.ifBlank { DEFAULT_DISCLAIMER_EMAIL }
+    val uriHandler = LocalUriHandler.current
+    val clipboard = LocalClipboardManager.current
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(28.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 6.dp,
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                // Mail icon in a jade-tinted circle, as the mockup draws it.
+                Box(
+                    modifier = Modifier
+                        .size(64.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    ContactUiState.CATEGORY_LABELS.forEachIndexed { idx, label ->
-                        FilterChip(
-                            colors = raddFilterChipColors(),
-                            selected = ContactUiState.CATEGORY_IDS[idx] == contact.category,
-                            onClick = { viewModel.onContactCategoryChanged(ContactUiState.CATEGORY_IDS[idx]) },
-                            label = { Text(label) },
-                            // Audit #54: a FilterChip is 32 dp tall — the
-                            // touch-target floor is 48 dp, so the chip itself
-                            // carries it.
-                            modifier = Modifier.heightIn(min = 48.dp),
-                        )
-                    }
-                }
-                OutlinedTextField(
-                    value = contact.subject,
-                    onValueChange = viewModel::onContactSubjectChanged,
-                    label = { Text("Subject (optional)") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = contact.body,
-                    onValueChange = viewModel::onContactBodyChanged,
-                    label = { Text("Your message") },
-                    minLines = 4,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = contact.email,
-                    onValueChange = viewModel::onContactEmailChanged,
-                    label = { Text("Your email (optional)") },
-                    placeholder = { Text("So we can reply") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Text(
-                    "Your email is stored shortened, so only part of it is ever visible to us.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                contact.message?.let { message ->
-                    Text(
-                        message,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (contact.messageIsError) {
-                            MaterialTheme.colorScheme.error
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
+                    Icon(
+                        imageVector = Icons.Default.Email,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(32.dp),
                     )
                 }
+                Text(
+                    "Contact us",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                )
+                Text(
+                    "Questions, takedown requests or feedback — write to us and we will reply.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+                // The app's contact address, in a jade pill. The whole pill
+                // copies it — the copy icon is the affordance, the row is the
+                // target. The row carries the action's name; the painted
+                // address stays readable, so each is heard once.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
+                        .clickable(
+                            role = Role.Button,
+                        ) { clipboard.setText(AnnotatedString(shownEmail)) }
+                        .semantics { contentDescription = "Copy email address" }
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        "@ $shownEmail",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Icon(
+                        imageVector = Icons.Default.ContentCopy,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Button(
+                        onClick = onDismiss,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            contentColor = MaterialTheme.colorScheme.onSurface,
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 48.dp),
+                    ) {
+                        Text("Close")
+                    }
+                    Button(
+                        onClick = {
+                            runCatching { uriHandler.openUri("mailto:$shownEmail") }
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 48.dp),
+                    ) {
+                        Text("Write email")
+                    }
+                }
             }
-        },
-        confirmButton = {
-            Button(
-                onClick = viewModel::submitContact,
-                enabled = !contact.isSending && contact.body.isNotBlank(),
-            ) {
-                BusyLabel(contact.isSending, "Send")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = viewModel::closeContactForm, enabled = !contact.isSending) {
-                Text("Cancel")
-            }
-        },
-    )
+        }
+    }
 }
