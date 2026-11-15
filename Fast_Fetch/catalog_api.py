@@ -502,6 +502,30 @@ def _facet_clauses(content_type, genres, languages, qualities, available,
             params[name] = value
         clauses.append(f"w.work_type IN ({', '.join(placeholders)})")
     for index, genre in enumerate(_iter_terms(genres)):
+        needle = normalize_text(genre)
+        if needle in ("kpop", "k pop"):
+            # K-pop is filed by title, not by genre — the same gap as the
+            # v1 GENRE_FILTER_SQL entry: the works ledger never writes a
+            # k-pop token into genres for the flagship works (KPop Demon
+            # Hunters' genres are NULL/empty, KPOPPED's are empty), so
+            # the title token is the signal the data actually carries.
+            # The genres arms cover the works whose genres DO say "K-Pop"
+            # (BTS tour films, Love Class S3) and whose titles don't.
+            # Measured live 2026-11-16 on 197,530 works: title '%kpop%'
+            # / '%k-pop%' 14 works + genres '%k-pop%' 3 works (disjoint)
+            # = 17 works; genres '%kpop%' 0. "k pop" is the normalised
+            # form of a client-sent "k-pop" (normalize_text folds the
+            # hyphen to a space), so both spellings take this arm.
+            clauses.append(
+                f"((w.genres IS NOT NULL AND (instr(lower(w.genres), :genre{index}a) > 0"
+                f" OR instr(lower(w.genres), :genre{index}b) > 0))"
+                f" OR instr(lower(w.title), :genre{index}c) > 0"
+                f" OR instr(lower(w.title), :genre{index}d) > 0)")
+            params[f"genre{index}a"] = "kpop"
+            params[f"genre{index}b"] = "k-pop"
+            params[f"genre{index}c"] = "kpop"
+            params[f"genre{index}d"] = "k-pop"
+            continue
         # 2026-11-15, search speed: instr() is C-level (measured on the live
         # catalog: 0.26s vs 4.62s for the radd_list_has Python UDF, which
         # JSON-parses and normalises every row's list). It matches substrings

@@ -3272,13 +3272,14 @@ _NEWEST_YEAR_SQL = (
 SEARCH_DEADLINE_SECONDS = 10.0
 
 
-#: The 10 genre categories the panel seeded (gap A18) and the facets
+#: The 11 genre categories the panel seeded (gap A18) and the facets
 #: endpoint reports. The `genre=` filter and the facets counts share the
 #: predicates below, so a facet count is exactly the number of rows the
 #: matching filter returns — a chip must never promise a count its tap
 #: cannot deliver.
 GENRE_KEYS = ("action", "adventure", "animation", "comedy", "crime",
-              "drama", "horror", "romance", "sci-fi", "thriller")
+              "drama", "horror", "romance", "sci-fi", "thriller",
+              "kpop")
 
 #: genre key -> (SQL fragment on alias `p`, params). A plain token is one
 #: `lower(p.genres) LIKE ?`; sci-fi keeps the four spellings the filter
@@ -3299,6 +3300,18 @@ GENRE_FILTER_SQL = {
                " OR lower(p.genres) LIKE ? OR lower(p.genres) LIKE ?)",
                ["%sci-fi%", "%sci fi%", "%scifi%", "%science fiction%"]),
     "thriller": ("lower(p.genres) LIKE ?", ["%thriller%"]),
+    # K-pop is filed by title, not by genre: the ledger never writes a
+    # k-pop token into genres for the flagship titles (KPop Demon
+    # Hunters' genres are NULL/empty, KPOPPED's are empty), so the title
+    # token is the signal the data actually carries — the same reasoning
+    # as animation's is_animated arm. The genres arm covers the rows
+    # whose genres DO say "K-Pop" (BTS tour films, Love Class S3) and
+    # whose titles don't. Measured live 2026-11-16 on 225,080 posts:
+    # clean_title '%kpop%' 10 + '%k-pop%' 8 (disjoint) + genres
+    # '%k-pop%' 3 (disjoint from both) = 21 rows; genres '%kpop%' 0.
+    "kpop": ("(lower(p.clean_title) LIKE ? OR lower(p.clean_title) LIKE ?"
+             " OR lower(p.genres) LIKE ? OR lower(p.genres) LIKE ?)",
+             ["%kpop%", "%k-pop%", "%kpop%", "%k-pop%"]),
 }
 
 #: industry key -> SQL fragment on alias `p` (no params; the values are
@@ -5413,7 +5426,7 @@ def api_v1_get_related(work_id, page: int = 1, limit: int = 20,
 def api_v1_get_facets() -> dict:
     """GET /api/v1/facets — the browse jump-off chips.
 
-    Four groups, each entry {key, label, count}: genres (the 10 panel
+    Four groups, each entry {key, label, count}: genres (the 11 panel
     categories), languages (top 12), industries (the 5 fixed keys), types
     (the content_type values). Every count is the number of public,
     non-adult posts the matching filter returns — the counts and the

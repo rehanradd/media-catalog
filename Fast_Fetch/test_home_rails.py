@@ -415,7 +415,7 @@ class FacetsTests(Fixture):
         facets = viewer.api_v1_get_facets()
         expected = {"action": 2, "adventure": 2, "animation": 0,
                     "comedy": 1, "crime": 0, "drama": 2, "horror": 0,
-                    "romance": 1, "sci-fi": 3, "thriller": 1}
+                    "romance": 1, "sci-fi": 3, "thriller": 1, "kpop": 0}
         self.assertEqual(
             [e["key"] for e in facets["genres"]], list(viewer.GENRE_KEYS))
         for key, count in expected.items():
@@ -460,7 +460,7 @@ class FacetsTests(Fixture):
 
 
 class GenreFilterTests(Fixture):
-    def test_all_ten_categories_filter(self):
+    def test_all_eleven_categories_filter(self):
         expected = {"action": {self.seed_id, self.part_two_id},
                     "adventure": {self.seed_id, self.interstellar_id},
                     "animation": set(),
@@ -471,7 +471,8 @@ class GenreFilterTests(Fixture):
                     "romance": {self.humsafar_id},
                     "sci-fi": {self.seed_id, self.part_two_id,
                                self.interstellar_id},
-                    "thriller": {self.squid_id}}
+                    "thriller": {self.squid_id},
+                    "kpop": set()}
         for key, ids in expected.items():
             resp = viewer.api_v1_get_posts(genre=key, limit=20)
             self.assertEqual({int(i["id"]) for i in resp["results"]}, ids,
@@ -482,6 +483,55 @@ class GenreFilterTests(Fixture):
     def test_unknown_genre_is_ignored_not_guessed(self):
         resp = viewer.api_v1_get_posts(genre="no-such-genre", limit=20)
         self.assertEqual(resp["total"], 6)
+
+
+class KpopGenreTests(Fixture):
+    """genre=kpop on the v1 path: the title token AND the genres token.
+
+    One row per signal arm, mirroring the live catalog (measured
+    2026-11-16): the flagship title carries the token in its title
+    with no k-pop token in genres; the BTS-style row carries it in
+    genres with a token-free title; the hyphen row carries "K-Pops!"
+    in its title. The facet count must equal the filter total.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.hunters_id = self.ingest(
+            title="KPop Demon Hunters", year=2025, content_type="movie",
+            genres=["Action", "Music"],
+            cast=["Arden Cho"], industry="Hollywood", language="English",
+            n_releases=1, n_sources=1)
+        self.bts_id = self.ingest(
+            title="BTS World Tour", year=2025, content_type="movie",
+            genres=["Documentary", "Music", "K-Pop"],
+            cast=["BTS"], industry="Hollywood", language="English",
+            n_releases=1, n_sources=1)
+        self.kpops_id = self.ingest(
+            title="K-Pops!", year=2025, content_type="movie",
+            genres=["Comedy"], cast=["Anderson .Paak"],
+            industry="Hollywood", language="English",
+            n_releases=1, n_sources=1)
+
+    def test_kpop_filter_returns_title_and_genre_rows(self):
+        resp = viewer.api_v1_get_posts(genre="kpop", limit=20)
+        self.assertEqual({int(i["id"]) for i in resp["results"]},
+                         {self.hunters_id, self.bts_id, self.kpops_id})
+        self.assertNotIn(self.seed_id,
+                         {int(i["id"]) for i in resp["results"]})
+
+    def test_kpop_filter_is_case_insensitive(self):
+        resp = viewer.api_v1_get_posts(genre="KPOP", limit=20)
+        self.assertEqual({int(i["id"]) for i in resp["results"]},
+                         {self.hunters_id, self.bts_id, self.kpops_id})
+
+    def test_kpop_facet_count_matches_filter(self):
+        facets = viewer.api_v1_get_facets()
+        entry = [e for e in facets["genres"] if e["key"] == "kpop"]
+        self.assertEqual(len(entry), 1)
+        self.assertEqual(entry[0]["count"], 3)
+        total = viewer.api_v1_get_posts(genre="kpop")["total"]
+        self.assertEqual(total, entry[0]["count"])
 
 
 class LanguageFilterTests(Fixture):

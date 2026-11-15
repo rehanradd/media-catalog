@@ -116,7 +116,8 @@ class CatalogApiTestCase(unittest.TestCase):
     # ---- ledger helpers ---------------------------------------------------- #
     def add_post(self, site, url, *, title=None, clean_title, year=2024,
                  content_type="movie", imdb_id=None, tmdb_id=None, is_18_plus=0,
-                 is_animated=0, language="Hindi", releases=()):
+                 is_animated=0, language="Hindi", genres='["Action"]',
+                 releases=()):
         data = {
             "url": url,
             "slug": url.rstrip("/").split("/")[-1],
@@ -128,7 +129,7 @@ class CatalogApiTestCase(unittest.TestCase):
             "poster_url": "https://cdn/poster.jpg",
             "backdrop_urls": '["https://cdn/bd1.jpg"]',
             "imdb_rating": 7.5,
-            "genres": '["Action"]',
+            "genres": genres,
             "synopsis": f"{clean_title} synopsis",
             "is_18_plus": is_18_plus,
             "is_animated": is_animated,
@@ -633,6 +634,77 @@ class BrowseTests(CatalogApiTestCase):
         self.assertTrue(broken["identity_suspect"])
         self.assertIn("identity_suspect", broken["flags"])
         self.assertIn("needs_review", broken["flags"])
+
+
+class KpopGenreFacetTests(CatalogApiTestCase):
+    """genre=kpop on the v2 path: title-token works + genre-token works.
+
+    The v2 clause matches genre terms against w.genres only, but the
+    ledger never writes a k-pop token into genres for the flagship
+    works — so "kpop" (and a client-sent "k-pop", normalised to "k pop")
+    also matches the title token. One work per signal arm, mirroring
+    the live catalog (measured 2026-11-16: 14 title works + 3 genre
+    works = 17 works), plus an unrelated control work.
+    """
+
+    def build_corpus(self):
+        self.add_post("somecdn.site", "https://cdn.example/kpop-demon-hunters/",
+                      clean_title="KPop Demon Hunters", year=2025,
+                      releases=[{"release_title": "KPop Demon Hunters 1080p",
+                                 "quality": "1080p",
+                                 "sources": [cdn("KPOP-HUNTERS")]}])
+        self.add_post("somecdn.site", "https://cdn.example/bts-world-tour/",
+                      clean_title="BTS World Tour", year=2025,
+                      genres='["Documentary", "Music", "K-Pop"]',
+                      releases=[{"release_title": "BTS World Tour 1080p",
+                                 "quality": "1080p",
+                                 "sources": [cdn("KPOP-BTS")]}])
+        self.add_post("somecdn.site", "https://cdn.example/k-pops/",
+                      clean_title="K-Pops!", year=2025,
+                      releases=[{"release_title": "K-Pops! 1080p",
+                                 "quality": "1080p",
+                                 "sources": [cdn("KPOP-POPS")]}])
+        self.add_post("somecdn.site", "https://cdn.example/dune/",
+                      clean_title="Dune", year=2024,
+                      releases=[{"release_title": "Dune 1080p",
+                                 "quality": "1080p",
+                                 "sources": [cdn("KPOP-DUNE")]}])
+        self.project()
+        self._index_corpus()
+
+    def test_genre_kpop_returns_title_and_genre_works(self):
+        page = catalog_api.browse(self.conn, genres=["kpop"], limit=100)
+        self.assertEqual({i["title"] for i in page["items"]},
+                         {"KPop Demon Hunters", "BTS World Tour", "K-Pops!"})
+
+    def test_genre_kpop_hyphen_spelling_returns_the_same_works(self):
+        page = catalog_api.browse(self.conn, genres=["k-pop"], limit=100)
+        self.assertEqual({i["title"] for i in page["items"]},
+                         {"KPop Demon Hunters", "BTS World Tour", "K-Pops!"})
+
+    def test_genre_kpop_in_search_title_arm(self):
+        # q narrows by title AND the genre clause must hold: BTS has no
+        # kpop token in its title, so the q correctly excludes it here.
+        # "K-Pops!" is also excluded by the q — not by the facet: the
+        # search tokenises it to "k pops", so the token "kpop" never
+        # matches its haystack (pre-existing tokenisation, out of scope
+        # for this facet slice; browse with genre=kpop does return it).
+        page = catalog_api.search(self.conn, q="kpop", genres=["kpop"],
+                                  limit=100)
+        self.assertEqual({i["title"] for i in page["items"]},
+                         {"KPop Demon Hunters"})
+
+    def test_genre_kpop_in_search_genre_arm(self):
+        # The genre arm is what admits BTS: q="tour" matches its title,
+        # and only the kpop facet lets it through.
+        page = catalog_api.search(self.conn, q="tour", genres=["kpop"],
+                                  limit=100)
+        self.assertEqual({i["title"] for i in page["items"]},
+                         {"BTS World Tour"})
+        # And the facet excludes a title-matching non-kpop work.
+        page = catalog_api.search(self.conn, q="dune", genres=["kpop"],
+                                  limit=100)
+        self.assertEqual(page["items"], [])
 
 
 # ── search ───────────────────────────────────────────────────────────────────
