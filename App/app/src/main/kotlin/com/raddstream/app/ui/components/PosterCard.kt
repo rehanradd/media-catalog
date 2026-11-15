@@ -22,6 +22,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -100,6 +102,17 @@ fun PosterCard(
      * slipping thumb.
      */
     onRemove: (() -> Unit)? = null,
+    /**
+     * Pick 3 (home review, Nov 2026): the favourite heart, drawn on the
+     * poster's free TopStart corner. Only Pick 3 passes it — the heart IS
+     * that card's action, so it rides the art instead of the text row. The
+     * NEW pill owns TopEnd and the rank badge owns TopStart in the ranked
+     * rail, so a tile carries either a rank or a heart, never both. Null
+     * everywhere else: everywhere else the tile is a doorway, not a list
+     * to edit, and a heart there would be a trap for a slipping thumb.
+     */
+    isFavorite: Boolean = false,
+    onToggleFavorite: (() -> Unit)? = null,
     /**
      * 1-based server ranking position (1..10) when rendered inside the ranked rail.
      * Null everywhere else — no synthetic rank numbers are ever invented.
@@ -350,6 +363,42 @@ fun PosterCard(
                             color = MaterialTheme.colorScheme.onPrimary,
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.ExtraBold,
+                        )
+                    }
+                }
+
+                // Pick 3: the heart on the poster — the card's whole point
+                // is tapping it. A 48dp touch target in a scrimmed circle,
+                // so it reads as a control and never as part of the art; the
+                // button eats its own tap, so it never also opens the title
+                // (same as the remove × below). TopStart: TopEnd is the NEW
+                // pill's, and a rank badge would own TopStart — the two
+                // never meet on one tile (see the parameter docs).
+                if (onToggleFavorite != null) {
+                    IconButton(
+                        onClick = onToggleFavorite,
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(4.dp)
+                            .size(48.dp)
+                            .background(
+                                MaterialTheme.colorScheme.scrim.copy(alpha = 0.55f),
+                                CircleShape,
+                            ),
+                    ) {
+                        Icon(
+                            imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                            contentDescription = if (isFavorite) {
+                                "Remove $title from My List"
+                            } else {
+                                "Save $title to My List"
+                            },
+                            tint = if (isFavorite) {
+                                MaterialTheme.colorScheme.secondary
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            },
+                            modifier = Modifier.size(24.dp),
                         )
                     }
                 }

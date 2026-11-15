@@ -16,8 +16,10 @@ import com.raddstream.app.network.models.FacetsResponse
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.network.models.PanelBroadcast
 import com.raddstream.app.network.models.VipRemoteConfig
+import com.raddstream.app.network.models.currentCalendarYear
 import com.raddstream.app.network.models.displayYearLabel
 import com.raddstream.app.network.models.WireText
+import com.raddstream.app.ui.components.UserWords
 import com.raddstream.app.player.AdCadenceGovernor
 import com.raddstream.app.player.AdSurface
 import com.raddstream.app.repository.CatalogRepository
@@ -190,6 +192,12 @@ data class HomeUiState(
     /** Gap A6: true once the first-run "Pick 3 you like" card is done (picked 3 or dismissed). */
     val pickThreeDone: Boolean = false,
     /**
+     * Pick 3 (home review, Nov 2026): true once the card has been displayed
+     * a single time. The card is a one-shot — first display retires it,
+     * whether the viewer picked, dismissed, or scrolled past.
+     */
+    val pickThreeShown: Boolean = false,
+    /**
      * B5: true once the viewer has opened a title detail or started a
      * playback — the first browse or play. The Pick 3 card waits for it, so
      * first open is the catalog, not a chore.
@@ -206,12 +214,35 @@ data class HomeUiState(
     val facets: FacetsResponse? = null,
 ) {
     /**
-     * Gap A6: the three titles the first-run card offers — the first rail
-     * with at least three rows, first three only. Empty when no rail can
-     * offer three yet, so the card waits instead of inventing titles.
+     * Pick 3 (home review, Nov 2026): the three titles the redesigned card
+     * offers — the first rail with at least three rows AFTER the hero's own
+     * titles are taken out, first three only. The hero shows its section's
+     * first six slides (HERO_LIMIT in HomeScreen), and Audit #18 says the
+     * same title never appears twice on Home — so the hero's six are not
+     * candidates: the picks come from the next titles of that rail, or the
+     * next rail when it runs short. Empty when no rail can offer three
+     * eligible titles, so the card waits instead of inventing titles.
+     * Identity is the work key, not the row id: one film filed twice has
+     * two row ids, and the hero exclusion follows [selectHeroSection], so
+     * a stale panel hero that lost the slot to "Recently added" excludes
+     * Recent's titles, not the stale list's.
      */
     val pickThreeCandidates: List<Post>
-        get() = sections.firstOrNull { it.items.size >= 3 }?.items?.take(3).orEmpty()
+        get() {
+            val heroKeys = selectHeroSection(sections, currentCalendarYear())
+                ?.items.orEmpty().take(HERO_SLIDE_COUNT)
+                .mapTo(HashSet()) { UserWords.workKey(it.workRef, it.displayTitle, it.year) }
+            return sections.firstOrNull { section ->
+                section.items.count { post ->
+                    UserWords.workKey(post.workRef, post.displayTitle, post.year) !in heroKeys
+                } >= 3
+            }?.items
+                ?.filter { post ->
+                    UserWords.workKey(post.workRef, post.displayTitle, post.year) !in heroKeys
+                }
+                ?.take(3)
+                .orEmpty()
+        }
 
     /**
      * Gap A6: the card shows only to a brand-new viewer — nothing
@@ -219,10 +250,12 @@ data class HomeUiState(
      * offer three real titles to pick from. B5: and only after the first
      * browse or play, so the card never greets a viewer who has not looked
      * at anything yet — first open is the catalog, the card comes later.
+     * Pick 3: and only once — the first display retires it, so a viewer
+     * who scrolled past it is never asked again.
      */
     val showPickThree: Boolean
-        get() = !pickThreeDone && firstBrowseDone && continueWatching.isEmpty() && favoriteIds.isEmpty() &&
-            pickThreeCandidates.size >= 3
+        get() = !pickThreeDone && !pickThreeShown && firstBrowseDone && continueWatching.isEmpty() &&
+            favoriteIds.isEmpty() && pickThreeCandidates.size >= 3
 }
 
 /**
@@ -396,6 +429,16 @@ internal fun mergePanelFeed(
 internal const val RECENT_SECTION_KEY = "recent"
 
 /**
+ * Pick 3 (home review, Nov 2026): how many slides the hero shows — the
+ * same count as HERO_LIMIT in HomeScreen. The hero exclusion in
+ * [HomeUiState.pickThreeCandidates] mirrors it, so the picks never repeat
+ * a hero slide. The operator can hide the hero (heroMax 0), which this
+ * count cannot see; over-excluding then only shifts the picks down a rail,
+ * never onto a hero title.
+ */
+internal const val HERO_SLIDE_COUNT = 6
+
+/**
  * Hero (Nov 2026): which rail the banner rides. The panel's sections come
  * first by [mergePanelFeed], so the banner's default is the operator's hero
  * list — but that list is curation, and curation goes stale: the panel once
@@ -473,6 +516,7 @@ class HomeViewModel @Inject constructor(
         observeDailyCheckIn()
         observeTrialNote()
         observePickThreeDone()
+        observePickThreeShown()
         observeFirstBrowseDone()
         _uiState.update { it.copy(sections = initialHomeSections() + regionalHomeSections()) }
         // Gap A5: cache-first — the saved Home renders before the network
@@ -739,6 +783,31 @@ class HomeViewModel @Inject constructor(
 
     fun dismissPickThree() {
         setPickThreeDone()
+    }
+
+    /**
+     * Pick 3 (home review, Nov 2026): the card is a one-shot — the first
+     * display retires it. Called from the card's own LaunchedEffect, so
+     * the flag lands the moment the card is on screen, not when the viewer
+     * acts on it. Same shape as [setPickThreeDone].
+     */
+    fun markPickThreeShown() {
+        _uiState.update { it.copy(pickThreeShown = true) }
+        viewModelScope.launch {
+            runCatching { settingsRepository.setPickThreeShown(true) }
+        }
+    }
+
+    /**
+     * Pick 3: the shown flag, persisted so a displayed card never returns.
+     * Same shape as [observePickThreeDone].
+     */
+    private fun observePickThreeShown() {
+        viewModelScope.launch {
+            settingsRepository.pickThreeShown.collect { shown ->
+                _uiState.update { it.copy(pickThreeShown = shown) }
+            }
+        }
     }
 
     private fun setPickThreeDone() {

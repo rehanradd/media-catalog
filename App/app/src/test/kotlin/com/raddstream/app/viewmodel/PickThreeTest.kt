@@ -11,34 +11,67 @@ import org.junit.Test
  * only once a rail can offer three real titles. B5: and only after the
  * first browse or play — a viewer who has not looked at anything yet never
  * sees the card, however full the rails are.
+ *
+ * Pick 3 (home review, Nov 2026): the picks never repeat the hero — the
+ * hero shows its section's first six slides, so the candidates are the
+ * next three of that rail, or the next rail when it runs short. And the
+ * card is a one-shot: the first display retires it, whether the viewer
+ * picked, dismissed, or scrolled past.
  */
 class PickThreeTest {
 
-    private fun post(id: Int) = Post(id = id, title = "Title $id")
+    private fun post(id: Int, year: Int? = null) = Post(id = id, title = "Title $id", year = year)
 
-    private fun rail(items: List<Post>) =
-        HomeSection(key = "recent", title = "Recently added", type = null, items = items)
+    private fun rail(items: List<Post>, key: String = "recent") =
+        HomeSection(key = key, title = "Recently added", type = null, items = items)
+
+    /** Nine titles: the hero takes the first six, the card offers the next three. */
+    private fun fullRail() = rail((1..9).map { post(it) })
 
     private fun state(
-        sections: List<HomeSection> = listOf(rail(listOf(post(1), post(2), post(3), post(4)))),
+        sections: List<HomeSection> = listOf(fullRail()),
         continueWatching: List<ResumeTile> = emptyList(),
         favoriteIds: Set<Int> = emptySet(),
         pickThreeDone: Boolean = false,
+        pickThreeShown: Boolean = false,
         firstBrowseDone: Boolean = true,
     ) = HomeUiState(
         sections = sections,
         continueWatching = continueWatching,
         favoriteIds = favoriteIds,
         pickThreeDone = pickThreeDone,
+        pickThreeShown = pickThreeShown,
         firstBrowseDone = firstBrowseDone,
     )
 
     @Test
-    fun `viewer who has browsed once with a full rail sees the card with the first three`() {
+    fun `viewer who has browsed once with a full rail sees the card with the three after the hero`() {
         val s = state()
 
         assertTrue(s.showPickThree)
-        assertEquals(listOf(1, 2, 3), s.pickThreeCandidates.map { it.id })
+        assertEquals(listOf(7, 8, 9), s.pickThreeCandidates.map { it.id })
+    }
+
+    @Test
+    fun `hero titles are never offered as picks`() {
+        val s = state()
+
+        assertTrue(s.pickThreeCandidates.none { it.id in 1..6 })
+    }
+
+    @Test
+    fun `a rail short on eligible titles falls through to the next rail`() {
+        val s = state(
+            sections = listOf(
+                rail((1..7).map { post(it) }),
+                rail(listOf(post(11), post(12), post(13)), key = "movie"),
+            ),
+        )
+
+        // Only one eligible title in the first rail (its seventh) — the
+        // second rail supplies all three picks.
+        assertTrue(s.showPickThree)
+        assertEquals(listOf(11, 12, 13), s.pickThreeCandidates.map { it.id })
     }
 
     @Test
@@ -46,7 +79,7 @@ class PickThreeTest {
         val s = state(firstBrowseDone = false)
 
         // The titles are ready — the card is gated, not empty.
-        assertEquals(listOf(1, 2, 3), s.pickThreeCandidates.map { it.id })
+        assertEquals(listOf(7, 8, 9), s.pickThreeCandidates.map { it.id })
         assertFalse(s.showPickThree)
     }
 
@@ -79,10 +112,45 @@ class PickThreeTest {
     }
 
     @Test
+    fun `shown card never returns even without a pick or a dismiss`() {
+        val s = state(pickThreeShown = true)
+
+        // The picks are still computed — the card is retired, not empty.
+        assertEquals(listOf(7, 8, 9), s.pickThreeCandidates.map { it.id })
+        assertFalse(s.showPickThree)
+    }
+
+    @Test
+    fun `a rail with fewer than three eligible titles offers nothing`() {
+        val s = state(sections = listOf(rail((1..7).map { post(it) })))
+
+        assertTrue(s.pickThreeCandidates.isEmpty())
+        assertFalse(s.showPickThree)
+    }
+
+    @Test
     fun `a rail with fewer than three titles offers nothing`() {
         val s = state(sections = listOf(rail(listOf(post(1), post(2)))))
 
         assertTrue(s.pickThreeCandidates.isEmpty())
         assertFalse(s.showPickThree)
+    }
+
+    @Test
+    fun `a stale panel hero excludes the fallback rail titles instead`() {
+        val staleHero = HomeSection(
+            key = "hero",
+            title = "Hero",
+            items = listOf(post(101, year = 1963), post(102, year = 1946)),
+            panelManaged = true,
+        )
+        val recent = rail((1..9).map { post(it, year = 2026) })
+        val s = state(sections = listOf(staleHero, recent))
+
+        // The stale panel list lost the hero slot to Recently added, so
+        // the exclusion follows the fallback — Recent's first six are
+        // out, its next three are the picks, and no stale title appears.
+        assertTrue(s.showPickThree)
+        assertEquals(listOf(7, 8, 9), s.pickThreeCandidates.map { it.id })
     }
 }

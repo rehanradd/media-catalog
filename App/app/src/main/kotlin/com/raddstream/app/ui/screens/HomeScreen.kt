@@ -14,7 +14,6 @@ import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -36,8 +35,6 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
@@ -75,7 +72,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -89,7 +85,6 @@ import com.raddstream.app.network.models.FacetsResponse
 import com.raddstream.app.network.models.PanelBroadcast
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.network.models.currentCalendarYear
-import com.raddstream.app.ui.components.CatalogImage
 import com.raddstream.app.ui.components.EmptyState
 import com.raddstream.app.ui.components.ErrorState
 import com.raddstream.app.ui.components.HeroCarousel
@@ -236,6 +231,7 @@ fun HomeScreen(
             onToggleFavorite = { viewModel.toggleFavorite(it) },
             onRemoveFromContinueWatching = { viewModel.removeFromContinueWatching(it) },
             onDismissPickThree = viewModel::dismissPickThree,
+            onPickThreeShown = viewModel::markPickThreeShown,
             onDismissTrialNote = viewModel::dismissTrialNote,
             onClaimDailyLogin = viewModel::claimDailyLogin,
         )
@@ -313,6 +309,7 @@ internal fun HomeContent(
     onToggleFavorite: (Post) -> Unit = {},
     onRemoveFromContinueWatching: (ResumeTile) -> Unit = {},
     onDismissPickThree: () -> Unit = {},
+    onPickThreeShown: () -> Unit = {},
     onDismissTrialNote: () -> Unit = {},
     onClaimDailyLogin: () -> Unit = {},
 ) {
@@ -504,6 +501,7 @@ internal fun HomeContent(
                     onToggleFavorite = { post -> onToggleFavorite(post) },
                     onPostClick = onPostClick,
                     onDismiss = onDismissPickThree,
+                    onShown = onPickThreeShown,
                 )
                 Spacer(Modifier.height(8.dp))
             }
@@ -714,20 +712,29 @@ private fun StartWatchingPlaceholder(onBrowse: () -> Unit) {
 }
 
 /**
- * Gap A6 — the first-run "Pick 3 you like" card. Three real titles from the
- * first rail that has them; the heart saves each one to My List, the poster
- * opens the title, and "Not now" retires the card. Nothing here promises
- * personalisation — the picks ARE the start of My List, and the card says
- * exactly that.
+ * Gap A6 — the first-run "Pick 3 you like" card, redesigned (home review,
+ * Nov 2026): three poster thumbnails in a row, a heart on each poster, the
+ * poster opens the title. The old text rows showed no artwork, so the card
+ * read as a chore list; the posters ARE the choice now. The heart saves
+ * each one to My List, and "Not now" retires the card. Nothing here
+ * promises personalisation — the picks ARE the start of My List, and the
+ * card says exactly that.
+ *
+ * One-shot: the first display retires the card ([onShown] fires from a
+ * LaunchedEffect), whether the viewer picks, dismisses, or scrolls past.
+ * Home scrolls as one column and this card rides high in the feed, so
+ * first composition is first display for practical purposes.
  */
 @Composable
-private fun PickThreeCard(
+internal fun PickThreeCard(
     candidates: List<Post>,
     isFavorite: (Post) -> Boolean,
     onToggleFavorite: (Post) -> Unit,
     onPostClick: (Post) -> Unit,
     onDismiss: () -> Unit,
+    onShown: () -> Unit = {},
 ) {
+    LaunchedEffect(Unit) { onShown() }
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
         shape = RoundedCornerShape(16.dp),
@@ -747,61 +754,18 @@ private fun PickThreeCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            candidates.forEach { post ->
-                val title = post.cleanTitle?.takeIf { it.isNotBlank() } ?: post.title
-                val saved = isFavorite(post)
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.fillMaxWidth()
-                        .clickable(onClick = { onPostClick(post) }, onClickLabel = "Open $title"),
-                ) {
-                    CatalogImage(
-                        url = post.posterUrl,
-                        contentDescription = null,
-                        modifier = Modifier.size(width = 48.dp, height = 72.dp)
-                            .clip(RoundedCornerShape(8.dp)),
-                        fallbackLabel = title,
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                candidates.take(3).forEach { post ->
+                    PosterCard(
+                        post = post,
+                        modifier = Modifier.weight(1f),
+                        onClick = { onPostClick(post) },
+                        isFavorite = isFavorite(post),
+                        onToggleFavorite = { onToggleFavorite(post) },
                     )
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            text = title,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        // M3 (home review, Nov 2026): the year comes from
-                        // [Post.yearLabel], the guarded choke point.
-                        val subtitle = listOfNotNull(
-                            post.yearLabel,
-                            post.typeLabel,
-                        ).joinToString(" · ")
-                        if (subtitle.isNotBlank()) {
-                            Text(
-                                text = subtitle,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
-                    IconButton(onClick = { onToggleFavorite(post) }) {
-                        Icon(
-                            imageVector = if (saved) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                            contentDescription = if (saved) {
-                                "Remove $title from My List"
-                            } else {
-                                "Save $title to My List"
-                            },
-                            tint = if (saved) {
-                                MaterialTheme.colorScheme.secondary
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                        )
-                    }
                 }
             }
             // M9 (home review, Nov 2026): "Not now" is a real button, not a

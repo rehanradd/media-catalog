@@ -366,6 +366,25 @@ class ServerSettingsRepository @Inject constructor(
     }
 
     /**
+     * Pick 3 (home review, Nov 2026): true once the redesigned card has
+     * been displayed a single time. The card is a one-shot introduction —
+     * it shows once, then never again, whether the viewer picked three,
+     * dismissed it, or only scrolled past it. The done flag above still
+     * retires it on dismiss / third pick; this flag retires it on sight.
+     * Same shape as [pickThreeDone].
+     */
+    val pickThreeShown: Flow<Boolean> = dataStore.data.map { preferences ->
+        preferences[PICK_THREE_SHOWN_KEY] ?: false
+    }
+
+    suspend fun setPickThreeShown(shown: Boolean) {
+        dataStore.edit { preferences ->
+            if (shown) preferences[PICK_THREE_SHOWN_KEY] = true
+            else preferences.remove(PICK_THREE_SHOWN_KEY)
+        }
+    }
+
+    /**
      * B5: true once this viewer has opened a title detail or started a
      * playback — the first browse or play. The first-run "Pick 3 you like"
      * card waits for it, so a brand-new viewer meets the catalog first and
@@ -1114,6 +1133,7 @@ class ServerSettingsRepository @Inject constructor(
         private val TRIAL_NOTE_DISMISSED_KEY = booleanPreferencesKey("trial_note_dismissed")
         private val HOME_CACHE_JSON_KEY = stringPreferencesKey("home_cache_json")
         private val PICK_THREE_DONE_KEY = booleanPreferencesKey("pick_three_done")
+        private val PICK_THREE_SHOWN_KEY = booleanPreferencesKey("pick_three_shown")
         private val FIRST_BROWSE_DONE_KEY = booleanPreferencesKey("first_browse_done")
         private val LOGIN_STREAK_LAST_DAY_KEY = longPreferencesKey("login_streak_last_day")
         private val LOGIN_STREAK_COUNT_KEY = intPreferencesKey("login_streak_count")
