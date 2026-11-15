@@ -1620,6 +1620,33 @@ class PlayerViewModel @Inject constructor(
     }
 
     /**
+     * Hate-audit H12: manual source switch. The print sheet's rows are
+     * tappable now — tapping a rendition loads it now, at the current
+     * position, instead of waiting for the staged failover. The same
+     * staging as [tryNextPrint]: the new print's runner-ups and the work
+     * scope carry over, so resume points and binge context survive the
+     * hop. A tap on the print already playing just closes the sheet.
+     */
+    fun switchRendition(rendition: PlaybackRendition) {
+        val active = _ui.value.activeRendition
+        val handle = rendition.playback.streamId
+        if (handle == active?.playback?.streamId) {
+            hidePrintSheet()
+            return
+        }
+        val title = _ui.value.pendingTitle ?: active?.displayLabel() ?: Brand.name
+        val positionMs = controller?.takeIf { it.isConnected }?.currentPosition ?: 0L
+        val backups = rendition.playback.backupStreamIds.filter { it != handle }
+        store.stageFailover(handle, backups)
+        store.peekWorkRef(active?.playback?.streamId)?.let { scope ->
+            store.stageWorkRef(handle, scope)
+            backups.forEach { store.stageWorkRef(it, scope) }
+        }
+        hidePrintSheet()
+        startStreamHandle(handle, title, startOverrideMs = positionMs.takeIf { it > 1_000 })
+    }
+
+    /**
      * The viewer dismissed the 30 s give-up card: keep waiting, with a fresh thirty
      * seconds. A dismiss is not a fix — if the copy is truly dead the card comes back —
      * but a viewer who is still willing to wait should not be nagged every tick.

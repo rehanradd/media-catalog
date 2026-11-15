@@ -52,6 +52,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
@@ -109,6 +110,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -122,6 +124,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
@@ -163,6 +166,7 @@ import com.raddstream.app.player.AudioBoost
 import com.raddstream.app.player.AudioBoostUi
 import com.raddstream.app.player.AudioTrackPolicy
 import com.raddstream.app.player.CacheAffordance
+import com.raddstream.app.player.EDGE_DEAD_ZONE_DP
 import com.raddstream.app.player.initialBrightnessBase
 import com.raddstream.app.player.EpisodeCoverage
 import com.raddstream.app.player.chapterTicks
@@ -195,6 +199,7 @@ import com.raddstream.app.player.subtitles.SubtitleOffset
 import com.raddstream.app.player.subtitles.SubtitleOffsetSheet
 import com.raddstream.app.player.dragHalfZone
 import com.raddstream.app.player.dominantAxis
+import com.raddstream.app.player.isInEdgeDeadZone
 import com.raddstream.app.player.qualityCostPerHour
 import com.raddstream.app.ui.components.CatalogImage
 import com.raddstream.app.ui.components.RaddDialogTitle
@@ -647,6 +652,7 @@ private fun PlayerScreenContent(
                         state,
                         onTogglePlayPause = { vm.togglePlayPause() },
                         onPlayFromStart = { vm.playFrom(0) },
+                        onSeekBy = { vm.seekBy(it) },
                     )
                     BottomControls(
                         state = state,
@@ -1254,6 +1260,16 @@ private fun GestureOverlay(
                     var lastY = startY
                     var axis: DominantAxis = DominantAxis.NONE
                     val zone = dragHalfZone(startX, paneSize.width.toFloat())
+                    // Hate-audit H5: the screen edges belong to Android's back
+                    // gesture — a vertical drag that starts inside the edge
+                    // dead zone is the system gesture, not a brightness/volume
+                    // change, so it applies nothing here.
+                    val edgeDeadZonePx = with(density) { EDGE_DEAD_ZONE_DP.dp.toPx() }
+                    val inEdgeDeadZone = isInEdgeDeadZone(
+                        startX,
+                        paneSize.width.toFloat(),
+                        edgeDeadZonePx,
+                    )
                     val basePosition = latestPosition
                     var scrubTarget: Long? = null
                     try {
@@ -1270,10 +1286,12 @@ private fun GestureOverlay(
                             }
                             when (axis) {
                                 DominantAxis.VERTICAL ->
-                                    when (val cmd = GestureMapper.onVerticalDrag(zone, dy, paneSize.height.toFloat(), latestSettings)) {
-                                        is DragCommand.BrightnessDelta -> latestOnBrightness(cmd.fractionPerSwipe)
-                                        is DragCommand.VolumeDelta -> latestOnVolume(cmd.fractionPerSwipe)
-                                        else -> Unit
+                                    if (!inEdgeDeadZone) {
+                                        when (val cmd = GestureMapper.onVerticalDrag(zone, dy, paneSize.height.toFloat(), latestSettings)) {
+                                            is DragCommand.BrightnessDelta -> latestOnBrightness(cmd.fractionPerSwipe)
+                                            is DragCommand.VolumeDelta -> latestOnVolume(cmd.fractionPerSwipe)
+                                            else -> Unit
+                                        }
                                     }
                                 DominantAxis.HORIZONTAL ->
                                     when (val cmd = GestureMapper.onHorizontalScrub(basePosition, totalDx, paneSize.width.toFloat(), latestDuration, latestSettings)) {
@@ -1500,6 +1518,11 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
     Box(
         modifier = Modifier
             .fillMaxWidth()
+            // Hate-audit H21 (Robo P8): when the system bars are transiently
+            // revealed (edge swipe) the title must clear the status bar —
+            // statusBarsPadding is a no-op while the bars are hidden, so
+            // the immersive frame is untouched.
+            .statusBarsPadding()
             .background(topGradient)
             .padding(start = 4.dp, end = 4.dp, top = 4.dp, bottom = 8.dp),
     ) {
@@ -1522,38 +1545,29 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
                 overflow = TextOverflow.Ellipsis,
             )
             if (print != null) {
-                val hlsTag = stringResource(R.string.player_tag_hls)
                 val expiringTag = stringResource(R.string.player_tag_expiring)
                 val autoTag = state.autoQualityBand?.let { band -> stringResource(R.string.player_tag_auto, band) }
                 // D-37: the subtitle is metadata — year · quality · source — never
                 // the title again. The year comes from the staged title metadata;
                 // the quality is the rung label; the "source" half is the playback
-                // kind (HLS / expiring / Auto), never a host name or a raw link.
+                // kind (expiring / Auto), never a host name or a raw link.
                 // Session 121 (P-7): when the quality is unknown the display label
                 // is a rank ("Rank #1"), not a rung — printing it would repeat the
                 // title's job badly. The tags are still worth showing on their own,
                 // and the line is dropped entirely when there is nothing to say.
                 // Mockup: a live channel's subtitle is the broadcast, not the
-                // title's metadata — "Live Broadcast • HLS". No year, no rung:
-                // a live picture has neither to print.
+                // title's metadata — "Live Broadcast". No year, no rung:
+                // a live picture has neither to print. Hate-audit H17: the
+                // "• HLS" half was engineer jargon; a viewer does not need
+                // the transport, on live or on VOD.
                 val subtitle = if (state.isLive) {
-                    buildString {
-                        append(stringResource(R.string.player_live_broadcast))
-                        if (print.playback.isHls()) {
-                            append(" · ")
-                            append(hlsTag)
-                        }
-                    }
+                    stringResource(R.string.player_live_broadcast)
                 } else {
                     buildString {
                         state.titleYear?.let { append(it.toString()) }
                         print.displayLabel().takeIf { looksLikeQualityLabel(it) }?.let {
                             if (isNotEmpty()) append(" · ")
                             append(it)
-                        }
-                        if (print.playback.isHls()) {
-                            if (isNotEmpty()) append(" · ")
-                            append(hlsTag)
                         }
                         if (print.playback.ephemeral) {
                             if (isNotEmpty()) append(" · ")
@@ -1639,6 +1653,110 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
 }
 
 /**
+ * The centre transport (mockup): a large frosted play/pause on the picture,
+ * flanked by visible ±10s skip buttons — every rival shows them, and the
+ * hidden double-tap alone was both undiscoverable and accident-prone
+ * (hate-audit H5/H13). The skips are VOD-only: a live channel has no
+ * position to move, so on live the centre button stands alone. Visible
+ * whenever the chrome is up and the picture is actually playing or paused
+ * — never over a start card (the card narrates the wait) and never over
+ * the buffering spinner (the two would stack). A tap here toggles
+ * play/pause only: the button sits in the chrome layer above the gesture
+ * plane, so the tap is consumed here and never also toggles the chrome.
+ * When the chrome auto-hides, the button goes with it and the picture is
+ * clean. An ended title restarts from the beginning, the same rule the
+ * bottom bar's play button follows. The centre button and double-tap-centre
+ * share one toggle path
+ * ([com.raddstream.app.viewmodel.PlayerViewModel.togglePlayPause]); a
+ * double-tap on the button is one toggle, not two — the second tap inside
+ * the platform double-tap window is the double-tap's second half, not a
+ * new press, so it is dropped.
+ */
+@Composable
+internal fun CenterPlayPause(
+    state: PlayerUiState,
+    onTogglePlayPause: () -> Unit,
+    onPlayFromStart: () -> Unit,
+    onSeekBy: (Long) -> Unit,
+) {
+    if (state.startPhase != StartPhase.NONE || state.isBuffering) return
+    val label = stringResource(
+        if (state.isPlaying) R.string.player_pause else R.string.player_play,
+    )
+    var lastCentreToggleNs by remember { mutableLongStateOf(0L) }
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(24.dp),
+        ) {
+            if (!state.isLive) {
+                CentreSkipButton(
+                    icon = Icons.Default.Replay10,
+                    label = stringResource(R.string.player_rewind_10),
+                    onClick = { onSeekBy(-10_000L) },
+                )
+            }
+            Surface(
+                color = Color.Black.copy(alpha = 0.55f),
+                shape = CircleShape,
+                modifier = Modifier
+                    .size(88.dp)
+                    .clickable(
+                        onClick = {
+                            val now = System.nanoTime()
+                            if (now - lastCentreToggleNs > 300_000_000L) {
+                                lastCentreToggleNs = now
+                                if (state.isEnded) onPlayFromStart() else onTogglePlayPause()
+                            }
+                        },
+                        role = Role.Button,
+                    )
+                    .semantics { contentDescription = label },
+            ) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Icon(
+                        painter = painterResource(
+                            if (state.isPlaying) R.drawable.ic_player_pause else R.drawable.ic_player_play,
+                        ),
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(40.dp),
+                    )
+                }
+            }
+            if (!state.isLive) {
+                CentreSkipButton(
+                    icon = Icons.Default.Forward10,
+                    label = stringResource(R.string.player_forward_10),
+                    onClick = { onSeekBy(10_000L) },
+                )
+            }
+        }
+    }
+}
+
+/** One ±10s flank of the centre transport: a 56dp frosted circle, same chrome. */
+@Composable
+private fun CentreSkipButton(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+) {
+    Surface(
+        color = Color.Black.copy(alpha = 0.55f),
+        shape = CircleShape,
+        modifier = Modifier
+            .size(56.dp)
+            .clickable(onClick = onClick, role = Role.Button)
+            .semantics { contentDescription = label },
+    ) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(28.dp))
+        }
+    }
+}
+
+/**
  * The centre of the picture holds exactly one thing while the picture is not
  * there yet: the buffering spinner. Once playback is under way the centre
  * belongs to [CenterPlayPause] — the frosted play/pause button — and this
@@ -1670,53 +1788,6 @@ internal fun CenterSpinner(state: PlayerUiState) {
                     color = Color.White,
                     strokeWidth = 4.dp,
                     modifier = Modifier.size(56.dp),
-                )
-            }
-        }
-    }
-}
-
-/**
- * The mockup's centre transport: one large frosted play/pause button on the
- * picture, visible whenever the chrome is up and the picture is actually
- * playing or paused — never over a start card (the card narrates the wait)
- * and never over the buffering spinner (the two would stack). A tap here
- * toggles play/pause only: the button sits in the chrome layer above the
- * gesture plane, so the tap is consumed here and never also toggles the
- * chrome. When the chrome auto-hides, the button goes with it and the
- * picture is clean. An ended title restarts from the beginning, the same
- * rule the bottom bar's play button follows.
- */
-@Composable
-internal fun CenterPlayPause(
-    state: PlayerUiState,
-    onTogglePlayPause: () -> Unit,
-    onPlayFromStart: () -> Unit,
-) {
-    if (state.startPhase != StartPhase.NONE || state.isBuffering) return
-    val label = stringResource(
-        if (state.isPlaying) R.string.player_pause else R.string.player_play,
-    )
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Surface(
-            color = Color.Black.copy(alpha = 0.55f),
-            shape = CircleShape,
-            modifier = Modifier
-                .size(88.dp)
-                .clickable(
-                    onClick = { if (state.isEnded) onPlayFromStart() else onTogglePlayPause() },
-                    role = Role.Button,
-                )
-                .semantics { contentDescription = label },
-        ) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Icon(
-                    painter = painterResource(
-                        if (state.isPlaying) R.drawable.ic_player_pause else R.drawable.ic_player_play,
-                    ),
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(40.dp),
                 )
             }
         }
@@ -2012,7 +2083,7 @@ internal fun BottomControls(
                     )
                 }
             } else if (state.isLive) {
-                LiveProgressRow(state)
+                LiveMark()
             }
             Row(
                 Modifier
@@ -2335,7 +2406,10 @@ private fun Scrubber(
     BoxWithConstraints(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 10.dp)
+            // Hate-audit H6: 24dp of track + 12dp of padding each side = a
+            // 48dp touch height, the floor the 44dp row missed. The thumb
+            // stays 16dp at rest (20dp dragging); only the grab area grows.
+            .padding(horizontal = 12.dp, vertical = 12.dp)
             .height(24.dp)
             .semantics(mergeDescendants = true) {
                 contentDescription = seekDescription
@@ -2708,68 +2782,34 @@ private fun LockedTimeChip(positionMs: Long, durationMs: Long, lowRam: Boolean, 
  */
 
 /**
- * Mockup: the live row — a thin jade line at the live edge, the elapsed time
- * on the left, "• LIVE" on the right, and no total, because a live channel
- * has none. F29 (Batch B) still holds: a live HLS playlist can report a
- * finite DVR-window duration (Discover Pakistan: 2:00:12), so the line is
- * NOT a scrubber — it never seeks, and its fill is pinned at the live edge
- * (full), never at a position inside a window we do not trust. The elapsed
- * time is the player's own window position, which ticks as you watch.
+ * F29 (Batch B): the live mark — a red dot and the word Live, in place of the
+ * scrubber + time row a live stream does not have. It says what the stream
+ * is; it promises no position, because a live window has none to show.
+ * Hate-audit H16: the Stitch mockup showed a seek bar + elapsed time on
+ * live — copying it would reintroduce the Discover Pakistan 2:00:12 bug
+ * (073e454e). A live elapsed counter is meaningless (elapsed since what?)
+ * and a bar implies a rewind that does not exist, so the mark stays.
  */
 @Composable
-private fun LiveProgressRow(state: PlayerUiState) {
-    Column(
-        Modifier
+private fun LiveMark(modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 6.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        // The line is the live edge itself: full jade, thumb pinned at the
-        // end. No drag, no tap-to-seek — a live row that sought would seek
-        // inside a DVR window the player may have invented.
         Box(
-            Modifier
-                .fillMaxWidth()
-                .height(16.dp),
-            contentAlignment = Alignment.CenterStart,
-        ) {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(4.dp)
-                    .background(RaddCurrent500),
-            )
-            Box(
-                Modifier
-                    .align(Alignment.CenterEnd)
-                    .size(16.dp)
-                    .border(2.dp, Color.White, CircleShape)
-                    .background(RaddCurrent500, CircleShape),
-            )
-        }
-        Row(
-            Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = state.positionMs.formatTime(),
-                color = Color.White,
-                style = MaterialTheme.typography.labelMedium,
-            )
-            Spacer(Modifier.weight(1f))
-            Box(
-                Modifier
-                    .size(6.dp)
-                    .background(RaddCurrent500, CircleShape),
-            )
-            Spacer(Modifier.width(4.dp))
-            Text(
-                text = stringResource(R.string.player_live).uppercase(),
-                color = RaddCurrent500,
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
-        }
+            modifier = Modifier
+                .size(8.dp)
+                .background(MaterialTheme.colorScheme.error, CircleShape),
+        )
+        Text(
+            text = stringResource(R.string.player_live),
+            color = Color.White,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
     }
 }
 
@@ -3589,7 +3629,36 @@ private fun SubtitleSettingsSheet(state: PlayerUiState, vm: PlayerViewModel) {
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = 24.dp),
         ) {
-            SheetTitle(stringResource(R.string.player_subtitles_title))
+            SheetTitle(stringResource(R.string.player_audio_subtitles_title))
+            // Hate-audit H25: the audio-language switch lives here now, one
+            // tap from the Subtitles primary — the Plex pattern was audio
+            // buried two taps deep in More. The full audio controls (stereo,
+            // audio-only, boost) stay in the Tracks sheet behind More; this
+            // section is the language switch only.
+            if (state.audioTracks.isNotEmpty()) {
+                SheetSection(stringResource(R.string.player_audio_title))
+                state.audioTracks.forEach { track ->
+                    SheetRow(
+                        label = track.language
+                            ?.let { stringResource(R.string.player_track_with_language, track.label, it) }
+                            ?: track.label,
+                        selected = track.id == state.selectedAudioId || track.selected,
+                    ) { vm.selectAudioTrack(track) }
+                }
+                if (state.preferredAudioLanguage != null) {
+                    Text(
+                        stringResource(
+                            R.string.player_preferred_audio,
+                            AudioTrackPolicy.nameFor(state.preferredAudioLanguage)
+                                ?: state.preferredAudioLanguage,
+                        ),
+                        color = Color.White.copy(alpha = 0.55f),
+                        fontSize = brandSp(11),
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+            }
             // App-design audit #6: a subtitle sheet with no tracks is one
             // clear action, not an empty panel with a size slider for a
             // track that does not exist. The size/position/style controls
@@ -4016,23 +4085,18 @@ private fun PrintLogSheet(state: PlayerUiState, vm: PlayerViewModel) {
             }
             state.bundle?.renditions?.forEach { r ->
                 val active = r.rank == state.activeRendition?.rank
-                val hlsTag = stringResource(R.string.player_tag_hls)
-                val playingTag = stringResource(R.string.player_rune_playing)
                 // PL-6: the row names the quality and the format, and marks the
                 // print that is playing. The rank is debug — it shows only
-                // behind the long-press above.
+                // behind the long-press above. Hate-audit H12/H17: the rows
+                // are tappable now — the sheet is "Switch source", and a tap
+                // loads that print at the current position; the HLS tag is
+                // gone (jargon — the quality label is enough). The selected
+                // row's jade fill + check carry the "playing" mark.
                 val rowText = buildString {
                     append(r.displayLabel())
-                    if (r.playback.isHls()) append("  ·  ").append(hlsTag)
-                    if (active) append("   ← ").append(playingTag)
                     if (debugVisible) append("  ·  #").append(r.rank)
                 }
-                Text(
-                    rowText,
-                    color = if (active) RaddCurrent500 else Color.White.copy(alpha = 0.8f),
-                    fontSize = brandSp(14),
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 3.dp),
-                )
+                SheetRow(label = rowText, selected = active) { vm.switchRendition(r) }
             }
             // Chapters (plan §5 step 11): the pack's episode boundaries as rows that
             // seek on tap. Absent for a single-episode file — no boundaries, no list.

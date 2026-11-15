@@ -27,12 +27,11 @@
     <string name="player_time_of">%1$s / %2$s</string>
     <string name="player_boost_badge">Boosting speed</string>
     <string name="player_back">Back</string>
-    <string name="player_tag_hls">HLS</string>
     <string name="player_tag_expiring">expiring link</string>
     <string name="player_tag_auto">Auto: %1$s</string>
     <string name="player_sleep_remaining">Sleep in %1$s</string>
     <string name="player_speed_short">%1$s×</string>
-    <string name="player_prints_tools">Versions &amp; tools</string>
+    <string name="player_prints_tools">Sources &amp; tools</string>
     <string name="player_pause">Pause</string>
     <!-- CL-5: the centre pause control announces this instead of bare "Pause",
          so it does not collide with the bottom-bar pause button. -->
@@ -47,7 +46,7 @@
     <!-- F29 (Batch B): the mark in place of the scrubber on a live stream — a
          live picture has no time row, so the viewer still sees what it is. -->
     <string name="player_live">Live</string>
-    <!-- Mockup: a live channel's top-bar subtitle — "Live Broadcast • HLS". -->
+    <!-- Mockup: a live channel's top-bar subtitle — "Live Broadcast". -->
     <string name="player_live_broadcast">Live Broadcast</string>
     <string name="player_paused">Paused</string>
     <string name="player_leave_cinema">Leave cinema mode</string>
@@ -151,6 +150,9 @@
     <string name="player_sleep_note">Volume fades down over the last %1$ds, then playback pauses (MX behaviour).</string>
     <string name="player_external_subtitle">external subtitle</string>
     <string name="player_subtitles_title">Subtitles</string>
+    <!-- Hate-audit H25: one sheet for both — the audio-language switch lives
+         inside the Subtitles sheet now, so the sheet is named for both. -->
+    <string name="player_audio_subtitles_title">Audio &amp; Subtitles</string>
     <string name="player_sheet_section_tracks">Tracks</string>
     <string name="player_sheet_section_appearance">Appearance</string>
     <string name="player_subtitle_none">No subtitle tracks for this title yet.</string>
@@ -174,12 +176,11 @@
     <string name="player_audio_only_on">Audio-only mode: ON (screen decoder off)</string>
     <string name="player_audio_only_off">Audio-only mode: off</string>
     <string name="player_audio_level">Audio level</string>
-    <string name="player_prints_title">Versions &amp; failover</string>
+    <string name="player_prints_title">Switch source</string>
     <string name="player_chapters_title">Chapters</string>
     <string name="player_chapter_row">"%1$s  ·  %2$s"</string>
     <string name="player_failover_log">Failover log</string>
-    <string name="player_prints_note">Versions, best first — the first playable one wins; switches happen automatically on playback errors, preserving position.</string>
-    <string name="player_rune_playing">playing</string>
+    <string name="player_prints_note">Sources, best first — tap one to switch, keeping your position; switches also happen automatically on playback errors.</string>
     <string name="player_failover_record">#%1$d %2$s: %3$s → %4$s</string>
     <string name="player_failover_policy">Policy: retry same ×%1$d, backoff %2$d ms, then next rank, max %3$d ranks.</string>
     <string name="player_play_from_row">Play from a position…</string>

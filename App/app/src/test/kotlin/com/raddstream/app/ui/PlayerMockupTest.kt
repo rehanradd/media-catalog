@@ -1,11 +1,11 @@
 package com.raddstream.app.ui
 
 import android.content.Context
-import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
 import com.raddstream.app.R
 import com.raddstream.app.player.LadderRung
@@ -25,11 +25,12 @@ import org.robolectric.RobolectricTestRunner
 
 /**
  * The Stitch player mockup, pinned in code: the gestures popup is gone, the
- * top bar badges live, the live row prints elapsed + LIVE with no total,
- * the VOD row prints current + total, the quality control is a text pill
- * showing the rung, and the centre of the picture carries a play/pause
- * button. Fixtures mirror PaparazziPreviewTest's playerBase so the two
- * suites can never drift apart silently.
+ * top bar badges live, the live row is the LIVE mark only (no bar, no time
+ * — hate-audit H16: the mockup's live seek bar is not copied), the VOD row
+ * prints current + total, the quality control is a text pill showing the
+ * rung, and the centre of the picture carries a play/pause button flanked
+ * by ±10s skip buttons. Fixtures mirror PaparazziPreviewTest's playerBase
+ * so the two suites can never drift apart silently.
  */
 @RunWith(RobolectricTestRunner::class)
 class PlayerMockupTest {
@@ -111,7 +112,7 @@ class PlayerMockupTest {
             }
         }
         compose.onNodeWithText("LIVE").assertIsDisplayed()
-        compose.onNodeWithText("Live Broadcast • HLS").assertIsDisplayed()
+        compose.onNodeWithText("Live Broadcast").assertIsDisplayed()
         compose.onNodeWithText("Madani Channel Urdu").assertIsDisplayed()
     }
 
@@ -132,11 +133,12 @@ class PlayerMockupTest {
     }
 
     @Test
-    fun `live bottom row shows elapsed time and LIVE, never a total`() {
+    fun `live bottom row is the LIVE mark only, never a time or a bar`() {
         setBottom(liveBase())
-        compose.onNodeWithText("1:00:00").assertIsDisplayed()
-        compose.onNodeWithText("LIVE").assertIsDisplayed()
-        // The fixture's duration is 2:00:00 — a live row must never print it.
+        compose.onNodeWithText("Live").assertIsDisplayed()
+        // The fixture's duration is 2:00:00 and its position 1:00:00 — a live
+        // row must print neither: a live window has no position to show.
+        compose.onNodeWithText("1:00:00").assertDoesNotExist()
         compose.onNodeWithText("2:00:00").assertDoesNotExist()
     }
 
@@ -175,6 +177,7 @@ class PlayerMockupTest {
                     state = vodBase(isPlaying = true),
                     onTogglePlayPause = {},
                     onPlayFromStart = {},
+                    onSeekBy = {},
                 )
             }
         }
@@ -185,10 +188,50 @@ class PlayerMockupTest {
                     state = vodBase(isPlaying = false),
                     onTogglePlayPause = {},
                     onPlayFromStart = {},
+                    onSeekBy = {},
                 )
             }
         }
         compose.onNodeWithContentDescription(context.getString(R.string.player_play)).assertIsDisplayed()
+    }
+
+    @Test
+    fun `centre skip buttons seek ten seconds each way`() {
+        val seeks = mutableListOf<Long>()
+        compose.setContent {
+            RaddStreamTheme {
+                CenterPlayPause(
+                    state = vodBase(isPlaying = true),
+                    onTogglePlayPause = {},
+                    onPlayFromStart = {},
+                    onSeekBy = { seeks += it },
+                )
+            }
+        }
+        compose.onNodeWithContentDescription(context.getString(R.string.player_rewind_10))
+            .performClick()
+        compose.onNodeWithContentDescription(context.getString(R.string.player_forward_10))
+            .performClick()
+        org.junit.Assert.assertEquals(listOf(-10_000L, 10_000L), seeks)
+    }
+
+    @Test
+    fun `live centre shows no skip buttons`() {
+        compose.setContent {
+            RaddStreamTheme {
+                CenterPlayPause(
+                    state = liveBase(),
+                    onTogglePlayPause = {},
+                    onPlayFromStart = {},
+                    onSeekBy = {},
+                )
+            }
+        }
+        compose.onNodeWithContentDescription(context.getString(R.string.player_rewind_10))
+            .assertDoesNotExist()
+        compose.onNodeWithContentDescription(context.getString(R.string.player_forward_10))
+            .assertDoesNotExist()
+        compose.onNodeWithContentDescription(context.getString(R.string.player_pause)).assertIsDisplayed()
     }
 
     @Test
@@ -199,6 +242,7 @@ class PlayerMockupTest {
                     state = vodBase(isPlaying = true).copy(isBuffering = true),
                     onTogglePlayPause = {},
                     onPlayFromStart = {},
+                    onSeekBy = {},
                 )
             }
         }

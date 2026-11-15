@@ -10,7 +10,7 @@ package com.raddstream.app.player
  *  - double-tap MIDDLE third → play/pause (MX option, on by default),
  *  - single tap → toggle controls,
  *  - vertical drag LEFT half → brightness · RIGHT half → volume,
- *  - horizontal drag → scrub (full width == full duration, clamped),
+ *  - horizontal drag → scrub (full width == 10% of the duration, clamped),
  *  - long press → speed boost to [GestureSettings.boostSpeed], release restores,
  *  - pinch out/in → aspect ZOOM / FIT (mode-based: PlayerSurfaceView absent in Media3 1.3.1),
  *  - two-finger tap → the [GestureSettings.cinemaRewindMs] jump back, and only in
@@ -90,6 +90,18 @@ fun initialBrightnessBase(windowBrightness: Float, systemBrightness01: Float?): 
         else -> 0.5f
     }
 
+/**
+ * The screen edges belong to Android's back gesture: a vertical
+ * brightness/volume drag that starts within [EDGE_DEAD_ZONE_DP] of the left
+ * or right edge is the system gesture, not ours — the viewer gets back
+ * navigation, not a brightness jump. The gesture layer checks the drag's
+ * start point against this before it applies any vertical command.
+ */
+const val EDGE_DEAD_ZONE_DP = 24f
+
+fun isInEdgeDeadZone(xPx: Float, widthPx: Float, deadZonePx: Float): Boolean =
+    xPx < deadZonePx || xPx > widthPx - deadZonePx
+
 /** Which half of the width a vertical-drag point falls in (LEFT=brightness, RIGHT=volume). */
 fun dragHalfZone(x: Float, widthPx: Float): ScreenZone =
     if (x < widthPx / 2f) ScreenZone.LEFT else ScreenZone.RIGHT
@@ -158,7 +170,12 @@ object GestureMapper {
         }
     }
 
-    /** Horizontal scrub: full width == full duration; clamped to [0, durationMs]. */
+    /**
+     * Horizontal scrub: a full-width swipe moves 10% of the duration, clamped to
+     * [0, durationMs]. A quarter of the film per swipe (~42 min on Salaar) was
+     * an accident waiting for a thumb — 10% is a deliberate seek, and the
+     * scrubber is there for the big jumps.
+     */
     fun onHorizontalScrub(
         basePositionMs: Long,
         dxPx: Float,
@@ -171,9 +188,7 @@ object GestureMapper {
         ) {
             return DragCommand.None
         }
-        // A single across-screen swipe moves by one quarter of the duration at a time — MX
-        // maps the whole width to a fixed large jump; quarter-width feels right on phones.
-        val deltaMs = (dxPx / widthPx * durationMs / 4f).toLong()
+        val deltaMs = (dxPx / widthPx * durationMs / 10f).toLong()
         val target = (basePositionMs + deltaMs).coerceIn(0, durationMs)
         return DragCommand.ScrubTarget(target, startedNewScrub = true)
     }

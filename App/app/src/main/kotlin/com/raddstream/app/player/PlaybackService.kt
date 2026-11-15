@@ -775,6 +775,10 @@ class PlaybackService : MediaSessionService() {
         failover = machine
         store.replaceRendition(index, swapped)
         store.setAutoBand(targetBand)
+        // Hate-audit H9: Auto moved the band mid-title — say so once, briefly,
+        // in the settled banner's own 5s transient. A hand-picked switch never
+        // comes through here, so this only ever fires for Auto's own moves.
+        store.announceQualityChange(targetBand)
         store.appendFailover(
             listOf(
                 FailoverRecord(

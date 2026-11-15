@@ -127,20 +127,32 @@ class PlayerGesturesTest {
     }
 
     @Test
-    fun `a full-width swipe moves a quarter of the duration and clamps to the file`() {
+    fun `a full-width swipe moves a tenth of the duration and clamps to the file`() {
         val duration = 60_000L
         val forward = GestureMapper.onHorizontalScrub(10_000L, width, width, duration, base)
-        assertEquals(DragCommand.ScrubTarget(25_000L, startedNewScrub = true), forward)
+        assertEquals(DragCommand.ScrubTarget(16_000L, startedNewScrub = true), forward)
 
         // The width→jump mapping is linear, so a quarter-screen drag is a quarter of that jump.
         val small = GestureMapper.onHorizontalScrub(10_000L, width / 4f, width, duration, base)
-        assertEquals(DragCommand.ScrubTarget(13_750L, startedNewScrub = true), small)
+        assertEquals(DragCommand.ScrubTarget(11_500L, startedNewScrub = true), small)
 
         val past = GestureMapper.onHorizontalScrub(55_000L, width, width, duration, base)
         assertTrue(past is DragCommand.ScrubTarget && past.targetMs == duration)
 
         val before = GestureMapper.onHorizontalScrub(2_000L, -width, width, duration, base)
         assertTrue(before is DragCommand.ScrubTarget && before.targetMs == 0L)
+    }
+
+    @Test
+    fun `the edge dead zone covers both edges and nothing in the middle`() {
+        val deadZone = 24f * 3f // 24dp at ~3x density
+        assertTrue(isInEdgeDeadZone(0f, width, deadZone))
+        assertTrue(isInEdgeDeadZone(deadZone - 1f, width, deadZone))
+        assertTrue(isInEdgeDeadZone(width, width, deadZone))
+        assertTrue(isInEdgeDeadZone(width - deadZone + 1f, width, deadZone))
+        assertFalse(isInEdgeDeadZone(deadZone, width, deadZone))
+        assertFalse(isInEdgeDeadZone(width / 2f, width, deadZone))
+        assertFalse(isInEdgeDeadZone(width - deadZone, width, deadZone))
     }
 
     @Test

@@ -41,6 +41,7 @@ import com.raddstream.app.ui.screens.EpisodeRow
 import com.raddstream.app.ui.screens.FilterRail
 import com.raddstream.app.ui.screens.FilterSheetBody
 import com.raddstream.app.ui.screens.BottomControls
+import com.raddstream.app.ui.screens.CenterPlayPause
 import com.raddstream.app.ui.screens.CenterSpinner
 import com.raddstream.app.ui.screens.EdgeFeedbackLine
 import com.raddstream.app.ui.screens.EdgeHud
@@ -900,6 +901,7 @@ class PaparazziPreviewTest {
                     state = playerBase(isPlaying = true),
                     onTogglePlayPause = {},
                     onPlayFromStart = {},
+                    onSeekBy = {},
                 )
             }
         }
@@ -913,6 +915,7 @@ class PaparazziPreviewTest {
                     state = playerBase(isPlaying = false),
                     onTogglePlayPause = {},
                     onPlayFromStart = {},
+                    onSeekBy = {},
                 )
             }
         }
@@ -965,9 +968,10 @@ class PaparazziPreviewTest {
     @Test
     fun playerBottomLive() {
         // F29: a live HLS playlist can report a finite DVR-window duration
-        // (Discover Pakistan: 2:00:12) — the shot must show the live row
-        // (elapsed + LIVE, no total) and no seekable scrubber, whatever the
-        // duration claims.
+        // (Discover Pakistan: 2:00:12) — the shot must show the LIVE mark
+        // and no seekable scrubber, whatever the duration claims. The
+        // Stitch mockup's live seek bar + elapsed time is NOT copied here
+        // (hate-audit H16); the mark is the whole live row.
         shotBottom(
             playerBase().copy(
                 isLive = true,

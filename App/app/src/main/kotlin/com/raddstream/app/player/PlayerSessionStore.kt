@@ -207,6 +207,15 @@ class PlayerSessionStore(
         _settledBanner.value = null
     }
 
+    /**
+     * Hate-audit H9: Auto moved the band mid-title — say so once, briefly.
+     * The settled banner is the screen's own 5s transient; a hand-picked
+     * switch never calls this, so it only ever fires for Auto's own moves.
+     */
+    fun announceQualityChange(band: String) {
+        _settledBanner.value = "Quality changed to $band"
+    }
+
     /** Cache boundary identity for the current rendition (see CacheContract.kt). */
     fun cacheKey(): CacheSessionKey? {
         val b = _bundle.value ?: return null

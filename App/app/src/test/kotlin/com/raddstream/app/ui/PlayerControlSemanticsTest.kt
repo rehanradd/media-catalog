@@ -39,6 +39,56 @@ class PlayerControlSemanticsTest {
         error("brand.properties not found above ${File("").absolutePath}")
     }
 
+    /**
+     * Hate-audit fixes, pinned so a later mockup pass cannot silently undo
+     * them: live stays the mark only, no HLS jargon, the sheet switches
+     * sources, gestures are guarded, and the scrubber is 48dp.
+     */
+    @Test
+    fun `hate-audit fixes stay in the player`() {
+        // H16: live is the LIVE mark only — no seek bar, no elapsed counter.
+        // The mockup's live bar is not copied; the regression (073e454e) stays fixed.
+        assertTrue("the live mark is missing", source.contains("private fun LiveMark("))
+        assertFalse(
+            "the live progress row is back — the mockup's seek bar must not be copied",
+            source.contains("LiveProgressRow"),
+        )
+        // H17: no HLS jargon anywhere on screen, and the sheet is Switch source.
+        assertFalse("an HLS tag is still printed", source.contains("player_tag_hls"))
+        assertFalse(
+            "the sheet still says Versions & failover",
+            stringsSource.contains("Versions &amp; failover"),
+        )
+        assertTrue("the sheet must be Switch source", stringsSource.contains("Switch source"))
+        assertFalse("an HLS string still exists", stringsSource.contains(">HLS<"))
+        // H12: the print sheet's rows switch the source.
+        assertTrue("rendition rows must call the switch", source.contains("vm.switchRendition(r)"))
+        // H5: the edge dead zone gates vertical gestures in Lane C.
+        assertTrue("the edge dead zone is missing from Lane C", source.contains("isInEdgeDeadZone("))
+        // H6: the scrubber's touch height is 48dp (24dp track + 12dp each side).
+        val scrubber = functionBody("private fun Scrubber(")
+        assertTrue("the scrubber must pad 12dp vertically", scrubber.contains("vertical = 12.dp"))
+        // H14/H5: the centre button's double-tap guard — one toggle per double-tap.
+        assertTrue("the centre double-tap guard is missing", source.contains("lastCentreToggleNs"))
+        // H25: one Audio & Subtitles sheet, audio switch one tap from the primary.
+        assertTrue("the combined sheet title is missing", source.contains("player_audio_subtitles_title"))
+        // H21: the top bar clears the status bar when the bars are shown.
+        assertTrue("statusBarsPadding is missing from the chrome", source.contains("statusBarsPadding()"))
+    }
+
+    private val stringsSource: String by lazy {
+        var dir: File? = File("").absoluteFile
+        while (dir != null) {
+            if (File(dir, "brand.properties").isFile) {
+                val f = File(dir, "App/app/src/main/res/values/strings.xml")
+                assertTrue("strings.xml is missing at ${f.path}", f.isFile)
+                return@lazy f.readText()
+            }
+            dir = dir.parentFile
+        }
+        error("brand.properties not found above ${File("").absolutePath}")
+    }
+
     private val source: String by lazy {
         assertTrue("PlayerScreen.kt is missing at ${playerScreen.path}", playerScreen.isFile)
         playerScreen.readText()
