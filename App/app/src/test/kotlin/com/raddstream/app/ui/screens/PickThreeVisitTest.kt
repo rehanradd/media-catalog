@@ -91,23 +91,34 @@ class PickThreeVisitTest {
     @Test
     fun leavingHomeEndsTheVisitSoTheCardNeverReturns() {
         var state by mutableStateOf(eligibleState())
-        setHome(
-            state = state,
-            onPickThreeShown = { state = state.onPickThreeShown() },
-            onPickThreeVisitEnded = { state = state.onPickThreeVisitEnded() },
-        )
+        // One setContent per test (this Compose version forbids calling
+        // it twice): leaving Home is a conditional around the feed, so
+        // the toggle disposes HomeContent exactly like navigation does.
+        var onHome by mutableStateOf(true)
+        compose.setContent {
+            RaddStreamTheme {
+                if (onHome) {
+                    HomeContent(
+                        state = state,
+                        heroAutoplay = false,
+                        onPickThreeShown = { state = state.onPickThreeShown() },
+                        onPickThreeVisitEnded = { state = state.onPickThreeVisitEnded() },
+                    )
+                }
+            }
+        }
         compose.waitForIdle()
         compose.onNodeWithText("Pick 3 you like").assertExists()
 
         // Leaving Home disposes the feed: the visit ends, the latch
         // clears, and the persisted shown flag keeps the card away.
-        compose.setContent { }
+        onHome = false
         compose.waitForIdle()
 
         assertFalse(state.showPickThree)
 
         // Coming back: still gone.
-        setHome(state = state)
+        onHome = true
         compose.waitForIdle()
         compose.onNodeWithText("Pick 3 you like").assertDoesNotExist()
     }
