@@ -12,6 +12,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import com.raddstream.app.data.UserRegion
 import com.raddstream.app.data.local.LocalVideoFile
 import com.raddstream.app.ui.theme.RaddStreamTheme
@@ -68,10 +69,13 @@ class SubScreensMockupTest {
                 )
             }
         }
-        // All nine real options are rows, not the mockup's three.
+        // All nine real options are rows, not the mockup's three. The rows
+        // past the first screenful live below the fold in the scrollable
+        // column, so each one is scrolled into view before it is asserted.
         listOf("Player default", "English", "Hindi", "Urdu", "Tamil", "Telugu", "Malayalam", "Kannada", "Japanese")
             .forEach { label ->
-                compose.onNodeWithContentDescription("Audio language: $label").assertIsDisplayed()
+                compose.onNodeWithContentDescription("Audio language: $label")
+                    .performScrollTo().assertIsDisplayed()
             }
         compose.onNodeWithContentDescription("Audio language: Hindi").assertIsSelected()
         compose.onNodeWithContentDescription("Audio language: Urdu").assertIsNotSelected()
@@ -91,7 +95,8 @@ class SubScreensMockupTest {
         }
         listOf("Off", "English", "Hindi", "Urdu", "Tamil", "Telugu", "Kannada")
             .forEach { label ->
-                compose.onNodeWithContentDescription("Subtitle language: $label").assertIsDisplayed()
+                compose.onNodeWithContentDescription("Subtitle language: $label")
+                    .performScrollTo().assertIsDisplayed()
             }
         compose.onNodeWithContentDescription("Subtitle language: English").assertIsSelected()
         compose.onNodeWithContentDescription("Subtitle language: Off").assertIsNotSelected()
@@ -126,7 +131,8 @@ class SubScreensMockupTest {
                 )
             }
         }
-        compose.onNodeWithText("Subtitle size").assertIsDisplayed()
+        // The size card sits at the bottom of the scrollable column.
+        compose.onNodeWithText("Subtitle size").performScrollTo().assertIsDisplayed()
         // The stored value is a percent — the mockup's "Medium" is invented.
         compose.onNodeWithText("125%").assertIsDisplayed()
     }
@@ -151,7 +157,11 @@ class SubScreensMockupTest {
         compose.onNodeWithText("East Asian").assertIsDisplayed()
         compose.onNodeWithText("International").assertIsDisplayed()
         compose.onNodeWithText("Bollywood & Hindi dubs").assertIsDisplayed()
-        compose.onNodeWithTag("regionChoice_check").assertIsDisplayed()
+        // The jade check badge is a plain Icon inside the selectable card,
+        // so the card's merged semantics swallow its test tag — the stored
+        // pick is pinned through the card's own selected state instead.
+        compose.onNodeWithTag("regionChoice_${UserRegion.DESI_DUBS}").assertIsSelected()
+        compose.onNodeWithTag("regionChoice_${UserRegion.EAST_ASIAN}").assertIsNotSelected()
         compose.onNodeWithText("Done").assertIsDisplayed()
         compose.onNodeWithText("Skip").assertIsDisplayed()
     }
@@ -198,19 +208,24 @@ class SubScreensMockupTest {
                 LocalFilesListContent(
                     files = listOf(
                         localFile(),
+                        localFile(uri = "content://media/3", title = "Parizaad Ep 23", folder = "Movies"),
                         localFile(uri = "content://media/2", title = "Parizaad Ep 24", folder = "Downloads"),
                     ),
                     onPlay = {},
                 )
             }
         }
-        // One folder row per real folder, each with its count.
+        // One folder row per real folder, each with its count — the two
+        // folders hold different counts so neither "N files" line is
+        // ambiguous to a single-node lookup.
         compose.onNodeWithText("Movies").assertIsDisplayed()
-        compose.onNodeWithText("1 file").assertIsDisplayed()
+        compose.onNodeWithText("2 files").assertIsDisplayed()
         compose.onNodeWithText("Downloads").assertIsDisplayed()
+        compose.onNodeWithText("1 file").assertIsDisplayed()
         compose.onNodeWithText("Maula Jatt").assertIsDisplayed()
+        compose.onNodeWithText("Parizaad Ep 23").assertIsDisplayed()
         compose.onNodeWithText("Parizaad Ep 24").assertIsDisplayed()
-        assertEquals(2, compose.onAllNodesWithTag("localFile_play").fetchSemanticsNodes().size)
+        assertEquals(3, compose.onAllNodesWithTag("localFile_play").fetchSemanticsNodes().size)
     }
 
     @Test

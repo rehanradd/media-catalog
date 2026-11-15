@@ -210,8 +210,6 @@
          November UI reviews flagged (F1). One short sentence each, no
          implementation words. Named languages_*/search_* so they stay
          outside the player_* copy rules in PlayerChromeCopyTest. -->
-    <string name="languages_audio_help">The player plays the soundtrack in your language when the title has one.</string>
-    <string name="languages_sync_help">Change your language in one place and it changes everywhere — here, in Settings, and in the player.</string>
     <string name="search_filters_help">Filters narrow the whole catalog — only the year range applies to the titles already loaded.</string>
     <string name="embed_load_failed">The page did not load: %1$s</string>
     <string name="embed_load_failed_unknown">The page did not load</string>

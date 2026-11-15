@@ -227,7 +227,7 @@ internal fun HelpContent(
         )
         HelpRow(
             icon = Icons.Default.Info,
-            label = "About Radd Stream",
+            label = Brand.copy("settings_about_heading", "About ${Brand.name}"),
             onClick = onAboutClick,
             testTag = "help_row_about",
         )

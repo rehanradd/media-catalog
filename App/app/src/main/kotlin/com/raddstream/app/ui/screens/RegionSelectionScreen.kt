@@ -312,8 +312,7 @@ internal fun RegionChoiceCard(
                         .padding(end = 16.dp)
                         .size(28.dp)
                         .clip(CircleShape)
-                        .background(jade)
-                        .testTag("regionChoice_check"),
+                        .background(jade),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
