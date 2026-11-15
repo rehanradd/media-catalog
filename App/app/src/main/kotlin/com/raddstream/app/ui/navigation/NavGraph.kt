@@ -554,6 +554,9 @@ fun RaddStreamNavGraph(
                     // Session 123 (HO-7): a guest's sign-in door is Settings,
                     // where the account card lives.
                     onOpenSignIn = { navController.navigate(Screen.Settings.route) },
+                    // Mockup (Nov 2026): the header's Coin Wallet pill opens
+                    // the VIP screen, which shows "Wallet: N coins".
+                    onOpenWallet = { navController.navigate(Screen.VipUpgrade.route) },
                     heroMax = theme.heroMax,
                     heroAutoplay = theme.heroAutoplay && autoplayPreviews,
                     heroIntervalMs = theme.heroIntervalS * 1_000L,

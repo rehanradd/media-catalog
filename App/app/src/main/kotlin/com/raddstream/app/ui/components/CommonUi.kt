@@ -896,8 +896,9 @@ fun <T> MediaRail(
     items: List<T>,
     key: (T) -> Any,
     contentPadding: PaddingValues = PaddingValues(horizontal = 16.dp),
-    /** Per-rail cell width; the rail default, or [CardGeometry.CONTINUE_WATCHING_CARD_WIDTH_DP]
-     *  for the Continue Watching rail, whose tiles carry a remove × beside the title. */
+    /** Per-rail cell width; the rail default. Continue Watching used to ride
+     *  this rail with wider cells for its remove ×, but it is full-width rows
+     *  now (mockup, Nov 2026), so no rail passes anything else. */
     itemWidthDp: Int = CardGeometry.RAIL_CARD_WIDTH_DP,
     itemContent: @Composable (T) -> Unit,
 ) {

@@ -16,12 +16,12 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 
 /**
- * B3: the Continue Watching rail is pinned under the hero and always
- * present. With resume rows it is the real rail; without rows — a fresh
- * install — it is a "Start watching" placeholder whose CTA opens Browse.
- * It only shows once the catalog has landed, so a blank or loading load
- * still gets the empty/loading state, not a placeholder for titles that
- * may not exist.
+ * B3: the Continue Watching rows are pinned under the hero and always
+ * present. With resume rows they are the real rows (thumb, title, remaining
+ * label, progress bar); without rows — a fresh install — the slot is a
+ * "Start watching" placeholder whose CTA opens Browse. It only shows once
+ * the catalog has landed, so a blank or loading load still gets the
+ * empty/loading state, not a placeholder for titles that may not exist.
  */
 @RunWith(RobolectricTestRunner::class)
 class ContinueWatchingPlaceholderTest {

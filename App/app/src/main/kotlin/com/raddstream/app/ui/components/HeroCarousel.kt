@@ -14,8 +14,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -99,14 +97,14 @@ import kotlinx.coroutines.launch
  *  - the widest artwork the row carries, cropped to fill;
  *  - a vertical scrim that goes from clear at the top to the page background at the
  *    bottom, so the title and buttons stay readable over any poster;
- *  - the title, a year badge and up to [MAX_LANGUAGE_PILLS] language pills;
+ *  - the title and one meta line (seasons | genre | year);
  *  - page dots, which double as the manual affordance — tapping a dot jumps to that slide.
- *    They sit at the TOP end of the banner, in a contrast pill: bottom-anchored they shared
- *    the buttons' strip, and their 48dp hit boxes (declared after the pager, so on top in
- *    z-order) covered the Watch Now button's centre on a 6-dot hero — a centred tap hit a
- *    dot, which just re-selected the slide, so Watch Now looked dead while the banner tap
- *    (above the strip) worked. The top band never meets the button strip; see
- *    [heroIndicatorOverlapsActionRow].
+ *    They sit BELOW the card now, centred and bare (mockup, Nov 2026): they used to ride
+ *    the top end in a contrast pill, and before that the bottom strip, where their 48dp
+ *    hit boxes (declared after the pager, so on top in z-order) covered the Watch Now
+ *    button's centre on a 6-dot hero — a centred tap hit a dot, which just re-selected
+ *    the slide, so Watch Now looked dead while the banner tap (above the strip) worked.
+ *    Below the card no dot can cover any control, so the band math is gone with them.
  *  - a prominent Watch Now button, which starts the title (the slide's own tap target
  *    only opens the details — the button is the part that says "play"); beside it, a
  *    My List toggle, so saving a title does not need a trip to its details page;
@@ -205,7 +203,12 @@ fun HeroCarousel(
         }
     }
 
-    Box(modifier.fillMaxWidth().height(heroHeight())) {
+    // Mockup (Nov 2026): the dots live BELOW the card, not on it — centred,
+    // bare, no pill. They cannot cover any control down here: the overlap
+    // that once ate Watch Now taps is structural now, not a band calculation
+    // ([heroIndicatorOverlapsActionRow] is gone with it).
+    Column(modifier.fillMaxWidth()) {
+    Box(Modifier.fillMaxWidth().height(heroHeight())) {
         HeroAmbientGlow(
             currentPage = pagerState.currentPage,
             modifier = Modifier.fillMaxSize(),
@@ -233,34 +236,33 @@ fun HeroCarousel(
                 modifier = Modifier.clip(RoundedCornerShape(HERO_CORNER)),
             )
         }
+    }
 
-        if (posts.size > 1) {
-            HeroIndicator(
-                count = posts.size,
-                current = pagerState.currentPage,
-                // Scrolling is a suspending pager call, so the dot's click launches it on the
-                // composition's scope instead of pretending the tap can wait for it inline.
-                // The tap also restarts the auto-advance clock outright: tapping the
-                // current dot changes no page, so the page effect would not see it,
-                // and without this the slide just chosen could still be yanked away
-                // a beat later (Samsung RTL v1.1.2, Issue 3).
-                onSelect = { index ->
-                    lastChangeMs = SystemClock.uptimeMillis()
-                    scrollScope.launch {
-                        pagerState.animateScrollToPage(index, animationSpec = RaddMotion.defaultSpatial())
-                    }
-                },
-                // Top end, NOT the bottom strip: the dots' 48dp hit boxes used to sit
-                // in the buttons' band (bottom 20dp), declared after the pager so on
-                // top in z-order, and on a 6-dot hero they covered the Watch Now
-                // button's centre — a centred tap hit a dot, not the button. Up here
-                // no dot can cover any control; the pill keeps them readable over
-                // bright artwork, where the top scrim is clear.
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = HERO_INDICATOR_TOP_DP.dp, end = 16.dp),
-            )
-        }
+    if (posts.size > 1) {
+        HeroIndicator(
+            count = posts.size,
+            current = pagerState.currentPage,
+            // Scrolling is a suspending pager call, so the dot's click launches it on the
+            // composition's scope instead of pretending the tap can wait for it inline.
+            // The tap also restarts the auto-advance clock outright: tapping the
+            // current dot changes no page, so the page effect would not see it,
+            // and without this the slide just chosen could still be yanked away
+            // a beat later (Samsung RTL v1.1.2, Issue 3).
+            onSelect = { index ->
+                lastChangeMs = SystemClock.uptimeMillis()
+                scrollScope.launch {
+                    pagerState.animateScrollToPage(index, animationSpec = RaddMotion.defaultSpatial())
+                }
+            },
+            // Below the card, on the page background: no pill behind the
+            // dots — the pill was contrast over bright artwork, and down
+            // here there is no artwork behind them.
+            background = false,
+            modifier = Modifier
+                .align(Alignment.CenterHorizontally)
+                .padding(top = 8.dp),
+        )
+    }
     }
 }
 
@@ -291,6 +293,23 @@ internal fun HeroFallbackFrame(modifier: Modifier = Modifier) {
  */
 internal fun heroArtUrls(posts: List<Post>): List<String> =
     posts.mapNotNull { it.heroArtUrl?.takeIf { url -> url.isNotBlank() } }.distinct()
+
+/**
+ * The hero's one meta line (mockup, Nov 2026): seasons, first genre, year —
+ * "S1-S2 | reality | 2026". The genre reads lowercase, as the mockup shows
+ * it; the seasons text is the server's own (`posts.seasons` — "2",
+ * "S01–S03"), never normalised here. Null when the title carries none of
+ * the three, so the slide prints no empty line. Pure, so the line is
+ * testable without a pager.
+ */
+internal fun heroMetaLine(post: Post): String? {
+    val parts = listOfNotNull(
+        post.seasons?.takeIf { it.isNotBlank() },
+        post.genreList.firstOrNull()?.lowercase()?.takeIf { it.isNotBlank() },
+        post.yearLabel,
+    )
+    return parts.joinToString(" | ").takeIf { it.isNotBlank() }
+}
 
 /**
  * Hero art prefetch (Nov 2026): when Home lands, warm the hero items' art so
@@ -329,7 +348,7 @@ internal suspend fun prefetchHeroArt(context: Context, posts: List<Post>) {
 /**
  * The banner's own placeholder while the first rail is still in flight. It keeps the real
  * hero's footprint ([heroHeight]) so the page does not jump when artwork lands, and a few
- * shimmering bars stand in for the title, badges and Watch Now button.
+ * shimmering bars stand in for the title, meta line and Watch Now button.
  *
  * Samsung RTL (v1.1.2, Issue 3): the first load read as a blank grey box for ~10 s.
  * The skeleton was already here — but its shimmer band (0.16f) is near-invisible
@@ -341,27 +360,17 @@ internal suspend fun prefetchHeroArt(context: Context, posts: List<Post>) {
  */
 @Composable
 fun HeroSkeleton(modifier: Modifier = Modifier) {
-    Box(modifier.fillMaxWidth().height(heroHeight())) {
+    // Mockup (Nov 2026): the skeleton mirrors the real hero — inset card,
+    // then the dots BELOW it, bare. The dots used to shimmer inside the card
+    // at the top end; they ride under it now, like the real indicator.
+    Column(modifier.fillMaxWidth()) {
+    Box(Modifier.fillMaxWidth().height(heroHeight())) {
         Box(Modifier.fillMaxSize().padding(heroInset).clip(RoundedCornerShape(HERO_CORNER))) {
             ShimmerBox(Modifier.fillMaxSize(), highlightAlpha = HERO_SKELETON_SHIMMER_ALPHA)
             RaddStreamMark(
                 diameter = 56.dp,
                 color = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
                 modifier = Modifier.align(Alignment.Center),
-            )
-            // The page dots: the real indicator is a 6-dot row of 48dp touch
-            // boxes at the top end (16dp from the top), its painted pill
-            // 18dp tall and inset 12dp from the row's edges — 264dp wide,
-            // 31dp from the top, 28dp from the right. Six dots is the
-            // hero's default count; a smaller hero shows no dots at all.
-            ShimmerBox(
-                Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 31.dp, end = 28.dp)
-                    .width(264.dp)
-                    .height(18.dp),
-                shape = RaddTokens.Shape.Pill,
-                highlightAlpha = HERO_SKELETON_SHIMMER_ALPHA,
             )
             Column(
                 modifier = Modifier
@@ -379,10 +388,10 @@ fun HeroSkeleton(modifier: Modifier = Modifier) {
                     Modifier.fillMaxWidth(0.55f).height(44.dp).testTag("heroTitleSkeleton"),
                     shape = RoundedCornerShape(8.dp),
                 )
-                // Badges row: HeroBadge pills are labelMedium (16dp) with
-                // 3dp vertical padding — 22dp tall, not 16dp.
+                // Meta line: one bodyMedium line (16dp) — the real meta line
+                // is a single 20dp line, not the 22dp badge pills it replaced.
                 ShimmerBox(
-                    Modifier.width(180.dp).height(22.dp),
+                    Modifier.width(180.dp).height(20.dp),
                     shape = RoundedCornerShape(8.dp),
                 )
                 // Action row: Watch Now AND My List, each 40dp min, 8dp
@@ -396,6 +405,32 @@ fun HeroSkeleton(modifier: Modifier = Modifier) {
                     ShimmerBox(
                         Modifier.width(130.dp).height(HERO_BUTTON_HEIGHT_DP.dp),
                         shape = RoundedCornerShape(28.dp),
+                    )
+                }
+            }
+        }
+    }
+        // The page dots below the card: six 48dp cells, each with a small
+        // painted dot centred in it — the same footprint as the real
+        // indicator. Six dots is the hero's default count; a smaller hero
+        // shows no dots at all.
+        Row(
+            modifier = Modifier
+                .align(Alignment.CenterHorizontally)
+                .padding(top = 8.dp)
+                .height(48.dp),
+            horizontalArrangement = Arrangement.spacedBy(0.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            repeat(6) {
+                Box(
+                    modifier = Modifier.size(48.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    ShimmerBox(
+                        Modifier.width(12.dp).height(5.dp),
+                        shape = RaddTokens.Shape.Pill,
+                        highlightAlpha = HERO_SKELETON_SHIMMER_ALPHA,
                     )
                 }
             }
@@ -439,7 +474,6 @@ private fun HeroAmbientGlow(currentPage: Int, modifier: Modifier = Modifier) {
     )
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun HeroSlide(
     post: Post,
@@ -455,7 +489,13 @@ private fun HeroSlide(
     modifier: Modifier = Modifier,
 ) {
     val title = post.displayTitle
-    val languages = remember(post.language) { heroLanguagePills(post.language) }
+    // The spoken line still names the languages (the meta line replaced the
+    // visible pills, not the words) — read straight from the wire text,
+    // filtered by the same known-language rule, no pill cap or length cut:
+    // a screen reader is not a layout.
+    val languages = remember(post.language) {
+        WireText.listOf(post.language).map { it.trim() }.filter { isKnownLanguage(it) }
+    }
     val genres = remember(post.genres) { post.genreList.take(2) }
     val rating = remember(post.imdbRating) { UserWords.displayRating(post.imdbRating) }
     // The slide merges its children, so TalkBack reads this line and then the Watch Now button
@@ -545,20 +585,23 @@ private fun HeroSlide(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
-            }
-
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                rating?.let { RatingBadge(rating = it) }
-                post.yearLabel?.let { HeroBadge(it) }
-                post.typeLabel?.let { HeroBadge(it) }
-                genres.forEach { HeroBadge(it, subdued = true) }
-                languages.forEach { HeroBadge(it, subdued = true) }
+                // Mockup (Nov 2026): one meta line under the title —
+                // "S1-S2 | reality | 2026" — not four separate pills. The
+                // rating, year and type badges are gone with the pills; the
+                // meta line is the only words under the title.
+                heroMetaLine(post)?.let { meta ->
+                    Text(
+                        text = meta,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
 
             Row(
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -579,7 +622,10 @@ private fun HeroSlide(
                         contentColor = MaterialTheme.colorScheme.onPrimary,
                     ),
                     interactionSource = watchNowSource,
-                    modifier = Modifier.heightIn(min = HERO_BUTTON_HEIGHT_DP.dp).pressScale(watchNowSource),
+                    // Mockup (Nov 2026): the two buttons share the slide's
+                    // width equally and read in ALL CAPS — "WATCH NOW" /
+                    // "MY LIST" — instead of wrapping their labels.
+                    modifier = Modifier.weight(1f).heightIn(min = HERO_BUTTON_HEIGHT_DP.dp).pressScale(watchNowSource),
                 ) {
                     Icon(
                         imageVector = Icons.Default.PlayArrow,
@@ -587,7 +633,7 @@ private fun HeroSlide(
                         modifier = Modifier.size(22.dp),
                     )
                     Spacer(Modifier.width(8.dp))
-                    Text(Brand.copy("hero_watch_now", "Watch Now"), fontWeight = FontWeight.Bold)
+                    Text(Brand.copy("hero_watch_now", "Watch Now").uppercase(), fontWeight = FontWeight.Bold)
                 }
                 // Session 121 (P-26): My List on the hero, so saving a title does not
                 // need a trip to its details page first. The filled heart says saved;
@@ -603,6 +649,7 @@ private fun HeroSlide(
                     // as the nav tab — so it announces what the tap does instead:
                     // "Save to My List", or "Saved to My List" once saved.
                     modifier = Modifier
+                        .weight(1f)
                         .heightIn(min = HERO_BUTTON_HEIGHT_DP.dp)
                         .semantics { contentDescription = if (isFavorite) "Saved to My List" else "Save to My List" },
                 ) {
@@ -612,37 +659,10 @@ private fun HeroSlide(
                         modifier = Modifier.size(20.dp),
                     )
                     Spacer(Modifier.width(8.dp))
-                    Text(if (isFavorite) "Saved" else "My List", fontWeight = FontWeight.Bold)
+                    Text((if (isFavorite) "Saved" else "My List").uppercase(), fontWeight = FontWeight.Bold)
                 }
             }
         }
-    }
-}
-
-/** One small pill: the year badge and the language badges share this exact shape. */
-@Composable
-private fun HeroBadge(text: String, subdued: Boolean = false) {
-    val scheme = MaterialTheme.colorScheme
-    Box(
-        Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(
-                if (subdued) scheme.scrim.copy(alpha = 0.6f) else scheme.surface.copy(alpha = 0.55f)
-            )
-            .padding(horizontal = 8.dp, vertical = 3.dp),
-    ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.SemiBold,
-            // Robo run 2: the subdued pill's 85%-white text on the 0.6f scrim
-            // (LC-2) is still ~3.8:1 over bright art — under the 4.5:1 floor.
-            // Full-strength text on the same scrim is ~5.7:1 worst case; the
-            // pill stays subdued by its darker scrim, not by dimming its words.
-            color = scheme.onBackground,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
     }
 }
 
@@ -653,13 +673,12 @@ private fun HeroBadge(text: String, subdued: Boolean = false) {
  * The painted dot is 5dp tall and used to be the only thing a finger could aim at. Each one now
  * sits inside the [DOT_TOUCH_WIDTH] by [DOT_TOUCH_HEIGHT] box — 48dp square, the WCAG 2.2 AA
  * minimum in both directions (the 24dp width it used to have failed Robo's 48dp touch-target
- * floor). The row rides at the TOP end of the hero, in a contrast pill: at the bottom end
- * its hit boxes shared the buttons' strip and, on a 6-dot hero, covered the Watch Now
- * button's centre — a centred tap selected a dot instead of starting the title. Up here
- * the row can be as wide as the dot count needs without covering any control, and the
- * pill (0.72f surface, up from 0.55f — the round-2 re-review found the dots blending
- * into bright artwork) keeps the dots readable over bright artwork, where the top scrim
- * is clear. The dots themselves shrank in Batch B (active 18dp → 12dp, 7dp → 5dp tall):
+ * floor). Mockup (Nov 2026): the row rides BELOW the card, centred and bare — it used to
+ * ride the top end in a contrast pill, and before that the bottom strip, where its hit
+ * boxes covered the Watch Now button's centre. Below the card no dot can cover any
+ * control, and the pill is gone with the artwork behind it ([background] = false);
+ * the pill stays for an overlay position, where the dots still need contrast over
+ * bright artwork. The dots themselves shrank in Batch B (active 18dp → 12dp, 7dp → 5dp tall):
  * the old capsule read oversized next to the badges. Each dot also says what
  * it is in words and carries a `selected` state, because the visual stretch was the only thing
  * that used to show which slide is up.
@@ -670,34 +689,45 @@ internal fun HeroIndicator(
     current: Int,
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * Mockup (Nov 2026): below the card the dots sit on the page
+     * background, bare — the contrast pill behind them was for bright
+     * artwork, and there is none behind them down here. True keeps the
+     * pill (an overlay position); false draws bare dots.
+     */
+    background: Boolean = true,
 ) {
     if (count <= 1) return
     val scheme = MaterialTheme.colorScheme
     val reduceMotion = rememberReduceMotion()
     Row(
         modifier = modifier
-            .drawBehind {
-                // Visual capsule is a compact 18dp-tall pill centered over the
-                // dot strip while every dot retains its full 48x48dp touch target.
-                val pillHeight = 18.dp.toPx().coerceAtMost(size.height)
-                val insetX = 12.dp.toPx().coerceAtMost(size.width * 0.15f)
-                val pillWidth = (size.width - insetX * 2f).coerceAtLeast(pillHeight)
-                val top = (size.height - pillHeight) / 2f
-                val corner = CornerRadius(pillHeight / 2f, pillHeight / 2f)
-                drawRoundRect(
-                    color = scheme.scrim.copy(alpha = 0.56f),
-                    topLeft = Offset(insetX, top),
-                    size = Size(pillWidth, pillHeight),
-                    cornerRadius = corner,
-                )
-                drawRoundRect(
-                    color = scheme.onSurface.copy(alpha = 0.14f),
-                    topLeft = Offset(insetX, top),
-                    size = Size(pillWidth, pillHeight),
-                    cornerRadius = corner,
-                    style = Stroke(width = 0.75.dp.toPx()),
-                )
-            },
+            .then(
+                if (background) {
+                    Modifier.drawBehind {
+                        // Visual capsule is a compact 18dp-tall pill centered over the
+                        // dot strip while every dot retains its full 48x48dp touch target.
+                        val pillHeight = 18.dp.toPx().coerceAtMost(size.height)
+                        val insetX = 12.dp.toPx().coerceAtMost(size.width * 0.15f)
+                        val pillWidth = (size.width - insetX * 2f).coerceAtLeast(pillHeight)
+                        val top = (size.height - pillHeight) / 2f
+                        val corner = CornerRadius(pillHeight / 2f, pillHeight / 2f)
+                        drawRoundRect(
+                            color = scheme.scrim.copy(alpha = 0.56f),
+                            topLeft = Offset(insetX, top),
+                            size = Size(pillWidth, pillHeight),
+                            cornerRadius = corner,
+                        )
+                        drawRoundRect(
+                            color = scheme.onSurface.copy(alpha = 0.14f),
+                            topLeft = Offset(insetX, top),
+                            size = Size(pillWidth, pillHeight),
+                            cornerRadius = corner,
+                            style = Stroke(width = 0.75.dp.toPx()),
+                        )
+                    }
+                } else Modifier
+            ),
         horizontalArrangement = Arrangement.spacedBy(0.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -744,24 +774,6 @@ internal fun isKnownLanguage(value: String): Boolean =
     value.isNotBlank() && !value.equals("unknown", ignoreCase = true) && !value.equals("n/a", ignoreCase = true)
 
 /**
- * Language pills, trimmed to what a banner can show. `posts.language` is free TEXT —
- * "Hindi + English + Japanese", a bare "English", sometimes nothing — so [WireText.listOf]
- * is the only sanctioned reader, and a single long value is cut rather than allowed to
- * push the title off the slide.
- *
- * F2 (Batch A): the server also sends the literal words "Unknown" and "N/A" for titles
- * whose language was never recorded — a missing value, not a language. Those are dropped
- * here, and [DetailScreen]'s meta row and the audio/subtitle badges hide them the same
- * way, so no pill, meta line or badge ever reads "Unknown" at a viewer.
- */
-internal fun heroLanguagePills(raw: String?, max: Int = MAX_LANGUAGE_PILLS): List<String> =
-    WireText.listOf(raw)
-        .map { it.trim() }
-        .filter { isKnownLanguage(it) && it.length <= MAX_PILL_LENGTH }
-        .distinct()
-        .take(max)
-
-/**
  * The auto-advance step, pure so the wrap-around is testable: the next page, or page 0
  * again after the last one. A degenerate count advances nowhere.
  */
@@ -791,37 +803,16 @@ internal fun shouldAdvanceHero(
 }
 
 /**
- * The vertical bands the hero's top and bottom controls live in, in dp from the hero's
- * top edge — the single source of truth for both the layout above and the regression
- * test (HeroCarouselTest). The indicator is top-anchored at [HERO_INDICATOR_TOP_DP]
- * with height [DOT_TOUCH_HEIGHT_DP]; the action row (Watch Now + My List) is
- * bottom-anchored, [HERO_ACTION_BOTTOM_DP] up from the bottom edge, [HERO_BUTTON_HEIGHT_DP]
- * tall. [heroIndicatorOverlapsActionRow] is false exactly when the two bands do not
- * meet — which is what broke Watch Now: the old bottom-anchored indicator sat in the
- * same band as the buttons, and its hit boxes (on top in z-order) ate the taps.
- */
-internal const val HERO_INDICATOR_TOP_DP = 16f
-/**
  * Density (2026-11-15): the hero action row was 56dp tall — M3's large button
  * on a banner that already eats 320–400dp of the first viewport. 40dp is M3's
  * small button and the size Netflix's Play button ships at; the button still
  * spans most of the hero's width, so the target stays large. The skeleton
- * placeholder and the indicator-overlap math below read this same constant.
+ * placeholder reads this same constant.
  */
 internal const val HERO_BUTTON_HEIGHT_DP = 40f
 internal const val HERO_ACTION_BOTTOM_DP = 20f
 private const val DOT_TOUCH_HEIGHT_DP = 48f
 
-/** True when an indicator whose top edge sits [indicatorTopDp] below the hero's top edge
- *  would overlap the Watch Now / My List button strip of a hero [heroHeightDp] tall. */
-internal fun heroIndicatorOverlapsActionRow(heroHeightDp: Float, indicatorTopDp: Float): Boolean {
-    val indicatorBottom = indicatorTopDp + DOT_TOUCH_HEIGHT_DP
-    val actionsTop = heroHeightDp - HERO_ACTION_BOTTOM_DP - HERO_BUTTON_HEIGHT_DP
-    return indicatorBottom > actionsTop
-}
-
-private const val MAX_LANGUAGE_PILLS = 3
-private const val MAX_PILL_LENGTH = 18
 /**
  * Samsung RTL (v1.1.2, Issue 3): 5 s per slide made Watch Now a moving
  * target — a viewer reading the slide and then reaching for the button got
@@ -861,7 +852,9 @@ private fun heroHeight(): Dp {
     return if (width < 400) 320.dp else 400.dp
 }
 
-/** Full-bleed edge-to-edge cinematic hero: artwork fills the viewport width and blends into the canvas. */
-private val heroInset = PaddingValues(0.dp)
+/** Mockup (Nov 2026): the hero is a rounded inset card, 16dp in from the
+ *  screen edges — not the full-bleed cinematic banner it used to be. The
+ *  page background shows on both sides of the card. */
+private val heroInset = PaddingValues(horizontal = 16.dp)
 
-private val HERO_CORNER: Dp = 0.dp
+private val HERO_CORNER: Dp = 16.dp

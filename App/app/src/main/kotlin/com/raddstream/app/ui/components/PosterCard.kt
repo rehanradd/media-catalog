@@ -140,7 +140,18 @@ fun PosterCard(
     // M3 (home review, Nov 2026): the year comes from [Post.yearLabel], the
     // guarded choke point — the old inline `takeIf { it > 0 }` let an
     // impossible year (2027 for a 2024 work, 20215) straight onto the tile.
+    // Mockup (Nov 2026): the meta line carries the rating too — one line,
+    // "★ 6.7 | 2026 | Series" — so the rating badge that used to ride the
+    // poster is gone: it would say the same number twice on one tile.
     val details = listOfNotNull(
+        UserWords.displayRating(post.imdbRating)?.let { "★ $it" },
+        post.yearLabel,
+        typeLabel,
+    ).joinToString(" | ")
+    // The spoken sentence keeps the old shape — "2024 · Movie" — and the
+    // rating arrives once, as "rating 8.6 out of 10" below, so a screen
+    // reader never hears the number twice.
+    val spokenDetails = listOfNotNull(
         post.yearLabel,
         typeLabel,
     ).joinToString(" · ")
@@ -153,7 +164,7 @@ fun PosterCard(
     val a11y = buildString {
         if (rank != null && rank in 1..10) append("Rank ").append(rank).append(", ")
         append(title)
-        if (details.isNotBlank()) append(", ").append(details)
+        if (spokenDetails.isNotBlank()) append(", ").append(spokenDetails)
         if (isNewRelease) append(", new release")
         post.imdbRating?.let { UserWords.displayRating(it) }?.let { rating ->
             append(", rating ").append(rating).append(" out of 10")
@@ -269,7 +280,6 @@ fun PosterCard(
                 // art — it rode the image corner and covered the artwork on
                 // every saved tile. It lives in the text row now, beside the
                 // title, on the card surface; the image corner is art-only.
-                // (The rating badge keeps BottomStart on the scrim — P0-1.)
 
                 // Bottom scrim: a poster's lower edge is whatever the artwork happens to be, and
                 // the progress bar below has to stay visible against it.
@@ -305,19 +315,11 @@ fun PosterCard(
                     }
                 }
 
-                UserWords.displayRating(post.imdbRating)?.let { rating ->
-                    // UI-fix P0-1: the badge used to sit TopEnd, painted OVER
-                    // the remove × (same corner, declared later, so it won
-                    // the tap) — rated titles in My List / Continue Watching
-                    // could not be removed. It now rides BottomStart, above
-                    // the 3dp progress bar, on the same scrim plate.
-                    RatingBadge(
-                        rating = rating,
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .padding(start = 6.dp, bottom = 8.dp),
-                    )
-                }
+                // Mockup (Nov 2026): no rating badge on the poster any more —
+                // the rating lives in the meta line under the poster ("★ 6.7 |
+                // 2026 | Series"), and a badge here would say the same number
+                // twice. The scrim stays: the 3dp progress bar below still
+                // needs contrast against bright artwork.
 
                 if (rank != null && rank in 1..10) {
                     Box(
@@ -432,7 +434,7 @@ fun PosterCard(
                         text = displayTitle,
                         color = MaterialTheme.colorScheme.onSurface,
                         style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
+                        fontWeight = FontWeight.Bold,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                         onTextLayout = { result ->

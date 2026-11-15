@@ -34,21 +34,22 @@ object CardGeometry {
     /**
      * Rail tile width. A rail cell and its placeholder both draw from this one number.
      * Density (2026-11-15): 132 dp showed ~2.4 tiles per row on a 360 dp phone;
-     * 112 dp shows ~2.7 and matches Netflix's ~110–120 dp rail. Continue Watching
-     * stays 180 dp — its text row carries a 48 dp remove × beside the title,
-     * so it needs the wider column (see below).
+     * 112 dp shows ~2.7 and matches Netflix's ~110–120 dp rail. Mockup
+     * (2026-11-15): the target layout's rails are wider — ~150 dp posters,
+     * 3:4-ish, two per row with the next peeking — so the rail grows to 150 dp.
+     * The poster ratio stays 2:3 (see [POSTER_ASPECT]): one ratio per artwork
+     * class, and the skeleton follows this same number. Continue Watching
+     * stays its own width — it is full-width rows now, not rail tiles.
      */
-    const val RAIL_CARD_WIDTH_DP: Int = 112
+    const val RAIL_CARD_WIDTH_DP: Int = 150
 
     /**
-     * Continue Watching tiles: wider than a rail tile, because the text row
-     * carries a 48 dp remove × beside the title (F12) — at the 112 dp rail
-     * width the column left for text is 48 dp and "2023 · Movie" /
-     * "S1:E3 · 20 min left" clip mid-word (caught by the Paparazzi
-     * homeLoaded shot, 2026-11-15). At 180 dp the text column is 116 dp
-     * and both lines fit, with the 48 dp touch target kept.
+     * Continue Watching rows: the poster's width in the full-width row (mockup,
+     * 2026-11-15). At [POSTER_ASPECT] the thumb is 144 dp tall, so the row is
+     * the poster's height plus its padding — the title, remaining label and
+     * progress bar sit beside it, vertically centred.
      */
-    const val CONTINUE_WATCHING_CARD_WIDTH_DP: Int = 180
+    const val CONTINUE_WATCHING_ROW_THUMB_WIDTH_DP: Int = 96
 
     /** The detail header's poster column: the same ratio, a fixed column instead of a rail cell. */
     const val DETAIL_POSTER_WIDTH_DP: Int = 120

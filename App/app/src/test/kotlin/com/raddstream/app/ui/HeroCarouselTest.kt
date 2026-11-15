@@ -1,66 +1,69 @@
 package com.raddstream.app.ui
 
-import com.raddstream.app.ui.components.HERO_INDICATOR_TOP_DP
-import com.raddstream.app.ui.components.heroIndicatorOverlapsActionRow
-import com.raddstream.app.ui.components.heroLanguagePills
+import com.raddstream.app.network.models.Post
+import com.raddstream.app.ui.components.heroMetaLine
 import com.raddstream.app.ui.components.isKnownLanguage
 import com.raddstream.app.ui.components.nextHeroPage
 import com.raddstream.app.ui.components.shouldAdvanceHero
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The hero banner's one piece of real logic: what a free-text `posts.language` column
- * becomes when it is drawn as pills. The renderer cannot be tested here (no Robolectric),
- * so what is tested is the decision the renderer depends on.
+ * The hero banner's pure logic, testable without a pager: the one meta line
+ * under the title, the page step, and the auto-advance timing.
+ *
+ * The language pills used to be tested here too (heroLanguagePills: split,
+ * cap, dedupe, drop Unknown/N/A). They are gone with the pills — the hero
+ * shows one meta line now, and the languages survive only in the slide's
+ * spoken sentence, filtered by [isKnownLanguage] — so those tests went with
+ * the pills, and the overlap tests went with the dots: the dots ride below
+ * the card now, where no band math can put them over the buttons.
  */
 class HeroCarouselTest {
 
+    private fun post(
+        seasons: String? = null,
+        genres: String? = null,
+        year: Int = 2026,
+    ) = Post(
+        id = 1,
+        title = "Test Title",
+        cleanTitle = "Test Title",
+        year = year,
+        contentType = "series",
+        posterUrl = null,
+        genres = genres,
+        seasons = seasons,
+    )
+
+    // Mockup (Nov 2026): one meta line — "seasons | genre | year" — under the
+    // title, not four separate pills. The genre reads lowercase, as the
+    // mockup shows it; the seasons text is the server's own, never
+    // normalised here.
     @Test
-    fun splitsTheMixedSeparatorsTheColumnActuallyUses() {
-        assertEquals(
-            listOf("Hindi", "English", "Japanese"),
-            heroLanguagePills("Hindi + English + Japanese"),
-        )
-        assertEquals(listOf("Tamil", "Telugu"), heroLanguagePills("Tamil, Telugu"))
-        assertEquals(listOf("English"), heroLanguagePills("English"))
+    fun metaLineJoinsSeasonsGenreAndYear() {
+        assertEquals("S1-S2 | reality | 2026", heroMetaLine(post(seasons = "S1-S2", genres = "Reality", year = 2026)))
     }
 
     @Test
-    fun answersNothingForNothing() {
-        assertTrue(heroLanguagePills(null).isEmpty())
-        assertTrue(heroLanguagePills("").isEmpty())
-        assertTrue(heroLanguagePills("   ").isEmpty())
+    fun metaLineSkipsMissingParts() {
+        assertEquals("action | 2023", heroMetaLine(post(genres = "Action", year = 2023)))
+        assertEquals("2024", heroMetaLine(post(year = 2024)))
+        assertEquals("S01–S03", heroMetaLine(post(seasons = "S01–S03", year = 0)))
     }
 
     @Test
-    fun capsThePillsAndDropsValuesTooLongToFit() {
-        assertEquals(3, heroLanguagePills("A, B, C, D, E").size)
-
-        // A 40-character "language" is a scrape accident, not a pill: it would push the
-        // title off the banner, so it is dropped instead of truncated.
-        val tooLong = "x".repeat(40)
-        assertEquals(listOf("English"), heroLanguagePills("$tooLong, English"))
-        assertTrue(heroLanguagePills(tooLong).isEmpty())
+    fun metaLineTakesTheFirstGenreOnly() {
+        assertEquals("action | 2023", heroMetaLine(post(genres = "Action, Thriller", year = 2023)))
     }
 
     @Test
-    fun dropsDuplicates() {
-        assertEquals(listOf("English"), heroLanguagePills("English, English, English"))
-    }
-
-    // F2 (Batch A): the server sends the literal words "Unknown" and "N/A" for
-    // titles whose language was never recorded — a missing value, not a
-    // language. No pill ever reads "Unknown" at a viewer.
-    @Test
-    fun dropsUnknownAndNotApplicable() {
-        assertTrue(heroLanguagePills("Unknown").isEmpty())
-        assertTrue(heroLanguagePills("N/A").isEmpty())
-        assertEquals(listOf("Hindi"), heroLanguagePills("Hindi, Unknown"))
-        assertEquals(listOf("English"), heroLanguagePills("N/A, English"))
-        assertEquals(listOf("Hindi", "English"), heroLanguagePills("Hindi, UNKNOWN, English, n/a"))
+    fun metaLineIsNullWhenNothingToSay() {
+        assertNull(heroMetaLine(post(year = 0)))
+        assertNull(heroMetaLine(post(genres = "  ", year = 0)))
     }
 
     @Test
@@ -87,27 +90,6 @@ class HeroCarouselTest {
     fun nextPageNowhereOnDegenerateCount() {
         assertEquals(0, nextHeroPage(0, 0))
         assertEquals(0, nextHeroPage(3, 0))
-    }
-
-    // The Watch Now regression (Appetize v1.1.2): the indicator's 48dp hit boxes sat in
-    // the buttons' bottom strip, on top in z-order, and on a 6-dot hero covered the Watch
-    // Now button's centre — a centred tap selected a dot instead of navigating. The
-    // indicator now rides the top band, so its band must clear the button strip on both
-    // hero heights (320dp narrow phone, 400dp regular).
-    @Test
-    fun indicatorBandClearsTheButtonStrip() {
-        assertFalse(heroIndicatorOverlapsActionRow(320f, HERO_INDICATOR_TOP_DP))
-        assertFalse(heroIndicatorOverlapsActionRow(400f, HERO_INDICATOR_TOP_DP))
-    }
-
-    @Test
-    fun bottomAnchoredIndicatorWouldOverlapTheButtonStrip() {
-        // Regression witness: the old placement anchored the indicator 20dp up from the
-        // bottom edge, so its top sat at heroH - 20 - 48 — inside the buttons' band
-        // [heroH - 72, heroH - 20] — and the overlap ate the taps. If this ever goes
-        // false, the witness is stale, not the fix.
-        assertTrue(heroIndicatorOverlapsActionRow(320f, 320f - 20f - 48f))
-        assertTrue(heroIndicatorOverlapsActionRow(400f, 400f - 20f - 48f))
     }
 
     // Samsung RTL (v1.1.2, Issue 3): the banner rotated every 5 s and a manual

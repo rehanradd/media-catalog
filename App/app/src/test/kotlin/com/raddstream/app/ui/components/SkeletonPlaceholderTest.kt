@@ -54,12 +54,15 @@ class SkeletonPlaceholderTest {
 
     /**
      * A rail cell must be the same height as the [PosterCard] that replaces
-     * it, or the rail grows when its rows arrive. The card is a 112dp poster
-     * (168dp tall at 2:3) over a 100dp text column — 6dp gap, a 40dp title
+     * it, or the rail grows when its rows arrive. The card is a 150dp poster
+     * (225dp tall at 2:3) over a 100dp text column — 6dp gap, a 40dp title
      * slot, 2dp, a 16dp details line, 2dp, the always-24dp badge slot and
-     * the card's 10dp bottom padding. The old skeleton drew a 14dp title
-     * line and a 10dp details line and no badge slot: 204dp against the
-     * card's 268dp, a ~64dp jump per rail.
+     * the card's 10dp bottom padding — 325dp in all. The old skeleton drew a
+     * 14dp title line and a 10dp details line and no badge slot: 204dp
+     * against the card's 268dp, a ~64dp jump per rail.
+     *
+     * Mockup (Nov 2026): the rail card grew 112dp → 150dp, so the cell is
+     * 325dp now; the text column under it did not move.
      *
      * The assertion is on the first cell, not the rail Row: a rail rendered
      * as the test's root content is measured EXACTLY at window height, so
@@ -75,7 +78,7 @@ class SkeletonPlaceholderTest {
                 PosterRailSkeleton()
             }
         }
-        compose.onNodeWithTag("posterRailCell").assertHeightIsEqualTo(268.dp)
+        compose.onNodeWithTag("posterRailCell").assertHeightIsEqualTo(325.dp)
     }
 
     /**

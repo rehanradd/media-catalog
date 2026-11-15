@@ -71,6 +71,53 @@ fun visibleHomeRows(sections: List<HomeSection>, hasContinueWatching: Boolean): 
 /** At most 10 rows on Home, Continue Watching included. */
 const val MAX_HOME_ROWS = 10
 
+/**
+ * The Home filter chips (mockup, Nov 2026): one row under the header that
+ * filters the content rails in place — no navigation, no new screen. The
+ * match is the rail's own identity: its [HomeSection.type] first, then its
+ * key, so a panel rail (whose type is null — the panel owns the rows, not
+ * the type) still matches by key. A mixed rail ("Recently added",
+ * "Most copies", the regional rails) has no single type, so it shows only
+ * under ALL — the filter never invents a type for a rail that has none.
+ * "Complete series" is series content, so it rides SERIES. The hero,
+ * Continue Watching, Pick 3 and the library are not rails and are never
+ * filtered — only the content rails below them.
+ */
+enum class HomeFilter(val label: String) {
+    All("ALL"),
+    Movies("MOVIES"),
+    Series("SERIES"),
+    Anime("ANIME"),
+    Kpop("KPOP"),
+    ;
+
+    /** The empty-filter line when this chip hides every rail. */
+    val emptyMessage: String
+        get() = when (this) {
+            All -> "Nothing here yet."
+            Movies -> "No movies here yet."
+            Series -> "No series here yet."
+            Anime -> "No anime here yet."
+            Kpop -> "No K-pop here yet."
+        }
+}
+
+/** Whether this rail survives the active filter chip. Pure, so the chip filter is testable. */
+internal fun homeFilterMatches(section: HomeSection, filter: HomeFilter): Boolean {
+    if (filter == HomeFilter.All) return true
+    val key = section.key
+    return when (filter) {
+        HomeFilter.Movies -> section.type == "movie" || key == "movie" || key == "panel:movie"
+        HomeFilter.Series -> section.type == "series" || section.type == "complete_season" ||
+            key == "series" || key == "panel:series"
+        HomeFilter.Anime -> section.type == "anime" || key == "anime" || key == "panel:anime"
+        HomeFilter.Kpop -> section.type == "kpop" || key == "kpop" || key == "panel:kpop"
+        // Unreachable: ALL returns true above. It stays so the `when` is
+        // exhaustive without an `else` that would silently swallow a new chip.
+        HomeFilter.All -> true
+    }
+}
+
 data class HomeSection(
     val key: String,
     val title: String,

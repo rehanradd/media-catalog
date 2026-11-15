@@ -37,7 +37,7 @@ class HomeSectionMarginsTest {
                 LibraryStrip(onOpenLocalFiles = {}, onOpenDownloads = {})
             }
         }
-        compose.onNodeWithText("Your library").assertLeftPositionInRootIsEqualTo(16.dp)
+        compose.onNodeWithText("Your Library").assertLeftPositionInRootIsEqualTo(16.dp)
     }
 
     @Test
