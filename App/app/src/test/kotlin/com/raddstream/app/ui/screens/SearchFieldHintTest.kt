@@ -16,7 +16,7 @@ import org.robolectric.RobolectricTestRunner
 
 /**
  * App-design audit (2026-11-12, issue #33): typing "av" rendered the
- * green hint "Search movies and shows" ABOVE the white "av" — the field
+ * green hint "Search movies, shows, anime" ABOVE the white "av" — the field
  * carried both a label and a placeholder with the same text, so the label
  * floated instead of vanishing. The hint must disappear the moment the
  * first character is typed.
@@ -37,7 +37,7 @@ class SearchFieldHintTest {
                 SearchField(query = "", onQueryChanged = {}, onSubmit = {})
             }
         }
-        compose.onNodeWithText("Search movies and shows").assertIsDisplayed()
+        compose.onNodeWithText("Search movies, shows, anime").assertIsDisplayed()
     }
 
     @Test
@@ -48,9 +48,9 @@ class SearchFieldHintTest {
                 SearchField(query = query, onQueryChanged = { query = it }, onSubmit = {})
             }
         }
-        compose.onNodeWithContentDescription("Search movies and shows")
+        compose.onNodeWithContentDescription("Search movies, shows, anime")
             .performTextInput("a")
-        compose.onNodeWithText("Search movies and shows").assertDoesNotExist()
+        compose.onNodeWithText("Search movies, shows, anime").assertDoesNotExist()
         compose.onNodeWithText("a").assertIsDisplayed()
     }
 }

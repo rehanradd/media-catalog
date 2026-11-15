@@ -660,8 +660,7 @@ class PaparazziPreviewTest {
                 SearchContent(
                     state = state,
                     onRunQuery = {},
-                    onClearRecents = {},
-                    onSelectGenre = {},
+                    onRemoveRecent = {},
                     onSubmitCurrentQuery = {},
                     onResetFilters = {},
                     onQueryChanged = {},
@@ -678,6 +677,10 @@ class PaparazziPreviewTest {
     private val searchDiscovery = SearchUiState(
         recents = listOf("Jawan", "Salaar", "Money Heist"),
         trending = homePosts,
+        // Mockup (Nov 2026): the discovery page adds "Recommended for you"
+        // under the recents — 4 posts exercises the grid's incomplete last
+        // row (3 + 1) in the golden.
+        recommended = homePosts,
     )
 
     private val searchResults = SearchUiState(

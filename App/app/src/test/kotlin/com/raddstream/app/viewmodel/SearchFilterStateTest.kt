@@ -177,4 +177,51 @@ class SearchFilterStateTest {
             IndustryFilter.entries.none { it.wireValue == "anime" },
         )
     }
+
+    @Test
+    fun `selecting kpop sets the query preset`() {
+        // Mockup (Nov 2026): KPOP is a query preset, not a content_type —
+        // the server has no K-pop facet, so the pill runs a real title
+        // search for "kpop" and the fetch sites send type=null for it.
+        val body = functionBody("fun selectType(type: String?)", "fun selectGenre")
+        assertTrue(
+            "selectType must set the query to \"kpop\" when the kpop pill is tapped — " +
+                "without it the pill filters on a content_type no post carries",
+            body.contains("if (type == \"kpop\") \"kpop\""),
+        )
+    }
+
+    @Test
+    fun `editing the query releases the kpop preset`() {
+        // Mockup (Nov 2026): the preset is the tap's query, not a sticky
+        // filter — typing a different word must clear the kpop type, or
+        // the pill would keep answering "kpop" under a new query.
+        val body = functionBody("fun onQueryChanged(query: String)", "fun submitCurrentQuery()")
+        assertTrue(
+            "onQueryChanged must release the kpop preset when the query moves off it",
+            body.contains("filters.type == \"kpop\""),
+        )
+        assertTrue(
+            "onQueryChanged must compute a fresh type that is null off the preset — " +
+                "keeping the old type would re-run the kpop search under the new query",
+            body.contains("val type = if"),
+        )
+    }
+
+    @Test
+    fun `every fetch site sends the effective type`() {
+        // Mockup (Nov 2026): content_type='kpop' would answer zero rows on
+        // both routes, so all four fetch sites (scheduleSearch v2 + v1,
+        // loadMore v2 + v1) must translate through effectiveSearchType.
+        assertFalse(
+            "a fetch site still sends the raw type — the kpop pill would answer zero rows",
+            source.contains("type = filters.type") || source.contains("type = state.filters.type"),
+        )
+        assertEquals(
+            "all four fetch sites must route through effectiveSearchType",
+            4,
+            "effectiveSearchType\\(filters\\.type\\)|effectiveSearchType\\(state\\.filters\\.type\\)"
+                .toRegex().findAll(source).count(),
+        )
+    }
 }

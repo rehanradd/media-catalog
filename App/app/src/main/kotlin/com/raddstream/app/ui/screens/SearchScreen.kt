@@ -30,7 +30,6 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.CardMembership
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Close
@@ -38,6 +37,7 @@ import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.HighQuality
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Search
@@ -46,6 +46,7 @@ import androidx.compose.material.icons.filled.Theaters
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -60,7 +61,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -77,9 +77,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -99,7 +97,6 @@ import com.raddstream.app.ui.components.ErrorState
 import com.raddstream.app.ui.components.MediaRail
 import com.raddstream.app.ui.components.PosterCard
 import com.raddstream.app.ui.components.SearchResultsSkeleton
-import com.raddstream.app.ui.components.Pill
 import com.raddstream.app.ui.components.SectionHeader
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.viewmodel.GenreFilter
@@ -110,7 +107,6 @@ import com.raddstream.app.viewmodel.SearchSort
 import com.raddstream.app.viewmodel.SearchUiState
 import com.raddstream.app.viewmodel.SearchViewModel
 import com.raddstream.app.viewmodel.displayLanguageName
-import com.raddstream.app.viewmodel.filteredPillLabel
 import com.raddstream.app.viewmodel.resultsSummary
 
 private val typeChips = listOf(
@@ -120,6 +116,21 @@ private val typeChips = listOf(
     // Not a `content_type`: the server answers `type=anime` from the `is_animated` flag.
     "Anime" to "anime",
     "Complete series" to "complete_season",
+)
+
+/**
+ * Mockup (Nov 2026): the rail's own chips — ALL / MOVIES / SERIES / ANIME /
+ * KPOP, uppercase like Home's rail. "Complete series" lives in the sheet's
+ * Type group, not here: the rail is the five most-reached-for choices, and
+ * the sheet owns the rest. KPOP is a query preset, not a content_type — see
+ * [SearchViewModel.selectType].
+ */
+private val railTypeChips = listOf(
+    "ALL" to null,
+    "MOVIES" to "movie",
+    "SERIES" to "series",
+    "ANIME" to "anime",
+    "KPOP" to "kpop",
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -173,40 +184,6 @@ fun SearchScreen(
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        topBar = {
-            TopAppBar(
-                // Session 121 (P-13): the count lives in the body, next to Sort —
-                // the top bar saying "12 results" as well was the same number twice.
-                // CL-7, same as Settings: the title says "Search" and so does its
-                // nav tab — the title is paint, not a second announcement.
-                title = { Text("Search", modifier = Modifier.clearAndSetSemantics { }) },
-                actions = {
-                    if (state.hasFacetFilters) {
-                        // F5c (Batch A): the pill names the facets, never the sort —
-                        // and it opens the sheet, so a viewer can see which filters
-                        // are actually on instead of taking the pill's word.
-                        Box(
-                            // Robo run 2 class: a raw clickable wrapping a
-                            // ~24dp pill is a ~24dp touch target. The pill
-                            // keeps its size; the tap area is 48dp tall.
-                            contentAlignment = Alignment.Center,
-                            modifier = Modifier
-                                .heightIn(min = 48.dp)
-                                .clickable(
-                                    role = Role.Button,
-                                    onClickLabel = "Open filters",
-                                ) { showSheet = true },
-                        ) {
-                            Pill(text = filteredPillLabel(state.filters), backgroundColor = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer)
-                        }
-                        Spacer(Modifier.width(8.dp))
-                    }
-                    IconButton(onClick = { showSheet = true }) {
-                        Icon(Icons.Default.Tune, contentDescription = "Filters and sort")
-                    }
-                },
-            )
-        },
     ) { contentPadding ->
         // Session 120: the open keyboard covered the top row of results and the
         // empty-state hint hid behind its clipboard bar — the content never
@@ -220,6 +197,18 @@ fun SearchScreen(
                 .imePadding()
                 .padding(horizontal = 16.dp),
         ) {
+            // Mockup (Nov 2026): the title is a heading in the content, not
+            // a top bar. The bar's Tune icon and "Filtered" pill are gone
+            // with it — the rail's Filters chip is the one entry to the
+            // sheet, and it already shows the active count.
+            Text(
+                text = "Search",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            )
+            Spacer(Modifier.height(12.dp))
             SearchField(
                 query = state.query,
                 onQueryChanged = viewModel::onQueryChanged,
@@ -312,8 +301,7 @@ fun SearchScreen(
                 SearchContent(
                     state = state,
                     onRunQuery = viewModel::runRecent,
-                    onClearRecents = viewModel::clearRecents,
-                    onSelectGenre = viewModel::selectGenre,
+                    onRemoveRecent = viewModel::removeRecent,
                     onSubmitCurrentQuery = viewModel::submitCurrentQuery,
                     onResetFilters = viewModel::resetFilters,
                     onQueryChanged = viewModel::onQueryChanged,
@@ -327,7 +315,7 @@ fun SearchScreen(
                 // A pasted link replaces the results, not the history: the
                 // recents stay reachable so the viewer is never stranded on
                 // a link row with nowhere to go.
-                RecentsSection(state = state, onRunRecent = viewModel::runRecent, onClearRecents = viewModel::clearRecents)
+                RecentsSection(state = state, onRunRecent = viewModel::runRecent, onRemoveRecent = viewModel::removeRecent)
             }
         }
 
@@ -373,6 +361,8 @@ fun SearchScreen(
  * character is typed, and the accessible name rides on semantics instead.
  * The field searches titles and cast names; only the prompt is unified
  * with Home's bar, not the capability.
+ * Mockup (Nov 2026): one rounded field, 52dp tall, 16dp corners, prompt
+ * "Search movies, shows, anime".
  */
 @Composable
 internal fun SearchField(
@@ -381,13 +371,14 @@ internal fun SearchField(
     onSubmit: () -> Unit,
     modifier: Modifier = Modifier,
     // Audit #17: the Home search bar names what it takes — titles and
-    // shows — while Search keeps the shorter hint.
-    label: String = "Search movies and shows",
+    // shows — while Search keeps the shorter hint. The mockup's prompt
+    // names all three: movies, shows, anime.
+    label: String = "Search movies, shows, anime",
 ) {
     TextField(
         value = query,
         onValueChange = onQueryChanged,
-        modifier = modifier.fillMaxWidth()
+        modifier = modifier.fillMaxWidth().height(52.dp)
             .semantics { contentDescription = label },
         singleLine = true,
         placeholder = { Text(label) },
@@ -403,7 +394,7 @@ internal fun SearchField(
         // Session 121 (P-12): searching dismisses the keyboard so the
         // results are visible instead of sitting under it.
         keyboardActions = KeyboardActions(onSearch = { onSubmit() }),
-        shape = RoundedCornerShape(28.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = TextFieldDefaults.colors(
             focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
             unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -456,6 +447,11 @@ private fun DirectVideoRow(url: String, title: String, onPlay: () -> Unit) {
  * most, then the Filters button for everything else (industry, genre,
  * quality, plan, sort, years). One ungrouped ~30-chip scroll buried the
  * type choice behind captions; the sheet owns the rest.
+ * Mockup (Nov 2026): ALL / MOVIES / SERIES / ANIME / KPOP — 48dp tall,
+ * active chip jade-filled with black text, inactive chips dark-filled
+ * with a thin border and white text. The selected-chip scroll (merged
+ * 3bcd64de) stays: the rail scrolls just enough to bring its own
+ * selection fully into view.
  */
 @Composable
 internal fun FilterRail(state: SearchUiState, onSelectType: (String?) -> Unit, onOpenFilters: () -> Unit) {
@@ -467,7 +463,7 @@ internal fun FilterRail(state: SearchUiState, onSelectType: (String?) -> Unit, o
     // so tapping a visible chip never moves the row.
     val listState = rememberLazyListState()
     LaunchedEffect(state.filters.type) {
-        val selectedIndex = typeChips.indexOfFirst { it.second == state.filters.type }
+        val selectedIndex = railTypeChips.indexOfFirst { it.second == state.filters.type }
         if (selectedIndex < 0) return@LaunchedEffect
         // The effect launches before the row's first layout pass, so wait a frame:
         // layoutInfo is empty until the row is measured.
@@ -500,16 +496,27 @@ internal fun FilterRail(state: SearchUiState, onSelectType: (String?) -> Unit, o
         // pads 16 dp.
         contentPadding = PaddingValues(start = 0.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
     ) {
-        items(typeChips) { (label, value) ->
+        items(railTypeChips) { (label, value) ->
+            val selected = state.filters.type == value
             FilterChip(
-                colors = raddFilterChipColors(),
-                selected = state.filters.type == value,
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                    labelColor = MaterialTheme.colorScheme.onSurface,
+                ),
+                selected = selected,
                 onClick = { onSelectType(value) },
-                label = { Text(label) },
-                // CL-3, same as the sheet: the rail's "All" chip is the Type
-                // group's "All", and it must say so — bare "All" is the bug.
+                label = {
+                    Text(
+                        label,
+                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                    )
+                },
+                // CL-3, same as the sheet: the rail's "ALL" chip is the Type
+                // group's "All", and it must say so — bare "ALL" is the bug.
                 // Audit #54: a FilterChip is 32 dp tall — the touch-target floor is 48 dp, so the chip itself carries it.
-                modifier = if (label == "All") {
+                modifier = if (label == "ALL") {
                     Modifier.heightIn(min = 48.dp).semantics { contentDescription = "All types" }
                 } else {
                     Modifier.heightIn(min = 48.dp)
@@ -529,7 +536,14 @@ internal fun FilterRail(state: SearchUiState, onSelectType: (String?) -> Unit, o
             val filtersLabel = if (activeFilterCount > 0) "Filters ($activeFilterCount)" else "Filters"
             val filtersA11y = if (activeFilterCount > 0) "Filters, $activeFilterCount active" else "Filters"
             FilterChip(
-                colors = raddFilterChipColors(),
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                    selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimary,
+                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                    labelColor = MaterialTheme.colorScheme.onSurface,
+                    leadingIconColor = MaterialTheme.colorScheme.onSurface,
+                ),
                 selected = activeFilterCount > 0,
                 onClick = onOpenFilters,
                 label = {
@@ -551,50 +565,56 @@ internal fun FilterRail(state: SearchUiState, onSelectType: (String?) -> Unit, o
 }
 
 /**
- * The recent-searches rail: a lazy row (never a fixed Row that clips the
- * 9th chip) with a Clear action. Used on the empty screen and under a
- * pasted link, where it is the way back.
+ * Mockup (Nov 2026): recent searches as a list, not a chip rail — one row
+ * per search, clock icon, tap to run it, × to drop that row. Used on the
+ * discovery page and under a pasted link, where it is the way back.
  */
 @Composable
-internal fun RecentsSection(state: SearchUiState, onRunRecent: (String) -> Unit, onClearRecents: () -> Unit) {
-    RecentsRow(
+internal fun RecentsSection(state: SearchUiState, onRunRecent: (String) -> Unit, onRemoveRecent: (String) -> Unit) {
+    RecentsList(
         recents = state.recents,
         onRunRecent = onRunRecent,
-        onClearRecents = onClearRecents,
+        onRemoveRecent = onRemoveRecent,
     )
 }
 
 @Composable
-private fun RecentsRow(
+internal fun RecentsList(
     recents: List<String>,
     onRunRecent: (String) -> Unit,
-    onClearRecents: () -> Unit,
+    onRemoveRecent: (String) -> Unit,
 ) {
     Column(Modifier.fillMaxWidth()) {
         SectionHeader(
             title = "Recent searches",
             modifier = Modifier.padding(top = 8.dp),
-            action = {
-                TextButton(
-                    onClick = onClearRecents,
-                    modifier = Modifier.heightIn(min = 48.dp),
-                ) { Text("Clear") }
-            },
         )
-        LazyRow(
-            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = PaddingValues(start = 0.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
-        ) {
-            items(recents, key = { it }) { recent ->
-                FilterChip(
-                    colors = raddFilterChipColors(),
-                    selected = false,
-                    onClick = { onRunRecent(recent) },
-                    label = { Text(recent) },
-                    // Audit #54: a FilterChip is 32 dp tall — the touch-target floor is 48 dp, so the chip itself carries it.
-                    modifier = Modifier.heightIn(min = 48.dp),
+        recents.forEach { recent ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .clickable { onRunRecent(recent) },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Icon(
+                    Icons.Default.History,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp),
                 )
+                Text(
+                    recent,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(onClick = { onRemoveRecent(recent) }) {
+                    Icon(Icons.Default.Close, contentDescription = "Remove $recent")
+                }
             }
         }
     }
@@ -605,105 +625,84 @@ private fun RecentsRow(
 internal fun SearchDiscoveryContent(
     state: SearchUiState,
     onRunQuery: (String) -> Unit,
-    onClearRecents: () -> Unit,
-    onSelectGenre: (GenreFilter) -> Unit,
+    onRemoveRecent: (String) -> Unit,
     onPostClick: (Post) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val trendingQueries = remember(state.trending) {
-        state.trending.mapNotNull { it.displayTitle.takeIf(String::isNotBlank) }.distinct().take(6)
-    }
     Column(
         modifier.fillMaxSize().verticalScroll(rememberScrollState()),
     ) {
+        // Mockup (Nov 2026): the discovery page is three sections, top to
+        // bottom — "Trending now" rail, "Recent searches" list,
+        // "Recommended for you" 3-column grid. The old "Trending searches"
+        // chips and "Browse by genre" are gone: the mockup has neither, and
+        // the genre filter still lives in the sheet. Each section hides
+        // when its data is empty, so a fresh install shows the hint only.
+        if (state.trending.isNotEmpty()) {
+            SectionHeader(
+                title = "Trending now",
+                modifier = Modifier.padding(top = 16.dp),
+            )
+            Spacer(Modifier.height(8.dp))
+            // The outer column already pads 16dp: the rail starts at 0 and
+            // keeps 16dp at the end, so the last card never sits flush
+            // against the screen edge when fully scrolled.
+            MediaRail(items = state.trending, key = { it.id }, contentPadding = PaddingValues(start = 0.dp, end = 16.dp)) { post ->
+                PosterCard(post = post, onClick = { onPostClick(post) })
+            }
+        }
         if (state.recents.isNotEmpty()) {
-            RecentsRow(
+            RecentsList(
                 recents = state.recents,
                 onRunRecent = onRunQuery,
-                onClearRecents = onClearRecents,
+                onRemoveRecent = onRemoveRecent,
             )
-        } else {
+        }
+        if (state.recommended.isNotEmpty()) {
+            SectionHeader(
+                title = "Recommended for you",
+                modifier = Modifier.padding(top = 20.dp),
+            )
+            Spacer(Modifier.height(8.dp))
+            state.recommended.chunked(3).forEach { trio ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    trio.forEach { post ->
+                        PosterCard(post = post, onClick = { onPostClick(post) }, modifier = Modifier.weight(1f))
+                    }
+                    // An incomplete last row keeps the grid's columns —
+                    // spacers hold the width the missing cards would take.
+                    repeat(3 - trio.size) { Spacer(Modifier.weight(1f)) }
+                }
+                Spacer(Modifier.height(12.dp))
+            }
+        }
+        if (state.trending.isEmpty() && state.recents.isEmpty() && state.recommended.isEmpty()) {
             Spacer(Modifier.height(28.dp))
             Icon(
                 Icons.Default.Search,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(40.dp).align(Alignment.CenterHorizontally),
+                modifier = Modifier.size(48.dp).align(Alignment.CenterHorizontally),
             )
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(16.dp))
             Text(
                 text = "Search your catalog",
                 style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onBackground,
+                color = MaterialTheme.colorScheme.onSurface,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                modifier = Modifier.fillMaxWidth(),
             )
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(8.dp))
             Text(
-                text = "Type a title or an actor's name, or pick a filter to begin. Recent searches will show up here.",
+                text = "Search titles and cast names to find movies, series, and anime",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                modifier = Modifier.fillMaxWidth(),
             )
-        }
-        if (trendingQueries.isNotEmpty()) {
-            SectionHeader(
-                title = "Trending searches",
-                modifier = Modifier.padding(top = 16.dp),
-            )
-            LazyRow(
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = PaddingValues(start = 0.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
-            ) {
-                items(trendingQueries, key = { it }) { term ->
-                    FilterChip(
-                        colors = raddFilterChipColors(),
-                        selected = false,
-                        onClick = { onRunQuery(term) },
-                        leadingIcon = {
-                            Icon(
-                                Icons.AutoMirrored.Filled.TrendingUp,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                            )
-                        },
-                        label = { Text(term, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        modifier = Modifier.heightIn(min = 48.dp),
-                    )
-                }
-            }
-        }
-        if (state.trending.isNotEmpty()) {
-            SectionHeader(
-                title = "Trending now",
-                modifier = Modifier.padding(top = 20.dp),
-            )
-            Spacer(Modifier.height(8.dp))
-            MediaRail(items = state.trending, key = { it.id }) { post ->
-                PosterCard(post = post, onClick = { onPostClick(post) })
-            }
-        }
-        SectionHeader(
-            title = "Browse by genre",
-            modifier = Modifier.padding(top = 20.dp),
-        )
-        Spacer(Modifier.height(8.dp))
-        FlowRow(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            GenreFilter.entries.filter { it != GenreFilter.ALL }.forEach { genre ->
-                FilterChip(
-                    selected = false,
-                    onClick = { onSelectGenre(genre) },
-                    label = { Text(genre.label) },
-                    modifier = Modifier.heightIn(min = 48.dp),
-                    colors = raddFilterChipColors(),
-                )
-            }
         }
         Spacer(Modifier.height(24.dp))
     }
@@ -714,8 +713,7 @@ internal fun SearchDiscoveryContent(
 internal fun SearchContent(
     state: SearchUiState,
     onRunQuery: (String) -> Unit,
-    onClearRecents: () -> Unit,
-    onSelectGenre: (GenreFilter) -> Unit,
+    onRemoveRecent: (String) -> Unit,
     onSubmitCurrentQuery: () -> Unit,
     onResetFilters: () -> Unit,
     onQueryChanged: (String) -> Unit,
@@ -741,8 +739,7 @@ internal fun SearchContent(
             SearchDiscoveryContent(
                 state = state,
                 onRunQuery = onRunQuery,
-                onClearRecents = onClearRecents,
-                onSelectGenre = onSelectGenre,
+                onRemoveRecent = onRemoveRecent,
                 onPostClick = onPostClick,
             )
         }

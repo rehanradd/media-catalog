@@ -26,6 +26,8 @@ import org.robolectric.RobolectricTestRunner
  * scrolled the rail to it. The rail already scrolls (LazyRow) with end padding (Session 121
  * P-29); what it never did was reveal its own selection. These tests pin both halves: the
  * last chip is reachable by scrolling, and selecting a chip scrolls it fully into view.
+ * Mockup (Nov 2026): the rail is ALL / MOVIES / SERIES / ANIME / KPOP — "Complete series"
+ * lives in the sheet's Type group, not the rail, so the last chip is KPOP now.
  *
  * NOTE: `assertIsDisplayed` alone cannot catch a partial clip — a half-visible node still
  * counts as displayed — so the reveal tests assert the chip's bounds sit fully inside the
@@ -46,14 +48,17 @@ class SearchFilterRailTest {
                 }
             }
         }
-        // "Complete series" is only a peek at the right edge at rest (Robo #7) — scroll it whole.
-        val chip = compose.onNodeWithText("Complete series")
+        // Mockup (Nov 2026): KPOP is the last rail chip — "Complete series"
+        // lives in the sheet now, so the rail must not carry it at all.
+        compose.onNodeWithText("Complete series").assertDoesNotExist()
+        // "KPOP" is only a peek at the right edge at rest (Robo #7) — scroll it whole.
+        val chip = compose.onNodeWithText("KPOP")
         chip.performScrollTo()
         chip.assertIsDisplayed()
         val chipBounds = chip.fetchSemanticsNode().boundsInRoot
         with(compose.density) {
             assertTrue(
-                "Complete series still past the right edge after scrolling",
+                "KPOP still past the right edge after scrolling",
                 chipBounds.right.toDp() <= 480.dp,
             )
         }
@@ -74,11 +79,12 @@ class SearchFilterRailTest {
     fun selectedChipScrollsFullyIntoView() {
         // Robo #7, shot 34: "Complete series" selected, yet only "Comp" showed — the rail
         // never scrolled to its own selection. Selecting it must bring it fully into view.
+        // Mockup (Nov 2026): the last chip is KPOP now — same mechanism, new last chip.
         compose.setContent {
             RaddStreamTheme {
                 Box(Modifier.size(width = 360.dp, height = 120.dp)) {
                     FilterRail(
-                        state = SearchUiState(filters = SearchFilters(type = "complete_season")),
+                        state = SearchUiState(filters = SearchFilters(type = "kpop")),
                         onSelectType = {},
                         onOpenFilters = {},
                     )
@@ -86,12 +92,12 @@ class SearchFilterRailTest {
             }
         }
         compose.waitForIdle()
-        val chip = compose.onNodeWithText("Complete series")
+        val chip = compose.onNodeWithText("KPOP")
         chip.assertIsDisplayed()
         val bounds = chip.fetchSemanticsNode().boundsInRoot
         with(compose.density) {
-            assertTrue("Complete series clipped at the left edge", bounds.left.toDp() >= 0.dp)
-            assertTrue("Complete series clipped at the right edge", bounds.right.toDp() <= 360.dp)
+            assertTrue("KPOP clipped at the left edge", bounds.left.toDp() >= 0.dp)
+            assertTrue("KPOP clipped at the right edge", bounds.right.toDp() <= 360.dp)
         }
     }
 
@@ -113,7 +119,7 @@ class SearchFilterRailTest {
         }
         type = "movie"
         compose.waitForIdle()
-        compose.onNodeWithText("All").assertIsDisplayed()
-        compose.onNodeWithText("Movies").assertIsDisplayed()
+        compose.onNodeWithText("ALL").assertIsDisplayed()
+        compose.onNodeWithText("MOVIES").assertIsDisplayed()
     }
 }

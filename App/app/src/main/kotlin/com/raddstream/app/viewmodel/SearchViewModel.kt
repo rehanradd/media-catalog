@@ -188,6 +188,7 @@ internal fun activeFilterSummary(filters: SearchFilters): List<String> = buildLi
                 "series" -> "Series"
                 "anime" -> "Anime"
                 "complete_season" -> "Complete series"
+                "kpop" -> "K-pop"
                 else -> type
             },
         )
@@ -227,6 +228,15 @@ internal fun resultsSummary(loaded: Int, serverTotal: Int, hasMore: Boolean, tot
     else -> "$loaded result" + if (loaded == 1) "" else "s"
 }
 
+/**
+ * Mockup (Nov 2026): the type the server actually receives. "kpop" is a
+ * query preset, not a content_type — no post carries it, so sending it
+ * would answer zero rows on both routes. The query ("kpop") carries the
+ * pill; the type stays null. Every other type passes through untouched.
+ * Pure so a test can pin it without a ViewModel.
+ */
+internal fun effectiveSearchType(type: String?): String? = if (type == "kpop") null else type
+
 data class SearchUiState(
     val query: String = "",
     val isLoading: Boolean = false,
@@ -261,6 +271,14 @@ data class SearchUiState(
      * then, never an error for a suggestion that failed to load.
      */
     val trending: List<Post> = emptyList(),
+    /**
+     * Mockup (Nov 2026): the "Recommended for you" grid on the discovery
+     * page — the catalog's freshest titles, newest first (the same feed as
+     * Home's "Recently added" rail). There is no personalised recommendation
+     * endpoint, so the label names the freshest rows, not a per-viewer pick;
+     * empty when the route fails, and the section simply hides then.
+     */
+    val recommended: List<Post> = emptyList(),
     /**
      * True when the suggest call itself failed (blocked route, old server,
      * dead socket) — distinct from "the server answered and has no matches".
@@ -312,6 +330,9 @@ class SearchViewModel @Inject constructor(
     /** F14 (Batch B): the trending load runs once per ViewModel, not per recomposition. */
     private var trendingRequested = false
 
+    /** Mockup (Nov 2026): the recommended load runs once per ViewModel, like trending. */
+    private var recommendedRequested = false
+
     init {
         // The rail is a history, not a session scratch pad: hydrate from the persisted list
         // and keep following it, so a second device state (e.g. a reset) cannot leave the
@@ -339,10 +360,32 @@ class SearchViewModel @Inject constructor(
             runCatching { catalogRepository.getTrending(limit = 10) }
                 .onSuccess { page -> _uiState.update { it.copy(trending = page.results) } }
         }
+        // Mockup (Nov 2026): the "Recommended for you" grid, loaded once.
+        // The freshest titles, newest first — the same feed as Home's
+        // "Recently added" rail. A failure leaves the grid empty and the
+        // section hides; a recommendation that failed to load is not a
+        // search that failed.
+        viewModelScope.launch {
+            if (recommendedRequested) return@launch
+            recommendedRequested = true
+            runCatching {
+                catalogRepository.getPosts(sort = SearchSort.NEWEST.wireValue, page = 1, limit = 18)
+            }.onSuccess { page -> _uiState.update { it.copy(recommended = page.results) } }
+        }
     }
 
     fun onQueryChanged(query: String) {
-        _uiState.update { it.copy(query = query, error = null) }
+        // Mockup (Nov 2026): editing the query releases the KPOP preset —
+        // the pill names a search for "kpop", not a filter that follows
+        // the text. The preset only holds while the query still is "kpop".
+        val type = if (!query.trim().equals("kpop", ignoreCase = true) &&
+            _uiState.value.filters.type == "kpop"
+        ) {
+            null
+        } else {
+            _uiState.value.filters.type
+        }
+        _uiState.update { it.copy(query = query, error = null, filters = it.filters.copy(type = type)) }
         scheduleSearch(reset = true)
         scheduleSuggest()
     }
@@ -380,15 +423,29 @@ class SearchViewModel @Inject constructor(
         _uiState.update { it.copy(showExactOnly = false) }
     }
 
-    /** The recents rail is a history: clear it from the store, and the flow echoes it back. */
-    fun clearRecents() {
-        _uiState.update { it.copy(recents = emptyList()) }
-        viewModelScope.launch { settingsRepository.saveSearchRecents(emptyList()) }
+    /**
+     * Mockup (Nov 2026): one recent's × — drop that row from the history
+     * and persist the shorter list; the store's flow echoes it back.
+     */
+    fun removeRecent(query: String) {
+        val next = _uiState.value.recents.filterNot { it == query }
+        if (next == _uiState.value.recents) return
+        _uiState.update { it.copy(recents = next) }
+        viewModelScope.launch { settingsRepository.saveSearchRecents(next) }
     }
 
     fun selectType(type: String?) {
         if (_uiState.value.filters.type == type) return
-        _uiState.update { it.copy(filters = it.filters.copy(type = type)) }
+        // Mockup (Nov 2026): "kpop" is a query preset, not a content_type —
+        // the server has no K-pop facet (no genre/music key, and an unknown
+        // genre is silently ignored — proven live 2026-11-15: genre=music
+        // answered 207,919 rows, the unfiltered total). The pill runs a real
+        // title search for "kpop" (2 titles live), so the query becomes
+        // "kpop" with the tap; the fetch sites send type=null for it via
+        // [effectiveSearchType], because content_type='kpop' would answer
+        // zero rows. Editing the query releases the preset ([onQueryChanged]).
+        val query = if (type == "kpop") "kpop" else _uiState.value.query
+        _uiState.update { it.copy(filters = it.filters.copy(type = type), query = query) }
         scheduleSearch(reset = true)
     }
 
@@ -499,7 +556,7 @@ class SearchViewModel @Inject constructor(
                         sort = state.sort.wireValue,
                         limit = PAGE_SIZE,
                         cursor = v2Cursor,
-                        type = state.filters.type,
+                        type = effectiveSearchType(state.filters.type),
                         genres = state.filters.genre.wireValue?.let { listOf(it) },
                         industries = state.filters.industry.wireValues.takeIf { it.isNotEmpty() },
                         qualities = state.filters.quality.wireValue?.let { listOf(it) },
@@ -524,7 +581,7 @@ class SearchViewModel @Inject constructor(
                 }
                 val resp = catalogRepository.getPosts(
                     query = state.query.trim(),
-                    type = state.filters.type,
+                    type = effectiveSearchType(state.filters.type),
                     industry = state.filters.industry.wireValue,
                     genre = state.filters.genre.wireValue,
                     language = state.filters.language.wireValue,
@@ -637,7 +694,7 @@ class SearchViewModel @Inject constructor(
                         query = query,
                         sort = state.sort.wireValue,
                         limit = PAGE_SIZE,
-                        type = filters.type,
+                        type = effectiveSearchType(filters.type),
                         genres = filters.genre.wireValue?.let { listOf(it) },
                         industries = filters.industry.wireValues.takeIf { it.isNotEmpty() },
                         qualities = filters.quality.wireValue?.let { listOf(it) },
@@ -671,7 +728,7 @@ class SearchViewModel @Inject constructor(
                 }
                 val resp = catalogRepository.getPosts(
                     query = query,
-                    type = filters.type,
+                    type = effectiveSearchType(filters.type),
                     industry = filters.industry.wireValue,
                     genre = filters.genre.wireValue,
                     language = filters.language.wireValue,

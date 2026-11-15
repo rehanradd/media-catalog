@@ -153,4 +153,22 @@ class CatalogHelpersTest {
             activeFilterSummary(SearchFilters(type = "anime", industry = IndustryFilter.BOLLYWOOD)),
         )
     }
+
+    @Test
+    fun `effectiveSearchType sends null for the kpop preset`() {
+        // Mockup (Nov 2026): KPOP is a query preset, not a content_type —
+        // no post carries it, so sending it would answer zero rows on both
+        // routes. The query ("kpop") carries the pill; the type stays null.
+        assertNull(effectiveSearchType("kpop"))
+        assertEquals("movie", effectiveSearchType("movie"))
+        assertEquals("series", effectiveSearchType("series"))
+        assertEquals("anime", effectiveSearchType("anime"))
+        assertEquals("complete_season", effectiveSearchType("complete_season"))
+        assertNull(effectiveSearchType(null))
+    }
+
+    @Test
+    fun `the kpop preset names itself in the filter summary`() {
+        assertEquals(listOf("K-pop"), activeFilterSummary(SearchFilters(type = "kpop")))
+    }
 }
