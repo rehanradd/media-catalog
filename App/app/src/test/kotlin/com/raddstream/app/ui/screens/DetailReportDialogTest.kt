@@ -4,7 +4,6 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performTextInput
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -19,21 +18,40 @@ class DetailReportDialogTest {
     val compose = createComposeRule()
 
     @Test
-    fun reportDialogSubmitsOptionalNoteInOneTap() {
-        var submittedNote: String? = null
+    fun reportSheetSubmitsTheTappedReasonInOneTap() {
+        var submittedReason: String? = null
         compose.setContent {
             RaddStreamTheme {
-                ReportBrokenStreamDialog(
-                    title = "Sample Film",
+                ReportBrokenStreamSheetBody(
                     isSubmitting = false,
-                    onSubmit = { submittedNote = it },
+                    onSubmit = { submittedReason = it },
                     onDismiss = {},
                 )
             }
         }
-        compose.onNodeWithText("Report an issue").assertIsDisplayed()
-        compose.onNodeWithText("Details (optional)").performTextInput("Stream stops at 10m")
-        compose.onNodeWithText("Send report").performClick()
-        assertEquals("Stream stops at 10m", submittedNote)
+        compose.onNodeWithText("Report a problem").assertIsDisplayed()
+        for (reason in listOf("Video won't play", "Wrong title", "Bad quality", "Something else")) {
+            compose.onNodeWithText(reason).assertIsDisplayed()
+        }
+        // The mockup is categories only — no free-text field any more.
+        compose.onNodeWithText("Details (optional)").assertDoesNotExist()
+        compose.onNodeWithText("Video won't play").performClick()
+        assertEquals("Video won't play", submittedReason)
+    }
+
+    @Test
+    fun reportSheetCancelCallsDismiss() {
+        var dismissed = false
+        compose.setContent {
+            RaddStreamTheme {
+                ReportBrokenStreamSheetBody(
+                    isSubmitting = false,
+                    onSubmit = {},
+                    onDismiss = { dismissed = true },
+                )
+            }
+        }
+        compose.onNodeWithText("Cancel").performClick()
+        assertEquals(true, dismissed)
     }
 }

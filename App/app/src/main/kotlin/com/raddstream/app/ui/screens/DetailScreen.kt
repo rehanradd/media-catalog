@@ -48,6 +48,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
@@ -56,7 +57,6 @@ import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
@@ -67,8 +67,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -77,6 +77,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -115,6 +116,7 @@ import com.raddstream.app.ui.components.AudioBadge
 import com.raddstream.app.ui.components.CapabilityChip
 import com.raddstream.app.ui.components.CamBadge
 import com.raddstream.app.ui.components.CatalogImage
+import com.raddstream.app.ui.components.CenteredMockupDialog
 import com.raddstream.app.ui.components.DetailSkeleton
 import com.raddstream.app.ui.components.ErrorState
 import com.raddstream.app.ui.components.HdrBadge
@@ -128,7 +130,6 @@ import com.raddstream.app.ui.components.UserWords
 import com.raddstream.app.ui.components.PrintQualityBadge
 import com.raddstream.app.ui.components.PrintSourceBadge
 import com.raddstream.app.ui.components.QualityRungCard
-import com.raddstream.app.ui.components.RaddDialogTitle
 import com.raddstream.app.ui.components.RatingBadge
 import com.raddstream.app.ui.components.SectionHeader
 import com.raddstream.app.ui.components.SubtitleBadge
@@ -147,7 +148,6 @@ import com.raddstream.app.ui.theme.pressScale
 import com.raddstream.app.ui.theme.rememberArtworkAccent
 import com.raddstream.app.viewmodel.DetailNavigationEvent
 import com.raddstream.app.viewmodel.DetailViewModel
-import com.raddstream.app.viewmodel.downloadConfirmLabel
 import com.raddstream.app.viewmodel.EpisodeGroup
 import com.raddstream.app.viewmodel.EpisodeProgress
 import com.raddstream.app.viewmodel.PendingKeep
@@ -156,7 +156,8 @@ import com.raddstream.app.viewmodel.RankedPrint
 import com.raddstream.app.viewmodel.ResumePoint
 import com.raddstream.app.viewmodel.SeasonGroup
 import com.raddstream.app.viewmodel.formatRuntimeMinutes
-import com.raddstream.app.viewmodel.keepSizeLabel
+import com.raddstream.app.viewmodel.keepConfirmLine
+import com.raddstream.app.viewmodel.seasonKeepConfirmLine
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -445,6 +446,7 @@ fun DetailScreen(
     state.pendingKeep?.let { pending ->
         KeepConfirmDialog(
             pending = pending,
+            wifiOnly = state.wifiOnlyDownloads,
             onConfirm = viewModel::confirmKeep,
             onDismiss = viewModel::dismissKeep,
             // UI-fix P1-D9: the coins Direct Link row is gone — it opened the
@@ -457,20 +459,17 @@ fun DetailScreen(
     state.pendingSeasonKeep?.let { pending ->
         SeasonKeepConfirmDialog(
             pending = pending,
+            wifiOnly = state.wifiOnlyDownloads,
             onConfirm = viewModel::confirmKeepSeason,
             onDismiss = viewModel::dismissKeepSeason,
         )
     }
 
     if (showReportDialog) {
-        val title = state.post?.let { detailDisplayTitle(it) }
-            ?: state.fallbackPost?.let { detailDisplayTitle(it) }
-            ?: "this title"
         ReportBrokenStreamDialog(
-            title = title,
             isSubmitting = state.isReportingIssue,
-            onSubmit = { note ->
-                viewModel.reportBrokenStream(note)
+            onSubmit = { reason ->
+                viewModel.reportBrokenStream(reason)
                 showReportDialog = false
             },
             onDismiss = { showReportDialog = false },
@@ -478,53 +477,90 @@ fun DetailScreen(
     }
 }
 
+/**
+ * The report sheet: four reasons, one tap each. Tapping a reason submits
+ * that reason as the report — the same [onSubmit] contract the free-text
+ * dialog had, so the view-model call is unchanged — and the caller closes
+ * the sheet. No free-text field: the mockup is categories only, and the
+ * reason itself is the report.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun ReportBrokenStreamDialog(
-    title: String,
     isSubmitting: Boolean,
     onSubmit: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var note by remember { mutableStateOf("") }
-    AlertDialog(
+    ModalBottomSheet(
         onDismissRequest = { if (!isSubmitting) onDismiss() },
-        title = { RaddDialogTitle("Report an issue") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(
-                    "Let us know if \"$title\" isn't playing, has missing audio, or failed to load.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                OutlinedTextField(
-                    value = note,
-                    onValueChange = { note = it.take(300) },
-                    label = { Text("Details (optional)") },
-                    placeholder = { Text("e.g., won't start, wrong audio, missing subtitles") },
-                    maxLines = 3,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = { onSubmit(note) },
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        ReportBrokenStreamSheetBody(
+            isSubmitting = isSubmitting,
+            onSubmit = onSubmit,
+            onDismiss = onDismiss,
+        )
+    }
+}
+
+/**
+ * The sheet's content on its own, so the reasons are pinned by a test
+ * without opening a sheet (the check-in sheet does the same).
+ */
+@Composable
+internal fun ReportBrokenStreamSheetBody(
+    isSubmitting: Boolean,
+    onSubmit: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val reasons = listOf("Video won't play", "Wrong title", "Bad quality", "Something else")
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .padding(bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(
+            text = "Report a problem",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.SemiBold,
+        )
+        for (reason in reasons) {
+            Surface(
+                onClick = { if (!isSubmitting) onSubmit(reason) },
                 enabled = !isSubmitting,
-                modifier = Modifier.heightIn(min = 48.dp),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
             ) {
-                Text(if (isSubmitting) "Sending…" else "Send report")
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        reason,
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Icon(
+                        Icons.Default.ChevronRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
-        },
-        dismissButton = {
-            TextButton(
-                onClick = onDismiss,
-                enabled = !isSubmitting,
-                modifier = Modifier.heightIn(min = 48.dp),
-            ) {
-                Text("Cancel")
-            }
-        },
-    )
+        }
+        TextButton(
+            onClick = onDismiss,
+            enabled = !isSubmitting,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+        ) {
+            Text("Cancel")
+        }
+    }
 }
 
 /**
@@ -534,40 +570,28 @@ internal fun ReportBrokenStreamDialog(
  * Confirm; Cancel leaves nothing behind.
  */
 @Composable
-private fun KeepConfirmDialog(
+internal fun KeepConfirmDialog(
     pending: PendingKeep,
+    wifiOnly: Boolean,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    AlertDialog(
+    CenteredMockupDialog(
         onDismissRequest = onDismiss,
-        // D-2: one dialog title style everywhere — display family,
-        // semibold, 20sp.
-        title = { RaddDialogTitle("Download this title?") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(pending.title, style = MaterialTheme.typography.titleSmall)
-                Text(
-                    pending.printLabel,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    keepSizeLabel(pending.sizeBytes),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        },
-        confirmButton = {
-            // Audit #10/#11: one dialog, one primary action — the version
-            // and its size, named together.
-            Button(onClick = onConfirm) { Text(downloadConfirmLabel(pending.printLabel, pending.sizeBytes)) }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
-        },
-    )
+        icon = Icons.Default.Download,
+        title = "Download this title?",
+        primaryLabel = "Download",
+        onPrimary = onConfirm,
+        secondaryLabel = "Cancel",
+        onSecondary = onDismiss,
+    ) {
+        Text(
+            keepConfirmLine(pending, wifiOnly),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+    }
 }
 
 /**
@@ -578,43 +602,36 @@ private fun KeepConfirmDialog(
  * single-download dialog above.
  */
 @Composable
-private fun SeasonKeepConfirmDialog(
+internal fun SeasonKeepConfirmDialog(
     pending: PendingSeasonKeep,
+    wifiOnly: Boolean,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    AlertDialog(
+    CenteredMockupDialog(
         onDismissRequest = onDismiss,
-        title = { RaddDialogTitle("Download Season ${pending.seasonNumber}?") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
-                    "${pending.items.size} episode${if (pending.items.size == 1) "" else "s"}",
-                    style = MaterialTheme.typography.titleSmall,
-                )
-                Text(
-                    keepSizeLabel(pending.totalSizeBytes),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (pending.lockedCount > 0) {
-                    Text(
-                        "${pending.lockedCount} episode${if (pending.lockedCount == 1) "" else "s"} need${if (pending.lockedCount == 1) "s" else ""} VIP and won't download.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            Button(onClick = onConfirm) {
-                Text("Download ${pending.items.size} episode${if (pending.items.size == 1) "" else "s"}")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
-        },
-    )
+        icon = Icons.Default.Download,
+        title = "Download season ${pending.seasonNumber}?",
+        primaryLabel = "Download",
+        onPrimary = onConfirm,
+        secondaryLabel = "Cancel",
+        onSecondary = onDismiss,
+    ) {
+        Text(
+            seasonKeepConfirmLine(pending, wifiOnly),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+        if (pending.lockedCount > 0) {
+            Text(
+                "${pending.lockedCount} episode${if (pending.lockedCount == 1) "" else "s"} need${if (pending.lockedCount == 1) "s" else ""} VIP and won't download.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+        }
+    }
 }
 
 /**

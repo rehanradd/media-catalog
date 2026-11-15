@@ -144,6 +144,13 @@ data class DetailUiState(
      */
     val pendingSeasonKeep: PendingSeasonKeep? = null,
     /**
+     * The viewer's own Wi-Fi-only downloads switch, mirrored so the keep
+     * confirm can say "Wi-Fi only" only when it is actually on. On by
+     * default, like the switch itself — a viewer who turned it off must
+     * never read a line that claims the download waits for Wi-Fi.
+     */
+    val wifiOnlyDownloads: Boolean = true,
+    /**
      * Session 76 (Build 4): the direct-download price (coins for one movie)
      * and the viewer's balance, read when the keep dialog opens so a free
      * viewer can see what a direct link costs and whether they can afford it.
@@ -277,15 +284,28 @@ fun keepSizeLabel(sizeBytes: Long?): String =
     sizeBytes?.takeIf { it > 0 }?.let { CacheAffordance.formatBytes(it) } ?: "Size unknown"
 
 /**
- * The dialog's one primary action (audit #10/#11): the version and its
- * size are named together, so the size is tied to the choice being made.
- * "Download 480p · 730 MB"; a size the server never named says so
+ * The single-download confirm's one line: title, quality, size, and the
+ * Wi-Fi-only note only when the viewer's own switch is on. "Salaar ·
+ * 1080p · 1.3 GB · Wi-Fi only"; a size the server never named says so
  * instead of inventing one.
  */
-fun downloadConfirmLabel(printLabel: String, sizeBytes: Long?): String {
-    val label = printLabel.trim().ifBlank { "this version" }
-    val size = sizeBytes?.takeIf { it > 0 }?.let { CacheAffordance.formatBytes(it) }
-    return if (size != null) "Download $label · $size" else "Download $label"
+fun keepConfirmLine(pending: PendingKeep, wifiOnly: Boolean): String {
+    val parts = listOf(pending.title, pending.printLabel, keepSizeLabel(pending.sizeBytes)) +
+        if (wifiOnly) listOf("Wi-Fi only") else emptyList()
+    return parts.joinToString(" · ")
+}
+
+/**
+ * The season-download confirm's one line: how many episodes, their total
+ * size, and the Wi-Fi-only note only when the viewer's own switch is on.
+ * "12 episodes · 4.2 GB · Wi-Fi only"; a total no episode named says so
+ * instead of inventing one.
+ */
+fun seasonKeepConfirmLine(pending: PendingSeasonKeep, wifiOnly: Boolean): String {
+    val count = "${pending.items.size} episode${if (pending.items.size == 1) "" else "s"}"
+    val parts = listOf(count, keepSizeLabel(pending.totalSizeBytes)) +
+        if (wifiOnly) listOf("Wi-Fi only") else emptyList()
+    return parts.joinToString(" · ")
 }
 
 /**
@@ -446,6 +466,7 @@ class DetailViewModel @Inject constructor(
         viewModelScope.launch {
             settingsRepository.wifiOnlyDownloads.collect { enabled ->
                 wifiOnlyDownloads = enabled
+                _uiState.update { it.copy(wifiOnlyDownloads = enabled) }
             }
         }
         viewModelScope.launch {

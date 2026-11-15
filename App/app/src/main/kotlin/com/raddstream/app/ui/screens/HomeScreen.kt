@@ -38,12 +38,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -97,6 +97,7 @@ import com.raddstream.app.network.models.PanelBroadcast
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.network.models.currentCalendarYear
 import com.raddstream.app.ui.components.CatalogImage
+import com.raddstream.app.ui.components.CenteredMockupDialog
 import com.raddstream.app.ui.components.EmptyState
 import com.raddstream.app.ui.components.ErrorState
 import com.raddstream.app.ui.components.HeroCarousel
@@ -106,7 +107,6 @@ import com.raddstream.app.ui.components.InlineLoadFailure
 import com.raddstream.app.ui.components.MediaRail
 import com.raddstream.app.ui.components.PosterCard
 import com.raddstream.app.ui.components.PosterRailSkeleton
-import com.raddstream.app.ui.components.RaddDialogTitle
 import com.raddstream.app.ui.components.SectionHeader
 import com.raddstream.app.ui.components.SeeAllButton
 import com.raddstream.app.ui.components.UserWords
@@ -115,7 +115,6 @@ import com.raddstream.app.ui.components.rememberReduceMotion
 import com.raddstream.app.ui.layout.CardGeometry
 import com.raddstream.app.ui.theme.RaddMotion
 import com.raddstream.app.ui.theme.RaddSignalGold
-import com.raddstream.app.ui.theme.RaddStreamMark
 import com.raddstream.app.update.InAppUpdate
 import com.raddstream.app.viewmodel.HomeFilter
 import com.raddstream.app.viewmodel.HomeSection
@@ -1172,73 +1171,60 @@ private fun BroadcastBanner(broadcast: PanelBroadcast, onDismiss: () -> Unit) {
  * minimum — offers no "Later" and cannot be dismissed: the viewer cannot
  * keep using a build the operator has withdrawn.
  */
-private fun AppUpdateDialog(
+internal fun AppUpdateDialog(
     required: Boolean,
     onUpdateNow: () -> Unit,
     onDismiss: () -> Unit,
     sizeBytes: Long = 0,
 ) {
-    AlertDialog(
+    CenteredMockupDialog(
         onDismissRequest = if (required) ({}) else onDismiss,
-        icon = { RaddStreamMark(diameter = 40.dp) },
-        title = {
-            // D-2: one dialog title style everywhere — display family,
-            // semibold, 20sp.
-            RaddDialogTitle(
-                text = Brand.copy(
-                    if (required) "update_required_title" else "update_title",
-                    if (required) "Update required" else "A new build is available",
-                ),
+        icon = Icons.Default.AutoAwesome,
+        title = Brand.copy(
+            if (required) "update_required_title" else "update_title",
+            if (required) "Update required" else "A new version is ready",
+        ),
+        primaryLabel = Brand.copy("update_now", "Update"),
+        onPrimary = onUpdateNow,
+        secondaryLabel = if (required) null else "Later",
+        onSecondary = onDismiss,
+    ) {
+        Text(
+            Brand.copy(
+                if (required) "update_required_message" else "update_message",
+                if (required) {
+                    "${Brand.name} needs an update to keep working. Download the new version to continue."
+                } else {
+                    "${Brand.name} has published a newer version. Download it to keep everything current."
+                },
+                "name" to Brand.name,
+            ),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+        // A viewer on mobile data wants to know what the tap costs
+        // before tapping it. No size published, no line — an absent
+        // number is not a zero-byte download.
+        if (sizeBytes > 0) {
+            Text(
+                text = "Download size: ${Formatter.formatShortFileSize(LocalContext.current, sizeBytes)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
             )
-        },
-        text = {
-            Column {
-                Text(
-                    Brand.copy(
-                        if (required) "update_required_message" else "update_message",
-                        if (required) {
-                            "${Brand.name} needs an update to keep working. Download the new version to continue."
-                        } else {
-                            "${Brand.name} has published a newer version. Download it to keep everything current."
-                        },
-                        "name" to Brand.name,
-                    ),
-                )
-                // A viewer on mobile data wants to know what the tap costs
-                // before tapping it. No size published, no line — an absent
-                // number is not a zero-byte download.
-                if (sizeBytes > 0) {
-                    Text(
-                        text = "Download size: ${Formatter.formatShortFileSize(LocalContext.current, sizeBytes)}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 8.dp),
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            Button(onClick = onUpdateNow) {
-                Text(Brand.copy("update_now", "Update Now"), fontWeight = FontWeight.SemiBold)
-            }
-        },
-        dismissButton = if (required) {
-            null
-        } else {
-            {
-                TextButton(onClick = onDismiss) { Text("Later") }
-            }
-        },
-        containerColor = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(28.dp),
-    )
+        }
+    }
 }
 
 /**
  * The check-in card's day line, as a pure function so the wording is pinned
  * by a test (HO-6): the day number is the server's claimed count, never the
  * device's open count; until the server answers, no day number is printed
- * at all; a guest reads the honest local wording.
+ * at all; a guest reads the honest local wording. A streak past the ladder
+ * reads complete, never an eighth promise. No coin amounts anywhere: the
+ * claim still pays the server's ladder, but the sheet shows the streak,
+ * not the price.
  */
 internal fun checkInDayLine(
     signedIn: Boolean,
@@ -1247,40 +1233,24 @@ internal fun checkInDayLine(
     targetDays: Int,
 ): String = when {
     signedIn && serverStreak != null ->
-        "Day $serverStreak of $targetDays — claim today's coins to keep the streak going."
+        "Day ${serverStreak.coerceIn(1, targetDays)} of $targetDays — keep the streak going."
     signedIn ->
-        "Claim today's coins to keep your streak going."
+        "Check in to keep your streak going."
     else ->
         "You've opened the app $streakCount days in a row."
 }
 
 /**
- * The claim button's label (HO-8): today's pay from the server's ladder at
- * the next claimable day. No ladder value, no amount promised — the button
- * falls back to the plain wording instead of inventing a number.
+ * The claim button's label (HO-8): the mockup's plain "Check in" — the
+ * button never names an amount, so there is nothing to invent and nothing
+ * to keep in step with the ladder.
  */
 internal fun claimButtonLabel(
-    serverStreak: Int?,
-    streakLadder: Map<Int, Int>,
     isClaiming: Boolean,
 ): String {
     if (isClaiming) return "Claiming…"
-    val todayDay = (serverStreak ?: 0) + 1
-    val todayCoins = streakLadder[todayDay] ?: return "Claim today's coins"
-    return "Claim $todayCoins coins for Day $todayDay"
+    return "Check in"
 }
-
-/**
- * The banner/sheet progress: claimed days against the ladder's last day.
- * A guest has no server streak, so the local open count stands in — the
- * banner's own line says the same thing ("You've opened the app N days in
- * a row"). Clamped: a streak past the ladder reads complete, never overfull.
- */
-internal fun streakProgress(
-    serverStreak: Int?,
-    streakCount: Int,
-    targetDays: Int,
-): Float = ((serverStreak ?: streakCount).coerceAtLeast(0).toFloat() / targetDays.coerceAtLeast(1)).coerceIn(0f, 1f)
 
 /**
  * The check-in ladder as a bottom sheet: the banner's tap target. Same state
@@ -1328,6 +1298,79 @@ internal fun CheckInSheet(
 }
 
 /**
+ * The 7-day ladder as circles, one per day: a claimed day is a jade disc
+ * with a check, a day still to come is a dark disc with its number, and
+ * the day's label sits underneath. Shared by the sheet and the standalone
+ * screen, so the two can never disagree about what a claimed day looks
+ * like. No amounts anywhere — the circles say which days are done, not
+ * what they paid.
+ */
+@Composable
+internal fun CheckInDayCircles(
+    currentStreak: Int,
+    targetDays: Int,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        for (day in 1..targetDays) {
+            val claimed = day <= currentStreak
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .background(
+                            color = if (claimed) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.surfaceVariant
+                            },
+                            shape = CircleShape,
+                        )
+                        .semantics {
+                            contentDescription = if (claimed) {
+                                "Day $day claimed"
+                            } else {
+                                "Day $day not claimed"
+                            }
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (claimed) {
+                        Icon(
+                            Icons.Default.Check,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    } else {
+                        Text(
+                            "$day",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                Text(
+                    "Day $day",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (claimed) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
+        }
+    }
+}
+
+/**
  * The sheet's content on its own, so the ladder and the claim are pinned by
  * a test without opening a sheet (the Search filter sheet does the same).
  */
@@ -1359,81 +1402,26 @@ internal fun CheckInSheetBody(
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
             )
+            CheckInDayCircles(
+                currentStreak = currentStreak,
+                targetDays = targetDays,
+            )
             Text(
                 text = when {
-                    !signedIn -> "Sign in to claim your coins."
+                    !signedIn -> "Sign in to check in."
                     claimedToday -> claimMessage ?: "Claimed for today."
                     else -> checkInDayLine(signedIn, serverStreak, streakCount, targetDays)
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            LinearProgressIndicator(
-                progress = { streakProgress(serverStreak, streakCount, targetDays) },
-                modifier = Modifier.fillMaxWidth(),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                trackColor = MaterialTheme.colorScheme.surfaceVariant,
-            )
-            // The ladder, one row per day — the CheckIn screen's rows, in
-            // miniature. A day at or below the streak is claimed; the next
-            // day is today's; the rest wait. A streak past the ladder reads
-            // complete, never an eighth promise.
-            for (day in 1..targetDays) {
-                val coins = streakLadder[day]
-                val claimed = day <= currentStreak
-                val isToday = !claimedToday && day == currentStreak + 1
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (isToday) {
-                            MaterialTheme.colorScheme.primaryContainer
-                        } else {
-                            MaterialTheme.colorScheme.surfaceVariant
-                        },
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Row(
-                        Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Text(
-                            "Day $day",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal,
-                        )
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (coins != null) {
-                                Text(
-                                    "+$coins coins",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                )
-                            } else {
-                                Text(
-                                    "—",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            if (claimed) {
-                                Icon(
-                                    Icons.Default.Check,
-                                    contentDescription = "Claimed",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(start = 8.dp),
-                                )
-                            }
-                        }
-                    }
-                }
-            }
             when {
                 !signedIn -> {
                     Button(
                         onClick = onOpenSignIn,
                         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                     ) {
-                        Text("Sign in to claim")
+                        Text("Sign in to check in")
                     }
                 }
                 claimedToday -> {
@@ -1449,10 +1437,13 @@ internal fun CheckInSheetBody(
                         enabled = !isClaiming,
                         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                     ) {
-                        Text(claimButtonLabel(serverStreak, streakLadder, isClaiming))
+                        Text(claimButtonLabel(isClaiming))
                     }
                 }
             }
+            // The mockup shows no link here, but the sheet is the Home
+            // path to the standalone screen — dropping it would strand
+            // the full ladder. It stays, as the one quiet row.
             TextButton(
                 onClick = onOpenCheckIn,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),

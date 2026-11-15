@@ -2,15 +2,14 @@ package com.raddstream.app.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -23,7 +22,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -36,11 +34,13 @@ import com.raddstream.app.viewmodel.AccountViewModel
  * only inside the VIP screen, so a viewer who never opened VIP never saw
  * it — and the Home card could claim, but never show the week. This screen
  * shows the 7-day ladder the server will actually pay, the streak it counts
- * on the server (not the device's local open-count), and the one Claim button.
- * A day already claimed rests; a day beyond the ladder's seventh is the
- * ladder complete, not a new promise. Nothing here is a local count: the
- * ladder, the streak and the grant all come from the ledger, and the claim's
- * answer is the server's own.
+ * on the server (not the device's local open-count), and the one Check in
+ * button. A day already claimed rests; a day beyond the ladder's seventh is
+ * the ladder complete, not a new promise. Nothing here is a local count:
+ * the ladder, the streak and the grant all come from the ledger, and the
+ * claim's answer is the server's own. The card shows the streak, never an
+ * amount: the claim still pays the server's ladder, but no day names what
+ * it pays.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -78,95 +78,62 @@ fun CheckInScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Text(
-                "Claim every day to keep the streak going. The coins are the server's ladder — the same ladder the claim pays.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                "${state.currentStreak} days in a row · best ${state.bestStreak}",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
-            // The ladder, one row per day. A day at or below the current
-            // streak is claimed; the next day is today's; the rest wait.
-            // A streak past day 7 has completed the ladder — the rows still
-            // show, claimed, rather than pretending an eighth day pays.
-            for (day in 1..7) {
-                val coins = state.streakLadder[day]
-                val claimed = day <= state.currentStreak
-                val isToday = !state.claimedToday && day == state.currentStreak + 1
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (isToday) {
-                            MaterialTheme.colorScheme.primaryContainer
-                        } else {
-                            MaterialTheme.colorScheme.surfaceVariant
-                        },
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
+            // The day number is the claimed streak, clamped to the ladder:
+            // a streak past day 7 has completed it, and a viewer who has
+            // not claimed yet is on day 1.
+            val dayNumber = state.currentStreak.coerceIn(1, 7)
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                ),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Row(
-                        Modifier.padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Text(
-                            "Day $day",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal,
-                        )
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (coins != null) {
-                                Text(
-                                    "+$coins coins",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                )
-                            } else {
-                                Text(
-                                    "—",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            if (claimed) {
-                                Icon(
-                                    Icons.Default.Check,
-                                    contentDescription = "Claimed",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(start = 8.dp),
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-            if (!state.signedIn) {
-                Text(
-                    "Sign in from Settings to claim your coins.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            } else if (state.claimedToday) {
-                Text(
-                    state.claimMessage ?: "Claimed for today — come back tomorrow.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            } else {
-                Button(
-                    onClick = { viewModel.claimDailyLogin() },
-                    enabled = !state.isClaiming,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(if (state.isClaiming) "Claiming…" else "Claim today's coins")
-                }
-                state.claimMessage?.let { message ->
+                    CheckInDayCircles(
+                        currentStreak = state.currentStreak,
+                        targetDays = 7,
+                    )
                     Text(
-                        message,
+                        "Day $dayNumber of 7",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        "Check in every day to keep your streak going.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    if (!state.signedIn) {
+                        Text(
+                            "Sign in from Settings to check in.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else if (state.claimedToday) {
+                        Text(
+                            state.claimMessage ?: "Claimed for today — come back tomorrow.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        Button(
+                            onClick = { viewModel.claimDailyLogin() },
+                            enabled = !state.isClaiming,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                        ) {
+                            Text(if (state.isClaiming) "Claiming…" else "Check in")
+                        }
+                        state.claimMessage?.let { message ->
+                            Text(
+                                message,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                 }
             }
             state.loadError?.let { error ->

@@ -6,16 +6,15 @@ import org.junit.Test
 /**
  * The check-in card's wording, pinned (Session 123, HO-6/HO-8): the day
  * number is the server's claimed count, never the device's open count, and
- * the claim button states the amount today pays from the server's ladder.
+ * the claim button never names an amount — the sheet shows the streak,
+ * not the price, so there is nothing to keep in step with the ladder.
  */
 class HomeCheckInTextTest {
-
-    private val ladder = mapOf(1 to 5, 2 to 5, 3 to 10, 4 to 10, 5 to 15, 6 to 15, 7 to 20)
 
     @Test
     fun `signed in with a server streak shows the server day`() {
         assertEquals(
-            "Day 2 of 7 — claim today's coins to keep the streak going.",
+            "Day 2 of 7 — keep the streak going.",
             checkInDayLine(signedIn = true, serverStreak = 2, streakCount = 9, targetDays = 7),
         )
     }
@@ -23,7 +22,7 @@ class HomeCheckInTextTest {
     @Test
     fun `signed in before the overview answers prints no day number`() {
         assertEquals(
-            "Claim today's coins to keep your streak going.",
+            "Check in to keep your streak going.",
             checkInDayLine(signedIn = true, serverStreak = null, streakCount = 9, targetDays = 7),
         )
     }
@@ -37,34 +36,20 @@ class HomeCheckInTextTest {
     }
 
     @Test
-    fun `the claim states todays pay from the ladder`() {
+    fun `a streak past the ladder reads complete`() {
         assertEquals(
-            "Claim 10 coins for Day 3",
-            claimButtonLabel(serverStreak = 2, streakLadder = ladder, isClaiming = false),
+            "Day 7 of 7 — keep the streak going.",
+            checkInDayLine(signedIn = true, serverStreak = 9, streakCount = 9, targetDays = 7),
         )
     }
 
     @Test
-    fun `claiming overrides the amount`() {
-        assertEquals(
-            "Claiming…",
-            claimButtonLabel(serverStreak = 2, streakLadder = ladder, isClaiming = true),
-        )
+    fun `the claim button never names an amount`() {
+        assertEquals("Check in", claimButtonLabel(isClaiming = false))
     }
 
     @Test
-    fun `no ladder value means no amount promised`() {
-        assertEquals(
-            "Claim today's coins",
-            claimButtonLabel(serverStreak = 2, streakLadder = emptyMap(), isClaiming = false),
-        )
-    }
-
-    @Test
-    fun `an unknown streak claims day one`() {
-        assertEquals(
-            "Claim 5 coins for Day 1",
-            claimButtonLabel(serverStreak = null, streakLadder = ladder, isClaiming = false),
-        )
+    fun `claiming overrides the label`() {
+        assertEquals("Claiming…", claimButtonLabel(isClaiming = true))
     }
 }

@@ -64,6 +64,11 @@ import androidx.compose.ui.tooling.preview.Preview
 import android.provider.Settings
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Surface
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.window.Dialog
 import com.raddstream.app.ui.layout.CardGeometry
 import com.raddstream.app.ui.theme.RaddEmphasized
 import com.raddstream.app.ui.theme.RaddStreamTheme
@@ -158,6 +163,88 @@ fun RaddDialogTitle(
         style = MaterialTheme.typography.headlineSmall,
         color = color,
     )
+}
+
+/**
+ * The Stitch mockup centred dialog: a dark card with a jade icon disc, a
+ * centred title, the body, and two side-by-side pill buttons — the jade
+ * primary on the right, the dark secondary on the left. One helper so the
+ * download confirms, the update dialog and the analytics consent can never
+ * drift apart again. [belowActions] is the quiet third row (the consent
+ * sheet's "Skip for now"); [secondaryLabel] null means a single full-width
+ * primary, for the update that cannot be put off.
+ */
+@Composable
+fun CenteredMockupDialog(
+    onDismissRequest: () -> Unit,
+    icon: ImageVector,
+    title: String,
+    primaryLabel: String,
+    onPrimary: () -> Unit,
+    primaryEnabled: Boolean = true,
+    secondaryLabel: String? = null,
+    onSecondary: (() -> Unit)? = null,
+    secondaryEnabled: Boolean = true,
+    belowActions: (@Composable ColumnScope.() -> Unit)? = null,
+    body: @Composable ColumnScope.() -> Unit,
+) {
+    Dialog(onDismissRequest = onDismissRequest) {
+        Surface(
+            shape = RoundedCornerShape(28.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        ) {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .background(
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            shape = CircleShape,
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        icon,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(28.dp),
+                    )
+                }
+                RaddDialogTitle(text = title)
+                body()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    if (secondaryLabel != null) {
+                        Button(
+                            onClick = { onSecondary?.invoke() },
+                            enabled = secondaryEnabled,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            ),
+                            modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                        ) {
+                            Text(secondaryLabel)
+                        }
+                    }
+                    Button(
+                        onClick = onPrimary,
+                        enabled = primaryEnabled,
+                        modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                    ) {
+                        Text(primaryLabel)
+                    }
+                }
+                belowActions?.invoke(this)
+            }
+        }
+    }
 }
 
 @Composable

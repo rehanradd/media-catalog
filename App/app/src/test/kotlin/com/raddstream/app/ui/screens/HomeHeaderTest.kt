@@ -154,17 +154,7 @@ class HomeHeaderTest {
     }
 
     @Test
-    fun streakProgressCountsClaimedDaysAgainstTheLadder() {
-        assertEquals(2f / 7f, streakProgress(serverStreak = 2, streakCount = 2, targetDays = 7), 0.001f)
-        // A guest has no server streak: the local open count stands in.
-        assertEquals(3f / 7f, streakProgress(serverStreak = null, streakCount = 3, targetDays = 7), 0.001f)
-        // A streak past the ladder reads complete, never overfull.
-        assertEquals(1f, streakProgress(serverStreak = 9, streakCount = 9, targetDays = 7), 0.001f)
-        assertEquals(0f, streakProgress(serverStreak = 0, streakCount = 0, targetDays = 7), 0.001f)
-    }
-
-    @Test
-    fun checkInSheetBodyShowsLadderAndClaim() {
+    fun checkInSheetBodyShowsCirclesAndClaim() {
         compose.setContent {
             RaddStreamTheme {
                 CheckInSheetBody(
@@ -181,10 +171,10 @@ class HomeHeaderTest {
             }
         }
         compose.onNodeWithText("Day 1").assertIsDisplayed()
-        // Days 1 and 2 both pay 5 in this ladder, so the text matches twice.
-        compose.onAllNodesWithText("+5 coins").assertCountEquals(2)
+        // No day names an amount any more — the circles say which days
+        // are done, not what they paid.
         compose.onNodeWithText("Day 3").assertIsDisplayed()
-        compose.onNodeWithText("Claim 10 coins for Day 3").assertIsDisplayed()
+        compose.onNodeWithText("Check in").assertIsDisplayed()
         compose.onNodeWithText("See all rewards").assertIsDisplayed()
     }
 
