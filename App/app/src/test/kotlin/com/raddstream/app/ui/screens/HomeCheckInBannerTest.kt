@@ -1,7 +1,9 @@
 package com.raddstream.app.ui.screens
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -127,7 +129,8 @@ class HomeCheckInBannerTest {
             }
         }
         compose.onNodeWithText("Day 1").assertIsDisplayed()
-        compose.onNodeWithText("+5 coins").assertIsDisplayed()
+        // Days 1 and 2 both pay 5 in this ladder, so the text matches twice.
+        compose.onAllNodesWithText("+5 coins").assertCountEquals(2)
         compose.onNodeWithText("Day 3").assertIsDisplayed()
         compose.onNodeWithText("Claim 10 coins for Day 3").assertIsDisplayed()
         compose.onNodeWithText("See all rewards").assertIsDisplayed()
