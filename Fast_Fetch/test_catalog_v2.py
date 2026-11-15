@@ -24,6 +24,7 @@ import catalog_api
 import catalog_v2
 import fast_fetch
 import link_health
+import redact
 import release_descriptor
 import validate_catalog_full
 import viewer
@@ -1906,6 +1907,41 @@ class EntitlementTests(ProjectionTestCase):
         self.assertEqual([r["model"] for r in rows], ["rental"])
         self.assertEqual(rows[0]["rental_hours"], 24)
         self.assertEqual(rows[0]["requires_account"], 0)
+
+
+class NeedleSnapshotProjectionTests(ProjectionTestCase):
+    """The projection builds the needle snapshot (Session 147) so the next
+    process start reads ~1,300 rows instead of two DISTINCT scans over
+    download_sources (~12.8s on the live catalog)."""
+
+    def test_projection_builds_the_needle_snapshot(self):
+        self.add_post("vegamovies", "https://vega.test/snapshot-film/",
+                      clean_title="Snapshot Film", year=2024,
+                      releases=[{"release_title": "Snapshot Film 1080p",
+                                 "quality": "1080p",
+                                 "sources": [{"source_name": "Zzsnapshotprobe Mirror",
+                                              "service": "zzsnapshotprobe",
+                                              "resource_id": "x",
+                                              "source_url": "https://zz.test/f/1",
+                                              "final_url": "https://zz.test/f/1",
+                                              "playback_type": "direct",
+                                              "is_temporary": 0,
+                                              "status": "active"}]}])
+        self.project()
+        stored = {r[0] for r in
+                  self.conn.execute("SELECT value FROM site_needle_values")}
+        self.assertIn("zzsnapshotprobe", stored)
+        stamp = self.conn.execute(
+            "SELECT value FROM cat_projection_meta "
+            "WHERE key = 'needle_snapshot_at'").fetchone()
+        projected = self.conn.execute(
+            "SELECT value FROM cat_projection_meta "
+            "WHERE key = 'projected_at'").fetchone()
+        self.assertIsNotNone(stamp)
+        self.assertEqual(stamp[0], projected[0])
+        # And the serve path reads it: the next _ensure_schema serves the
+        # snapshot instead of scanning the ledger.
+        self.assertIn("zzsnapshotprobe", redact.site_needles(str(self.db_path)))
 
 
 if __name__ == "__main__":

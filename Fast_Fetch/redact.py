@@ -1656,24 +1656,105 @@ def site_needles(db_path=None) -> frozenset[str]:
                         needles.add(str(value or "").strip().lower())
                 # For download_sources, scan when table is small or indexed; _registry_needles()
                 # already carries all canonical hosters and services.
-                has_service_idx = conn.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type='index' AND tbl_name='download_sources' AND name='idx_sources_service'"
-                ).fetchone()
-                sub_cnt = conn.execute("SELECT count(*) FROM (SELECT 1 FROM download_sources LIMIT 100000)").fetchone()[0]
-                if has_service_idx or sub_cnt < 100000:
-                    for (value,) in conn.execute("SELECT DISTINCT service FROM download_sources"):
-                        needles.add(str(value or "").strip().lower())
-                    for (value,) in conn.execute(
-                            "SELECT DISTINCT source_name FROM download_sources"):
-                        head = re.match(r"\W*([A-Za-z][A-Za-z0-9\-]{4,})", str(value or ""))
-                        if head:
-                            needles.add(head.group(1).lower())
+                # Session 147: the snapshot is the fast path — the projection
+                # rebuilds `site_needle_values` when download_sources is final
+                # (catalog_v2._finalize), so process start reads ~1,300 rows
+                # instead of two DISTINCT scans over 4.45M rows (~12.8s per
+                # fresh process, measured 2026-11-15). When the snapshot is
+                # absent or stale, fall back to the live scan below.
+                snapshot = _snapshot_needle_values(conn)
+                if snapshot is not None:
+                    needles.update(snapshot)
+                else:
+                    has_service_idx = conn.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='index' AND tbl_name='download_sources' AND name='idx_sources_service'"
+                    ).fetchone()
+                    sub_cnt = conn.execute("SELECT count(*) FROM (SELECT 1 FROM download_sources LIMIT 100000)").fetchone()[0]
+                    if has_service_idx or sub_cnt < 100000:
+                        for (value,) in conn.execute("SELECT DISTINCT service FROM download_sources"):
+                            needles.add(str(value or "").strip().lower())
+                        for (value,) in conn.execute(
+                                "SELECT DISTINCT source_name FROM download_sources"):
+                            head = re.match(r"\W*([A-Za-z][A-Za-z0-9\-]{4,})", str(value or ""))
+                            if head:
+                                needles.add(head.group(1).lower())
         except Exception:
             pass
     return frozenset(
         n for n in needles
         if n and len(n) >= 4 and n not in {"unknown", "null", "none"}
         and n not in GENERIC_TOKENS)
+
+
+#: Snapshot of the download_sources vocabulary, rebuilt by the catalog
+#: projection and read by site_needles() at process start.
+SNAPSHOT_TABLE = "site_needle_values"
+SNAPSHOT_STAMP_KEY = "needle_snapshot_at"
+
+
+def rebuild_site_needle_snapshot(conn) -> int:
+    """Rebuild the needle-vocabulary snapshot from the live ledger.
+
+    Runs inside the catalog projection (catalog_v2._finalize), when
+    download_sources is final. Stores the raw `service` values and the
+    head-token of each `source_name` — the same two DISTINCT queries
+    site_needles() used to run live; the length/generic-token filter still
+    applies at read time, in site_needles() itself. Returns the number of
+    values stored. The caller commits. Returns 0 when there is no
+    download_sources table to read (a fixture DB that never had one).
+    """
+    has_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='download_sources'"
+    ).fetchone()
+    if not has_table:
+        return 0
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS site_needle_values (value TEXT PRIMARY KEY)"
+    )
+    values = set()
+    for (value,) in conn.execute("SELECT DISTINCT service FROM download_sources"):
+        text = str(value or "").strip().lower()
+        if text:
+            values.add(text)
+    for (value,) in conn.execute("SELECT DISTINCT source_name FROM download_sources"):
+        head = re.match(r"\W*([A-Za-z][A-Za-z0-9\-]{4,})", str(value or ""))
+        if head:
+            values.add(head.group(1).lower())
+    conn.execute("DELETE FROM site_needle_values")
+    conn.executemany(
+        "INSERT OR IGNORE INTO site_needle_values (value) VALUES (?)",
+        [(v,) for v in sorted(values)],
+    )
+    return len(values)
+
+
+def _snapshot_needle_values(conn):
+    """The projected needle snapshot, or None when absent or stale.
+
+    Stale means its stamp does not match the projection's `projected_at`:
+    the projection rebuilds the snapshot and stamps both in the same run,
+    so a mismatch means a merge ran without the rebuild (or the rebuild
+    failed and warned) and the live scan is the honest answer. Any error —
+    a missing table, a missing meta key — also means None, never a crash:
+    the caller falls back to the live scan.
+    """
+    try:
+        has_table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='site_needle_values'"
+        ).fetchone()
+        if not has_table:
+            return None
+        stamp = conn.execute(
+            "SELECT value FROM cat_projection_meta WHERE key = 'needle_snapshot_at'"
+        ).fetchone()
+        projected = conn.execute(
+            "SELECT value FROM cat_projection_meta WHERE key = 'projected_at'"
+        ).fetchone()
+        if not stamp or not projected or stamp[0] != projected[0]:
+            return None
+        return {str(row[0]) for row in conn.execute("SELECT value FROM site_needle_values")}
+    except Exception:
+        return None
 
 
 #: `posts.source_site` also holds the literal 'vegamovies' as a schema default on

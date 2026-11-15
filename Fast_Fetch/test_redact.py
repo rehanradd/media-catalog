@@ -824,6 +824,78 @@ class NeedleVocabularyTests(FixtureMixin):
             self.assertNotIn(whole, broad)
 
 
+class NeedleSnapshotTests(FixtureMixin):
+    """The projected needle snapshot (Session 147): site_needles() at process
+    start reads ~1,300 rows from `site_needle_values` instead of two DISTINCT
+    scans over download_sources (~12.8s on the live catalog)."""
+
+    def setUp(self):
+        self.make_ledger()
+        self._plant_distinctive_service()
+
+    def _plant_distinctive_service(self):
+        """Give one ledger row a service name that exists nowhere else — not
+        in BASE_NEEDLES, not in the registry, not in posts — so the test can
+        tell the snapshot apart from every other vocabulary source."""
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute("SELECT id FROM download_sources LIMIT 1").fetchone()
+            conn.execute(
+                "UPDATE download_sources SET service = 'zzsnapshotprobe', "
+                "source_name = 'Zzsnapshotprobe Mirror' WHERE id = ?",
+                (row[0],))
+
+    def _build_snapshot(self, stamp="T1", projected="T1"):
+        with sqlite3.connect(self.db_path) as conn:
+            count = redact.rebuild_site_needle_snapshot(conn)
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS cat_projection_meta "
+                "(key TEXT PRIMARY KEY, value TEXT)")
+            conn.execute(
+                "INSERT OR REPLACE INTO cat_projection_meta VALUES "
+                "('needle_snapshot_at', ?)", (stamp,))
+            conn.execute(
+                "INSERT OR REPLACE INTO cat_projection_meta VALUES "
+                "('projected_at', ?)", (projected,))
+            conn.commit()
+        return count
+
+    def test_snapshot_matches_the_live_scan(self):
+        before = redact.site_needles(self.db_path)
+        self.assertIn("zzsnapshotprobe", before)
+        count = self._build_snapshot()
+        self.assertGreater(count, 0)
+        after = redact.site_needles(self.db_path)
+        self.assertEqual(before, after)
+        with sqlite3.connect(self.db_path) as conn:
+            stored = {r[0] for r in
+                      conn.execute("SELECT value FROM site_needle_values")}
+        self.assertIn("zzsnapshotprobe", stored)
+
+    def test_snapshot_serves_after_the_rows_are_gone(self):
+        self._build_snapshot()
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM download_sources")
+            conn.commit()
+        # The live scan now finds nothing, but the snapshot still serves it.
+        self.assertIn("zzsnapshotprobe", redact.site_needles(self.db_path))
+
+    def test_stale_snapshot_falls_back_to_the_live_scan(self):
+        self._build_snapshot(stamp="T1", projected="T2")
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM download_sources")
+            conn.commit()
+        # Stamps disagree, so the snapshot is ignored and the live scan —
+        # which now finds nothing — is the honest answer.
+        self.assertNotIn("zzsnapshotprobe", redact.site_needles(self.db_path))
+
+    def test_rebuild_on_a_db_without_download_sources_returns_zero(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = str(Path(d) / "empty.db")
+            with sqlite3.connect(path) as conn:
+                self.assertEqual(redact.rebuild_site_needle_snapshot(conn), 0)
+                self.assertIsNone(redact._snapshot_needle_values(conn))
+
+
 # ── 2. the live HTTP edge ────────────────────────────────────────────────────
 
 class UnknownBrandAndDanglingWordTests(unittest.TestCase):
