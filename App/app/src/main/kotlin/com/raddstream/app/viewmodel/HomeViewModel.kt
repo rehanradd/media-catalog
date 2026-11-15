@@ -927,7 +927,7 @@ class HomeViewModel @Inject constructor(
                 _uiState.update {
                     it.copy(
                         isRefreshing = false,
-                        fatal = friendlyNetworkError(error, "Your connected catalog server did not respond."),
+                        fatal = friendlyNetworkError(error, "The catalog didn't answer. Try again in a moment."),
                     )
                 }
             }

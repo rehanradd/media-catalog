@@ -28,13 +28,13 @@ class ClientErrorsTest {
     }
 
     @Test
-    fun `unresolved host points at the server address the viewer typed`() {
+    fun `unresolved host points at the catalog address the viewer typed`() {
         val message = friendlyNetworkError(UnknownHostException("example.invalid"), fallback)
         assertTrue(message, message.contains("Check its address in Settings"))
     }
 
     @Test
-    fun `refused connection says the server may be offline`() {
+    fun `refused connection says the catalog may be offline`() {
         val message = friendlyNetworkError(ConnectException("Failed to connect /1.2.3.4:80"), fallback)
         assertTrue(message, message.contains("didn't answer"))
     }
@@ -46,7 +46,7 @@ class ClientErrorsTest {
     }
 
     @Test
-    fun `rate limit and server trouble are told apart by status code`() {
+    fun `rate limit and catalog trouble are told apart by status code`() {
         assertTrue(
             friendlyNetworkError(IOException("HTTP 429 Too Many Requests"), fallback)
                 .contains("Give it a minute")
@@ -72,7 +72,7 @@ class ClientErrorsTest {
         // suffix showed "(HTTP 503 Service Unavailable)" to the viewer.
         val error = IOException("HTTP 503 Service Unavailable")
         val debug = friendlyNetworkError(error, fallback, debugBuild = true)
-        assertEquals("The catalog server is having trouble right now.", debug)
+        assertEquals("The catalog is having trouble right now.", debug)
         assertTrue(debug, !debug.contains("503"))
     }
 

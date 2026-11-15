@@ -15,7 +15,7 @@ import java.net.UnknownHostException
  * protocol's text, not the user's.
  *
  * What the viewer needs is which of the three real situations this is — the address
- * is wrong, the server is not answering, or this build is not allowed to reach it —
+ * is wrong, the catalog is not answering, or this build is not allowed to reach it —
  * and each one names where to go.
  *
  * App-design audit (2026-11-12, issue #14): the raw text is NEVER appended,
@@ -32,20 +32,20 @@ fun friendlyNetworkError(
     val plain = when {
         // The platform's own refusal, word for word from NetworkPolicyManager.
         raw.contains("CLEARTEXT communication") ->
-            "This connection is not allowed over an unsecured address. " +
-                "Use a server address that starts with https, or keep the app on its current server."
+            "This connection isn't allowed over an unsecured address. " +
+                "Use an address that starts with https, or keep using the catalog you're on."
         error is UnknownHostException || raw.contains("Unable to resolve host") ->
-            "We couldn't find that server. Check its address in Settings."
+            "We couldn't find the catalog at that address. Check its address in Settings."
         error is ConnectException || raw.contains("Failed to connect") ->
-            "The server didn't answer. It may be offline — try again in a moment."
+            "The catalog didn't answer. It may be offline — try again in a moment."
         error is SocketTimeoutException || raw.contains("timeout", ignoreCase = true) ->
-            "The server took too long to answer. Try again."
+            "The catalog took too long to answer. Try again."
         httpStatus(raw) == 429 ->
             "That was a lot of requests at once. Give it a minute."
         httpStatus(raw) == 404 ->
-            "The server doesn't have this page of the catalog."
+            "The catalog doesn't have this page."
         (httpStatus(raw) ?: 0) >= 500 ->
-            "The catalog server is having trouble right now."
+            "The catalog is having trouble right now."
         else -> fallback
     }
     return plain

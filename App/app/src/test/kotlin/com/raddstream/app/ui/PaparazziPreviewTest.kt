@@ -311,7 +311,7 @@ class PaparazziPreviewTest {
         paparazzi.snapshot {
             themed {
                 HomeContent(
-                    state = HomeUiState(fatal = "Server did not respond."),
+                    state = HomeUiState(fatal = "Couldn't reach the catalog."),
                     heroAutoplay = false,
                 )
             }

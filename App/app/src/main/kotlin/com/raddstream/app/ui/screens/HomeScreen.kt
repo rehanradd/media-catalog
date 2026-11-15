@@ -372,11 +372,11 @@ internal fun HomeContent(
         val anyVisible = state.sections.any { it.visible }
         if (state.fatal != null && !anyVisible) {
             ErrorState(
-                message = state.fatal ?: "Server did not respond.",
+                message = state.fatal ?: "Couldn't reach the catalog.",
                 onRetry = onRefresh,
                 // The address is the one thing a person can fix themselves, and
                 // Settings is four taps away. Offer it where the failure is seen.
-                secondaryLabel = "Set up a server",
+                secondaryLabel = "Try a different address",
                 onSecondary = onSetupServerClick,
             )
         } else {
@@ -562,16 +562,16 @@ internal fun HomeContent(
             }
             // A successful empty load is a blank page today: no rails, no
             // error, nothing to tap. Say so, and point at the one fix the
-            // viewer can do — the server address in Settings.
+            // viewer can do — a different address.
             if (renderedRows.isEmpty() && state.continueWatching.isEmpty() &&
                 state.sections.none { it.loading } && state.fatal == null
             ) {
                 EmptyState(
                     title = "Nothing here yet",
-                    message = "This catalog has no titles to show. Check your server in Settings.",
+                    message = "No titles to show right now.",
                     action = {
                         OutlinedButton(onClick = onSetupServerClick) {
-                            Text("Set up a server")
+                            Text("Try a different address")
                         }
                     },
                 )
