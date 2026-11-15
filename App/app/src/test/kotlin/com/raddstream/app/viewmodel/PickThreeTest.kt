@@ -17,6 +17,13 @@ import org.junit.Test
  * next three of that rail, or the next rail when it runs short. And the
  * card is a one-shot: the first display retires it, whether the viewer
  * picked, dismissed, or scrolled past.
+ *
+ * Fixed 2026-11-15: the once is a whole Home visit, not one frame. The
+ * first build set only the persisted shown flag on display, and the gate
+ * required it false — so the card retired itself the instant it composed
+ * and no user or Robo run ever saw it. The visit latch keeps the card up
+ * while it is showing; leaving Home clears the latch, and the persisted
+ * flag then keeps it away.
  */
 class PickThreeTest {
 
@@ -34,6 +41,7 @@ class PickThreeTest {
         favoriteIds: Set<Int> = emptySet(),
         pickThreeDone: Boolean = false,
         pickThreeShown: Boolean = false,
+        pickThreeShownThisVisit: Boolean = false,
         firstBrowseDone: Boolean = true,
     ) = HomeUiState(
         sections = sections,
@@ -41,6 +49,7 @@ class PickThreeTest {
         favoriteIds = favoriteIds,
         pickThreeDone = pickThreeDone,
         pickThreeShown = pickThreeShown,
+        pickThreeShownThisVisit = pickThreeShownThisVisit,
         firstBrowseDone = firstBrowseDone,
     )
 
@@ -112,11 +121,57 @@ class PickThreeTest {
     }
 
     @Test
-    fun `shown card never returns even without a pick or a dismiss`() {
+    fun `shown card never returns on a later visit even without a pick or a dismiss`() {
         val s = state(pickThreeShown = true)
 
         // The picks are still computed — the card is retired, not empty.
         assertEquals(listOf(7, 8, 9), s.pickThreeCandidates.map { it.id })
+        assertFalse(s.showPickThree)
+    }
+
+    @Test
+    fun `display latches the card visible for the rest of the visit`() {
+        // This is the bug that hid the card from every user and both Robo
+        // runs: display used to retire the card the same frame it
+        // appeared. The latch is what keeps it up while it is showing.
+        val shown = state().onPickThreeShown()
+
+        assertTrue(shown.pickThreeShown)
+        assertTrue(shown.pickThreeShownThisVisit)
+        assertTrue(shown.showPickThree)
+        assertEquals(listOf(7, 8, 9), shown.pickThreeCandidates.map { it.id })
+    }
+
+    @Test
+    fun `leaving Home ends the visit so the card never returns`() {
+        val ended = state().onPickThreeShown().onPickThreeVisitEnded()
+
+        assertTrue("the persisted shown flag survives the visit", ended.pickThreeShown)
+        assertFalse(ended.pickThreeShownThisVisit)
+        assertFalse(ended.showPickThree)
+    }
+
+    @Test
+    fun `card stays visible after one pick on the same visit`() {
+        // The empty-favourites gate is an entry condition, not a live
+        // one — one or two picks must not hide a card mid-visit.
+        val s = state(
+            favoriteIds = setOf(7),
+            pickThreeShown = true,
+            pickThreeShownThisVisit = true,
+        )
+
+        assertTrue(s.showPickThree)
+    }
+
+    @Test
+    fun `third pick retires the card even mid-visit`() {
+        val s = state(
+            pickThreeDone = true,
+            pickThreeShown = true,
+            pickThreeShownThisVisit = true,
+        )
+
         assertFalse(s.showPickThree)
     }
 

@@ -61,6 +61,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -232,6 +233,7 @@ fun HomeScreen(
             onRemoveFromContinueWatching = { viewModel.removeFromContinueWatching(it) },
             onDismissPickThree = viewModel::dismissPickThree,
             onPickThreeShown = viewModel::markPickThreeShown,
+            onPickThreeVisitEnded = viewModel::endPickThreeVisit,
             onDismissTrialNote = viewModel::dismissTrialNote,
             onClaimDailyLogin = viewModel::claimDailyLogin,
         )
@@ -310,6 +312,7 @@ internal fun HomeContent(
     onRemoveFromContinueWatching: (ResumeTile) -> Unit = {},
     onDismissPickThree: () -> Unit = {},
     onPickThreeShown: () -> Unit = {},
+    onPickThreeVisitEnded: () -> Unit = {},
     onDismissTrialNote: () -> Unit = {},
     onClaimDailyLogin: () -> Unit = {},
 ) {
@@ -492,6 +495,13 @@ internal fun HomeContent(
             // new viewer meets a movie first, and the picks are still
             // the first thing that asks anything of them.
             if (state.showPickThree) {
+                // The visit latch clears when the card leaves composition:
+                // the viewer left Home, or scrolled the card out of the
+                // feed. Either way the visit is over, and the persisted
+                // shown flag keeps the card away on the next visit.
+                DisposableEffect(Unit) {
+                    onDispose { onPickThreeVisitEnded() }
+                }
                 PickThreeCard(
                     candidates = state.pickThreeCandidates,
                     isFavorite = { post ->
@@ -720,10 +730,13 @@ private fun StartWatchingPlaceholder(onBrowse: () -> Unit) {
  * promises personalisation — the picks ARE the start of My List, and the
  * card says exactly that.
  *
- * One-shot: the first display retires the card ([onShown] fires from a
- * LaunchedEffect), whether the viewer picks, dismisses, or scrolls past.
- * Home scrolls as one column and this card rides high in the feed, so
- * first composition is first display for practical purposes.
+ * One-shot: the first display latches the card for the whole Home visit
+ * ([onShown] fires from a LaunchedEffect) — the viewer can read it, pick
+ * from it, or dismiss it. The visit ends when the card leaves composition
+ * (Home left, or the card scrolled out of the feed), and the persisted
+ * shown flag then keeps it away for good. The first build retired the
+ * card on display instead, so it vanished within a frame of appearing
+ * and no user or Robo run ever saw it; the latch is the fix.
  */
 @Composable
 internal fun PickThreeCard(

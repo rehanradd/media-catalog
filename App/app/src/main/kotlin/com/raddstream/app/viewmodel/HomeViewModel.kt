@@ -193,10 +193,24 @@ data class HomeUiState(
     val pickThreeDone: Boolean = false,
     /**
      * Pick 3 (home review, Nov 2026): true once the card has been displayed
-     * a single time. The card is a one-shot — first display retires it,
-     * whether the viewer picked, dismissed, or scrolled past.
+     * on a previous Home visit. The card is a one-shot — first display
+     * retires it, whether the viewer picked, dismissed, or scrolled past —
+     * but the shot is the whole visit, not one frame: the first build also
+     * read this flag in [showPickThree], so the card retired itself the
+     * instant it composed and no user or Robo run ever saw it. The visit
+     * latch ([pickThreeShownThisVisit]) is what keeps the card up while
+     * it is showing; this flag only keeps it away on later visits.
      */
     val pickThreeShown: Boolean = false,
+    /**
+     * Pick 3 (fixed 2026-11-15): true while the card is on screen on THIS
+     * Home visit. Set by [onPickThreeShown] the moment the card composes,
+     * cleared by [onPickThreeVisitEnded] when the card leaves composition
+     * (the viewer left Home, or scrolled the card out of the feed).
+     * Session-only — never persisted; the persisted [pickThreeShown] is
+     * what retires the card for good.
+     */
+    val pickThreeShownThisVisit: Boolean = false,
     /**
      * B5: true once the viewer has opened a title detail or started a
      * playback — the first browse or play. The Pick 3 card waits for it, so
@@ -250,12 +264,38 @@ data class HomeUiState(
      * offer three real titles to pick from. B5: and only after the first
      * browse or play, so the card never greets a viewer who has not looked
      * at anything yet — first open is the catalog, the card comes later.
-     * Pick 3: and only once — the first display retires it, so a viewer
-     * who scrolled past it is never asked again.
+     * Pick 3 (fixed 2026-11-15): and only once — but the once is a whole
+     * Home visit. The visit latch ([pickThreeShownThisVisit]) keeps the
+     * card up while it is showing, even after the persisted shown flag
+     * lands and even after the first one or two picks (the empty-favourites
+     * gate is an entry condition, not a live one — the third pick retires
+     * the card through [pickThreeDone]). A viewer who scrolled past it is
+     * never asked again: leaving Home clears the latch, and the persisted
+     * flag then keeps the card away.
      */
     val showPickThree: Boolean
-        get() = !pickThreeDone && !pickThreeShown && firstBrowseDone && continueWatching.isEmpty() &&
-            favoriteIds.isEmpty() && pickThreeCandidates.size >= 3
+        get() = !pickThreeDone && (pickThreeShownThisVisit ||
+            (!pickThreeShown && firstBrowseDone && continueWatching.isEmpty() &&
+                favoriteIds.isEmpty() && pickThreeCandidates.size >= 3))
+
+    /**
+     * Pick 3 (fixed 2026-11-15): the card reported shown on this visit.
+     * Latches the card visible for the rest of the visit AND records the
+     * persisted shown flag, so a later visit never offers it again. The
+     * first build only set [pickThreeShown], and [showPickThree] required
+     * it false — so the card retired itself the frame it appeared and no
+     * user or Robo run ever saw it. The latch is the fix: display must
+     * not be the thing that hides the card.
+     */
+    fun onPickThreeShown(): HomeUiState =
+        copy(pickThreeShown = true, pickThreeShownThisVisit = true)
+
+    /**
+     * Pick 3: the Home visit ended — the card scrolled out of the feed or
+     * the viewer left Home. The visit latch clears; the persisted shown
+     * flag already keeps the card away on later visits.
+     */
+    fun onPickThreeVisitEnded(): HomeUiState = copy(pickThreeShownThisVisit = false)
 }
 
 /**
@@ -786,16 +826,28 @@ class HomeViewModel @Inject constructor(
     }
 
     /**
-     * Pick 3 (home review, Nov 2026): the card is a one-shot — the first
-     * display retires it. Called from the card's own LaunchedEffect, so
-     * the flag lands the moment the card is on screen, not when the viewer
-     * acts on it. Same shape as [setPickThreeDone].
+     * Pick 3 (home review, Nov 2026; fixed 2026-11-15): the card is a
+     * one-shot — but the shot is the whole Home visit, not one frame.
+     * Called from the card's own LaunchedEffect, so the latch lands the
+     * moment the card is on screen; the card stays up until the viewer
+     * dismisses it, picks a third title, or leaves Home, and the persisted
+     * flag keeps it away on later visits. Same shape as [setPickThreeDone].
      */
     fun markPickThreeShown() {
-        _uiState.update { it.copy(pickThreeShown = true) }
+        _uiState.update { it.onPickThreeShown() }
         viewModelScope.launch {
             runCatching { settingsRepository.setPickThreeShown(true) }
         }
+    }
+
+    /**
+     * Pick 3: the Home visit ended — the card scrolled out of the feed
+     * or the viewer left Home. Clears the visit latch (session only);
+     * the persisted shown flag already keeps the card away on later
+     * visits. Never touches the persisted flag.
+     */
+    fun endPickThreeVisit() {
+        _uiState.update { it.onPickThreeVisitEnded() }
     }
 
     /**

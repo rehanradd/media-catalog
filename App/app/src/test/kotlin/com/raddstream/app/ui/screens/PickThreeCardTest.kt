@@ -20,8 +20,11 @@ import org.robolectric.RobolectricTestRunner
 /**
  * Pick 3 (home review, Nov 2026): the redesigned card is three poster
  * thumbnails in a row with a heart on each poster — the poster opens the
- * title, the heart saves it to My List — and the first display retires
- * the card, so it shows exactly once.
+ * title, the heart saves it to My List — and it shows exactly once, for
+ * one whole Home visit. Fixed 2026-11-15: the first display used to
+ * retire the card the same frame it appeared, so no user ever saw it;
+ * display now latches the visit (see [PickThreeVisitTest]) and the card
+ * retires on dismiss, third pick, or leaving Home.
  */
 @RunWith(RobolectricTestRunner::class)
 class PickThreeCardTest {
@@ -89,12 +92,17 @@ class PickThreeCardTest {
 
     @Test
     fun firstDisplayReportsShownOnce() {
+        // The callback latches the visit (and records the persisted shown
+        // flag) — it must fire exactly once per composition, and it must
+        // NOT hide the card: the card staying up is pinned by
+        // PickThreeVisitTest, which drives the real HomeContent gate.
         var shownCount = 0
         setCard(onShown = { shownCount++ })
 
         compose.waitForIdle()
 
         assertEquals(1, shownCount)
+        compose.onNodeWithText("Pick 3 you like").assertIsDisplayed()
     }
 
     @Test
