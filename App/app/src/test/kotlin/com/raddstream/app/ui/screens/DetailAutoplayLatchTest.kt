@@ -79,8 +79,8 @@ class DetailAutoplayLatchTest {
             source.contains("autoPlayedFor = post.id"),
         )
         assertTrue(
-            "DetailScreen must import rememberSaveable",
-            source.contains("import androidx.compose.runtime.rememberSaveable"),
+            "DetailScreen must import rememberSaveable from androidx.compose.runtime.saveable",
+            source.contains("import androidx.compose.runtime.saveable.rememberSaveable"),
         )
     }
 }
