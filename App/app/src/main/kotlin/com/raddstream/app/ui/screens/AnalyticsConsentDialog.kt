@@ -47,8 +47,9 @@ internal fun AnalyticsConsentDialog(
         onDismissRequest = onSkip,
         icon = Icons.Default.BarChart,
         // The name comes from Brand, never a literal — the drift test
-        // forbids a hardcoded brand name outside the brand files, and
-        // the short name is the sentence-case one ("Radd Stream").
+        // scans raw file text, comments included, so even a quoted
+        // brand name in a comment trips it. The short name is the
+        // sentence-case one.
         title = Brand.copy(
             "analytics_consent_title",
             "Help improve {name}",
