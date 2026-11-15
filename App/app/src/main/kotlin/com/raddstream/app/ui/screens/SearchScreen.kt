@@ -542,7 +542,10 @@ internal fun FilterRail(state: SearchUiState, onSelectType: (String?) -> Unit, o
                     selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimary,
                     containerColor = MaterialTheme.colorScheme.surfaceContainer,
                     labelColor = MaterialTheme.colorScheme.onSurface,
-                    leadingIconColor = MaterialTheme.colorScheme.onSurface,
+                    // This Compose version names the unselected icon colour
+                    // `iconColor`, not `leadingIconColor` — the latter does
+                    // not exist and fails compileDebugKotlin (CI 43738577241).
+                    iconColor = MaterialTheme.colorScheme.onSurface,
                 ),
                 selected = activeFilterCount > 0,
                 onClick = onOpenFilters,
