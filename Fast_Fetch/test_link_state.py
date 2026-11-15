@@ -228,11 +228,14 @@ class ClassifyTests(unittest.TestCase):
             (failed("https://a", status=500, error="http_500"), "dead"),
             (failed("https://a", status=403, error="http_403"), "expired"),
             (failed("https://a", status=429, error="http_429"), "expired"),
-            (failed("https://a", error="timeout"), "dead"),
-            (failed("https://a", error="dns"), "dead"),
-            (failed("https://a", error="tls"), "dead"),
-            (failed("https://a", error="conn_reset"), "dead"),
-            (failed("https://a", error="conn_error:ValueError"), "dead"),
+            # transport: our side failed to reach the endpoint, so no verdict
+            # is earned — measured 2026-11-15, timeout + dns + reset killed
+            # 4,986 of the live catalog's 10,871 dead rows (46%)
+            (failed("https://a", error="timeout"), "unverified"),
+            (failed("https://a", error="dns"), "unverified"),
+            (failed("https://a", error="tls"), "unverified"),
+            (failed("https://a", error="conn_reset"), "unverified"),
+            (failed("https://a", error="conn_error:ValueError"), "unverified"),
             (failed("https://a", error="redirect_loop"), "dead"),
             (failed("https://a", error="empty_body"), "dead"),
             # alive but not media: liveness is true, playability is the other axis
@@ -246,6 +249,17 @@ class ClassifyTests(unittest.TestCase):
         for payload, expected in cases:
             self.assertEqual(link_state.classify(payload), expected,
                              getattr(payload, "error", payload))
+
+    def test_transport_vocabulary_matches_resolved_cache(self):
+        """link_state and resolved_cache share one transport vocabulary.
+
+        A timeout must never be "dead" in the ledger and "not a strike" in
+        the cache circuit at the same time; the equality pins the shared set.
+        """
+        import resolved_cache
+
+        self.assertEqual(link_state._TRANSPORT_ERRORS,
+                         resolved_cache.TRANSPORT_CAUSES)
 
     def test_effective_status_refuses_an_unprobed_active(self):
         unprobed = {"status": "active", "checked_at": None,

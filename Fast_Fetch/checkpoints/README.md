@@ -5,6 +5,7 @@ Newest first. Each file is a session block moved verbatim out of `Fast_Fetch/CON
 Entries written to `CONTINUITY.md` by another lane *after* the rotation are not lost: the rebase onto
 trunk `4fe6f65` moved them here the same way, verbatim, with the trunk line range in the header.
 
+- 2026-11-15 — transport failures earn no verdict `[LINK-TRANSPORT-NO-VERDICT]`: `link_state.classify()` mapped timeout/dns/tls/reset to `dead` on one strike — measured 4,986 of the live catalog's 10,871 dead rows (46%) were killed that way, all with `http_status=0`. Fix: transport errors return `unverified` (no verdict, row stays eligible); `_TRANSPORT_ERRORS` pinned equal to `resolved_cache.TRANSPORT_CAUSES`; the `test_resolved_cache` pin that demanded `dead` for every transport word updated to the new contract. Local: 34 + 85 + 5 + 13 green. NOT live — gate deploy is the supervisor's call. Full note: `20261115-link-transport-no-verdict.md`.
 - 2026-11-15 — instant play `[REV-VERIFY-FLOOR]`: the press DOES bank —
   the audit counted rows for the bundle's link_id while the handle decodes
   to a different id — but the banked row was born expired

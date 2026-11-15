@@ -1128,11 +1128,17 @@ class TestTransportIsNotEvidence(unittest.TestCase):
 
     def test_transport_vocabulary_is_link_states_own_words(self):
         """No new taxonomy (crown item 1): every refused cause must be a word
-        `link_state` already uses AND already maps to `dead` — which is
-        exactly why these answers used to strike. If link_state ever grows a
-        transport word this guard misses, the subset pin does not catch it;
-        the direction of that drift (an endpoint word mis-refused) is caught
-        by the accrual tests above instead."""
+        `link_state` already uses — and one it maps to `unverified`, not
+        `dead`. A transport failure earns no verdict in the ledger
+        (link_state.classify) and no strike in the circuit
+        (resolved_cache.note_failure_from_probe); the shared vocabulary is
+        what keeps the two surfaces from disagreeing about a failure.
+        Measured 2026-11-15: timeout + dns + reset killed 4,986 of the
+        live catalog's 10,871 dead rows (46%) while they still mapped to
+        dead. If link_state ever grows a transport word this guard misses,
+        the subset pin does not catch it; the direction of that drift (an
+        endpoint word mis-refused) is caught by the accrual tests above
+        instead."""
         import link_state
         for word in sorted(resolved_cache.TRANSPORT_CAUSES):
             with self.subTest(word=word):
@@ -1140,9 +1146,8 @@ class TestTransportIsNotEvidence(unittest.TestCase):
                               "resolved_cache must not invent a vocabulary")
                 self.assertEqual(
                     link_state.classify({"ok": False, "error": word}),
-                    link_state.STATUS_DEAD,
-                    "the word must be one whose dead verdict used to flow "
-                    "into the circuit unchecked")
+                    link_state.STATUS_UNVERIFIED,
+                    "a transport failure earns no verdict in the ledger")
 
 
 class TestTransportCauseNaming(unittest.TestCase):

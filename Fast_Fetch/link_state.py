@@ -54,8 +54,13 @@ Status mapping (``classify()``, pure and network-free)
     http_404 / http_410 / http_451        -> dead      (the resource is gone)
     any other 4xx, any 5xx                -> dead
     timeout / dns / tls / conn_reset /
-    conn_error / redirect_loop /
-    redirect_limit / empty_body           -> dead      (we could not get bytes)
+    conn_error                            -> unverified (we never reached an
+                                           endpoint, so no verdict is earned;
+                                           measured 2026-11-15, transport
+                                           killed 4,986 of the live catalog's
+                                           10,871 dead rows — 46%)
+    redirect_loop / redirect_limit /
+    empty_body                            -> dead      (we could not get bytes)
     2xx that answers but is not media
     (not_media, html_page, embed)         -> active    + probe_error recorded
     blocked_target / blocklisted /
@@ -118,6 +123,20 @@ _ERROR_CODES = ("timeout", "dns", "tls", "conn_reset", "conn_error",
                 "invalid_url", "head_unsupported")
 #: error codes that mean "we refused to look", so the row has no verdict at all.
 _NO_VERDICT_ERRORS = ("blocked_target", "blocklisted", "invalid_url")
+
+#: Transport causes — OUR side failing to reach the endpoint (timeout, DNS,
+#: TLS, reset). A verdict about our night, not about their link: no verdict
+#: is earned, so the row stays unverified and remains eligible for a later
+#: run. Must match resolved_cache.TRANSPORT_CAUSES exactly (a test pins the
+#: equality) — the two surfaces share one vocabulary so a timeout can never
+#: be "dead" in one place and "not a strike" in the other. Measured
+#: 2026-11-15 on the live catalog: timeout + conn_reset + dns killed 4,986
+#: of the 10,871 rows marked dead (46%), all with http_status=0.
+#: NOTE: link_health's "dns" does not distinguish NXDOMAIN (host gone) from
+#: a resolver failure on our side, so it earns no verdict either; if the
+#: prober ever splits them, NXDOMAIN can go hard (serve_verify already
+#: treats dns as hard).
+_TRANSPORT_ERRORS = frozenset(("timeout", "dns", "tls", "conn_reset", "conn_error"))
 
 # ── knobs sized for a 1-CPU VM next to a live crawler ────────────────────────
 
@@ -280,9 +299,14 @@ def classify(payload) -> str:
     if error in ("not_media",) or (error == "" and status and status < 400):
         # The endpoint answered; it just did not hand us media. Liveness: true.
         return STATUS_ACTIVE
+    if error in _TRANSPORT_ERRORS or error.startswith("conn_error"):
+        # Transport failure: we never reached an endpoint (http_status is 0
+        # here — any real answer was already handled by the status branches
+        # above), so there is no verdict about the link. verdict_for()
+        # returns None for it and the sweep leaves the row alone for a
+        # later run.
+        return STATUS_UNVERIFIED
     if error in _ERROR_CODES:
-        return STATUS_DEAD
-    if error.startswith("conn_error"):
         return STATUS_DEAD
     return STATUS_DEAD if error else STATUS_UNVERIFIED
 
