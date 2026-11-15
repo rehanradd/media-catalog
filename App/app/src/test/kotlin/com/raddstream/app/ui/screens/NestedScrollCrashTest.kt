@@ -20,6 +20,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performScrollTo
@@ -184,7 +185,11 @@ class NestedScrollCrashTest {
                 )
             }
         }
-        compose.onNodeWithText("Recently added").performScrollTo().assertIsDisplayed()
+        // The hero rail's own titles are the hero's slides: Audit #18
+        // dedupes them out of the rail below, so the "Recently added"
+        // header never paints — the second rail's header is the one that
+        // proves the rails composed.
+        compose.onNodeWithText("Most copies").performScrollTo().assertIsDisplayed()
         compose.onRoot().assertExists()
     }
 
@@ -203,7 +208,9 @@ class NestedScrollCrashTest {
                 )
             }
         }
-        compose.onNodeWithText("Recently added").performScrollTo().assertIsDisplayed()
+        // Same Audit #18 dedupe as above: the hero rail paints no header,
+        // the second rail does.
+        compose.onNodeWithText("Most copies").performScrollTo().assertIsDisplayed()
         compose.onRoot().assertExists()
     }
 
@@ -554,7 +561,10 @@ class NestedScrollCrashTest {
                 )
             }
         }
-        compose.onNodeWithText("Hindi").performScrollTo().assertIsDisplayed()
+        // The rows speak through content descriptions, not text (the
+        // SubScreensMockupTest pins the same nodes this way).
+        compose.onNodeWithContentDescription("Audio language: Hindi")
+            .performScrollTo().assertIsDisplayed()
     }
 
     @Test
