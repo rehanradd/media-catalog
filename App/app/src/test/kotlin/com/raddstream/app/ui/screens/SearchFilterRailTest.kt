@@ -8,6 +8,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.dp
@@ -121,5 +122,22 @@ class SearchFilterRailTest {
         compose.waitForIdle()
         compose.onNodeWithText("ALL").assertIsDisplayed()
         compose.onNodeWithText("MOVIES").assertIsDisplayed()
+    }
+
+    @Test
+    fun rightEdgeFadeMaskExists() {
+        // Search review (Nov 2026): the last chip hard-clipped at the right
+        // edge ("KPO") — a fade mask over the row's right edge replaces the
+        // hard clip. The mask is a plain overlay (no click handling), so
+        // the test only pins its presence; the chips beneath stay tappable
+        // through it.
+        compose.setContent {
+            RaddStreamTheme {
+                Box(Modifier.size(width = 360.dp, height = 120.dp)) {
+                    FilterRail(state = SearchUiState(), onSelectType = {}, onOpenFilters = {})
+                }
+            }
+        }
+        compose.onNodeWithTag(FilterRailFadeTag).assertExists()
     }
 }

@@ -616,6 +616,7 @@ fun RaddStreamNavGraph(
                     initialIndustry = backStackEntry.arguments?.getString(Screen.Search.ARG_INDUSTRY)?.takeIf { it.isNotBlank() },
                     initialLanguage = backStackEntry.arguments?.getString(Screen.Search.ARG_LANGUAGE)?.takeIf { it.isNotBlank() },
                     onPostClick = { post -> navController.navigateToPost(post) },
+                    onBrowse = { type -> navController.navigate(Screen.Browse.createRoute(type)) },
                     onPlayDirectUrl = { url, title ->
                         // The address is staged, never routed: the player
                         // opens the opaque key and reads the address from

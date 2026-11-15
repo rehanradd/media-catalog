@@ -48,6 +48,8 @@ class SearchDiscoveryTest {
         onRunQuery: (String) -> Unit = {},
         onRemoveRecent: (String) -> Unit = {},
         onPostClick: (Post) -> Unit = {},
+        onSeeAllTrending: () -> Unit = {},
+        onSeeAllRecommended: () -> Unit = {},
     ) {
         compose.setContent {
             RaddStreamTheme {
@@ -60,6 +62,8 @@ class SearchDiscoveryTest {
                     onRunQuery = onRunQuery,
                     onRemoveRecent = onRemoveRecent,
                     onPostClick = onPostClick,
+                    onSeeAllTrending = onSeeAllTrending,
+                    onSeeAllRecommended = onSeeAllRecommended,
                 )
             }
         }
@@ -164,5 +168,56 @@ class SearchDiscoveryTest {
         compose.onNodeWithText("Trending now").assertDoesNotExist()
         compose.onNodeWithText("Recent searches").assertDoesNotExist()
         compose.onNodeWithText("Recommended for you").assertDoesNotExist()
+    }
+
+    @Test
+    fun seeAllButtonsPresentOnBothSections() {
+        setDiscovery()
+
+        // The two "See all" buttons share their text, so the test taps
+        // the tags, not the text — the text alone is ambiguous.
+        compose.onNodeWithTag(SeeAllTrendingTag).assertIsDisplayed()
+        // "Recommended for you" sits below the fold in the short
+        // Robolectric window — scroll first, the way the order test does.
+        compose.onNodeWithTag(SeeAllRecommendedTag).performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun tappingTrendingSeeAllCallsCallback() {
+        var called = false
+        setDiscovery(onSeeAllTrending = { called = true })
+
+        compose.onNodeWithTag(SeeAllTrendingTag).performClick()
+        assertTrue(called)
+    }
+
+    @Test
+    fun tappingRecommendedSeeAllCallsCallback() {
+        var called = false
+        setDiscovery(onSeeAllRecommended = { called = true })
+
+        compose.onNodeWithTag(SeeAllRecommendedTag).performScrollTo().performClick()
+        assertTrue(called)
+    }
+
+    @Test
+    fun seeAllHiddenWhenSectionsEmpty() {
+        setDiscovery(recents = emptyList(), trending = emptyList(), recommended = emptyList())
+
+        compose.onNodeWithTag(SeeAllTrendingTag).assertDoesNotExist()
+        compose.onNodeWithTag(SeeAllRecommendedTag).assertDoesNotExist()
+    }
+
+    @Test
+    fun browseTypeForSeeAllMapsRailTypes() {
+        // The rail's types are the Browse route's — except "kpop", which
+        // the server has no content_type for, so it expands to the whole
+        // catalog instead of an empty one.
+        assertEquals("movie", browseTypeForSeeAll("movie"))
+        assertEquals("series", browseTypeForSeeAll("series"))
+        assertEquals("anime", browseTypeForSeeAll("anime"))
+        assertEquals(null, browseTypeForSeeAll("kpop"))
+        assertEquals(null, browseTypeForSeeAll(null))
+        assertEquals(null, browseTypeForSeeAll("complete_season"))
     }
 }

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -32,6 +33,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CardMembership
 import androidx.compose.material.icons.filled.Category
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.ExpandLess
@@ -72,6 +74,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalFocusManager
@@ -134,6 +137,27 @@ private val railTypeChips = listOf(
     "KPOP" to "kpop",
 )
 
+/** Test tags on the discovery "See all" actions, so a test taps the button itself. */
+internal const val SeeAllTrendingTag = "see-all-trending"
+internal const val SeeAllRecommendedTag = "see-all-recommended"
+
+/** Test tag on the filter rail's right-edge fade mask. */
+internal const val FilterRailFadeTag = "filter-rail-fade"
+
+/**
+ * The Browse route's type for a "See all" tap: the rail's type values are
+ * the Browse route's, except "kpop" — the server has no kpop content_type
+ * (SearchViewModel: content_type='kpop' answers zero rows), so K-pop
+ * expands to the whole trending catalog rather than an empty one.
+ * Browse serves sort=trending, so the expanded "Recommended for you" grid
+ * is the same scope in trending order, not newest order — a sort argument
+ * on the Browse route is a later slice, not this one.
+ */
+internal fun browseTypeForSeeAll(type: String?): String? = when (type) {
+    "movie", "series", "anime" -> type
+    else -> null
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 // Session 121 (P-30): Search is a bottom-nav tab root — there is nowhere to go back
@@ -142,6 +166,8 @@ private val railTypeChips = listOf(
 fun SearchScreen(
     onPostClick: (Post) -> Unit = {},
     onPlayDirectUrl: (url: String, title: String) -> Unit = { _, _ -> },
+    /** A "See all" tap expands a discovery section in Browse, with the active type filter. */
+    onBrowse: (String?) -> Unit = {},
     /** A query to run at once — an actor tap on a detail card lands here with the name filled in. */
     initialQuery: String? = null,
     /** A genre filter to apply at once — a facet chip on Home lands here with the genre filled in. */
@@ -311,6 +337,8 @@ fun SearchScreen(
                     onRunSuggestion = viewModel::runSuggestion,
                     onLoadMore = viewModel::loadMore,
                     onPostClick = onPostClick,
+                    onSeeAllTrending = { onBrowse(browseTypeForSeeAll(state.filters.type)) },
+                    onSeeAllRecommended = { onBrowse(browseTypeForSeeAll(state.filters.type)) },
                 )
             } else if (state.recents.isNotEmpty()) {
                 // A pasted link replaces the results, not the history: the
@@ -363,7 +391,9 @@ fun SearchScreen(
  * The field searches titles and cast names; only the prompt is unified
  * with Home's bar, not the capability.
  * Mockup (Nov 2026): one rounded field, 52dp tall, 16dp corners, prompt
- * "Search movies, shows, anime".
+ * "Search titles, genres, or cast" (search review: the old "Search movies,
+ * shows, anime" mismatched the chips — SERIES, not "shows" — and omitted
+ * KPOP; the new prompt names what the field takes).
  */
 @Composable
 internal fun SearchField(
@@ -372,9 +402,9 @@ internal fun SearchField(
     onSubmit: () -> Unit,
     modifier: Modifier = Modifier,
     // Audit #17: the Home search bar names what it takes — titles and
-    // shows — while Search keeps the shorter hint. The mockup's prompt
-    // names all three: movies, shows, anime.
-    label: String = "Search movies, shows, anime",
+    // shows — while Search keeps the shorter hint. The review's prompt
+    // names all three: titles, genres, or cast.
+    label: String = "Search titles, genres, or cast",
 ) {
     TextField(
         value = query,
@@ -487,84 +517,108 @@ internal fun FilterRail(state: SearchUiState, onSelectType: (String?) -> Unit, o
             itemEnd > end -> listState.animateScrollBy((itemEnd - end).toFloat())
         }
     }
-    LazyRow(
-        state = listState,
-        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        // Session 121 (P-29): the last chip ("Anime") was clipped at the right edge —
-        // the row needs end padding; start stays 0 because the outer column already
-        // pads 16 dp.
-        contentPadding = PaddingValues(start = 0.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
-    ) {
-        items(railTypeChips) { (label, value) ->
-            val selected = state.filters.type == value
-            FilterChip(
-                colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = MaterialTheme.colorScheme.primary,
-                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                    labelColor = MaterialTheme.colorScheme.onSurface,
-                ),
-                selected = selected,
-                onClick = { onSelectType(value) },
-                label = {
-                    Text(
-                        label,
-                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                    )
-                },
-                // CL-3, same as the sheet: the rail's "ALL" chip is the Type
-                // group's "All", and it must say so — bare "ALL" is the bug.
-                // Audit #54: a FilterChip is 32 dp tall — the touch-target floor is 48 dp, so the chip itself carries it.
-                modifier = if (label == "ALL") {
-                    Modifier.heightIn(min = 48.dp).semantics { contentDescription = "All types" }
-                } else {
-                    Modifier.heightIn(min = 48.dp)
-                },
-            )
+    // Search review (Nov 2026): the last chip hard-clipped at the right
+    // edge ("KPO") — a fade mask, the same treatment Home's BrowseSection
+    // gets, so the row reads as scrollable instead of broken. Local to
+    // this file: no shared fade component (the Home fix owns the shared
+    // files right now).
+    Box(Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+        LazyRow(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            // Session 121 (P-29): the last chip ("Anime") was clipped at the right edge —
+            // the row needs end padding; start stays 0 because the outer column already
+            // pads 16 dp.
+            contentPadding = PaddingValues(start = 0.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
+        ) {
+            items(railTypeChips) { (label, value) ->
+                val selected = state.filters.type == value
+                FilterChip(
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = MaterialTheme.colorScheme.primary,
+                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                        labelColor = MaterialTheme.colorScheme.onSurface,
+                    ),
+                    selected = selected,
+                    onClick = { onSelectType(value) },
+                    label = {
+                        Text(
+                            label,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                        )
+                    },
+                    // CL-3, same as the sheet: the rail's "ALL" chip is the Type
+                    // group's "All", and it must say so — bare "ALL" is the bug.
+                    // Audit #54: a FilterChip is 32 dp tall — the touch-target floor is 48 dp, so the chip itself carries it.
+                    modifier = if (label == "ALL") {
+                        Modifier.heightIn(min = 48.dp).semantics { contentDescription = "All types" }
+                    } else {
+                        Modifier.heightIn(min = 48.dp)
+                    },
+                )
+            }
+            item {
+                val activeFilterCount = listOf(
+                    state.filters.industry != IndustryFilter.ALL,
+                    state.filters.genre != GenreFilter.ALL,
+                    state.filters.quality != QualityFilter.ALL,
+                    state.filters.language != LanguageFilter.ALL,
+                    state.filters.yearFrom != null || state.filters.yearTo != null,
+                    state.filters.includedOnly,
+                    state.sort != SearchSort.DEFAULT,
+                ).count { it }
+                val filtersLabel = if (activeFilterCount > 0) "Filters ($activeFilterCount)" else "Filters"
+                val filtersA11y = if (activeFilterCount > 0) "Filters, $activeFilterCount active" else "Filters"
+                FilterChip(
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = MaterialTheme.colorScheme.primary,
+                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                        selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimary,
+                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                        labelColor = MaterialTheme.colorScheme.onSurface,
+                        // This Compose version names the unselected icon colour
+                        // `iconColor`, not `leadingIconColor` — the latter does
+                        // not exist and fails compileDebugKotlin (CI 43738577241).
+                        iconColor = MaterialTheme.colorScheme.onSurface,
+                    ),
+                    selected = activeFilterCount > 0,
+                    onClick = onOpenFilters,
+                    label = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Text(filtersLabel)
+                        }
+                    },
+                    // Audit #54: a FilterChip is 32 dp tall — the touch-target floor is 48 dp, so the chip itself carries it.
+                    modifier = Modifier
+                        .heightIn(min = 48.dp)
+                        .semantics { contentDescription = filtersA11y },
+                )
+            }
         }
-        item {
-            val activeFilterCount = listOf(
-                state.filters.industry != IndustryFilter.ALL,
-                state.filters.genre != GenreFilter.ALL,
-                state.filters.quality != QualityFilter.ALL,
-                state.filters.language != LanguageFilter.ALL,
-                state.filters.yearFrom != null || state.filters.yearTo != null,
-                state.filters.includedOnly,
-                state.sort != SearchSort.DEFAULT,
-            ).count { it }
-            val filtersLabel = if (activeFilterCount > 0) "Filters ($activeFilterCount)" else "Filters"
-            val filtersA11y = if (activeFilterCount > 0) "Filters, $activeFilterCount active" else "Filters"
-            FilterChip(
-                colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = MaterialTheme.colorScheme.primary,
-                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-                    selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimary,
-                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                    labelColor = MaterialTheme.colorScheme.onSurface,
-                    // This Compose version names the unselected icon colour
-                    // `iconColor`, not `leadingIconColor` — the latter does
-                    // not exist and fails compileDebugKotlin (CI 43738577241).
-                    iconColor = MaterialTheme.colorScheme.onSurface,
+    // The overlay carries no click handling, so taps pass through to
+    // the chips beneath it.
+    Box(
+        modifier = Modifier
+            .align(Alignment.CenterEnd)
+            .width(32.dp)
+            .fillMaxHeight()
+            .background(
+                Brush.horizontalGradient(
+                    colors = listOf(
+                        Color.Transparent,
+                        MaterialTheme.colorScheme.background,
+                    ),
                 ),
-                selected = activeFilterCount > 0,
-                onClick = onOpenFilters,
-                label = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Text(filtersLabel)
-                    }
-                },
-                // Audit #54: a FilterChip is 32 dp tall — the touch-target floor is 48 dp, so the chip itself carries it.
-                modifier = Modifier
-                    .heightIn(min = 48.dp)
-                    .semantics { contentDescription = filtersA11y },
             )
-        }
+            .testTag(FilterRailFadeTag),
+    )
     }
 }
 
@@ -643,6 +697,8 @@ internal fun SearchDiscoveryContent(
     onRunQuery: (String) -> Unit,
     onRemoveRecent: (String) -> Unit,
     onPostClick: (Post) -> Unit,
+    onSeeAllTrending: () -> Unit = {},
+    onSeeAllRecommended: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -658,6 +714,7 @@ internal fun SearchDiscoveryContent(
             SectionHeader(
                 title = "Trending now",
                 modifier = Modifier.padding(top = 16.dp),
+                action = { SeeAllButton(onClick = onSeeAllTrending, tag = SeeAllTrendingTag) },
             )
             Spacer(Modifier.height(8.dp))
             // The outer column already pads 16dp: the rail starts at 0 and
@@ -678,6 +735,7 @@ internal fun SearchDiscoveryContent(
             SectionHeader(
                 title = "Recommended for you",
                 modifier = Modifier.padding(top = 20.dp),
+                action = { SeeAllButton(onClick = onSeeAllRecommended, tag = SeeAllRecommendedTag) },
             )
             Spacer(Modifier.height(8.dp))
             state.recommended.chunked(3).forEach { trio ->
@@ -724,6 +782,32 @@ internal fun SearchDiscoveryContent(
     }
 }
 
+/**
+ * Search review (Nov 2026): "See all" on a discovery section header —
+ * muted text + chevron, the Stitch redesign's treatment. A TextButton
+ * with the 48dp touch floor; the tap expands the section in Browse.
+ */
+@Composable
+private fun SeeAllButton(onClick: () -> Unit, tag: String) {
+    TextButton(
+        onClick = onClick,
+        modifier = Modifier.testTag(tag).heightIn(min = 48.dp),
+        contentPadding = PaddingValues(start = 8.dp, end = 0.dp, top = 0.dp, bottom = 0.dp),
+    ) {
+        Text(
+            text = "See all",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Icon(
+            Icons.Default.ChevronRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(18.dp),
+        )
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun SearchContent(
@@ -738,6 +822,8 @@ internal fun SearchContent(
     onRunSuggestion: (String) -> Unit,
     onLoadMore: () -> Unit,
     onPostClick: (Post) -> Unit,
+    onSeeAllTrending: () -> Unit = {},
+    onSeeAllRecommended: () -> Unit = {},
 ) {
     // Session 121 (P-12): scrolling the results dismisses the keyboard — the open
     // keyboard covering the top row was the other half of the complaint (the first
@@ -757,6 +843,8 @@ internal fun SearchContent(
                 onRunQuery = onRunQuery,
                 onRemoveRecent = onRemoveRecent,
                 onPostClick = onPostClick,
+                onSeeAllTrending = onSeeAllTrending,
+                onSeeAllRecommended = onSeeAllRecommended,
             )
         }
         state.isLoading && state.groups.isEmpty() -> SearchResultsSkeleton(
