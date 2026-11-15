@@ -174,15 +174,17 @@ fun SectionHeader(
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Column(Modifier.weight(1f)) {
-            // Restyle: section heads are the emphasized titleLarge (22sp,
-            // bold) — a rail head that reads at a glance without shouting
-            // over the posters below it.
+            // Density (Nov 2026): section heads are titleMedium (16sp,
+            // bold) — 22sp is the app-bar/page-title slot, and a rail head
+            // at 22sp shouts over the posters below it. M3 Expressive has
+            // no density scale factor; density comes from picking the
+            // smaller token, never a global scale.
             // F30 (Batch B): a heading, not bare paint — TalkBack users
             // navigate by headings, and Robo flagged the "Your library"
             // strip as having no screen-reader label at all.
             Text(
                 text = title,
-                style = RaddEmphasized.titleLarge,
+                style = RaddEmphasized.titleMedium,
                 color = MaterialTheme.colorScheme.onBackground,
                 modifier = Modifier.semantics { heading() },
             )
