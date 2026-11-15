@@ -55,7 +55,7 @@ import kotlinx.coroutines.launch
  */
 /**
  * The rails Home actually renders, in order. Continue Watching counts as a
- * row: the rule is at most 10 rows total, CW first and pinned, so the
+ * row: the rule is at most 10 rows total, CW pinned under the hero, so the
  * content rails behind it are 9 when CW is showing and 10 when it is not.
  * A panel that publishes 12 sections does not get 12 rails on a phone —
  * the cap is the phone's, and the first rails win.

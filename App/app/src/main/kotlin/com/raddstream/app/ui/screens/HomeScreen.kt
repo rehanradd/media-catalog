@@ -367,46 +367,18 @@ internal fun HomeContent(
                 onSecondary = onSetupServerClick,
             )
         } else {
-            // Continue Watching is first and pinned: it is the one rail
-            // this device owns outright, and the research rule is that
-            // Home opens on it — the hero carousel is discovery, not the
-            // first thing. The hero still rides the first rail that has
-            // rows, only now it rides behind the rail that remembers.
+            // B3 (home review, Nov 2026): the Continue Watching rail is
+            // pinned under the hero, not above it — it used to sit first
+            // and only exist once resume data existed, so a fresh install
+            // never showed it and a new viewer never learned the feature
+            // is there. The rail itself lives below the hero now; with rows
+            // it is the real rail, unchanged, and without rows it is a
+            // "Start watching" placeholder whose CTA opens Browse.
             val shownRows = visibleHomeRows(state.sections, state.continueWatching.isNotEmpty())
             val hasSaved = state.continueWatching.isNotEmpty() || anyVisible
             if (state.isOffline && hasSaved) {
                 OfflineBanner()
                 Spacer(Modifier.height(8.dp))
-            }
-            if (state.continueWatching.isNotEmpty()) {
-                Column {
-                    SectionHeader(
-                        title = "Continue watching",
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                    )
-                    // Keyed on the scope, not the work: two rows of the same series are two
-                    // different episodes, and a duplicate key would crash the rail.
-                    // Wider cells than a catalog rail: the tile carries a 48 dp remove ×
-                    // beside the title, and at 132 dp the text column clips "2023 · Movie"
-                    // and the resume label mid-word (Paparazzi homeLoaded, 2026-11-15).
-                    MediaRail(
-                        items = state.continueWatching,
-                        key = { "${it.post.id}|${it.season}|${it.episode}" },
-                        itemWidthDp = CardGeometry.CONTINUE_WATCHING_CARD_WIDTH_DP,
-                    ) { tile ->
-                        PosterCard(
-                            post = tile.post,
-                            onClick = { onPostClick(tile.post) },
-                            progressFraction = tile.progressFraction,
-                            progressLabel = tile.resumeLabel,
-                            // Phase 7 (D1): the × removes this scope from
-                            // Continue Watching — server row first, then
-                            // the local rows, with Undo on the snackbar.
-                            onRemove = { onRemoveFromContinueWatching(tile) },
-                        )
-                    }
-                    Spacer(Modifier.height(8.dp))
-                }
             }
             // The banner rides the first rail that actually has rows, so it is real
             // catalog data (freshest additions) and not a hand-picked fake "featured" set.
@@ -438,6 +410,45 @@ internal fun HomeContent(
                     HeroSkeleton()
                     Spacer(Modifier.height(12.dp))
                 }
+            }
+            // B3: the Continue Watching slot is pinned here, under the hero,
+            // and always present. With rows it is the real rail, unchanged;
+            // without rows it is the "Start watching" placeholder — but only
+            // once the catalog has landed (anyVisible). On a blank or failed
+            // load the empty/error state speaks instead, and during the first
+            // load the hero skeleton above holds the slot.
+            if (state.continueWatching.isNotEmpty()) {
+                Column {
+                    SectionHeader(
+                        title = "Continue watching",
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    )
+                    // Keyed on the scope, not the work: two rows of the same series are two
+                    // different episodes, and a duplicate key would crash the rail.
+                    // Wider cells than a catalog rail: the tile carries a 48 dp remove ×
+                    // beside the title, and at 132 dp the text column clips "2023 · Movie"
+                    // and the resume label mid-word (Paparazzi homeLoaded, 2026-11-15).
+                    MediaRail(
+                        items = state.continueWatching,
+                        key = { "${it.post.id}|${it.season}|${it.episode}" },
+                        itemWidthDp = CardGeometry.CONTINUE_WATCHING_CARD_WIDTH_DP,
+                    ) { tile ->
+                        PosterCard(
+                            post = tile.post,
+                            onClick = { onPostClick(tile.post) },
+                            progressFraction = tile.progressFraction,
+                            progressLabel = tile.resumeLabel,
+                            // Phase 7 (D1): the × removes this scope from
+                            // Continue Watching — server row first, then
+                            // the local rows, with Undo on the snackbar.
+                            onRemove = { onRemoveFromContinueWatching(tile) },
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+            } else if (anyVisible) {
+                StartWatchingPlaceholder(onBrowse = { onBrowseType(null) })
+                Spacer(Modifier.height(8.dp))
             }
             // Gap A6: the first-run card now rides BELOW the hero — a
             // new viewer meets a movie first, and the picks are still
@@ -611,6 +622,58 @@ private fun OfflineBanner() {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
         )
+    }
+}
+
+/**
+ * B3 — the empty Continue Watching rail. Same header as the real rail, so
+ * the slot reads as the feature, not a banner: a title, one honest line,
+ * and a Browse CTA. The button is a primary action, so it keeps the
+ * primary container; nothing else here is jade. The CTA opens Browse with
+ * no type — the "browse/all" landing — because there is no title yet to
+ * narrow it by.
+ */
+@Composable
+private fun StartWatchingPlaceholder(onBrowse: () -> Unit) {
+    Column {
+        SectionHeader(
+            title = "Continue watching",
+            modifier = Modifier.padding(horizontal = 16.dp),
+        )
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            ),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Column(
+                    Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Text(
+                        text = "Start watching",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = "Pick something to watch and it will wait for you here.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Button(
+                    onClick = onBrowse,
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) {
+                    Text("Browse titles")
+                }
+            }
+        }
     }
 }
 
