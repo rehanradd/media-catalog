@@ -199,6 +199,21 @@ class DownloadsViewModel @Inject constructor(
         viewModelScope.launch { _uiState.update { it.copy(storage = readStorage()) } }
     }
 
+    /**
+     * "Free up space", from the storage card: re-read storage and say, in
+     * one honest line, how much space this screen's downloads hold and how
+     * to free it. There is no bulk-delete behind the button — a finished
+     * title is removed with its own ×, never silently in bulk — so the
+     * button explains instead of deleting.
+     */
+    fun freeUpSpace() {
+        viewModelScope.launch {
+            val downloadsBytes = _uiState.value.deviceDownloads.sumOf { it.bytesDownloaded } +
+                _uiState.value.items.sumOf { it.bytesDownloaded }
+            _uiState.update { it.copy(storage = readStorage(), statusMessage = freeUpSpaceMessage(downloadsBytes)) }
+        }
+    }
+
     fun clearStatus() = _uiState.update { it.copy(statusMessage = null) }
 
     /**
@@ -390,3 +405,18 @@ fun watchedTitles(rows: List<WatchHistoryEntity>): Set<String> =
         .map { it.title }
         .filter { it.isNotBlank() }
         .toSet()
+
+/** The "Free up space" line: the real bytes this screen's downloads hold, and the honest way to free them. */
+internal fun freeUpSpaceMessage(downloadsBytes: Long): String =
+    if (downloadsBytes > 0) {
+        "Downloads here use ${formatDownloadSize(downloadsBytes)}. Remove a finished title with its × to free space."
+    } else {
+        "Nothing downloaded here yet — there is nothing to free up."
+    }
+
+/** Decimal size words, the same units the rows use (1 GB = 1,000,000,000 bytes). */
+internal fun formatDownloadSize(bytes: Long): String = when {
+    bytes >= 1_000_000_000 -> "%.1f GB".format(bytes / 1_000_000_000.0)
+    bytes >= 1_000_000 -> "%.0f MB".format(bytes / 1_000_000.0)
+    else -> "%.0f KB".format(bytes / 1_000.0)
+}
