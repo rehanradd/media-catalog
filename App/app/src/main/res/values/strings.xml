@@ -107,8 +107,12 @@
     <string name="player_up_next_title">%1$s: %2$s</string>
     <string name="player_quality_single">Only one quality is available for this title</string>
     <!-- Session 126 (NAV-4/NAV-5): the catch-all deep-link destination. -->
-    <string name="dead_link_title">This link didn’t lead anywhere</string>
-    <string name="dead_link_body">The link doesn’t name a title this app knows. It may be mistyped, or from an older share. Go back home and find the title again.</string>
+    <!-- Flow mockup (Nov 2026): the words are the mockup's — the title was
+         never named, so the screen says the title is not available and the
+         one action is to browse similar titles from Home. -->
+    <string name="dead_link_title">This title isn’t available</string>
+    <string name="dead_link_body">No working sources right now. Try a similar title instead.</string>
+    <string name="dead_link_browse_similar">Browse similar titles</string>
     <string name="player_start_slow">Taking longer than usual</string>
     <string name="player_start_try_another">Try another version</string>
     <string name="player_attempt_counter">Trying copy %1$d of %2$d</string>

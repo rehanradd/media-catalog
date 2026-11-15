@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -22,6 +23,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -31,6 +33,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.raddstream.app.network.models.Post
@@ -73,7 +76,19 @@ fun BrowseScreen(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text(state.title) },
+                // Flow mockup (Nov 2026): the bar is the same near-black as
+                // the canvas — the default surface band would draw a stripe
+                // across the top — and the category name is bold, as drawn.
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                ),
+                title = {
+                    Text(
+                        state.title,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onBackClick) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Back")
@@ -102,31 +117,59 @@ fun BrowseScreen(
                     OutlinedButton(onClick = onBackClick) { Text("Browse all") }
                 },
             )
-            else -> LazyVerticalGrid(
-                state = gridState,
-                columns = CatalogGridColumns,
+            else -> BrowsePosterGrid(
+                items = state.items,
+                loadingMore = state.loadingMore,
+                error = state.error,
+                gridState = gridState,
+                onPostClick = onPostClick,
+                onRetryLoadMore = viewModel::loadMore,
                 modifier = Modifier.fillMaxSize().padding(contentPadding),
-                contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp, start = 16.dp, end = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                items(state.items, key = { it.id }) { post ->
-                    PosterCard(post = post, onClick = { onPostClick(post) })
+            )
+        }
+    }
+}
+
+/**
+ * Flow mockup (Nov 2026): the category grid itself — two columns of the
+ * canonical [PosterCard] on a phone, bold title + "year · type" meta, no
+ * bottom nav. Extracted from [BrowseScreen] so the grid is testable
+ * without the ViewModel: the screen keeps the Scaffold, the paging and
+ * the state machine, and this renders only the rows.
+ */
+@Composable
+internal fun BrowsePosterGrid(
+    items: List<Post>,
+    loadingMore: Boolean,
+    error: String?,
+    gridState: LazyGridState,
+    onPostClick: (Post) -> Unit,
+    onRetryLoadMore: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    LazyVerticalGrid(
+        state = gridState,
+        columns = CatalogGridColumns,
+        modifier = modifier,
+        contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp, start = 16.dp, end = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        items(items, key = { it.id }) { post ->
+            PosterCard(post = post, onClick = { onPostClick(post) })
+        }
+        if (loadingMore) {
+            item {
+                Box(Modifier.fillMaxWidth().height(60.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(Modifier.height(28.dp), strokeWidth = 2.dp)
                 }
-                if (state.loadingMore) {
-                    item {
-                        Box(Modifier.fillMaxWidth().height(60.dp), contentAlignment = Alignment.Center) {
-                            CircularProgressIndicator(Modifier.height(28.dp), strokeWidth = 2.dp)
-                        }
-                    }
-                }
-                // The grid is what the viewer can see; a page that failed to arrive is not.
-                // Without this a dead next page just looks like a shorter category.
-                state.error?.let { failure ->
-                    item(contentType = "failure") {
-                        InlineLoadFailure(message = failure, onRetry = viewModel::loadMore)
-                    }
-                }
+            }
+        }
+        // The grid is what the viewer can see; a page that failed to arrive is not.
+        // Without this a dead next page just looks like a shorter category.
+        error?.let { failure ->
+            item(contentType = "failure") {
+                InlineLoadFailure(message = failure, onRetry = onRetryLoadMore)
             }
         }
     }
