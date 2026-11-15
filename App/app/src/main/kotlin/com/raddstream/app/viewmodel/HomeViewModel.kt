@@ -187,6 +187,12 @@ data class HomeUiState(
     /** Gap A6: true once the first-run "Pick 3 you like" card is done (picked 3 or dismissed). */
     val pickThreeDone: Boolean = false,
     /**
+     * B5: true once the viewer has opened a title detail or started a
+     * playback — the first browse or play. The Pick 3 card waits for it, so
+     * first open is the catalog, not a chore.
+     */
+    val firstBrowseDone: Boolean = false,
+    /**
      * The browse jump-off chips from GET /api/v1/facets (genres, languages,
      * industries, types, each with the count its tap delivers). Null until
      * the call answers, and null again when it fails — no chips, never a
@@ -207,10 +213,12 @@ data class HomeUiState(
     /**
      * Gap A6: the card shows only to a brand-new viewer — nothing
      * continued, nothing saved, card not done — and only once a rail can
-     * offer three real titles to pick from.
+     * offer three real titles to pick from. B5: and only after the first
+     * browse or play, so the card never greets a viewer who has not looked
+     * at anything yet — first open is the catalog, the card comes later.
      */
     val showPickThree: Boolean
-        get() = !pickThreeDone && continueWatching.isEmpty() && favoriteIds.isEmpty() &&
+        get() = !pickThreeDone && firstBrowseDone && continueWatching.isEmpty() && favoriteIds.isEmpty() &&
             pickThreeCandidates.size >= 3
 }
 
@@ -407,6 +415,7 @@ class HomeViewModel @Inject constructor(
         observeDailyCheckIn()
         observeTrialNote()
         observePickThreeDone()
+        observeFirstBrowseDone()
         _uiState.update { it.copy(sections = initialHomeSections() + regionalHomeSections()) }
         // Gap A5: cache-first — the saved Home renders before the network
         // answers, and the refresh runs behind it. The restore is awaited
@@ -654,6 +663,18 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             settingsRepository.pickThreeDone.collect { done ->
                 _uiState.update { it.copy(pickThreeDone = done) }
+            }
+        }
+    }
+
+    /**
+     * B5: the first browse/play flag, persisted so one browse unlocks the
+     * Pick 3 card for good. Same shape as [observePickThreeDone].
+     */
+    private fun observeFirstBrowseDone() {
+        viewModelScope.launch {
+            settingsRepository.firstBrowseDone.collect { done ->
+                _uiState.update { it.copy(firstBrowseDone = done) }
             }
         }
     }

@@ -366,6 +366,27 @@ class ServerSettingsRepository @Inject constructor(
     }
 
     /**
+     * B5: true once this viewer has opened a title detail or started a
+     * playback — the first browse or play. The first-run "Pick 3 you like"
+     * card waits for it, so a brand-new viewer meets the catalog first and
+     * the card only after they have looked at something. Persisted, so one
+     * browse unlocks the card for good; the card's own done flag still
+     * retires it afterwards. Set from the detail and player choke points
+     * (every detail open, every bundle start), never from Home alone, so a
+     * first browse from Search or a first play from Live TV counts too.
+     */
+    val firstBrowseDone: Flow<Boolean> = dataStore.data.map { preferences ->
+        preferences[FIRST_BROWSE_DONE_KEY] ?: false
+    }
+
+    suspend fun setFirstBrowseDone(done: Boolean) {
+        dataStore.edit { preferences ->
+            if (done) preferences[FIRST_BROWSE_DONE_KEY] = true
+            else preferences.remove(FIRST_BROWSE_DONE_KEY)
+        }
+    }
+
+    /**
      * The login streak (plan §5 step 19): consecutive days this device opened the app, counted
      * locally because no server route carries a per-user progress count. The last day is a local
      * epoch day (-1 means never opened); the count is how many in a row that is. The two move
@@ -1093,6 +1114,7 @@ class ServerSettingsRepository @Inject constructor(
         private val TRIAL_NOTE_DISMISSED_KEY = booleanPreferencesKey("trial_note_dismissed")
         private val HOME_CACHE_JSON_KEY = stringPreferencesKey("home_cache_json")
         private val PICK_THREE_DONE_KEY = booleanPreferencesKey("pick_three_done")
+        private val FIRST_BROWSE_DONE_KEY = booleanPreferencesKey("first_browse_done")
         private val LOGIN_STREAK_LAST_DAY_KEY = longPreferencesKey("login_streak_last_day")
         private val LOGIN_STREAK_COUNT_KEY = intPreferencesKey("login_streak_count")
         private val COACH_SEEN_VERSION_KEY = stringPreferencesKey("player_coach_seen_version")

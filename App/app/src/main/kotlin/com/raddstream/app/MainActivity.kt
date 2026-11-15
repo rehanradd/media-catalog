@@ -233,6 +233,11 @@ class MainActivity : ComponentActivity() {
             // `analyticsConsentKnown` is false and nothing shows.
             var analyticsConsent by remember { mutableStateOf<Boolean?>(null) }
             var analyticsConsentKnown by remember { mutableStateOf(false) }
+            // B5: "Skip for now" hides the sheet for this launch only — the
+            // answer stays null, so the sheet asks again on the next launch.
+            // Without this flag a skip would re-show the sheet on the next
+            // recomposition, since null is still the "never asked" state.
+            var consentSkippedThisLaunch by remember { mutableStateOf(false) }
             LaunchedEffect(Unit) {
                 serverSettingsRepository.analyticsConsent.collect { answer ->
                     analyticsConsent = answer
@@ -394,11 +399,13 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                     // Tracking A: the one question before anything is
-                    // counted. Both buttons are answers — there is no way to
-                    // dismiss it unanswered — and answering refreshes the
-                    // telemetry snapshot at once, so a "yes" turns the
-                    // headers on without a restart and a "no" leaves the app
-                    // exactly as it was.
+                    // counted. Both buttons are answers — and B5 adds a
+                    // visible "Skip for now" that answers nothing: the sheet
+                    // hides for this launch and asks again on the next one,
+                    // so first open reaches the catalog in one tap. Answering
+                    // refreshes the telemetry snapshot at once, so a "yes"
+                    // turns the headers on without a restart and a "no"
+                    // leaves the app exactly as it was.
                     // Session 121 (P-21): the question used to appear over whatever
                     // the first paint was — on a first install, over the genre
                     // picker, before the viewer had seen anything of the app. It
@@ -414,7 +421,7 @@ class MainActivity : ComponentActivity() {
                     // the effective one; a null stored version (not yet
                     // read) is not settled.
                     if (analyticsConsentKnown && analyticsConsent == null && destination == Screen.Home.route &&
-                        disclaimerSeenVersion == effectiveDisclaimer.version) {
+                        disclaimerSeenVersion == effectiveDisclaimer.version && !consentSkippedThisLaunch) {
                         AnalyticsConsentDialog(
                             onAccept = {
                                 activityScope.launch {
@@ -428,6 +435,7 @@ class MainActivity : ComponentActivity() {
                                     Telemetry.refresh(serverSettingsRepository)
                                 }
                             },
+                            onSkip = { consentSkippedThisLaunch = true },
                         )
                     }
                 }

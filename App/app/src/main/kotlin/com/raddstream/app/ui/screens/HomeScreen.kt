@@ -705,8 +705,15 @@ private fun PickThreeCard(
                     }
                 }
             }
+            // M9 (home review, Nov 2026): "Not now" is a real button, not a
+            // link — an outlined button with a 48dp minimum height, the
+            // same floor the file's other dismissals use. A TextButton here
+            // read as small print and measured ~40dp tall.
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                TextButton(onClick = onDismiss) { Text("Not now") }
+                OutlinedButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) { Text("Not now") }
             }
         }
     }

@@ -8,7 +8,9 @@ import org.junit.Test
 
 /**
  * Gap A6: the "Pick 3 you like" card shows only to a brand-new viewer, and
- * only once a rail can offer three real titles.
+ * only once a rail can offer three real titles. B5: and only after the
+ * first browse or play — a viewer who has not looked at anything yet never
+ * sees the card, however full the rails are.
  */
 class PickThreeTest {
 
@@ -22,19 +24,30 @@ class PickThreeTest {
         continueWatching: List<ResumeTile> = emptyList(),
         favoriteIds: Set<Int> = emptySet(),
         pickThreeDone: Boolean = false,
+        firstBrowseDone: Boolean = true,
     ) = HomeUiState(
         sections = sections,
         continueWatching = continueWatching,
         favoriteIds = favoriteIds,
         pickThreeDone = pickThreeDone,
+        firstBrowseDone = firstBrowseDone,
     )
 
     @Test
-    fun `brand new viewer with a full rail sees the card with the first three`() {
+    fun `viewer who has browsed once with a full rail sees the card with the first three`() {
         val s = state()
 
         assertTrue(s.showPickThree)
         assertEquals(listOf(1, 2, 3), s.pickThreeCandidates.map { it.id })
+    }
+
+    @Test
+    fun `card waits until the first browse or play`() {
+        val s = state(firstBrowseDone = false)
+
+        // The titles are ready — the card is gated, not empty.
+        assertEquals(listOf(1, 2, 3), s.pickThreeCandidates.map { it.id })
+        assertFalse(s.showPickThree)
     }
 
     @Test

@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
@@ -36,9 +37,11 @@ import com.raddstream.app.ui.theme.RaddTokens
  * Both answers are real choices: "Share totals" turns the counters on,
  * "No thanks" leaves the app exactly as it was — nothing is counted,
  * nothing is sent, and nothing about the app changes. The choice can be
- * changed later in Settings. The sheet cannot be dismissed any other way,
- * because an unanswered question would leave the app counting nothing
- * forever without the viewer ever knowing it was asked.
+ * changed later in Settings. B5: there is also a visible "Skip for now" —
+ * first open must reach the catalog in one tap, not wait on a question.
+ * Skipping answers nothing and counts nothing; the sheet simply asks again
+ * on the next launch, the same way it already did for a first-run viewer
+ * who had not seen Home yet. A swipe-down dismiss is the same skip.
  *
  * The operator has not written analytics wording yet, the way he has not
  * written the disclaimer text either — this is this app's own plain-English
@@ -49,9 +52,10 @@ import com.raddstream.app.ui.theme.RaddTokens
 internal fun AnalyticsConsentDialog(
     onAccept: () -> Unit,
     onDecline: () -> Unit,
+    onSkip: () -> Unit = {},
 ) {
     ModalBottomSheet(
-        onDismissRequest = {},
+        onDismissRequest = onSkip,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
     ) {
         Column(
@@ -74,6 +78,15 @@ internal fun AnalyticsConsentDialog(
             }
             TextButton(onClick = onDecline, modifier = Modifier.fillMaxWidth()) {
                 Text("No thanks")
+            }
+            // B5: the visible Skip — one tap reaches the catalog, the
+            // question waits for the next launch. A skip is not an answer:
+            // nothing is recorded, nothing is counted.
+            TextButton(
+                onClick = onSkip,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            ) {
+                Text("Skip for now")
             }
             Text(
                 "You can change this anytime in Settings. Saying no changes nothing about the app.",

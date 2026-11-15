@@ -1250,6 +1250,12 @@ class PlayerViewModel @Inject constructor(
         resumeKey: String,
         overrideMs: Long? = null,
     ) {
+        // B5: starting any playback is the first play — the first-run Pick 3
+        // card waits for it, so a first play from Live TV or a detail page
+        // unlocks it too. Fire-and-forget; the write is idempotent.
+        viewModelScope.launch {
+            runCatching { settingsRepository.setFirstBrowseDone(true) }
+        }
         // A new file starts with no segment: the old A-B points are positions in a
         // different file. A quality switch keeps the same work, season, episode and
         // title, so the segment survives it — the range is in the file, not the

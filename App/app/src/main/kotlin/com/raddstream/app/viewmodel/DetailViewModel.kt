@@ -252,6 +252,13 @@ class DetailViewModel @Inject constructor(
     val navEvents: SharedFlow<DetailNavigationEvent> = _navEvents.asSharedFlow()
 
     init {
+        // B5: opening any title is the first browse — the first-run Pick 3
+        // card waits for it, so a viewer who came from Search or Similar
+        // unlocks it too, not only a Home tap. Fire-and-forget, same as the
+        // other one-time flags; the write is idempotent.
+        viewModelScope.launch {
+            runCatching { settingsRepository.setFirstBrowseDone(true) }
+        }
         loadDetail()
         observeFavorite()
         observeEntitlement()
