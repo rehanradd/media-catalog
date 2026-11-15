@@ -1101,13 +1101,13 @@ internal fun CheckInBanner(
                     }
                 }
             }
-            LinearProgressIndicator(
-                progress = { streakProgress(serverStreak, streakCount, targetDays) },
-                modifier = Modifier.fillMaxWidth(),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                trackColor = MaterialTheme.colorScheme.surfaceVariant,
-            )
         }
+        LinearProgressIndicator(
+            progress = { streakProgress(serverStreak, streakCount, targetDays) },
+            modifier = Modifier.fillMaxWidth(),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            trackColor = MaterialTheme.colorScheme.surfaceVariant,
+        )
     }
 }
 }
