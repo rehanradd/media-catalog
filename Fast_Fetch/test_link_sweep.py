@@ -183,7 +183,10 @@ class VerdictTests(unittest.TestCase):
                      error="http_429"), "expired"),
             (_result("https://a.example/5", error="blocklisted"), "blocked"),
             (_result("https://a.example/6", error="invalid_url"), "no_verdict"),
-            (_result("https://a.example/7", error="timeout"), "dead"),
+            # Transport (2026-11-15): our side failed to reach the endpoint,
+            # so no verdict is earned — the run counts it as no_verdict,
+            # not dead (it used to map to dead via link_state.classify).
+            (_result("https://a.example/7", error="timeout"), "no_verdict"),
         ]
         for result, want in cases:
             self.assertEqual(link_sweep._verdict_of(result), want, result)

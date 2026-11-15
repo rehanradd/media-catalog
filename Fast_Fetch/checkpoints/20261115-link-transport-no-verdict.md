@@ -79,6 +79,21 @@ directly) and are unaffected.
   needs the rate fix (below) — or a one-time targeted re-probe of rows
   with `status='dead' AND http_status=0`.
 
+## CI follow-up (same branch, 2026-11-15)
+
+Backend CI run 43670347627 failed with exactly one failure:
+`test_link_sweep.py::VerdictTests.test_verdict_mapping` — a fourth
+consumer of `classify()` that the first local pass missed
+(`link_sweep._verdict_of` delegates to `link_state.classify` and maps
+UNVERIFIED to `no_verdict`). The pinned case `timeout -> "dead"` is
+updated to `"no_verdict"` with the same reason. Lesson recorded: when a
+pure classifier changes, grep the WHOLE test tree for its callers
+(`link_state.classify`, `_verdict_of`, and any module that imports the
+classifier) instead of running only the suites named after the changed
+file. Local after the fix: test_link_sweep 21/21, test_link_sweep_budget
+15/15, test_link_state 34/34, test_resolved_cache 85/85,
+test_transient_dead_heal 5/5, test_probe_coverage 13/13.
+
 ## Still open (rate)
 
 `PROPAGATE_BATCHES_PER_TICK = 2` (400 rows/tick, ~6h) = ~1,600 rows/day
