@@ -113,9 +113,8 @@ fun HelpScreen(
 
     if (showReportDialog) {
         ReportBrokenStreamDialog(
-            // A report from Help names no title; the dialog's sentence is
-            // about a video, and the note carries the viewer's own words.
-            title = "a video",
+            // A report from Help names no title — the sheet is category-only
+            // (the reason itself is the report), and onSubmit carries it.
             isSubmitting = reportState.isSubmitting,
             onSubmit = { note ->
                 viewModel.submitReport(note)
