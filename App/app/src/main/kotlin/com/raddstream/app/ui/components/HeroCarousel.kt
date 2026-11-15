@@ -691,7 +691,14 @@ internal fun shouldAdvanceHero(
  * same band as the buttons, and its hit boxes (on top in z-order) ate the taps.
  */
 internal const val HERO_INDICATOR_TOP_DP = 16f
-internal const val HERO_BUTTON_HEIGHT_DP = 56f
+/**
+ * Density (2026-11-15): the hero action row was 56dp tall — M3's large button
+ * on a banner that already eats 320–400dp of the first viewport. 40dp is M3's
+ * small button and the size Netflix's Play button ships at; the button still
+ * spans most of the hero's width, so the target stays large. The skeleton
+ * placeholder and the indicator-overlap math below read this same constant.
+ */
+internal const val HERO_BUTTON_HEIGHT_DP = 40f
 internal const val HERO_ACTION_BOTTOM_DP = 20f
 private const val DOT_TOUCH_HEIGHT_DP = 48f
 
