@@ -56,4 +56,25 @@ class WatchHistoryViewModel @Inject constructor(
                 }
         }
     }
+
+    /**
+     * Empty the whole record, local and synced together. The merge only ever
+     * folds a synced row onto a local row this device already knows, so
+     * clearing the local table alone would empty the list — the synced clear
+     * keeps the two stores from disagreeing about what was forgotten.
+     */
+    fun clearAll() {
+        viewModelScope.launch {
+            watchHistoryDao.clear()
+            syncedProgressDao.clear()
+        }
+    }
+
+    /** Forget exactly one scope, local and synced together. */
+    fun removeRow(row: HistoryRow) {
+        viewModelScope.launch {
+            watchHistoryDao.remove(row.workRef, row.seasonNumber, row.episodeNumber)
+            syncedProgressDao.remove(row.workRef, row.seasonNumber, row.episodeNumber)
+        }
+    }
 }

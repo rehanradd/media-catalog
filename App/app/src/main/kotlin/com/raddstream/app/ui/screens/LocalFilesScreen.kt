@@ -8,6 +8,7 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,10 +23,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
@@ -35,6 +39,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -49,6 +54,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -105,7 +115,7 @@ fun LocalFilesScreen(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("On this phone") },
+                title = { Text("Local files") },
                 navigationIcon = {
                     IconButton(onClick = onBackClick) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Back")
@@ -191,15 +201,65 @@ fun LocalFilesScreen(
                     modifier = Modifier.fillMaxSize(),
                 )
             }
-            else -> LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(contentPadding),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                items(state.files, key = { it.uri }) { file ->
+            else -> LocalFilesListContent(
+                files = state.files,
+                onPlay = { file -> onPlayLocal(file.uri, file.title) },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(contentPadding),
+            )
+        }
+    }
+}
+
+/**
+ * The list itself, grouped by the folder each file came from: one folder
+ * row ("Movies — N files") with its files under it, newest first inside
+ * each folder. The mockup shows a single folder because Stitch imagined one;
+ * the phone has two (Movies and Downloads), so a folder earns its own row
+ * rather than the list pretending they are one.
+ *
+ * Stitch sub-screens mockup (Nov 2026): each file is a card with a small
+ * thumb, the title, the size line and a jade play button. A local file has
+ * no poster art, so the thumb is a dark tile with a play mark — never an
+ * invented picture — and the size line is the file's own duration and size:
+ * there is no quality field on a local file, so no "1080p" is claimed.
+ */
+@Composable
+internal fun LocalFilesListContent(
+    files: List<LocalVideoFile>,
+    onPlay: (LocalVideoFile) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    // Which folders are folded shut; a list survives a rotation.
+    var collapsed by rememberSaveable { mutableStateOf(listOf<String>()) }
+    // groupBy keeps the folders in first-encounter order, and the files
+    // arrive newest first, so each folder's rows stay newest first too.
+    val groups = files.groupBy { it.folder }
+
+    LazyColumn(
+        modifier = modifier,
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        groups.forEach { (folder, folderFiles) ->
+            val isCollapsed = folder in collapsed
+            item(key = "folder:$folder") {
+                FolderHeaderRow(
+                    folder = folder,
+                    count = folderFiles.size,
+                    expanded = !isCollapsed,
+                    onToggle = {
+                        collapsed = if (isCollapsed) collapsed - folder
+                        else collapsed + folder
+                    },
+                )
+            }
+            if (!isCollapsed) {
+                items(folderFiles, key = { it.uri }) { file ->
                     LocalVideoRow(
                         file = file,
-                        onPlay = { onPlayLocal(file.uri, file.title) },
+                        onPlay = { onPlay(file) },
                     )
                 }
             }
@@ -207,44 +267,143 @@ fun LocalFilesScreen(
     }
 }
 
+/** One folder row: the folder, how many files it holds, fold it shut. */
 @Composable
-private fun LocalVideoRow(file: LocalVideoFile, onPlay: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .clickable { onPlay() }
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
+private fun FolderHeaderRow(
+    folder: String,
+    count: Int,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = Modifier.fillMaxWidth(),
     ) {
-        Icon(
-            Icons.Default.PlayArrow,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(28.dp),
-        )
-        Column(
-            modifier = Modifier.weight(1f).padding(start = 12.dp),
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onToggle() }
+                .testTag("localFolder_$folder")
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = file.title,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Default.Folder,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 12.dp),
+            ) {
+                Text(
+                    text = folder,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = if (count == 1) "1 file" else "$count files",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Icon(
+                imageVector = if (expanded) Icons.Default.KeyboardArrowDown
+                else Icons.Default.ChevronRight,
+                contentDescription = if (expanded) "Collapse $folder" else "Expand $folder",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            val details = listOfNotNull(
-                file.folder,
-                file.durationMs.takeIf { it > 0 }?.formatTime(),
-                file.sizeBytes.takeIf { it > 0 }?.let { QualityOption.formatBytes(it) },
-            ).joinToString(" · ")
-            Text(
-                text = details,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+        }
+    }
+}
+
+@Composable
+internal fun LocalVideoRow(file: LocalVideoFile, onPlay: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onPlay() }
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            // A local file has no poster: a dark 2:3 tile with a play mark,
+            // the same shape as the poster's tile elsewhere.
+            Box(
+                modifier = Modifier
+                    .size(width = 56.dp, height = 84.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Default.PlayArrow,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(28.dp),
+                )
+            }
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    text = file.title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                val details = listOfNotNull(
+                    file.durationMs.takeIf { it > 0 }?.formatTime(),
+                    file.sizeBytes.takeIf { it > 0 }?.let { QualityOption.formatBytes(it) },
+                ).joinToString(" · ")
+                if (details.isNotEmpty()) {
+                    Text(
+                        text = details,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .clickable { onPlay() }
+                    .semantics { role = Role.Button }
+                    .testTag("localFile_play"),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Default.PlayArrow,
+                    contentDescription = "Play ${file.title}",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
         }
     }
 }

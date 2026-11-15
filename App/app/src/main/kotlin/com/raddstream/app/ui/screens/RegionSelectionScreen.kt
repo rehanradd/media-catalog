@@ -14,8 +14,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -29,49 +31,60 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.res.vectorResource
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.raddstream.app.R
 import com.raddstream.app.data.RegionChoice
 import com.raddstream.app.data.RegionChoices
-import com.raddstream.app.data.UserRegion
 import com.raddstream.app.ui.components.rememberReduceMotion
 import com.raddstream.app.ui.theme.RaddMotion
-import com.raddstream.app.ui.theme.RaddStreamMark
-import com.raddstream.app.ui.theme.RaddTokens
 import com.raddstream.app.viewmodel.RegionUiState
 import com.raddstream.app.viewmodel.RegionViewModel
 
 /**
  * The first-run choice: what this viewer came to watch, in three cards.
  *
- * One question, three answers, no brochure. Each card is a brand icon, a name, one short
- * line about what it holds, and the audio/subtitle promise it writes — nothing else. The
- * promise on the card and the record in storage cannot drift apart, because both come from
+ * One question, three answers, no brochure. Each card is a name and one short
+ * line about what it holds — nothing else. The promise on the card and the
+ * record in storage cannot drift apart, because both come from
  * [com.raddstream.app.data.RegionChoices]: the screen never invents its own words.
+ *
+ * Stitch sub-screens mockup (Nov 2026): a top bar with a back arrow and the
+ * title "Content preference", one card per region with the choice in force
+ * wearing a jade check and a jade left edge, and a full-width jade "Done"
+ * button. The mockup's card names (Pakistan / India / International) are
+ * Stitch's invention — the real choices are Desi, East Asian and
+ * International with their real taglines, and the checks follow the stored
+ * region, never a hard-coded pick. This screen serves two entrances
+ * (first-run setup and Settings), so the back arrow leaves the way the
+ * screen was entered leaves: pop when Settings is behind it, Home when it
+ * is the whole stack — the same rule [onContinue] already carries.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RegionSelectionScreen(
     onContinue: () -> Unit,
@@ -80,6 +93,41 @@ fun RegionSelectionScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
 
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = {
+            TopAppBar(
+                title = { Text("Content preference") },
+                navigationIcon = {
+                    IconButton(onClick = onContinue) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                    }
+                },
+            )
+        },
+    ) { contentPadding ->
+        RegionContent(
+            state = state,
+            onSelect = { viewModel.select(it) },
+            onDone = { viewModel.saveAndContinue(onContinue) },
+            onSkip = { viewModel.skip(onContinue) },
+            modifier = modifier.padding(contentPadding),
+        )
+    }
+}
+
+/**
+ * The screen without its ViewModel, so a test can drive it with a plain
+ * [RegionUiState]: the three cards, the Done button and Skip.
+ */
+@Composable
+internal fun RegionContent(
+    state: RegionUiState,
+    onSelect: (String) -> Unit,
+    onDone: () -> Unit,
+    onSkip: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     // Session 154 (R-1): the stagger rides the motion token (250ms) and
     // reduced-motion users get the fade only, never the rise — the
     // HomeScreen rails pattern.
@@ -94,31 +142,9 @@ fun RegionSelectionScreen(
             // navigation. The 28 dp vertical padding stays; the nav bar
             // gets its own room on top of it.
             .navigationBarsPadding()
-            .padding(horizontal = 20.dp, vertical = 28.dp),
-        // Session 121 (P-23): on a tall phone the content ended mid-screen and the
-        // bottom ~40% sat empty and black. Short content is centred; tall content
-        // still scrolls from the top.
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
+            .padding(horizontal = 16.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        RaddStreamMark(diameter = 56.dp)
-        Spacer(Modifier.height(20.dp))
-        Text(
-            text = "What do you prefer to watch?",
-            style = MaterialTheme.typography.headlineSmall,
-            color = MaterialTheme.colorScheme.onBackground,
-            fontWeight = FontWeight.SemiBold,
-            textAlign = TextAlign.Center,
-        )
-        Spacer(Modifier.height(6.dp))
-        Text(
-            text = "Sets your default audio and subtitles. You can browse all titles anytime.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-        )
-        Spacer(Modifier.height(28.dp))
-
         RegionChoices.ALL.forEachIndexed { index, choice ->
             AnimatedVisibility(
                 visible = true,
@@ -142,16 +168,14 @@ fun RegionSelectionScreen(
                 RegionChoiceCard(
                     choice = choice,
                     selected = choice.id == state.selectedId,
-                    recommended = choice.id == UserRegion.DEFAULT,
-                    onSelect = { viewModel.select(choice.id) },
+                    onSelect = { onSelect(choice.id) },
                 )
             }
-            Spacer(Modifier.height(12.dp))
         }
 
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(4.dp))
         Button(
-            onClick = { viewModel.saveAndContinue(onContinue) },
+            onClick = onDone,
             enabled = !state.isSaving,
             modifier = Modifier
                 .fillMaxWidth()
@@ -165,29 +189,19 @@ fun RegionSelectionScreen(
                     strokeWidth = 2.dp,
                 )
             } else {
-                Text("Continue")
+                Text("Done")
             }
         }
-        // Session 123 (D-4): the screen ends at the button, so the value the
-        // viewer gets for choosing is written under it — no more dead void.
-        Spacer(Modifier.height(RaddTokens.Space.Md))
-        Text(
-            text = "Free forever · No account needed",
-            style = RaddTokens.Type.BodySmall,
-            color = RaddTokens.Color.TextSecondary,
-            textAlign = TextAlign.Center,
-        )
         // Session 121 (P-24): the question is a convenience, never a door — a viewer
         // who does not want to choose skips straight to the default (Desi).
         TextButton(
-            onClick = { viewModel.skip(onContinue) },
+            onClick = onSkip,
             enabled = !state.isSaving,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text("Skip")
         }
         if (state.saveFailed) {
-            Spacer(Modifier.height(10.dp))
             // A message that appears under the thumb the viewer just used is invisible to a screen
             // reader unless it is announced, so this text node is a polite live region.
             Text(
@@ -204,62 +218,43 @@ fun RegionSelectionScreen(
     }
 }
 
-/** The brand icon for a card: a clapperboard for Desi cinema, a lantern for East Asia, a globe for the world. */
-private fun regionIconRes(choice: RegionChoice): Int = when (choice.id) {
-    UserRegion.DESI_DUBS -> R.drawable.ic_region_desi
-    UserRegion.EAST_ASIAN -> R.drawable.ic_region_east_asian
-    else -> R.drawable.ic_region_international
-}
-
 /**
- * One selectable card: an icon tile, a name, one line about what it holds, and the
- * audio/subtitle promise as a pill. The whole surface is the tap target, and it carries a
- * radio-button role with a real selected state: a screen reader has to say which of the
+ * One selectable card: a name, one line about what it holds, and nothing
+ * else. The whole surface is the tap target, and it carries a radio-button
+ * role with a real selected state: a screen reader has to say which of the
  * three is the answer, not read the check mark as a separate picture.
  *
- * The selected card wears the brand jade — border, icon tile and pill all shift together
- * through [animateColorAsState], and the check badge scales in — so the answer reads at a
- * glance instead of needing a second look.
+ * The selected card wears the brand jade — a left edge bar and the check
+ * badge, both animated in — so the answer reads at a glance instead of
+ * needing a second look.
  */
 @Composable
-private fun RegionChoiceCard(
+internal fun RegionChoiceCard(
     choice: RegionChoice,
     selected: Boolean,
-    recommended: Boolean,
     onSelect: () -> Unit,
 ) {
     val jade = MaterialTheme.colorScheme.primary
     // Session 154 (R-1): the check badge rides the motion tokens and
     // reduced-motion users get a 30ms alpha crossfade, never a scale.
     val reduceMotion = rememberReduceMotion()
-    val containerColor by animateColorAsState(
-        if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-        label = "regionCardContainer",
-    )
     val borderColor by animateColorAsState(
         if (selected) jade else MaterialTheme.colorScheme.outlineVariant,
         label = "regionCardBorder",
-    )
-    val iconTileColor by animateColorAsState(
-        if (selected) jade.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceVariant,
-        label = "regionIconTile",
-    )
-    val iconTint by animateColorAsState(
-        if (selected) jade else MaterialTheme.colorScheme.onSurfaceVariant,
-        label = "regionIconTint",
     )
 
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(16.dp))
             .selectable(
                 selected = selected,
                 role = Role.RadioButton,
                 onClick = onSelect,
-            ),
-        shape = RoundedCornerShape(20.dp),
-        color = containerColor,
+            )
+            .testTag("regionChoice_${choice.id}"),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
         border = BorderStroke(
             if (selected) 2.dp else 1.dp,
             borderColor,
@@ -267,75 +262,37 @@ private fun RegionChoiceCard(
         tonalElevation = if (selected) 2.dp else 0.dp,
     ) {
         Row(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(IntrinsicSize.Max),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            // The mockup's selected edge: a jade bar down the card's left
+            // side. An unselected card keeps the same width transparent so
+            // the text never shifts when the pick moves.
             Box(
                 modifier = Modifier
-                    .size(48.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(iconTileColor),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    // The qualified form, as in NavGraph: the top-level vectorResource does
-                    // not exist in this Compose version (BOM 2024.06.00), only the Companion's.
-                    imageVector = ImageVector.vectorResource(regionIconRes(choice)),
-                    contentDescription = null,
-                    tint = iconTint,
-                    modifier = Modifier.size(26.dp),
-                )
-            }
-            Spacer(Modifier.width(14.dp))
+                    .width(4.dp)
+                    .fillMaxHeight()
+                    .background(if (selected) jade else MaterialTheme.colorScheme.surfaceContainerHigh),
+            )
             Column(
-                modifier = Modifier.weight(1f),
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = choice.title,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    if (recommended) {
-                        Spacer(Modifier.width(8.dp))
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(jade.copy(alpha = 0.14f))
-                                .padding(horizontal = 8.dp, vertical = 3.dp),
-                        ) {
-                            Text(
-                                text = "Recommended",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = jade,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                        }
-                    }
-                }
+                Text(
+                    text = choice.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.SemiBold,
+                )
                 Text(
                     text = choice.tagline,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(
-                            if (selected) jade.copy(alpha = 0.14f)
-                            else MaterialTheme.colorScheme.surfaceVariant,
-                        )
-                        .padding(horizontal = 8.dp, vertical = 3.dp),
-                ) {
-                    Text(
-                        text = choice.preferencePill(),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (selected) jade else MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontWeight = FontWeight.Medium,
-                    )
-                }
             }
             AnimatedVisibility(
                 visible = selected,
@@ -352,10 +309,11 @@ private fun RegionChoiceCard(
             ) {
                 Box(
                     modifier = Modifier
-                        .padding(start = 12.dp)
+                        .padding(end = 16.dp)
                         .size(28.dp)
                         .clip(CircleShape)
-                        .background(jade),
+                        .background(jade)
+                        .testTag("regionChoice_check"),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(

@@ -668,7 +668,12 @@ fun RaddStreamNavGraph(
             }
 
             composable(Screen.Help.route) {
-                HelpScreen(onBackClick = { navController.popBackStack() })
+                HelpScreen(
+                    onBackClick = { navController.popBackStack() },
+                    // The Contact form lives in Settings; Help sends the
+                    // viewer there, as the screen's own note always said.
+                    onContactClick = { navController.navigate(Screen.Settings.route) },
+                )
             }
 
             composable(Screen.Languages.route) {

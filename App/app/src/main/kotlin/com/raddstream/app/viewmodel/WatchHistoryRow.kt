@@ -24,6 +24,12 @@ data class HistoryRow(
     val progressLabel: String?,
     val finished: Boolean,
     val dateLabel: String,
+    /** The day it was watched, in the viewer's own words ("Watched 2 days ago"). */
+    val watchedLabel: String,
+    /** The scope's keys, so the screen can remove exactly this row. */
+    val workRef: String,
+    val seasonNumber: Int,
+    val episodeNumber: Int,
 ) {
     /** A row the app cannot route to a work is a row that cannot be tapped. */
     val tappable: Boolean get() = postId > 0
@@ -52,7 +58,28 @@ object WatchHistoryRow {
         else ContinueWatchingTile.progressLabel(row.positionMs, row.durationMs),
         finished = isFinished(row.positionMs, row.durationMs),
         dateLabel = dateLabel(row.updatedAt),
+        watchedLabel = "Watched ${relativeDateLabel(row.updatedAt)}",
+        workRef = row.workRef,
+        seasonNumber = row.seasonNumber,
+        episodeNumber = row.episodeNumber,
     )
+
+    /**
+     * The day it was last watched, in the viewer's own words: "Today",
+     * "Yesterday", "N days ago" for the last week, the plain date after that.
+     * [nowMs] is a parameter so a JVM test can pin the boundaries without
+     * waiting a week; the screen always passes the real clock.
+     */
+    fun relativeDateLabel(epochMs: Long, nowMs: Long = System.currentTimeMillis()): String {
+        val days = (nowMs - epochMs) / 86_400_000L
+        return when {
+            days < 0L -> dateLabel(epochMs)
+            days == 0L -> "Today"
+            days == 1L -> "Yesterday"
+            days < 7L -> "$days days ago"
+            else -> dateLabel(epochMs)
+        }
+    }
 
     /**
      * Finished is the rail's end-guard read the other way: stopped within the last ten

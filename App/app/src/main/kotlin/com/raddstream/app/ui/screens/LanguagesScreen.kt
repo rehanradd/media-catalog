@@ -2,26 +2,26 @@ package com.raddstream.app.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -29,14 +29,13 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.raddstream.app.R
-import com.raddstream.app.ui.components.raddFilterChipColors
+import com.raddstream.app.viewmodel.LanguagesUiState
 import com.raddstream.app.viewmodel.LanguagesViewModel
 import com.raddstream.app.viewmodel.UserPreferences
 import com.raddstream.app.viewmodel.displayLanguageName
@@ -52,8 +51,17 @@ import com.raddstream.app.viewmodel.displayLanguageName
  * what the others said. They all write the same stored keys, so this screen
  * changes them through the same repository methods and every surface follows.
  * Nothing is removed here: the old surfaces stay until this screen is proven.
+ *
+ * Stitch sub-screens mockup (Nov 2026): each group is a headed card — a small
+ * grey section label, then one row per option with a jade check on the choice
+ * in force. The rows carry every real option (nine audio, seven subtitle);
+ * the mockup's three rows per group are Stitch's illustration, not the list.
+ * The subtitle size stays the slider this screen always had — the mockup drew
+ * a "Medium" row with a chevron, but there is no size picker to open and the
+ * stored value is a percent, so the row shows the real percent above the
+ * slider instead of inventing a name.
  */
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LanguagesScreen(
     onBackClick: () -> Unit,
@@ -74,165 +82,169 @@ fun LanguagesScreen(
             )
         },
     ) { contentPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(contentPadding)
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp),
-        ) {
-            // F5a (Batch A): each value names where it came from — "your choice"
-            // or "<Region> default" — so this screen and the Settings card can
-            // never disagree without saying why.
-            Text(
-                "Audio: ${state.audioLanguage} (${state.audioProvenance}). " +
-                    "Subtitles: ${state.subtitleLanguage} (${state.subtitleProvenance}). " +
-                    "Subtitle size: ${state.subtitleSizePercent}%.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+        LanguagesContent(
+            state = state,
+            onAudioSelect = { viewModel.setAudioLanguage(it) },
+            onSubtitleSelect = { viewModel.setSubtitleLanguage(it) },
+            onSizeChange = { viewModel.setSubtitleSize(it) },
+            modifier = Modifier.padding(contentPadding),
+        )
+    }
+}
+
+/**
+ * The screen without its ViewModel, so a test can drive it with a plain
+ * [LanguagesUiState]: the two headed option cards and the size card.
+ */
+@Composable
+internal fun LanguagesContent(
+    state: LanguagesUiState,
+    onAudioSelect: (String) -> Unit,
+    onSubtitleSelect: (String) -> Unit,
+    onSizeChange: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
+    ) {
+        LanguageSection(title = "Audio") {
+            LanguageOptionCard(
+                rowName = "Audio language",
+                options = UserPreferences.AUDIO_LANGUAGE_OPTIONS,
+                selected = state.audioLanguage,
+                onSelect = onAudioSelect,
             )
+        }
 
-            LanguageSection(title = "Preferred audio language") {
-                // The chips wrap: eight options do not fit one row on a phone, and a
-                // row that scrolls sideways hides the choice a viewer is looking for.
-                LanguageChipRow(
-                    rowName = "Audio language",
-                    options = UserPreferences.AUDIO_LANGUAGE_OPTIONS,
-                    selectedIndex = UserPreferences.AUDIO_LANGUAGE_OPTIONS
-                        .indexOf(state.audioLanguage).coerceAtLeast(0),
-                    onSelect = { idx -> viewModel.setAudioLanguage(UserPreferences.AUDIO_LANGUAGE_OPTIONS[idx]) },
-                )
-                // F1 (Batch A): the old paragraph explained the track-picking rule in
-                // implementation words ("dual audio", "the player picks the track that
-                // says so"). What the viewer needs is one plain sentence.
-                Text(
-                    stringResource(R.string.languages_audio_help),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+        LanguageSection(title = "Subtitles") {
+            LanguageOptionCard(
+                rowName = "Subtitle language",
+                options = subtitleOptions,
+                selected = state.subtitleLanguage,
+                onSelect = onSubtitleSelect,
+            )
+        }
 
-            LanguageSection(title = "Default subtitle language") {
-                LanguageChipRow(
-                    rowName = "Subtitle language",
-                    options = subtitleOptions,
-                    selectedIndex = subtitleOptions
-                        .indexOf(state.subtitleLanguage).coerceAtLeast(0),
-                    onSelect = { idx -> viewModel.setSubtitleLanguage(subtitleOptions[idx]) },
-                )
-                Text(
-                    "The subtitles a new title starts with. Off means none until you turn " +
-                        "them on in the player. Saved on this device.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-
-            LanguageSection(title = "Subtitle size") {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+        LanguageSection(title = "Subtitle size") {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    Text(
-                        "${state.subtitleSizePercent}%",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "Subtitle size",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            text = "${state.subtitleSizePercent}%",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     Slider(
                         value = state.subtitleSizePercent.toFloat(),
-                        onValueChange = { viewModel.setSubtitleSize(it.toInt()) },
+                        onValueChange = { onSizeChange(it.toInt()) },
                         valueRange = 50f..200f,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
-                Text(
-                    "The same size the player sheet offers while watching; it applies from the next playback.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
-
-            // F1 (Batch A): the old paragraph explained the shared-storage plumbing
-            // ("one stored value underneath them") — an implementation detail no
-            // viewer needs. The behaviour is one plain sentence now.
-            Text(
-                stringResource(R.string.languages_sync_help),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
 }
 
-/** One headed section: a title, then the controls under it. */
+/** One headed section: a small grey label, then the card under it. */
 @Composable
 private fun LanguageSection(
     title: String,
     content: @Composable () -> Unit,
 ) {
     Column(
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
-            text = title,
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurface,
+            text = title.uppercase(),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             fontWeight = FontWeight.SemiBold,
         )
         content()
     }
 }
 
-/** The chip row, wrapping: the audio list is eight long and must not scroll sideways. */
-@OptIn(ExperimentalLayoutApi::class)
+/** One card of rows: a tap picks the row, the pick wears the jade check. */
 @Composable
-private fun LanguageChipRow(
+private fun LanguageOptionCard(
     // F31 (Batch B): the row's name, spoken before the language — the audio
-    // row and the subtitle row hold the same words ("Hindi" in both), and a
+    // card and the subtitle card hold the same words ("Hindi" in both), and a
     // screen reader hearing bare "Hindi" twice cannot tell which choice it
     // is changing. The painted label stays the language alone.
     rowName: String,
     options: List<String>,
-    selectedIndex: Int,
-    onSelect: (Int) -> Unit,
+    selected: String,
+    onSelect: (String) -> Unit,
 ) {
-    FlowRow(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
     ) {
-        options.forEachIndexed { idx, label ->
-            FilterChip(
-                selected = idx == selectedIndex,
-                onClick = { onSelect(idx) },
-                // F23 (Batch B): the chip paints both scripts —
-                // "Hindi · हिन्दी" — so the language is findable by a reader
-                // of either. The stored value stays the English name.
-                label = { Text(displayLanguageName(label)) },
-                // F3 (Batch A): this was the one bare FilterChip in the app — no
-                // emerald selected treatment. It now uses the shared token, and
-                // the selected chip also carries a check, so the choice is not
-                // colour-only (a viewer who cannot tell the greens apart can
-                // still see which language is picked).
-                colors = raddFilterChipColors(),
-                leadingIcon = if (idx == selectedIndex) {
-                    {
+        Column {
+            options.forEachIndexed { idx, label ->
+                if (idx > 0) {
+                    HorizontalDivider(
+                        color = MaterialTheme.colorScheme.outlineVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    )
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .selectable(
+                            selected = label == selected,
+                            role = Role.RadioButton,
+                            onClick = { onSelect(label) },
+                        )
+                        .semantics {
+                            contentDescription = "$rowName: $label"
+                        }
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        // F23 (Batch B): the row paints both scripts —
+                        // "Hindi · हिन्दी" — so the language is findable by a
+                        // reader of either. The stored value stays the
+                        // English name.
+                        text = displayLanguageName(label),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (label == selected) {
                         Icon(
-                            imageVector = Icons.Filled.Check,
-                            contentDescription = null, // the chip label already says which language
-                            modifier = Modifier.size(18.dp),
+                            imageVector = Icons.Default.Check,
+                            contentDescription = null, // the row's selected state already says this out loud
+                            tint = MaterialTheme.colorScheme.primary,
                         )
                     }
-                } else {
-                    null
-                },
-                // Audit #54: a FilterChip is 32 dp tall — the touch-target floor is 48 dp, so the chip itself carries it.
-                modifier = Modifier.heightIn(min = 48.dp).semantics {
-                    contentDescription = "$rowName: $label"
-                },
-            )
+                }
+            }
         }
     }
 }
