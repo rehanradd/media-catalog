@@ -214,7 +214,6 @@ fun HomeScreen(
             heroMax = heroMax,
             heroAutoplay = heroAutoplay,
             heroIntervalMs = heroIntervalMs,
-            onSearchQuery = onSearchQuery,
             onPostClick = onPostClick,
             onWatchNowClick = onWatchNowClick,
             onBrowseType = onBrowseType,
@@ -291,7 +290,6 @@ internal fun HomeContent(
     heroMax: Int = HERO_LIMIT,
     heroAutoplay: Boolean = true,
     heroIntervalMs: Long = 8_000L,
-    onSearchQuery: (String) -> Unit = {},
     onPostClick: (Post) -> Unit = {},
     onWatchNowClick: (Post) -> Unit = onPostClick,
     onBrowseType: (String?) -> Unit = {},
@@ -320,25 +318,12 @@ internal fun HomeContent(
             LinearProgressIndicator(Modifier.fillMaxWidth())
         }
 
-        // Search first: a plain movie-search bar (audit #17, reworked
-        // 2026-11-12: the browser identity is dropped — this searches the
-        // catalog only, it takes no address and opens no web page). The
-        // viewer types here, and Enter opens Search with the query
-        // applied. The top-bar icon stays as the empty-search door, and
-        // the bar hides with the operator's search flag, exactly like
-        // the icon does.
-        if (searchEnabled) {
-            var homeQuery by remember { mutableStateOf("") }
-            SearchField(
-                query = homeQuery,
-                onQueryChanged = { homeQuery = it },
-                onSubmit = { onSearchQuery(homeQuery) },
-                modifier = Modifier.padding(horizontal = 16.dp),
-                label = "Search movies and shows",
-            )
-            Spacer(Modifier.height(12.dp))
-        }
-
+        // M6 (home review, Nov 2026): the home search bar is gone. It was
+        // a third door to the same place — the Search tab is the empty-query
+        // door and the bar only carried a typed query into it — and Netflix
+        // 2026 ships no bar on Home. The first content is the hero (or the
+        // sync line when Home has loaded before). SearchField itself stays:
+        // the Search screen still uses it.
         // Gap A5: the sync/status line — how fresh the rows below are, or
         // that they are saved rows on an offline phone. Nothing until Home
         // has ever loaded, so a first launch never dates an empty page.
