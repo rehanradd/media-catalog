@@ -1,6 +1,7 @@
 package com.raddstream.app.ui.screens
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import com.raddstream.app.ui.theme.RaddStreamTheme
@@ -39,12 +40,12 @@ class DashboardPaywallTest {
                 )
             }
         }
-        compose.onNodeWithText("Coins").assertIsDisplayed()
-        compose.onNodeWithText("25 coins").assertIsDisplayed()
-        compose.onNodeWithText("Check-in streak").assertIsDisplayed()
-        compose.onNodeWithText("See VIP options").assertIsDisplayed()
-        compose.onNodeWithText("Coins and history").assertIsDisplayed()
-        compose.onNodeWithText("Your profile").assertIsDisplayed()
+        compose.onNodeWithText("Coins").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("25 coins").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Check-in streak").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("See VIP options").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Coins and history").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Your profile").performScrollTo().assertIsDisplayed()
     }
 
     @Test
@@ -69,9 +70,9 @@ class DashboardPaywallTest {
         compose.onNodeWithText("Check-in streak").assertDoesNotExist()
         compose.onNodeWithText("See VIP options").assertDoesNotExist()
         compose.onNodeWithText("Coins and history").assertDoesNotExist()
-        compose.onNodeWithText("Premium").assertIsDisplayed()
-        compose.onNodeWithText("All qualities and downloads included.").assertIsDisplayed()
-        compose.onNodeWithText("Your profile").assertIsDisplayed()
+        compose.onNodeWithText("Premium").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("All qualities and downloads included.").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Your profile").performScrollTo().assertIsDisplayed()
     }
 
     @Test
@@ -89,6 +90,6 @@ class DashboardPaywallTest {
             }
         }
         compose.onNodeWithText("Sign in from Settings to see your coins, streak and membership here.").assertDoesNotExist()
-        compose.onNodeWithText("Premium").assertIsDisplayed()
+        compose.onNodeWithText("Premium").performScrollTo().assertIsDisplayed()
     }
 }

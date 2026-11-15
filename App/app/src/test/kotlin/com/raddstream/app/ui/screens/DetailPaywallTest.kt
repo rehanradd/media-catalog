@@ -2,6 +2,7 @@ package com.raddstream.app.ui.screens
 
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.unit.dp
@@ -88,7 +89,7 @@ class DetailPaywallTest {
     @Test
     fun sponsorCardShowsWhileTheQualityGateIsOn() {
         content(paywallVisible = true)
-        compose.onNodeWithText("Go VIP").assertIsDisplayed()
+        compose.onNodeWithText("Go VIP").performScrollTo().assertIsDisplayed()
     }
 
     @Test

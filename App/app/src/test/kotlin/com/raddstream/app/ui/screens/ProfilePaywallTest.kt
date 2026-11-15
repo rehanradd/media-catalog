@@ -1,6 +1,7 @@
 package com.raddstream.app.ui.screens
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import com.raddstream.app.ui.theme.RaddStreamTheme
@@ -38,12 +39,12 @@ class ProfilePaywallTest {
                 )
             }
         }
-        compose.onNodeWithText("Free account").assertIsDisplayed()
-        compose.onNodeWithText("Check-in streak: 3 days (best 5).").assertIsDisplayed()
-        compose.onNodeWithText("Coins: 25.").assertIsDisplayed()
-        compose.onNodeWithText("Coins and history").assertIsDisplayed()
-        compose.onNodeWithText("Open dashboard").assertIsDisplayed()
-        compose.onNodeWithText("Sign out").assertIsDisplayed()
+        compose.onNodeWithText("Free account").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Check-in streak: 3 days (best 5).").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Coins: 25.").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Coins and history").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Open dashboard").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Sign out").performScrollTo().assertIsDisplayed()
     }
 
     @Test
@@ -66,8 +67,8 @@ class ProfilePaywallTest {
         compose.onNodeWithText("Check-in streak: 3 days (best 5).").assertDoesNotExist()
         compose.onNodeWithText("Coins: 25.").assertDoesNotExist()
         compose.onNodeWithText("Coins and history").assertDoesNotExist()
-        compose.onNodeWithText("Premium member").assertIsDisplayed()
-        compose.onNodeWithText("Open dashboard").assertIsDisplayed()
-        compose.onNodeWithText("Sign out").assertIsDisplayed()
+        compose.onNodeWithText("Premium member").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Open dashboard").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Sign out").performScrollTo().assertIsDisplayed()
     }
 }

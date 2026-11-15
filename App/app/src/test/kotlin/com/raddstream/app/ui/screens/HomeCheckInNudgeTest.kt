@@ -1,6 +1,7 @@
 package com.raddstream.app.ui.screens
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.unit.dp
@@ -37,8 +38,8 @@ class HomeCheckInNudgeTest {
                 )
             }
         }
-        compose.onNodeWithText("Daily check-in").assertIsDisplayed()
-        compose.onNodeWithText("Sign in").assertIsDisplayed()
+        compose.onNodeWithText("Daily check-in").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Sign in").performScrollTo().assertIsDisplayed()
         val bounds = compose.onNodeWithText("Sign in").fetchSemanticsNode().boundsInRoot
         with(compose.density) {
             assertTrue("Sign in below 48dp touch height", bounds.height.toDp() >= 48.dp)
@@ -62,8 +63,8 @@ class HomeCheckInNudgeTest {
                 )
             }
         }
-        compose.onNodeWithText("Day 2 of 3 · 25 coins").assertIsDisplayed()
-        compose.onNodeWithText("Claim 10 coins for Day 3").assertIsDisplayed()
+        compose.onNodeWithText("Day 2 of 3 · 25 coins").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Claim 10 coins for Day 3").performScrollTo().assertIsDisplayed()
     }
 
     @Test
@@ -78,7 +79,7 @@ class HomeCheckInNudgeTest {
                 )
             }
         }
-        compose.onNodeWithText("Daily check-in").assertIsDisplayed()
+        compose.onNodeWithText("Daily check-in").performScrollTo().assertIsDisplayed()
     }
 
     @Test
