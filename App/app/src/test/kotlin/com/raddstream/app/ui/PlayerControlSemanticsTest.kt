@@ -45,22 +45,90 @@ class PlayerControlSemanticsTest {
     }
 
     /**
-     * The body of one top-level function, from its signature to the end of its declaration —
-     * whichever comes first: a closing brace at column 0 (a block body) or the next blank line
-     * (an expression body like the press helper's).
+     * The body of one top-level function, from its signature to the end of its declaration.
+     * A block body is brace-counted to its matching close, so blank lines inside a long
+     * function (GestureOverlay) do not cut the body short — the first version stopped at
+     * the first blank line and never reached Lane C. An expression body (the press
+     * helper's `= this.then(...)`) ends at the next blank line. The scan skips string
+     * literals and comments, so a brace inside either cannot throw the count off.
      */
     private fun functionBody(signature: String): String {
         val start = source.indexOf(signature)
         assertTrue("PlayerScreen.kt no longer declares $signature", start >= 0)
-        val close = source.indexOf("\n}\n", start)
         val blank = source.indexOf("\n\n", start)
-        val end = when {
-            close < 0 && blank < 0 -> source.length
-            close < 0 -> blank
-            blank < 0 -> close
-            else -> minOf(close, blank)
+        val openParen = source.indexOf("(", start)
+        if (openParen < 0) {
+            val end = if (blank < 0) source.length else blank
+            return source.substring(start, end)
         }
-        return source.substring(start, end)
+        // End of the parameter list: the `)` matching the opening `(`.
+        var i = openParen
+        var depth = 0
+        var closeParen = -1
+        while (i < source.length) {
+            i = skipStringOrComment(i)
+            if (i >= source.length) break
+            when (source[i]) {
+                '(' -> depth++
+                ')' -> {
+                    depth--
+                    if (depth == 0) {
+                        closeParen = i
+                        break
+                    }
+                }
+            }
+            i++
+        }
+        if (closeParen < 0) {
+            val end = if (blank < 0) source.length else blank
+            return source.substring(start, end)
+        }
+        // After the parameter list (and any return type) a `{` means a block
+        // body and an `=` means an expression body — whichever comes first.
+        val openBrace = source.indexOf("{", closeParen)
+        val equals = source.indexOf("=", closeParen)
+        val isBlock = openBrace >= 0 && (equals < 0 || openBrace < equals)
+        if (!isBlock) {
+            val end = if (blank < 0) source.length else blank
+            return source.substring(start, end)
+        }
+        var braceDepth = 0
+        i = openBrace
+        while (i < source.length) {
+            i = skipStringOrComment(i)
+            if (i >= source.length) break
+            when (source[i]) {
+                '{' -> braceDepth++
+                '}' -> {
+                    braceDepth--
+                    if (braceDepth == 0) return source.substring(start, i + 1)
+                }
+            }
+            i++
+        }
+        return source.substring(start)
+    }
+
+    /** Index just past a string literal or comment starting at [i], or [i] itself. */
+    private fun skipStringOrComment(i: Int): Int {
+        if (source.startsWith("//", i)) {
+            val nl = source.indexOf("\n", i)
+            return if (nl < 0) source.length else nl
+        }
+        if (source.startsWith("/*", i)) {
+            val end = source.indexOf("*/", i + 2)
+            return if (end < 0) source.length else end + 2
+        }
+        if (source[i] == '"') {
+            var j = i + 1
+            while (j < source.length && source[j] != '"') {
+                if (source[j] == '\\') j++
+                j++
+            }
+            return minOf(j + 1, source.length)
+        }
+        return i
     }
 
     @Test
@@ -351,18 +419,20 @@ class PlayerControlSemanticsTest {
             "Lane C must call latestOnBrightness, not the stale onBrightness closure",
             overlay.contains("latestOnBrightness(cmd.fractionPerSwipe)"),
         )
-        // "onVolume(cmd.fractionPerSwipe)" is a substring of
-        // "latestOnVolume(cmd.fractionPerSwipe)", so the negative check
-        // counts occurrences: exactly one, the latest-prefixed call.
+        // "Volume(cmd.fractionPerSwipe)" matches both the latest-prefixed call
+        // and a bare onVolume call: camelCase puts a capital O in
+        // latestOnVolume, so splitting on lowercase "onVolume(...)" matches
+        // nothing at all. Exactly one occurrence means Lane C calls it once,
+        // via latestOnVolume.
         assertEquals(
             "Lane C must call onVolume exactly once, via latestOnVolume",
             1,
-            overlay.split("onVolume(cmd.fractionPerSwipe)").size - 1,
+            overlay.split("Volume(cmd.fractionPerSwipe)").size - 1,
         )
         assertEquals(
             "Lane C must call onBrightness exactly once, via latestOnBrightness",
             1,
-            overlay.split("onBrightness(cmd.fractionPerSwipe)").size - 1,
+            overlay.split("Brightness(cmd.fractionPerSwipe)").size - 1,
         )
     }
 
