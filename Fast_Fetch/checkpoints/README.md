@@ -5,6 +5,14 @@ Newest first. Each file is a session block moved verbatim out of `Fast_Fetch/CON
 Entries written to `CONTINUITY.md` by another lane *after* the rotation are not lost: the rebase onto
 trunk `4fe6f65` moved them here the same way, verbatim, with the trunk line range in the header.
 
+- 2026-11-15 — instant play `[REV-VERIFY-FLOOR]`: the press DOES bank —
+  the audit counted rows for the bundle's link_id while the handle decodes
+  to a different id — but the banked row was born expired
+  (`expires_at == resolved_at`, `reverify_after` 60 s in the past), so
+  every press re-resolved live forever. Fix: `_compute_reverify_after`
+  floors at `resolved_at + 120 s`; one new test; 85/85 green locally.
+  NOT live — gate deploy is the supervisor's call. Full note:
+  `20261115-instant-play-reverify-floor.md`.
 - 2026-11-14 — self-check `[TRENDING-STALE-REBUILD]`: the trending 503
   flake (synchronous ~10 s cold rebuild tripping the 10 s timeout) gets
   stale-while-revalidate — expired / superseded-fingerprint orders are

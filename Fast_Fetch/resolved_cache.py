@@ -67,6 +67,12 @@ __all__ = [
 #: A cache row is refused inside this margin of its measured death, so a token
 #: never dies in flight between our 302 and the player's first byte.
 REVERIFY_MARGIN_SECONDS = 60.0
+#: The shortest window a banked row is ever trusted for. A URL whose measured
+#: expiry is already at/past the resolve instant would otherwise bank a
+#: stillborn row (reverify_after <= resolved_at) that the cache can never
+#: serve. 120 s: an immediate second press hits, a genuinely short window
+#: still ends when it should (see _compute_reverify_after).
+MIN_USABLE_REVERIFY_SECONDS = 120.0
 #: Consecutive client failure reports (POST /links/{id}/report "failed") after
 #: which a nominally fresh row stops being served, until a fresh resolve resets
 #: it. This is the circuit that keeps a poisoned or revoked URL out of service.
@@ -310,7 +316,16 @@ def _compute_reverify_after(*, resolved_at: float, expires_at: float | None,
         horizon = min(expires_at, resolved_at + max(cap, _pool_recheck_seconds()))
     else:
         horizon = resolved_at + cap
-    return horizon - REVERIFY_MARGIN_SECONDS
+    # Live 2026-11-15: a googleusercontent URL banked with expires_at ==
+    # resolved_at, so this returned resolved_at - 60 s and the row was
+    # stillborn — the cache could never serve it and every press re-resolved
+    # live forever. A resolve that just proved the URL plays earns a short
+    # usable window instead of a row that is dead on arrival; 120 s covers
+    # an immediate second press and the failover ladder, and stays below the
+    # 60 s death margin the measured-expiry test pins (240 s for a 300 s
+    # expiry), so a genuinely short window still ends when it should.
+    return max(horizon - REVERIFY_MARGIN_SECONDS,
+               resolved_at + MIN_USABLE_REVERIFY_SECONDS)
 
 
 def record_resolved_cache(conn: sqlite3.Connection, link_id: int,

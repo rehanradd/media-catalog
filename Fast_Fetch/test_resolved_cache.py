@@ -207,6 +207,26 @@ class TestKindAndCategoryFiltering(unittest.TestCase):
         self.assertIsNone(resolved_cache.lookup_cache(conn, 3, now=now + 280),
                           "must not serve inside the 60s death margin")
 
+    def test_expiry_at_resolve_time_still_banks_a_usable_row(self):
+        """Live 2026-11-15: a googleusercontent URL banked with expires_at ==
+        resolved_at, so reverify_after landed 60 s in the past and the row
+        could never be served — every press re-resolved live forever. A row
+        whose measured expiry is already reached still earns the minimum
+        usable window: the resolve just proved it plays."""
+        conn = fresh_conn()
+        now = time.time()
+        resolved_cache.record_resolved_cache(
+            conn, 4, file_resolve(expires_at=now), now=now)
+        row = conn.execute(
+            "SELECT reverify_after - resolved_at FROM resolved_cache "
+            "WHERE link_id = ?", (4,)).fetchone()
+        self.assertGreater(row[0], 0)
+        self.assertIsNotNone(resolved_cache.lookup_cache(conn, 4, now=now + 60))
+        # And an expiry already in the past measures the same way.
+        resolved_cache.record_resolved_cache(
+            conn, 5, file_resolve(expires_at=now - 3600), now=now)
+        self.assertIsNotNone(resolved_cache.lookup_cache(conn, 5, now=now + 60))
+
 
 class TestServingGuards(unittest.TestCase):
     def test_failure_circuit_opens(self):
