@@ -624,13 +624,19 @@ private fun HeroSlide(
                     interactionSource = watchNowSource,
                     // Mockup (Nov 2026): the two buttons share the slide's
                     // width equally and read in ALL CAPS — "WATCH NOW" /
-                    // "MY LIST" — instead of wrapping their labels.
+                    // "MY LIST" — instead of wrapping their labels. The
+                    // inset card leaves each button ~144dp wide, and the
+                    // default 24dp content padding + 22dp icon pushed
+                    // "WATCH NOW" onto two lines — so both buttons take
+                    // 12dp of content padding and an 18dp icon, which fits
+                    // the longest label on one line with room to spare.
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                     modifier = Modifier.weight(1f).heightIn(min = HERO_BUTTON_HEIGHT_DP.dp).pressScale(watchNowSource),
                 ) {
                     Icon(
                         imageVector = Icons.Default.PlayArrow,
                         contentDescription = null,
-                        modifier = Modifier.size(22.dp),
+                        modifier = Modifier.size(18.dp),
                     )
                     Spacer(Modifier.width(8.dp))
                     Text(Brand.copy("hero_watch_now", "Watch Now").uppercase(), fontWeight = FontWeight.Bold)
@@ -645,6 +651,10 @@ private fun HeroSlide(
                         containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f),
                         contentColor = MaterialTheme.colorScheme.onBackground,
                     ),
+                    // Same 12dp content padding as Watch Now (see above):
+                    // the two buttons share the width, so they share the
+                    // padding that keeps their labels on one line.
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                     // CL-6: the button's visible text is "My List", the same words
                     // as the nav tab — so it announces what the tap does instead:
                     // "Save to My List", or "Saved to My List" once saved.
@@ -656,7 +666,7 @@ private fun HeroSlide(
                     Icon(
                         imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                         contentDescription = null,
-                        modifier = Modifier.size(20.dp),
+                        modifier = Modifier.size(18.dp),
                     )
                     Spacer(Modifier.width(8.dp))
                     Text((if (isFavorite) "Saved" else "My List").uppercase(), fontWeight = FontWeight.Bold)
