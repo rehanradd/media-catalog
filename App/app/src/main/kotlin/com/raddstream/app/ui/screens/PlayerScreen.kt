@@ -840,8 +840,16 @@ private fun PlayerScreenContent(
         // furniture. Past two seconds the card gains the slow line (§5 P5); past eight it
         // gains something to press. At thirty seconds the deadline card owns the screen
         // instead, so this notice stands down.
+        // Player card fix (Nov 2026): while the deadline stage is SILENT
+        // (the first 2 s) no card at all — the centre spinner below is the
+        // only sign of work. The card is a bordered 420 dp plate with a
+        // title, a step line and, from ACTIONS, real buttons: that shape
+        // reads as an error dialog, and ordinary users pressed Retry on a
+        // press that was still succeeding. The full card earns its place
+        // only from HINT, when the wait is genuinely long.
         if (state.startPhase != StartPhase.NONE &&
-            state.startDeadlineStage != StartDeadlineStage.GIVE_UP
+            state.startDeadlineStage != StartDeadlineStage.GIVE_UP &&
+            state.startDeadlineStage != StartDeadlineStage.SILENT
         ) {
             val actions = state.startDeadlineStage == StartDeadlineStage.ACTIONS
             // Session 121 (P-36): the 30-second wait showed no progress at all. When
@@ -1156,6 +1164,15 @@ private fun GestureOverlay(
     val latestSettings by rememberUpdatedState(settings)
     val latestDuration by rememberUpdatedState(state.durationMs)
     val latestPosition by rememberUpdatedState(state.positionMs)
+    // Volume-gesture fix (Nov 2026): onVolume reads state.userVolume, a
+    // snapshot — inside Lane C's never-restarted pointerInput(Unit) loop
+    // the first composition's closure kept adding each frame's tiny delta
+    // to the ORIGINAL volume, so a full swipe moved it ~1% and the
+    // volume flickered instead of following the finger. latestOnVolume
+    // keeps the base fresh; latestOnBrightness the same for safety
+    // (brightness only worked by accident — it reads a live MutableState).
+    val latestOnVolume by rememberUpdatedState(onVolume)
+    val latestOnBrightness by rememberUpdatedState(onBrightness)
     /**
      * Stamp of the last confirmed two-finger tap. The two-finger lane below watches the
      * Initial pass, which every frame delivers before the Main pass the tap lane reads, so
@@ -1280,8 +1297,8 @@ private fun GestureOverlay(
                             when (axis) {
                                 DominantAxis.VERTICAL ->
                                     when (val cmd = GestureMapper.onVerticalDrag(zone, dy, paneSize.height.toFloat(), latestSettings)) {
-                                        is DragCommand.BrightnessDelta -> onBrightness(cmd.fractionPerSwipe)
-                                        is DragCommand.VolumeDelta -> onVolume(cmd.fractionPerSwipe)
+                                        is DragCommand.BrightnessDelta -> latestOnBrightness(cmd.fractionPerSwipe)
+                                        is DragCommand.VolumeDelta -> latestOnVolume(cmd.fractionPerSwipe)
                                         else -> Unit
                                     }
                                 DominantAxis.HORIZONTAL ->
@@ -1617,6 +1634,14 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
 @Composable
 internal fun CenterSpinner(state: PlayerUiState) {
     if (state.startPhase == StartPhase.NONE && !state.isBuffering) return
+    // Player card fix (Nov 2026): while the start-notice card is up
+    // (HINT/ACTIONS) its own spinner is the one — a second centre
+    // spinner reads as something broken. During SILENT the card is
+    // hidden, so this spinner is the only one; after start it is the
+    // buffering spinner.
+    if (state.startPhase != StartPhase.NONE &&
+        state.startDeadlineStage != StartDeadlineStage.SILENT
+    ) return
     val chrome = PlayerChromeTheme.forId(state.playerTheme)
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Surface(color = chrome.chip, shape = CircleShape) {

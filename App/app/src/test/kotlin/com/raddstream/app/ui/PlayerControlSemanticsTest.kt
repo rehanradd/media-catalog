@@ -327,6 +327,46 @@ class PlayerControlSemanticsTest {
     }
 
     @Test
+    fun `the volume gesture reads a fresh base, not the first frame's`() {
+        // Volume-gesture fix (Nov 2026): onVolume adds each frame's delta
+        // to state.userVolume, a snapshot — inside Lane C's
+        // pointerInput(Unit) loop the first composition's closure kept
+        // adding to the ORIGINAL volume, so a full swipe moved it ~1%.
+        // The lane must call the rememberUpdatedState wrapper, never the
+        // bare lambda; same for brightness, which only worked by accident.
+        val overlay = functionBody("private fun GestureOverlay(")
+        assertTrue(
+            "GestureOverlay must wrap onVolume in rememberUpdatedState",
+            overlay.contains("val latestOnVolume by rememberUpdatedState(onVolume)"),
+        )
+        assertTrue(
+            "GestureOverlay must wrap onBrightness in rememberUpdatedState",
+            overlay.contains("val latestOnBrightness by rememberUpdatedState(onBrightness)"),
+        )
+        assertTrue(
+            "Lane C must call latestOnVolume, not the stale onVolume closure",
+            overlay.contains("latestOnVolume(cmd.fractionPerSwipe)"),
+        )
+        assertTrue(
+            "Lane C must call latestOnBrightness, not the stale onBrightness closure",
+            overlay.contains("latestOnBrightness(cmd.fractionPerSwipe)"),
+        )
+        // "onVolume(cmd.fractionPerSwipe)" is a substring of
+        // "latestOnVolume(cmd.fractionPerSwipe)", so the negative check
+        // counts occurrences: exactly one, the latest-prefixed call.
+        assertEquals(
+            "Lane C must call onVolume exactly once, via latestOnVolume",
+            1,
+            overlay.split("onVolume(cmd.fractionPerSwipe)").size - 1,
+        )
+        assertEquals(
+            "Lane C must call onBrightness exactly once, via latestOnBrightness",
+            1,
+            overlay.split("onBrightness(cmd.fractionPerSwipe)").size - 1,
+        )
+    }
+
+    @Test
     fun `the top bar carries the lock action and the coach overlay covers scrub and pinch`() {
         val topBarStart = source.indexOf("internal fun TopBar(")
         val topBarEnd = source.indexOf("\n@Composable\ninternal fun CenterSpinner(", topBarStart)
