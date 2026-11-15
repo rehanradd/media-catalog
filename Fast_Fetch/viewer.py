@@ -3824,6 +3824,49 @@ def _trending_rebuild_async(key, where_sql, params, content_type):
     return True
 
 
+def _trending_warm():
+    """Build the trending orders at service startup, so the first request
+    after a restart never pays the cold grouping on its own thread. The
+    grouping is a full-catalog GROUP BY (~10 s cold on the live catalog)
+    and the request path runs it under the 10 s progress deadline, so
+    that first hit tripped the nginx read timeout into a 503 — exactly
+    once per process start (the loop's owed check, 2026-11-15; the
+    stale-while-revalidate fix of 2026-11-14 covers every later miss,
+    but a true cold start has no stale order to serve). Reuses
+    `_trending_rebuild`, which builds on its own connection without
+    the request deadline, and the same where-clause construction the
+    request path uses (adult clause + type facet + operator hides).
+    Warms the three shapes the app actually requests: unfiltered (the
+    "Most copies" rail), movie, series. Best-effort: a failure to warm
+    one shape only logs — the request path still cold-builds on demand,
+    exactly as before. Returns the content types warmed."""
+    warmed = []
+    try:
+        hidden = panel_feed.hidden_work_ids()
+    except Exception:  # noqa: BLE001 — unwired panel means no hides
+        hidden = set()
+    for content_type in ("", "movie", "series"):
+        try:
+            where_clauses = [redact.adult_clause("p")]
+            facet_clauses, facet_params = _facet_filter_clauses(
+                content_type=content_type)
+            where_clauses.extend(facet_clauses)
+            params = list(facet_params)
+            if hidden:
+                ids = sorted(hidden)[:panel_feed.HIDDEN_IDS_CAP]
+                where_clauses.append(
+                    "p.id NOT IN (%s)" % ",".join("?" for _ in ids))
+                params.extend(ids)
+            where_sql = " AND ".join(where_clauses)
+            key = (content_type, _trending_db_fingerprint())
+            _trending_rebuild(key, where_sql, params, content_type)
+            warmed.append(content_type)
+        except Exception as exc:  # noqa: BLE001 — warm is best-effort
+            sys.stderr.write("trending warm failed for %r: %s\n"
+                             % (content_type, exc))
+    return warmed
+
+
 def _trending_cached_page(conn, where_sql, params, content_type,
                           limit, offset, hidden):
     """(page_ids, total) for a plain trending page from the cached
@@ -7995,6 +8038,19 @@ def start_server(port: int = 8080, host: str = "127.0.0.1",
         maintenance.start_maintenance_thread()
     except Exception as ex:      # noqa: BLE001 — serving matters more than the tick
         print(f"[i] scheduled maintenance unavailable: {ex}")
+
+    # Warm the trending orders before the first request can arrive
+    # (2026-11-15): a cold start pays the full-catalog grouping on the
+    # request thread under the 10 s deadline and 503s exactly once per
+    # restart. The warm builds the three shapes the app requests on
+    # deadline-free connections; a failure only logs — serving starts
+    # either way and the request path cold-builds on demand as before.
+    try:
+        warmed = _trending_warm()
+        if warmed:
+            print(f"[i] trending orders warmed: {', '.join(warmed)}")
+    except Exception as ex:      # noqa: BLE001 — serving matters more than the warm
+        print(f"[i] trending warm unavailable: {ex}")
 
     try:
         server.serve_forever()

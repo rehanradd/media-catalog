@@ -213,6 +213,20 @@ class TrendingTests(Fixture):
         self.assertIn("subtitled", item)
         self.assertNotIn("source_site", item)
 
+    def test_startup_warm_populates_the_cache(self):
+        viewer._TRENDING_ORDER_CACHE.clear()
+        self.addCleanup(viewer._TRENDING_ORDER_CACHE.clear)
+        warmed = viewer._trending_warm()
+        self.assertEqual(warmed, ["", "movie", "series"])
+        types = {key[0] for key in viewer._TRENDING_ORDER_CACHE}
+        self.assertEqual(types, {"", "movie", "series"})
+        # The warmed order answers the same page the cold path did.
+        resp = viewer.api_v1_get_trending(limit=20)
+        self.assertEqual(self.ids(resp), [
+            self.part_two_id, self.squid_id, self.seed_id,
+            self.wonka_id, self.humsafar_id, self.interstellar_id])
+        self.assertNotIn(self.adult_id, self.ids(resp))
+
     def test_second_hit_serves_the_cached_order(self):
         first = viewer.api_v1_get_trending(limit=20)
         self.assertTrue(viewer._TRENDING_ORDER_CACHE,
