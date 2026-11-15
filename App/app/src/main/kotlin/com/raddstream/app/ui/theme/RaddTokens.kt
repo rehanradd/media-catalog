@@ -91,24 +91,28 @@ object RaddTokens {
         val MinGap: Dp = 8.dp
 
         /**
-         * Bottom-nav active-indicator pill, 64×48dp (Session 154, N-2).
-         * M3's spec pill is 56×32dp on a 64dp bar — this app keeps the
-         * larger pill on purpose: Robo runs 4–6 measured the 32dp pill
-         * under the 48dp touch-target floor, and the bar's 80dp content
-         * height (below) is what stops the system nav-bars inset from
-         * crushing the tabs to 32dp. Do not shrink these to the spec
-         * without re-running Robo on a 3-button-nav device.
+         * Bottom-nav active-indicator pill, 56×32dp (density, Nov 2026 —
+         * M3 Expressive's spec pill on a 64dp bar). The pill is VISUAL
+         * only: the tab itself is the touch target at 64dp, still above
+         * the 48dp floor, so the pill no longer needs to clear the floor
+         * on its own. Robo runs 4–6 measured the 32dp pill under the
+         * floor, but run 6 proved the measured node is the tab, not the
+         * pill — and the pill carries no click action. A Robo re-run on
+         * a 3-button-nav device is still the verification owed for this
+         * change (see BottomNavTouchTargetTest).
          */
-        val NavIndicatorWidth: Dp = 64.dp
-        val NavIndicatorHeight: Dp = 48.dp
+        val NavIndicatorWidth: Dp = 56.dp
+        val NavIndicatorHeight: Dp = 32.dp
 
         /**
-         * Bottom-nav tab height, 80dp (Session 154, N-2). M3's bar is
-         * 64dp; this app uses 80dp of content height so that, once M3's
-         * NavigationBar applies the system nav-bars inset inside the bar,
-         * the tabs still measure the full 48dp floor (Robo run 6).
+         * Bottom-nav tab height, 64dp (density, Nov 2026 — M3 Expressive
+         * ContainerHeight; was 80dp). The bar sizes to this content
+         * height PLUS the system nav-bars inset — RaddBottomBar applies
+         * the inset inside its Row exactly as NavigationBar did — so the
+         * tabs keep their full 64dp even on a 3-button-nav device (Robo
+         * run 6 lesson: never force the bar to an exact total height).
          */
-        val NavTabHeight: Dp = 80.dp
+        val NavTabHeight: Dp = 64.dp
     }
 
     /**
