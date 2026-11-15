@@ -31,13 +31,19 @@ object CardGeometry {
      */
     const val POSTER_ASPECT: Float = 2f / 3f
 
-    /** Rail tile width. A rail cell and its placeholder both draw from this one number. */
-    const val RAIL_CARD_WIDTH_DP: Int = 132
+    /**
+     * Rail tile width. A rail cell and its placeholder both draw from this one number.
+     * Density (2026-11-15): 132 dp showed ~2.4 tiles per row on a 360 dp phone;
+     * 112 dp shows ~2.7 and matches Netflix's ~110–120 dp rail. Continue Watching
+     * stays 180 dp — its text row carries a 48 dp remove × beside the title,
+     * so it needs the wider column (see below).
+     */
+    const val RAIL_CARD_WIDTH_DP: Int = 112
 
     /**
      * Continue Watching tiles: wider than a rail tile, because the text row
-     * carries a 48 dp remove × beside the title (F12) — at the 132 dp rail
-     * width the column left for text is 68 dp and "2023 · Movie" /
+     * carries a 48 dp remove × beside the title (F12) — at the 112 dp rail
+     * width the column left for text is 48 dp and "2023 · Movie" /
      * "S1:E3 · 20 min left" clip mid-word (caught by the Paparazzi
      * homeLoaded shot, 2026-11-15). At 180 dp the text column is 116 dp
      * and both lines fit, with the 48 dp touch target kept.

@@ -103,7 +103,7 @@ class CardGeometryTest {
         assertEquals(
             "rail tile width must come from CardGeometry.RAIL_CARD_WIDTH_DP, not a per-screen dp",
             emptyList<String>(),
-            pathsMatching(Regex("""width\(\s*132\s*\.dp""")),
+            pathsMatching(Regex("""width\(\s*112\s*\.dp""")),
         )
         assertEquals(
             "a rail placeholder height must be derived, not pinned — a pinned 190dp skeleton box " +
@@ -113,7 +113,7 @@ class CardGeometryTest {
         )
         assertTrue(
             "CardGeometry must still own the rail width, or the dp scan above is vacuous",
-            Regex("""const val RAIL_CARD_WIDTH_DP: Int = 132""").containsMatchIn(sources.getValue(geometryPath)),
+            Regex("""const val RAIL_CARD_WIDTH_DP: Int = 112""").containsMatchIn(sources.getValue(geometryPath)),
         )
     }
 
