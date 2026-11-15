@@ -14,6 +14,7 @@ import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -44,6 +46,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -78,6 +81,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -795,6 +799,28 @@ internal fun HomeHeader(
 }
 
 /**
+ * Home review (Nov 2026): the right-edge fade for the horizontally
+ * scrolling chip strips — the last chip fades out instead of hard-clipping
+ * mid-word ("Complete s..."). A paint-only overlay: it has no click
+ * handling, so taps pass straight through to the row beneath it. Shared
+ * by the filter row and the Browse facets row, which both scroll.
+ */
+@Composable
+private fun RowEndFade(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .width(24.dp)
+            .fillMaxHeight()
+            .background(
+                Brush.horizontalGradient(
+                    0f to Color.Transparent,
+                    1f to MaterialTheme.colorScheme.background,
+                ),
+            ),
+    )
+}
+
+/**
  * Mockup (Nov 2026): the filter chips under the header — ALL / MOVIES /
  * SERIES / ANIME / KPOP — 48dp tall, horizontally scrollable, filtering the
  * rails in place. The active chip is jade-filled; tapping it again restores
@@ -806,28 +832,31 @@ internal fun HomeFilterRow(
     onSelect: (HomeFilter) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    LazyRow(
-        modifier = modifier.fillMaxWidth().testTag(HomeFilterRowTag),
-        contentPadding = PaddingValues(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        items(HomeFilter.entries) { filter ->
-            FilterChip(
-                selected = filter == selected,
-                onClick = { onSelect(filter) },
-                label = {
-                    Text(
-                        filter.label,
-                        fontWeight = if (filter == selected) FontWeight.Bold else FontWeight.Normal,
-                    )
-                },
-                colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = MaterialTheme.colorScheme.primary,
-                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-                ),
-                modifier = Modifier.height(48.dp).testTag("filterChip_${filter.name}"),
-            )
+    Box(modifier = modifier.fillMaxWidth()) {
+        LazyRow(
+            modifier = Modifier.fillMaxWidth().testTag(HomeFilterRowTag),
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items(HomeFilter.entries) { filter ->
+                FilterChip(
+                    selected = filter == selected,
+                    onClick = { onSelect(filter) },
+                    label = {
+                        Text(
+                            filter.label,
+                            fontWeight = if (filter == selected) FontWeight.Bold else FontWeight.Normal,
+                        )
+                    },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = MaterialTheme.colorScheme.primary,
+                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                    ),
+                    modifier = Modifier.height(48.dp).testTag("filterChip_${filter.name}"),
+                )
+            }
         }
+        RowEndFade(Modifier.align(Alignment.CenterEnd))
     }
 }
 
@@ -967,53 +996,43 @@ private fun OfflineBanner() {
 }
 
 /**
- * B3 — the empty Continue Watching rail. Same header as the real rail, so
- * the slot reads as the feature, not a banner: a title, one honest line,
- * and a Browse CTA. The button is a primary action, so it keeps the
- * primary container; nothing else here is jade. The CTA opens Browse with
- * no type — the "browse/all" landing — because there is no title yet to
- * narrow it by.
+ * B3 (home review, Nov 2026): the empty Continue Watching rail — one
+ * quiet line, never a big card. A new viewer has no history; the old
+ * placeholder card hijacked the fold for a feature with nothing to show.
+ * The clock icon says what the row is, the text says what to do, and
+ * Browse opens Browse with no type. There is no "Continue watching"
+ * heading above it — the heading belongs to the real rail, with rows
+ * under it.
  */
 @Composable
 private fun StartWatchingPlaceholder(onBrowse: () -> Unit) {
-    Column {
-        SectionHeader(
-            title = "Continue watching",
-            modifier = Modifier.padding(horizontal = 16.dp),
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(
+            Icons.Default.History,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(20.dp),
         )
-        Card(
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-            ),
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Column(
-                    Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    Text(
-                        text = "Start watching",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Text(
-                        text = "Pick something to watch and it will wait for you here.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Button(
-                    onClick = onBrowse,
-                    modifier = Modifier.heightIn(min = 48.dp),
-                ) {
-                    Text("Browse titles")
-                }
-            }
+        Text(
+            text = "No active shows — start exploring picks",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        TextButton(onClick = onBrowse) {
+            Text(
+                text = "Browse",
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold,
+            )
         }
     }
 }
@@ -1553,54 +1572,65 @@ internal fun BrowseSection(
     Column(Modifier.padding(top = 4.dp)) {
         // Audit #15: every section heading carries the 16 dp phone margin.
         SectionHeader(title = "Browse", modifier = Modifier.padding(horizontal = 16.dp))
-        // Density (2026-11-15): one scrollable pill row, not two. The type
-        // jump-offs and the facet chips were two 48 dp rows with an 8 dp
-        // spacer between them (104 dp); they are all navigation links to
-        // the same Browse destination, so they ride one row now (48 dp).
-        // The pills stay 48 dp tall on purpose: the touch target is the
-        // layout size in Compose (E-T4 — 14 dp of vertical padding takes
-        // the tile to >= 48 dp), and the Robo a11y runs pin 48 dp targets.
+        // Density (2026-11-15), revised by the home review: one scrollable
+        // pill row, not two. The type jump-offs and the facet chips were two
+        // 48 dp rows with an 8 dp spacer between them (104 dp); they are
+        // all navigation links to the same Browse destination, so they ride
+        // one row now (48 dp). The pills stay 48 dp tall on purpose: the
+        // touch target is the layout size in Compose (E-T4 — 16 dp of
+        // vertical padding takes the tile to >= 48 dp with the smaller
+        // labelMedium text), and the Robo a11y runs pin 48 dp targets.
         // A 32 dp visual with a 48 dp hit area needs a TouchDelegate-style
         // mechanism this codebase does not have; shrinking the hit area
         // would regress E-T4. The shape is a true pill now (24 dp radius
         // on a 48 dp pill). There is no selected state to invert — every
         // chip navigates away, none filters in place.
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .horizontalScrollPadding(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            browseTypeTiles.forEach { tile ->
-                Surface(
-                    onClick = { onBrowseType(tile.type) },
-                    shape = RoundedCornerShape(24.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                ) {
-                    Text(
-                        text = tile.label,
-                        style = MaterialTheme.typography.labelLarge,
-                        // E-T4: 14dp of vertical padding takes the tile to >= 48dp.
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-                    )
+        // Review redesign (Nov 2026): the chips are unfilled — transparent
+        // with a 1 dp outline — so this row reads as navigation links and
+        // never as a second filter system next to the filled filter row
+        // above it. The right edge fades instead of hard-clipping the
+        // last chip mid-word.
+        Box(Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .horizontalScrollPadding(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                browseTypeTiles.forEach { tile ->
+                    Surface(
+                        onClick = { onBrowseType(tile.type) },
+                        shape = RoundedCornerShape(24.dp),
+                        color = Color.Transparent,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    ) {
+                        Text(
+                            text = tile.label,
+                            style = MaterialTheme.typography.labelMedium,
+                            // E-T4: 16dp of vertical padding takes the tile to >= 48dp.
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 16.dp),
+                        )
+                    }
+                }
+                chips.forEach { chip ->
+                    Surface(
+                        onClick = { onFacetSelected(chip.genre, chip.industry, chip.language) },
+                        shape = RoundedCornerShape(24.dp),
+                        color = Color.Transparent,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    ) {
+                        Text(
+                            text = chip.label,
+                            style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 16.dp),
+                        )
+                    }
                 }
             }
-            chips.forEach { chip ->
-                Surface(
-                    onClick = { onFacetSelected(chip.genre, chip.industry, chip.language) },
-                    shape = RoundedCornerShape(24.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                ) {
-                    Text(
-                        text = chip.label,
-                        style = MaterialTheme.typography.labelLarge,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-                    )
-                }
-            }
+            RowEndFade(Modifier.align(Alignment.CenterEnd))
         }
     }
 }

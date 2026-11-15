@@ -2,6 +2,8 @@ package com.raddstream.app.ui
 
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.ui.components.heroMetaLine
+import com.raddstream.app.ui.components.heroSeasonsLabel
+import com.raddstream.app.ui.components.heroTitle
 import com.raddstream.app.ui.components.isKnownLanguage
 import com.raddstream.app.ui.components.nextHeroPage
 import com.raddstream.app.ui.components.shouldAdvanceHero
@@ -39,25 +41,50 @@ class HeroCarouselTest {
         seasons = seasons,
     )
 
-    // Mockup (Nov 2026): one meta line — "seasons | genre | year" — under the
-    // title, not four separate pills. The genre reads lowercase, as the
-    // mockup shows it; the seasons text is the server's own, never
-    // normalised here.
+    // Home review (Nov 2026): one meta line — "Season 1–2 · Reality ·
+    // 2026" — under the title, not four separate pills. The seasons are
+    // normalised to a range, the genre reads capitalised, and the parts
+    // join with " · " — never a raw list like "[1, 2] | reality | 2026".
     @Test
     fun metaLineJoinsSeasonsGenreAndYear() {
-        assertEquals("S1-S2 | reality | 2026", heroMetaLine(post(seasons = "S1-S2", genres = "Reality", year = 2026)))
+        assertEquals("Season 1–2 · Reality · 2026", heroMetaLine(post(seasons = "S1-S2", genres = "Reality", year = 2026)))
     }
 
     @Test
     fun metaLineSkipsMissingParts() {
-        assertEquals("action | 2023", heroMetaLine(post(genres = "Action", year = 2023)))
+        assertEquals("Action · 2023", heroMetaLine(post(genres = "Action", year = 2023)))
         assertEquals("2024", heroMetaLine(post(year = 2024)))
-        assertEquals("S01–S03", heroMetaLine(post(seasons = "S01–S03", year = 0)))
+        assertEquals("Season 1–3", heroMetaLine(post(seasons = "S01–S03", year = 0)))
     }
 
     @Test
     fun metaLineTakesTheFirstGenreOnly() {
-        assertEquals("action | 2023", heroMetaLine(post(genres = "Action, Thriller", year = 2023)))
+        assertEquals("Action · 2023", heroMetaLine(post(genres = "Action, Thriller", year = 2023)))
+    }
+
+    @Test
+    fun seasonsLabelNormalisesEveryServerShape() {
+        assertEquals("Season 1–2", heroSeasonsLabel("[1, 2]"))
+        assertEquals("Season 1–2", heroSeasonsLabel("2"))
+        assertEquals("Season 1", heroSeasonsLabel("1"))
+        assertEquals("Season 1", heroSeasonsLabel("S1"))
+        assertEquals("Season 1–3", heroSeasonsLabel("S01–S03"))
+        assertNull(heroSeasonsLabel(null))
+        assertNull(heroSeasonsLabel("   "))
+        assertNull(heroSeasonsLabel("unknown"))
+    }
+
+    @Test
+    fun heroTitleUsesTheCleanTitleOnly() {
+        val post = Post(
+            id = 1,
+            title = "It's Showtime (2026) S1-S2",
+            cleanTitle = "It's Showtime (2026) S1-S2",
+            year = 2026,
+            contentType = "series",
+            posterUrl = null,
+        )
+        assertEquals("It's Showtime", heroTitle(post))
     }
 
     @Test

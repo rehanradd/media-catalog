@@ -143,7 +143,9 @@ object UserWords {
      * already states, applied until the title stops changing: a trailing
      * "(YYYY)" that is the post's year (or any year when the post has
      * none), a trailing language word that is one of the post's own
-     * languages, and a trailing "Movie"/"Full Movie" for a movie or
+     * languages, a trailing season range ("S1-S2", "S01–S03", "Season 2")
+     * the meta line (hero) and the episode section (Detail) already
+     * state, and a trailing "Movie"/"Full Movie" for a movie or
      * "Series"/"TV Series" for a series. Only the tail is ever touched —
      * "The English Patient" keeps its English, "1917" keeps its year,
      * and a mid-title "(2023)" (as in "No Hard Feelings (2023) v2 – …")
@@ -167,6 +169,16 @@ object UserWords {
             .filter { it.isNotBlank() }
             .toSet()
         val yearSuffix = Regex("""\(\s*(\d{4})\s*\)\s*$""")
+        // Trailing season range, three shapes: "S1-S2" / "S01–S03"
+        // (dash or en dash, optional spaces), "Season 2" / "Season 1-2",
+        // and a bare "S1". The leading whitespace is required, so a title
+        // that IS a season token keeps it — the remainder guard below is
+        // the second half of that rule.
+        val seasonSuffixes = listOf(
+            Regex("""\s+S\d{1,2}\s*[-–—]\s*S?\d{1,2}\s*$""", RegexOption.IGNORE_CASE),
+            Regex("""\s+Season\s+\d{1,2}(?:\s*[-–—]\s*\d{1,2})?\s*$""", RegexOption.IGNORE_CASE),
+            Regex("""\s+S\d{1,2}\s*$""", RegexOption.IGNORE_CASE),
+        )
         // Four passes are enough for every real suffix stack
         // ("(2023) English Movie" needs three: type, language, year);
         // the loop stops the moment a pass changes nothing.
@@ -204,6 +216,16 @@ object UserWords {
                 isSeries && next.endsWith("Series", ignoreCase = true) ->
                     next.dropLast("Series".length).trim()
                 else -> next
+            }
+            // Trailing season range — the seasons live in the meta line,
+            // not the title. Runs inside the same loop, so a year the
+            // range was hiding ("Show (2026) S1-S2") falls to the year
+            // pass on the next round.
+            for (seasonPattern in seasonSuffixes) {
+                seasonPattern.find(next)?.let { match ->
+                    val remainder = next.substring(0, match.range.first).trim()
+                    if (remainder.isNotBlank()) next = remainder
+                }
             }
             if (next != current) {
                 current = next

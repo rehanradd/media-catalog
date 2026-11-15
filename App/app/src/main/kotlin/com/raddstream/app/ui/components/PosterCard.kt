@@ -1,6 +1,5 @@
 package com.raddstream.app.ui.components
 
-import android.graphics.Bitmap
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
@@ -24,8 +23,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -38,7 +35,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -58,17 +54,17 @@ import com.raddstream.app.ui.theme.PressHaptics
 import com.raddstream.app.ui.theme.RaddArtScrim
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.ui.theme.pressScale
-import com.raddstream.app.ui.theme.rememberArtworkAccent
 
 /**
  * The canonical catalog tile. Used by Home rails, the search grid, My List and
  * Downloads. Kept intentionally light (one [CatalogImage] + a couple of Texts) and
  * always rendered inside a keyed lazy container so Compose can recycle slots cheaply
- * on low-RAM phones (Compose performance guidance). M11 (home review, Nov 2026):
- * the tile varies by its own artwork — a 1dp rim + tinted glow in the poster's
- * sampled accent ([rememberArtworkAccent], the Detail header's treatment) and a
- * NEW pill for recent releases — so a rail stops reading as identical grey
- * rectangles. No quality badge: the list wire carries no quality field (it
+ * on low-RAM phones (Compose performance guidance). Review redesign (Nov 2026):
+ * frameless — the M11 artwork-accent rim and the dark footer box are gone (both
+ * reviewers read the rim as a selected/promoted outline), so the poster paints
+ * edge-to-edge at 10dp corners and the title + meta sit below it on the page
+ * background; the NEW pill is a small dark chip, top-left, never covering faces
+ * or logos. No quality badge: the list wire carries no quality field (it
  * lives on Detail's RankedPrint), and inventing one would break the honesty
  * rule; that badge waits on a server `best_quality` field.
  *
@@ -128,15 +124,6 @@ fun PosterCard(
     val isNewRelease = remember(post.year) {
         isNewReleaseYear(post.year, currentCalendarYear())
     }
-    // M11: the artwork accent — the poster's own colour, sampled by
-    // [rememberArtworkAccent] (81-pixel grid, brand-safe, contrast-boosted),
-    // exactly the treatment DetailScreen already gives its poster border.
-    // Nothing is painted until the bitmap actually loads: the fallback
-    // accent would rim every unloaded tile in brand jade, which is the
-    // uniform look this fix removes.
-    var posterBitmap by remember(post.id) { mutableStateOf<Bitmap?>(null) }
-    val accent = rememberArtworkAccent(posterBitmap)
-    val hasAccent = posterBitmap != null
     // M3 (home review, Nov 2026): the year comes from [Post.yearLabel], the
     // guarded choke point — the old inline `takeIf { it > 0 }` let an
     // impossible year (2027 for a 2024 work, 20215) straight onto the tile.
@@ -173,16 +160,17 @@ fun PosterCard(
         if (progressLabel != null) append(", ").append(progressLabel)
     }
 
-    // F7 (Batch B): the title slot is exactly two lines tall, taken from the
-    // style's own line height, so a one-line title leaves the same card height
-    // as a two-line one — the round-2 "inconsistent card heights" complaint.
-    // The height is density-scaled, so a 200% font scale grows the slot
-    // instead of clipping the second line.
+    // Review redesign (Nov 2026): the title slot is exactly one line tall,
+    // taken from the style's own line height, so every card in a rail has
+    // the same height — the round-2 "inconsistent card heights" complaint,
+    // kept from the two-line slot (F7, Batch B). The height is
+    // density-scaled, so a 200% font scale grows the slot instead of
+    // clipping the line.
     val titleLineHeight = MaterialTheme.typography.titleSmall.lineHeight
     val titleSlotHeight = with(LocalDensity.current) {
         // TextUnit has no isSpecified in this Compose version — Unspecified
         // is the sentinel to compare against.
-        if (titleLineHeight != TextUnit.Unspecified) (titleLineHeight.value * 2).sp.toDp() else 40.dp
+        if (titleLineHeight != TextUnit.Unspecified) titleLineHeight.value.sp.toDp() else 20.dp
     }
 
     val clickable = Modifier.semantics { contentDescription = a11y }
@@ -192,35 +180,13 @@ fun PosterCard(
     val pressSource = remember { MutableInteractionSource() }
     PressHaptics(pressSource)
 
-    Card(
+    // Review redesign (Nov 2026): frameless — no Card, no rim, no glow.
+    // The poster paints edge-to-edge and the text sits below it on the
+    // page background, so the tile reads as artwork, not as a boxed card.
+    Column(
         modifier = modifier
             .fillMaxWidth()
             .then(clickable)
-            // M11: the glow is cast before the clip, so it follows the
-            // card's own rounded shape; on pre-S devices the tinted
-            // colours are ignored and the card is exactly as before.
-            .then(
-                if (hasAccent) {
-                    Modifier.shadow(
-                        elevation = 6.dp,
-                        shape = RoundedCornerShape(12.dp),
-                        ambientColor = accent.copy(alpha = 0.18f),
-                        spotColor = accent.copy(alpha = 0.30f),
-                    )
-                } else Modifier
-            )
-            .clip(RoundedCornerShape(12.dp))
-            // M11: a 1dp rim in the poster's own colour, the same alpha
-            // DetailScreen uses on its poster border.
-            .then(
-                if (hasAccent) {
-                    Modifier.border(
-                        width = 1.dp,
-                        color = accent.copy(alpha = 0.55f),
-                        shape = RoundedCornerShape(12.dp),
-                    )
-                } else Modifier
-            )
             .pressScale(pressSource)
             .then(
                 when {
@@ -244,273 +210,276 @@ fun PosterCard(
                     else -> Modifier
                 }
             ),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(CardGeometry.POSTER_ASPECT)
+                .clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+            contentAlignment = Alignment.BottomStart,
+        ) {
+            val posterUrl = post.posterUrl?.takeIf { it.isNotBlank() }
+            if (posterUrl == null) {
+                ImageFallbackCard(
+                    modifier = Modifier.fillMaxSize(),
+                    // F6 (Batch A): the full title, not initials — the tile
+                    // must say which title has no poster.
+                    label = title,
+                )
+            } else {
+                CatalogImage(
+                    url = posterUrl,
+                    contentDescription = null, // tile-level a11y already announced the title
+                    modifier = Modifier.fillMaxSize(),
+                    // A dead poster URL must not look like "no artwork exists" — the
+                    // branded fallback says what failed, and keeps the title readable.
+                    fallbackLabel = title,
+                )
+            }
+
+            // F12 (Batch B): the remove × no longer sits on the poster
+            // art — it rode the image corner and covered the artwork on
+            // every saved tile. It lives in the text row now, beside the
+            // title, on the page background; the image corner is art-only.
+
+            // Bottom scrim: a poster's lower edge is whatever the artwork happens to be, and
+            // the progress bar below has to stay visible against it.
             Box(
-                modifier = Modifier
+                Modifier
                     .fillMaxWidth()
-                    .aspectRatio(CardGeometry.POSTER_ASPECT)
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-                contentAlignment = Alignment.BottomStart,
-            ) {
-                val posterUrl = post.posterUrl?.takeIf { it.isNotBlank() }
-                if (posterUrl == null) {
-                    ImageFallbackCard(
-                        modifier = Modifier.fillMaxSize(),
-                        // F6 (Batch A): the full title, not initials — the tile
-                        // must say which title has no poster.
-                        label = title,
+                    .align(Alignment.BottomCenter)
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                androidx.compose.ui.graphics.Color.Transparent,
+                                MaterialTheme.colorScheme.scrim.copy(alpha = 0.55f),
+                            )
+                        )
                     )
-                } else {
-                    CatalogImage(
-                        url = posterUrl,
-                        contentDescription = null, // tile-level a11y already announced the title
-                        modifier = Modifier.fillMaxSize(),
-                        // A dead poster URL must not look like "no artwork exists" — the
-                        // branded fallback says what failed, and keeps the title readable.
-                        fallbackLabel = title,
-                        // M11: the bitmap feeds the artwork accent (edge + glow).
-                        onBitmap = { posterBitmap = it },
-                    )
-                }
+                    .height(36.dp),
+            )
 
-                // F12 (Batch B): the remove × no longer sits on the poster
-                // art — it rode the image corner and covered the artwork on
-                // every saved tile. It lives in the text row now, beside the
-                // title, on the card surface; the image corner is art-only.
-
-                // Bottom scrim: a poster's lower edge is whatever the artwork happens to be, and
-                // the progress bar below has to stay visible against it.
+            progressFraction?.let { fraction ->
                 Box(
                     Modifier
-                        .fillMaxWidth()
                         .align(Alignment.BottomCenter)
-                        .background(
-                            Brush.verticalGradient(
-                                colors = listOf(
-                                    androidx.compose.ui.graphics.Color.Transparent,
-                                    MaterialTheme.colorScheme.scrim.copy(alpha = 0.55f),
-                                )
-                            )
-                        )
-                        .height(36.dp),
-                )
-
-                progressFraction?.let { fraction ->
+                        .fillMaxWidth()
+                        .height(3.dp)
+                        .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.55f)),
+                ) {
                     Box(
                         Modifier
-                            .align(Alignment.BottomCenter)
-                            .fillMaxWidth()
-                            .height(3.dp)
-                            .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.55f)),
-                    ) {
-                        Box(
-                            Modifier
-                                .fillMaxWidth(fraction.coerceIn(0f, 1f))
-                                .fillMaxHeight()
-                                .background(MaterialTheme.colorScheme.onSurfaceVariant),
-                        )
-                    }
-                }
-
-                // Mockup (Nov 2026): no rating badge on the poster any more —
-                // the rating lives in the meta line under the poster ("★ 6.7 |
-                // 2026 | Series"), and a badge here would say the same number
-                // twice. The scrim stays: the 3dp progress bar below still
-                // needs contrast against bright artwork.
-
-                if (rank != null && rank in 1..10) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .padding(6.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(RaddArtScrim)
-                            .border(
-                                width = 1.dp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
-                                shape = RoundedCornerShape(8.dp),
-                            )
-                            .padding(horizontal = 7.dp, vertical = 2.dp)
-                            .clearAndSetSemantics { },
-                    ) {
-                        Text(
-                            text = "#$rank",
-                            color = MaterialTheme.colorScheme.onSurface,
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.ExtraBold,
-                        )
-                    }
-                }
-
-                // M11: the NEW pill rides the free TopEnd corner (the rank
-                // badge owns TopStart, the rating badge BottomStart). Same
-                // 8dp pill as the rank badge, jade-filled so it reads as a
-                // badge and never as a button; paint-only, the tile's one
-                // spoken sentence already says "new release".
-                if (isNewRelease) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(6.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.primary)
-                            .padding(horizontal = 7.dp, vertical = 2.dp)
-                            .clearAndSetSemantics { },
-                    ) {
-                        Text(
-                            text = "NEW",
-                            color = MaterialTheme.colorScheme.onPrimary,
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.ExtraBold,
-                        )
-                    }
-                }
-
-                // Pick 3: the heart on the poster — the card's whole point
-                // is tapping it. A 48dp touch target in a scrimmed circle,
-                // so it reads as a control and never as part of the art; the
-                // button eats its own tap, so it never also opens the title
-                // (same as the remove × below). TopStart: TopEnd is the NEW
-                // pill's, and a rank badge would own TopStart — the two
-                // never meet on one tile (see the parameter docs).
-                if (onToggleFavorite != null) {
-                    IconButton(
-                        onClick = onToggleFavorite,
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .padding(4.dp)
-                            .size(48.dp)
-                            .background(
-                                MaterialTheme.colorScheme.scrim.copy(alpha = 0.55f),
-                                CircleShape,
-                            ),
-                    ) {
-                        Icon(
-                            imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                            contentDescription = if (isFavorite) {
-                                "Remove $title from My List"
-                            } else {
-                                "Save $title to My List"
-                            },
-                            tint = if (isFavorite) {
-                                MaterialTheme.colorScheme.secondary
-                            } else {
-                                MaterialTheme.colorScheme.onSurface
-                            },
-                            modifier = Modifier.size(24.dp),
-                        )
-                    }
+                            .fillMaxWidth(fraction.coerceIn(0f, 1f))
+                            .fillMaxHeight()
+                            .background(MaterialTheme.colorScheme.onSurfaceVariant),
+                    )
                 }
             }
 
-            // The text row: the title, details, badges and progress are paint
-            // here, not four more nodes saying the same words the tile already
-            // said — the column below is cleared for exactly that reason, so
-            // the remove button sits BESIDE it in this row, not inside it:
-            // a cleared subtree would swallow the button's own description
-            // and tap. One spoken sentence per tile (see the a11y string
-            // above).
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, bottom = 10.dp),
-                verticalAlignment = Alignment.Top,
-            ) {
-                Column(
-                    modifier = Modifier.weight(1f).clearAndSetSemantics { },
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    // M2 (home review, Nov 2026): Compose's Ellipsis cuts at
-                    // the last fitting character, not the last word
-                    // ("Strange New W…"). When the second line is ellipsized
-                    // mid-word, back the text off to the previous word
-                    // boundary once — the trimmed string is strictly shorter
-                    // and the guard below keeps the state from ever looping.
-                    var displayTitle by remember(title) {
-                        mutableStateOf(UserWords.breakableTitle(title))
-                    }
-                    Text(
-                        text = displayTitle,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        onTextLayout = { result ->
-                            if (result.lineCount > 1 && result.isLineEllipsized(1)) {
-                                val trimmed = UserWords.trimToWordBoundary(
-                                    displayTitle,
-                                    result.getLineEnd(1, visibleEnd = true),
-                                )
-                                if (trimmed != displayTitle) displayTitle = trimmed
-                            }
-                        },
-                        modifier = Modifier.height(titleSlotHeight),
-                    )
-                    if (details.isNotBlank()) {
-                        Text(
-                            text = details,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.labelSmall,
-                            // F7 (Batch B): one line, not two — year + type
-                            // never needs a second line, and the second line
-                            // was the other half of the uneven card heights.
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    // Session 121 (P-28): the badge row only exists when a title has
-                    // badges, so cards in one rail had different heights and a badge
-                    // could straddle the rail's clip edge ("Dual Audio" cut mid-glyph).
-                    // The slot is always 24 dp — the pill's own height — so card height
-                    // is invariant to badge presence and rails stay uniform.
-                    Box(Modifier.fillMaxWidth().height(24.dp), contentAlignment = Alignment.CenterStart) {
-                        // Dub status decides whether this title is watchable at all for a
-                        // Hindi/Urdu-first viewer, so it is said on the tile, not after a tap.
-                        AudioBadgeChipRow(badges = tileBadges)
-                    }
+            // Mockup (Nov 2026): no rating badge on the poster any more —
+            // the rating lives in the meta line under the poster ("★ 6.7 |
+            // 2026 | Series"), and a badge here would say the same number
+            // twice. The scrim stays: the 3dp progress bar below still
+            // needs contrast against bright artwork.
 
-                    progressLabel?.let { label ->
-                        Text(
-                            text = label,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+            if (rank != null && rank in 1..10) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(6.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(RaddArtScrim)
+                        .border(
+                            width = 1.dp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                            shape = RoundedCornerShape(8.dp),
                         )
-                    }
+                        .padding(horizontal = 7.dp, vertical = 2.dp)
+                        .clearAndSetSemantics { },
+                ) {
+                    Text(
+                        text = "#$rank",
+                        color = MaterialTheme.colorScheme.onSurface,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                    )
+                }
+            }
+
+            // Review redesign (Nov 2026): the NEW pill is a small dark
+            // chip — scrim plate, jade text — never a neon sticker over
+            // the art. It rides TopStart, where the eye lands first;
+            // the rank badge and the Pick 3 heart own TopStart in
+            // their rails, so there it falls back to TopEnd instead.
+            // Paint-only, the tile's one spoken sentence already says
+            // "new release".
+            if (isNewRelease) {
+                val newAlignment =
+                    if (rank != null || onToggleFavorite != null) Alignment.TopEnd else Alignment.TopStart
+                Box(
+                    modifier = Modifier
+                        .align(newAlignment)
+                        .padding(6.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(RaddArtScrim)
+                        .padding(horizontal = 7.dp, vertical = 2.dp)
+                        .clearAndSetSemantics { },
+                ) {
+                    Text(
+                        text = "NEW",
+                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.ExtraBold,
+                    )
+                }
+            }
+
+            // Pick 3: the heart on the poster — the card's whole point
+            // is tapping it. A 48dp touch target in a scrimmed circle,
+            // so it reads as a control and never as part of the art; the
+            // button eats its own tap, so it never also opens the title
+            // (same as the remove × below). TopStart: the NEW pill falls
+            // back to TopEnd when the heart is here, and a rank badge
+            // would own TopStart — the two never meet on one tile (see
+            // the parameter docs).
+            if (onToggleFavorite != null) {
+                IconButton(
+                    onClick = onToggleFavorite,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(4.dp)
+                        .size(48.dp)
+                        .background(
+                            MaterialTheme.colorScheme.scrim.copy(alpha = 0.55f),
+                            CircleShape,
+                        ),
+                ) {
+                    Icon(
+                        imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                        contentDescription = if (isFavorite) {
+                            "Remove $title from My List"
+                        } else {
+                            "Save $title to My List"
+                        },
+                        tint = if (isFavorite) {
+                            MaterialTheme.colorScheme.secondary
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        },
+                        modifier = Modifier.size(24.dp),
+                    )
+                }
+            }
+        }
+
+        // The text row: the title, details, badges and progress are paint
+        // here, not four more nodes saying the same words the tile already
+        // said — the column below is cleared for exactly that reason, so
+        // the remove button sits BESIDE it in this row, not inside it:
+        // a cleared subtree would swallow the button's own description
+        // and tap. One spoken sentence per tile (see the a11y string
+        // above).
+        Row(
+            // Review redesign (Nov 2026): the text sits on the page
+            // background now, aligned to the poster edges — no inset,
+            // no footer box.
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Top,
+        ) {
+            Column(
+                modifier = Modifier.weight(1f).clearAndSetSemantics { },
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                // M2 (home review, Nov 2026): Compose's Ellipsis cuts at
+                // the last fitting character, not the last word
+                // ("Strange New W…"). When the one line is ellipsized
+                // mid-word, back the text off to the previous word
+                // boundary once — the trimmed string is strictly shorter
+                // and the guard below keeps the state from ever looping.
+                var displayTitle by remember(title) {
+                    mutableStateOf(UserWords.breakableTitle(title))
+                }
+                Text(
+                    text = displayTitle,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    onTextLayout = { result ->
+                        if (result.isLineEllipsized(0)) {
+                            val trimmed = UserWords.trimToWordBoundary(
+                                displayTitle,
+                                result.getLineEnd(0, visibleEnd = true),
+                            )
+                            if (trimmed != displayTitle) displayTitle = trimmed
+                        }
+                    },
+                    modifier = Modifier.height(titleSlotHeight),
+                )
+                if (details.isNotBlank()) {
+                    Text(
+                        text = details,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.labelSmall,
+                        // F7 (Batch B): one line, not two — year + type
+                        // never needs a second line, and the second line
+                        // was the other half of the uneven card heights.
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                // Session 121 (P-28): the badge row only exists when a title has
+                // badges, so cards in one rail had different heights and a badge
+                // could straddle the rail's clip edge ("Dual Audio" cut mid-glyph).
+                // The slot is always 24 dp — the pill's own height — so card height
+                // is invariant to badge presence and rails stay uniform.
+                Box(Modifier.fillMaxWidth().height(24.dp), contentAlignment = Alignment.CenterStart) {
+                    // Dub status decides whether this title is watchable at all for a
+                    // Hindi/Urdu-first viewer, so it is said on the tile, not after a tap.
+                    AudioBadgeChipRow(badges = tileBadges)
                 }
 
-                // F12 (Batch B): one tap, not a held tile and not a confirm —
-                // the × removes the row at once, and the screen offers Undo in
-                // the snackbar. The button eats its own tap, so it never also
-                // opens the title. It sits on the card surface beside the
-                // title now, never on the poster art above.
-                if (onRemove != null) {
-                    IconButton(
-                        onClick = onRemove,
-                        modifier = Modifier
-                            .size(48.dp)
-                            .background(
-                                MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
-                                CircleShape,
-                            ),
-                    ) {
-                        Icon(
-                            Icons.Default.Close,
-                            contentDescription = "Remove $title from My List",
-                            tint = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.size(16.dp),
-                        )
-                    }
+                progressLabel?.let { label ->
+                    Text(
+                        text = label,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+
+            // F12 (Batch B): one tap, not a held tile and not a confirm —
+            // the × removes the row at once, and the screen offers Undo in
+            // the snackbar. The button eats its own tap, so it never also
+            // opens the title. It sits beside the title now, never on the
+            // poster art above.
+            if (onRemove != null) {
+                IconButton(
+                    onClick = onRemove,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .background(
+                            MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+                            CircleShape,
+                        ),
+                ) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = "Remove $title from My List",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(16.dp),
+                    )
                 }
             }
         }
     }
 }
-
 /**
  * F25 (Batch B): the placeholder tile as Android Studio sees it — a title
  * with no poster art, so the F6 gradient + title treatment is visible

@@ -165,32 +165,37 @@ class TextContrastTest {
     }
 
     @Test
-    fun homePosterCardTitleOnSurfaceMeetsContrastFloor() {
+    fun homePosterCardTitleOnBackgroundMeetsContrastFloor() {
         // Robo run 10, issue 3: three low-contrast readings (1.01–1.02:1)
         // on TextView[1] nodes in the Home rails — the poster card titles
         // (Kesariya@100 and its neighbours). The reported fg/bg are all
         // surface/surfaceContainer tones (#171E1E, #1A1A1B, #121E1D on
         // #161F1E, #1A1B1C, #121C1C), not any text colour: a PosterCard title
-        // is onSurface on the card's surface, 15.45:1. ATF sampled the card
+        // was onSurface on the card's surface, 15.45:1. ATF sampled the card
         // surface / poster pixels, the run-6 / run-9 artifact class. Pinned
         // here for the Home rail usage.
-        val ratio = contrastRatio(RaddPaperOnInk, RaddInk900)
+        // Home review (Nov 2026): the card is frameless now — the title
+        // sits on the page background, not on the card surface — so the
+        // pair is paper on #121212, 15.70:1.
+        val ratio = contrastRatio(RaddPaperOnInk, RaddInk950)
         assertTrue(
-            "home poster card title on surface is only $ratio:1, under the 4.5:1 floor",
+            "home poster card title on background is only $ratio:1, under the 4.5:1 floor",
             ratio >= 4.5f,
         )
     }
 
     @Test
-    fun homePosterCardDetailsOnSurfaceMeetsContrastFloor() {
+    fun homePosterCardDetailsOnBackgroundMeetsContrastFloor() {
         // Robo run 10, issue 3 (same three readings): the year · type line
-        // under each poster card title. It is onSurfaceVariant on the card's
-        // surface, 9.28:1 — the same pair the search/print cards pin above.
-        // The flagged nodes are the card titles, but the details line shares
-        // the card and the artifact, so it is pinned here too.
-        val ratio = contrastRatio(RaddMistOnInk, RaddInk900)
+        // under each poster card title. It was onSurfaceVariant on the
+        // card's surface, 9.28:1 — the same pair the search/print cards pin
+        // above. The flagged nodes are the card titles, but the details line
+        // shares the card and the artifact, so it is pinned here too.
+        // Home review (Nov 2026): frameless now — the details line sits on
+        // the page background, mist on #121212, 9.43:1.
+        val ratio = contrastRatio(RaddMistOnInk, RaddInk950)
         assertTrue(
-            "home poster card details on surface is only $ratio:1, under the 4.5:1 floor",
+            "home poster card details on background is only $ratio:1, under the 4.5:1 floor",
             ratio >= 4.5f,
         )
     }

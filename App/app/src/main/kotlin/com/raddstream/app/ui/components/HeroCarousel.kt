@@ -97,7 +97,7 @@ import kotlinx.coroutines.launch
  *  - the widest artwork the row carries, cropped to fill;
  *  - a vertical scrim that goes from clear at the top to the page background at the
  *    bottom, so the title and buttons stay readable over any poster;
- *  - the title and one meta line (seasons | genre | year);
+ *  - the title and one meta line (Season 1–2 · Reality · 2026);
  *  - page dots, which double as the manual affordance — tapping a dot jumps to that slide.
  *    They sit BELOW the card now, centred and bare (mockup, Nov 2026): they used to ride
  *    the top end in a contrast pill, and before that the bottom strip, where their 48dp
@@ -260,7 +260,7 @@ fun HeroCarousel(
             background = false,
             modifier = Modifier
                 .align(Alignment.CenterHorizontally)
-                .padding(top = 8.dp),
+                .padding(top = 10.dp),
         )
     }
     }
@@ -295,21 +295,60 @@ internal fun heroArtUrls(posts: List<Post>): List<String> =
     posts.mapNotNull { it.heroArtUrl?.takeIf { url -> url.isNotBlank() } }.distinct()
 
 /**
- * The hero's one meta line (mockup, Nov 2026): seasons, first genre, year —
- * "S1-S2 | reality | 2026". The genre reads lowercase, as the mockup shows
- * it; the seasons text is the server's own (`posts.seasons` — "2",
- * "S01–S03"), never normalised here. Null when the title carries none of
- * the three, so the slide prints no empty line. Pure, so the line is
+ * The hero's one meta line (review redesign, Nov 2026): seasons, first genre, year —
+ * "Season 1–2 · Reality · 2026". The seasons text is normalised by
+ * [heroSeasonsLabel] (the server sends "2", "S01–S03" and "[1, 2]" for the same
+ * fact — a raw list leaked onto the card as "[1, 2]"), the genre reads
+ * capitalised, and the parts join with " · ". Null when the title carries none
+ * of the three, so the slide prints no empty line. Pure, so the line is
  * testable without a pager.
  */
 internal fun heroMetaLine(post: Post): String? {
     val parts = listOfNotNull(
-        post.seasons?.takeIf { it.isNotBlank() },
-        post.genreList.firstOrNull()?.lowercase()?.takeIf { it.isNotBlank() },
+        heroSeasonsLabel(post.seasons),
+        post.genreList.firstOrNull()?.lowercase()?.replaceFirstChar { it.uppercase() }?.takeIf { it.isNotBlank() },
         post.yearLabel,
     )
-    return parts.joinToString(" | ").takeIf { it.isNotBlank() }
+    return parts.joinToString(" · ").takeIf { it.isNotBlank() }
 }
+
+/**
+ * The seasons half of [heroMetaLine], normalised from the server's free text.
+ * A bare integer is a count of seasons ("2" -> "Season 1–2"); anything else
+ * lists explicit season numbers ("[1, 2]", "S01–S03" -> "Season 1–2" and
+ * "Season 1–3"). A single season reads "Season 1"; text with no numbers
+ * carries no seasons at all. Pure, so the shapes are assertable without a pager.
+ */
+internal fun heroSeasonsLabel(raw: String?): String? {
+    val text = raw?.trim().orEmpty()
+    if (text.isBlank()) return null
+    val numbers = Regex("""\d+""").findAll(text).mapNotNull { it.value.toIntOrNull() }.toList()
+    if (numbers.isEmpty()) return null
+    if (Regex("""^\d+$""").matches(text)) {
+        val count = numbers.first()
+        return if (count <= 1) "Season 1" else "Season 1–$count"
+    }
+    val first = numbers.min()
+    val last = numbers.max()
+    return if (first == last) "Season $first" else "Season $first–$last"
+}
+
+/**
+ * The title the hero paints: the same clean-title treatment Detail uses
+ * ([UserWords.detailTitle] — server display title, then clean title, then
+ * raw title, each stripped of the year/language/type/season suffixes the
+ * meta line already states), so the hero and Detail can never disagree
+ * about a title's name. Pure, so the shape is assertable without a pager.
+ */
+internal fun heroTitle(post: Post): String =
+    UserWords.detailTitle(
+        displayTitle = post.displayTitleWire,
+        cleanTitle = post.cleanTitle,
+        title = post.title,
+        year = post.year,
+        contentType = post.contentType,
+        languages = WireText.listOf(post.language),
+    )
 
 /**
  * Hero art prefetch (Nov 2026): when Home lands, warm the hero items' art so
@@ -413,22 +452,26 @@ fun HeroSkeleton(modifier: Modifier = Modifier) {
         // The page dots below the card: six 48dp cells, each with a small
         // painted dot centred in it — the same footprint as the real
         // indicator. Six dots is the hero's default count; a smaller hero
-        // shows no dots at all.
+        // shows no dots at all. The painted dots match the real ones
+        // (review redesign, Nov 2026): the first is the 16×4dp active
+        // pill, the rest 4dp circles.
         Row(
             modifier = Modifier
                 .align(Alignment.CenterHorizontally)
-                .padding(top = 8.dp)
+                .padding(top = 10.dp)
                 .height(48.dp),
             horizontalArrangement = Arrangement.spacedBy(0.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            repeat(6) {
+            repeat(6) { index ->
                 Box(
                     modifier = Modifier.size(48.dp),
                     contentAlignment = Alignment.Center,
                 ) {
                     ShimmerBox(
-                        Modifier.width(12.dp).height(5.dp),
+                        Modifier
+                            .width(if (index == 0) 16.dp else 4.dp)
+                            .height(4.dp),
                         shape = RaddTokens.Shape.Pill,
                         highlightAlpha = HERO_SKELETON_SHIMMER_ALPHA,
                     )
@@ -488,7 +531,7 @@ private fun HeroSlide(
     onToggleFavorite: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    val title = post.displayTitle
+    val title = heroTitle(post)
     // The spoken line still names the languages (the meta line replaced the
     // visible pills, not the words) — read straight from the wire text,
     // filtered by the same known-language rule, no pill cap or length cut:
@@ -545,18 +588,22 @@ private fun HeroSlide(
             )
         }
 
-        // 2 — vertical scrims: subtle top scrim behind indicator, deep bottom fade into background.
-        // Session 121 (P-20): the scrim protects the title/badges against bright art and blends
-        // smoothly into the page canvas at the bottom of the full-bleed hero.
+        // 2 — vertical scrim: a multi-stop bottom fade into the page
+        // background (review redesign, Nov 2026). The old gradient faded
+        // too late and too softly, so baked-in poster text bled behind
+        // the title and buttons; this one is clear through the top half
+        // (nothing sits there now — the dots ride below the card) and
+        // 0.75 at 75% before landing on the background at the bottom.
+        // Session 121 (P-20): the scrim protects the title/badges against
+        // bright art and blends smoothly into the page canvas at the
+        // bottom of the full-bleed hero.
         Box(
             Modifier
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
-                        0f to MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f),
-                        0.22f to MaterialTheme.colorScheme.background.copy(alpha = 0f),
-                        0.45f to MaterialTheme.colorScheme.background.copy(alpha = 0.22f),
-                        0.72f to MaterialTheme.colorScheme.background.copy(alpha = 0.72f),
+                        0.45f to MaterialTheme.colorScheme.background.copy(alpha = 0f),
+                        0.75f to MaterialTheme.colorScheme.background.copy(alpha = 0.75f),
                         1f to MaterialTheme.colorScheme.background,
                     )
                 ),
@@ -680,7 +727,8 @@ private fun HeroSlide(
  * Page dots that are also buttons: the active one stretches into a short bar, so the state
  * reads at a glance, and each dot jumps the pager to its slide.
  *
- * The painted dot is 5dp tall and used to be the only thing a finger could aim at. Each one now
+ * The painted dot is 4dp tall (review redesign, Nov 2026: active 16×4dp pill,
+ * inactive 4dp circles) and used to be the only thing a finger could aim at. Each one now
  * sits inside the [DOT_TOUCH_WIDTH] by [DOT_TOUCH_HEIGHT] box — 48dp square, the WCAG 2.2 AA
  * minimum in both directions (the 24dp width it used to have failed Robo's 48dp touch-target
  * floor). Mockup (Nov 2026): the row rides BELOW the card, centred and bare — it used to
@@ -688,10 +736,13 @@ private fun HeroSlide(
  * boxes covered the Watch Now button's centre. Below the card no dot can cover any
  * control, and the pill is gone with the artwork behind it ([background] = false);
  * the pill stays for an overlay position, where the dots still need contrast over
- * bright artwork. The dots themselves shrank in Batch B (active 18dp → 12dp, 7dp → 5dp tall):
- * the old capsule read oversized next to the badges. Each dot also says what
- * it is in words and carries a `selected` state, because the visual stretch was the only thing
- * that used to show which slide is up.
+ * bright artwork. The painted dots shrank twice — Batch B (active 18dp → 12dp, 7dp → 5dp
+ * tall) and the review redesign (16×4dp pill, 4dp circles) — because the old capsules
+ * read oversized next to the badges. The hit boxes stay 48dp: the review asked for a
+ * ~20dp-tall dots row, but the 48dp boxes are pinned by HeroIndicatorTest and by the
+ * Robo touch-target floor, so the row's footprint stays 48dp and only the paint got
+ * smaller. Each dot also says what it is in words and carries a `selected` state,
+ * because the visual stretch was the only thing that used to show which slide is up.
  */
 @Composable
 internal fun HeroIndicator(
@@ -744,7 +795,7 @@ internal fun HeroIndicator(
         repeat(count) { index ->
             val active = index == current
             val dotWidth by animateDpAsState(
-                targetValue = if (active) 16.dp else 6.dp,
+                targetValue = if (active) 16.dp else 4.dp,
                 animationSpec = if (reduceMotion) snap() else RaddMotion.fastSpatial(),
                 label = "heroDotWidth",
             )
@@ -765,7 +816,7 @@ internal fun HeroIndicator(
             ) {
                 Box(
                     Modifier
-                        .size(width = dotWidth, height = 5.dp)
+                        .size(width = dotWidth, height = 4.dp)
                         .clip(RaddTokens.Shape.Pill)
                         .background(dotColor),
                 )
@@ -844,7 +895,7 @@ private const val HERO_SKELETON_SHIMMER_ALPHA = 0.30f
 
 /**
  * The page dot's hit box: 48dp square, the WCAG 2.2 AA minimum in both directions.
- * The painted dot inside it stays 7dp.
+ * The painted dot inside it is 4dp tall (16×4dp active pill, 4dp circles).
  */
 private val DOT_TOUCH_HEIGHT: Dp = DOT_TOUCH_HEIGHT_DP.dp
 private val DOT_TOUCH_WIDTH: Dp = 48.dp

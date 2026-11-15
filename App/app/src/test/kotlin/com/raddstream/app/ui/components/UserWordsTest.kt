@@ -190,4 +190,17 @@ class UserWordsTest {
         assertEquals("Breaking Bad", UserWords.stripTitleSuffixes("Breaking Bad TV Series", null, "series", emptyList()))
         assertEquals("Dark", UserWords.stripTitleSuffixes("Dark Series", null, "tv_series", emptyList()))
     }
+
+    @Test
+    fun stripTitleSuffixesStripsSeasonSuffixes() {
+        // Home review (Nov 2026): the hero and Detail title must never
+        // carry the season the meta line already states.
+        assertEquals("It's Showtime", UserWords.stripTitleSuffixes("It's Showtime (2026) S1-S2", 2026, "series", emptyList()))
+        assertEquals("Show", UserWords.stripTitleSuffixes("Show S01–S03", null, "series", emptyList()))
+        assertEquals("Show", UserWords.stripTitleSuffixes("Show S1", null, "series", emptyList()))
+        assertEquals("Show", UserWords.stripTitleSuffixes("Show Season 2", null, "series", emptyList()))
+        // A title that IS a season token keeps it — the strip never
+        // empties the title.
+        assertEquals("S1", UserWords.stripTitleSuffixes("S1", null, "series", emptyList()))
+    }
 }
