@@ -70,19 +70,30 @@ class PickThreeRoundTripTest {
 
         // HomeViewModel.observeFirstBrowseDone, verbatim in shape: collect
         // the persisted flag into the state's copy.
-        launch {
+        // DetailViewModel.init, verbatim in shape: fire-and-forget, errors
+        // swallowed — opening any title is the first browse.
+        //
+        // Both are held as jobs and cancelled in the finally: the collector
+        // never returns on its own (a DataStore flow is endless), and
+        // runBlocking joins its children before it returns — so an
+        // uncancelled collector wedges the test thread after the assertions
+        // pass, and the whole suite hangs with no failure. (That is what
+        // the first CI run of this test did: 18 minutes in the Gradle step,
+        // run 43770475581, cancelled.)
+        val collector = launch {
             settings.firstBrowseDone.collect { done ->
                 state.update { it.copy(firstBrowseDone = done) }
             }
         }
-
-        // DetailViewModel.init, verbatim in shape: fire-and-forget, errors
-        // swallowed — opening any title is the first browse.
-        launch {
+        val writer = launch {
             runCatching { settings.setFirstBrowseDone(true) }
         }
-
-        withTimeout(10_000) { state.first { it.showPickThree } }
+        try {
+            withTimeout(10_000) { state.first { it.showPickThree } }
+        } finally {
+            collector.cancel()
+            writer.cancel()
+        }
 
         assertTrue(state.value.showPickThree)
         assertEquals(listOf(7, 8, 9), state.value.pickThreeCandidates.map { it.id })
@@ -110,13 +121,18 @@ class PickThreeRoundTripTest {
         val state = MutableStateFlow(HomeUiState(sections = listOf(fullRail())))
         assertFalse(state.value.showPickThree)
 
-        launch {
+        // Same collector as the live test, same cancel-in-finally: the
+        // DataStore flow never ends, so runBlocking would join it forever.
+        val collector = launch {
             settings.firstBrowseDone.collect { done ->
                 state.update { it.copy(firstBrowseDone = done) }
             }
         }
-
-        withTimeout(10_000) { state.first { it.showPickThree } }
+        try {
+            withTimeout(10_000) { state.first { it.showPickThree } }
+        } finally {
+            collector.cancel()
+        }
 
         assertTrue(state.value.showPickThree)
         assertEquals(listOf(7, 8, 9), state.value.pickThreeCandidates.map { it.id })
