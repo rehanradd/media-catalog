@@ -29,8 +29,11 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.Translate
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -45,7 +48,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -73,6 +75,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.raddstream.app.brand.Brand
 import com.raddstream.app.data.RegionChoices
@@ -92,6 +95,7 @@ import com.raddstream.app.viewmodel.ImageQuality
 import com.raddstream.app.viewmodel.KeepTtl
 import com.raddstream.app.viewmodel.MembershipCardCopy
 import com.raddstream.app.viewmodel.SettingsViewModel
+import kotlin.math.roundToInt
 
 /** The subtitle chips, in the order the row shows them. Readable by the region test, which
  * pins that a card can only ever seed a word this row can actually display.
@@ -178,7 +182,9 @@ fun SettingsScreen(
             // card does not hold — the card picks the viewer's content
             // preference (which region's catalog defaults apply), not a region
             // to watch. The title now says what the card is.
-            SettingsCard(title = "Content preference") {
+            // Mockup: the card carries its globe icon at the top-right, and
+            // the change link reads as a jade link with an arrow.
+            SettingsCard(title = "Content preference", icon = Icons.Default.Public) {
                 val region = RegionChoices.byId(state.userRegion)
                 Text(
                     region.title,
@@ -191,7 +197,7 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 TextButton(onClick = onOpenRegionChoice) {
-                    Text("Change what you watch")
+                    Text("Change what you watch →")
                 }
             }
 
@@ -201,7 +207,8 @@ fun SettingsScreen(
             // the Languages screen changes them here — all three write the
             // same keys, and this card shows the effective values, so a
             // viewer never has to guess which one won.
-            SettingsCard(title = "Languages") {
+            // Mockup: the card carries its translate icon at the top-right.
+            SettingsCard(title = "Languages", icon = Icons.Default.Translate) {
                 // F5a (Batch A): same effective values and provenance as the
                 // Languages screen's top line, so the two can never disagree
                 // without saying why.
@@ -229,7 +236,8 @@ fun SettingsScreen(
                 )
             }
 
-            SettingsCard(title = "Playback & Display") {
+            // Mockup: the card carries its sliders icon at the top-right.
+            SettingsCard(title = "Playback & Display", icon = Icons.Default.Tune) {
                 Spacer(Modifier.height(10.dp))
                 PreferenceRowTitle("Image quality")
                 ChipRow(ImageQuality.entries.toList().map { it.label }, ImageQuality.entries.indexOf(state.prefs.imageQuality)) { idx ->
@@ -272,22 +280,28 @@ fun SettingsScreen(
                 }
 
                 Spacer(Modifier.height(10.dp))
-                PreferenceRowTitle("Audio level")
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Text(
-                        AudioBoost.labelFor(state.prefs.audioBoost),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
+                // Mockup: the title and its percent share one row, the slider
+                // runs full-width below them. The percent stays neutral (M8):
+                // a readout is not a primary action, so it does not take jade.
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        PreferenceRowTitle("Audio level")
+                        Text(
+                            audioLevelPercent(state.prefs.audioBoost),
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
                     Slider(
                         value = state.prefs.audioBoost.coerceIn(0f, AudioBoostUi.MAX_OFFERED_LEVEL),
                         onValueChange = viewModel::setAudioBoost,
                         valueRange = 0f..AudioBoostUi.MAX_OFFERED_LEVEL,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
                 // Still worth saying: below the ceiling the boost is real, but it rides on the
@@ -557,19 +571,16 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
 
-                // Session 123: the account screens live here — the dashboard
-                // that answers "where do I stand?", the profile, and the coins.
-                Row {
-                    TextButton(onClick = onOpenDashboard) {
-                        Text("Dashboard")
-                    }
-                    TextButton(onClick = onOpenProfile) {
-                        Text("Profile")
-                    }
-                    TextButton(onClick = onOpenCoins) {
-                        Text("Coins")
-                    }
-                }
+                // Free launch: the Dashboard / Profile / Coins doors hide
+                // while the quality gate is OFF — the coins and VIP machinery
+                // they open is hidden while every viewer is premium. The VIP
+                // Membership card above is gated on the same flag.
+                AccountNavRow(
+                    paywallVisible = state.paywallVisible,
+                    onOpenDashboard = onOpenDashboard,
+                    onOpenProfile = onOpenProfile,
+                    onOpenCoins = onOpenCoins,
+                )
 
                 // ── the free days this install was granted ───────────────────────
                 account.trialSecondsLeft?.let { secondsLeft ->
@@ -916,7 +927,7 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    "Version ${Brand.versionName} (${Brand.versionCode}) • ${Brand.schemeName}",
+                    "Version ${Brand.versionName}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1008,11 +1019,13 @@ fun SettingsScreen(
  */
 @Composable
 private fun SettingsSectionHeading(text: String) {
+    // Mockup: section headings are small all-caps grey labels ("WATCHING",
+    // "DOWNLOADS", "ACCOUNT"), not title-sized text — the cards carry the weight.
     Text(
-        text,
-        style = MaterialTheme.typography.titleMedium,
+        text.uppercase(),
+        style = MaterialTheme.typography.labelMedium.copy(letterSpacing = 1.2.sp),
         fontWeight = FontWeight.SemiBold,
-        color = MaterialTheme.colorScheme.onBackground,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(top = 16.dp),
     )
 }
@@ -1031,11 +1044,13 @@ private fun SettingsCard(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        // Mockup: the title sits left, the card's icon at the top-right —
+        // the icon is a label for the card, not a bullet before its title.
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onBackground, modifier = Modifier.weight(1f))
             if (icon != null) {
                 Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onBackground)
         }
         content()
     }
@@ -1104,6 +1119,14 @@ internal fun AccountLabelField(
 private fun PreferenceRowTitle(text: String) {    Text(text, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
 }
 
+/**
+ * The audio level as a bare percent ("82%") — the same number [AudioBoost.labelFor]
+ * prints after "Volume ", so the two can never disagree. A non-finite level
+ * collapses to the baseline through [AudioBoost.clampLevel], never NaN%.
+ */
+internal fun audioLevelPercent(level: Float): String =
+    "${(AudioBoost.clampLevel(level) * 100f).roundToInt()}%"
+
 @Composable
 internal fun SwitchRow(checked: Boolean, onCheckedChange: (Boolean) -> Unit, label: String) {
     val haptics = LocalHapticFeedback.current
@@ -1142,19 +1165,41 @@ internal fun SwitchRow(checked: Boolean, onCheckedChange: (Boolean) -> Unit, lab
                 haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 onCheckedChange(next)
             },
-            thumbContent = if (checked) {
-                {
-                    Icon(
-                        imageVector = Icons.Default.Check,
-                        contentDescription = null,
-                        modifier = Modifier.size(SwitchDefaults.IconSize),
-                    )
-                }
-            } else {
-                null
-            },
+            // Mockup: a plain switch — no check mark in the thumb. The state
+            // is still the track colour + the thumb position, and the Switch
+            // itself still carries the label as its spoken name.
             modifier = Modifier.semantics { contentDescription = label },
         )
+    }
+}
+
+/**
+ * The Account card's doors to the Dashboard, Profile and Coins screens.
+ * Free launch: the whole row hides while the quality gate is OFF — the coins
+ * and VIP machinery those screens open is hidden while every viewer is
+ * premium — so the gate decision lives here, where the paywall tests can pin
+ * it without rendering the whole Settings screen.
+ */
+@Composable
+internal fun AccountNavRow(
+    paywallVisible: Boolean,
+    onOpenDashboard: () -> Unit,
+    onOpenProfile: () -> Unit,
+    onOpenCoins: () -> Unit,
+) {
+    if (!paywallVisible) return
+    // Session 123: the account screens live here — the dashboard that
+    // answers "where do I stand?", the profile, and the coins.
+    Row {
+        TextButton(onClick = onOpenDashboard) {
+            Text("Dashboard")
+        }
+        TextButton(onClick = onOpenProfile) {
+            Text("Profile")
+        }
+        TextButton(onClick = onOpenCoins) {
+            Text("Coins")
+        }
     }
 }
 
