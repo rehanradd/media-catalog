@@ -14,7 +14,6 @@ import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -33,6 +32,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Download
@@ -51,8 +51,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -76,6 +78,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import com.raddstream.app.brand.Brand
 import androidx.compose.ui.text.style.TextAlign
@@ -310,12 +313,37 @@ internal fun HomeContent(
     onDismissTrialNote: () -> Unit = {},
     onClaimDailyLogin: () -> Unit = {},
 ) {
+    // M12 (home review, Nov 2026): the check-in is a banner, not a card in
+    // the feed — it pins above the scroll, so it never competes with the
+    // catalog rows, and a tap opens the ladder as a bottom sheet. The claim
+    // itself stays one tap away on the banner. The body below keeps its
+    // indentation (it was one Column deep); only the nesting changed.
+    var showCheckInSheet by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .then(modifier)
-            .verticalScroll(rememberScrollState()),
+            .then(modifier),
     ) {
+        if (state.streakLadder.isNotEmpty() && state.paywallVisible) {
+            CheckInBanner(
+                streakCount = state.streakCount,
+                serverStreak = state.serverStreak,
+                streakLadder = state.streakLadder,
+                coinBalance = state.coinBalance,
+                signedIn = state.signedIn,
+                claimedToday = state.claimedToday,
+                isClaiming = state.isClaiming,
+                claimMessage = state.claimMessage,
+                onClaim = onClaimDailyLogin,
+                onOpenSheet = { showCheckInSheet = true },
+                onOpenSignIn = onOpenSignIn,
+            )
+        }
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState()),
+        ) {
         if (state.isRefreshing) {
             LinearProgressIndicator(Modifier.fillMaxWidth())
         }
@@ -496,28 +524,6 @@ internal fun HomeContent(
             )
             Spacer(Modifier.height(8.dp))
 
-            // Small #2: keep Home centered on catalog discovery — place
-            // the toned-down check-in strip quietly after Browse rather
-            // than competing right below the Hero banner. Free launch:
-            // the strip hides while the operator's quality gate is OFF —
-            // every viewer is premium then, and there is nothing to claim.
-            if (state.streakLadder.isNotEmpty() && state.paywallVisible) {
-                CheckInNudge(
-                    streakCount = state.streakCount,
-                    serverStreak = state.serverStreak,
-                    streakLadder = state.streakLadder,
-                    coinBalance = state.coinBalance,
-                    signedIn = state.signedIn,
-                    claimedToday = state.claimedToday,
-                    isClaiming = state.isClaiming,
-                    claimMessage = state.claimMessage,
-                    onClaim = onClaimDailyLogin,
-                    onOpenCheckIn = onOpenCheckIn,
-                    onOpenSignIn = onOpenSignIn,
-                )
-                Spacer(Modifier.height(10.dp))
-            }
-
             // At most 10 rows total, CW included: a panel that publishes 12
             // sections does not get 12 rails on a phone, and the first rails win.
             // Audit #18: the same title never appears twice on Home. The seen
@@ -576,6 +582,23 @@ internal fun HomeContent(
             }
             Spacer(Modifier.height(24.dp))
         }
+        }
+    }
+    if (showCheckInSheet) {
+        CheckInSheet(
+            streakCount = state.streakCount,
+            serverStreak = state.serverStreak,
+            streakLadder = state.streakLadder,
+            coinBalance = state.coinBalance,
+            signedIn = state.signedIn,
+            claimedToday = state.claimedToday,
+            isClaiming = state.isClaiming,
+            claimMessage = state.claimMessage,
+            onClaim = onClaimDailyLogin,
+            onOpenCheckIn = { showCheckInSheet = false; onOpenCheckIn() },
+            onOpenSignIn = onOpenSignIn,
+            onDismiss = { showCheckInSheet = false },
+        )
     }
 }
 
@@ -960,15 +983,34 @@ internal fun claimButtonLabel(
 }
 
 /**
- * UI-fix P1-H1: the daily check-in as one line, not a wallet card. Home
- * keeps at most this nudge; the wallet, the streak ladder and the claim
- * shop live on the CheckIn screen, which the row opens. The wording rules
- * still hold (HO-6/HO-8, pinned by HomeCheckInTextTest): the day number is
- * the server's claimed count, never the device's open count, and the claim
- * button states the amount today pays from the server's ladder.
+ * The banner/sheet progress: claimed days against the ladder's last day.
+ * A guest has no server streak, so the local open count stands in — the
+ * banner's own line says the same thing ("You've opened the app N days in
+ * a row"). Clamped: a streak past the ladder reads complete, never overfull.
+ */
+internal fun streakProgress(
+    serverStreak: Int?,
+    streakCount: Int,
+    targetDays: Int,
+): Float = ((serverStreak ?: streakCount).coerceAtLeast(0).toFloat() / targetDays.coerceAtLeast(1)).coerceIn(0f, 1f)
+
+/** The banner's tap target for the sheet-open test. */
+internal const val CheckInBannerTag = "checkInBanner"
+
+/**
+ * M12 (home review, Nov 2026): the daily check-in as a banner, not a card
+ * in the feed. It pins above the scroll (see [HomeContent]), so it never
+ * competes with the catalog rows. The banner carries the streak progress —
+ * claimed days against the ladder's last day — and the one-tap claim; a tap
+ * anywhere else opens the ladder as a bottom sheet ([CheckInSheet]). The
+ * wording rules still hold (HO-6/HO-8, pinned by HomeCheckInTextTest): the
+ * day number is the server's claimed count, never the device's open count,
+ * and the claim button states the amount today pays from the server's
+ * ladder. Free launch: the banner hides while the operator's quality gate
+ * is OFF — every viewer is premium then, and there is nothing to claim.
  */
 @Composable
-internal fun CheckInNudge(
+internal fun CheckInBanner(
     streakCount: Int,
     serverStreak: Int?,
     streakLadder: Map<Int, Int>,
@@ -978,23 +1020,23 @@ internal fun CheckInNudge(
     isClaiming: Boolean,
     claimMessage: String?,
     onClaim: () -> Unit,
-    onOpenCheckIn: () -> Unit = {},
+    onOpenSheet: () -> Unit = {},
     onOpenSignIn: () -> Unit = {},
 ) {
     val targetDays = streakLadder.keys.maxOrNull() ?: 7
     Surface(
-        onClick = onOpenCheckIn,
-        shape = RoundedCornerShape(12.dp),
+        onClick = onOpenSheet,
         color = MaterialTheme.colorScheme.surfaceContainer,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp),
+        modifier = Modifier.fillMaxWidth().testTag(CheckInBannerTag),
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 10.dp),
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
@@ -1059,7 +1101,194 @@ internal fun CheckInNudge(
                     }
                 }
             }
+            LinearProgressIndicator(
+                progress = { streakProgress(serverStreak, streakCount, targetDays) },
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                trackColor = MaterialTheme.colorScheme.surfaceVariant,
+            )
         }
+    }
+}
+}
+
+/**
+ * The check-in ladder as a bottom sheet: the banner's tap target. Same state
+ * and same claim as the banner — the sheet adds the ladder rows, so the
+ * viewer sees what each day pays before claiming. "See all rewards" leaves
+ * for the standalone check-in screen; the sheet closes first, so coming
+ * back does not find it still open.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun CheckInSheet(
+    streakCount: Int,
+    serverStreak: Int?,
+    streakLadder: Map<Int, Int>,
+    coinBalance: Int,
+    signedIn: Boolean,
+    claimedToday: Boolean,
+    isClaiming: Boolean,
+    claimMessage: String?,
+    onClaim: () -> Unit,
+    onOpenCheckIn: () -> Unit = {},
+    onOpenSignIn: () -> Unit = {},
+    onDismiss: () -> Unit = {},
+) {
+    val targetDays = streakLadder.keys.maxOrNull() ?: 7
+    val currentStreak = serverStreak ?: 0
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        CheckInSheetBody(
+            streakCount = streakCount,
+            serverStreak = serverStreak,
+            streakLadder = streakLadder,
+            coinBalance = coinBalance,
+            signedIn = signedIn,
+            claimedToday = claimedToday,
+            isClaiming = isClaiming,
+            claimMessage = claimMessage,
+            onClaim = onClaim,
+            onOpenCheckIn = onOpenCheckIn,
+            onOpenSignIn = onOpenSignIn,
+        )
+    }
+}
+
+/**
+ * The sheet's content on its own, so the ladder and the claim are pinned by
+ * a test without opening a sheet (the Search filter sheet does the same).
+ */
+@Composable
+internal fun CheckInSheetBody(
+    streakCount: Int,
+    serverStreak: Int?,
+    streakLadder: Map<Int, Int>,
+    coinBalance: Int,
+    signedIn: Boolean,
+    claimedToday: Boolean,
+    isClaiming: Boolean,
+    claimMessage: String?,
+    onClaim: () -> Unit,
+    onOpenCheckIn: () -> Unit = {},
+    onOpenSignIn: () -> Unit = {},
+) {
+    val targetDays = streakLadder.keys.maxOrNull() ?: 7
+    val currentStreak = serverStreak ?: 0
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .padding(bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+            Text(
+                text = "Daily check-in",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = when {
+                    !signedIn -> "Sign in to claim your coins."
+                    claimedToday -> claimMessage ?: "Claimed for today."
+                    else -> checkInDayLine(signedIn, serverStreak, streakCount, targetDays)
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            LinearProgressIndicator(
+                progress = { streakProgress(serverStreak, streakCount, targetDays) },
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                trackColor = MaterialTheme.colorScheme.surfaceVariant,
+            )
+            // The ladder, one row per day — the CheckIn screen's rows, in
+            // miniature. A day at or below the streak is claimed; the next
+            // day is today's; the rest wait. A streak past the ladder reads
+            // complete, never an eighth promise.
+            for (day in 1..targetDays) {
+                val coins = streakLadder[day]
+                val claimed = day <= currentStreak
+                val isToday = !claimedToday && day == currentStreak + 1
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isToday) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant
+                        },
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(
+                            "Day $day",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal,
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (coins != null) {
+                                Text(
+                                    "+$coins coins",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                            } else {
+                                Text(
+                                    "—",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            if (claimed) {
+                                Icon(
+                                    Icons.Default.Check,
+                                    contentDescription = "Claimed",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(start = 8.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            when {
+                !signedIn -> {
+                    Button(
+                        onClick = onOpenSignIn,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                    ) {
+                        Text("Sign in to claim")
+                    }
+                }
+                claimedToday -> {
+                    Text(
+                        text = claimMessage ?: "Claimed for today — come back tomorrow.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                else -> {
+                    Button(
+                        onClick = onClaim,
+                        enabled = !isClaiming,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                    ) {
+                        Text(claimButtonLabel(serverStreak, streakLadder, isClaiming))
+                    }
+                }
+            }
+            TextButton(
+                onClick = onOpenCheckIn,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            ) {
+                Text("See all rewards")
+            }
     }
 }
 
