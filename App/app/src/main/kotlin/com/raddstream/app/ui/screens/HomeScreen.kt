@@ -1106,6 +1106,18 @@ internal fun BrowseSection(
     Column(Modifier.padding(top = 4.dp)) {
         // Audit #15: every section heading carries the 16 dp phone margin.
         SectionHeader(title = "Browse", modifier = Modifier.padding(horizontal = 16.dp))
+        // Density (2026-11-15): one scrollable pill row, not two. The type
+        // jump-offs and the facet chips were two 48 dp rows with an 8 dp
+        // spacer between them (104 dp); they are all navigation links to
+        // the same Browse destination, so they ride one row now (48 dp).
+        // The pills stay 48 dp tall on purpose: the touch target is the
+        // layout size in Compose (E-T4 — 14 dp of vertical padding takes
+        // the tile to >= 48 dp), and the Robo a11y runs pin 48 dp targets.
+        // A 32 dp visual with a 48 dp hit area needs a TouchDelegate-style
+        // mechanism this codebase does not have; shrinking the hit area
+        // would regress E-T4. The shape is a true pill now (24 dp radius
+        // on a 48 dp pill). There is no selected state to invert — every
+        // chip navigates away, none filters in place.
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1116,7 +1128,7 @@ internal fun BrowseSection(
             browseTypeTiles.forEach { tile ->
                 Surface(
                     onClick = { onBrowseType(tile.type) },
-                    shape = RoundedCornerShape(20.dp),
+                    shape = RoundedCornerShape(24.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant,
                     contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 ) {
@@ -1128,29 +1140,18 @@ internal fun BrowseSection(
                     )
                 }
             }
-        }
-        if (chips.isNotEmpty()) {
-            Spacer(Modifier.height(8.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .horizontalScrollPadding(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                chips.forEach { chip ->
-                    Surface(
-                        onClick = { onFacetSelected(chip.genre, chip.industry, chip.language) },
-                        shape = RoundedCornerShape(20.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    ) {
-                        Text(
-                            text = chip.label,
-                            style = MaterialTheme.typography.labelLarge,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-                        )
-                    }
+            chips.forEach { chip ->
+                Surface(
+                    onClick = { onFacetSelected(chip.genre, chip.industry, chip.language) },
+                    shape = RoundedCornerShape(24.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                ) {
+                    Text(
+                        text = chip.label,
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                    )
                 }
             }
         }
