@@ -298,6 +298,7 @@ class CatalogRepository @Inject constructor(
             nextCursor = response.nextCursor,
             hasMore = response.hasMore,
             totalEstimate = response.totalEstimate,
+            totalCapped = response.totalCapped == true,
         )
     }
 
@@ -336,6 +337,7 @@ class CatalogRepository @Inject constructor(
             nextCursor = response.nextCursor,
             hasMore = response.hasMore,
             totalEstimate = response.totalEstimate,
+            totalCapped = response.totalCapped == true,
         )
     }
 
@@ -714,6 +716,8 @@ data class V2BrowsePage(
     val hasMore: Boolean,
     /** The server's rough total for this query, or null when it did not say. */
     val totalEstimate: Int? = null,
+    /** True when the server capped the total: the real total is larger than totalEstimate. */
+    val totalCapped: Boolean = false,
 )
 
 /** Outcome of [CatalogRepository.fetchWorkDetailV2], distinguishing transient failure from 404/unavailable. */

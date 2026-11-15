@@ -762,7 +762,7 @@ internal fun SearchContent(
                 // the "Filtered" pill) opens the sheet. The header keeps only
                 // the count; a second "Sort" door to the same sheet is gone.
                 Text(
-                    text = resultsSummary(state.resultCount, state.serverTotal, state.hasMore),
+                    text = resultsSummary(state.resultCount, state.serverTotal, state.hasMore, state.totalCapped),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),

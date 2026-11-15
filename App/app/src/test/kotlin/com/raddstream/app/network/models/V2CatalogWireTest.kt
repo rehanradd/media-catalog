@@ -37,7 +37,7 @@ class V2CatalogWireTest {
                "best_quality_score": 820,
                "available": {"stream": true, "download": true, "any": true, "state": "available"},
                "flags": [], "identity_suspect": false, "entitlement": {"model": "free"}}
-            ], "next_cursor": "eyJpZCI6MTIzNH0=", "has_more": true, "total_estimate": 42, "count": 1}
+            ], "next_cursor": "eyJpZCI6MTIzNH0=", "has_more": true, "total_estimate": 42, "total_capped": true, "count": 1}
         """.trimIndent()
         val resp = gson.fromJson(json, WireBrowseResponse::class.java)
         assertTrue(resp.ok)
@@ -45,6 +45,7 @@ class V2CatalogWireTest {
         assertEquals("eyJpZCI6MTIzNH0=", resp.nextCursor)
         assertTrue(resp.hasMore)
         assertEquals(42, resp.totalEstimate)
+        assertEquals(true, resp.totalCapped)
         val item = resp.items[0]
         assertEquals("https://raddstream.duckdns.org/api/v1/art?id=abc&k=poster&n=0", item.poster?.src)
         assertEquals("poster", item.poster?.kind)

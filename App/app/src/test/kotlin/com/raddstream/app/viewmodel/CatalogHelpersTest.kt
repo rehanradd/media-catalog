@@ -86,6 +86,15 @@ class CatalogHelpersTest {
         assertEquals("0 results", resultsSummary(loaded = 0, serverTotal = 0, hasMore = false))
     }
 
+    @Test
+    fun `a capped total prints with a plus`() {
+        // 2026-11-15, search speed: the server counts at most 1000 matches
+        // for a search, so a capped total must not read as an exact count.
+        assertEquals("Showing 20 of 1000+ results", resultsSummary(loaded = 20, serverTotal = 1000, hasMore = true, totalCapped = true))
+        // Uncapped keeps the old wording, and the flag defaults to false.
+        assertEquals("Showing 20 of 1000 results", resultsSummary(loaded = 20, serverTotal = 1000, hasMore = true))
+    }
+
     // F5c (Batch A): the "Filtered" pill names the filters that are on — the old
     // pill read the bare word "Filtered" while its comment claimed it named
     // them, so a viewer could not tell which filter was active.

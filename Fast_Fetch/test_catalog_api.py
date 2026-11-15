@@ -28,6 +28,7 @@ os.environ.setdefault("RADD_SKIP_LIVE_ENRICH", "1")
 import catalog_api
 import catalog_v2
 import fast_fetch
+import fts_search
 import link_health
 import redact
 import viewer
@@ -677,6 +678,77 @@ class SearchTests(CatalogApiTestCase):
         self.assertTrue(all(t == "Nova" for t in titles))
         scores = [i["relevance"] for i in found["items"]]
         self.assertEqual(scores, sorted(scores, reverse=True))
+
+    # ---- 2026-11-15, search speed: FTS is the text match, total is capped ---- #
+
+    def test_search_total_is_capped_and_says_so(self):
+        # "nova" matches two works (movie + series); a cap of 1 reports 1
+        # and flags the cap, so the app can print "1+ results" honestly.
+        capped = catalog_api.search(self.conn, q="nova", total_cap=1)
+        self.assertEqual(capped["total_estimate"], 1)
+        self.assertTrue(capped["total_capped"])
+        # A single match stays exact and uncapped.
+        exact = catalog_api.search(self.conn, q="dune", total_cap=1)
+        self.assertEqual(exact["total_estimate"], 1)
+        self.assertFalse(exact["total_capped"])
+        # A faceted browse caps too (its WHERE re-scans the match set);
+        # a plain browse keeps the exact count (its WHERE is cheap).
+        faceted = catalog_api.browse(self.conn, genres=["Action"], limit=100, total_cap=1)
+        self.assertEqual(faceted["total_estimate"], 1)
+        self.assertTrue(faceted["total_capped"])
+        page = catalog_api.browse(self.conn, limit=100)
+        self.assertFalse(page["total_capped"])
+        self.assertEqual(page["total_estimate"], page["count"])
+
+    def test_fts_search_answers_the_same_pinned_queries(self):
+        # With the FTS index built, the LIKE scan is skipped — the same
+        # queries must still find the same titles (the index holds the
+        # same normalised fields the haystack covers).
+        fts_search.rebuild_fts(self.conn)
+        cases = (
+            ("cafe", ["Café Clown"]),
+            ("tommy the movie", ["Tommy: The Movie"]),
+        )
+        for query, titles in cases:
+            found = catalog_api.search(self.conn, q=query)
+            self.assertEqual([i["title"] for i in found["items"]], titles, query)
+            self.assertFalse(found["total_capped"])
+        for query, title in (("dune 2024", "Dune"), ("hindi dubbed", "Café Clown")):
+            found = catalog_api.search(self.conn, q=query)
+            self.assertIn(title, {i["title"] for i in found["items"]}, query)
+        found = catalog_api.search(self.conn, q="nova")
+        self.assertTrue(all(t == "Nova" for t in [i["title"] for i in found["items"]]))
+        self.assertEqual(found["items"][0]["title"], "Nova")
+
+    def test_genre_and_language_facets_match_the_list_membership_rule(self):
+        # The C-level instr() facet predicates must agree with the
+        # radd_list_has membership rule they replaced (whole-word match).
+        # Genre: same title set as the rule computes from cat_works (the
+        # adult filter applies to both sides, so it is applied here too).
+        expected_genre = {
+            row["title"] for row in self.conn.execute(
+                "SELECT title, genres FROM cat_works WHERE COALESCE(is_18_plus, 0) = 0")
+            if catalog_api._list_has(row["genres"], "Action")
+        }
+        page = catalog_api.browse(self.conn, genres=["Action"], limit=100)
+        self.assertEqual({i["title"] for i in page["items"]}, expected_genre)
+        # Language: a work matches when its own languages match OR any of
+        # its prints carries that audio track.
+        expected_lang = set()
+        for row in self.conn.execute(
+                "SELECT id, title, languages FROM cat_works"
+                " WHERE COALESCE(is_18_plus, 0) = 0"):
+            if catalog_api._list_has(row["languages"], "Hindi"):
+                expected_lang.add(row["title"])
+                continue
+            for (audio,) in self.conn.execute(
+                    "SELECT audio_languages FROM cat_releases WHERE work_id = ?",
+                    (row["id"],)):
+                if catalog_api._list_has(audio, "Hindi"):
+                    expected_lang.add(row["title"])
+                    break
+        page = catalog_api.browse(self.conn, languages=["Hindi"], limit=100)
+        self.assertEqual({i["title"] for i in page["items"]}, expected_lang)
 
     def test_search_excludes_adult_and_honours_the_admin_opt_in(self):
         hidden = catalog_api.search(self.conn, q="adult diary")

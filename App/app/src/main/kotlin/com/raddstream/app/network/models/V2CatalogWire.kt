@@ -143,6 +143,9 @@ data class WireBrowseResponse(
     val hasMore: Boolean = false,
     @SerializedName("total_estimate")
     val totalEstimate: Int? = null,
+    /** True when the server capped the total (see total_estimate): the real total is larger. */
+    @SerializedName("total_capped")
+    val totalCapped: Boolean? = null,
     val count: Int? = null,
     val query: String? = null,
     val sort: String? = null,

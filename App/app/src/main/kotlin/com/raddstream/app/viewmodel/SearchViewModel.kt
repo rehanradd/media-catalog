@@ -216,12 +216,14 @@ internal fun filteredPillLabel(filters: SearchFilters): String {
     }
 }
 
-internal fun resultsSummary(loaded: Int, serverTotal: Int, hasMore: Boolean): String = when {
+internal fun resultsSummary(loaded: Int, serverTotal: Int, hasMore: Boolean, totalCapped: Boolean = false): String = when {
     // F5d (Batch A): relabel only — the two numbers count different populations
     // (loaded posts vs the server's total for the query), so the partial line now
     // says "results" like the complete line does, and the group subtitle keeps
     // saying "titles". The numbers are NOT forced to agree; they never will.
-    hasMore || loaded < serverTotal -> "Showing $loaded of $serverTotal results"
+    // 2026-11-15, search speed: a capped total prints with a "+" — the server
+    // counts at most 1000 matches for a search, so the real total is larger.
+    hasMore || loaded < serverTotal -> if (totalCapped) "Showing $loaded of $serverTotal+ results" else "Showing $loaded of $serverTotal results"
     else -> "$loaded result" + if (loaded == 1) "" else "s"
 }
 
@@ -236,6 +238,8 @@ data class SearchUiState(
     val resultCount: Int = 0,
     /** What the server says the query matches, not merely what this page holds. */
     val serverTotal: Int = 0,
+    /** True when serverTotal is the server's cap (1000), not the real total. */
+    val totalCapped: Boolean = false,
     val recents: List<String> = emptyList(),
     val page: Int = 1,
     val hasMore: Boolean = false,
@@ -508,6 +512,7 @@ class SearchViewModel @Inject constructor(
                             it.copy(
                                 page = next,
                                 serverTotal = page.totalEstimate ?: rawResults.size,
+                                totalCapped = page.totalCapped,
                                 hasMore = page.hasMore,
                                 isFuzzy = false,
                             )
@@ -535,6 +540,7 @@ class SearchViewModel @Inject constructor(
                     it.copy(
                         page = next,
                         serverTotal = resp.total,
+                        totalCapped = false,
                         hasMore = resp.results.size >= PAGE_SIZE && next < resp.totalPages,
                         isFuzzy = resp.fuzzy,
                     )
@@ -590,7 +596,7 @@ class SearchViewModel @Inject constructor(
             _uiState.update {
                 it.copy(
                     isLoading = false, error = null, groups = emptyList(), resultCount = 0,
-                    serverTotal = 0, hasSearched = false, hasMore = false, page = 1,
+                    serverTotal = 0, totalCapped = false, hasSearched = false, hasMore = false, page = 1,
                     isFuzzy = false, showExactOnly = false, didYouMean = null,
                 )
             }
@@ -604,7 +610,7 @@ class SearchViewModel @Inject constructor(
             _uiState.update {
                 it.copy(
                     isLoading = false, error = null, groups = emptyList(), resultCount = 0,
-                    serverTotal = 0, hasSearched = false, hasMore = false, page = 1,
+                    serverTotal = 0, totalCapped = false, hasSearched = false, hasMore = false, page = 1,
                     isFuzzy = false, showExactOnly = false, suggestions = emptyList(),
                     suggestionsUnavailable = false, didYouMean = null,
                 )
@@ -647,6 +653,7 @@ class SearchViewModel @Inject constructor(
                                 hasSearched = true,
                                 page = 1,
                                 serverTotal = page.totalEstimate ?: rawResults.size,
+                                totalCapped = page.totalCapped,
                                 hasMore = page.hasMore,
                                 error = null,
                                 isFuzzy = false,
@@ -682,6 +689,7 @@ class SearchViewModel @Inject constructor(
                         hasSearched = true,
                         page = 1,
                         serverTotal = resp.total,
+                        totalCapped = false,
                         hasMore = resp.results.size >= PAGE_SIZE && resp.totalPages > 1,
                         error = null,
                         isFuzzy = resp.fuzzy,

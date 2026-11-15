@@ -65,6 +65,9 @@ import tiers
 DEFAULT_LIMIT = 24
 MAX_LIMIT = 100
 MAX_SEARCH_LIMIT = 100
+# 2026-11-15, search speed: a search total above this is reported as the cap
+# with total_capped=True (the exact COUNT re-scans the whole match set).
+DEFAULT_TOTAL_CAP = 1000
 SORT_KEYS = ("trending", "newest", "quality", "rating", "title", "updated")
 COVERAGE_TYPES = ("whole_work", "season_pack", "episode_range", "single_episode", "parts")
 ERROR_CODES = (
@@ -391,17 +394,24 @@ def _facet_clauses(content_type, genres, languages, qualities, available,
             params[name] = value
         clauses.append(f"w.work_type IN ({', '.join(placeholders)})")
     for index, genre in enumerate(_iter_terms(genres)):
-        clauses.append(f"(w.genres IS NOT NULL AND radd_list_has(w.genres, :genre{index}))")
-        params[f"genre{index}"] = genre
+        # 2026-11-15, search speed: instr() is C-level (measured on the live
+        # catalog: 0.26s vs 4.62s for the radd_list_has Python UDF, which
+        # JSON-parses and normalises every row's list). It matches substrings
+        # where the UDF matched whole words — the measured over-match is 8
+        # rows in 23,852 for "romance" (0.03%), longer words containing the
+        # genre name. The needle is normalised the same way the UDF did.
+        clauses.append(f"(w.genres IS NOT NULL AND instr(lower(w.genres), :genre{index}) > 0)")
+        params[f"genre{index}"] = normalize_text(genre)
     for index, language in enumerate(_iter_terms(languages)):
         # Work-level declared language OR any print that actually carries that audio
         # track — a Hindi-dubbed print of an English work must be findable in Hindi.
+        # Same C-level instr() as genres (the UDF was the cost here too).
         clauses.append(
-            f"(radd_list_has(COALESCE(w.languages, ''), :lang{index})"
+            f"(instr(lower(COALESCE(w.languages, '')), :lang{index}) > 0"
             " OR EXISTS (SELECT 1 FROM cat_releases lr"
-            f"  WHERE lr.work_id = w.id AND radd_list_has(lr.audio_languages, :lang{index})))"
+            f"  WHERE lr.work_id = w.id AND instr(lower(lr.audio_languages), :lang{index}) > 0))"
         )
-        params[f"lang{index}"] = language
+        params[f"lang{index}"] = normalize_text(language)
     resolutions: list[str] = []
     if qualities not in (None, "", "all"):
         values = ([qualities] if isinstance(qualities, str)
@@ -1160,7 +1170,7 @@ def _listing_error(sort, order):
 
 def _run_listing(conn, *, sort, order, limit, include_adult, cursor,
                  facet_clauses, facet_params, query_tokens, query_norm,
-                 use_fts_match) -> dict:
+                 use_fts_match, total_cap: int = DEFAULT_TOTAL_CAP) -> dict:
     """Shared engine for `browse` and `search`.
 
     Pagination is keyset (`WHERE (expr, id) > (cursor)`), not OFFSET, because the
@@ -1173,12 +1183,25 @@ def _run_listing(conn, *, sort, order, limit, include_adult, cursor,
     just those ids. The one-query shape ran those subqueries over every matching
     work before LIMIT, and the `cat_links` COUNTs had no work_id index, so a
     plain browse never answered; see the note at the step-1 query.
+
+    2026-11-15, search speed: when the FTS index exists it IS the text match.
+    The per-token LIKEs used to run as well, scanning the whole match set with
+    a per-row haystack UDF plus a correlated alias subquery (measured on the
+    live catalog: "love" cost 4.38s of LIKEs on top of a 4.3s second COUNT),
+    while FTS answers the same tokens from the index in ~0.03s. The FTS table
+    indexes the same normalised fields the haystack covers (title,
+    original_title, genres, aliases), so the only recall lost is
+    substring-inside-a-word matches ("glove" for "love") — token-prefix
+    matching is what every other search box does, and the relevance re-sort
+    already ranks prefix hits first. Without the index the LIKE scan runs
+    exactly as before. The total is capped for a search (see below).
     """
     clauses = ["1 = 1"] if include_adult else [_adult_clause("w")]
     clauses.extend(facet_clauses)
     params = dict(facet_params)
     expr = _sort_expr(sort)
 
+    like_clauses: list[str] = []
     if query_tokens:
         hay = ("radd_hay(w.title, w.original_title, w.genres,"
                " (SELECT group_concat(a.alias, ' | ') FROM cat_work_aliases a"
@@ -1186,10 +1209,10 @@ def _run_listing(conn, *, sort, order, limit, include_adult, cursor,
         # One ANDed LIKE per query token: every token must appear somewhere in the
         # normalised title/original-title/alias haystack. No token is ever dropped.
         for index, token in enumerate(query_tokens):
-            clauses.append(f"{hay} LIKE :q{index}")
+            like_clauses.append(f"{hay} LIKE :q{index}")
             params[f"q{index}"] = f"%{token}%"
 
-    where_sql = " AND ".join(clauses)
+    where_sql = " AND ".join(clauses + like_clauses)
     fingerprint = _fingerprint(where_sql, dict(sorted(params.items())))
     if cursor is not None and cursor.get("f") not in (None, fingerprint):
         # A cursor minted for a different facet set would silently skip or repeat
@@ -1198,10 +1221,14 @@ def _run_listing(conn, *, sort, order, limit, include_adult, cursor,
                                        "message": "Cursor belongs to a different filter set"}}
 
     if query_tokens and use_fts_match:
-        # Optional accelerator: the fingerprint above is deliberately computed
-        # without it, so a cursor keeps working if the FTS index disappears.
-        where_sql += (" AND w.id IN (SELECT rowid FROM cat_works_fts"
-                      " WHERE cat_works_fts MATCH :fts)")
+        # The FTS clause replaces the LIKEs for execution (the fingerprint
+        # above is deliberately still computed from the LIKE shape, so a
+        # cursor minted before this change keeps paging: the FTS set is a
+        # subset of the LIKE set, in the same sort order).
+        where_sql = " AND ".join(clauses + [
+            "w.id IN (SELECT rowid FROM cat_works_fts"
+            " WHERE cat_works_fts MATCH :fts)"])
+        params = {k: v for k, v in params.items() if not k.startswith("q")}
         params["fts"] = " ".join(f'"{token}"*' for token in query_tokens)
 
     direction = "DESC" if order == "desc" else "ASC"
@@ -1239,7 +1266,7 @@ def _run_listing(conn, *, sort, order, limit, include_adult, cursor,
                             include_adult=include_adult, cursor=cursor,
                             facet_clauses=facet_clauses, facet_params=facet_params,
                             query_tokens=query_tokens, query_norm=query_norm,
-                            use_fts_match=False)
+                            use_fts_match=False, total_cap=total_cap)
     has_more = len(step1_rows) > limit
     step1_rows = step1_rows[:limit]
     page_ids = [int(r["id"]) for r in step1_rows]
@@ -1277,8 +1304,28 @@ def _run_listing(conn, *, sort, order, limit, include_adult, cursor,
                                    sort=sort, order=order, fingerprint=fingerprint)
     count_params = {key: value for key, value in params.items()
                     if key not in ("lim", "cv", "cid")}
-    total_row = conn.execute(
-        f"SELECT COUNT(*) AS n FROM cat_works w WHERE {where_sql}", count_params).fetchone()
+    # 2026-11-15, search speed: the exact COUNT re-scans the whole match set
+    # with the same expensive WHERE as the page (measured on the live
+    # catalog: "love" cost 4.3s of COUNT on top of 4.4s of page, and a
+    # language-faceted browse 2.6s of COUNT — cold, with the page, past the
+    # 15 s nginx edge). Any listing with a text query or a facet caps the
+    # total: count at most total_cap + 1 rows and report the cap with
+    # total_capped=True. A plain unfiltered browse keeps the exact count
+    # (its WHERE is cheap, 0.53 s for the whole page). The app renders a
+    # capped total as "N+ results".
+    total_capped = False
+    if query_tokens or facet_clauses:
+        capped_row = conn.execute(
+            f"SELECT COUNT(*) AS n FROM (SELECT 1 FROM cat_works w"
+            f" WHERE {where_sql} LIMIT :cap)",
+            {**count_params, "cap": total_cap + 1}).fetchone()
+        total_n = int(capped_row["n"]) if capped_row else 0
+        total_capped = total_n > total_cap
+        total_n = min(total_n, total_cap)
+    else:
+        total_row = conn.execute(
+            f"SELECT COUNT(*) AS n FROM cat_works w WHERE {where_sql}", count_params).fetchone()
+        total_n = int(total_row["n"]) if total_row else 0
     return {
         "ok": True,
         "items": items,
@@ -1289,7 +1336,8 @@ def _run_listing(conn, *, sort, order, limit, include_adult, cursor,
         "next_cursor": next_cursor,
         "has_more": has_more,
         # Same WHERE as the rows, so a total can never advertise hidden adult titles.
-        "total_estimate": (int(total_row["n"]) if total_row else 0),
+        "total_estimate": total_n,
+        "total_capped": total_capped,
         "adult_included": bool(include_adult),
         "fingerprint": fingerprint,
     }
@@ -1321,12 +1369,15 @@ def _relevance(item: dict, query_norm: str, tokens: list[str]) -> int:
 def browse(conn, *, content_type=None, genres=(), languages=(), qualities=(),
            sort="trending", order="desc", cursor=None, limit=DEFAULT_LIMIT,
            include_adult=False, q=None, available=None, year_from=None, year_to=None,
-           min_quality=None, animated=None, country=(), industry=()) -> dict:
+           min_quality=None, animated=None, country=(), industry=(),
+           total_cap: int = DEFAULT_TOTAL_CAP) -> dict:
     """Faceted catalog browse with keyset pagination.
 
     Returns ``{items[], next_cursor, has_more, total_estimate, ...}``. `total_estimate`
     is computed with the *same* adult filter as the rows, so it can never advertise
-    titles the list hides.
+    titles the list hides. A search (a `q` is given) or a faceted browse caps the
+    total at `total_cap` and reports `total_capped=True` above it; a plain
+    unfiltered browse keeps the exact count.
     """
     _require_row_factory(conn)
     _register_udfs(conn)
@@ -1351,13 +1402,14 @@ def browse(conn, *, content_type=None, genres=(), languages=(), qualities=(),
     return _run_listing(
         conn, sort=sort, order=order, limit=limit, include_adult=bool(include_adult),
         cursor=decoded, facet_clauses=facet_clauses, facet_params=facet_params,
-        query_tokens=tokens, query_norm=query_norm, use_fts_match=_has_table(conn, "cat_works_fts"))
+        query_tokens=tokens, query_norm=query_norm, use_fts_match=_has_table(conn, "cat_works_fts"),
+        total_cap=total_cap)
 
 
 @public_edge
 def search(conn, *, q, limit=DEFAULT_LIMIT, include_adult=False, content_type=None,
            genres=(), languages=(), qualities=(), sort="relevance", order="desc",
-           cursor=None, fields=None) -> dict:
+           cursor=None, fields=None, total_cap: int = DEFAULT_TOTAL_CAP) -> dict:
     """Title search that survives dirty scraped titles.
 
     Matching is per-token AND over a normalised haystack (casefold, diacritics
@@ -1366,6 +1418,14 @@ def search(conn, *, q, limit=DEFAULT_LIMIT, include_adult=False, content_type=No
     Two', accents and 'Hindi Dubbed' noise can never make a query return nothing.
     `sort='relevance'` orders by the documented `_relevance()` score; any browse
     sort key is also accepted.
+
+    2026-11-15: when the `cat_works_fts` FTS5 index exists it IS the text match
+    (same normalised fields as the haystack); the per-token LIKE scan is the
+    fallback when the index is absent. FTS matches token prefixes, so
+    substring-inside-a-word hits ("glove" for "love") no longer match — the
+    first pages are the prefix hits the relevance sort already ranked first.
+    The total is capped at `total_cap` (default 1000) with `total_capped=True`
+    above it, because the exact COUNT re-scans the whole match set.
 
     Gap A4 — forgiving search. A mood or descriptive word in the query
     ("funny", "sad love story", "mazahiya") is not a title token: it maps
@@ -1395,7 +1455,8 @@ def search(conn, *, q, limit=DEFAULT_LIMIT, include_adult=False, content_type=No
     if not literal_tokens and not mood_genres:
         return {"ok": True, "items": [], "count": 0, "query": q, "normalized": query_norm,
                 "limit": _clamp_limit(limit, ceiling=MAX_SEARCH_LIMIT), "next_cursor": None,
-                "has_more": False, "total_estimate": 0, "adult_included": bool(include_adult),
+                "has_more": False, "total_estimate": 0, "total_capped": False,
+                "adult_included": bool(include_adult),
                 "truncated": False, "fields": fields or None,
                 "moods": moods, "mood_genres": mood_genres,
                 "note": "empty query returns no results by design"}
@@ -1421,7 +1482,7 @@ def search(conn, *, q, limit=DEFAULT_LIMIT, include_adult=False, content_type=No
         cursor=decoded_cursor,
         facet_clauses=facet_clauses, facet_params=facet_params,
         query_tokens=literal_tokens, query_norm=query_norm,
-        use_fts_match=use_fts)
+        use_fts_match=use_fts, total_cap=total_cap)
     if cursor not in (None, "") and not result.get("ok"):
         return result
     used_tokens = literal_tokens
