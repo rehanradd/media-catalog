@@ -827,10 +827,19 @@ fun RaddStreamNavGraph(
                             launchSingleTop = true
                         }
                     },
-                    // NAV-4: the expired-link card's way home.
+                    // NAV-4: the expired-link card's way home. It must clear
+                    // the dead player (and the detail under it) instead of
+                    // stacking a second Home over them: without the pop-up,
+                    // Back from that Home dropped the viewer straight back
+                    // into the failed player, which reads as Home not
+                    // working at all. Same block as the bottom-nav Home tab.
                     onHomeClick = {
                         navController.navigate(Screen.Home.route) {
+                            popUpTo(Screen.Home.route) {
+                                saveState = true
+                            }
                             launchSingleTop = true
+                            restoreState = true
                         }
                     },
                 )
@@ -875,9 +884,16 @@ fun RaddStreamNavGraph(
             // NAV-5: the catch-all for a deep link that parsed to nothing.
             composable(route = Screen.DeadLink.route) {
                 DeadLinkScreen(
+                    // Same as the player card's way home (NAV-4): clear the
+                    // dead-link screen instead of stacking a second Home
+                    // over it, or Back from Home returns to the dead link.
                     onHomeClick = {
                         navController.navigate(Screen.Home.route) {
+                            popUpTo(Screen.Home.route) {
+                                saveState = true
+                            }
                             launchSingleTop = true
+                            restoreState = true
                         }
                     },
                 )

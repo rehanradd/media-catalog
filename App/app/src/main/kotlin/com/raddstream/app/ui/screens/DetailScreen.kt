@@ -78,6 +78,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -245,6 +246,18 @@ fun DetailScreen(
     // loaded: the best print starts, and a title with nothing playable (or a locked
     // print) simply stays here with the reason in front of the viewer — `playBest`
     // never navigates, so there is nothing to unwind.
+    // Home-tab-after-failed-playback (Nov 2026): the once-per-title latch MUST
+    // survive this screen leaving the composition. A plain `remember` is
+    // discarded when Navigation Compose takes Detail off screen for the
+    // Player, so coming back from a failed playback reset the latch and the
+    // effect below re-fired at once — the post is already loaded and the
+    // resume lookup already landed in the surviving ViewModel — and the
+    // failed player re-opened within a frame. Every exit from the player
+    // was undone before the viewer could reach a tab, which is exactly
+    // "tapping Home does nothing". `rememberSaveable` keeps the latch in
+    // the back-stack entry's saved state, so a return never re-plays; a
+    // different title is a different entry, so its own autoplay is untouched.
+    var autoPlayedFor by rememberSaveable { mutableStateOf<Int?>(null) }
     // Session 123 (DE-1): autoplay respects Resume — a title the viewer left
     // halfway through restarts from where they left off, not from the
     // beginning. `playResume` is the same path the Resume card's own button
