@@ -77,7 +77,9 @@ data class HomeSection(
     val error: String? = null,
     /**
      * The server sort this rail asks for (`/api/v1/posts?sort=`), or null for
-     * the server default (`p.id DESC`, freshest first). Only "Most copies"
+     * the server default: newest release year first — v1 orders by
+     * `_NEWEST_YEAR_SQL DESC, p.id DESC` (dirty years sort last, `p.id DESC`
+     * is only the tiebreak), v2 by year desc. Only "Most copies"
      * sets one today: `sort=trending` ranks by how many prints and mirrors
      * the catalog holds for a work — the ledger has no play-count column,
      * so the rail is labelled for the viewer, never "Trending" (which would
@@ -290,12 +292,14 @@ private const val BECAUSE_YOU_WATCH_KEY = "because_you_watch"
  * last, and only that rail asks the server for a sort.
  *
  * Only rails v1 can honestly serve today. `type = null` == recently added
- * (the API default order is `p.id DESC` per viewer.py:1905, i.e. freshest
- * scrape). "Most copies" is `sort=trending` on the same live route — the
- * server ranks by how many prints and mirrors the catalog holds for a work,
- * because the ledger has no play-count column; the label says what the
- * order is, and "Trending" would promise popularity data that does not
- * exist (the same naming rule SearchViewModel's [SearchSort] follows).
+ * (the API default order is newest release year first — v1
+ * `_NEWEST_YEAR_SQL DESC, p.id DESC`, v2 year desc — not bare `p.id DESC`;
+ * live-verified: the newest rail walks 2027, then 2026). "Most copies" is
+ * `sort=trending` on the same live route — the server ranks by how many
+ * prints and mirrors the catalog holds for a work, because the ledger has
+ * no play-count column; the label says what the order is, and "Trending"
+ * would promise popularity data that does not exist (the same naming rule
+ * SearchViewModel's [SearchSort] follows).
  */
 internal fun initialHomeSections(): List<HomeSection> = listOf(
     HomeSection(key = "recent", title = "Recently added", type = null, loading = true),
