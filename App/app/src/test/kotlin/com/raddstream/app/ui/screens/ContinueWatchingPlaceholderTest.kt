@@ -4,6 +4,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.HomeSection
@@ -64,7 +65,10 @@ class ContinueWatchingPlaceholderTest {
     fun placeholderShowsWhenCatalogLoadedButNothingWatchedYet() {
         setHome(HomeUiState(sections = listOf(loadedSection())))
 
-        compose.onNodeWithText("Continue watching").assertIsDisplayed()
+        // The slot sits below the hero, so the header is below the first
+        // fold — scroll it into view before asserting it (the paywall tests
+        // do the same for their below-fold cards).
+        compose.onNodeWithText("Continue watching").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Start watching").assertIsDisplayed()
         compose.onNodeWithText("Browse titles").assertIsDisplayed()
     }
@@ -77,7 +81,9 @@ class ContinueWatchingPlaceholderTest {
             onBrowseType = { browsedType = it },
         )
 
-        compose.onNodeWithText("Browse titles").performClick()
+        // A click on a node below the fold lands off-viewport and never
+        // fires — scroll the CTA into view first.
+        compose.onNodeWithText("Browse titles").performScrollTo().performClick()
 
         assertNull(browsedType)
     }
@@ -91,7 +97,7 @@ class ContinueWatchingPlaceholderTest {
             ),
         )
 
-        compose.onNodeWithText("Continue watching").assertIsDisplayed()
+        compose.onNodeWithText("Continue watching").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Start watching").assertDoesNotExist()
     }
 

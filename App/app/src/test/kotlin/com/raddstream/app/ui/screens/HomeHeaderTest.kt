@@ -7,6 +7,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.ui.theme.RaddStreamTheme
@@ -230,25 +231,39 @@ class HomeHeaderTest {
         listOf("ALL", "MOVIES", "SERIES", "ANIME", "KPOP").forEach {
             compose.onNodeWithText(it).assertIsDisplayed()
         }
-        val bounds = compose.onNodeWithTag("filterChip_ALL").fetchSemanticsNode().boundsInRoot
+        val bounds = compose.onNodeWithTag("filterChip_All").fetchSemanticsNode().boundsInRoot
         with(compose.density) {
             assertTrue("ALL chip below 48dp touch height", bounds.height.toDp() >= 48.dp)
         }
     }
 
     @Test
-    fun tappingAChipFiltersTheRailsInPlaceAndTappingAgainRestoresAll() {
+    fun tappingAChipFiltersTheRailsInPlace() {
         compose.setContent {
             RaddStreamTheme { HomeContent(state = filterState(), heroAutoplay = false) }
         }
-        compose.onNodeWithText("Series Rail").assertIsDisplayed()
-        compose.onNodeWithText("Movies Rail").assertIsDisplayed()
+        // Existence, not display: the rails sit below the hero, so their
+        // headers are below the first fold — and nothing may scroll before
+        // the chip tap below, or the chip leaves the viewport with it.
+        compose.onNodeWithText("Series Rail").assertExists()
+        compose.onNodeWithText("Movies Rail").assertExists()
         compose.onNodeWithText("SERIES").performClick()
-        compose.onNodeWithText("Series Rail").assertIsDisplayed()
         compose.onNodeWithText("Movies Rail").assertDoesNotExist()
-        // Tapping the active chip again restores everything.
+        compose.onNodeWithText("Series Rail").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun tappingTheActiveChipAgainRestoresAll() {
+        compose.setContent {
+            RaddStreamTheme { HomeContent(state = filterState(), heroAutoplay = false) }
+        }
+        // Two taps in a row, nothing scrolled in between: the chip stays in
+        // view for both, so the restore is a tap, not a scroll-then-tap.
         compose.onNodeWithText("SERIES").performClick()
-        compose.onNodeWithText("Movies Rail").assertIsDisplayed()
+        compose.onNodeWithText("Movies Rail").assertDoesNotExist()
+        compose.onNodeWithText("SERIES").performClick()
+        compose.onNodeWithText("Movies Rail").assertExists()
+        compose.onNodeWithText("Series Rail").assertExists()
     }
 
     @Test
@@ -259,10 +274,12 @@ class HomeHeaderTest {
         compose.onNodeWithText("ANIME").performClick()
         compose.onNodeWithText("Series Rail").assertDoesNotExist()
         compose.onNodeWithText("Movies Rail").assertDoesNotExist()
-        compose.onNodeWithText("No anime here yet.").assertIsDisplayed()
-        compose.onNodeWithText("Show all").performClick()
-        compose.onNodeWithText("Series Rail").assertIsDisplayed()
-        compose.onNodeWithText("Movies Rail").assertIsDisplayed()
+        compose.onNodeWithText("No anime here yet.").performScrollTo().assertIsDisplayed()
+        // A click on a node below the fold lands off-viewport and never
+        // fires — scroll the button into view first.
+        compose.onNodeWithText("Show all").performScrollTo().performClick()
+        compose.onNodeWithText("Series Rail").assertExists()
+        compose.onNodeWithText("Movies Rail").assertExists()
     }
 
     // ── the hero card ──────────────────────────────────────────────────
@@ -293,7 +310,15 @@ class HomeHeaderTest {
         compose.onNodeWithText("MY LIST").assertIsDisplayed()
         // The inset card: the slide's title starts 16dp in from the screen
         // edge (the card inset) plus its own 16dp of text padding, so its
-        // left edge clears 16dp with room to spare.
+        // left edge clears 16dp with room to spare. The WATCH NOW button
+        // pins the same inset directly: it sits in the slide's 16dp-padded
+        // column inside the 16dp-inset card, so its left edge clears 16dp
+        // even on the art-less slide, where the title rides the fallback
+        // card's centred label instead.
+        val buttonBounds = compose.onNodeWithText("WATCH NOW").fetchSemanticsNode().boundsInRoot
+        with(compose.density) {
+            assertTrue("WATCH NOW starts under 16dp from the edge", buttonBounds.left.toDp() >= 16.dp)
+        }
         val bounds = compose.onNodeWithText("Hero Title").fetchSemanticsNode().boundsInRoot
         with(compose.density) {
             assertTrue("hero title starts under 16dp from the edge", bounds.left.toDp() >= 16.dp)

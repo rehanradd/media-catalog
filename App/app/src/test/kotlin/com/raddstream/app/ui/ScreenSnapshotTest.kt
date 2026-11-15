@@ -19,10 +19,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.test.assertExists
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNode
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.network.models.Post
@@ -393,14 +398,15 @@ class ScreenSnapshotTest {
     }
 
     @Test
-    fun heroPills() {
+    fun heroMetaLine() {
         val post = Post(
             id = 104,
             title = "Jawan",
             cleanTitle = "Jawan",
             year = 2023,
             contentType = "movie",
-            posterUrl = null,
+            posterUrl = "https://image.tmdb.org/t/p/w500/abc123.jpg",
+            genres = "Action",
             language = "Hindi + English + Unknown",
         )
         shot {
@@ -412,20 +418,20 @@ class ScreenSnapshotTest {
                 )
             }
         }
+        // Mockup (Nov 2026): the badge pills are gone — the hero shows one
+        // meta line ("action | 2023": first genre lowercased, then the year)
+        // and the languages survive only in the slide's spoken sentence.
+        // The poster URL never loads under Robolectric (no network), but the
+        // title and the meta line render regardless of the load state.
+        compose.onNodeWithText("action | 2023").assertIsDisplayed()
         // F2: the server's "Unknown" is a missing value, not a language — it
-        // must never reach a pill, while the real languages do.
+        // must never reach a visible node, while the real languages do (in
+        // the spoken sentence).
         assertTrue(
             "the hero still paints an \"Unknown\" pill",
             compose.onAllNodes(hasText("Unknown")).fetchSemanticsNodes().isEmpty(),
         )
-        assertTrue(
-            "the hero lost the Hindi pill",
-            compose.onAllNodes(hasText("Hindi")).fetchSemanticsNodes().isNotEmpty(),
-        )
-        assertTrue(
-            "the hero lost the English pill",
-            compose.onAllNodes(hasText("English")).fetchSemanticsNodes().isNotEmpty(),
-        )
-        capture("08_hero_pills")
+        compose.onNode(hasContentDescription("languages Hindi, English", substring = true)).assertExists()
+        capture("08_hero_meta_line")
     }
 }
