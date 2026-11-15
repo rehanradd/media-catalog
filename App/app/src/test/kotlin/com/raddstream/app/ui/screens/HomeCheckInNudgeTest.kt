@@ -1,10 +1,12 @@
 package com.raddstream.app.ui.screens
 
+import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.ui.theme.RaddStreamTheme
+import com.raddstream.app.viewmodel.HomeUiState
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -63,5 +65,35 @@ class HomeCheckInNudgeTest {
         }
         compose.onNodeWithText("Day 2 of 3 · 25 coins").assertIsDisplayed()
         compose.onNodeWithText("Claim 10 coins for Day 3").assertIsDisplayed()
+    }
+
+    @Test
+    fun checkInNudgeShowsWhileTheQualityGateIsOn() {
+        // Positive control for the free-launch hiding below: with the gate
+        // on (the default), the ladder renders the strip.
+        compose.setContent {
+            RaddStreamTheme {
+                HomeContent(
+                    state = HomeUiState(streakLadder = ladder, paywallVisible = true),
+                    heroAutoplay = false,
+                )
+            }
+        }
+        compose.onNodeWithText("Daily check-in").assertIsDisplayed()
+    }
+
+    @Test
+    fun checkInNudgeHidesWhileTheQualityGateIsOff() {
+        // Free launch: gate OFF means every viewer is premium, so the
+        // check-in strip hides even though the server published a ladder.
+        compose.setContent {
+            RaddStreamTheme {
+                HomeContent(
+                    state = HomeUiState(streakLadder = ladder, paywallVisible = false),
+                    heroAutoplay = false,
+                )
+            }
+        }
+        compose.onNodeWithText("Daily check-in").assertDoesNotExist()
     }
 }

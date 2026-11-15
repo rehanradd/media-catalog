@@ -160,6 +160,14 @@ data class HomeUiState(
     val claimedToday: Boolean = false,
     val isClaiming: Boolean = false,
     val claimMessage: String? = null,
+    /**
+     * Free launch: the paywall surfaces (check-in nudge, coins, upsells)
+     * render only while the operator's quality gate is ON. The gate flag
+     * is the free-launch switch — gate OFF means every viewer is premium
+     * and the nudge hides. Defaults true (gate on) so a build that has
+     * not heard from the panel yet behaves exactly as today.
+     */
+    val paywallVisible: Boolean = true,
     /** Session 121 (P-26): the ids on this device's My List, so the hero's toggle reads live. */
     val favoriteIds: Set<Int> = emptySet(),
     /**
@@ -425,6 +433,14 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             settingsRepository.loginStreakCount.collect { count ->
                 _uiState.update { it.copy(streakCount = count) }
+            }
+        }
+        // Free launch: the quality-gate flag is the free-launch switch.
+        // Gate OFF hides the paywall surfaces (this nudge first); the
+        // default true keeps today's behaviour until the panel answers.
+        viewModelScope.launch {
+            settingsRepository.qualityGateEnabled.collect { enabled ->
+                _uiState.update { it.copy(paywallVisible = enabled) }
             }
         }
         viewModelScope.launch {

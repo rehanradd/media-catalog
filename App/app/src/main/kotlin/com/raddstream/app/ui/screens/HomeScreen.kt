@@ -500,8 +500,10 @@ internal fun HomeContent(
 
             // Small #2: keep Home centered on catalog discovery — place
             // the toned-down check-in strip quietly after Browse rather
-            // than competing right below the Hero banner.
-            if (state.streakLadder.isNotEmpty()) {
+            // than competing right below the Hero banner. Free launch:
+            // the strip hides while the operator's quality gate is OFF —
+            // every viewer is premium then, and there is nothing to claim.
+            if (state.streakLadder.isNotEmpty() && state.paywallVisible) {
                 CheckInNudge(
                     streakCount = state.streakCount,
                     serverStreak = state.serverStreak,
