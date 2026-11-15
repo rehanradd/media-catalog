@@ -257,7 +257,6 @@ fun DetailScreen(
     // "tapping Home does nothing". `rememberSaveable` keeps the latch in
     // the back-stack entry's saved state, so a return never re-plays; a
     // different title is a different entry, so its own autoplay is untouched.
-    var autoPlayedFor by rememberSaveable { mutableStateOf<Int?>(null) }
     // Session 123 (DE-1): autoplay respects Resume — a title the viewer left
     // halfway through restarts from where they left off, not from the
     // beginning. `playResume` is the same path the Resume card's own button
@@ -266,7 +265,11 @@ fun DetailScreen(
     // own coroutine and lands after the title does, so deciding on `post`
     // alone would almost always decide before the answer existed and play
     // from the beginning anyway.
-    var autoPlayedFor by remember { mutableStateOf<Int?>(null) }
+    // The latch sits here, above the effect that reads it: it must be
+    // rememberSaveable, not plain remember (see the note above) — a plain
+    // remember is discarded when Detail leaves the composition for the
+    // Player, so returning from a failed playback re-fired this effect.
+    var autoPlayedFor by rememberSaveable { mutableStateOf<Int?>(null) }
     LaunchedEffect(state.post?.id, state.resumeLoaded, autoplay) {
         val post = state.post ?: return@LaunchedEffect
         if (autoplay && state.resumeLoaded && autoPlayedFor != post.id) {
