@@ -60,6 +60,12 @@ class SkeletonPlaceholderTest {
      * the card's 10dp bottom padding. The old skeleton drew a 14dp title
      * line and a 10dp details line and no badge slot: 204dp against the
      * card's 268dp, a ~64dp jump per rail.
+     *
+     * The assertion is on the first cell, not the rail Row: a rail rendered
+     * as the test's root content is measured EXACTLY at window height, so
+     * the Row reports the screen height (470dp) and not its content. The
+     * cell is the unit that must match the card, and it is measured by the
+     * Row with its own height, so it reads true either way.
      */
     @Test
     fun railCellsMatchPosterCardHeight() {
@@ -69,7 +75,7 @@ class SkeletonPlaceholderTest {
                 PosterRailSkeleton()
             }
         }
-        compose.onNodeWithTag("posterRailSkeleton").assertHeightIsEqualTo(268.dp)
+        compose.onNodeWithTag("posterRailCell").assertHeightIsEqualTo(268.dp)
     }
 
     /**

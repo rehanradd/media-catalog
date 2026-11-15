@@ -399,9 +399,15 @@ fun PosterRailSkeleton(
         modifier = modifier.padding(horizontal = 16.dp).testTag("posterRailSkeleton"),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        repeat(cells) {
+        repeat(cells) { index ->
             Column(
-                modifier = Modifier.width(CardGeometry.RAIL_CARD_WIDTH_DP.dp),
+                modifier = Modifier
+                    .width(CardGeometry.RAIL_CARD_WIDTH_DP.dp)
+                    // The first cell stands for all of them in tests: a rail
+                    // rendered as the test's root content is measured EXACTLY
+                    // at window height, so the Row itself reports the screen
+                    // height — the cell is the unit that must match the card.
+                    .then(if (index == 0) Modifier.testTag("posterRailCell") else Modifier),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 SkeletonBox(
