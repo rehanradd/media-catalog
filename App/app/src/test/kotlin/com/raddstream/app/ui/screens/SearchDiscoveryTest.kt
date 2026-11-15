@@ -77,10 +77,15 @@ class SearchDiscoveryTest {
         compose.onNodeWithText("Browse by genre").assertDoesNotExist()
 
         // Order first, at rest: scrolling moves every bound, so the tops
-        // are only comparable before anything scrolls.
-        val trendingTop = compose.onNodeWithText("Trending now").fetchSemanticsNode().boundsInRoot.top
-        val recentsTop = compose.onNodeWithText("Recent searches").fetchSemanticsNode().boundsInRoot.top
-        val recommendedTop = compose.onNodeWithText("Recommended for you").fetchSemanticsNode().boundsInRoot.top
+        // are only comparable before anything scrolls. positionInRoot, not
+        // boundsInRoot: boundsInRoot CLIPS to the visible window, so a
+        // below-fold header reports the window's bottom edge instead of
+        // its layout position (CI 43740958870: recentsTop < recommendedTop
+        // failed on the clip, not on the layout). positionInRoot is the
+        // unclipped layout position, so the order holds at any scroll.
+        val trendingTop = compose.onNodeWithText("Trending now").fetchSemanticsNode().positionInRoot.y
+        val recentsTop = compose.onNodeWithText("Recent searches").fetchSemanticsNode().positionInRoot.y
+        val recommendedTop = compose.onNodeWithText("Recommended for you").fetchSemanticsNode().positionInRoot.y
         assertTrue("Trending now must sit above Recent searches", trendingTop < recentsTop)
         assertTrue("Recent searches must sit above Recommended for you", recentsTop < recommendedTop)
 
@@ -141,7 +146,10 @@ class SearchDiscoveryTest {
             ),
         )
         val tops = listOf("Alpha", "Beta", "Gamma", "Delta").map {
-            compose.onNodeWithText(it).fetchSemanticsNode().boundsInRoot.top
+            // positionInRoot, not boundsInRoot: the latter clips to the
+            // visible window, so a below-fold row reports the window's edge
+            // instead of its layout position (see the order test above).
+            compose.onNodeWithText(it).fetchSemanticsNode().positionInRoot.y
         }
         assertEquals("First grid row must share a top", tops[0], tops[1])
         assertEquals("First grid row must share a top", tops[0], tops[2])
