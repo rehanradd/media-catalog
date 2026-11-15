@@ -62,6 +62,21 @@ class PanelTabsTest {
     }
 
     @Test
+    fun `settings moves last even when the operator listed it mid-list`() {
+        // Home review, Nov 2026: the live panel put Live TV after Settings.
+        // The operator's order stands for every other tab; only Settings is
+        // pinned to the end.
+        assertEquals(
+            listOf("home", "live_tv", "search", "my_list", "settings"),
+            PanelTabs.resolve(listOf("settings", "live_tv", "search", "my_list"), searchEnabled = true),
+        )
+        assertEquals(
+            listOf("home", "live_tv", "settings"),
+            PanelTabs.resolve(listOf("live_tv", "settings", "home"), searchEnabled = false),
+        )
+    }
+
+    @Test
     fun `all-unknown remote list falls back to the shipped five`() {
         assertEquals(
             listOf("home", "live_tv", "search", "my_list", "settings"),

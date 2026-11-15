@@ -380,7 +380,14 @@ private fun HeroSlide(
                 contentDescription = null, // the merged description above already tells it
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
-                fallbackLabel = title,
+                // Home review (Nov 2026, M1): no fallback label here. When this
+                // image fails or is gated, the fallback card would print the
+                // title in the middle of the slide while the headline below
+                // prints it again — the duplicate the Appetize screenshots
+                // showed ("The Stranger" twice). The headline below always
+                // carries the title on this branch (hasArt), so the fallback
+                // is mark + gradient only.
+                fallbackLabel = null,
             )
         }
 
