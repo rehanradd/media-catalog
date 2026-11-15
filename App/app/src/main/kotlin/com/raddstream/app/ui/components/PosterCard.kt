@@ -1,5 +1,6 @@
 package com.raddstream.app.ui.components
 
+import android.graphics.Bitmap
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
@@ -35,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -47,17 +49,26 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.raddstream.app.network.models.Post
+import com.raddstream.app.network.models.currentCalendarYear
+import com.raddstream.app.network.models.isNewReleaseYear
 import com.raddstream.app.ui.layout.CardGeometry
 import com.raddstream.app.ui.theme.PressHaptics
 import com.raddstream.app.ui.theme.RaddArtScrim
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.ui.theme.pressScale
+import com.raddstream.app.ui.theme.rememberArtworkAccent
 
 /**
  * The canonical catalog tile. Used by Home rails, the search grid, My List and
  * Downloads. Kept intentionally light (one [CatalogImage] + a couple of Texts) and
  * always rendered inside a keyed lazy container so Compose can recycle slots cheaply
- * on low-RAM phones (Compose performance guidance).
+ * on low-RAM phones (Compose performance guidance). M11 (home review, Nov 2026):
+ * the tile varies by its own artwork — a 1dp rim + tinted glow in the poster's
+ * sampled accent ([rememberArtworkAccent], the Detail header's treatment) and a
+ * NEW pill for recent releases — so a rail stops reading as identical grey
+ * rectangles. No quality badge: the list wire carries no quality field (it
+ * lives on Detail's RankedPrint), and inventing one would break the honesty
+ * rule; that badge waits on a server `best_quality` field.
  *
  * Accessibility: the tile leads with one merged sentence — title, year and type, the rating out
  * of ten, and the progress line when the app has one — so the facts arrive in an order that
@@ -97,6 +108,21 @@ fun PosterCard(
 ) {
     val title = post.cleanTitle?.takeIf { it.isNotBlank() } ?: post.title
     val typeLabel = post.typeLabel
+    // M11 (home review, Nov 2026): the tile is a new release when its year
+    // is plausible and within the last two calendar years — the same bound
+    // [Post.yearLabel] uses, so a mis-parsed 2027 can never earn the badge.
+    val isNewRelease = remember(post.year) {
+        isNewReleaseYear(post.year, currentCalendarYear())
+    }
+    // M11: the artwork accent — the poster's own colour, sampled by
+    // [rememberArtworkAccent] (81-pixel grid, brand-safe, contrast-boosted),
+    // exactly the treatment DetailScreen already gives its poster border.
+    // Nothing is painted until the bitmap actually loads: the fallback
+    // accent would rim every unloaded tile in brand jade, which is the
+    // uniform look this fix removes.
+    var posterBitmap by remember(post.id) { mutableStateOf<Bitmap?>(null) }
+    val accent = rememberArtworkAccent(posterBitmap)
+    val hasAccent = posterBitmap != null
     // M3 (home review, Nov 2026): the year comes from [Post.yearLabel], the
     // guarded choke point — the old inline `takeIf { it > 0 }` let an
     // impossible year (2027 for a 2024 work, 20215) straight onto the tile.
@@ -114,6 +140,7 @@ fun PosterCard(
         if (rank != null && rank in 1..10) append("Rank ").append(rank).append(", ")
         append(title)
         if (details.isNotBlank()) append(", ").append(details)
+        if (isNewRelease) append(", new release")
         post.imdbRating?.let { UserWords.displayRating(it) }?.let { rating ->
             append(", rating ").append(rating).append(" out of 10")
         }
@@ -144,7 +171,31 @@ fun PosterCard(
         modifier = modifier
             .fillMaxWidth()
             .then(clickable)
+            // M11: the glow is cast before the clip, so it follows the
+            // card's own rounded shape; on pre-S devices the tinted
+            // colours are ignored and the card is exactly as before.
+            .then(
+                if (hasAccent) {
+                    Modifier.shadow(
+                        elevation = 6.dp,
+                        shape = RoundedCornerShape(12.dp),
+                        ambientColor = accent.copy(alpha = 0.18f),
+                        spotColor = accent.copy(alpha = 0.30f),
+                    )
+                } else Modifier
+            )
             .clip(RoundedCornerShape(12.dp))
+            // M11: a 1dp rim in the poster's own colour, the same alpha
+            // DetailScreen uses on its poster border.
+            .then(
+                if (hasAccent) {
+                    Modifier.border(
+                        width = 1.dp,
+                        color = accent.copy(alpha = 0.55f),
+                        shape = RoundedCornerShape(12.dp),
+                    )
+                } else Modifier
+            )
             .pressScale(pressSource)
             .then(
                 when {
@@ -195,6 +246,8 @@ fun PosterCard(
                         // A dead poster URL must not look like "no artwork exists" — the
                         // branded fallback says what failed, and keeps the title readable.
                         fallbackLabel = title,
+                        // M11: the bitmap feeds the artwork accent (edge + glow).
+                        onBitmap = { posterBitmap = it },
                     )
                 }
 
@@ -270,6 +323,30 @@ fun PosterCard(
                         Text(
                             text = "#$rank",
                             color = MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.ExtraBold,
+                        )
+                    }
+                }
+
+                // M11: the NEW pill rides the free TopEnd corner (the rank
+                // badge owns TopStart, the rating badge BottomStart). Same
+                // 8dp pill as the rank badge, jade-filled so it reads as a
+                // badge and never as a button; paint-only, the tile's one
+                // spoken sentence already says "new release".
+                if (isNewRelease) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(6.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.primary)
+                            .padding(horizontal = 7.dp, vertical = 2.dp)
+                            .clearAndSetSemantics { },
+                    ) {
+                        Text(
+                            text = "NEW",
+                            color = MaterialTheme.colorScheme.onPrimary,
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.ExtraBold,
                         )

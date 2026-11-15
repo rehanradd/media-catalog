@@ -19,6 +19,18 @@ internal fun displayYearLabel(year: Int?, currentYear: Int): String? {
     return y.toString()
 }
 
+/**
+ * M11 (home review, Nov 2026): a title is a new release when its year is
+ * plausible — the same [displayYearLabel] bound, so a mis-parsed 2027 or
+ * 20215 can never earn the badge — and within the last two calendar years.
+ * Next year's film is not new yet: it has not been released.
+ */
+internal fun isNewReleaseYear(year: Int?, currentYear: Int): Boolean {
+    val y = year ?: return false
+    if (y < 1900 || y > currentYear + 1) return false
+    return y >= currentYear - 1
+}
+
 /** The current calendar year, the bound [displayYearLabel] measures against. */
 internal fun currentCalendarYear(): Int = Calendar.getInstance().get(Calendar.YEAR)
 
