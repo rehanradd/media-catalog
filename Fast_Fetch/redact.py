@@ -42,6 +42,7 @@ Stdlib only, like the rest of the backend.
 from __future__ import annotations
 
 import base64
+import functools
 import hashlib
 import hmac
 import html
@@ -351,6 +352,38 @@ class ProjectionError(ValueError):
 _NEEDLES: frozenset = frozenset(n for n in BASE_NEEDLES if len(n) >= 4)
 _TEXT_NEEDLES: frozenset = _NEEDLES
 
+
+def _rebuild_needle_indexes() -> None:
+    """Derived per-needle work, built once per vocabulary — never per string.
+
+    `_drop_needles` used to sort the needle list, lower-case the input once
+    per needle, and recompile each needle's regex on every call: for the
+    9,480-release One Piece pack post (2026-11-15) that was 4.27M
+    ``.lower()`` calls and 17 s of a 22 s detail fetch. The derived
+    structures below are the same data in usable form — longest-first
+    order, one compiled pattern per needle, one alternation for the
+    glued-compound check — and the ONLY writer is :func:`set_needles`,
+    which rebuilds them (and clears the scrub cache) on every vocabulary
+    change, so a test that swaps needles can never read a stale index.
+    """
+    global _NEEDLES_BY_LENGTH, _NEEDLE_PATTERNS, _GLUED_NEEDLES, _GLUED_RE
+    _NEEDLES_BY_LENGTH = sorted(_TEXT_NEEDLES, key=len, reverse=True)
+    _NEEDLE_PATTERNS = {
+        needle: re.compile(
+            rf"(?<![a-z0-9]){re.escape(needle)}(?![a-z0-9])", re.IGNORECASE)
+        for needle in _NEEDLES_BY_LENGTH}
+    _GLUED_NEEDLES = frozenset(n for n in _TEXT_NEEDLES if len(n) >= 5)
+    _GLUED_RE = re.compile("|".join(
+        sorted((re.escape(n) for n in _GLUED_NEEDLES), key=len, reverse=True))
+        or "(?!)")  # empty alternation must match nothing, not everything
+
+
+_NEEDLES_BY_LENGTH: list = []
+_NEEDLE_PATTERNS: dict = {}
+_GLUED_NEEDLES: frozenset = frozenset()
+_GLUED_RE = re.compile("(?!)")
+_rebuild_needle_indexes()
+
 #: A token that cannot be ordinary English: it carries a hyphen, a dot or a digit
 #: ("g-direct", "v-cloud", "7starhd", "rogmovies.one"). A plain-word hoster id
 #: ("standard", "example", "nexus") stays out of the *rewriting* vocabulary,
@@ -384,6 +417,10 @@ def set_needles(needles, text_needles=None) -> None:
     # "g-direct"` told us a brand, not a word.
     text |= frozenset(n for n in broad if brand_shaped(n))
     _NEEDLES, _TEXT_NEEDLES = broad, text
+    # The vocabulary changed: rebuild the derived needle indexes and drop
+    # every memoized scrub — a cached answer belongs to the old vocabulary.
+    _rebuild_needle_indexes()
+    _scrub_cached.cache_clear()
 
 
 def needles() -> frozenset:
@@ -581,19 +618,25 @@ def _drop_needles(text: str) -> str:
     headline glues the brand to a label ("OfficialRogmovies", "HDHub4uIndia"),
     and a chunk like that is a brand compound, not a word a viewer needs. A chunk
     is only dropped when a brand is inside it and the chunk is short enough to be
-    one name rather than a sentence."""
+    one name rather than a sentence.
+
+    The loop lowers the input ONCE: every substitution only deletes text, so
+    a needle absent from the original lower-casing can never appear later,
+    and a needle an earlier substitution removed costs one wasted regex
+    that finds nothing. The patterns and the glued alternation are the
+    module-level indexes :func:`_rebuild_needle_indexes` maintains.
+    """
     out = text
-    for needle in sorted(_TEXT_NEEDLES, key=len, reverse=True):
-        if needle not in out.lower():
+    lowered = out.lower()
+    for needle in _NEEDLES_BY_LENGTH:
+        if needle not in lowered:
             continue
-        out = re.sub(rf"(?<![a-z0-9]){re.escape(needle)}(?![a-z0-9])", "",
-                     out, flags=re.IGNORECASE)
-    glued = frozenset(n for n in _TEXT_NEEDLES if len(n) >= 5)
-    if glued:
+        out = _NEEDLE_PATTERNS[needle].sub("", out)
+    if _GLUED_NEEDLES:
         kept = []
         for word in out.split():
             core = word.strip("()[]{}<>\"',.;:!?|·-–—&").lower()
-            if len(core) <= 40 and any(n in core for n in glued):
+            if len(core) <= 40 and _GLUED_RE.search(core):
                 continue
             kept.append(word)
         out = " ".join(kept)
@@ -613,10 +656,21 @@ def scrub_text(value) -> str:
     structured columns and cannot name a source at all.
 
     The ledger keeps the original text untouched: this is a rendering decision
-    at the edge, never a rewrite of stored data."""
+    at the edge, never a rewrite of stored data.
+
+    Results are memoized per input string (a 9,480-release pack post repeats
+    the same long title thousands of times): the function is pure over its
+    input plus the module-level vocabulary, and :func:`set_needles` clears
+    the cache on every vocabulary change."""
     text = str(value if value is not None else "")
     if not text:
         return ""
+    return _scrub_cached(text)
+
+
+@functools.lru_cache(maxsize=4096)
+def _scrub_cached(text: str) -> str:
+    """The memoizable half of :func:`scrub_text`: pure over one string."""
     out = _decode_entities(text)
     # Checked before the cut as well as after it: "All Direct Links" would
     # otherwise leave the orphan word "All" standing where a label used to be.

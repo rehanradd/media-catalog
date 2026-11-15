@@ -242,6 +242,32 @@ class ProjectionTests(FixtureMixin):
         self.assertEqual(redact.scrub_text("My Pixeldrain Story"), "My Pixeldrain Story")
         self.assertEqual(redact.scrub_text("Dune – VegaMovies"), "Dune")
 
+    def test_scrub_text_memoizes_repeated_titles_and_follows_vocabulary_changes(self):
+        # 2026-11-15, One Piece detail 504: a 9,480-release pack post repeats
+        # the same long title thousands of times through scrub_text, and the
+        # needle scan ran once per call (4.27M .lower() calls, 17 s of a 22 s
+        # fetch). Results are memoized per input string — but the memo belongs
+        # to the vocabulary: swapping needles must change the answer (both
+        # ways — a new needle works, an old one stops), and restoring the
+        # baseline must bring the old answer back.
+        title = ("Download One Piece: East Blue (Season 1) Complete MulTi Audio "
+                 "{Hindi-English-Japanese} Anime WEB-Series 1080p - 720p WEB-DL "
+                 "VegaMovies")
+        # The brand is a bare word here on purpose: a "| Vegamovies.is" tail
+        # is dropped by the domain-shape rules whatever the vocabulary says,
+        # so only the bare word proves the needle list is what removed it.
+        redact.set_needles(redact.BASE_NEEDLES, redact.BASE_NEEDLES)
+        self.addCleanup(redact.set_needles, redact.BASE_NEEDLES, redact.BASE_NEEDLES)
+        first = redact.scrub_text(title)
+        self.assertNotIn("vegamovies", first.lower())
+        for _ in range(200):
+            self.assertEqual(redact.scrub_text(title), first)
+        redact.set_needles({"rogmovies"}, {"rogmovies"})
+        self.assertIn("vegamovies", redact.scrub_text(title).lower())
+        self.assertEqual(redact.scrub_text("Dune – Rogmovies"), "Dune")
+        redact.set_needles(redact.BASE_NEEDLES, redact.BASE_NEEDLES)
+        self.assertEqual(redact.scrub_text(title), first)
+
     def test_scrub_text_keeps_honest_labels_intact(self):
         redact.set_needles(redact.site_needles(), redact.site_text_needles())
         for text in ("Example Film (2024) 1080p WEB-DL - Part 2",

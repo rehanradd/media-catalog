@@ -925,6 +925,49 @@ class OptionGroupsVerifyTests(unittest.TestCase):
         self.assertEqual(result["verified"], False)
         self.assertEqual(result["reason"], "dead")
 
+    def test_cached_verify_applies_real_ledger_verdicts_in_option_groups(self):
+        # 2026-11-15, One Piece detail 504: `_option_groups` opened one
+        # connection per scope and verified through a thread pool — but a
+        # connection opened on the main thread cannot be used from a worker
+        # (sqlite3 check_same_thread), so every cached lookup failed
+        # silently and read "unchecked": dead bands were never hidden and
+        # no winner was ever stamped, while the pool + connection churn
+        # cost ~10 s on a 1,180-scope title. The production path (no
+        # injected verifier) now verifies inline on one connection: the
+        # cached verdicts must actually apply — a dead band hides, a
+        # cached-good winner is stamped, an unchecked band stays.
+        conn = sqlite3.connect(str(self.db_path))
+        self.addCleanup(conn.close)
+        conn.execute("ALTER TABLE download_sources ADD COLUMN status TEXT")
+        conn.execute("ALTER TABLE download_sources ADD COLUMN http_status INT")
+        conn.execute(
+            "ALTER TABLE download_sources ADD COLUMN last_checked_at TEXT")
+        now_text = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+        conn.execute(
+            "INSERT INTO download_sources (id, source_url, service, status,"
+            " http_status, last_checked_at) VALUES (111,"
+            " 'https://good.example/x', 'svc', 'active', 200, ?)",
+            (now_text,))
+        conn.execute(
+            "INSERT INTO download_sources (id, source_url, service, status,"
+            " http_status, last_checked_at) VALUES (112,"
+            " 'https://dead.example/x', 'svc', 'dead', 404,"
+            " '2026-11-13 00:00:00')")
+        conn.commit()
+        good, dead, cold = (self._token(111), self._token(112),
+                            self._token(113))
+        groups = self._groups(
+            [self._release("720p", [good]),
+             self._release("480p", [dead]),
+             self._release("360p", [cold])],
+            verify=True)
+        self.assertEqual([t["band"] for t in groups[0]["tiers"]],
+                         ["720p", "sd"])
+        winner = groups[0]["tiers"][0]["link"]
+        self.assertEqual(winner["stream_id"], good)
+        self.assertIsNotNone(winner.get("verified_at"))
+        self.assertEqual(groups[0]["auto"]["band"], "720p")
+
 
 class WarmAllBandsTests(unittest.TestCase):
     def setUp(self):

@@ -5706,7 +5706,8 @@ def _source_host(conn, stream_id: str) -> str:
 
 
 def _verify_option_tiers(tier_rows, *, timeout: float = 10.0,
-                         verifier=None, conn=None, host_of=None):
+                         verifier=None, conn=None, host_of=None,
+                         inline: bool = False):
     """Verify every tier's candidates; hide bands with no verified link
     and no unchecked candidate.
 
@@ -5728,8 +5729,21 @@ def _verify_option_tiers(tier_rows, *, timeout: float = 10.0,
     checked, and the press re-verifies it live before serving bytes.
     A band whose candidates are all hard-failed (or timed out with no
     answer at all) is still hidden.
+
+    ``inline=True`` runs the verifications on the caller's thread instead
+    of a pool — the right shape for the cached fast path, whose verifier
+    is indexed SELECTs only (no network, nothing for a pool to hide),
+    and the ONLY correct shape for it: a connection opened on the main
+    thread cannot be used from a worker at all (sqlite3
+    ``check_same_thread``), so the threaded cached pass silently read
+    every candidate as "unchecked" and never hid a dead band or stamped
+    a winner. The timeout is not enforced in the inline path. (The
+    parameter is named ``inline``, not ``concurrent``: an
+    ``import concurrent.futures`` anywhere in this function would shadow
+    a parameter of that name with the module object, which is always
+    truthy — that exact trap is why the first version of this flag
+    silently never took effect.)
     """
-    import concurrent.futures
     import serve_verify
     verify = verifier or _verify_tier_link
 
@@ -5768,22 +5782,34 @@ def _verify_option_tiers(tier_rows, *, timeout: float = 10.0,
     if not jobs:
         return list(tier_rows), False
     results: dict = {}
-    pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
-    try:
-        futures = {pool.submit(verify, link, conn): (tier_index, rank)
-                   for tier_index, rank, link in jobs}
-        done, _pending = concurrent.futures.wait(
-            list(futures), timeout=float(timeout))
-        for future in done:
+    if inline:
+        # The cached fast path, inline: each verification is one indexed
+        # SELECT on the caller's connection. No pool, no thread spawn per
+        # tier, and — the point — no cross-thread connection use.
+        for tier_index, rank, link in jobs:
             try:
-                results[futures[future]] = future.result()
+                results[(tier_index, rank)] = verify(link, conn)
             except Exception:      # noqa: BLE001 — a verifier fault is transport
-                results[futures[future]] = {"verified": False,
-                                            "reason": "transport"}
-    finally:
-        # Stragglers keep resolving in their threads (their answers are
-        # banked by the resolver path); the response must not wait for them.
-        pool.shutdown(wait=False, cancel_futures=True)
+                results[(tier_index, rank)] = {"verified": False,
+                                               "reason": "transport"}
+    else:
+        import concurrent.futures
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
+        try:
+            futures = {pool.submit(verify, link, conn): (tier_index, rank)
+                       for tier_index, rank, link in jobs}
+            done, _pending = concurrent.futures.wait(
+                list(futures), timeout=float(timeout))
+            for future in done:
+                try:
+                    results[futures[future]] = future.result()
+                except Exception:      # noqa: BLE001 — a verifier fault is transport
+                    results[futures[future]] = {"verified": False,
+                                                "reason": "transport"}
+        finally:
+            # Stragglers keep resolving in their threads (their answers are
+            # banked by the resolver path); the response must not wait for them.
+            pool.shutdown(wait=False, cancel_futures=True)
     no_answer = 0
     for tier_index, rank, _link in jobs:
         result = results.get((tier_index, rank))
@@ -5893,76 +5919,90 @@ def _option_groups(releases, rel_list, *, vip: bool = False,
     wanted_audio = {str(a).strip().lower()
                     for a in (audio_languages or []) if str(a).strip()}
     groups = []
-    for (season, episode), prints in scopes.items():
-        ladders = []
-        for r_dict in prints:
-            ladder = tiers.for_release(r_dict, r_dict.get("sources") or [])
-            band = ladder["tiers"][0]["band"] if ladder["tiers"] else tiers.UNSPECIFIED
-            r_dict["band"] = band
-            r_dict["quality_label"] = (ladder["tiers"][0]["label"]
-                                       if ladder["tiers"] else "Available")
-            if ladder["tiers"]:
-                ladders.append(ladder)
-        merged = tiers.merge(ladders)
-        if merged["tiers"]:
-            if verify:
-                # Player Fix v2 serve-time rule, split for speed: the
-                # response answers from cached verdicts only (never a
-                # live probe — a cold title used to wait out the whole
-                # 10 s verify batch before the app saw it), so the
-                # ladder and `auto` agree on the best cached winner.
-                # Warming is the detail routes' `_preresolve_for_detail`
-                # (background threads, banks successes); a band is
-                # hidden only on cached hard evidence, an unchecked
-                # candidate keeps its band, and the press re-verifies
-                # it live before serving bytes.
-                with get_db() as _verify_conn:
+    # 2026-11-15, One Piece detail 504: the verify connection used to open
+    # once per scope — 1,180 fresh connections for a 9,480-release pack
+    # post, ~7 s of connect/pragmas/close — and the pool verifier could
+    # not use it at all (sqlite3 connections are bound to their creating
+    # thread). One connection for the whole call; the cached pass runs
+    # inline on this thread (inline=True), because its lookups are
+    # indexed SELECTs with no network to hide behind a pool. An injected
+    # verifier keeps the threaded path — its contract is the tests'.
+    _verify_ctx = get_db() if verify else None
+    _verify_conn = _verify_ctx.__enter__() if _verify_ctx is not None else None
+    try:
+        for (season, episode), prints in scopes.items():
+            ladders = []
+            for r_dict in prints:
+                ladder = tiers.for_release(r_dict, r_dict.get("sources") or [])
+                band = ladder["tiers"][0]["band"] if ladder["tiers"] else tiers.UNSPECIFIED
+                r_dict["band"] = band
+                r_dict["quality_label"] = (ladder["tiers"][0]["label"]
+                                           if ladder["tiers"] else "Available")
+                if ladder["tiers"]:
+                    ladders.append(ladder)
+            merged = tiers.merge(ladders)
+            if merged["tiers"]:
+                if verify:
+                    # Player Fix v2 serve-time rule, split for speed: the
+                    # response answers from cached verdicts only (never a
+                    # live probe — a cold title used to wait out the whole
+                    # 10 s verify batch before the app saw it), so the
+                    # ladder and `auto` agree on the best cached winner.
+                    # Warming is the detail routes' `_preresolve_for_detail`
+                    # (background threads, banks successes); a band is
+                    # hidden only on cached hard evidence, an unchecked
+                    # candidate keeps its band, and the press re-verifies
+                    # it live before serving bytes.
                     merged["tiers"], _poisoned = _verify_option_tiers(
                         merged["tiers"], timeout=verify_timeout,
                         verifier=_verifier or _verify_tier_link_cached,
-                        conn=_verify_conn, host_of=_host_of)
-                if not merged["tiers"]:
-                    continue
-            for tier in merged["tiers"]:
-                tier["gated"] = bool(
-                    tier["band"] in GATED_QUALITY_BANDS and not vip)
-                tier["preferred_audio"] = bool(
-                    wanted_audio and any(
-                        str(lang).strip().lower() in wanted_audio
-                        for lang in tier.get("audio_languages") or []))
-            # The switch order is what a naive "first tier" client presses:
-            # free before gated, preferred audio first inside each class,
-            # best band first inside that.
-            merged["tiers"].sort(key=lambda t: (
-                bool(t.get("gated")), not bool(t.get("preferred_audio")),
-                tiers.band_rank(t["band"])))
-            # `auto` is the tier the player should start at: the best
-            # playable tier the caller's plan actually lets through, in
-            # their preferred audio when one exists. Recomputed here, on
-            # the raw links, because the projection below drops the
-            # evidence keys `tiers.score` reads.
-            playable = [t for t in merged["tiers"]
-                        if t.get("playable") and not t.get("gated")]
-            if playable:
-                best = max(playable, key=lambda t: (
-                    bool(t.get("preferred_audio")),
-                    tiers.score(t["link"], t["band"]),
-                    -tiers.band_rank(t["band"])))
-                merged["auto"] = {"band": best["band"], "reason": "best",
-                                  "stream_id": (best["link"] or {}).get("stream_id")}
-            else:
-                merged["auto"] = None
-            for tier in merged["tiers"]:
-                backups = tier.pop("backups", None) or []
-                if tier["link"] is not None:
-                    tier["link"] = redact.project(tier["link"], "ladder_link")
-                # Only the runner-up *handles* travel. The player turns a handle
-                # into our own /api/v1/stream URL exactly as it does for the
-                # winner, so a backup needs nothing more to start — and a backup's
-                # diagnostics are as private as the winner's.
-                tier["backup_handles"] = [str(item["stream_id"]) for item in backups
-                                          if item.get("stream_id")]
-            groups.append({"season": season, "episode": episode, **merged})
+                        conn=_verify_conn, host_of=_host_of,
+                        inline=_verifier is None)
+                    if not merged["tiers"]:
+                        continue
+                for tier in merged["tiers"]:
+                    tier["gated"] = bool(
+                        tier["band"] in GATED_QUALITY_BANDS and not vip)
+                    tier["preferred_audio"] = bool(
+                        wanted_audio and any(
+                            str(lang).strip().lower() in wanted_audio
+                            for lang in tier.get("audio_languages") or []))
+                # The switch order is what a naive "first tier" client presses:
+                # free before gated, preferred audio first inside each class,
+                # best band first inside that.
+                merged["tiers"].sort(key=lambda t: (
+                    bool(t.get("gated")), not bool(t.get("preferred_audio")),
+                    tiers.band_rank(t["band"])))
+                # `auto` is the tier the player should start at: the best
+                # playable tier the caller's plan actually lets through, in
+                # their preferred audio when one exists. Recomputed here, on
+                # the raw links, because the projection below drops the
+                # evidence keys `tiers.score` reads.
+                playable = [t for t in merged["tiers"]
+                            if t.get("playable") and not t.get("gated")]
+                if playable:
+                    best = max(playable, key=lambda t: (
+                        bool(t.get("preferred_audio")),
+                        tiers.score(t["link"], t["band"]),
+                        -tiers.band_rank(t["band"])))
+                    merged["auto"] = {"band": best["band"], "reason": "best",
+                                      "stream_id": (best["link"] or {}).get("stream_id")}
+                else:
+                    merged["auto"] = None
+                for tier in merged["tiers"]:
+                    backups = tier.pop("backups", None) or []
+                    if tier["link"] is not None:
+                        tier["link"] = redact.project(tier["link"], "ladder_link")
+                    # Only the runner-up *handles* travel. The player turns a handle
+                    # into our own /api/v1/stream URL exactly as it does for the
+                    # winner, so a backup needs nothing more to start — and a backup's
+                    # diagnostics are as private as the winner's.
+                    tier["backup_handles"] = [str(item["stream_id"]) for item in backups
+                                              if item.get("stream_id")]
+                groups.append({"season": season, "episode": episode, **merged})
+    finally:
+        if _verify_ctx is not None:
+            _verify_ctx.__exit__(None, None, None)
     groups.sort(key=lambda group: tiers.scope_sort_key(group["season"],
                                                        group["episode"]))
     return groups
@@ -5985,15 +6025,42 @@ def _plain_stream_error(error: str) -> dict:
                 error, "That copy didn't play. Try another quality.")}
 
 
-def _preresolve_is_warm(source_id: int) -> bool:
-    """True when the resolved cache already holds a servable answer."""
+def _preresolve_is_warm(source_id: int, conn=None) -> bool:
+    """True when the resolved cache already holds a servable answer.
+
+    ``conn`` is an optional shared connection: the detail preresolve pass
+    checks thousands of tiers, and opening one connection per tier cost
+    ~7 s of connect/pragma/close churn on a 9,480-release title (detail
+    504). When no connection is passed the old per-call open is kept.
+    """
     try:
         import resolved_cache
-        with get_db() as conn:
-            return resolved_cache.lookup_cache(conn, int(source_id),
-                                               want="watch") is not None
+        if conn is None:
+            with get_db() as own:
+                return _preresolve_is_warm(int(source_id), conn=own)
+        return resolved_cache.lookup_cache(conn, int(source_id),
+                                           want="watch") is not None
     except Exception:      # noqa: BLE001 — a cache fault is "not warm", never an error
         return False
+
+
+@contextmanager
+def _shared_warm_conn():
+    """One connection for the whole preresolve warm pass, or None.
+
+    Yields None when the catalog file is not there yet (a test process):
+    opening it would create an empty file, and the per-tier open inside
+    `_preresolve_is_warm` is the safe fallback there. Any failure to open
+    also falls back to None rather than failing the detail request.
+    """
+    if not os.path.exists(DB_PATH):
+        yield None
+        return
+    try:
+        with get_db() as conn:
+            yield conn
+    except Exception:      # noqa: BLE001 — no shared connection, fall back
+        yield None
 
 
 # Resolve coalescing (Appetize FAILED 1, 2026-11-12): one in-flight live
@@ -6127,30 +6194,33 @@ def _preresolve_for_detail(p_dict: dict) -> dict:
     detail request arrives (research fold-in §1: this warm IS the async
     re-verification of the title's bands). The `band` key stays for the
     auto tier, for callers that read it; `bands` names every band warmed.
+    The warm checks share one connection (see `_shared_warm_conn`) so a
+    2,372-tier title does not pay a connect per tier.
     """
     bands: list = []
     warmed: list = []
     warming: list = []
-    for group in p_dict.get("option_groups") or []:
-        for tier in (group or {}).get("tiers") or []:
-            link = (tier or {}).get("link") or {}
-            stream_id = link.get("stream_id")
-            if not stream_id:
-                continue
-            try:
-                source_id = redact.parse_token(stream_id, signing_secret(),
-                                               signed_only=True)
-            except Exception:      # noqa: BLE001 — an unparseable handle is unavailable
-                continue
-            if not source_id:
-                continue
-            band = (tier or {}).get("band")
-            bands.append(band)
-            if _preresolve_is_warm(int(source_id)):
-                warmed.append(band)
-            else:
-                _start_preresolve(int(source_id))
-                warming.append(band)
+    with _shared_warm_conn() as shared:
+        for group in p_dict.get("option_groups") or []:
+            for tier in (group or {}).get("tiers") or []:
+                link = (tier or {}).get("link") or {}
+                stream_id = link.get("stream_id")
+                if not stream_id:
+                    continue
+                try:
+                    source_id = redact.parse_token(stream_id, signing_secret(),
+                                                   signed_only=True)
+                except Exception:      # noqa: BLE001 — an unparseable handle is unavailable
+                    continue
+                if not source_id:
+                    continue
+                band = (tier or {}).get("band")
+                bands.append(band)
+                if _preresolve_is_warm(int(source_id), conn=shared):
+                    warmed.append(band)
+                else:
+                    _start_preresolve(int(source_id))
+                    warming.append(band)
     if not bands:
         return {"status": "unavailable"}
     auto = ((p_dict.get("option_groups") or [{}])[0].get("auto") or {})
