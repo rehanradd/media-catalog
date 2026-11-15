@@ -2,6 +2,7 @@ package com.raddstream.app.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.raddstream.app.data.ServerSettingsRepository
 import com.raddstream.app.network.models.AccountEntitlement
 import com.raddstream.app.network.models.CoinLedgerEntry
 import com.raddstream.app.network.models.PassTier
@@ -93,6 +94,14 @@ data class AccountOverviewUiState(
     val isClaiming: Boolean = false,
     /** Today is already claimed (paid or already-claimed answer), so the button rests. */
     val claimedToday: Boolean = false,
+    /**
+     * Free launch: the paywall surfaces (coins card, streak card, VIP
+     * upsell, "Coins and history") render only while the operator's
+     * quality gate is ON. The gate flag is the free-launch switch — gate
+     * OFF means every viewer is premium. Defaults true (gate on) so a
+     * build that has not heard from the panel yet behaves exactly as today.
+     */
+    val paywallVisible: Boolean = true,
     /** The last redeem's answer in the viewer's own words, or null before any redeem. */
     val redeemMessage: String? = null,
     /** The plan a redeem is in flight for, or null when none is. */
@@ -102,12 +111,20 @@ data class AccountOverviewUiState(
 @HiltViewModel
 class AccountViewModel @Inject constructor(
     private val syncAccountRepository: SyncAccountRepository,
+    private val settingsRepository: ServerSettingsRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AccountOverviewUiState())
     val uiState = _uiState.asStateFlow()
 
     init {
+        // Free launch: the quality-gate flag is the free-launch switch.
+        // Gate OFF hides the paywall surfaces on the account screens.
+        viewModelScope.launch {
+            settingsRepository.qualityGateEnabled.collect { enabled ->
+                _uiState.update { it.copy(paywallVisible = enabled) }
+            }
+        }
         viewModelScope.launch {
             syncAccountRepository.signedIn.collect { signedIn ->
                 _uiState.update { it.copy(signedIn = signedIn) }

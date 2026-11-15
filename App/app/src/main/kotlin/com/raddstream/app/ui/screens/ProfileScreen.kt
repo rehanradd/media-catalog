@@ -27,6 +27,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.compose.runtime.collectAsState
+import com.raddstream.app.viewmodel.AccountOverviewUiState
 import com.raddstream.app.viewmodel.AccountViewModel
 
 /**
@@ -47,7 +48,31 @@ fun ProfileScreen(
     viewModel: AccountViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    ProfileContent(
+        state = state,
+        onBackClick = onBackClick,
+        onOpenDashboard = onOpenDashboard,
+        onOpenCoins = onOpenCoins,
+        onSignOut = { viewModel.signOut() },
+    )
+}
 
+/**
+ * The profile's body, split from the screen so tests can render it with a
+ * fake state (the Home pattern: HomeScreen + HomeContent). The paywall
+ * lines — streak, coins, "Coins and history" — render only while the
+ * operator's quality gate is ON; gate OFF means every viewer is premium,
+ * so they hide and the membership line says so.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ProfileContent(
+    state: AccountOverviewUiState,
+    onBackClick: () -> Unit,
+    onOpenDashboard: () -> Unit,
+    onOpenCoins: () -> Unit,
+    onSignOut: () -> Unit,
+) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -89,18 +114,23 @@ fun ProfileScreen(
                 ) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            if (state.isVip) "VIP member" else "Free account",
+                            // Free launch: gate OFF means every viewer is
+                            // premium, so the line says Premium, not Free.
+                            if (!state.paywallVisible) "Premium member"
+                            else if (state.isVip) "VIP member" else "Free account",
                             style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.Bold,
                         )
-                        Text(
-                            "Check-in streak: ${state.currentStreak} days (best ${state.bestStreak}).",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        Text(
-                            "Coins: ${state.coinBalance}.",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
+                        if (state.paywallVisible) {
+                            Text(
+                                "Check-in streak: ${state.currentStreak} days (best ${state.bestStreak}).",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Text(
+                                "Coins: ${state.coinBalance}.",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
                         state.createdAt?.let { created ->
                             Text(
                                 "Account created: ${formatCoinDay(created)}.",
@@ -125,11 +155,13 @@ fun ProfileScreen(
                 OutlinedButton(onClick = onOpenDashboard, modifier = Modifier.fillMaxWidth()) {
                     Text("Open dashboard")
                 }
-                OutlinedButton(onClick = onOpenCoins, modifier = Modifier.fillMaxWidth()) {
-                    Text("Coins and history")
+                if (state.paywallVisible) {
+                    OutlinedButton(onClick = onOpenCoins, modifier = Modifier.fillMaxWidth()) {
+                        Text("Coins and history")
+                    }
                 }
                 Button(
-                    onClick = { viewModel.signOut() },
+                    onClick = onSignOut,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text("Sign out")

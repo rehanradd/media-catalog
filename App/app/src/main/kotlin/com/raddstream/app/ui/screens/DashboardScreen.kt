@@ -29,6 +29,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.compose.runtime.collectAsState
+import com.raddstream.app.viewmodel.AccountOverviewUiState
 import com.raddstream.app.viewmodel.AccountViewModel
 
 /**
@@ -51,7 +52,33 @@ fun DashboardScreen(
     viewModel: AccountViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    DashboardContent(
+        state = state,
+        onBackClick = onBackClick,
+        onOpenCheckIn = onOpenCheckIn,
+        onOpenCoins = onOpenCoins,
+        onOpenProfile = onOpenProfile,
+        onOpenVipUpgrade = onOpenVipUpgrade,
+    )
+}
 
+/**
+ * The dashboard's body, split from the screen so tests can render it with
+ * a fake state (the Home pattern: HomeScreen + HomeContent). The paywall
+ * surfaces — coins card, streak card, "Coins and history" — render only
+ * while the operator's quality gate is ON; gate OFF means every viewer is
+ * premium, so they hide and the membership card says so.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DashboardContent(
+    state: AccountOverviewUiState,
+    onBackClick: () -> Unit,
+    onOpenCheckIn: () -> Unit,
+    onOpenCoins: () -> Unit,
+    onOpenProfile: () -> Unit,
+    onOpenVipUpgrade: () -> Unit,
+) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -80,50 +107,57 @@ fun DashboardScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            if (!state.signedIn) {
+            if (!state.signedIn && state.paywallVisible) {
                 Text(
                     "Sign in from Settings to see your coins, streak and membership here.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Coins", style = MaterialTheme.typography.labelLarge)
-                    Text(
-                        "${state.coinBalance} coins",
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Text(
-                        "Your balance, from the server's ledger — never a number this phone made up.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+            // Free launch: the coins card hides while the quality gate is OFF.
+            if (state.paywallVisible) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Coins", style = MaterialTheme.typography.labelLarge)
+                        Text(
+                            "${state.coinBalance} coins",
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Text(
+                            "Your balance, from the server's ledger — never a number this phone made up.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Check-in streak", style = MaterialTheme.typography.labelLarge)
-                    Text(
-                        "${state.currentStreak} days in a row",
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Text(
-                        "Best: ${state.bestStreak} days. Claim every day to keep it going.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Button(onClick = onOpenCheckIn, modifier = Modifier.fillMaxWidth()) {
-                        Text(if (state.claimedToday) "Check-in — claimed today" else "Open check-in")
+            // Free launch: the streak card (and its check-in door) hides
+            // while the quality gate is OFF.
+            if (state.paywallVisible) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Check-in streak", style = MaterialTheme.typography.labelLarge)
+                        Text(
+                            "${state.currentStreak} days in a row",
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Text(
+                            "Best: ${state.bestStreak} days. Claim every day to keep it going.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Button(onClick = onOpenCheckIn, modifier = Modifier.fillMaxWidth()) {
+                            Text(if (state.claimedToday) "Check-in — claimed today" else "Open check-in")
+                        }
                     }
                 }
             }
@@ -133,26 +167,43 @@ fun DashboardScreen(
             ) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("Membership", style = MaterialTheme.typography.labelLarge)
-                    Text(
-                        if (state.isVip) "VIP — active" else "Free",
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    if (!state.isVip) {
+                    if (!state.paywallVisible) {
+                        // Free launch: the gate is OFF, so every viewer is
+                        // premium — the card says so and offers no upsell.
                         Text(
-                            "VIP unlocks the higher qualities and direct downloads.",
+                            "Premium",
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Text(
+                            "All qualities and downloads included.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        Spacer(Modifier.height(8.dp))
-                        OutlinedButton(onClick = onOpenVipUpgrade, modifier = Modifier.fillMaxWidth()) {
-                            Text("See VIP options")
+                    } else {
+                        Text(
+                            if (state.isVip) "VIP — active" else "Free",
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        if (!state.isVip) {
+                            Text(
+                                "VIP unlocks the higher qualities and direct downloads.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            OutlinedButton(onClick = onOpenVipUpgrade, modifier = Modifier.fillMaxWidth()) {
+                                Text("See VIP options")
+                            }
                         }
                     }
                 }
             }
-            OutlinedButton(onClick = onOpenCoins, modifier = Modifier.fillMaxWidth()) {
-                Text("Coins and history")
+            if (state.paywallVisible) {
+                OutlinedButton(onClick = onOpenCoins, modifier = Modifier.fillMaxWidth()) {
+                    Text("Coins and history")
+                }
             }
             OutlinedButton(onClick = onOpenProfile, modifier = Modifier.fillMaxWidth()) {
                 Text("Your profile")
