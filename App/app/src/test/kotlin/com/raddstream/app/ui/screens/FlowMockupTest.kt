@@ -1,6 +1,9 @@
 package com.raddstream.app.ui.screens
 
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -81,11 +84,12 @@ class FlowMockupTest {
                 )
             }
         }
-        // The canonical tile paints the bold title and the "year · type" meta.
+        // The canonical tile paints the bold title and the meta line — the
+        // painted separator is " | " (the spoken sentence uses " · ").
         compose.onNodeWithText("Apex Horizon").assertIsDisplayed()
         compose.onNodeWithText("Shadow Protocol").assertIsDisplayed()
-        compose.onNodeWithText("2024 · Movie").assertIsDisplayed()
-        compose.onNodeWithText("2023 · Series").assertIsDisplayed()
+        compose.onNodeWithText("2024 | Movie").assertIsDisplayed()
+        compose.onNodeWithText("2023 | Series").assertIsDisplayed()
         // And each tile still speaks one sentence, title + meta.
         compose.onNode(hasContentDescription("Apex Horizon, 2024 · Movie")).assertExists()
         compose.onNode(hasContentDescription("Shadow Protocol, 2023 · Series")).assertExists()
@@ -177,18 +181,28 @@ class FlowMockupTest {
 
     @Test
     fun setupContentShowsFieldAndTestConnection() {
-        var changedTo: String? = null
+        // The content is stateless — the test owns the state, so typing into
+        // the field really updates it and the Test button enables. A fixed
+        // blank state would leave the button disabled and the click a no-op.
+        var state by mutableStateOf(SetupUiState(serverUrl = "", showUrlField = true))
         var tested = 0
-        setupContent(
-            state = SetupUiState(serverUrl = "", showUrlField = true),
-            onServerUrlChanged = { changedTo = it },
-            onTestConnection = { tested++ },
-        )
+        compose.setContent {
+            RaddStreamTheme {
+                SetupScreenContent(
+                    state = state,
+                    onServerUrlChanged = { state = state.copy(serverUrl = it) },
+                    onTestConnection = { tested++ },
+                    onRetryDefault = {},
+                    onRevealUrlField = {},
+                    onConnected = {},
+                )
+            }
+        }
         compose.onNode(hasText("Welcome to", substring = true)).assertIsDisplayed()
         compose.onNodeWithText("Watch movies, shows and live TV.").assertIsDisplayed()
         compose.onNodeWithText("Server address").assertIsDisplayed()
         compose.onNode(hasSetTextAction()).performTextInput("https://example.com:8080")
-        assertEquals("https://example.com:8080", changedTo)
+        assertEquals("https://example.com:8080", state.serverUrl)
         compose.onNodeWithText("Test connection").performClick()
         assertEquals(1, tested)
         // Not connected yet: Continue stays disabled, offline stays offered.

@@ -68,7 +68,7 @@ fun SetupScreen(
 
 /**
  * Flow mockup (Nov 2026): the first-run screen itself — a jade play mark in a
- * rounded tile, "Welcome to Radd Stream", the tagline, the address field and
+ * rounded tile, the welcome title, the tagline, the address field and
  * the jade Connect. Extracted from [SetupScreen] so the layout is testable
  * without the ViewModel: the screen keeps the state collection and the
  * arrival probe, and this renders only the content. The wiring is untouched:
