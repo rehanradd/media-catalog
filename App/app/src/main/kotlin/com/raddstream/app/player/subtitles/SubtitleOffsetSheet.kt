@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -93,9 +94,13 @@ fun SubtitleOffsetSheet(
 ) {
     val offset = SubtitleOffset.clamp(offsetMs)
     PlayerSheet(onDismiss = onDismiss, containerColor = MaterialTheme.colorScheme.surface) {
+        // Robo #10: the landscape panel no longer scrolls (PlayerSheet),
+        // so this sheet scrolls itself like the other four — otherwise a
+        // long offset sheet would clip sideways instead of scrolling.
         Column(
             Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 28.dp),
         ) {

@@ -10,8 +10,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -71,10 +69,19 @@ internal fun PlayerSheet(
                     .widthIn(max = 380.dp)
                     .background(containerColor),
             ) {
+                // Robo #10 (APK 757): this Column used to scroll itself, and
+                // every sheet it wraps scrolls itself too (SubtitleSettings,
+                // Tracks, More, PrintLog) — a vertical scroller inside a
+                // vertical scroller, measured with infinite constraints, so
+                // opening any of those sheets sideways crashed with
+                // "Vertically scrollable component was measured with an
+                // infinity maximum height constraints". One scroller owns
+                // the column: the panel never scrolls, each sheet scrolls
+                // its own content (the four plain sheets gained their own
+                // scroll in the same change, so a long quality list still
+                // scrolls in the landscape panel).
                 Column(
-                    Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState()),
+                    Modifier.fillMaxSize(),
                 ) {
                     content()
                 }

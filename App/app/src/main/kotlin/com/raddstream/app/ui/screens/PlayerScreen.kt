@@ -3572,7 +3572,11 @@ private fun parseTimeToMs(raw: String): Long {
 @Composable
 private fun SpeedSheet(state: PlayerUiState, vm: PlayerViewModel) {
     PlayerSheet(onDismiss = { vm.hideSpeedSheet() }) {
-        Column(Modifier.padding(bottom = 20.dp)) {
+        Column(
+            Modifier
+                .verticalScroll(rememberScrollState())
+                .padding(bottom = 20.dp),
+        ) {
             SheetTitle(stringResource(R.string.player_speed_title), onDismiss = { vm.hideSpeedSheet() })
             GestureMapper.SHEET_PRESETS.forEach { preset ->
                 SheetRow(
@@ -3595,7 +3599,11 @@ private fun SpeedSheet(state: PlayerUiState, vm: PlayerViewModel) {
 @Composable
 private fun QualitySheet(state: PlayerUiState, vm: PlayerViewModel) {
     PlayerSheet(onDismiss = { vm.hideQualitySheet() }) {
-        Column(Modifier.padding(bottom = 20.dp)) {
+        Column(
+            Modifier
+                .verticalScroll(rememberScrollState())
+                .padding(bottom = 20.dp),
+        ) {
             SheetTitle(stringResource(R.string.player_quality_title))
             QualityRow(
                 title = stringResource(R.string.player_quality_auto),
@@ -3748,7 +3756,11 @@ internal fun SwitchSourceRow(title: String, sizeText: String?, playing: Boolean,
 @Composable
 private fun SleepSheet(state: PlayerUiState, vm: PlayerViewModel) {
     PlayerSheet(onDismiss = { vm.hideSleepSheet() }) {
-        Column(Modifier.padding(bottom = 20.dp)) {
+        Column(
+            Modifier
+                .verticalScroll(rememberScrollState())
+                .padding(bottom = 20.dp),
+        ) {
             SheetTitle(stringResource(R.string.player_sleep_timer), onDismiss = { vm.hideSleepSheet() })
             if (state.sleep.mode == SleepMode.COUNTDOWN) {
                 Text(

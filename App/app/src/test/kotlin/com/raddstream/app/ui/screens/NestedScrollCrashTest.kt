@@ -22,6 +22,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.data.UserRegion
 import com.raddstream.app.data.local.LocalVideoFile
@@ -85,6 +86,17 @@ import org.robolectric.RobolectricTestRunner
  * still proves its point — `setContent` throwing is the failure, and a
  * composition that lays out without throwing is the pass.
  *
+ * FOUND (first CI run 43758154976): `playerSheetLandscapeWithScrollableContent`
+ * threw the exact Robo #10 exception. The nest is PlayerSheet's landscape
+ * branch: the panel wraps the sheet in its own verticalScroll column, and
+ * four sheets (SubtitleSettings, Tracks, More, PrintLog) scroll themselves
+ * — and the player forces landscape on entry (PlayerScreen sets
+ * SCREEN_ORIENTATION_LANDSCAPE), so Robo hit it by opening a player sheet
+ * after playback started. Fix, same branch: the panel never scrolls; each
+ * sheet owns its own scroll (the four plain sheets gained one here). The
+ * landscape test is the regression test for that fix — it threw before it
+ * and must compose after it.
+ *
  * Screens that take a Hilt ViewModel directly (Coins, Settings, VIP, Live
  * TV grid branch, My List grid branch, Downloads, Player, Check-in) cannot
  * be rendered without that ViewModel; their lazy children were verified by
@@ -114,7 +126,9 @@ class NestedScrollCrashTest {
     )
 
     private fun samplePosts(prefix: String, fromId: Int, titles: List<String>) =
-        titles.mapIndexed { index, title -> samplePost(fromId + index, "$prefix $title") }
+        titles.mapIndexed { index, title ->
+            samplePost(fromId + index, if (prefix.isEmpty()) title else "$prefix $title")
+        }
 
     private fun homeState(
         sections: List<HomeSection>,
@@ -170,7 +184,7 @@ class NestedScrollCrashTest {
                 )
             }
         }
-        compose.onNodeWithText("Recently added").assertIsDisplayed()
+        compose.onNodeWithText("Recently added").performScrollTo().assertIsDisplayed()
         compose.onRoot().assertExists()
     }
 
@@ -189,7 +203,7 @@ class NestedScrollCrashTest {
                 )
             }
         }
-        compose.onNodeWithText("Recently added").assertIsDisplayed()
+        compose.onNodeWithText("Recently added").performScrollTo().assertIsDisplayed()
         compose.onRoot().assertExists()
     }
 
@@ -223,7 +237,7 @@ class NestedScrollCrashTest {
                 )
             }
         }
-        compose.onAllNodesWithText("Dune")[0].assertIsDisplayed()
+        compose.onAllNodesWithText("Dune")[0].performScrollTo().assertIsDisplayed()
     }
 
     @Test
@@ -540,7 +554,7 @@ class NestedScrollCrashTest {
                 )
             }
         }
-        compose.onNodeWithText("Hindi").assertIsDisplayed()
+        compose.onNodeWithText("Hindi").performScrollTo().assertIsDisplayed()
     }
 
     @Test
@@ -637,7 +651,10 @@ class NestedScrollCrashTest {
                 }
             }
         }
-        compose.onNodeWithText("Apply").assertIsDisplayed()
+        // The footer sits outside the sheet's scrolling middle and the
+        // sheet opens partially expanded, so the button exists below the
+        // fold — existence, not display, is what this test pins.
+        compose.onNodeWithText("Apply").assertExists()
     }
 
     @Test
