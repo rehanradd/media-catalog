@@ -3,9 +3,10 @@ package com.raddstream.app.ui.screens
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
-import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.SearchUiState
@@ -70,17 +71,23 @@ class SearchDiscoveryTest {
 
         compose.onNodeWithText("Trending now").assertIsDisplayed()
         compose.onNodeWithText("Recent searches").assertIsDisplayed()
-        compose.onNodeWithText("Recommended for you").assertIsDisplayed()
         // The old discovery had neither of these — a regression to the
         // chip/genre layout would show them again.
         compose.onNodeWithText("Trending searches").assertDoesNotExist()
         compose.onNodeWithText("Browse by genre").assertDoesNotExist()
 
+        // Order first, at rest: scrolling moves every bound, so the tops
+        // are only comparable before anything scrolls.
         val trendingTop = compose.onNodeWithText("Trending now").fetchSemanticsNode().boundsInRoot.top
         val recentsTop = compose.onNodeWithText("Recent searches").fetchSemanticsNode().boundsInRoot.top
         val recommendedTop = compose.onNodeWithText("Recommended for you").fetchSemanticsNode().boundsInRoot.top
         assertTrue("Trending now must sit above Recent searches", trendingTop < recentsTop)
         assertTrue("Recent searches must sit above Recommended for you", recentsTop < recommendedTop)
+
+        // "Recommended for you" sits below the fold in the short
+        // Robolectric window — scroll it into view before asserting it is
+        // displayed, the way HomeHeaderTest scrolls to its "Show all".
+        compose.onNodeWithText("Recommended for you").performScrollTo().assertIsDisplayed()
     }
 
     @Test
@@ -97,7 +104,13 @@ class SearchDiscoveryTest {
         var clickedQuery: String? = null
         setDiscovery(onRunQuery = { clickedQuery = it })
 
-        compose.onNodeWithText("Classic Cinema").performClick()
+        // The row sits below the fold in the short Robolectric window, and
+        // on Android performClick is a real tap at the node's centre — a
+        // tap below the fold lands on nothing and fails silently. Scroll
+        // first, then tap the row's own tag (the clickable owner, not its
+        // child text).
+        compose.onNodeWithTag("${RecentRowTagPrefix}Classic Cinema")
+            .performScrollTo().performClick()
         assertEquals("Classic Cinema", clickedQuery)
     }
 
@@ -106,7 +119,10 @@ class SearchDiscoveryTest {
         var removed: String? = null
         setDiscovery(onRemoveRecent = { removed = it })
 
-        compose.onNodeWithContentDescription("Remove Classic Cinema").performClick()
+        // Same fold rule as the row tap: scroll first, then tap the ×
+        // button's own tag.
+        compose.onNodeWithTag("${RemoveRecentTagPrefix}Classic Cinema")
+            .performScrollTo().performClick()
         assertEquals("Classic Cinema", removed)
     }
 

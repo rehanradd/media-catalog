@@ -76,6 +76,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
@@ -571,7 +572,15 @@ internal fun FilterRail(state: SearchUiState, onSelectType: (String?) -> Unit, o
  * Mockup (Nov 2026): recent searches as a list, not a chip rail — one row
  * per search, clock icon, tap to run it, × to drop that row. Used on the
  * discovery page and under a pasted link, where it is the way back.
+ *
+ * The tags let a test tap the clickable owners themselves — the row and
+ * its × — instead of a child Text/Icon whose tap has to resolve upward
+ * (see SearchDiscoveryTest: the row sits below the fold in the short
+ * Robolectric window, so the test scrolls first, then taps the tag).
  */
+internal const val RecentRowTagPrefix = "recent:"
+internal const val RemoveRecentTagPrefix = "remove-recent:"
+
 @Composable
 internal fun RecentsSection(state: SearchUiState, onRunRecent: (String) -> Unit, onRemoveRecent: (String) -> Unit) {
     RecentsList(
@@ -597,6 +606,7 @@ internal fun RecentsList(
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 48.dp)
+                    .testTag("$RecentRowTagPrefix$recent")
                     .clickable { onRunRecent(recent) },
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -615,7 +625,10 @@ internal fun RecentsList(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
-                IconButton(onClick = { onRemoveRecent(recent) }) {
+                IconButton(
+                    onClick = { onRemoveRecent(recent) },
+                    modifier = Modifier.testTag("$RemoveRecentTagPrefix$recent"),
+                ) {
                     Icon(Icons.Default.Close, contentDescription = "Remove $recent")
                 }
             }
