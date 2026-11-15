@@ -58,7 +58,7 @@ import com.raddstream.app.viewmodel.HelpViewModel
  * One short Help screen: four rows, each of which goes somewhere.
  *
  * Stitch sub-screens mockup (Nov 2026): "Frequently asked questions",
- * "Report a problem", "Contact us", "About Radd Stream" — each a card with
+ * "Report a problem", "Contact us", "About" — each a card with
  * an icon and a chevron, no bottom nav. The answers to the questions are the
  * four short sections this screen always carried (Watch, Download, VIP and
  * coins, Need more help?), so tapping the first row opens them in place
