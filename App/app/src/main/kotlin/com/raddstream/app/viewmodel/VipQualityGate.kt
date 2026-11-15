@@ -85,7 +85,11 @@ object VipQualityGate {
         isVip || !isPremiumBand(band, freeQualityCap)
 
     fun allowsResolution(resolution: Resolution, isVip: Boolean): Boolean =
-        isVip || !isPremiumResolution(resolution)
+        allowsResolution(resolution, isVip, "720p")
+
+    /** The same, under the operator's free cap: at 480p, 720p is premium too. */
+    fun allowsResolution(resolution: Resolution, isVip: Boolean, freeQualityCap: String): Boolean =
+        isVip || !isPremiumResolution(resolution, freeQualityCap)
 
     /**
      * The ladder a non-VIP viewer may actually choose from. A premium band disappears together

@@ -450,7 +450,7 @@ object ReleaseLayoutBuilder {
         if (prints.any { it.hasHdr }) out.add("HDR")
         if (prints.any { it.resolution == Resolution.R1080 }) out.add("1080p")
         // Audit #31: user words only. "Official prints" is dropped (the
-        // count already rides in the PrintSummary line below the poster);
+        // counts stay on the layout for the gate's own bookkeeping);
         // "Resumable" is dropped entirely — nobody resumes from a chip;
         // "Streamable" is "Available to watch".
         if (prints.any { p -> p.links.any { it.playableHere } }) out.add("Available to watch")

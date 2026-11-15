@@ -10,6 +10,7 @@ import com.raddstream.app.data.cache.ConnectivityProbe
 import com.raddstream.app.data.cache.KeepIdentity
 import com.raddstream.app.data.cache.NetworkClass
 import com.raddstream.app.data.downloads.DeviceDownloadResult
+import com.raddstream.app.data.downloads.DeviceDownloadState
 import com.raddstream.app.data.downloads.DeviceDownloadsRepository
 import com.raddstream.app.data.local.SyncedProgressDao
 import com.raddstream.app.data.local.WatchHistoryDao
@@ -89,24 +90,26 @@ data class DetailUiState(
     val ladderEpisode: Int? = null,
     /** null / [LadderForScope.AUTO] = let the ladder's own pointer choose the rung. */
     val selectedBand: String? = LadderForScope.AUTO,
-    /**
-     * Whether the house sponsor card may be shown for this viewer at all. False is the
-     * ordinary case; a confirmed membership or a live rewarded pass turns the card off, which
-     * is what both of those offers say they do.
-     */
-    val adFree: Boolean = false,
     /** The ledger's answer, mirrored so the quality gate and its upsell read one fact. */
     val vip: Boolean = false,
     /** True when this title has 4K/1080p sources that the current viewer cannot play. */
     val premiumSourcesLocked: Boolean = false,
     /**
-     * Free launch: the paywall surfaces (the sponsor card on this page)
-     * render only while the operator's quality gate is ON. The gate flag
-     * is the free-launch switch — gate OFF means every viewer is premium.
-     * Defaults true (gate on) so a build that has not heard from the
-     * panel yet behaves exactly as today.
+     * Why this title cannot be played, in the viewer's own words — null
+     * when it can. The detail page paints this instead of a bare "not
+     * available": no sources at all, only VIP copies, or no working
+     * source. Computed in [DetailViewModel.publishViewerContent] from
+     * the ungated layout and the gated one, so it follows entitlement
+     * changes without a reload.
      */
-    val paywallVisible: Boolean = true,
+    val deadEndReason: String? = null,
+    /**
+     * Handles of downloads already on this device (READY rows only),
+     * so an episode row can say it is downloaded without asking the
+     * store on every frame. A handle is the stream id a print or rung
+     * keeps by — the same string [DeviceDownload.handle] carries.
+     */
+    val downloadedHandles: Set<String> = emptySet(),
     /** The latest scope this device stopped in, if any — the Resume button. */
     val resume: ResumePoint? = null,
     /** True when the Resume button has a print to play; false shows plain Play. */
@@ -132,6 +135,14 @@ data class DetailUiState(
      * only starts on Confirm.
      */
     val pendingKeep: PendingKeep? = null,
+    /**
+     * A whole season the viewer has been asked to confirm, with the
+     * episode count and the total size in front of them. Null when
+     * nothing is waiting — like [pendingKeep], nothing downloads until
+     * Confirm, and each episode still goes through the same keep
+     * routing (engine for HLS, device file otherwise) at confirm time.
+     */
+    val pendingSeasonKeep: PendingSeasonKeep? = null,
     /**
      * Session 76 (Build 4): the direct-download price (coins for one movie)
      * and the viewer's balance, read when the keep dialog opens so a free
@@ -166,6 +177,100 @@ data class PendingKeep(
     val resumable: Boolean,
     val target: KeepTarget,
 )
+
+/** One episode inside a season download: its best keepable copy. */
+data class SeasonKeepItem(
+    val handle: String,
+    val printLabel: String,
+    val title: String,
+    val sizeBytes: Long?,
+)
+
+/**
+ * A whole season waiting for the viewer's Confirm. The size is the sum
+ * of the episode sizes the server actually named — null when none of
+ * them named one, so the dialog says "Size unknown" instead of
+ * inventing a total. [lockedCount] is how many episodes of the season
+ * this viewer may not keep (VIP-only copies); the dialog names them so
+ * a season that downloads 8 of 10 episodes never reads as 10 of 10.
+ */
+data class PendingSeasonKeep(
+    val seasonNumber: Int,
+    val items: List<SeasonKeepItem>,
+    val lockedCount: Int,
+    val totalSizeBytes: Long?,
+)
+
+/**
+ * Why a title cannot be played, in the viewer's own words — null when
+ * it can. The answers, in order: the catalog holds nothing for
+ * this title at all; it holds only VIP copies; it holds copies but none
+ * this viewer may take; or it holds copies that cannot play, with a
+ * download still on the table when at least one of them is keepable.
+ * Pure so a test can pin every branch without a ViewModel.
+ */
+internal fun deadEndReasonFor(
+    hasReleases: Boolean,
+    gatedHasPrints: Boolean,
+    gatedPlayable: Boolean,
+    gatedKeepable: Boolean,
+    premiumLocked: Boolean,
+): String? = when {
+    !hasReleases -> "No sources for this title yet."
+    !gatedHasPrints && premiumLocked -> "Only VIP copies exist for this title."
+    !gatedHasPrints -> "No copies available for this title right now."
+    !gatedPlayable && gatedKeepable -> "No working sources right now — download is available."
+    !gatedPlayable -> "No working sources right now."
+    else -> null
+}
+
+/** The season-download plan: what a season keep would take, before Confirm. */
+data class SeasonKeepPlan(
+    val items: List<SeasonKeepItem>,
+    val lockedCount: Int,
+    val totalSizeBytes: Long?,
+)
+
+/**
+ * Plan a whole-season download: one best keepable copy per episode.
+ * An episode whose best copy is VIP-locked for this viewer counts as
+ * locked, never as downloadable; a packed-only episode is skipped (its
+ * file is the season pack, kept from its own banner); an episode with
+ * no keepable copy at all is skipped silently — the dialog's count is
+ * the episodes that will actually download. Pure so a test can pin the
+ * selection without a repository.
+ */
+internal fun seasonKeepPlan(
+    season: SeasonGroup,
+    premiumAccess: Boolean,
+    freeQualityCap: String,
+): SeasonKeepPlan {
+    var locked = 0
+    val items = season.episodes.mapNotNull { episode ->
+        if (episode.onlyPacked) return@mapNotNull null
+        val best = episode.prints.maxByOrNull { it.rankKey } ?: return@mapNotNull null
+        // The same gate keepPrint applies: a locked copy is never a
+        // download, even when it is the episode's only print.
+        if (!VipQualityGate.allowsResolution(best.resolution, premiumAccess, freeQualityCap)) {
+            locked++
+            return@mapNotNull null
+        }
+        val link = best.links.firstOrNull { !it.streamId.isBlank() && !it.isPageLink }
+            ?: return@mapNotNull null
+        SeasonKeepItem(
+            handle = link.streamId,
+            printLabel = best.qualityLabel,
+            title = episode.title ?: "Episode ${episode.numberWithinSeason}",
+            sizeBytes = best.sizeBytes,
+        )
+    }
+    val sizes = items.mapNotNull { it.sizeBytes?.takeIf { size -> size > 0 } }
+    return SeasonKeepPlan(
+        items = items,
+        lockedCount = locked,
+        totalSizeBytes = sizes.sum().takeIf { sizes.isNotEmpty() },
+    )
+}
 
 /** The size line of the keep-confirm dialog: a real size, or an honest unknown. */
 fun keepSizeLabel(sizeBytes: Long?): String =
@@ -263,6 +368,27 @@ class DetailViewModel @Inject constructor(
         observeFavorite()
         observeEntitlement()
         observeServerBase()
+        observeDownloads()
+    }
+
+    /**
+     * Which episodes are already on this device: READY downloads only,
+     * by their handle. A row still downloading is not downloaded yet —
+     * the check appears the moment the bytes land, not while they move.
+     */
+    private fun observeDownloads() {
+        viewModelScope.launch {
+            deviceDownloads.downloads.collect { rows ->
+                _uiState.update {
+                    it.copy(
+                        downloadedHandles = rows
+                            .filter { row -> row.state == DeviceDownloadState.READY && row.handle.isNotBlank() }
+                            .map { it.handle }
+                            .toSet(),
+                    )
+                }
+            }
+        }
     }
 
     /**
@@ -392,9 +518,6 @@ class DetailViewModel @Inject constructor(
     private fun publishViewerContent() {
         val detail = rawDetail
         if (detail == null) {
-            _uiState.update {
-                it.copy(adFree = RewardedVipPass.isAdFree(serverVip, rewardedExpiresAt))
-            }
             return
         }
         val artwork = detail.backdropList.ifEmpty {
@@ -439,16 +562,29 @@ class DetailViewModel @Inject constructor(
         } else {
             "Included in free — up to $freeQualityCap"
         }
+        // The gated layout is computed once and shared: the state update
+        // below and the dead-end reason both read it, so the page and its
+        // reason can never disagree about what this viewer may take.
+        val gatedLayout = VipQualityGate.gate(full, premiumAccess, freeQualityCap)
+        val gatedPrints = gatedLayout.workPrints +
+            gatedLayout.seasons.flatMap { season -> season.episodes.flatMap { it.prints } + season.packedPrints }
+        val deadEndReason = deadEndReasonFor(
+            hasReleases = full.totalPrints > 0,
+            gatedHasPrints = gatedPrints.isNotEmpty(),
+            // RankedPrint.canStart lives in DetailScreen; here it is the
+            // same two facts spelled out (a file that plays, or a page).
+            gatedPlayable = gatedPrints.any { it.playableHere || it.opensProviderPage },
+            gatedKeepable = gatedPrints.any { print -> print.links.any { it.keepable } },
+            premiumLocked = premiumLocked,
+        )
         _uiState.update {
             it.copy(
-                layout = VipQualityGate.gate(full, premiumAccess, freeQualityCap),
+                layout = gatedLayout,
                 ladder = VipQualityGate.gate(scope, premiumAccess, freeQualityCap),
                 vip = serverVip,
                 premiumSourcesLocked = premiumLocked,
-                // Free launch: the gate flag is the paywall's visibility.
-                paywallVisible = qualityGateEnabled,
                 includedLine = includedLine,
-                adFree = RewardedVipPass.isAdFree(serverVip, rewardedExpiresAt),
+                deadEndReason = deadEndReason,
             )
         }
         loadResume()
@@ -840,7 +976,7 @@ class DetailViewModel @Inject constructor(
      * Standard otherwise. A property of the stream and the operator's policy,
      * never of the viewer — a VIP viewer reads "VIP" on the 1080p row they can
      * play, and a free viewer never sees that row at all (the gate removed it
-     * and VipSourcesCard says where it went). With the gate off, every rung is
+     * and the hero's included line says where it went). With the gate off, every rung is
      * Standard because nothing requires VIP.
      */
     fun tierLabelFor(option: QualityOption): String =
@@ -1016,6 +1152,94 @@ class DetailViewModel @Inject constructor(
     fun dismissKeep() {
         lastDownload = null
         _uiState.update { it.copy(pendingKeep = null, directLinkMessage = null) }
+    }
+
+    /**
+     * Ask to download a whole season: one best copy per episode, with
+     * the count and the total size in front of the viewer first. Nothing
+     * downloads here — [confirmKeepSeason] is the only starter, exactly
+     * like the single-download dialog. A season with nothing keepable
+     * says so instead of opening an empty dialog.
+     */
+    fun requestKeepSeason(season: SeasonGroup) {
+        val plan = seasonKeepPlan(season, premiumAccess, freeQualityCap)
+        if (plan.items.isEmpty()) {
+            _uiState.update { it.copy(actionMessage = "Nothing to download in this season yet.") }
+            return
+        }
+        _uiState.update {
+            it.copy(
+                pendingSeasonKeep = PendingSeasonKeep(
+                    seasonNumber = season.number,
+                    items = plan.items,
+                    lockedCount = plan.lockedCount,
+                    totalSizeBytes = plan.totalSizeBytes,
+                ),
+            )
+        }
+    }
+
+    /** The viewer declined the season download: nothing started. */
+    fun dismissKeepSeason() {
+        _uiState.update { it.copy(pendingSeasonKeep = null) }
+    }
+
+    /**
+     * The viewer confirmed the season: each episode goes through the
+     * same keep routing a single download would (engine for HLS, device
+     * file otherwise), decided per handle from the one metadata ask —
+     * so a season of mixed files and playlists still lands in the right
+     * system. The Wi-Fi gate is checked again here, at the moment bytes
+     * would actually start, like [confirmKeep]. One refusal never stops
+     * the rest: a refused episode is counted, and the message at the end
+     * says how many of the season actually started.
+     */
+    fun confirmKeepSeason() {
+        val pending = _uiState.value.pendingSeasonKeep ?: return
+        _uiState.update { it.copy(pendingSeasonKeep = null) }
+        if (DataSaver.wifiOnlyBlocks(wifiOnlyDownloads, onWifi)) {
+            _uiState.update {
+                it.copy(actionMessage = "Wi-Fi only is on — connect to Wi-Fi to download this title. You can change it in Settings.")
+            }
+            return
+        }
+        viewModelScope.launch {
+            var started = 0
+            var refused = 0
+            for (item in pending.items) {
+                // The same one-ask decision confirmKeep makes per copy:
+                // the metadata answer decides which system owns it.
+                val meta = runCatching { catalogRepository.resolveStream(item.handle) }.getOrNull()
+                val target = if (meta != null && meta.success) keepTargetFor(meta.mimeType) else KeepTarget.DeviceFile
+                if (target == KeepTarget.EngineHls) {
+                    keepViaEngine(item.handle, item.printLabel, item.title, item.sizeBytes, meta?.resumable ?: false)
+                    started++
+                    continue
+                }
+                when (deviceDownloads.enqueue(item.handle, item.title, item.printLabel)) {
+                    is DeviceDownloadResult.Enqueued -> started++
+                    is DeviceDownloadResult.NeedsPermission -> {
+                        _navEvents.emit(DetailNavigationEvent.DownloadNeedsPermission)
+                        return@launch
+                    }
+                    is DeviceDownloadResult.Refused -> refused++
+                }
+            }
+            if (started > 0) {
+                _uiState.update {
+                    it.copy(
+                        actionMessage = if (refused > 0) {
+                            "Season ${pending.seasonNumber}: $started of ${pending.items.size} episodes started downloading."
+                        } else {
+                            "Season ${pending.seasonNumber} started downloading."
+                        },
+                    )
+                }
+                _navEvents.emit(DetailNavigationEvent.DownloadStarted("Season ${pending.seasonNumber}"))
+            } else if (refused > 0) {
+                _uiState.update { it.copy(actionMessage = "Season ${pending.seasonNumber} could not start downloading.") }
+            }
+        }
     }
 
     /**

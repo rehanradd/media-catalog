@@ -19,6 +19,11 @@ import java.util.Locale
  *   words the player quality sheet already uses.
  * - A title shown twice on one screen is the same title twice: rails
  *   dedupe on the work identity, not the row id.
+ * - A displayed title never repeats what the meta line already states:
+ *   a trailing year, language or type suffix is stripped ([detailTitle]),
+ *   so "No Hard Feelings (2023) English Movie" paints as "No Hard
+ *   Feelings" above a meta line that already reads "2023 · Movie ·
+ *   English".
  */
 object UserWords {
 
@@ -110,6 +115,103 @@ object UserWords {
         val ref = workRef?.trim()?.lowercase()
         if (!ref.isNullOrBlank()) return "work:$ref"
         return "title:${normalizeDedupTitle(title)}:${year ?: ""}"
+    }
+
+    /**
+     * The title to paint for a detail page: the server's own display
+     * title when it sent one, else the clean title, else the raw title —
+     * each stripped of any year/language/type suffix the meta line
+     * already states. A blank display title is no title at all, never a
+     * reason to paint nothing.
+     */
+    fun detailTitle(
+        displayTitle: String?,
+        cleanTitle: String?,
+        title: String,
+        year: Int?,
+        contentType: String?,
+        languages: List<String>,
+    ): String {
+        val base = displayTitle?.takeIf { it.isNotBlank() }
+            ?: cleanTitle?.takeIf { it.isNotBlank() }
+            ?: title
+        return stripTitleSuffixes(base, year, contentType, languages)
+    }
+
+    /**
+     * Strip the suffixes a catalog title carries that the meta line
+     * already states, applied until the title stops changing: a trailing
+     * "(YYYY)" that is the post's year (or any year when the post has
+     * none), a trailing language word that is one of the post's own
+     * languages, and a trailing "Movie"/"Full Movie" for a movie or
+     * "Series"/"TV Series" for a series. Only the tail is ever touched —
+     * "The English Patient" keeps its English, "1917" keeps its year,
+     * and a mid-title "(2023)" (as in "No Hard Feelings (2023) v2 – …")
+     * survives, because the server's display title is the answer for
+     * that shape, not a strip. Pure string work, so the rule is
+     * assertable without a layout.
+     */
+    fun stripTitleSuffixes(
+        title: String,
+        year: Int?,
+        contentType: String?,
+        languages: List<String>,
+    ): String {
+        var current = title.trim()
+        if (current.isEmpty()) return current
+        val type = contentType?.trim()?.lowercase().orEmpty()
+        val isMovie = type == "movie"
+        val isSeries = "series" in type || "season" in type
+        val knownLanguages = languages
+            .map { it.trim().lowercase() }
+            .filter { it.isNotBlank() }
+            .toSet()
+        val yearSuffix = Regex("""\(\s*(\d{4})\s*\)\s*$""")
+        // Four passes are enough for every real suffix stack
+        // ("(2023) English Movie" needs three: type, language, year);
+        // the loop stops the moment a pass changes nothing.
+        var changed: Boolean
+        var passes = 0
+        do {
+            changed = false
+            var next = current
+            // Trailing "(YYYY)" — the post's year, or any year when the
+            // post carries none. The parens must be the last thing on
+            // the line, so "Apollo 13 (1995)" keeps its 13.
+            yearSuffix.find(next)?.let { match ->
+                val suffixYear = match.groupValues[1].toIntOrNull()
+                if (suffixYear != null && (year == null || suffixYear == year)) {
+                    next = next.substring(0, match.range.first).trim()
+                }
+            }
+            // Trailing language word — only a word the post itself
+            // lists, so a title that happens to end in a language name
+            // the catalog never recorded keeps it.
+            if (knownLanguages.isNotEmpty()) {
+                val lastWord = next.substringAfterLast(' ', "").lowercase()
+                if (lastWord in knownLanguages) {
+                    next = next.substring(0, next.length - lastWord.length).trim()
+                }
+            }
+            // Trailing type word — only the type the post itself is.
+            next = when {
+                isMovie && next.endsWith("Full Movie", ignoreCase = true) ->
+                    next.dropLast("Full Movie".length).trim()
+                isMovie && next.endsWith("Movie", ignoreCase = true) ->
+                    next.dropLast("Movie".length).trim()
+                isSeries && next.endsWith("TV Series", ignoreCase = true) ->
+                    next.dropLast("TV Series".length).trim()
+                isSeries && next.endsWith("Series", ignoreCase = true) ->
+                    next.dropLast("Series".length).trim()
+                else -> next
+            }
+            if (next != current) {
+                current = next
+                changed = true
+            }
+            passes++
+        } while (changed && passes < 4)
+        return current
     }
 
     /** Lowercase, punctuation to spaces: the title half of a dedupe key. */

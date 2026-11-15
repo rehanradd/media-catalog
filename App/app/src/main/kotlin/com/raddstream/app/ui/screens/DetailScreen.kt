@@ -13,6 +13,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -44,18 +46,20 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
-import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -78,6 +82,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -145,11 +150,13 @@ import com.raddstream.app.viewmodel.downloadConfirmLabel
 import com.raddstream.app.viewmodel.EpisodeGroup
 import com.raddstream.app.viewmodel.EpisodeProgress
 import com.raddstream.app.viewmodel.PendingKeep
+import com.raddstream.app.viewmodel.PendingSeasonKeep
 import com.raddstream.app.viewmodel.RankedPrint
 import com.raddstream.app.viewmodel.ResumePoint
 import com.raddstream.app.viewmodel.SeasonGroup
 import com.raddstream.app.viewmodel.formatRuntimeMinutes
 import com.raddstream.app.viewmodel.keepSizeLabel
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -159,7 +166,6 @@ fun DetailScreen(
     /** A link the server calls a page: show the provider's own page rather than fail quietly. */
     onOpenProviderPage: (streamId: String, title: String) -> Unit = { _, _ -> },
     onOpenDownloads: () -> Unit = {},
-    onOpenVipUpgrade: () -> Unit = {},
     /** An actor chip in the cast row: open that actor's titles in Search. */
     onActorClick: (String) -> Unit = {},
     /** F18: tap on a tile in the Similar titles rail. */
@@ -279,6 +285,7 @@ fun DetailScreen(
     }
 
     var showReportDialog by remember { mutableStateOf(false) }
+    var showMoreMenu by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -305,12 +312,30 @@ fun DetailScreen(
                 },
                 actions = {
                     if (!state.isLoading) {
-                        IconButton(onClick = { showReportDialog = true }) {
-                            Icon(
-                                Icons.Default.Flag,
-                                contentDescription = "Report broken stream",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                        // Detail redesign (Nov 2026): no competitor puts
+                        // a report affordance in the top bar of a title
+                        // page. The function stays — it lives in the More
+                        // overflow now, one tap further from the title.
+                        Box {
+                            IconButton(onClick = { showMoreMenu = true }) {
+                                Icon(
+                                    Icons.Default.MoreVert,
+                                    contentDescription = "More options",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = showMoreMenu,
+                                onDismissRequest = { showMoreMenu = false },
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Report broken stream") },
+                                    onClick = {
+                                        showMoreMenu = false
+                                        showReportDialog = true
+                                    },
+                                )
+                            }
                         }
                     }
                 },
@@ -374,8 +399,6 @@ fun DetailScreen(
                 seasons = state.layout?.seasons ?: emptyList(),
                 workPrints = state.layout?.workPrints ?: emptyList(),
                 capabilities = state.layout?.capabilities ?: emptyList(),
-                officialPrintCount = state.layout?.officialPrintCount ?: 0,
-                camPrintCount = state.layout?.camPrintCount ?: 0,
                 isSeries = state.layout?.isSeriesLike ?: false,
                 resume = state.resume.takeIf { state.resumePlayable },
                 onPlayResume = viewModel::playResume,
@@ -383,11 +406,14 @@ fun DetailScreen(
                 onStartOver = viewModel::removeProgress,
                 episodeProgress = state.episodeProgress,
                 includedLine = state.includedLine,
+                deadEndReason = state.deadEndReason,
+                downloadedHandles = state.downloadedHandles,
                 selectedSeason = state.selectedSeason,
                 onSelectSeason = viewModel::selectSeason,
                 onPlayPrint = { print -> viewModel.playPrint(print, external = false) },
                 onOpenExternal = { print -> viewModel.playPrint(print, external = true) },
                 onKeep = { print -> downloadWithStoragePermission { viewModel.keepPrint(print) } },
+                onKeepSeason = { season -> viewModel.requestKeepSeason(season) },
                 rungs = RungActions(
                     ladder = state.ladder,
                     selectedBand = state.selectedBand,
@@ -398,12 +424,8 @@ fun DetailScreen(
                     preferredAudio = preferredAudioLanguages(state.region),
                 ),
                 ladderScope = rungScopeLabel(state.ladderSeason, state.ladderEpisode),
-                adFree = state.adFree,
-                premiumSourcesLocked = state.premiumSourcesLocked,
-                paywallVisible = state.paywallVisible,
                 onAskRungs = viewModel::showRungsFor,
                 hasRungs = { season, episode -> !viewModel.ladderFor(season, episode).isEmpty },
-                onOpenVipUpgrade = onOpenVipUpgrade,
                 onActorClick = onActorClick,
                 similarTitles = state.similarTitles,
                 onPostClick = onPostClick,
@@ -431,11 +453,17 @@ fun DetailScreen(
         )
     }
 
+    state.pendingSeasonKeep?.let { pending ->
+        SeasonKeepConfirmDialog(
+            pending = pending,
+            onConfirm = viewModel::confirmKeepSeason,
+            onDismiss = viewModel::dismissKeepSeason,
+        )
+    }
+
     if (showReportDialog) {
-        val title = state.post?.cleanTitle?.takeIf(String::isNotBlank)
-            ?: state.post?.title
-            ?: state.fallbackPost?.cleanTitle?.takeIf(String::isNotBlank)
-            ?: state.fallbackPost?.title
+        val title = state.post?.let { detailDisplayTitle(it) }
+            ?: state.fallbackPost?.let { detailDisplayTitle(it) }
             ?: "this title"
         ReportBrokenStreamDialog(
             title = title,
@@ -540,6 +568,81 @@ private fun KeepConfirmDialog(
         },
     )
 }
+
+/**
+ * The whole season before the download starts: how many episodes will
+ * actually download, their total size, and how many of the season this
+ * viewer may not keep (VIP-only copies). Nothing downloads until
+ * Confirm; Cancel leaves nothing behind — the same contract as the
+ * single-download dialog above.
+ */
+@Composable
+private fun SeasonKeepConfirmDialog(
+    pending: PendingSeasonKeep,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { RaddDialogTitle("Download Season ${pending.seasonNumber}?") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    "${pending.items.size} episode${if (pending.items.size == 1) "" else "s"}",
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Text(
+                    keepSizeLabel(pending.totalSizeBytes),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (pending.lockedCount > 0) {
+                    Text(
+                        "${pending.lockedCount} episode${if (pending.lockedCount == 1) "" else "s"} need${if (pending.lockedCount == 1) "s" else ""} VIP and won't download.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = onConfirm) {
+                Text("Download ${pending.items.size} episode${if (pending.items.size == 1) "" else "s"}")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
+}
+
+/**
+ * The title this screen paints for a detail row: the server's display
+ * title first, then the clean title, then the raw title — each stripped
+ * of the year/language/type suffix the meta line already states (see
+ * [UserWords.detailTitle]). One place, so the hero, the error header
+ * and the report dialog can never disagree about the title's name.
+ */
+internal fun detailDisplayTitle(post: PostDetail): String =
+    UserWords.detailTitle(
+        displayTitle = post.displayTitleWire,
+        cleanTitle = post.cleanTitle,
+        title = post.title,
+        year = post.year,
+        contentType = post.contentType,
+        languages = WireText.listOf(post.language),
+    )
+
+/** The same, for a list row used as the error header's fallback. */
+internal fun detailDisplayTitle(post: Post): String =
+    UserWords.detailTitle(
+        displayTitle = post.displayTitleWire,
+        cleanTitle = post.cleanTitle,
+        title = post.title,
+        year = post.year,
+        contentType = post.contentType,
+        languages = WireText.listOf(post.language),
+    )
 
 /**
  * The quality switch and the download card as one bundle: the same rows render under the work
@@ -648,7 +751,7 @@ internal fun detailErrorMetadataLine(post: Post): String? {
 
 @Composable
 private fun DetailErrorHeader(post: Post, modifier: Modifier = Modifier) {
-    val title = post.cleanTitle?.takeIf { it.isNotBlank() } ?: post.title
+    val title = detailDisplayTitle(post)
     val metaLine = remember(post) { detailErrorMetadataLine(post) }
     val rating = remember(post.imdbRating) { UserWords.displayRating(post.imdbRating) }
     val genres = remember(post.genreList) { post.genreList.take(3) }
@@ -706,8 +809,6 @@ internal fun DetailContent(
     seasons: List<SeasonGroup>,
     workPrints: List<RankedPrint>,
     capabilities: List<String>,
-    officialPrintCount: Int,
-    camPrintCount: Int,
     isSeries: Boolean,
     /** The latest scope this device stopped in, if it has a print to play — else null. */
     resume: ResumePoint?,
@@ -718,24 +819,23 @@ internal fun DetailContent(
     episodeProgress: Map<Pair<Int, Int>, EpisodeProgress>,
     /** What this viewer can watch of this title, in one line — null when it has no prints. */
     includedLine: String?,
+    /** Why this title cannot be played, in the viewer's words — null when it can. */
+    deadEndReason: String? = null,
+    /** Handles of downloads already on this device (READY rows only). */
+    downloadedHandles: Set<String> = emptySet(),
     selectedSeason: Int?,
     onSelectSeason: (Int) -> Unit,
     onPlayPrint: (RankedPrint) -> Unit,
     onOpenExternal: (RankedPrint) -> Unit,
     onKeep: (RankedPrint) -> Unit,
+    /** One best copy per episode, for the whole season — asks first, downloads on Confirm. */
+    onKeepSeason: (SeasonGroup) -> Unit = {},
     /** The quality switch and the download card, as one bundle the rows can reuse. */
     rungs: RungActions,
     /** "Season 2 · Episode 5", or null when these rungs are the whole work's. */
     ladderScope: String?,
-    /** False only for a viewer the operator has not confirmed: it decides the sponsor slot. */
-    adFree: Boolean,
-    /** True when this title has 4K/1080p sources the current viewer may not take. */
-    premiumSourcesLocked: Boolean,
-    /** Free launch: false hides the sponsor card — every viewer is premium then. */
-    paywallVisible: Boolean = true,
     onAskRungs: (season: Int?, episode: Int?) -> Unit,
     hasRungs: (season: Int?, episode: Int?) -> Boolean,
-    onOpenVipUpgrade: () -> Unit,
     /** An actor chip in the cast row: open that actor's titles in Search. */
     onActorClick: (String) -> Unit = {},
     similarTitles: List<Post> = emptyList(),
@@ -755,8 +855,15 @@ internal fun DetailContent(
 ) {
     val allPrints = (workPrints + seasons.flatMap { it.episodes.flatMap { e -> e.prints } } + seasons.flatMap { it.packedPrints })
     val bestPrint = allPrints.maxByOrNull { it.rankKey }
-    // UI-fix P1-D2: the version list folds to 3 until the viewer asks for all.
-    var showAllVersions by remember { mutableStateOf(false) }
+    // UI-fix P1-D2: the file list folds to 3 until the viewer asks for all.
+    // It only renders when the quality ladder cannot fold the title at all
+    // (no option groups from the server) — the ladder is the choice then.
+    var showAllFiles by remember { mutableStateOf(false) }
+    // The dead end's way out: the similar rail is the last item on the
+    // page, and the requester is what scrolls it into view from the
+    // actions above. Owned here, so the button and the rail agree.
+    val similarBringIntoView = remember { BringIntoViewRequester() }
+    val contentScope = rememberCoroutineScope()
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -794,22 +901,36 @@ internal fun DetailContent(
                 isFavorite = isFavorite,
                 onToggleFavorite = onToggleFavorite,
                 onShare = onShare,
+                deadEndReason = deadEndReason,
+                hasSimilar = similarTitles.isNotEmpty(),
+                onBrowseSimilar = {
+                    contentScope.launch { similarBringIntoView.bringIntoView() }
+                },
             )
         }
 
-        // The "No playable copy" sentence now rides inside PrimaryActions,
-        // above the Download hero — this item used to repeat it below.
-        // A first-party VIP house card: no third-party SDK, no hidden network call.
-        // It is our own membership, not a sponsored slot, so it carries no
-        // "Sponsored" label — and it is shown only when the VIP-sources card is
-        // not, so the two upsells never stack (Session 121, P-10).
-        // Audit #30: neither upsell shows on a title with no playable copy —
-        // selling VIP on a title the viewer cannot watch is the wrong pitch.
-        val playable = resume != null || bestPrint?.canStart == true
-        // Free launch: the sponsor card hides while the quality gate is
-        // OFF — every viewer is premium then, and there is nothing to sell.
-        if (!adFree && !premiumSourcesLocked && playable && paywallVisible) {
-            item { SponsorCard(onOpenVipUpgrade = onOpenVipUpgrade) }
+        // Detail redesign (Nov 2026): the story comes first — Netflix and
+        // Disney+ both put the synopsis directly under the actions, and
+        // ours buried it under a quality ladder and two upsell cards.
+        // The ladder moves below the synopsis; the cards are gone (the
+        // rung's own VIP pill is the lock, and the hero's included line
+        // already states the tier).
+        val synopsis = post.synopsis?.takeIf { it.isNotBlank() }
+        if (synopsis != null) {
+            item { ExpandableSynopsis(text = UserWords.stripSectionMarkers(synopsis)) }
+        }
+
+        // One consolidated "Audio & Subtitles" line, built from the
+        // prints' own data — the per-print badges stay on the cards for
+        // the few who expand them, but the discovery surface is this line.
+        audioSubtitleLine(allPrints)?.let { line ->
+            item {
+                Text(
+                    text = line,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
 
         // One row per quality band, exactly as the server collapsed the copies of this
@@ -828,16 +949,17 @@ internal fun DetailContent(
             }
         }
 
-        // The gate is not a silent removal: a viewer who came for the 4K copy is told where
-        // it went and given the same upgrade door the sponsor card uses.
-        // Audit #30: like the sponsor card, never on a title with no playable copy.
-        if (premiumSourcesLocked && playable) {
-            item { VipSourcesCard(onOpenVipUpgrade = onOpenVipUpgrade) }
-        }
-
-        val synopsis = post.synopsis?.takeIf { it.isNotBlank() }
-        if (synopsis != null) {
-            item { ExpandableSynopsis(text = UserWords.stripSectionMarkers(synopsis)) }
+        // A cam warning is a quality fact, not a count: the version
+        // summary that used to carry it is gone, but a title whose only
+        // copies are cam recordings must still say so in plain words.
+        if (allPrints.any { it.isCam }) {
+            item {
+                Text(
+                    text = "Some copies here are cam recordings — low quality.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
         }
 
         // Cast, from the catalog's own scraped list — only what the server
@@ -849,18 +971,15 @@ internal fun DetailContent(
             item { CastSection(cast = cast, onActorClick = onActorClick) }
         }
 
-        // Version-first summary line (owner brief: "4 official prints available").
-        item {
-            PrintSummary(officialPrintCount = officialPrintCount, camPrintCount = camPrintCount)
-        }
-
         if (isSeries) {
-            if (seasons.size > 1) {
+            if (seasons.size > 5) {
+                item { SeasonDropdown(seasons = seasons, selectedSeason = selectedSeason, onSelect = onSelectSeason) }
+            } else if (seasons.size > 1) {
                 item { SeasonChips(seasons = seasons, selectedSeason = selectedSeason, onSelect = onSelectSeason) }
             }
             val season = seasons.firstOrNull { it.number == selectedSeason } ?: seasons.firstOrNull()
             if (season != null) {
-                item { SeasonHeader(season) }
+                item { SeasonHeader(season = season, onKeepSeason = onKeepSeason) }
                 if (season.packedPrints.isNotEmpty()) {
                     item {
                         PackedSeasonBanner(
@@ -877,6 +996,11 @@ internal fun DetailContent(
                     EpisodeRow(
                         episode = episode,
                         progress = episodeProgress[season.number to episode.numberWithinSeason],
+                        isDownloaded = episode.prints.any { print ->
+                            print.links.any { link ->
+                                link.streamId.isNotBlank() && link.streamId in downloadedHandles
+                            }
+                        },
                         onPlayPrint = onPlayPrint,
                         onOpenExternal = onOpenExternal,
                         onKeep = onKeep,
@@ -891,20 +1015,16 @@ internal fun DetailContent(
                 }
             }
         } else {
-            if (workPrints.isEmpty()) {
-                item {
-                    Text(
-                        "Nothing to play for this title yet.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            } else {
+            // The ladder already folds one best copy per band, so the
+            // version list is gone — except when the server sent no
+            // ladder at all for this title, in which case the prints
+            // below are the only choice the viewer has.
+            if (workPrints.isNotEmpty() && rungs.ladder.isEmpty) {
                 // UI-fix P1-D2: a title can carry a long list of near-identical
-                // version cards (Salaar has 10 posts). Show at most 3, with
-                // "Show all versions" for the rest — the quality rungs above
-                // already carry the folded choice.
-                val shownPrints = if (showAllVersions) workPrints else workPrints.take(3)
+                // file cards (Salaar has 10 posts). Show at most 3, with
+                // "Show all files" for the rest — this list only renders
+                // when the server sent no ladder to fold the choice.
+                val shownPrints = if (showAllFiles) workPrints else workPrints.take(3)
                 val workCopies = copyNumbers(workPrints)
                 items(shownPrints, key = { "print-${it.releaseId}" }) { print ->
                     PrintCard(
@@ -918,10 +1038,10 @@ internal fun DetailContent(
                 }
                 if (workPrints.size > 3) {
                     item {
-                        TextButton(onClick = { showAllVersions = !showAllVersions }) {
+                        TextButton(onClick = { showAllFiles = !showAllFiles }) {
                             Text(
-                                if (showAllVersions) "Show fewer versions"
-                                else "Show all ${workPrints.size} versions",
+                                if (showAllFiles) "Show fewer files"
+                                else "Show all ${workPrints.size} files",
                             )
                         }
                     }
@@ -931,8 +1051,11 @@ internal fun DetailContent(
 
         if (similarTitles.isNotEmpty()) {
             item(contentType = "similar-titles") {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SectionHeader(title = "Similar titles")
+                Column(
+                    modifier = Modifier.bringIntoViewRequester(similarBringIntoView),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    SectionHeader(title = "More Like This")
                     MediaRail(
                         items = similarTitles,
                         key = { it.id },
@@ -980,7 +1103,7 @@ private fun DetailHeroSection(
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
-                fallbackLabel = post.cleanTitle ?: post.title,
+                fallbackLabel = detailDisplayTitle(post),
             )
             Box(
                 modifier = Modifier
@@ -1042,16 +1165,16 @@ private fun PosterHeader(
             if (!post.posterUrl.isNullOrBlank()) {
                 CatalogImage(
                     url = post.posterUrl,
-                    contentDescription = "${post.cleanTitle ?: post.title} poster",
+                    contentDescription = "${detailDisplayTitle(post)} poster",
                     modifier = Modifier.fillMaxSize(),
                     // F6 (Batch A): the full title, not initials.
-                    fallbackLabel = post.cleanTitle ?: post.title,
+                    fallbackLabel = detailDisplayTitle(post),
                     onBitmap = { posterBitmap = it },
                 )
             } else {
                 ImageFallbackCard(
                     modifier = Modifier.fillMaxSize(),
-                    label = post.cleanTitle ?: post.title,
+                    label = detailDisplayTitle(post),
                 )
             }
         }
@@ -1059,7 +1182,12 @@ private fun PosterHeader(
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             // Robo run 3: this title text is identical to the bar title above
             // it, so the big title carries its own spoken name.
-            val titleText = post.cleanTitle?.takeIf(String::isNotBlank) ?: post.title
+            // Detail redesign (Nov 2026): the painted title is the cleaned
+            // one — the server's display title when it sent one, else the
+            // clean title with its year/language/type suffix stripped, so
+            // "No Hard Feelings (2023) English Movie" paints as
+            // "No Hard Feelings" above a meta line that already states them.
+            val titleText = detailDisplayTitle(post)
             Text(
                 text = UserWords.breakableTitle(titleText),
                 style = MaterialTheme.typography.headlineMedium,
@@ -1124,6 +1252,12 @@ private fun PrimaryActions(
     isFavorite: Boolean,
     onToggleFavorite: () -> Unit,
     onShare: () -> Unit,
+    /** Why this title cannot be played, in the viewer's words — null when it can. */
+    deadEndReason: String? = null,
+    /** True when the similar rail below has titles to browse to. */
+    hasSimilar: Boolean = false,
+    /** Scroll the similar rail into view — the dead end's way out. */
+    onBrowseSimilar: () -> Unit = {},
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -1193,7 +1327,17 @@ private fun PrimaryActions(
             // nothing to download either, so the button stays disabled and
             // the sentence stays out (it would promise a download that
             // does not exist).
-            if (hasAnyPrint) {
+            // Detail redesign (Nov 2026): the bare sentence is replaced by
+            // the reason the ViewModel worked out — no sources, only VIP
+            // copies, or no working source — plus a way out: the similar
+            // rail below, instead of a dead end.
+            if (deadEndReason != null) {
+                Text(
+                    text = deadEndReason,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else if (hasAnyPrint) {
                 Text(
                     text = "Not available to stream yet — download it instead.",
                     style = MaterialTheme.typography.bodySmall,
@@ -1219,6 +1363,14 @@ private fun PrimaryActions(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
+            }
+            if (hasSimilar) {
+                TextButton(
+                    onClick = onBrowseSimilar,
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) {
+                    Text("Browse similar titles")
+                }
             }
         }
 
@@ -1325,81 +1477,6 @@ private fun RankedPrint.playLabel(): String = when {
     else -> "Play"
 }
 
-/**
- * The first-party VIP house card: the app renders no remote HTML, loads no third-party
- * script, and sends no ad-network request, so it cannot quietly become a tracker. The
- * action is the same VIP flow the Settings screen opens.
- */
-@Composable
-private fun SponsorCard(onOpenVipUpgrade: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .padding(14.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(38.dp)
-                .clip(RoundedCornerShape(20.dp))
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                Icons.Default.Star,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(20.dp),
-            )
-        }
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(
-                text = Brand.copy("sponsor_title", "Go VIP"),
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Text(
-                text = Brand.copy("sponsor_body", "A membership keeps this catalog running."),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        TextButton(onClick = onOpenVipUpgrade) { Text("Upgrade") }
-    }
-}
-
-@Composable
-private fun VipSourcesCard(onOpenVipUpgrade: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-            .padding(14.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(
-                text = "4K and 1080p are part of VIP",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Text(
-                text = "Free playback stays at 720p and below. Upgrade to unlock 4K and 1080p on this title.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        TextButton(onClick = onOpenVipUpgrade) { Text("Upgrade") }
-    }
-}
-
 @Composable
 private fun ExpandableSynopsis(text: String) {
     var expanded by remember { mutableStateOf(false) }
@@ -1473,31 +1550,6 @@ private fun CastSection(cast: List<String>, onActorClick: (String) -> Unit) {
 }
 
 @Composable
-private fun PrintSummary(officialPrintCount: Int, camPrintCount: Int) {
-    val total = officialPrintCount + camPrintCount
-    val officialText = when {
-        total == 0 -> "No versions available here yet"
-        officialPrintCount > 0 -> "$officialPrintCount official version${if (officialPrintCount == 1) "" else "s"} available"
-        else -> "No official versions"
-    }
-    Column {
-        Text(
-            text = officialText,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-            color = if (officialPrintCount > 0) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.error,
-        )
-        if (camPrintCount > 0) {
-            Text(
-                text = "$camPrintCount cam/bootleg version${if (camPrintCount == 1) "" else "s"} — low quality, shown last and labelled.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-            )
-        }
-    }
-}
-
-@Composable
 private fun SeasonChips(seasons: List<SeasonGroup>, selectedSeason: Int?, onSelect: (Int) -> Unit) {
     Column {
         SectionHeader(title = "Seasons", modifier = Modifier.padding(horizontal = 0.dp))
@@ -1544,11 +1596,60 @@ private fun SeasonThumbnail(season: SeasonGroup, modifier: Modifier = Modifier) 
 }
 
 /**
+ * The season picker past five seasons: a dropdown, not a tab strip —
+ * the Netflix pattern, which scales where a horizontal chip strip
+ * stops being a picker and starts being a scroll. Five or fewer seasons
+ * keep the chip strip ([SeasonChips]); above that the strip would hide
+ * most seasons off the right edge.
+ */
+@Composable
+private fun SeasonDropdown(
+    seasons: List<SeasonGroup>,
+    selectedSeason: Int?,
+    onSelect: (Int) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val selected = seasons.firstOrNull { it.number == selectedSeason } ?: seasons.firstOrNull()
+    Column {
+        SectionHeader(title = "Seasons", modifier = Modifier.padding(horizontal = 0.dp))
+        Box {
+            OutlinedButton(
+                onClick = { expanded = true },
+                modifier = Modifier.heightIn(min = 48.dp),
+            ) {
+                Text(
+                    text = selected?.let { "Season ${it.number} · ${it.episodeCount} episode${if (it.episodeCount == 1) "" else "s"}" }
+                        ?: "Season",
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("▾", style = MaterialTheme.typography.bodyLarge)
+            }
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+            ) {
+                seasons.forEach { season ->
+                    DropdownMenuItem(
+                        text = { Text("Season ${season.number} · ${season.episodeCount} episode${if (season.episodeCount == 1) "" else "s"}") },
+                        onClick = {
+                            expanded = false
+                            onSelect(season.number)
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
  * The selected season's header. Its image is the season's slice of the work's wide art, so a
  * multi-season show never presents the same root poster above every season's episode list.
  */
 @Composable
-private fun SeasonHeader(season: SeasonGroup) {
+private fun SeasonHeader(season: SeasonGroup, onKeepSeason: (SeasonGroup) -> Unit = {}) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -1595,6 +1696,27 @@ private fun SeasonHeader(season: SeasonGroup) {
                 color = MaterialTheme.colorScheme.onBackground,
             )
         }
+        // Download the whole season from its header: one best copy per
+        // episode, asked first and downloaded on Confirm — the Prime /
+        // MovieBox pattern. The packed-season banner below keeps its own
+        // download for the one-file season.
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(10.dp)
+                .size(48.dp)
+                .clip(RoundedCornerShape(24.dp))
+                .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.6f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            IconButton(onClick = { onKeepSeason(season) }, modifier = Modifier.size(48.dp)) {
+                Icon(
+                    Icons.Default.Download,
+                    contentDescription = "Download Season ${season.number}",
+                    tint = MaterialTheme.colorScheme.onBackground,
+                )
+            }
+        }
     }
 }
 
@@ -1638,6 +1760,8 @@ internal fun EpisodeRow(
     episode: EpisodeGroup,
     /** This episode's progress on this device — null when never watched. */
     progress: EpisodeProgress?,
+    /** True when a READY download on this device covers one of this episode's prints. */
+    isDownloaded: Boolean = false,
     onPlayPrint: (RankedPrint) -> Unit,
     onOpenExternal: (RankedPrint) -> Unit,
     onKeep: (RankedPrint) -> Unit,
@@ -1716,7 +1840,7 @@ internal fun EpisodeRow(
                     overflow = TextOverflow.Ellipsis,
                 )
                 val suffix = if (episode.onlyPacked) " · packed in season file" else
-                    if (episode.prints.size > 1) " · ${episode.prints.size} versions" else ""
+                    if (episode.prints.size > 1) " · ${episode.prints.size} files" else ""
                 if (best != null) {
                     // The same three axes the print card leads with, condensed for the row:
                     // quality, HDR and audio. Subtitles stay on the expanded print card.
@@ -1747,6 +1871,27 @@ internal fun EpisodeRow(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+                // A download already on this device is worth one jade
+                // check and the word itself — the viewer should not have
+                // to open the episode to learn it is already theirs.
+                if (isDownloaded) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(14.dp),
+                        )
+                        Text(
+                            text = "Downloaded",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                 }
             }
             // The row's badge facts, spoken once on the Play button (the badge
@@ -1822,9 +1967,12 @@ internal fun EpisodeRow(
         }
         // The collapsed ladder replaces the print list wherever the server could fold one
         // best copy per band; a ledger that cannot is still shown as before, not hidden.
+        // Its extra files read as "files", not "versions" — the viewer is
+        // opening files to watch, and the word matches the movie branch's
+        // expander.
         if (episode.prints.size > 1 && !canChooseQuality) {
             TextButton(onClick = { expanded = !expanded }) {
-                Text(if (expanded) "Hide versions" else "Show ${episode.prints.size} versions")
+                Text(if (expanded) "Hide files" else "Show all ${episode.prints.size} files")
             }
         }
         if (expanded) {
@@ -1868,6 +2016,30 @@ internal fun printSpokenLabel(print: RankedPrint, copyIndex: Int, copyTotal: Int
         if (print.detailLine.isNotBlank()) append(" · ").append(print.detailLine)
         if (copyTotal > 1) append(", copy $copyIndex of $copyTotal")
     }
+
+/**
+ * One consolidated "Audio & Subtitles" line for the detail page, built
+ * from the prints' own data: the audio languages across every print
+ * (in first-seen order, de-duplicated), and the subtitle languages where
+ * any print carries them. Null when neither exists — a title with no
+ * language data shows no line at all, never an empty "Audio:" label.
+ * Pure, so DetailAudioLineTest pins it.
+ */
+internal fun audioSubtitleLine(prints: List<RankedPrint>): String? {
+    val audio = prints.flatMap { it.languages }.map { it.trim() }
+        .filter { it.isNotBlank() }.distinct()
+    val subtitles = prints.filter { it.subtitlesAvailable }
+        .flatMap { it.subtitleLangs }.map { it.trim() }
+        .filter { it.isNotBlank() }.distinct()
+    if (audio.isEmpty() && subtitles.isEmpty()) return null
+    return buildString {
+        if (audio.isNotEmpty()) append("Audio: ").append(audio.joinToString(", "))
+        if (subtitles.isNotEmpty()) {
+            if (isNotEmpty()) append(" · ")
+            append("Subtitles: ").append(subtitles.joinToString(", "))
+        }
+    }
+}
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable

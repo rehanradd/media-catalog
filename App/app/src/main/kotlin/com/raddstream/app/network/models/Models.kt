@@ -126,6 +126,17 @@ data class Post(
     val title: String,
     @SerializedName("clean_title")
     val cleanTitle: String? = null,
+    /**
+     * The server's own display title (`display_title`) — the cleaned
+     * title it prints on its own surfaces, with year/language/type
+     * suffixes already stripped ("No Hard Feelings v2 – HDCAMRip" where
+     * `clean_title` still reads "No Hard Feelings (2023) v2 – HDCAMRip
+     * [HINDI HQ DUBBED] Full Movie"). Null on a server whose projection
+     * predates the key — callers must fall back to [cleanTitle], never
+     * assume it. Read it through [UserWords.detailTitle], never raw.
+     */
+    @SerializedName("display_title")
+    val displayTitleWire: String? = null,
     /** `posts.year` — INTEGER affinity, so JSON number or null (a text year decodes to null). */
     val year: Int? = null,
     /**
@@ -230,6 +241,13 @@ data class PostDetail(
     val title: String,
     @SerializedName("clean_title")
     val cleanTitle: String? = null,
+    /**
+     * The server's own display title — see [Post.displayTitleWire].
+     * The detail screen prefers it (then [cleanTitle], then [title]),
+     * with [UserWords.detailTitle] stripping any suffix the server left.
+     */
+    @SerializedName("display_title")
+    val displayTitleWire: String? = null,
     val year: Int? = null,
     /** Minutes, from the work row the server matched this post to — null when it has none. */
     @SerializedName("runtime_minutes")

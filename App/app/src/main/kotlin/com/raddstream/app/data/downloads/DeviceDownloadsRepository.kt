@@ -37,6 +37,14 @@ data class DeviceDownload(
     val bytesDownloaded: Long,
     val bytesTotal: Long,
     val localUri: String?,
+    /**
+     * The opaque handle this download was enqueued by — the same
+     * stream id a detail print or quality rung keeps by. The detail
+     * screen matches episode rows against it so a row can say it is
+     * already on the device; the id above is a UUID and names nothing
+     * outside this store.
+     */
+    val handle: String = "",
     val mimeType: String,
     val fileName: String,
     /**
@@ -445,6 +453,7 @@ class DeviceDownloadsRepository @Inject constructor(
         bytesDownloaded = bytesDownloaded,
         bytesTotal = bytesTotal,
         localUri = localUri,
+        handle = handle,
         mimeType = mimeType,
         fileName = fileName,
         bytesPerSec = liveRates[id]?.first ?: 0L,

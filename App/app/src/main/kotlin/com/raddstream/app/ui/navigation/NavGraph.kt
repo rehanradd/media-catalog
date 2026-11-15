@@ -785,7 +785,6 @@ fun RaddStreamNavGraph(
                         }
                     },
                     onOpenDownloads = { navController.navigate(Screen.Downloads.route) },
-                    onOpenVipUpgrade = { navController.navigate(Screen.VipUpgrade.route) },
                     onActorClick = { actor ->
                         navController.navigate(Screen.Search.createRoute(actor))
                     },

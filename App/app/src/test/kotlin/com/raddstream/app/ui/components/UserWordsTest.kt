@@ -114,10 +114,80 @@ class UserWordsTest {
     }
 
     @Test
-    fun trimToWordBoundaryCannotBackOffOneLongWord() {
+    fun detailTitleStripsYearLanguageAndTypeSuffix() {
+        // The live post 21013 shape: the clean title carries all three
+        // suffixes the meta line already states.
         assertEquals(
-            "Supercalifragilistic",
-            UserWords.trimToWordBoundary("Supercalifragilistic", 10),
+            "No Hard Feelings",
+            UserWords.detailTitle(
+                displayTitle = null,
+                cleanTitle = "No Hard Feelings (2023) English Movie",
+                title = "No Hard Feelings 2023 AMZN Dual Audio Hindi (ORG 5.1) 1080p 720p 480p WEB-DL x264 ESubs",
+                year = 2023,
+                contentType = "movie",
+                languages = listOf("English"),
+            ),
         )
+    }
+
+    @Test
+    fun detailTitlePrefersTheServerDisplayTitle() {
+        // Live post 225039: the server's display title is already clean,
+        // so it wins over the suffixed clean title — and the mid-title
+        // "(2023)" inside it survives the strip, which only touches the tail.
+        assertEquals(
+            "No Hard Feelings v2 – HDCAMRip",
+            UserWords.detailTitle(
+                displayTitle = "No Hard Feelings v2 – HDCAMRip",
+                cleanTitle = "No Hard Feelings (2023) v2 – HDCAMRip [HINDI HQ DUBBED] Full Movie",
+                title = "No Hard Feelings (2023) v2 – HDCAMRip [HINDI HQ DUBBED] Full Movie",
+                year = 2023,
+                contentType = "movie",
+                languages = listOf("Hindi"),
+            ),
+        )
+    }
+
+    @Test
+    fun detailTitleFallsBackToTheRawTitle() {
+        assertEquals(
+            "Raw",
+            UserWords.detailTitle(
+                displayTitle = null,
+                cleanTitle = null,
+                title = "Raw (2023) Movie",
+                year = 2023,
+                contentType = "movie",
+                languages = emptyList(),
+            ),
+        )
+    }
+
+    @Test
+    fun stripTitleSuffixesKeepsWordsThatAreNotSuffixes() {
+        // Only the tail is ever touched.
+        assertEquals("The English Patient", UserWords.stripTitleSuffixes("The English Patient", 1996, "movie", listOf("English")))
+        assertEquals("1917", UserWords.stripTitleSuffixes("1917", 2019, "movie", emptyList()))
+        assertEquals(
+            "No Hard Feelings (2023) v2 – HDCAMRip",
+            UserWords.stripTitleSuffixes("No Hard Feelings (2023) v2 – HDCAMRip", 2023, "movie", listOf("Hindi")),
+        )
+    }
+
+    @Test
+    fun stripTitleSuffixesNeedsThePostsOwnLanguageAndYear() {
+        // A trailing language word the post never listed is part of the
+        // title, not a suffix.
+        assertEquals("Salaar Hindi", UserWords.stripTitleSuffixes("Salaar Hindi", 2023, "movie", listOf("Telugu")))
+        // A year that is not the post's year stays.
+        assertEquals("Jawan (2022)", UserWords.stripTitleSuffixes("Jawan (2022)", 2023, "movie", emptyList()))
+        // …unless the post carries no year at all, when any year goes.
+        assertEquals("Jawan", UserWords.stripTitleSuffixes("Jawan (2023)", null, "movie", emptyList()))
+    }
+
+    @Test
+    fun stripTitleSuffixesStripsTheSeriesTypeWord() {
+        assertEquals("Breaking Bad", UserWords.stripTitleSuffixes("Breaking Bad TV Series", null, "series", emptyList()))
+        assertEquals("Dark", UserWords.stripTitleSuffixes("Dark Series", null, "tv_series", emptyList()))
     }
 }

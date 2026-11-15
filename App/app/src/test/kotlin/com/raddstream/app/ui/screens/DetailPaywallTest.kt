@@ -1,13 +1,15 @@
 package com.raddstream.app.ui.screens
 
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodes
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.network.models.PostDetail
 import com.raddstream.app.player.LadderForScope
+import com.raddstream.app.player.QualityOption
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.ResumePoint
 import org.junit.Rule
@@ -15,6 +17,13 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 
+/**
+ * Detail redesign (Nov 2026): the SponsorCard and the VipSourcesCard are
+ * deleted from Detail — the lock is a VIP badge on the rung itself, never
+ * a second card. These tests pin that no upsell card can ever appear on
+ * Detail, while the rung's own VIP tier pill still shows where a locked
+ * rung can appear.
+ */
 @RunWith(RobolectricTestRunner::class)
 class DetailPaywallTest {
 
@@ -22,8 +31,8 @@ class DetailPaywallTest {
     val compose = createComposeRule()
 
     // A playable title with no prints at all: the resume point alone makes
-    // it playable, so the sponsor card's visibility turns only on the
-    // paywall flag — no print or rung fixture is needed to judge it.
+    // it playable, so the upsell question turns only on the ladder —
+    // no print fixture is needed to judge it.
     private val post = PostDetail(
         id = 1,
         title = "Jawan",
@@ -41,7 +50,21 @@ class DetailPaywallTest {
         language = "Hindi",
     )
 
-    private fun content(paywallVisible: Boolean) {
+    private fun option(band: String, title: String) = QualityOption(
+        band = band,
+        title = title,
+        streamId = "h-$band",
+        playUrl = "http://127.0.0.1:8080/api/v1/stream?id=h-$band",
+        sizeBytes = null,
+        backupHandles = emptyList(),
+        playsHere = true,
+        resumable = false,
+        copies = 1,
+        isProviderPage = false,
+        audioLanguages = emptyList(),
+    )
+
+    private fun content(tierLabel: (QualityOption) -> String) {
         compose.setContent {
             RaddStreamTheme {
                 DetailContent(
@@ -49,32 +72,31 @@ class DetailPaywallTest {
                     seasons = emptyList(),
                     workPrints = emptyList(),
                     capabilities = emptyList(),
-                    officialPrintCount = 0,
-                    camPrintCount = 0,
                     isSeries = false,
                     resume = ResumePoint(season = 1, episode = 3, positionMs = 1_000_000L, durationMs = 5_000_000L),
                     onPlayResume = {},
                     episodeProgress = emptyMap(),
-                    includedLine = null,
+                    includedLine = "720p included — 1080p and 4K need VIP",
                     selectedSeason = null,
                     onSelectSeason = {},
                     onPlayPrint = {},
                     onOpenExternal = {},
                     onKeep = {},
                     rungs = RungActions(
-                        ladder = LadderForScope(options = emptyList(), autoBand = null, downloadOnlyBands = emptyList()),
+                        ladder = LadderForScope(
+                            options = listOf(option("720p", "HD - X264"), option("1080p", "Full HD · X264")),
+                            autoBand = "720p",
+                            downloadOnlyBands = emptyList(),
+                        ),
                         selectedBand = null,
                         onPlay = {},
                         onKeep = {},
-                        tierLabel = { "Standard" },
+                        tierLabel = tierLabel,
                     ),
                     ladderScope = null,
-                    adFree = false,
-                    premiumSourcesLocked = false,
-                    paywallVisible = paywallVisible,
                     onAskRungs = { _, _ -> },
                     hasRungs = { _, _ -> false },
-                    onOpenVipUpgrade = {},
+                    onActorClick = {},
                     reloadError = null,
                     onRetryReload = {},
                     isFavorite = false,
@@ -87,17 +109,30 @@ class DetailPaywallTest {
     }
 
     @Test
-    fun sponsorCardShowsWhileTheQualityGateIsOn() {
-        content(paywallVisible = true)
-        compose.onNodeWithText("Go VIP").performScrollTo().assertIsDisplayed()
+    fun noVipUpsellCardEverShowsOnDetail() {
+        // Even with a VIP-tiered rung in the ladder, neither upsell card
+        // may appear: the rung's own pill is the lock now.
+        content(tierLabel = { if (it.band == "1080p") "VIP" else "Standard" })
+        compose.onNodeWithText("Go VIP").assertDoesNotExist()
+        compose.onNodeWithText("4K and 1080p are part of VIP").assertDoesNotExist()
     }
 
     @Test
-    fun sponsorCardHidesWhileTheQualityGateIsOff() {
-        // Free launch: gate OFF means every viewer is premium — the
-        // sponsor card hides even though the title is playable and the
-        // viewer is neither ad-free nor VIP.
-        content(paywallVisible = false)
+    fun rungVipTierPillStillShows() {
+        content(tierLabel = { if (it.band == "1080p") "VIP" else "Standard" })
+        compose.onAllNodes(hasContentDescription("VIP tier, Full HD · X264"))
+            .assertCountEquals(1)
+        compose.onAllNodes(hasContentDescription("Standard tier, HD - X264"))
+            .assertCountEquals(1)
+    }
+
+    @Test
+    fun freeLaunchDetailShowsNoPremiumAtAll() {
+        // Free launch: gate OFF means every rung is Standard — no VIP
+        // text anywhere on the page, cards or pills.
+        content(tierLabel = { "Standard" })
         compose.onNodeWithText("Go VIP").assertDoesNotExist()
+        compose.onNodeWithText("4K and 1080p are part of VIP").assertDoesNotExist()
+        compose.onNodeWithText("VIP").assertDoesNotExist()
     }
 }
