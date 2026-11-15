@@ -963,7 +963,8 @@ def manifest_payload(conn) -> dict:
                                  "version_groups": list(VERSION_GROUPS),
                                  "folded_into_etag": True},
         "pagination": {"style": "keyset cursor", "opaque": True,
-                       "carries": ["next_cursor", "has_more", "total_estimate", "limit"]},
+                       "carries": ["next_cursor", "has_more", "total_estimate",
+                                   "total_capped", "limit"]},
         "visibility_policy": {
             "rows_are_never_deleted": True,
             "unlisted_answer": "not_found",

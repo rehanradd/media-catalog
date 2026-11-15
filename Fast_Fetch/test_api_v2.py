@@ -2540,6 +2540,9 @@ class V2SurfaceTests(V2WireFixture):
         payload = self.assert_clean(reply.json, label="manifest") and reply.json
         self.assertEqual(payload["contract_version"], api_v2.CONTRACT_VERSION)
         self.assertEqual(payload["base"], "/api/v2")
+        # 2026-11-15, search speed: the pagination envelope carries
+        # `total_capped` alongside the total, so the manifest says so.
+        self.assertIn("total_capped", payload["pagination"]["carries"])
         self.assertEqual(sorted(payload["error_codes"]), sorted(api_v2.PROBLEM_CODES))
         self.assertEqual(payload["enums"]["prefer"], list(api_v2.PREFER_VALUES))
         self.assertEqual(payload["enums"]["report_event"], list(api_v2.REPORT_EVENTS))
@@ -2609,6 +2612,11 @@ class V2SurfaceTests(V2WireFixture):
         search = self.get("/api/v2/search", {"q": "quiet valley"})
         self.assertTrue(search.json["items"], "a title search found nothing it indexed")
         self.assertTrue(all("relevance" in row for row in search.json["items"]))
+        # 2026-11-15, search speed: the envelope carries `total_capped`
+        # (False here — the fixture is far below the cap), so a client can
+        # tell a capped total from an exact one without guessing.
+        self.assertIn("total_capped", search.json)
+        self.assertFalse(search.json["total_capped"])
         self.assertEqual(self.get("/api/v2/suggest", {"q": "du"}).json["count"], 1)
         self.assertEqual(self.get("/api/v2/suggest", {"q": "d"}).json["items"], [],
                          "§12: `q` needs two characters, and says so without an error")
