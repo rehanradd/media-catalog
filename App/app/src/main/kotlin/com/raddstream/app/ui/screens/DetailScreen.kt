@@ -1048,8 +1048,11 @@ private fun PosterHeader(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.semantics { contentDescription = "Title: $titleText" },
             )
+            // M3 (home review, Nov 2026): the year comes from [Post.yearLabel],
+            // the guarded choke point — the old inline `takeIf { it > 0 }`
+            // let an impossible year straight onto the header.
             val meta = listOfNotNull(
-                post.year?.takeIf { it > 0 }?.toString(),
+                post.yearLabel,
                 post.typeLabel,
                 // P-5 (Session 121): normalize again at the render site — a language that
                 // arrives as a raw JSON array string ("[\"Tamil\", \"English\"]") reads

@@ -20,7 +20,10 @@ data class SuggestItem(
     val posterUrl: String? = null,
     @SerializedName("quality_max")
     val qualityMax: String? = null,
-)
+) {
+    /** M3 (home review, Nov 2026): same impossible-year guard as [Post.yearLabel]. */
+    val yearLabel: String? get() = displayYearLabel(year, currentCalendarYear())
+}
 
 data class SuggestResponse(
     val ok: Boolean = false,

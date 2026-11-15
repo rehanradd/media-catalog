@@ -1,6 +1,26 @@
 package com.raddstream.app.network.models
 
 import com.google.gson.annotations.SerializedName
+import java.util.Calendar
+
+/**
+ * M3 (home review, Nov 2026): the year a tile or header prints. Measured
+ * on the live catalog: year >= 2027 is 53 rows, year < 1900 is 17, one
+ * 5-digit year (20215) — a site mis-parse, e.g. "The Gentlemen (Season
+ * 1-2)" filed as 2027. An impossible year is hidden (null) instead of
+ * printed, so a bad parse can never show "2027" for a 2024 work. Next
+ * year's films are allowed (announced releases); anything earlier than
+ * 1900 or later than next year is not a release year. Pure, so the bound
+ * is assertable without a clock.
+ */
+internal fun displayYearLabel(year: Int?, currentYear: Int): String? {
+    val y = year ?: return null
+    if (y < 1900 || y > currentYear + 1) return null
+    return y.toString()
+}
+
+/** The current calendar year, the bound [displayYearLabel] measures against. */
+internal fun currentCalendarYear(): Int = Calendar.getInstance().get(Calendar.YEAR)
 
 /*
  * ─────────────────────────────────────────────────────────────────────────────
@@ -173,7 +193,7 @@ data class Post(
     val workId: Long? = null,
 ) {
     /** Display helper so UI never has to know that `year` is numeric on the wire. */
-    val yearLabel: String? get() = year?.toString()
+    val yearLabel: String? get() = displayYearLabel(year, currentCalendarYear())
     /** The one type word a tile or banner paints — "Anime" for an animated series. */
     val typeLabel: String? get() = WorkTypeLabel.of(contentType, isAnimated)
     val genreList: List<String> get() = WireText.listOf(genres)
@@ -255,7 +275,7 @@ data class PostDetail(
     @SerializedName("season_artwork")
     val seasonArtworkRows: List<SeasonArtwork>? = null,
 ) {
-    val yearLabel: String? get() = year?.toString()
+    val yearLabel: String? get() = displayYearLabel(year, currentCalendarYear())
     /** Same rule as [Post.typeLabel], so the detail header cannot disagree with its tile. */
     val typeLabel: String? get() = WorkTypeLabel.of(contentType, isAnimated)
     val genreList: List<String> get() = WireText.listOf(genres)

@@ -97,7 +97,10 @@ data class FavoritePost(
             id = post.id,
             title = post.title,
             cleanTitle = post.cleanTitle,
-            year = post.year?.toString(),
+            // M3 (home review, Nov 2026): store the guarded display year,
+            // not the raw wire year — an impossible year (2027 for a 2024
+            // work) must never reach My List.
+            year = post.yearLabel,
             contentType = post.contentType,
             posterUrl = post.posterUrl,
             imdbRating = post.imdbRating,
@@ -110,7 +113,8 @@ data class FavoritePost(
             id = detail.id,
             title = detail.title,
             cleanTitle = detail.cleanTitle,
-            year = detail.year?.toString(),
+            // M3: same guard as [fromPost] — the stored year is the display year.
+            year = detail.yearLabel,
             contentType = detail.contentType,
             posterUrl = detail.posterUrl,
             imdbRating = detail.imdbRating,

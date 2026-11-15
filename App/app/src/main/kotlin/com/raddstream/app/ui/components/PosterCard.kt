@@ -97,8 +97,11 @@ fun PosterCard(
 ) {
     val title = post.cleanTitle?.takeIf { it.isNotBlank() } ?: post.title
     val typeLabel = post.typeLabel
+    // M3 (home review, Nov 2026): the year comes from [Post.yearLabel], the
+    // guarded choke point — the old inline `takeIf { it > 0 }` let an
+    // impossible year (2027 for a 2024 work, 20215) straight onto the tile.
     val details = listOfNotNull(
-        post.year?.takeIf { it > 0 }?.toString(),
+        post.yearLabel,
         typeLabel,
     ).joinToString(" · ")
     // Robo run 2: the badge pills announced their a11y labels as separate

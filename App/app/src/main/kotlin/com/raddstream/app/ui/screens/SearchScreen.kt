@@ -289,11 +289,12 @@ fun SearchScreen(
                                 onClick = { viewModel.runSuggestion(suggestion.title) },
                                 label = {
                                     Text(
-                                        if (suggestion.year != null) {
-                                            "${suggestion.title} (${suggestion.year})"
-                                        } else {
-                                            suggestion.title
-                                        },
+                                        // M3 (home review, Nov 2026): the year
+                                        // comes from the guarded yearLabel, so
+                                        // an impossible year never prints here.
+                                        suggestion.yearLabel?.let {
+                                            "${suggestion.title} ($it)"
+                                        } ?: suggestion.title,
                                     )
                                 },
                                 // Audit #54: a FilterChip is 32 dp tall — the touch-target floor is 48 dp, so the chip itself carries it.

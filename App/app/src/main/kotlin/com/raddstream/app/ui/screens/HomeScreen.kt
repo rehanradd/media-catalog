@@ -683,8 +683,10 @@ private fun PickThreeCard(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
+                        // M3 (home review, Nov 2026): the year comes from
+                        // [Post.yearLabel], the guarded choke point.
                         val subtitle = listOfNotNull(
-                            post.year?.takeIf { it > 0 }?.toString(),
+                            post.yearLabel,
                             post.typeLabel,
                         ).joinToString(" · ")
                         if (subtitle.isNotBlank()) {
