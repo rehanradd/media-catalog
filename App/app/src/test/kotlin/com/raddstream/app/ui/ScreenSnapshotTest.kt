@@ -416,12 +416,13 @@ class ScreenSnapshotTest {
                 )
             }
         }
-        // Mockup (Nov 2026): the badge pills are gone — the hero shows one
-        // meta line ("action | 2023": first genre lowercased, then the year)
-        // and the languages survive only in the slide's spoken sentence.
-        // The poster URL never loads under Robolectric (no network), but the
-        // title and the meta line render regardless of the load state.
-        compose.onNodeWithText("action | 2023").assertIsDisplayed()
+        // Home review (Nov 2026): the badge pills are gone — the hero shows
+        // one meta line ("Action · 2023": first genre capitalised, then the
+        // year, joined with " · ") and the languages survive only in the
+        // slide's spoken sentence. The poster URL never loads under
+        // Robolectric (no network), but the title and the meta line render
+        // regardless of the load state.
+        compose.onNodeWithText("Action · 2023").assertIsDisplayed()
         // F2: the server's "Unknown" is a missing value, not a language — it
         // must never reach a visible node, while the real languages do (in
         // the spoken sentence).
