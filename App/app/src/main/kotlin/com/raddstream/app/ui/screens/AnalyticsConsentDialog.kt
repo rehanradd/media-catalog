@@ -11,6 +11,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.raddstream.app.brand.Brand
 import com.raddstream.app.ui.components.CenteredMockupDialog
 
 /**
@@ -45,7 +46,14 @@ internal fun AnalyticsConsentDialog(
     CenteredMockupDialog(
         onDismissRequest = onSkip,
         icon = Icons.Default.BarChart,
-        title = "Help improve Radd Stream",
+        // The name comes from Brand, never a literal — the drift test
+        // forbids a hardcoded brand name outside the brand files, and
+        // the short name is the sentence-case one ("Radd Stream").
+        title = Brand.copy(
+            "analytics_consent_title",
+            "Help improve {name}",
+            "name" to Brand.shortName,
+        ),
         primaryLabel = "Allow",
         onPrimary = onAccept,
         secondaryLabel = "Don't allow",

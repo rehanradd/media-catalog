@@ -126,11 +126,11 @@ class DialogsMockupTest {
     @Test
     fun keepConfirmLineJoinsTitleQualitySizeAndWifi() {
         assertEquals(
-            "Salaar · 1080p · 1.3 GB · Wi-Fi only",
+            "Salaar · 1080p · 1.30 GB · Wi-Fi only",
             keepConfirmLine(pendingKeep(), wifiOnly = true),
         )
         assertEquals(
-            "Salaar · 1080p · 1.3 GB",
+            "Salaar · 1080p · 1.30 GB",
             keepConfirmLine(pendingKeep(), wifiOnly = false),
         )
         assertEquals(
@@ -153,7 +153,7 @@ class DialogsMockupTest {
             }
         }
         compose.onNodeWithText("Download this title?").assertIsDisplayed()
-        compose.onNodeWithText("Salaar · 1080p · 1.3 GB · Wi-Fi only").assertIsDisplayed()
+        compose.onNodeWithText("Salaar · 1080p · 1.30 GB · Wi-Fi only").assertIsDisplayed()
         compose.onNodeWithText("Download", substring = false).performClick()
         assertEquals(true, confirmed)
         compose.onNodeWithText("Cancel").assertIsDisplayed()
@@ -171,7 +171,7 @@ class DialogsMockupTest {
                 )
             }
         }
-        compose.onNodeWithText("Salaar · 1080p · 1.3 GB").assertIsDisplayed()
+        compose.onNodeWithText("Salaar · 1080p · 1.30 GB").assertIsDisplayed()
         compose.onNodeWithText("Wi-Fi only").assertDoesNotExist()
     }
 
@@ -192,7 +192,7 @@ class DialogsMockupTest {
     @Test
     fun seasonKeepConfirmLineJoinsCountSizeAndWifi() {
         assertEquals(
-            "12 episodes · 4.2 GB · Wi-Fi only",
+            "12 episodes · 4.20 GB · Wi-Fi only",
             seasonKeepConfirmLine(pendingSeason(), wifiOnly = true),
         )
         assertEquals(
@@ -223,7 +223,7 @@ class DialogsMockupTest {
             }
         }
         compose.onNodeWithText("Download season 2?").assertIsDisplayed()
-        compose.onNodeWithText("12 episodes · 4.2 GB · Wi-Fi only").assertIsDisplayed()
+        compose.onNodeWithText("12 episodes · 4.20 GB · Wi-Fi only").assertIsDisplayed()
         compose.onNodeWithText("Download", substring = false).performClick()
         assertEquals(true, confirmed)
         compose.onNodeWithText("Cancel").assertIsDisplayed()

@@ -134,7 +134,9 @@ class HomeHeaderTest {
         }
         compose.onNodeWithTag(CheckInPillTag).performClick()
         compose.onNodeWithText("See all rewards").assertIsDisplayed()
-        compose.onNodeWithText("+10 coins").assertIsDisplayed()
+        compose.onNodeWithText("Day 3").assertIsDisplayed()
+        // The sheet shows the streak now, not what each day paid.
+        compose.onNodeWithText("+10 coins").assertDoesNotExist()
     }
 
     @Test

@@ -286,8 +286,8 @@ fun keepSizeLabel(sizeBytes: Long?): String =
 /**
  * The single-download confirm's one line: title, quality, size, and the
  * Wi-Fi-only note only when the viewer's own switch is on. "Salaar ·
- * 1080p · 1.3 GB · Wi-Fi only"; a size the server never named says so
- * instead of inventing one.
+ * 1080p · 1.30 GB · Wi-Fi only" (CacheAffordance prints GB with two
+ * decimals); a size the server never named says so instead of inventing one.
  */
 fun keepConfirmLine(pending: PendingKeep, wifiOnly: Boolean): String {
     val parts = listOf(pending.title, pending.printLabel, keepSizeLabel(pending.sizeBytes)) +
@@ -298,7 +298,7 @@ fun keepConfirmLine(pending: PendingKeep, wifiOnly: Boolean): String {
 /**
  * The season-download confirm's one line: how many episodes, their total
  * size, and the Wi-Fi-only note only when the viewer's own switch is on.
- * "12 episodes · 4.2 GB · Wi-Fi only"; a total no episode named says so
+ * "12 episodes · 4.20 GB · Wi-Fi only"; a total no episode named says so
  * instead of inventing one.
  */
 fun seasonKeepConfirmLine(pending: PendingSeasonKeep, wifiOnly: Boolean): String {
