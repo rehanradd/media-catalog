@@ -7,18 +7,22 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -36,7 +40,9 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.raddstream.app.network.models.Post
@@ -45,7 +51,6 @@ import com.raddstream.app.ui.components.ChipRowSkeleton
 import com.raddstream.app.ui.components.EmptyState
 import com.raddstream.app.ui.components.PosterCard
 import com.raddstream.app.ui.components.PosterGridSkeleton
-import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.viewmodel.ListSort
 import com.raddstream.app.viewmodel.MyListViewModel
 
@@ -145,36 +150,15 @@ fun MyListScreen(
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
                     )
                 }
-                // Gap A5: the sync/status line — how fresh the saved rows
-                // are, or that titles are still waiting to sync.
-                state.syncLine?.let { line ->
-                    Text(
-                        text = line,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-                    )
-                }
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 48.dp)
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    ListSort.entries.forEach { sort ->
-                        FilterChip(
-                            colors = raddFilterChipColors(),
-                            selected = state.sort == sort,
-                            onClick = { viewModel.setSort(sort) },
-                            label = { Text(sort.label) },
-                            // Robo run 2: the three sort chips are 32dp tall
-                            // (FilterChip's visual height) — the touch-target
-                            // floor is 48dp, so the chip itself carries it.
-                            modifier = Modifier.heightIn(min = 48.dp),
-                        )
-                    }
-                }
+                // The sync/status line is gone on purpose (mockup, Nov
+                // 2026): syncing happens silently, and a line about it is
+                // operator chrome on a screen about the viewer's list.
+                // The sync itself is untouched — only its sentence is.
+                MyListSortRow(
+                    sort = state.sort,
+                    onSort = { viewModel.setSort(it) },
+                    modifier = Modifier.padding(vertical = 4.dp),
+                )
                 LazyVerticalGrid(
                     columns = CatalogGridColumns,
                     modifier = Modifier.weight(1f),
@@ -187,12 +171,20 @@ fun MyListScreen(
                             post = post,
                             onClick = { onPostClick(post) },
                             onRemove = { viewModel.remove(post.id) },
+                            // The bar paints only where a real watch row
+                            // says the viewer stopped halfway — never a
+                            // bar for a title with no position (see
+                            // MyListViewModel.myListProgressByPostId).
+                            progressFraction = state.progressByPostId[post.id],
                         )
                     }
                     // F12 & Small #9: place the starter shelf inside the scrolling grid as
-                    // a full-span footer when 1 favorite exists so compact or scaled screens
-                    // never clip either the favorite or the suggestions.
-                    if (state.favorites.size == 1 && state.popular.isNotEmpty()) {
+                    // a full-span footer when the trending load produced titles, so compact
+                    // or scaled screens never clip either the favorites or the suggestions.
+                    // The load itself still only runs while <= 1 favorite is visible (see
+                    // MyListViewModel) — this footer only decides where the titles it
+                    // already has are shown.
+                    if (state.popular.isNotEmpty()) {
                         item(
                             key = "my_list_starter_shelf",
                             span = { GridItemSpan(maxLineSpan) },
@@ -206,6 +198,49 @@ fun MyListScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * Mockup (Nov 2026): the sort chips — Recently added / Title A–Z /
+ * Unwatched first — 48dp tall, all three fully visible in one row, the
+ * active chip jade-filled with black text (the same shape as
+ * [HomeFilterRow]: [FilterChip]'s own visual height is 32dp, so a
+ * `heightIn(min = 48.dp)` chip used to be a 32dp pill on a 48dp hit
+ * area — Robo run 2 measured it). Internal so the mockup test can pin
+ * the order, the selected state and the 48dp height without the Hilt
+ * ViewModel.
+ */
+internal const val MyListSortRowTag = "myListSortRow"
+
+@Composable
+internal fun MyListSortRow(
+    sort: ListSort,
+    onSort: (ListSort) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    LazyRow(
+        modifier = modifier.fillMaxWidth().testTag(MyListSortRowTag),
+        contentPadding = PaddingValues(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items(ListSort.entries) { entry ->
+            FilterChip(
+                selected = entry == sort,
+                onClick = { onSort(entry) },
+                label = {
+                    Text(
+                        entry.label,
+                        fontWeight = if (entry == sort) FontWeight.Bold else FontWeight.Normal,
+                    )
+                },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                ),
+                modifier = Modifier.height(48.dp).testTag("myListSortChip_${entry.name}"),
+            )
         }
     }
 }

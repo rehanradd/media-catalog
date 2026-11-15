@@ -58,7 +58,12 @@ class AdultListingGuardTest {
         val viewModel = source("viewmodel", "MyListViewModel.kt")
         assertTrue(
             "positive control: MyListViewModel no longer builds the grid's row list at all",
-            viewModel.contains("favorites = sorted.map(FavoritePost::toPost)"),
+            viewModel.contains("favorites = sorted.map(::myListDisplayPost)"),
+        )
+        assertTrue(
+            "the display mapping still builds each tile from the stored row, not a fresh fetch",
+            viewModel.contains("fun myListDisplayPost(favorite: FavoritePost): Post") &&
+                viewModel.contains("val post = favorite.toPost()"),
         )
         assertTrue(
             "a cached favourite reaches a LazyColumn only through AdultPolicy",

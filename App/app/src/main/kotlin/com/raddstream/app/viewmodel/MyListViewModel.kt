@@ -4,10 +4,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.raddstream.app.data.local.FavoritePost
 import com.raddstream.app.data.local.WatchHistoryDao
+import com.raddstream.app.data.local.WatchHistoryEntity
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.repository.CatalogRepository
 import com.raddstream.app.repository.FavoritesRepository
-import com.raddstream.app.sync.SyncAccountRepository
+import com.raddstream.app.ui.components.UserWords
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
@@ -38,10 +39,13 @@ data class MyListUiState(
     /** The title just removed, so the screen can offer Undo. Null when nothing is waiting. */
     val removedTitle: String? = null,
     /**
-     * Gap A5: the sync/status line — how fresh the saved rows are, or that
-     * titles are still waiting to sync. Null for an empty list.
+     * The progress bar each saved tile paints, keyed by post id — the
+     * latest resumable watch row for that title (see
+     * [myListProgressByPostId]). Absent when the viewer never started
+     * the title, finished it, or the row carries no duration: no bar
+     * rather than an invented one.
      */
-    val syncLine: String? = null,
+    val progressByPostId: Map<Int, Float> = emptyMap(),
 ) {
     /** [AdultPolicy.hiddenNotice] — a number, because a notice naming a hidden title is a list of one. */
     val hiddenNotice: String? get() = AdultPolicy.hiddenNotice(hiddenCount)
@@ -70,12 +74,80 @@ fun sortMyList(
     }
 }
 
+/**
+ * The language words the catalog appends as a title suffix ("(2023)
+ * English Movie", "Hindi Series"). A saved row stores no languages —
+ * [FavoritePost] carries no language list — so the strip below can
+ * only name these, the words this app itself offers as audio/subtitle
+ * languages. A title that merely ends in one of them keeps it: the
+ * language word is stripped only after a type or year suffix already
+ * came off in the same chain (see [stripMyListTitleSuffixes]).
+ */
+internal val myListTitleLanguages: Set<String> = setOf(
+    "english", "hindi", "urdu", "tamil", "telugu", "malayalam", "kannada", "bengali",
+)
+
+/**
+ * The title My List paints for one saved row: the server's clean title
+ * with the year/language/type suffixes the meta line already states
+ * stripped ([UserWords.stripTitleSuffixes], the Detail rule), so "No
+ * Hard Feelings (2023) English Movie" paints as "No Hard Feelings"
+ * above a meta line that already reads "2023 · Movie". A strip that
+ * would leave nothing keeps the row as saved — an empty painted title
+ * is worse than a suffixed one.
+ */
+internal fun myListDisplayPost(favorite: FavoritePost): Post {
+    val post = favorite.toPost()
+    val base = post.cleanTitle?.takeIf { it.isNotBlank() } ?: post.title
+    val stripped = stripMyListTitleSuffixes(base, post.year, post.contentType)
+    if (stripped.isBlank()) return post
+    return post.copy(cleanTitle = stripped)
+}
+
+/**
+ * [UserWords.stripTitleSuffixes] with the languages My List can name.
+ * The shared rule only strips a trailing language word the post itself
+ * lists, and a saved row lists none — so the language word is stripped
+ * only when a type ("Movie"/"Series") or year ("(2023)") suffix already
+ * came off in the same chain: "No Hard Feelings (2023) English Movie"
+ * loses all three, while "Broken English" (no type, no year) keeps its
+ * English and "The English Patient" never reaches the rule at all.
+ * Pure string work, so the rule is assertable without a layout.
+ */
+internal fun stripMyListTitleSuffixes(title: String, year: Int?, contentType: String?): String {
+    val once = UserWords.stripTitleSuffixes(title, year, contentType, emptyList())
+    if (once == title) return once
+    val lastWord = once.substringAfterLast(' ', "").lowercase()
+    if (lastWord !in myListTitleLanguages) return once
+    val withoutLanguage = once.dropLast(lastWord.length).trim()
+    if (withoutLanguage.isBlank()) return once
+    return UserWords.stripTitleSuffixes(withoutLanguage, year, contentType, emptyList())
+}
+
+/**
+ * The progress bar each saved tile paints, keyed by post id: the latest
+ * watch row for that title, and only when it is resumable — started and
+ * not within the end guard — so a finished title paints no bar and a row
+ * with no duration paints none either (no honest fraction exists). The
+ * mockup's bars under two posters are illustrative, not data: a bar
+ * appears only where a real row says the viewer stopped halfway.
+ */
+internal fun myListProgressByPostId(history: List<WatchHistoryEntity>): Map<Int, Float> =
+    history
+        .groupBy { it.postId }
+        .mapNotNull { (postId, rows) ->
+            val latest = rows.maxByOrNull { it.updatedAt } ?: return@mapNotNull null
+            if (!latest.resumable) return@mapNotNull null
+            ContinueWatchingTile.progressFraction(latest.positionMs, latest.durationMs)
+                ?.let { postId to it }
+        }
+        .toMap()
+
 @HiltViewModel
 class MyListViewModel @Inject constructor(
     private val favoritesRepository: FavoritesRepository,
     private val watchHistoryDao: WatchHistoryDao,
     private val catalogRepository: CatalogRepository,
-    private val syncAccountRepository: SyncAccountRepository,
 ) : ViewModel() {
 
     private val sortFlow = MutableStateFlow(ListSort.RECENT)
@@ -101,10 +173,7 @@ class MyListViewModel @Inject constructor(
             popularFlow,
             removedTitleFlow,
         ) { history, popular, removedTitle -> Triple(history, popular, removedTitle) },
-        // Gap A5: the sync line needs to know whether an account exists at
-        // all — a signed-out list is local-only by design, never "waiting".
-        syncAccountRepository.signedIn,
-    ) { (list, refused, sort), (history, popular, removedTitle), signedIn ->
+    ) { (list, refused, sort), (history, popular, removedTitle) ->
         // The stored rows are filtered here, before anything sorts or maps them, so no later step
         // can be handed the unfiltered list by accident. `is18Plus` is the strict half and is null
         // for every row on today's wire; the refusal ledger is the half that fires against a public
@@ -118,13 +187,13 @@ class MyListViewModel @Inject constructor(
         val favoriteIds = visible.mapTo(HashSet()) { it.id }
         val curatedShelf = popular.filterNot { it.id in favoriteIds }.take(3)
         MyListUiState(
-            favorites = sorted.map(FavoritePost::toPost),
+            favorites = sorted.map(::myListDisplayPost),
             sort = sort,
             isLoading = false,
             hiddenCount = list.size - visible.size,
             popular = curatedShelf,
             removedTitle = removedTitle,
-            syncLine = myListSyncLine(list, signedIn, System.currentTimeMillis()),
+            progressByPostId = myListProgressByPostId(history),
         )
     }.stateIn(
         scope = viewModelScope,
