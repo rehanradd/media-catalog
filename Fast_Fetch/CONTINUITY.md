@@ -41,10 +41,10 @@
     second** — into [`docs/ADMIN_PANEL_ACCESS.md`](../docs/ADMIN_PANEL_ACCESS.md), the panel's own
     guide, which also separates the running tree from the repository. Full session text, verbatim,
     rotated into `checkpoints/20261030-q3-lane-launch-readiness-job-a-the-operators-own-rea.md`.
-11. **JOB B (tasks #22/#30), branch `q3-engagement-ladder`** — the four monetization rules caught in review (`redeem_pass` debited before branching, `_engagement_public` double-priced the ladder, `usage_stats._payments` was the last float money field, `fetch_database_payload(full=True)` published playable columns for a flagged row), 27 + 17 tests, and the measurement that contradicts two documents: **`redact.link_is_adult` returns False for an unknown link id**, not the True its docstring and root `AGENTS.md` claim. Rotated verbatim into that checkpoint file; nothing was reworded.
+11. **JOB B (tasks #22/#30), branch `q3-engagement-ladder`** — the four monetization rules caught in review (details in that checkpoint file), 27 + 17 tests, and the measurement that contradicts two documents: **`redact.link_is_adult` returns False for an unknown link id**, not the True its docstring and root `AGENTS.md` claim. Rotated verbatim into that checkpoint file; nothing was reworded.
 12. `[Q3-ONBOARD-PAY]` — trial mint + PIN link + relay credit, 83 tests, CI 33: `checkpoints/20261031-q3-lane-zero-friction-onboarding-and-the-merchant-relay.md`.
 13. **qoder1 pass — `0e5ae28` + `8ca798a` + `a424ffc` landed; `q3-adultkey-net` and `q2-raddrelay` refused:** all four workers idle, qoder4's seek fix missing from the landed app. Text: `checkpoints/20261031-q1-supervisor-three-lanes-reviewed-gated-and-landed-two.md`.
-14. **qoder1 pass — `0afea35` + `a775ba7` + `e7f6bbb` landed (census CI step, `CLOSEST_SYNC`, the relay that deleted payments on a proxy 403); `q3-coins-engine` found empty and re-scoped; `q5-adultkey-reconciliation` held on one guard line, then green (item 15).** Every gate was a hosted run, zero local CPU. Text: `checkpoints/20261031-q1-supervisor-pass-three-landed-the-adult-gate-held.md`.
+14. **qoder1 pass — `0afea35` + `a775ba7` + `e7f6bbb` landed; `q3-coins-engine` found empty and re-scoped; `q5-adultkey-reconciliation` held on one guard line, then green (item 15).** Every gate was a hosted run, zero local CPU. Text: `checkpoints/20261031-q1-supervisor-pass-three-landed-the-adult-gate-held.md`.
 15. `[Q5-ADULTKEY]` — the merge-time corroborated adult fold and `link_is_adult` fail-closed; green on run 41156831610, landed `4a8c163`; **production still pre-law** — gap and read-only re-measure commands: `checkpoints/20261031-q5-adultkey-production-is-pre-law.md`.
 
 ---
@@ -53,7 +53,7 @@
 
 | # | exact command | expected cost | why |
 |---|---|---|---|
-| 1 | `python3 -S Fast_Fetch/site_scout.py https://movibd.com --max-samples 20 --timeout 12 --retries 1` | ~26 requests to one host, minutes, serial at 1 in-flight per host | measured from this box 2026-10-30: `movibd.online` is a parked stub (every path returns the same 370-byte iframe page), `movibd.top` returned `blocked: challenge` on all 10 samples, `movibd.com` answered its homepage with 17,786 bytes of real HTML and the scout recorded `https://movibd.com/sitemap.xml` as the discovered sitemap (blueprints `movibd_blueprint.json`, `movibd_com_blueprint.json`) |
+| 1 | `python3 -S Fast_Fetch/site_scout.py https://movibd.com --max-samples 20 --timeout 12 --retries 1` | ~26 requests to one host, minutes, serial at 1 in-flight per host | measured from this box 2026-10-30: `movibd.com` answered real HTML with a sitemap; `.online` is a parked stub, `.top` challenge-blocked (blueprints `movibd_blueprint.json`, `movibd_com_blueprint.json`) |
 | 2 | new `Fast_Fetch/importers/import_movibd.py` + `test_movibd_import.py` writing to **`movibd.db` staging only** | unknown N posts; price = `N × 2 pages × 1.1 s / distinct_hosts` — never into `fast_fetch.db` or the merged catalog | repo rule 9 (per-site staging DB) |
 | 3 | the adult-twin count against the live 6.4 GB catalog — **no command exists yet, writing it is the task** | a single `WHERE is_18_plus=1` count measured 26.46 s by qoder4 2026-10-30, so a scan of that size is a load-under-4-only action | the re-key residual in item 5 |
 | 4 | the 3.7 M-link health sweep | ≈ 7 days thread-bound (`docs/LINK_HEALTH_SWEEP.md` §1) | not scheduled; design doc only |
@@ -92,5 +92,3 @@ The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete i
 - 🎯 Current Operational State → [`checkpoints/20261030-pre-diet-state-and-roadmap.md`](checkpoints/20261030-pre-diet-state-and-roadmap.md)
 
 - 📌 Next Action Items (Production & App Layer Roadmap) → [`checkpoints/20261030-pre-diet-state-and-roadmap.md`](checkpoints/20261030-pre-diet-state-and-roadmap.md)
-
-
