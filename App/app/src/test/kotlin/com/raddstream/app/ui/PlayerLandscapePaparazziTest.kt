@@ -5,7 +5,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import app.cash.paparazzi.DeviceConfig
 import app.cash.paparazzi.Paparazzi
-import app.cash.paparazzi.ScreenOrientation
 import com.raddstream.app.player.KeepUiState
 import com.raddstream.app.player.LadderRung
 import com.raddstream.app.player.PlaybackInfo
@@ -30,10 +29,12 @@ class PlayerLandscapePaparazziTest {
 
     @get:Rule
     val paparazzi = Paparazzi(
+        // Paparazzi 1.3.5 has no orientation knob on DeviceConfig — the
+        // frame is landscape because it is wider than it is tall, the way
+        // the framework derives orientation from the display metrics.
         deviceConfig = DeviceConfig.PIXEL_5.copy(
             screenWidth = DeviceConfig.PIXEL_5.screenHeight,
             screenHeight = DeviceConfig.PIXEL_5.screenWidth,
-            orientation = ScreenOrientation.LANDSCAPE,
         ),
     )
 
