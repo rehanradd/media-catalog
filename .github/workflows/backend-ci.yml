@@ -345,6 +345,9 @@ jobs:
       - name: 🧪 test_merge_catalogs.py
         run: python3 -S Fast_Fetch/test_merge_catalogs.py
 
+      - name: 🧪 test_merge_fleet.py
+        run: python3 -S Fast_Fetch/test_merge_fleet.py
+
       - name: 🧪 test_backfill_cast.py
         run: python3 -S Fast_Fetch/test_backfill_cast.py
 
