@@ -1287,12 +1287,15 @@ internal fun ChipRow(options: List<String>, selectedIndex: Int, onSelect: (Int) 
     // own words (the contact categories below already wrap for the same
     // reason).
     //
-    // Review fix, two parts. (1) Visible height: the chip used to read
-    // ~32dp tall while its touch target was 48dp (Audit #54) — the
-    // heightIn only stretched the touch area, not the pill. The label
-    // now carries 12dp vertical padding, so the pill itself is 44dp
-    // (20sp text + 24dp), inside the 48dp touch target. (2) Selected
-    // state: verified against raddFilterChipColors() — the selected chip
+    // Review fix, two parts. (1) Visible height: the audit read the chips
+    // as ~32dp tall with a 48dp touch target (Audit #54) — that reading
+    // was wrong. M3 applies the caller's modifier to the chip's Surface
+    // (SelectableChip), so the pre-existing heightIn(min = 48.dp) already
+    // stretched the pill itself; the new golden measures the pill at
+    // ~48dp (57px at 1.173 px/dp on PIXEL_5). The label keeps its 12dp
+    // vertical padding as a floor: the content is 44dp (20sp text +
+    // 24dp) inside the 48dp pill, so the pill stays tall even if the
+    // heightIn is ever dropped. (2) Selected state: verified against
     // was a borderless dark-green fill (primaryContainer) while the
     // unselected chips carried bright 1dp outlines, so the unselected
     // state outweighed the selected one. Selected now gets a crisp
