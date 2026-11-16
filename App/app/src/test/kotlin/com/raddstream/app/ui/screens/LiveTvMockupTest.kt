@@ -116,6 +116,29 @@ class LiveTvMockupTest {
     }
 
     @Test
+    fun categoryRowChipsAre48dpTall() {
+        compose.setContent {
+            RaddStreamTheme {
+                LiveTvCategoryRow(
+                    categories = listOf("news", "sports"),
+                    selectedCategory = null,
+                    onCategorySelected = {},
+                )
+            }
+        }
+        // Live TV review (Nov 2026): the chip itself is 48dp tall, not
+        // just its touch target — the 32dp visible chip read as shallow
+        // next to the search pill.
+        val expectedPx = with(compose.density) { 48.dp.toPx() }
+        val allHeight = compose.onNodeWithTag("liveTv_chip_all")
+            .fetchSemanticsNode().boundsInRoot.height
+        val newsHeight = compose.onNodeWithTag("liveTv_chip_news")
+            .fetchSemanticsNode().boundsInRoot.height
+        assertEquals(expectedPx, allHeight, 1f)
+        assertEquals(expectedPx, newsHeight, 1f)
+    }
+
+    @Test
     fun liveTvSearchFieldShowsPlaceholderAndClears() {
         var query by mutableStateOf("")
         compose.setContent {
@@ -124,22 +147,24 @@ class LiveTvMockupTest {
                     query = query,
                     onQueryChanged = { query = it },
                     onSubmit = {},
-                    label = "Search channels",
+                    // Live TV review (Nov 2026): the field filters channels
+                    // locally, it is not global search — the label says so.
+                    label = "Filter channels",
                 )
             }
         }
         // Empty: the prompt is a placeholder, not a floating label.
-        compose.onNodeWithText("Search channels").assertIsDisplayed()
+        compose.onNodeWithText("Filter channels").assertIsDisplayed()
         // Type into the field itself (found by its accessible name).
-        compose.onNodeWithContentDescription("Search channels").performTextInput("geo")
+        compose.onNodeWithContentDescription("Filter channels").performTextInput("geo")
         assertEquals("geo", query)
         compose.onNodeWithText("geo").assertIsDisplayed()
-        compose.onNodeWithText("Search channels").assertDoesNotExist()
+        compose.onNodeWithText("Filter channels").assertDoesNotExist()
 
         // Non-empty: the clear button empties it again, and the prompt returns.
         compose.onNodeWithContentDescription("Clear search").performClick()
         assertEquals("", query)
-        compose.onNodeWithText("Search channels").assertIsDisplayed()
+        compose.onNodeWithText("Filter channels").assertIsDisplayed()
     }
 
     @Test

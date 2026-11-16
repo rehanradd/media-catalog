@@ -37,6 +37,30 @@ class LiveTvChannelCardTest {
 
         val duplicateValue = channel.copy(country = "Pakistan", language = "pakistan")
         assertEquals("News · Pakistan", channelMetaLine(duplicateValue))
+
+        // Live TV review (Nov 2026): the registry writes two-letter codes
+        // ("ur"), not words — the meta line spells the language out.
+        val codeLang = channel.copy(language = "ur")
+        assertEquals("News · Pakistan · Urdu", channelMetaLine(codeLang))
+    }
+
+    @Test
+    fun languageLabelMapsCodesAndPassesUnknownThrough() {
+        // Live TV review (Nov 2026): mirrors countryLabel — known codes
+        // map to names, unknown codes pass through untouched, never guessed.
+        assertEquals("Urdu", languageLabel("ur"))
+        assertEquals("Urdu", languageLabel("urdu"))
+        assertEquals("Urdu", languageLabel("Urdu"))
+        assertEquals("Hindi", languageLabel("hi"))
+        assertEquals("English", languageLabel("en"))
+        assertEquals("Punjabi", languageLabel("pa"))
+        assertEquals("Tamil", languageLabel("ta"))
+        assertEquals("Telugu", languageLabel("te"))
+        assertEquals("Bengali", languageLabel("bn"))
+        assertEquals("Malayalam", languageLabel("ml"))
+        assertEquals("xx", languageLabel("xx"))
+        assertEquals(null, languageLabel(null))
+        assertEquals(null, languageLabel("  "))
     }
 
     @Test

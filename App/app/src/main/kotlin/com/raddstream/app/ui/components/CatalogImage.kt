@@ -116,6 +116,14 @@ fun CatalogImage(
      */
     fallbackTone: FallbackTone = FallbackTone.Tile,
     /**
+     * Live TV review (Nov 2026): a channel logo plate is a wide, short
+     * surface — the standard 30dp fallback mark reads as an empty box
+     * there. A caller on such a plate passes true for a 48dp mark at full
+     * strength and a larger wordmark. Defaults off: poster tiles keep the
+     * small mark.
+     */
+    fallbackLarge: Boolean = false,
+    /**
      * Hero (Nov 2026): what the loading slot paints instead of the bare
      * shimmer. Only the hero passes one — a full-bleed slide's shimmer reads
      * as a black void on first paint, while a poster's does not. Null keeps
@@ -172,6 +180,7 @@ fun CatalogImage(
             label = fallbackLabel,
             modifier = modifier,
             tone = fallbackTone,
+            large = fallbackLarge,
         )
         return
     }
@@ -208,6 +217,7 @@ fun CatalogImage(
                     label = fallbackLabel,
                     modifier = Modifier.fillMaxSize(),
                     tone = fallbackTone,
+                    large = fallbackLarge,
                 )
             }
         },
@@ -260,6 +270,7 @@ fun ImageFallbackCard(
     modifier: Modifier = Modifier,
     label: String? = null,
     tone: FallbackTone = FallbackTone.Tile,
+    large: Boolean = false,
 ) {
     Box(
         modifier = modifier
@@ -283,9 +294,9 @@ fun ImageFallbackCard(
             modifier = Modifier.padding(8.dp),
         ) {
             RaddStreamMark(
-                diameter = if (tone == FallbackTone.Hero) 48.dp else 30.dp,
+                diameter = if (tone == FallbackTone.Hero || large) 48.dp else 30.dp,
                 color = MaterialTheme.colorScheme.primary.copy(
-                    alpha = if (tone == FallbackTone.Hero) 1f else 0.55f,
+                    alpha = if (tone == FallbackTone.Hero || large) 1f else 0.55f,
                 ),
             )
             // Session 121 (P-15): the label is the title itself, never punctuation.
@@ -298,7 +309,8 @@ fun ImageFallbackCard(
                 Text(
                     text = safeLabel,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.titleSmall,
+                    style = if (large) MaterialTheme.typography.titleMedium
+                    else MaterialTheme.typography.titleSmall,
                     textAlign = TextAlign.Center,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,

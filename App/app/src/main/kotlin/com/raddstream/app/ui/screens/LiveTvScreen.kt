@@ -1,6 +1,5 @@
 package com.raddstream.app.ui.screens
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -10,7 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
@@ -68,7 +67,7 @@ import com.raddstream.app.viewmodel.LiveTvViewModel
  *
  * Stitch mockup (Nov 2026): the search field is the app's shared filled
  * pill, the chips are the shared jade-selected filter chips, and the cards
- * are 16dp with a hairline outline. The mockup's invented channel names
+ * are 16dp. The mockup's invented channel names
  * and ALL-CAPS nav labels were never copied — the data is the server's,
  * and the nav stays title case.
  */
@@ -86,7 +85,16 @@ fun LiveTvScreen(
             TopAppBar(
                 // CL-7, same as Settings: the title says "Live TV" and so does
                 // its nav tab — the title is paint, not a second announcement.
-                title = { Text("Live TV", modifier = Modifier.clearAndSetSemantics { }) },
+                // Live TV review (Nov 2026): a bolder display weight — the
+                // modest title read as a list heading, not a screen title.
+                title = {
+                    Text(
+                        "Live TV",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.clearAndSetSemantics { },
+                    )
+                },
             )
         },
     ) { contentPadding ->
@@ -140,7 +148,7 @@ fun LiveTvScreen(
                     query = state.query,
                     onQueryChanged = viewModel::onQueryChanged,
                     onSubmit = {},
-                    label = "Search channels",
+                    label = "Filter channels",
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                 )
                 LiveTvCategoryRow(
@@ -198,7 +206,9 @@ fun LiveTvScreen(
  * long — the mockup's five chips happen to fit, but the registry can hold
  * more, and a clipped chip is worse than a scrollable row. The selected
  * chip is the shared jade fill ([raddFilterChipColors]); the unselected
- * chips keep the default thin border, as the mockup draws them.
+ * chips keep the default thin border, as the mockup draws them. The row
+ * shares Home's right-edge fade ([RowEndFade]) so the last chip fades out
+ * instead of hard-clipping mid-word.
  */
 @Composable
 internal fun LiveTvCategoryRow(
@@ -207,33 +217,42 @@ internal fun LiveTvCategoryRow(
     onCategorySelected: (String?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    LazyRow(
+    Box(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        contentPadding = PaddingValues(end = 16.dp),
     ) {
-        item {
-            FilterChip(
-                colors = raddFilterChipColors(),
-                selected = selectedCategory == null,
-                onClick = { onCategorySelected(null) },
-                label = { Text("All") },
-                // Audit #54: a FilterChip is 32 dp tall — the touch-target floor is 48 dp, so the chip itself carries it.
-                modifier = Modifier.heightIn(min = 48.dp).testTag("liveTv_chip_all"),
-            )
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(end = 16.dp),
+        ) {
+            item {
+                FilterChip(
+                    colors = raddFilterChipColors(),
+                    selected = selectedCategory == null,
+                    onClick = { onCategorySelected(null) },
+                    label = { Text("All") },
+                    // Live TV review (Nov 2026): the chip itself is 48dp
+                    // tall, not just its touch target — the 32dp visible
+                    // chip read as shallow next to the search pill, and
+                    // Home's filter row is 48dp.
+                    modifier = Modifier.height(48.dp).testTag("liveTv_chip_all"),
+                )
+            }
+            items(categories) { category ->
+                FilterChip(
+                    colors = raddFilterChipColors(),
+                    selected = selectedCategory == category,
+                    onClick = { onCategorySelected(category) },
+                    label = { Text(categoryLabel(category)) },
+                    // Live TV review (Nov 2026): same 48dp visible height
+                    // as the "All" chip above.
+                    modifier = Modifier.height(48.dp).testTag("liveTv_chip_$category"),
+                )
+            }
         }
-        items(categories) { category ->
-            FilterChip(
-                colors = raddFilterChipColors(),
-                selected = selectedCategory == category,
-                onClick = { onCategorySelected(category) },
-                label = { Text(categoryLabel(category)) },
-                // Audit #54: a FilterChip is 32 dp tall — the touch-target floor is 48 dp, so the chip itself carries it.
-                modifier = Modifier.heightIn(min = 48.dp).testTag("liveTv_chip_$category"),
-            )
-        }
+        RowEndFade(Modifier.align(Alignment.CenterEnd))
     }
 }
 
@@ -269,13 +288,51 @@ internal fun countryLabel(code: String?): String? {
     }
 }
 
+/**
+ * The server's language code as a readable name. The registry writes ISO
+ * 639 codes ("ur", "hi") and sometimes the full word ("urdu") — two-letter
+ * codes on a card are alphabet soup, and a viewer should not need a
+ * language lesson to know which language a channel speaks. Mirrors
+ * [countryLabel]: known codes map to names, unknown codes pass through
+ * untouched, never guessed at.
+ */
+internal fun languageLabel(code: String?): String? {
+    if (code.isNullOrBlank()) return null
+    return when (code.trim().lowercase()) {
+        "ur", "urdu" -> "Urdu"
+        "hi", "hindi" -> "Hindi"
+        "en", "english" -> "English"
+        "pa", "punjabi" -> "Punjabi"
+        "ta", "tamil" -> "Tamil"
+        "te", "telugu" -> "Telugu"
+        "bn", "bengali", "bangla" -> "Bengali"
+        "ml", "malayalam" -> "Malayalam"
+        "kn", "kannada" -> "Kannada"
+        "mr", "marathi" -> "Marathi"
+        "gu", "gujarati" -> "Gujarati"
+        "as", "assamese" -> "Assamese"
+        "or", "odia", "oriya" -> "Odia"
+        "ar", "arabic" -> "Arabic"
+        "zh", "chinese", "mandarin" -> "Chinese"
+        "ne", "nepali" -> "Nepali"
+        "it", "italian" -> "Italian"
+        "pt", "portuguese" -> "Portuguese"
+        "ru", "russian" -> "Russian"
+        "es", "spanish" -> "Spanish"
+        "fr", "french" -> "French"
+        "tl", "tagalog" -> "Tagalog"
+        "sd", "sindhi" -> "Sindhi"
+        else -> code.trim()
+    }
+}
+
 internal fun channelMetaLine(channel: LiveTvChannel): String =
     listOfNotNull(
         categoryLabel(channel.category).takeIf { it.isNotBlank() },
         countryLabel(channel.country),
         channel.language.trim()
             .takeIf(::isKnownLanguage)
-            ?.replaceFirstChar { it.uppercase() },
+            ?.let(::languageLabel),
     )
         .distinctBy { it.lowercase() }
         .joinToString(" · ")
@@ -296,13 +353,15 @@ internal fun LiveTvChannelCard(
     ).joinToString(" · ")
     Card(
         onClick = onClick,
-        // Mockup (Stitch, Nov 2026): 16dp corners, a hairline outline, no
-        // elevation — the card is one surface tier above the background,
-        // not a shadow. The logo plate stays surfaceVariant, one tier above
-        // the card fill, so the logo reads as a plate, not a hole.
+        // Mockup (Stitch, Nov 2026): 16dp corners, no elevation — the card
+        // is one surface tier above the background, not a shadow. Live TV
+        // review (Nov 2026): the 1dp hairline outline is gone — the
+        // wireframe look it gave the grid is fixed by tonal elevation
+        // alone, the same call as the Home PosterCard rework. The logo
+        // plate stays surfaceVariant, one tier above the card fill, so the
+        // logo reads as a plate, not a hole.
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         modifier = modifier.semantics { contentDescription = a11y },
     ) {
@@ -327,10 +386,13 @@ internal fun LiveTvChannelCard(
                     // registry's own, and the art policy does not vet them.
                     allowAnyHost = true,
                     contentScale = ContentScale.Fit,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(CardGeometry.WIDE_ART_ASPECT)
-                        .padding(8.dp),
+                    // Live TV review (Nov 2026): the logo lives in a centred
+                    // safe zone, 60% of the plate in each dimension — a wide
+                    // logo can no longer reach the corner where the LIVE
+                    // badge sits, and a white-background asset reads as a
+                    // badge, not a pasted rectangle.
+                    fallbackLarge = true,
+                    modifier = Modifier.fillMaxSize(0.6f),
                 )
                 Row(
                     verticalAlignment = Alignment.CenterVertically,

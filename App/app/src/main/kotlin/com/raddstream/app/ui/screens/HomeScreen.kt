@@ -803,10 +803,11 @@ internal fun HomeHeader(
  * scrolling chip strips — the last chip fades out instead of hard-clipping
  * mid-word ("Complete s..."). A paint-only overlay: it has no click
  * handling, so taps pass straight through to the row beneath it. Shared
- * by the filter row and the Browse facets row, which both scroll.
+ * by the filter row and the Browse facets row, which both scroll — and by
+ * Live TV's category row (Nov 2026 review).
  */
 @Composable
-private fun RowEndFade(modifier: Modifier = Modifier) {
+internal fun RowEndFade(modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
             .width(24.dp)
