@@ -307,3 +307,20 @@ merged 00:21 PKT 17 Nov; header-pill collision cleared).
   the free download URL builder (`downloadRedirectUrl`, no credit param)
   is still pinned by `ApiProviderTest`. Backend CI 43943553204 SUCCESS on
   the same SHA. Re-pushed as a fixup commit.
+
+## Final verdicts (17 Nov, tip 7ba46d84)
+
+- Android CI 43950180721 SUCCESS on tip 7ba46d84 (2108 tests; Paparazzi
+  home goldens refreshed by record run 43949018044).
+- Backend CI 43951678888 SUCCESS on tip 7ba46d84 (dispatched, then one
+  re-run of the failed job: test_download_endpoint failed once on the
+  one-second mint/expiry-boundary flake — `mint_token` embeds
+  `expires_at` in seconds, the test mints and the server re-mints, and
+  the tails differ when a second boundary falls between them. Same
+  backend code passed run 43945200448; re-run passed. Pre-existing flake,
+  not this branch; not fixed, per the known-flake rule).
+- CI-green debug APK: ~/workspace/apk-remove-coins-7ba46d84/app-debug-858/app-debug.apk
+  (26,560,515 B, sha256 920e9e8ac7c27e22d1f70c02f37cd2fc08810d066433de8ce991e0d920012a8a),
+  from Android run 43950180721. Robo pass still owed by the parent.
+- Branch tip: 7ba46d84, branch muse/remove-coins-checkin-20261117.
+  NOT merged — parent merges.
