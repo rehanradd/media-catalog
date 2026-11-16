@@ -1151,7 +1151,9 @@ class Service:
         live = self._live_catalog()
         if live is not None:
             try:
-                return live.read_remote_config_masked()
+                out = live.read_remote_config_masked()
+                out["publish_status"] = self._monetization_publish_state()
+                return out
             except LiveUnavailable:
                 pass
         row = self._config_row()
@@ -1162,7 +1164,103 @@ class Service:
             out[k] = row[k]
         out["shrinkme_configured"] = bool(row.get("shrinkme_api_token"))
         out["droplink_configured"] = bool(row.get("droplink_api_token"))
+        out["publish_status"] = self._monetization_publish_state()
         return out
+
+    # -- monetization publish state (launch plan Phase 1) ----------------
+    def _ensure_monetization_publish_state(self):
+        """One-row publish-state table, created lazily like idempotency
+        keys: the panel must remember a 'published but not snapshotted'
+        failure across restarts, so the warning survives the operator
+        navigating away. Fresh state is 'ok'."""
+        self.admin.execute(
+            "CREATE TABLE IF NOT EXISTS monetization_publish_state ("
+            "id INTEGER PRIMARY KEY CHECK (id = 1), status TEXT NOT NULL, "
+            "detail_json TEXT, updated_at INTEGER)")
+        self.admin.execute(
+            "INSERT OR IGNORE INTO monetization_publish_state (id, status) "
+            "VALUES (1, 'ok')")
+        self.admin.commit()
+
+    def _monetization_publish_state(self):
+        """Read-only: a missing table (a pre-Phase-1 database) means 'ok' —
+        nothing has been published through the new flow yet. Never creates
+        anything, so a GET stays a GET."""
+        try:
+            row = self.admin.execute(
+                "SELECT status FROM monetization_publish_state WHERE id=1"
+                ).fetchone()
+        except sqlite3.Error:
+            return "ok"
+        return row["status"] if row else "ok"
+
+    def _set_monetization_publish_state(self, status, detail=None):
+        self._ensure_monetization_publish_state()
+        with WRITE_LOCK:
+            self.admin.execute(
+                "UPDATE monetization_publish_state SET status=?, "
+                "detail_json=?, updated_at=? WHERE id=1",
+                (status, json.dumps(detail) if detail is not None else None,
+                 NOW()))
+            self.admin.commit()
+
+    def _record_versioned_snapshot(self, published_by):
+        """Bump config_version and write the history snapshot for it.
+
+        One helper for every version bump that is not the remote-config
+        publish (which has its own guards in _do_publish): the monetization
+        publish and a feature pause/resume both need version + snapshot
+        together, never a bare bump. Returns the new version."""
+        row = self._config_row()
+        new_version = row["config_version"] + 1
+        snap = {"config": self._redacted_config(row), "home": self._home_snapshot()}
+        snap["config"]["config_version"] = new_version
+        with WRITE_LOCK:
+            self.admin.execute(
+                "UPDATE app_remote_config_v2 SET config_version=?, updated_by=?, updated_at=? WHERE id=1",
+                (new_version, published_by, NOW()))
+            self.admin.execute(
+                "INSERT INTO app_remote_config_history (config_version, snapshot_json, published_by, published_at) "
+                "VALUES (?,?,?,?)", (new_version, json.dumps(snap), published_by, NOW()))
+            self.admin.commit()
+        return new_version
+
+    def _publish_staged_monetization(self, actor, before, ip=""):
+        """The publish itself, in the design's order (§3.1):
+
+        (1) the live catalog row first — the single source of truth the
+        app reads; (2) the draft row + config_version bump + published
+        snapshot; (3) the audit row. A failure at step 2 or 3 leaves the
+        catalog published but not snapshotted: the catalog is never rolled
+        back silently, the failure is recorded, and the next publish
+        repairs it (re-snapshot + re-audit). Returns the publish status.
+        """
+        row = self._config_row()
+        staged = {k: row[k] for k in MONETIZATION_FIELDS}
+        live = self._live_catalog()
+        if live is not None:
+            # WRITE path: tests run this on a COPY; live use needs a
+            # catalog backup before first use (see handoff).
+            live.save_remote_config(dict(staged))
+        before_version = row["config_version"]
+        try:
+            new_version = self._record_versioned_snapshot(actor["id"])
+            after = self.get_monetization(actor)
+            before_audit = dict(before)
+            before_audit["config_version"] = before_version
+            after_audit = dict(after)
+            after_audit["config_version"] = new_version
+            self.audit(actor["id"], "monetization.save", "app_remote_config", 1,
+                       before_audit, after_audit, ip)
+        except Exception as exc:
+            self._set_monetization_publish_state(
+                "published_but_not_snapshotted",
+                {"error": str(exc),
+                 "config_version": self._config_row()["config_version"]})
+            return {"publish_status": "published_but_not_snapshotted",
+                    "config_version": self._config_row()["config_version"]}
+        self._set_monetization_publish_state("ok")
+        return {"publish_status": "ok", "config_version": new_version}
 
     def put_monetization(self, actor, body, ip=""):
         self.require_role(actor, write=True)
@@ -1190,19 +1288,36 @@ class Service:
             if k in body and int(body[k]) not in (0, 1):
                 raise bad("That flag must be 0 or 1.")
         before = self.get_monetization(actor)
-        live = self._live_catalog()
-        if live is not None:
-            # The live app_remote_config row is the source of truth the
-            # app reads. WRITE path: tests run this on a COPY; live use
-            # needs a catalog backup before first use (see handoff).
-            live.save_remote_config(dict(body))
+        # Stage the edit in the draft row first (draft → publish): the
+        # draft is the staging area, the publish below applies it to the
+        # live catalog in the design's order.
         with WRITE_LOCK:
             self.admin.execute(
                 "UPDATE app_remote_config_v2 SET %s WHERE id=1"
                 % ", ".join("%s=?" % k for k in body), list(body.values()))
             self.admin.commit()
+        status = self._publish_staged_monetization(actor, before, ip)
         after = self.get_monetization(actor)
-        self.audit(actor["id"], "monetization.save", "app_remote_config", 1, before, after, ip)
+        after["publish_status"] = status["publish_status"]
+        after["config_version"] = status["config_version"]
+        return after
+
+    def publish_monetization(self, actor, body=None, ip=""):
+        """Publish what the draft has staged (the repair path, and the
+        endpoint a Publish button calls): catalog first, then draft +
+        version bump + snapshot, then the audit row. Re-running it after
+        a 'published but not snapshotted' failure repairs the publish —
+        the catalog write is idempotent, it rewrites the same fields.
+        """
+        self.require_role(actor, write=True)
+        self._validate_body(body or {}, {"confirm"})
+        if not body or not body.get("confirm"):
+            raise bad("Publish needs confirm set to true.")
+        before = self.get_monetization(actor)
+        status = self._publish_staged_monetization(actor, before, ip)
+        after = self.get_monetization(actor)
+        after["publish_status"] = status["publish_status"]
+        after["config_version"] = status["config_version"]
         return after
 
     def draft_remote_config(self, actor, body, ip=""):
@@ -2416,6 +2531,10 @@ class Service:
             self.admin.commit()
             row = self.admin.execute("SELECT * FROM pauses WHERE id=?", (cur.lastrowid,)).fetchone()
         self.audit(actor["id"], "pause.create", "pause", row["id"], None, _row(row), ip)
+        if body["target_type"] == "feature":
+            # D-4: a live feature pause changes what the app must serve,
+            # so it is versioned like a flag flip (bump + snapshot).
+            self._record_versioned_snapshot(actor["id"])
         return _row(row)
 
     def resume_pause(self, actor, pause_id, ip=""):
@@ -2431,6 +2550,9 @@ class Service:
                 (NOW(), actor["id"], pause_id))
             self.admin.commit()
         self.audit(actor["id"], "pause.resume", "pause", pause_id, _row(row), {"resumed": True}, ip)
+        if row["target_type"] == "feature":
+            # D-4: clearing a feature pause is a versioned change too.
+            self._record_versioned_snapshot(actor["id"])
         return {"ok": True}
 
     # -- domains ---------------------------------------------------------------

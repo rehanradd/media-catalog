@@ -1705,6 +1705,15 @@ MONETIZATION_ID = 1
 SAVE_MONETIZATION_PATH = "/admin/action/save-monetization"
 SETTINGS_UNAVAILABLE = "the settings row is unavailable"
 
+#: Feature flags are edited in the v2 panel only (launch plan Phase 1, D-6):
+#: this process cannot version, snapshot or audit a flip, and an unversioned
+#: direct write would leave the gate flippable with no rollback. The v1 card
+#: shows these keys read-only; a save carrying one is refused outright.
+_V1_READ_ONLY_FLAGS = frozenset({
+    "maintenance_mode", "feature_pure_cinema", "feature_chromecast",
+    "feature_downloads", "feature_quality_gate",
+})
+
 _TEXT = "text"
 _PHONE = "phone"
 _MONEY = "pkr"
@@ -2205,6 +2214,10 @@ def _save_monetization(conn, payload):
     for key in payload:
         if key not in _FIELD_BY_KEY:
             unknown.append(str(key))
+        elif key in _V1_READ_ONLY_FLAGS:
+            rejected.append(
+                "%s is edited in the v2 panel (Monetization), not here"
+                % key)
     for key, _label, _kind, _default in MONETIZATION_FIELDS:
         if key not in payload:
             continue                # a partial save edits only what was sent
@@ -3626,9 +3639,10 @@ def _config_card(monetization):
     def toggle(key):
         field = fields.get(key) or {"label": key, "value": "off"}
         checked = " checked" if _as_flag(field.get("value")) else ""
-        return (f'<label class="toggle"><input type="checkbox"'
-                f' data-key="{_e(key)}"{checked}'
-                f' onchange="saveSetting(this.dataset.key, this.checked, this)">'
+        # Read-only (launch plan Phase 1, D-6): flags are edited in the v2
+        # panel, where the flip is versioned, snapshotted and audited.
+        return (f'<label class="toggle"><input type="checkbox" disabled'
+                f' data-key="{_e(key)}"{checked}>'
                 f' <span>{_e(field.get("label", key))}</span></label>')
 
     def text_row(key, label, placeholder=""):
@@ -3652,6 +3666,9 @@ def _config_card(monetization):
     out += toggle("feature_chromecast")
     out += toggle("feature_downloads")
     out += toggle("feature_quality_gate")
+    out += ('<p class="hint">Feature flags are edited in the v2 panel '
+            '(Monetization) so every flip is versioned, snapshotted and '
+            'audited. This card shows the live values read-only.</p>')
     out += ('<p class="hint">Charging VIP for 1080p/4K hides those rungs from every '
             'viewer the ledger has not confirmed, including signed-out ones. Off means '
             'the catalog is fully watchable, which is the honest default until approvals '

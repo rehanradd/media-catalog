@@ -327,6 +327,9 @@ def _api(self, method, path, query, headers, body_bytes):
     R(("PUT", r"^/admin/api/v2/monetization$", lambda u, _ip: svc.put_monetization(u, body, ip=_ip), True))
     # POST alias so the HTML Monetization form can save (forms cannot PUT).
     R(("POST", r"^/admin/api/v2/monetization$", lambda u, _ip: svc.put_monetization(u, body, ip=_ip), True))
+    # Explicit publish (launch plan Phase 1): re-publishes what the draft
+    # holds — the repair path for a 'published but not snapshotted' failure.
+    R(("POST", r"^/admin/api/v2/monetization/publish$", lambda u, _ip: svc.publish_monetization(u, body, ip=_ip), True))
     R(("GET", r"^/admin/api/v2/data-health$", lambda u, _ip: svc.data_health(u), False))
     R(("GET", r"^/admin/api/v2/contact$", lambda u, _ip: svc.list_contact(u, status=q("status"), category=q("category"), after_id=after, limit=limit), False))
     R(("POST", r"^/admin/api/v2/contact/(\d+)/status$", lambda u, _ip: svc.update_contact(u, int(_last2(path)), body, ip=_ip), True))

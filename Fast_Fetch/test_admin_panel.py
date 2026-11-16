@@ -573,19 +573,22 @@ class Monetization(Fixture):
         `_read_monetization` indexed its row by name, so a connection without
         `sqlite3.Row` raised TypeError inside a `try` that catches only
         `sqlite3.Error`, and the caller answered with the **defaults**. The visible
-        result was an operator who saved `maintenance_mode` and was silently ignored,
+        result was an operator who saved a price and was silently ignored,
         and settings that read differently depending on which module opened the file.
         """
-        self.save({"maintenance_mode": 1, "vip_monthly_pkr": 250})
+        self.save({"apk_update_url": "https://downloads.example/app/radd-stream.apk",
+                   "vip_monthly_pkr": 250})
         plain = sqlite3.connect(self.db_path)
         try:
             values = admin_panel._read_monetization(plain)
-            self.assertEqual(values["maintenance_mode"], 1,
+            self.assertEqual(values["apk_update_url"],
+                             "https://downloads.example/app/radd-stream.apk",
                              "a plain connection read the default, not the stored value")
             self.assertEqual(values["vip_monthly_pkr"], 250)
             payload = admin_panel.remote_config(plain)
-            self.assertTrue(payload["maintenance_mode"],
-                            "the phone was told maintenance was off")
+            self.assertEqual(payload["apk_update_url"],
+                             "https://downloads.example/app/radd-stream.apk",
+                             "the phone was told there was no update banner")
         finally:
             plain.close()
 
@@ -593,9 +596,8 @@ class Monetization(Fixture):
         """`settings_unavailable` is the difference between a default and a lie.
 
         The fallback this replaces published the shipped defaults with no marker, so a
-        phone read `maintenance_mode: false` while the operator had it switched on, and
-        the default PKR price while the stored one was different. `false` is not the
-        safe value on that field: it is the value that keeps playing. The panel's own
+        phone read an empty update banner while the operator had published one, and
+        the default PKR price while the stored one was different. The panel's own
         diagnostic already reports `the settings row is unavailable` in this state;
         only the public route was silent about it.
 
@@ -603,9 +605,11 @@ class Monetization(Fixture):
         if the marker is dropped *and* if the degraded body starts diverging in shape
         from a healthy one.
         """
-        self.save({"maintenance_mode": 1, "vip_monthly_pkr": 250})
+        self.save({"apk_update_url": "https://downloads.example/app/radd-stream.apk",
+                   "vip_monthly_pkr": 250})
         healthy = self.public()
-        self.assertEqual(healthy["maintenance_mode"], True)
+        self.assertEqual(healthy["apk_update_url"],
+                         "https://downloads.example/app/radd-stream.apk")
         self.assertEqual(healthy["vip"]["monthly_pkr"], 250)
 
         boom = mock.patch.object(admin_panel, "_read_monetization",
@@ -619,7 +623,7 @@ class Monetization(Fixture):
                          "a degraded body dropped keys a client decodes")
         # What a degraded read prints, and why the marker is the whole point: without
         # it these two lines are indistinguishable from an operator's decision.
-        self.assertEqual(degraded["maintenance_mode"], False)
+        self.assertEqual(degraded["apk_update_url"], "")
         self.assertEqual(degraded["vip"]["monthly_pkr"], 200)
 
     def test_a_missing_row_is_unknown_too_and_not_a_set_of_defaults(self):
@@ -637,10 +641,10 @@ class Monetization(Fixture):
         """The positive control. A flag that is always true guards nothing, and a phone
         comparing `settingsUnavailable === true` must not be handed SQLite's 0/1 — the
         rule every other flag in this body already follows."""
-        self.save({"maintenance_mode": 1})
+        self.save({"vip_monthly_pkr": 250})
         body = self.public()
         self.assertIs(body["settings_unavailable"], False)
-        self.assertTrue(body["maintenance_mode"])
+        self.assertEqual(body["vip"]["monthly_pkr"], 250)
 
     def test_the_retired_detour_is_off_on_a_fresh_install(self):
         """Nothing has to be typed to keep downloads direct: the flag ships off.
@@ -729,7 +733,25 @@ class Monetization(Fixture):
                          {"downloads": True, "pure_cinema": True,
                           "chromecast": True, "quality_gate": False})
 
-    def test_the_remote_controls_round_trip_through_the_save_and_the_public_body(self):
+    def test_the_non_flag_controls_round_trip_through_the_save_and_the_public_body(self):
+        """Non-flag controls still round-trip through the v1 save: the URL
+        the operator sets is the URL the public body serves."""
+        answered = self.save({
+            "apk_update_url": "https://downloads.example/app/radd-stream.apk",
+            "vip_monthly_pkr": 250,
+        })
+        self.assertEqual(answered[0], 200, answered)
+        data = self.public()
+        self.assertEqual(data["apk_update_url"],
+                         "https://downloads.example/app/radd-stream.apk")
+        self.assertEqual(data["vip"]["monthly_pkr"], 250)
+
+    def test_flag_keys_are_refused_by_the_v1_save_and_write_nothing(self):
+        """Launch plan Phase 1, D-6: flags are edited in the v2 panel only,
+        where the flip is versioned, snapshotted and audited. A v1 save
+        carrying a flag key is refused outright — nothing in the row moves,
+        not even the non-flag keys sent with it (all-or-nothing)."""
+        before = self.public()
         answered = self.save({
             "maintenance_mode": True,
             "apk_update_url": "https://downloads.example/app/radd-stream.apk",
@@ -738,18 +760,12 @@ class Monetization(Fixture):
             "feature_chromecast": False,
             "feature_quality_gate": True,
         })
-        self.assertEqual(answered[0], 200, answered)
+        self.assertEqual(answered[0], 400, answered)
         data = self.public()
-        self.assertTrue(data["maintenance_mode"])
-        self.assertEqual(data["apk_update_url"],
-                         "https://downloads.example/app/radd-stream.apk")
-        self.assertEqual(data["feature_flags"],
-                         {"downloads": False, "pure_cinema": True,
-                          "chromecast": False, "quality_gate": True})
-        values = self.values()
-        self.assertEqual(values["maintenance_mode"], "on")
-        self.assertEqual(values["feature_downloads"], "off")
-        self.assertEqual(values["feature_chromecast"], "off")
+        self.assertEqual(data["feature_flags"], before["feature_flags"])
+        self.assertEqual(data["maintenance_mode"],
+                         before["maintenance_mode"])
+        self.assertEqual(data["apk_update_url"], before["apk_update_url"])
 
     def test_a_bad_flag_or_update_url_is_refused_and_writes_nothing(self):
         self.assertEqual(self.save({"maintenance_mode": "maybe"})[0], 400)

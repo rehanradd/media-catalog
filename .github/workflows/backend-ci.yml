@@ -275,6 +275,9 @@ jobs:
       - name: 🧪 test_launch_phase0.py
         run: python3 -S Fast_Fetch/test_launch_phase0.py
 
+      - name: 🧪 test_launch_phase1.py
+        run: python3 -S Fast_Fetch/test_launch_phase1.py
+
       - name: 🧪 test_vidout.py
         run: python3 -S Fast_Fetch/test_vidout.py
 
