@@ -861,7 +861,7 @@ private fun DetailErrorHeader(post: Post, modifier: Modifier = Modifier) {
 }
 
 @Composable
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 internal fun DetailContent(
     post: PostDetail,
     seasons: List<SeasonGroup>,
