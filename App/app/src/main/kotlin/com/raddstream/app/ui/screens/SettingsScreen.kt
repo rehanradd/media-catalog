@@ -486,12 +486,28 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
-                    Slider(
-                        value = state.prefs.subtitleSizePercent.toFloat(),
-                        onValueChange = { viewModel.setSubtitleSize(it.toInt()) },
-                        valueRange = 50f..200f,
-                        modifier = Modifier.weight(1f),
-                    )
+                    // Parent fixup (Nov 2026): the same edge hazard the
+                    // Audio slider had — the thumb at 100% sat ~16dp from
+                    // the screen edge, inside the back-gesture zone. Same
+                    // fix: the track is inset 12dp inside the 16dp card
+                    // padding (28dp from the viewport edge) and the touch
+                    // area is 48dp tall. The % label keeps its place at the
+                    // row's start; only the slider moves.
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Slider(
+                            value = state.prefs.subtitleSizePercent.toFloat(),
+                            onValueChange = { viewModel.setSubtitleSize(it.toInt()) },
+                            valueRange = 50f..200f,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp),
+                        )
+                    }
                 }
                 Text(
                     "The same size the player sheet offers while watching; it applies from the next playback.",
