@@ -150,6 +150,19 @@ object Brand {
         get() = string("network.gateway_discovery_url")
             .ifBlank { BuildConfig.BRAND_NETWORK_GATEWAY_DISCOVERY_URL }.ifBlank { "https://rehan-radd.blogspot.com/" }.trim()
 
+    /**
+     * Plain-HTTP fallback address (Nov 2 owner order: the box's public IP over
+     * plain HTTP, used for one session when the HTTPS primary is unreachable).
+     * It is a fallback only: the deadman switch may hand it to the app as a
+     * session-only override, and it must never overwrite a saved HTTPS primary.
+     * It is NOT a release escape hatch — the release network policy still
+     * permits cleartext for loopback hosts only, so this address takes effect
+     * in debug builds and in a release only if the owner ever allows the host.
+     */
+    val fallbackServerUrl: String
+        get() = string("network.fallback_server_url")
+            .ifBlank { BuildConfig.BRAND_NETWORK_FALLBACK_SERVER_URL }.trim()
+
     val userAgent: String get() =
         "${string("network.user_agent.product").ifBlank { BuildConfig.BRAND_NETWORK_USER_AGENT_PRODUCT }}" +
             "/${versionName} (${string("network.user_agent.version_suffix")

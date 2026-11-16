@@ -43,6 +43,65 @@ open class ApiProvider @Inject constructor(
     @Volatile
     private var cachedApi: RaddStreamApi? = null
 
+    /**
+     * The address THIS PROCESS is using instead of the saved one, and the saved
+     * value the choice was made from.
+     *
+     * Session-only by design: a fallback to a plain-HTTP address is a decision
+     * about the network right now, not a preference. It lives only in memory,
+     * so a process death ends it and the next launch tries the saved address
+     * first again — and it is never written to settings.
+     *
+     * Keying it to the saved value is what keeps that cache honest. A viewer
+     * who changes server mid-session must land on the new one immediately, not
+     * stay frozen on a fallback decided from the old one: [resolveSessionUrl]
+     * drops the override the moment the saved value moves.
+     */
+    @Volatile
+    private var sessionDecision: SessionDecision? = null
+
+    private data class SessionDecision(val savedUrl: String, val sessionUrl: String)
+
+    /**
+     * Use [sessionUrl] for the rest of this process instead of [savedUrl], without
+     * persisting anything. Only the deadman switch calls this, with a candidate
+     * it already probed; both URLs are normalized here so the key comparison in
+     * [resolveSessionUrl] is exact.
+     */
+    fun useSessionServerUrl(savedUrl: String, sessionUrl: String) {
+        sessionDecision = SessionDecision(
+            savedUrl = normalizeServerUrl(savedUrl),
+            sessionUrl = normalizeServerUrl(sessionUrl),
+        )
+    }
+
+    /** Drop the session override, if any — the saved address is live again. */
+    fun clearSessionServerUrl() {
+        sessionDecision = null
+        // The cached client was built for the overridden address; drop it so
+        // the next read answers from the saved address instead of a cleared
+        // fallback.
+        cachedBaseUrl = null
+        cachedApi = null
+    }
+
+    /**
+     * The address this process actually talks to for [savedUrl]: the session
+     * override when one was decided from exactly this saved value, the saved
+     * value itself otherwise. A saved value that moved since the decision
+     * clears the override, so a mid-session server change is never shadowed
+     * by a stale fallback.
+     */
+    fun resolveSessionUrl(savedUrl: String): String {
+        val saved = runCatching { normalizeServerUrl(savedUrl) }.getOrNull() ?: savedUrl
+        val decision = sessionDecision ?: return saved
+        if (decision.savedUrl != saved) {
+            sessionDecision = null
+            return saved
+        }
+        return decision.sessionUrl
+    }
+
     fun forServer(serverUrl: String): RaddStreamApi {
         val baseUrl = normalizeServerUrl(serverUrl)
         cachedApi?.let { api ->
@@ -117,7 +176,7 @@ open class ApiProvider @Inject constructor(
     open suspend fun current(): RaddStreamApi {
         val savedUrl = settingsRepository.serverUrl.first()
             ?: throw IllegalStateException("Connect to a catalog server first.")
-        return forServer(savedUrl)
+        return forServer(resolveSessionUrl(savedUrl))
     }
 
     /**
@@ -138,10 +197,16 @@ open class ApiProvider @Inject constructor(
      * `currentBaseUrl()` with a failing read, to pin the repository's fallback.
      */
     open suspend fun currentBaseUrl(): String {
-        cachedBaseUrl?.let { return it }
+        cachedBaseUrl?.let { cached ->
+            // A session fallback decided from this exact saved value still
+            // applies; any other cached value is the live answer already.
+            val decision = sessionDecision
+            if (decision != null && cached == decision.savedUrl) return decision.sessionUrl
+            return cached
+        }
         val savedUrl = settingsRepository.serverUrl.first()
             ?: throw IllegalStateException("Connect to a catalog server first.")
-        return normalizeServerUrl(savedUrl)
+        return resolveSessionUrl(savedUrl)
     }
 }
 

@@ -1,6 +1,7 @@
 package com.raddstream.app.data
 
 import com.raddstream.app.di.CacheScope
+import com.raddstream.app.network.DynamicServerDiscovery
 import com.raddstream.app.player.AdCadenceGovernor
 import com.raddstream.app.repository.CatalogRepository
 import java.util.concurrent.atomic.AtomicBoolean
@@ -31,6 +32,7 @@ class RemoteConfigWatcher @Inject constructor(
     private val catalogRepository: CatalogRepository,
     private val settings: ServerSettingsRepository,
     private val adCadence: AdCadenceGovernor,
+    private val discovery: DynamicServerDiscovery,
     @CacheScope private val scope: CoroutineScope,
 ) {
 
@@ -77,6 +79,15 @@ class RemoteConfigWatcher @Inject constructor(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
+            // The configured server did not answer. This is the one place the
+            // deadman switch is allowed to run: a failure of the poll we
+            // already make, on the background scope the loop already owns —
+            // never on launch, never on a timer of its own. The switch
+            // enforces its own 30-minute cooldown and its own persistence
+            // rule (HTTPS may overwrite the saved primary; plain HTTP stays
+            // session-only), and it never throws into this loop. A failed
+            // poll still leaves the last good answer in place.
+            runCatching { discovery.discoverAndPersistWorkingServer() }
             return
         }
         if (!config.success) return
