@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.SemanticsProperties
-import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
@@ -82,8 +81,11 @@ class MyListEmptyContentTest {
         // would fail the poster's >100dp floor; they announce themselves as
         // "Save <title> to My List" / "Remove <title> from My List".
         val tiles = compose.onAllNodes(hasClickAction()).fetchSemanticsNodes().filter { node ->
-            val description = node.config.getOrNull(SemanticsProperties.ContentDescription)
-                ?.joinToString(" ") ?: ""
+            // SemanticsConfiguration has no getOrNull in this Compose
+            // version — getOrElse with an empty default is the read.
+            val description = node.config
+                .getOrElse(SemanticsProperties.ContentDescription) { emptyList() }
+                .joinToString(" ")
             !description.startsWith("Save ") && !description.startsWith("Remove ")
         }
         assertEquals(popular.size, tiles.size)
