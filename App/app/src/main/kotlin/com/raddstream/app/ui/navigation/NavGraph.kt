@@ -795,6 +795,7 @@ fun RaddStreamNavGraph(
                         navController.navigate(Screen.Search.createRoute(actor))
                     },
                     onPostClick = { similar -> navController.navigateToPost(similar) },
+                    onOpenLanguages = { navController.navigate(Screen.Languages.route) },
                 )
             }
 

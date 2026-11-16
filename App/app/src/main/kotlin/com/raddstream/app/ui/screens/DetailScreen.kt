@@ -179,6 +179,8 @@ fun DetailScreen(
     onActorClick: (String) -> Unit = {},
     /** F18: tap on a tile in the Similar titles rail. */
     onPostClick: (Post) -> Unit = {},
+    /** Detail review (Nov 2026, P1): the audio line opens Languages. */
+    onOpenLanguages: () -> Unit = {},
     /** Session 121 (P-26): the hero's Watch Now — start the best print once the title loads. */
     autoplay: Boolean = false,
     viewModel: DetailViewModel = hiltViewModel(),
@@ -465,6 +467,7 @@ fun DetailScreen(
                     shareTitle(context, post) { viewModel.reportShare(post.workRef) }
                 },
                 onReport = { showReportDialog = true },
+                onOpenLanguages = onOpenLanguages,
                 contentPadding = detailPadding,
             )
         }
@@ -904,6 +907,8 @@ internal fun DetailContent(
     onShare: () -> Unit,
     /** Open the broken-stream report — the utility row's Report action. */
     onReport: () -> Unit = {},
+    /** Open the Languages screen — the audio line's tap target. */
+    onOpenLanguages: () -> Unit = {},
     contentPadding: PaddingValues,
 ) {
     val allPrints = (workPrints + seasons.flatMap { it.episodes.flatMap { e -> e.prints } } + seasons.flatMap { it.packedPrints })
@@ -1016,14 +1021,32 @@ internal fun DetailContent(
         // One consolidated "Audio & Subtitles" line, built from the
         // prints' own data — the per-print badges stay on the cards for
         // the few who expand them, but the discovery surface is this line.
+        // Detail review (Nov 2026, P1): the line is tappable — it opens
+        // the Languages screen, where the viewer picks their audio and
+        // subtitle languages. The chevron is the affordance; the whole
+        // row is the target, 48dp tall.
         audioSubtitleLine(allPrints)?.let { line ->
             item {
-                Text(
-                    text = line,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = pageSides,
-                )
+                Row(
+                    modifier = pageSides
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .clickable(onClick = onOpenLanguages, role = Role.Button),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = line,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Icon(
+                        Icons.Default.ChevronRight,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
 
@@ -2289,9 +2312,17 @@ internal fun audioSubtitleLine(prints: List<RankedPrint>): String? {
     val subtitles = prints.filter { it.subtitlesAvailable }
         .flatMap { it.subtitleLangs }.map { it.trim() }
         .filter { it.isNotBlank() }.distinct()
+    // Detail review (Nov 2026, P1): the first real surround layout
+    // across the prints — "5.1" or "7.1" only, never "unknown". Prints
+    // arrive best-first, so this is the best print's layout when it
+    // has one.
+    val layout = prints.firstNotNullOfOrNull { it.channelLayout }
     if (audio.isEmpty() && subtitles.isEmpty()) return null
     return buildString {
-        if (audio.isNotEmpty()) append("Audio: ").append(audio.joinToString(", "))
+        if (audio.isNotEmpty()) {
+            append("Audio: ").append(audio.joinToString(", "))
+            layout?.let { append(" · ").append(it) }
+        }
         if (subtitles.isNotEmpty()) {
             if (isNotEmpty()) append(" · ")
             append("Subtitles: ").append(subtitles.joinToString(", "))

@@ -342,8 +342,12 @@ object ReleaseLabelParsing {
                 rest = mask(rest, listOf(match.range.first until match.range.last + 1))
             }
         }
+        // Detail review (Nov 2026, P1): 7.1 is its own layout — the old
+        // code mapped it to "5.1", so a 7.1 print was mislabelled and
+        // the audio line could never say 7.1. The digit is captured now.
+        val surround = Regex("""\b([57])\s?\.\s?1\b""").find(text)?.groupValues?.getOrNull(1)
         val layout = when {
-            Regex("""\b[57]\s?\.\s?1\b""").containsMatchIn(text) -> "5.1"
+            surround != null -> "$surround.1"
             Regex("""\b2\s?\.\s?0\b|\bstereo\b""").containsMatchIn(text) -> "2.0"
             else -> "unknown"
         }
@@ -460,7 +464,7 @@ object ReleaseLabelParsing {
             else -> 0
         }
         if (audio.dualAudio) score += 25
-        if (audio.channelLayout == "5.1") score += 15
+        if (audio.channelLayout == "5.1" || audio.channelLayout == "7.1") score += 15
         if (edition in setOf("director_cut", "extended", "remastered", "restored")) score += 15
         if (watermarked) score -= 60
         if (sourceTag in CAM_FAMILY) score = minOf(score, CAM_FAMILY_CEILING)

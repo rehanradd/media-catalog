@@ -170,6 +170,14 @@ data class RankedPrint(
     val subtitlesHardcoded: Boolean get() = descriptor.subtitlesHardcoded
     val subtitleLangs: List<String> get() = descriptor.subtitleLangs
 
+    /**
+     * Detail review (Nov 2026, P1): the print's real surround layout —
+     * "5.1" or "7.1" only. Stereo ("2.0"), unknown and absent layouts
+     * read as null: the audio line appends a layout only when it is a
+     * real surround claim, never "unknown".
+     */
+    val channelLayout: String? get() = channelLayoutLabel(descriptor.channelLayout)
+
     /** The surviving print-quality axis (0..1000); never comparable with a link score. */
     val qualityScore: Int get() = descriptor.qualityScore
 
@@ -224,6 +232,15 @@ data class RankedPrint(
             return parts.joinToString(" · ")
         }
 }
+
+/**
+ * Detail review (Nov 2026, P1): a channel-layout word the audio line
+ * may print — a real surround layout only ("5.1" / "7.1"). Stereo,
+ * "unknown" and absent layouts are null, so the line never reads
+ * "· unknown". Pure so DetailAudioLineTest pins it.
+ */
+internal fun channelLayoutLabel(layout: String?): String? =
+    layout?.trim()?.takeIf { it == "5.1" || it == "7.1" }
 
 /** A single episode with its ranked prints. Packed seasons attach their pack here. */
 data class EpisodeGroup(
