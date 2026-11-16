@@ -90,7 +90,7 @@ class DetailRedesignTest {
                     resume = null,
                     onPlayResume = {},
                     episodeProgress = emptyMap(),
-                    includedLine = null,
+                    includedPill = null,
                     deadEndReason = deadEndReason,
                     selectedSeason = selectedSeason,
                     onSelectSeason = {},

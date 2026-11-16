@@ -433,7 +433,7 @@ fun DetailScreen(
                 /** Phase 7 (D1): "Start over" — forget where viewing stopped. */
                 onStartOver = viewModel::removeProgress,
                 episodeProgress = state.episodeProgress,
-                includedLine = state.includedLine,
+                includedPill = state.includedPill,
                 deadEndReason = state.deadEndReason,
                 downloadedHandles = state.downloadedHandles,
                 selectedSeason = state.selectedSeason,
@@ -868,8 +868,8 @@ internal fun DetailContent(
     onStartOver: () -> Unit = {},
     /** Per-episode progress, keyed by (season, episode). */
     episodeProgress: Map<Pair<Int, Int>, EpisodeProgress>,
-    /** What this viewer can watch of this title, in one line — null when it has no prints. */
-    includedLine: String?,
+    /** What this viewer can watch of this title, as a pill — null when it has no prints. */
+    includedPill: String?,
     /** Why this title cannot be played, in the viewer's words — null when it can. */
     deadEndReason: String? = null,
     /** Handles of downloads already on this device (READY rows only). */
@@ -953,7 +953,7 @@ internal fun DetailContent(
                 post = post,
                 capabilities = capabilities,
                 seasonCount = if (isSeries) seasons.size else 0,
-                includedLine = includedLine,
+                includedPill = includedPill,
                 pageSides = pageSides,
             )
         }
@@ -987,7 +987,7 @@ internal fun DetailContent(
         // Disney+ both put the synopsis directly under the actions, and
         // ours buried it under a quality ladder and two upsell cards.
         // The ladder moves below the synopsis; the cards are gone (the
-        // rung's own VIP pill is the lock, and the hero's included line
+        // rung's own VIP pill is the lock, and the hero's included pill
         // already states the tier).
         val synopsis = post.synopsis?.takeIf { it.isNotBlank() }
         if (synopsis != null) {
@@ -1141,7 +1141,16 @@ internal fun DetailContent(
                 if (workPrints.size > 3) {
                     item {
                         Box(pageSides) {
-                            TextButton(onClick = { showAllFiles = !showAllFiles }) {
+                            TextButton(
+                                onClick = { showAllFiles = !showAllFiles },
+                                // Detail review (Nov 2026, P1): a TextButton's
+                                // default 12dp side padding indents the label
+                                // ~28dp from the body text above it — the
+                                // expander reads as a nested item, not a row
+                                // of this list. Zero it here and on the
+                                // synopsis, cast and episode expanders below.
+                                contentPadding = PaddingValues(0.dp),
+                            ) {
                                 Text(
                                     if (showAllFiles) "Show fewer files"
                                     else "Show all ${workPrints.size} files",
@@ -1183,7 +1192,7 @@ private fun DetailHeroSection(
     post: PostDetail,
     capabilities: List<String>,
     seasonCount: Int,
-    includedLine: String?,
+    includedPill: String?,
     /** The page's side padding — the fallback pads itself with it; the bleed does not. */
     pageSides: Modifier,
 ) {
@@ -1198,7 +1207,7 @@ private fun DetailHeroSection(
                 post = post,
                 capabilities = capabilities,
                 seasonCount = seasonCount,
-                includedLine = includedLine,
+                includedPill = includedPill,
             )
         }
         return
@@ -1237,7 +1246,7 @@ private fun DetailHeroSection(
             post = post,
             capabilities = capabilities,
             seasonCount = seasonCount,
-            includedLine = includedLine,
+            includedPill = includedPill,
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .then(pageSides)
@@ -1258,7 +1267,10 @@ internal fun detailMetaParts(post: PostDetail, seasonCount: Int): List<String> =
         // the guarded choke point — the old inline `takeIf { it > 0 }`
         // let an impossible year straight onto the header.
         post.yearLabel,
-        post.typeLabel,
+        // Detail review (Nov 2026, P1): "Movie" adds nothing — the page
+        // IS a movie. Any other type word stays: a series is named by
+        // its type here and counted by its seasons below.
+        post.typeLabel?.takeIf { it != "Movie" },
         // P-5 (Session 121): normalize again at the render site — a language that
         // arrives as a raw JSON array string ("[\"Tamil\", \"English\"]") reads
         // "Tamil, English". Idempotent with the mapper-side normalization.
@@ -1271,7 +1283,7 @@ internal fun detailMetaParts(post: PostDetail, seasonCount: Int): List<String> =
     )
 
 /**
- * Detail review (Nov 2026, P1): the title + meta + included line +
+ * Detail review (Nov 2026, P1): the title + meta + included pill +
  * rating + genre chips, shared by the full-bleed hero overlay and the
  * no-backdrop poster header — one block, two placements, so a fix to
  * the meta or the chips lands in both.
@@ -1281,7 +1293,7 @@ private fun DetailTitleBlock(
     post: PostDetail,
     capabilities: List<String>,
     seasonCount: Int,
-    includedLine: String?,
+    includedPill: String?,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1306,8 +1318,26 @@ private fun DetailTitleBlock(
         if (meta.isNotEmpty()) {
             Text(meta.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        includedLine?.let { line ->
-            Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
+        includedPill?.let { pill ->
+            // Detail review (Nov 2026, P1): the included line is a pill
+            // now, not a sentence. VIP draws the eye in the rung pill's
+            // own colours (primaryContainer); a free viewer reads the
+            // cap. The ViewModel is the only producer — it emits "VIP"
+            // or "Free · up to X" — so the VIP check is an exact match
+            // on its own word.
+            Pill(
+                text = pill,
+                backgroundColor = if (pill == "VIP") {
+                    MaterialTheme.colorScheme.primaryContainer
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant
+                },
+                contentColor = if (pill == "VIP") {
+                    MaterialTheme.colorScheme.onPrimaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
         }
         UserWords.displayRating(post.imdbRating)?.let { rating ->
             RatingBadge(rating = "$rating IMDb")
@@ -1367,8 +1397,8 @@ private fun PosterHeader(
     capabilities: List<String>,
     /** Seasons, for a series — 0 for a movie, which has none to count. */
     seasonCount: Int = 0,
-    /** What this viewer can watch of this title, in one line — null when it has no prints. */
-    includedLine: String? = null,
+    /** What this viewer can watch of this title, as a pill — null when it has no prints. */
+    includedPill: String? = null,
 ) {
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         // The poster's own colour, sampled once it loads: a 1dp border in the
@@ -1417,7 +1447,7 @@ private fun PosterHeader(
             post = post,
             capabilities = capabilities,
             seasonCount = seasonCount,
-            includedLine = includedLine,
+            includedPill = includedPill,
             modifier = Modifier.weight(1f),
         )
     }
@@ -1714,7 +1744,10 @@ private fun ExpandableSynopsis(text: String) {
             onTextLayout = { result -> hasOverflow = result.hasVisualOverflow },
         )
         if (expanded || hasOverflow) {
-            TextButton(onClick = { expanded = !expanded }) {
+            TextButton(
+                onClick = { expanded = !expanded },
+                contentPadding = PaddingValues(0.dp),
+            ) {
                 Text(if (expanded) "Show less" else "Read more")
             }
         }
@@ -1758,7 +1791,10 @@ private fun CastSection(cast: List<String>, onActorClick: (String) -> Unit) {
             }
         }
         if (cast.size > 6) {
-            TextButton(onClick = { expanded = !expanded }) {
+            TextButton(
+                onClick = { expanded = !expanded },
+                contentPadding = PaddingValues(0.dp),
+            ) {
                 Text(
                     if (expanded) "Show less" else "and ${cast.size - 6} more",
                     style = MaterialTheme.typography.bodySmall,
@@ -2190,7 +2226,10 @@ internal fun EpisodeRow(
         // opening files to watch, and the word matches the movie branch's
         // expander.
         if (episode.prints.size > 1 && !canChooseQuality) {
-            TextButton(onClick = { expanded = !expanded }) {
+            TextButton(
+                onClick = { expanded = !expanded },
+                contentPadding = PaddingValues(0.dp),
+            ) {
                 Text(if (expanded) "Hide files" else "Show all ${episode.prints.size} files")
             }
         }

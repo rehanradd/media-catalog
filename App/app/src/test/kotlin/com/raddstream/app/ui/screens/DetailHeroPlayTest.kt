@@ -117,7 +117,7 @@ class DetailHeroPlayTest {
                     resume = null,
                     onPlayResume = {},
                     episodeProgress = emptyMap(),
-                    includedLine = null,
+                    includedPill = null,
                     deadEndReason = deadEndReason,
                     selectedSeason = null,
                     onSelectSeason = {},

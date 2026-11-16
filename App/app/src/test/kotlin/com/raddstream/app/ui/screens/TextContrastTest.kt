@@ -95,7 +95,7 @@ class TextContrastTest {
 
     @Test
     fun detailHeaderMetaOnBackgroundMeetsContrastFloor() {
-        // The meta line ("2022 · Movie · 1 season"): onSurfaceVariant on
+        // The meta line ("2022 · 1 season"): onSurfaceVariant on
         // background. Same run-9 artifact as the title above.
         val ratio = contrastRatio(RaddMistOnInk, RaddInk950)
         assertTrue(
@@ -105,12 +105,14 @@ class TextContrastTest {
     }
 
     @Test
-    fun detailHeaderIncludedLineOnBackgroundMeetsContrastFloor() {
-        // The "Included with VIP" line: primary on background. Same run-9
+    fun detailHeaderIncludedPillMeetsContrastFloor() {
+        // Detail review (Nov 2026, P1): the included line is a pill
+        // now — the VIP pill is onPrimaryContainer on
+        // primaryContainer (10.3:1 AAA, see Color.kt). Same run-9
         // artifact as the title above.
-        val ratio = contrastRatio(RaddCurrent500, RaddInk950)
+        val ratio = contrastRatio(RaddOnCurrentContainer, RaddCurrentContainerDark)
         assertTrue(
-            "detail header included line on background is only $ratio:1, under the 4.5:1 floor",
+            "detail header included pill is only $ratio:1, under the 4.5:1 floor",
             ratio >= 4.5f,
         )
     }

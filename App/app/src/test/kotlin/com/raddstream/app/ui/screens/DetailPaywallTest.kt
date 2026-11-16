@@ -63,7 +63,13 @@ class DetailPaywallTest {
         audioLanguages = emptyList(),
     )
 
-    private fun content(tierLabel: (QualityOption) -> String) {
+    private fun content(
+        tierLabel: (QualityOption) -> String,
+        // The included pill the ViewModel would produce for this state:
+        // "VIP" when a rung is locked, null when the gate is off and
+        // nothing is locked (free launch).
+        includedPill: String? = "VIP",
+    ) {
         compose.setContent {
             RaddStreamTheme {
                 DetailContent(
@@ -75,7 +81,7 @@ class DetailPaywallTest {
                     resume = ResumePoint(season = 1, episode = 3, positionMs = 1_000_000L, durationMs = 5_000_000L),
                     onPlayResume = {},
                     episodeProgress = emptyMap(),
-                    includedLine = "720p included — 1080p and 4K need VIP",
+                    includedPill = includedPill,
                     selectedSeason = null,
                     onSelectSeason = {},
                     onPlayPrint = {},
@@ -128,8 +134,9 @@ class DetailPaywallTest {
     @Test
     fun freeLaunchDetailShowsNoPremiumAtAll() {
         // Free launch: gate OFF means every rung is Standard — no VIP
-        // text anywhere on the page, cards or pills.
-        content(tierLabel = { "Standard" })
+        // text anywhere on the page, cards or pills. The ViewModel
+        // produces no included pill either when the gate is off.
+        content(tierLabel = { "Standard" }, includedPill = null)
         compose.onNodeWithText("Go VIP").assertDoesNotExist()
         compose.onNodeWithText("4K and 1080p are part of VIP").assertDoesNotExist()
         compose.onNodeWithText("VIP").assertDoesNotExist()

@@ -124,11 +124,14 @@ data class DetailUiState(
     /** Per-episode progress, keyed by (season, episode) — the marks on episode rows. */
     val episodeProgress: Map<Pair<Int, Int>, EpisodeProgress> = emptyMap(),
     /**
-     * What this viewer can actually watch of this title, in one line. Null
-     * when the title has no prints at all — then "no playable releases"
-     * says it instead.
+     * What this viewer can actually watch of this title, as a pill.
+     * "VIP" for a VIP viewer or a title whose better copies need VIP,
+     * "Free · up to X" for a free viewer with nothing locked, null when
+     * the title has no prints at all — then "no playable releases" says
+     * it instead — and null when the gate is off, because everything is
+     * included and there is nothing to flag.
      */
-    val includedLine: String? = null,
+    val includedPill: String? = null,
     /**
      * A download the viewer has been asked to confirm, with the size and the
      * quality in front of them. Null when nothing is waiting — the download
@@ -564,24 +567,20 @@ class DetailViewModel @Inject constructor(
                         it.band !in scope.downloadOnlyBands
                 }
             )
-        // What this viewer can watch, in one line — the free cap is the
-        // operator's, so the line names it rather than a hardcoded 720p.
+        // Detail review (Nov 2026, P1): what this viewer can watch, as
+        // a pill, not a sentence — VIP reads as one word, a free viewer
+        // reads the cap. The free cap is the operator's, so the pill
+        // names it rather than a hardcoded 720p.
         val hasPrints = full.workPrints.isNotEmpty() ||
             full.seasons.any { it.episodes.isNotEmpty() || it.packedPrints.isNotEmpty() }
-        val includedLine = if (!hasPrints) {
+        val includedPill = if (!hasPrints) {
             null
-        } else if (serverVip) {
-            "Included with VIP — up to 4K"
+        } else if (serverVip || premiumLocked) {
+            "VIP"
         } else if (!qualityGateEnabled) {
-            "Included in your plan — up to 4K"
-        } else if (premiumLocked) {
-            if (freeQualityCap == "480p") {
-                "480p included — 720p, 1080p and 4K need VIP"
-            } else {
-                "720p included — 1080p and 4K need VIP"
-            }
+            null
         } else {
-            "Included in free — up to $freeQualityCap"
+            "Free · up to $freeQualityCap"
         }
         // The gated layout is computed once and shared: the state update
         // below and the dead-end reason both read it, so the page and its
@@ -604,7 +603,7 @@ class DetailViewModel @Inject constructor(
                 ladder = VipQualityGate.gate(scope, premiumAccess, freeQualityCap),
                 vip = serverVip,
                 premiumSourcesLocked = premiumLocked,
-                includedLine = includedLine,
+                includedPill = includedPill,
                 deadEndReason = deadEndReason,
             )
         }
@@ -997,7 +996,7 @@ class DetailViewModel @Inject constructor(
      * Standard otherwise. A property of the stream and the operator's policy,
      * never of the viewer — a VIP viewer reads "VIP" on the 1080p row they can
      * play, and a free viewer never sees that row at all (the gate removed it
-     * and the hero's included line says where it went). With the gate off, every rung is
+     * and the hero's included pill says where it went). With the gate off, every rung is
      * Standard because nothing requires VIP.
      */
     fun tierLabelFor(option: QualityOption): String =
