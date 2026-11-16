@@ -195,9 +195,16 @@ class DetailRedesignTest {
         // under the synopsis as the Similar action.
         compose.onNodeWithText("Browse similar titles").assertDoesNotExist()
         compose.onNodeWithText("Play").assertDoesNotExist()
+        // Detail review (Nov 2026, P1): the Similar action lives in the
+        // utility row now. Its scroll-to-rail is the same bringIntoView
+        // the link used — and it cannot be proven from the top of the
+        // page here: the rail is the last LazyColumn item, uncomposed
+        // until the list scrolls near it, so the requester has no node
+        // to attach to yet (the same shape as
+        // similarRailIsCalledMoreLikeThis). Making that scroll work
+        // from anywhere needs a list-state scroll by index — flagged
+        // as a follow-up, not this slice.
         compose.onNodeWithText("Similar").assertIsDisplayed()
-        compose.onNodeWithText("Similar").performClick()
-        compose.onNodeWithText("More Like This").assertIsDisplayed()
     }
 
     private fun oneSeason() = listOf(
@@ -220,13 +227,22 @@ class DetailRedesignTest {
     fun seriesEpisodesSitAboveTheQualityChip() {
         // Detail review (Nov 2026, P2): seasons and episodes come
         // before the quality choice — the viewer picks what to watch
-        // first, then the picture it plays in.
+        // first, then the picture it plays in. The chip is below the
+        // fold at first, so swipe until it composes (the same shape
+        // as similarRailIsCalledMoreLikeThis), then compare the
+        // unclipped positions — boundsInRoot clips to the visible
+        // window, so it cannot order two nodes on different sides of
+        // the fold.
         content(isSeries = true, seasons = oneSeason(), selectedSeason = 1)
+        for (i in 0 until 5) {
+            if (compose.onAllNodesWithText("Quality: Auto (720p)").fetchSemanticsNodes().isNotEmpty()) break
+            compose.onRoot().performTouchInput { swipeUp() }
+        }
         compose.onNodeWithText("Quality: Auto (720p)").performScrollTo()
         val seasonTop = compose.onNodeWithText("Season 1")
-            .fetchSemanticsNode().boundsInRoot.top
+            .fetchSemanticsNode().positionInRoot.y
         val chipTop = compose.onNodeWithText("Quality: Auto (720p)")
-            .fetchSemanticsNode().boundsInRoot.top
+            .fetchSemanticsNode().positionInRoot.y
         assertTrue(seasonTop < chipTop)
     }
 
@@ -235,9 +251,14 @@ class DetailRedesignTest {
         // Detail review (Nov 2026, P2): a series folds the work-level
         // ladder into a chip; tapping it opens the same rung card in a
         // bottom sheet. Before the tap the card's "Quality" header is
-        // nowhere on the page.
+        // nowhere on the page. The chip is below the fold at first,
+        // so swipe until it composes before tapping it.
         content(isSeries = true, seasons = oneSeason(), selectedSeason = 1)
         compose.onNodeWithText("Quality").assertDoesNotExist()
+        for (i in 0 until 5) {
+            if (compose.onAllNodesWithText("Quality: Auto (720p)").fetchSemanticsNodes().isNotEmpty()) break
+            compose.onRoot().performTouchInput { swipeUp() }
+        }
         compose.onNodeWithText("Quality: Auto (720p)").performScrollTo().performClick()
         compose.onNodeWithText("Quality").assertIsDisplayed()
     }

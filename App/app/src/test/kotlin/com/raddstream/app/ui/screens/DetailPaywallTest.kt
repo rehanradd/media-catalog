@@ -125,9 +125,9 @@ class DetailPaywallTest {
     @Test
     fun rungVipTierPillStillShows() {
         content(tierLabel = { if (it.band == "1080p") "VIP" else "Standard" })
-        compose.onAllNodes(hasContentDescription("VIP tier, Full HD · X264"))
+        compose.onAllNodes(hasContentDescription("VIP tier, 1080p Full HD"))
             .assertCountEquals(1)
-        compose.onAllNodes(hasContentDescription("Standard tier, HD - X264"))
+        compose.onAllNodes(hasContentDescription("Standard tier, 720p HD"))
             .assertCountEquals(1)
     }
 

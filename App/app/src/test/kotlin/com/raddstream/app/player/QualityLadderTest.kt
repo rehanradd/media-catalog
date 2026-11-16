@@ -77,7 +77,7 @@ class QualityLadderTest {
     fun `one rung is one row and the server order is kept`() {
         val scope = QualityLadder.from(ladder)
         assertEquals(listOf("2160p", "1080p", "720p", "480p"), scope.options.map { it.band })
-        assertEquals(listOf("4K Ultra HD", "Full HD", "HD", "Good"), scope.options.map { it.title })
+        assertEquals(listOf("4K Ultra HD", "1080p Full HD", "720p HD", "480p"), scope.options.map { it.title })
         assertEquals("1080p", scope.autoBand)
         assertEquals("1080p", scope.autoOption?.band)
     }

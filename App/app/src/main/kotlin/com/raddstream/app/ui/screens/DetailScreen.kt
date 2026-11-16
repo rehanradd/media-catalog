@@ -1303,7 +1303,7 @@ private fun DetailHeroSection(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(16f / 9f),
+                .aspectRatio(CardGeometry.WIDE_ART_ASPECT),
         ) {
             CatalogImage(
                 url = backdropUrl,
