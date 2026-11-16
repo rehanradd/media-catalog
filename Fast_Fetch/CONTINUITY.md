@@ -97,3 +97,5 @@ The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete i
 - 🎯 Current Operational State → [`checkpoints/20261030-pre-diet-state-and-roadmap.md`](checkpoints/20261030-pre-diet-state-and-roadmap.md)
 
 - 📌 Next Action Items (Production & App Layer Roadmap) → [`checkpoints/20261030-pre-diet-state-and-roadmap.md`](checkpoints/20261030-pre-diet-state-and-roadmap.md)
+
+- Playback beacon (2026-11-16, main 790e0474): aggregates-only per-(host x net) counters in usage_host_quality, ridden on POST /api/v2/account/progress as playback_beacon; 30-day window, 0.9/day decay, n>=20 floor. No new endpoint. Ranking use comes later.
