@@ -271,6 +271,9 @@ jobs:
       - name: 🧪 test_series_filter.py
         run: python3 -S Fast_Fetch/test_series_filter.py
 
+      - name: 🧪 test_launch_phase0.py
+        run: python3 -S Fast_Fetch/test_launch_phase0.py
+
       - name: 🧪 test_vidout.py
         run: python3 -S Fast_Fetch/test_vidout.py
 

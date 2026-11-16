@@ -158,9 +158,11 @@ STREAK_PASS_SECONDS = DAY_SECONDS
 #: The 24-hour VIP pass costs 500 coins by the owner's daily check-in plan
 #: (2026-11-07): ten days of check-ins for one day of VIP, so a pass is earned,
 #: not given away after two mornings. The weekend and monthly tiers keep their
-#: shipped prices; the operator re-prices any tier with its knob
+#: shipped prices — the canonical 1200/5000 the panel row and the live catalog
+#: agree on (launch plan Phase 0, G-5); the old 70/200 were the pre-audit
+#: shipped prices. The operator re-prices any tier with its knob
 #: (`coin_redeem_day`, `coin_redeem_weekend`, `coin_redeem_monthly`).
-REDEEM_COIN_COSTS = {"day": 500, "weekend": 70, "monthly_vip": 200}
+REDEEM_COIN_COSTS = {"day": 500, "weekend": 1200, "monthly_vip": 5000}
 
 #: One direct download — a free viewer skipping the web shortener for one
 #: movie — costs 100 coins by the same plan. The operator re-prices it with

@@ -52,9 +52,15 @@ MONETIZATION_FIELDS = [
     "feature_quality_gate",
 ] + COIN_REDEEM_FIELDS
 
+# Canonical tuning defaults (launch plan Phase 0, G-7): one value per knob,
+# and `panel_feed.TUNING_KNOBS` / `TABS_DEFAULT` agree with it. `warmup_count`
+# is 200, not 50 — the prefetch selector picks the top 200 titles and the old
+# cap throttled the sweep to 50 links (Player Fix v2, `panel_feed.py`).
+# `tabs` includes `live_tv`, matching `panel_feed.TABS_DEFAULT` and the
+# panel's own stored default.
 TUNING_DEFAULTS = {
     "resolver_concurrency": 2, "candidate_cap": 10, "cache_ttl_h": 6,
-    "warmup_count": 50, "warmup_interval_h": 24,
+    "warmup_count": 200, "warmup_interval_h": 24,
     "rate_limit_play_per_min": 30, "import_cap": 25,
     "import_concurrency": 1, "prefetch_queue": 100,
     "prefetch_concurrency": 1, "hero_max": 6, "section_cap": 20,
@@ -63,7 +69,7 @@ TUNING_DEFAULTS = {
     "theme_mode": "dark", "theme_accent": "",
     "theme_dynamic_color": 0, "theme_hero_autoplay": 1,
     "theme_hero_interval_s": 5,
-    "tabs": "home,search,my_list,settings",
+    "tabs": "home,search,my_list,settings,live_tv",
     "disclaimer_text": "", "disclaimer_version": 0,
     "disclaimer_email": "radddao1@gmail.com",
 }

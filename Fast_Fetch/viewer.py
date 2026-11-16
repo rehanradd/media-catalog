@@ -7779,7 +7779,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 payload["theme"] = panel_feed.read_theme()
                 payload["tabs"] = panel_feed.read_tabs()
                 payload["disclaimer"] = panel_feed.read_disclaimer()
-                payload["free_quality_cap"] = panel_feed.read_free_quality_cap()
                 payload["min_version_code"] = panel_feed.read_min_version()
                 # The force-update block rides the same body: the latest
                 # APK the operator published, whether an older app must

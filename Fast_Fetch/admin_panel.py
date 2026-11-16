@@ -1779,18 +1779,20 @@ MONETIZATION_FIELDS = (
     ("feature_downloads", "Background Downloads", _FLAG, 1),
     ("feature_pure_cinema", "Pure Cinema Mode", _FLAG, 1),
     ("feature_chromecast", "Chromecast", _FLAG, 1),
-    # Default ON since the security release: the gate is the server's side of
-    # the 720p free cap the client already shows, and a signed handle alone
-    # used to play 1080p/4K without any payment. It was off by default while
-    # the resolver was unproven, because a gate that refuses premium plays
-    # on a broken resolver is an availability failure; the resolver is now
-    # proven (Sessions 103–104b), so a fresh deployment gates premium
-    # quality and the operator turns it off in /admin if the business ever
-    # wants it off. `_ensure_monetization` only adds a missing row, so an
-    # existing deployment keeps whatever its operator set — the live catalog
-    # row stays 0 until the operator flips it (or the panel's Monetization
-    # page does), and that flip is a gate-time step, not a code change.
-    ("feature_quality_gate", "Charge VIP for 1080p/4K", _FLAG, 1),
+    # Canonical default OFF (launch plan Phase 0, G-1): the live catalog row,
+    # the panel v2 DDL (`AdminV2/admin_v2/store.py`) and the app default
+    # (`VipRemoteConfig.kt:327`) all say 0, and this field was the outlier.
+    # A fresh deployment must not gate 1080p/4K by surprise — the operator
+    # turns the gate ON in the panel when the business wants it on.
+    # `_ensure_monetization` only adds a missing row, so an existing
+    # deployment keeps whatever its operator set.
+    ("feature_quality_gate", "Charge VIP for 1080p/4K", _FLAG, 0),
+    # The free cap lives on this row (launch plan Phase 0, G-8): the served
+    # cap is the catalog value, not `tuning_settings`. A TEXT column is
+    # created `DEFAULT ''` (see `_column_ddl`), so a row that predates this
+    # column reads back `''` and `remote_config` publishes the field default
+    # below — the same rule `streak_tz` already relies on.
+    ("free_quality_cap", "Free quality cap (480p/720p)", _TEXT, "720p"),
     # ---- engagement pillars ----------------------------------------------------
     # The four knobs `docs/MONETIZATION_PILLARS_SCHEMA.md` §2 reserves for the
     # operator, so an ad cadence, a coin price, a streak grant and the PKR pass
@@ -1813,8 +1815,12 @@ MONETIZATION_FIELDS = (
     ("coin_per_rewarded_ad", "Coins per rewarded ad view", _INT, 5),
     ("rewarded_daily_cap", "Rewarded ads counted per local day", _INT, 10),
     ("coin_redeem_day", "Coins: one-day pass", _INT, 500),
-    ("coin_redeem_weekend", "Coins: weekend pass", _INT, 70),
-    ("coin_redeem_monthly", "Coins: 30-day VIP pass", _INT, 200),
+    # Canonical prices (launch plan Phase 0, G-5): the panel row and the live
+    # catalog agree on 1200/5000; the old 70/200 were the pre-audit shipped
+    # prices and disagreed with both. `engagement.REDEEM_COIN_COSTS` is the
+    # fallback for a zeroed/missing knob and carries the same numbers.
+    ("coin_redeem_weekend", "Coins: weekend pass", _INT, 1200),
+    ("coin_redeem_monthly", "Coins: 30-day VIP pass", _INT, 5000),
     ("coin_redeem_download", "Coins: direct download pass", _INT, 100),
     ("coin_share", "Coins: share a movie (once a day)", _INT, 25),
     ("coin_finish_watch", "Coins: finish watching a title", _INT, 15),
@@ -2314,6 +2320,19 @@ def _engagement_public(values):
     return view
 
 
+def _resolve_free_quality_cap(values):
+    """The best picture a free viewer may play: "480p" or "720p".
+
+    The catalog row is the single source (launch plan Phase 0, G-8). A TEXT
+    column reads back "" on a row that predates it, and anything else — a
+    typo, an older value, a missing key — answers the shipped "720p", never
+    a stricter cap the operator did not ask for. Same allowed values as the
+    panel's draft validation (`services.py:1241-1242`).
+    """
+    cap = str(values.get("free_quality_cap") or "").strip()
+    return cap if cap in ("480p", "720p") else "720p"
+
+
 def remote_config(conn):
     """The app-facing projection: what a phone needs to take a payment and to
     hang a sponsor card, to decide whether an offered APK is the file the operator
@@ -2386,6 +2405,10 @@ def remote_config(conn):
         # guess whether `0` and `false` mean different things.
         "settings_unavailable": unavailable,
         "maintenance_mode": flag("maintenance_mode"),
+        # The free cap rides the same body the gate reads: the catalog row's
+        # value (G-8), never the tuning_settings mirror — the viewer overlay
+        # that used to replace this key is gone.
+        "free_quality_cap": _resolve_free_quality_cap(values),
         "apk_update_url": shown("apk_update_url"),
         # Flat and additive, never nested: `VipRemoteConfig.kt` decodes
         # `apk_update_url` at the top level of this body and every phone caches it

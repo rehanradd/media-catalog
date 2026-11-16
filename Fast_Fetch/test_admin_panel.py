@@ -713,21 +713,21 @@ class Monetization(Fixture):
     # ── the app's remote controls ─────────────────────────────────────────
     def test_remote_controls_have_honest_defaults_before_any_save(self):
         """An unconfigured deployment is open for business: no maintenance
-        window, no update banner, and all three features on. A flag that
+        window, no update banner, and the three feature flags on. A flag that
         defaulted off would look like a feature the owner had switched off.
 
-        `quality_gate` used to be the deliberate exception — off by default
-        while the resolver was unproven, because a gate that refuses premium
-        plays on a broken resolver is an availability failure. The resolver
-        is proven now (Sessions 103–104b), so the honest default is on: a
-        fresh deployment gates 1080p/4K behind VIP, and the operator turns
-        it off in /admin if the business ever wants it off."""
+        `quality_gate` is the deliberate exception, and it defaults OFF
+        (launch plan Phase 0, G-1): the live catalog row, the panel v2 DDL
+        and the app default all say 0. A fresh deployment must not gate
+        1080p/4K by surprise — the operator turns the gate ON in the panel
+        when the business wants it on.
+        """
         data = self.public()
         self.assertFalse(data["maintenance_mode"])
         self.assertEqual(data["apk_update_url"], "")
         self.assertEqual(data["feature_flags"],
                          {"downloads": True, "pure_cinema": True,
-                          "chromecast": True, "quality_gate": True})
+                          "chromecast": True, "quality_gate": False})
 
     def test_the_remote_controls_round_trip_through_the_save_and_the_public_body(self):
         answered = self.save({

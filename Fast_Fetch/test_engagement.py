@@ -431,8 +431,13 @@ class EngagementFixture(unittest.TestCase):
                                    pass_secret=SECRET)
 
     def test_the_weekend_pass_expires_at_the_next_local_monday_midnight(self):
-        engagement.grant_coins(self.conn, self.account_id, amount=100,
-                               reason="admin_grant", source="admin")
+        # The grant covers the pass; the price itself is pinned by the
+        # Phase 0 defaults tests, so this test reads it from the ladder
+        # instead of hardcoding a number that would rot on a reprice.
+        engagement.grant_coins(
+            self.conn, self.account_id,
+            amount=engagement.resolve_ladder()["weekend"]["coins"],
+            reason="admin_grant", source="admin")
         friday = epoch_at("2026-01-09T18:00:00")   # a Friday, PKT
         redeem = engagement.redeem_pass(self.conn, self.account_id, plan="weekend",
                                         pass_secret=SECRET, now=friday)
