@@ -52,6 +52,8 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.PlayArrow
@@ -92,11 +94,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -439,6 +443,7 @@ fun DetailScreen(
                 onShare = {
                     shareTitle(context, post) { viewModel.reportShare(post.workRef) }
                 },
+                onReport = { showReportDialog = true },
                 contentPadding = detailPadding,
             )
         }
@@ -871,6 +876,8 @@ internal fun DetailContent(
     isFavorite: Boolean,
     onToggleFavorite: () -> Unit,
     onShare: () -> Unit,
+    /** Open the broken-stream report — the utility row's Report action. */
+    onReport: () -> Unit = {},
     contentPadding: PaddingValues,
 ) {
     val allPrints = (workPrints + seasons.flatMap { it.episodes.flatMap { e -> e.prints } } + seasons.flatMap { it.packedPrints })
@@ -934,14 +941,7 @@ internal fun DetailContent(
                 onPlay = { heroPrint?.let(onPlayPrint) },
                 onKeep = { bestPrint?.let(onKeep) },
                 onStartOver = onStartOver,
-                isFavorite = isFavorite,
-                onToggleFavorite = onToggleFavorite,
-                onShare = onShare,
                 deadEndReason = deadEndReason,
-                hasSimilar = similarTitles.isNotEmpty(),
-                onBrowseSimilar = {
-                    contentScope.launch { similarBringIntoView.bringIntoView() }
-                },
             )
         }
 
@@ -954,6 +954,24 @@ internal fun DetailContent(
         val synopsis = post.synopsis?.takeIf { it.isNotBlank() }
         if (synopsis != null) {
             item { ExpandableSynopsis(text = UserWords.stripSectionMarkers(synopsis)) }
+        }
+
+        // Detail review (Nov 2026, P1): Save / Share / Similar / Report
+        // live here, directly under the synopsis — one compact borderless
+        // row for thumb reach, not three outlined buttons under the hero.
+        // The Similar action keeps the scroll-to-rail behaviour the dead
+        // end's standalone link used to carry; that link is gone.
+        item {
+            DetailUtilityRow(
+                isFavorite = isFavorite,
+                onToggleFavorite = onToggleFavorite,
+                onShare = onShare,
+                hasSimilar = similarTitles.isNotEmpty(),
+                onBrowseSimilar = {
+                    contentScope.launch { similarBringIntoView.bringIntoView() }
+                },
+                onReport = onReport,
+            )
         }
 
         // One consolidated "Audio & Subtitles" line, built from the
@@ -1296,23 +1314,13 @@ private fun PrimaryActions(
     onKeep: () -> Unit,
     /** Phase 7 (D1): forget where viewing stopped — only offered while a resume exists. */
     onStartOver: () -> Unit,
-    isFavorite: Boolean,
-    onToggleFavorite: () -> Unit,
-    onShare: () -> Unit,
     /** Why this title cannot be played, in the viewer's words — null when it can. */
     deadEndReason: String? = null,
-    /** True when the similar rail below has titles to browse to. */
-    hasSimilar: Boolean = false,
-    /** Scroll the similar rail into view — the dead end's way out. */
-    onBrowseSimilar: () -> Unit = {},
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        // Audit #29: whether anything here can start. A resume is playable
-        // by definition (only a playable resume is ever passed in).
-        val playable = resume != null || bestPrint?.canStart == true
         // UI-fix P1-D1: the hero button plays video, nothing else. A title
         // whose only option is the provider's own page gets a secondary row
         // instead — the big green button must never open a web page.
@@ -1411,86 +1419,6 @@ private fun PrimaryActions(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            if (hasSimilar) {
-                TextButton(
-                    onClick = onBrowseSimilar,
-                    modifier = Modifier.heightIn(min = 48.dp),
-                ) {
-                    Text("Browse similar titles")
-                }
-            }
-        }
-
-        // Three plain buttons under Play: Add to My List, Download, Share.
-        // When Download is already the hero above, it leaves this row —
-        // the same action must never appear twice on one screen.
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            OutlinedButton(
-                onClick = onToggleFavorite,
-                modifier = Modifier
-                    .weight(1f)
-                    .heightIn(min = 48.dp)
-                    // Round-2 (Batch B): the full "Save to My List" never fit
-                    // a third of the row and truncated mid-word. The visible
-                    // label is the short verb; the full phrase is the spoken
-                    // name, so TalkBack still hears what the tap does.
-                    .semantics { contentDescription = favoriteActionLabel(isFavorite) },
-                contentPadding = PaddingValues(horizontal = 4.dp),
-            ) {
-                Icon(
-                    imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                    tint = if (isFavorite) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurface,
-                )
-                Spacer(Modifier.width(4.dp))
-                Text(
-                    text = if (isFavorite) "Saved" else "Save",
-                    style = MaterialTheme.typography.labelMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-
-            if (playable) {
-                OutlinedButton(
-                    onClick = onKeep,
-                    enabled = hasAnyPrint,
-                    modifier = Modifier
-                        .weight(1f)
-                        .heightIn(min = 48.dp),
-                    contentPadding = PaddingValues(horizontal = 4.dp),
-                ) {
-                    Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text(
-                        text = "Download",
-                        style = MaterialTheme.typography.labelMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-
-            OutlinedButton(
-                onClick = onShare,
-                modifier = Modifier
-                    .weight(1f)
-                    .heightIn(min = 48.dp),
-                contentPadding = PaddingValues(horizontal = 4.dp),
-            ) {
-                Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(4.dp))
-                Text(
-                    text = "Share",
-                    style = MaterialTheme.typography.labelMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
         }
 
         // Phase 7 (D1): only while a resume exists — after "Start over" the
@@ -1500,6 +1428,94 @@ private fun PrimaryActions(
                 Text("Start over")
             }
         }
+    }
+}
+
+/**
+ * Detail review (Nov 2026, P1): the compact borderless utility row —
+ * Save / Share / Similar / Report — that sits directly under the
+ * synopsis. No outlined buttons, no Download: the hero above already
+ * owns Download, and a second one would be the same action twice on
+ * one screen. Similar appears only when the rail below has titles;
+ * Report opens the same broken-stream dialog the top bar's More menu
+ * offers (kept in both places: the bar for discoverability, this row
+ * for thumb reach).
+ */
+@Composable
+private fun DetailUtilityRow(
+    isFavorite: Boolean,
+    onToggleFavorite: () -> Unit,
+    onShare: () -> Unit,
+    hasSimilar: Boolean,
+    onBrowseSimilar: () -> Unit,
+    onReport: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+    ) {
+        UtilityAction(
+            icon = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+            label = if (isFavorite) "Saved" else "Save",
+            contentDescription = favoriteActionLabel(isFavorite),
+            tint = if (isFavorite) MaterialTheme.colorScheme.secondary else Color.Unspecified,
+            onClick = onToggleFavorite,
+        )
+        UtilityAction(
+            icon = Icons.Default.Share,
+            label = "Share",
+            onClick = onShare,
+        )
+        if (hasSimilar) {
+            UtilityAction(
+                icon = Icons.Default.GridView,
+                label = "Similar",
+                onClick = onBrowseSimilar,
+            )
+        }
+        UtilityAction(
+            icon = Icons.Default.Flag,
+            label = "Report",
+            onClick = onReport,
+        )
+    }
+}
+
+/** One borderless icon + label action in the utility row. */
+@Composable
+private fun UtilityAction(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    contentDescription: String? = null,
+    tint: Color = Color.Unspecified,
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+        modifier = modifier
+            .weight(1f)
+            .heightIn(min = 48.dp)
+            .clickable(onClick = onClick, role = Role.Button)
+            // The visible label is the short verb; the full phrase is the
+            // spoken name, so TalkBack still hears what the tap does.
+            .semantics { this.contentDescription = contentDescription ?: label },
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            modifier = Modifier.size(24.dp),
+            tint = tint,
+        )
+        Spacer(Modifier.height(2.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

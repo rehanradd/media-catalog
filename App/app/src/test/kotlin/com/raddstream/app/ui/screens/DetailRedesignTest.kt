@@ -183,13 +183,19 @@ class DetailRedesignTest {
     }
 
     @Test
-    fun deadEndShowsReasonAndBrowseSimilar() {
+    fun deadEndShowsReasonWithoutStandaloneLink() {
         content(
             deadEndReason = "No sources for this title yet.",
             similarTitles = listOf(Post(id = 2, title = "Jawan 2")),
         )
         compose.onNodeWithText("No sources for this title yet.").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Browse similar titles").assertIsDisplayed()
+        // Detail review (Nov 2026, P1): the standalone "Browse similar
+        // titles" link is gone — the way out moved into the utility row
+        // under the synopsis as the Similar action.
+        compose.onNodeWithText("Browse similar titles").assertDoesNotExist()
         compose.onNodeWithText("Play").assertDoesNotExist()
+        compose.onNodeWithText("Similar").assertIsDisplayed()
+        compose.onNodeWithText("Similar").performClick()
+        compose.onNodeWithText("More Like This").assertIsDisplayed()
     }
 }
