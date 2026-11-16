@@ -66,15 +66,18 @@ const val DEFAULT_START_BAND = "480p"
  * is actually on this ladder; (3) the staged band Auto resolved; (4) the 480p
  * start, but only when the viewer never picked a default at all
  * ([defaultBandSet] is false) and this ladder has a 480p rung — most viewers
- * start on SD, so playback starts light unless the viewer said otherwise;
+ * start on SD, so playback starts light unless the viewer said otherwise. The
+ * 480p start is a first rung, not a decision: Auto stays on, so the switcher
+ * may climb from 480p once the network proves it can feed a higher rung;
  * (5) the first rung, when nothing else named one. A default band that is not on
  * this ladder is ignored rather than guessed at, and "auto" (or blank) means no
  * default at all — which is why [defaultBandSet] exists: a viewer who picked
  * "Auto" in Settings chose Auto, and must not be silently moved to 480p.
- * Applying the default turns Auto off for this title: a fixed band is a decision,
- * and the director never moves a decision. The 480p start is the same kind of
- * decision, so it turns Auto off too; the viewer can still switch up, or pick
- * Auto, from the quality sheet.
+ * Applying a fixed default turns Auto off for this title: a fixed band is a
+ * decision, and the director never moves a decision. The 480p start is not a
+ * decision — it only names the first rung, so Auto stays on and the director
+ * arms on the cheapest rung (480p on the usual ladder) and climbs from there;
+ * the viewer can still switch up, or pick a fixed rung, from the quality sheet.
  */
 fun resolveStartBand(
     stagedStartBand: String?,
@@ -90,7 +93,7 @@ fun resolveStartBand(
         stagedAuto && default != null -> default to false
         stagedStartBand != null && stagedStartBand in rungBands -> stagedStartBand to stagedAuto
         default != null -> default to false
-        !defaultBandSet && DEFAULT_START_BAND in rungBands -> DEFAULT_START_BAND to false
+        !defaultBandSet && DEFAULT_START_BAND in rungBands -> DEFAULT_START_BAND to true
         rungBands.isNotEmpty() -> rungBands.first() to stagedAuto
         else -> (stagedStartBand ?: defaultBand) to stagedAuto
     }
