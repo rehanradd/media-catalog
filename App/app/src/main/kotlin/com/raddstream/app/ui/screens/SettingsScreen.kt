@@ -244,6 +244,31 @@ fun SettingsScreen(
                 },
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
+            // ── Resolve test (debug-only harness, plan §8) ─────────────
+            // A manual field-test screen, never a production feature: it
+            // mints direct links from the baked sample list and records the
+            // measurements. The row exists only in DEBUG builds.
+            if (BuildConfig.DEBUG) {
+                SettingsCard(title = stringResource(R.string.resolve_test_title)) {
+                    Text(
+                        stringResource(R.string.resolve_test_intro),
+                        style = settingsHelperStyle,
+                    )
+                    OutlinedButton(
+                        onClick = onOpenResolveTest,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(stringResource(R.string.resolve_test_open))
+                    }
+                    OutlinedButton(
+                        onClick = onOpenPressTest,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(stringResource(R.string.press_test_open))
+                    }
+                }
+            }
+
             SettingsSectionHeading("Watching")
             // The region row lives in its own card under Watching, not
             // buried in Playback & Display: it is the one row the viewer needs
@@ -1024,31 +1049,6 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-            }
-
-            // ── Resolve test (debug-only harness, plan §8) ─────────────
-            // A manual field-test screen, never a production feature: it
-            // mints direct links from the baked sample list and records the
-            // measurements. The row exists only in DEBUG builds.
-            if (BuildConfig.DEBUG) {
-                SettingsCard(title = stringResource(R.string.resolve_test_title)) {
-                    Text(
-                        stringResource(R.string.resolve_test_intro),
-                        style = settingsHelperStyle,
-                    )
-                    OutlinedButton(
-                        onClick = onOpenResolveTest,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(stringResource(R.string.resolve_test_open))
-                    }
-                    OutlinedButton(
-                        onClick = onOpenPressTest,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(stringResource(R.string.press_test_open))
-                    }
-                }
             }
 
             // ── Advanced ───────────────────────────────────────────────
