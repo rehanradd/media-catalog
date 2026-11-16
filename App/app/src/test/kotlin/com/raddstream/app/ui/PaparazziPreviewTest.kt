@@ -146,6 +146,21 @@ class PaparazziPreviewTest {
         language = "English",
     )
 
+    // Rail-title cleanup (Nov 2026): the third rail card carries the
+    // suffix stack the catalog actually sends, so the golden proves the
+    // tile paints the stripped title ("No Hard Feelings"), not the raw
+    // "(2023) English Movie" form the meta line already states.
+    private val noHardFeelings = fakePost(
+        id = 4,
+        title = "No Hard Feelings (2023) English Movie",
+        year = 2023,
+        contentType = "movie",
+        rating = "6.5",
+        genres = "Comedy",
+        industry = "Hollywood",
+        language = "English",
+    )
+
     /** Dark-first, like the shipped app: RaddStreamTheme defaults to the brand scheme. */
     @Composable
     private fun themed(content: @Composable () -> Unit) {
@@ -179,7 +194,7 @@ class PaparazziPreviewTest {
                 ) {
                     PosterCard(post = jawan, modifier = Modifier.width(112.dp), rank = 1)
                     PosterCard(post = salaars, modifier = Modifier.width(112.dp), rank = 2)
-                    PosterCard(post = mclintock, modifier = Modifier.width(112.dp))
+                    PosterCard(post = noHardFeelings, modifier = Modifier.width(112.dp))
                 }
             }
         }

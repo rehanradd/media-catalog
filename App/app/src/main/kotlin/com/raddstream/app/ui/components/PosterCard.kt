@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.raddstream.app.network.models.Post
+import com.raddstream.app.network.models.WireText
 import com.raddstream.app.network.models.currentCalendarYear
 import com.raddstream.app.network.models.isNewReleaseYear
 import com.raddstream.app.ui.layout.CardGeometry
@@ -115,7 +116,21 @@ fun PosterCard(
      */
     rank: Int? = null,
 ) {
-    val title = post.cleanTitle?.takeIf { it.isNotBlank() } ?: post.title
+    // Rail-title cleanup (Nov 2026): the tile paints the same clean title
+    // Detail and the hero paint ([UserWords.detailTitle] — the server's
+    // display title first, then the clean title, then the raw title, each
+    // stripped of the year/language/type/season suffixes the meta line
+    // already states), so a rail card can never show "(2023) English
+    // Movie" under a meta line that already reads "2023 · Movie". The
+    // title data itself is untouched — only what is painted.
+    val title = UserWords.detailTitle(
+        displayTitle = post.displayTitleWire,
+        cleanTitle = post.cleanTitle,
+        title = post.title,
+        year = post.year,
+        contentType = post.contentType,
+        languages = WireText.listOf(post.language),
+    )
     val typeLabel = post.typeLabel
     // M11 (home review, Nov 2026): the tile is a new release when its year
     // is plausible and within the last two calendar years. The bound is
