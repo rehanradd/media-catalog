@@ -3,6 +3,8 @@ package com.raddstream.app.ui.screens
 import androidx.compose.ui.graphics.Color
 import com.raddstream.app.ui.theme.RaddArtScrim
 import com.raddstream.app.ui.theme.RaddCurrent500
+import com.raddstream.app.ui.theme.RaddCurrentContainerDark
+import com.raddstream.app.ui.theme.RaddOnCurrentContainer
 import com.raddstream.app.ui.theme.RaddInk750
 import com.raddstream.app.ui.theme.RaddInk800
 import com.raddstream.app.ui.theme.RaddInk900
