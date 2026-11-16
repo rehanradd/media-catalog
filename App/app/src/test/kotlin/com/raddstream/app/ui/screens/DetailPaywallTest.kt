@@ -4,7 +4,11 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.network.models.PostDetail
 import com.raddstream.app.player.LadderForScope
@@ -130,6 +134,16 @@ class DetailPaywallTest {
     @Test
     fun rungVipTierPillStillShows() {
         content(tierLabel = { if (it.band == "1080p") "VIP" else "Standard" })
+        // The card sits below the fold once the utility row is above
+        // it, so its pills are not composed until the list scrolls
+        // near it — swipe until the rung title composes (the same
+        // shape as DetailRedesignTest's series tests), then the pills
+        // exist to count. The card is one LazyColumn item, so when
+        // the title composes, both rows' pills are there.
+        for (i in 0 until 5) {
+            if (compose.onAllNodesWithText("1080p Full HD").fetchSemanticsNodes().isNotEmpty()) break
+            compose.onRoot().performTouchInput { swipeUp() }
+        }
         compose.onAllNodes(hasContentDescription("VIP tier, 1080p Full HD"))
             .assertCountEquals(1)
         compose.onAllNodes(hasContentDescription("Standard tier, 720p HD"))
