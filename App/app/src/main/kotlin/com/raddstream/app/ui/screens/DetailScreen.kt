@@ -23,12 +23,14 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -115,6 +117,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.raddstream.app.R
 import com.raddstream.app.brand.Brand
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.network.models.PostDetail
@@ -1768,7 +1771,7 @@ private fun DetailUtilityRow(
 
 /** One borderless icon + label action in the utility row. */
 @Composable
-private fun UtilityAction(
+private fun RowScope.UtilityAction(
     icon: ImageVector,
     label: String,
     onClick: () -> Unit,
