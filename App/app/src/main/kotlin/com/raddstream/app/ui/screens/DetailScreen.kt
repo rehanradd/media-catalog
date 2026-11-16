@@ -37,11 +37,13 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
@@ -303,17 +305,29 @@ fun DetailScreen(
                 // actions). The title appears ONCE, next to the poster
                 // below — the bar used to repeat it, so the screen read
                 // its own name twice.
+                // Detail review (Nov 2026, P1): the bar is transparent
+                // and floats over the full-bleed hero — the content runs
+                // edge-to-edge underneath it (detailContentPadding top
+                // is 0), so the back and More targets are 40dp
+                // translucent circles that read over any artwork, not an
+                // opaque bar. The insets are explicit here (windowInsets
+                // = 0): the status bar via statusBarsPadding, the camera
+                // cutout horizontally — the bar's own defaults must not
+                // double them.
                 title = {},
                 // Samsung RTL (v1.1.2, Issue 9): in landscape the camera
                 // cutout sits on one side, and the Scaffold's insets do not
                 // carry it — the back arrow must clear the hole, not sit
                 // under it. The cutout inset is zero in portrait, so this
                 // changes nothing there.
-                modifier = Modifier.windowInsetsPadding(
-                    WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal),
-                ),
+                modifier = Modifier
+                    .statusBarsPadding()
+                    .windowInsetsPadding(
+                        WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal),
+                    ),
+                windowInsets = WindowInsets(0.dp, 0.dp, 0.dp, 0.dp),
                 navigationIcon = {
-                    IconButton(onClick = onBackClick) {
+                    DetailTopBarTarget(onClick = onBackClick) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Back")
                     }
                 },
@@ -323,8 +337,12 @@ fun DetailScreen(
                         // a report affordance in the top bar of a title
                         // page. The function stays — it lives in the More
                         // overflow now, one tap further from the title.
+                        // Detail review (Nov 2026, P1): Report stays in
+                        // the More menu AND in the utility row under the
+                        // synopsis — the bar for discoverability, the row
+                        // for thumb reach.
                         Box {
-                            IconButton(onClick = { showMoreMenu = true }) {
+                            DetailTopBarTarget(onClick = { showMoreMenu = true }) {
                                 Icon(
                                     Icons.Default.MoreVert,
                                     contentDescription = "More options",
@@ -346,7 +364,10 @@ fun DetailScreen(
                         }
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color.Transparent,
+                    scrolledContainerColor = Color.Transparent,
+                ),
             )
         },
     ) { paddingValues ->
@@ -711,6 +732,11 @@ private fun rungScopeLabel(season: Int?, episode: Int?): String? = when {
  * bottom VIP card sat half-hidden behind the system nav bar when this
  * was a fixed 40 dp while the Scaffold's own bottom padding was
  * ignored). Pure so the max-per-side rule is testable without a device.
+ *
+ * Detail review (Nov 2026, P1): the top is 0 — the page is edge-to-edge
+ * now, and the transparent top bar floats over the full-bleed hero. The
+ * bar carries its own status-bar inset (statusBarsPadding), so the
+ * content needs no top offset at all.
  */
 internal fun detailContentPadding(
     scaffoldPadding: PaddingValues,
@@ -735,10 +761,10 @@ internal fun detailContentPadding(
     }
     return PaddingValues(
         start = maxOf(baseHorizontal, safeStart),
-        top = maxOf(
-            scaffoldPadding.calculateTopPadding(),
-            safeDrawingPadding.calculateTopPadding(),
-        ),
+        // Detail review (Nov 2026, P1): edge-to-edge — the transparent
+        // top bar floats over the hero, so the content takes no top
+        // offset. The sides and bottom keep the max-per-side rule above.
+        top = 0.dp,
         end = maxOf(baseHorizontal, safeEnd),
         bottom = maxOf(
             scaffoldPadding.calculateBottomPadding(),
@@ -897,16 +923,26 @@ internal fun DetailContent(
     val similarBringIntoView = remember { BringIntoViewRequester() }
     val contentScope = rememberCoroutineScope()
 
+    // Detail review (Nov 2026, P1): the hero bleeds full-width, so the
+    // list itself carries no side padding — every item below pads itself
+    // 16dp, and the hero item does not. The top stays 0 (edge-to-edge
+    // under the transparent bar) and the bottom keeps the page's
+    // breathing room, both from the caller's [detailContentPadding].
+    val pageSides = Modifier.padding(horizontal = 16.dp)
+    val listPadding = PaddingValues(
+        start = 0.dp,
+        top = contentPadding.calculateTopPadding(),
+        end = 0.dp,
+        bottom = contentPadding.calculateBottomPadding(),
+    )
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        // Already inset-aware: the caller passes [detailContentPadding],
-        // which takes the larger of the Scaffold's ask and the safe-drawing
-        // inset per side (system bars + display cutout), plus the 40 dp of
-        // breathing room at the bottom (Session 121, P-22).
-        contentPadding = contentPadding,
+        contentPadding = listPadding,
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         reloadError?.let { failure ->
+            // InlineLoadFailure insets itself 16dp horizontally, so it
+            // needs no pageSides of its own.
             item(contentType = "reload-failure") {
                 InlineLoadFailure(message = failure, onRetry = onRetryReload)
             }
@@ -918,11 +954,13 @@ internal fun DetailContent(
                 capabilities = capabilities,
                 seasonCount = if (isSeries) seasons.size else 0,
                 includedLine = includedLine,
+                pageSides = pageSides,
             )
         }
 
         item {
             PrimaryActions(
+                modifier = pageSides,
                 // Detail review (Nov 2026, P0): the hero's Play must be the
                 // best print that can actually start here — the ladder's Auto
                 // rung — not the best-ranked print. The old shape hid Play
@@ -953,7 +991,7 @@ internal fun DetailContent(
         // already states the tier).
         val synopsis = post.synopsis?.takeIf { it.isNotBlank() }
         if (synopsis != null) {
-            item { ExpandableSynopsis(text = UserWords.stripSectionMarkers(synopsis)) }
+            item { Box(pageSides) { ExpandableSynopsis(text = UserWords.stripSectionMarkers(synopsis)) } }
         }
 
         // Detail review (Nov 2026, P1): Save / Share / Similar / Report
@@ -963,6 +1001,7 @@ internal fun DetailContent(
         // end's standalone link used to carry; that link is gone.
         item {
             DetailUtilityRow(
+                modifier = pageSides,
                 isFavorite = isFavorite,
                 onToggleFavorite = onToggleFavorite,
                 onShare = onShare,
@@ -983,6 +1022,7 @@ internal fun DetailContent(
                     text = line,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = pageSides,
                 )
             }
         }
@@ -993,6 +1033,7 @@ internal fun DetailContent(
         if (!rungs.ladder.isEmpty && ladderScope == null) {
             item {
                 QualityRungCard(
+                    modifier = pageSides,
                     ladder = rungs.ladder,
                     selectedBand = rungs.selectedBand,
                     onPlayRung = rungs.onPlay,
@@ -1012,6 +1053,7 @@ internal fun DetailContent(
                     text = "Some copies here are cam recordings — low quality.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
+                    modifier = pageSides,
                 )
             }
         }
@@ -1022,50 +1064,54 @@ internal fun DetailContent(
         // empty "Cast" header. A tap searches that actor's titles.
         val cast = parseCastNames(post.castNames)
         if (cast.isNotEmpty()) {
-            item { CastSection(cast = cast, onActorClick = onActorClick) }
+            item { Box(pageSides) { CastSection(cast = cast, onActorClick = onActorClick) } }
         }
 
         if (isSeries) {
             if (seasons.size > 5) {
-                item { SeasonDropdown(seasons = seasons, selectedSeason = selectedSeason, onSelect = onSelectSeason) }
+                item { Box(pageSides) { SeasonDropdown(seasons = seasons, selectedSeason = selectedSeason, onSelect = onSelectSeason) } }
             } else if (seasons.size > 1) {
-                item { SeasonChips(seasons = seasons, selectedSeason = selectedSeason, onSelect = onSelectSeason) }
+                item { Box(pageSides) { SeasonChips(seasons = seasons, selectedSeason = selectedSeason, onSelect = onSelectSeason) } }
             }
             val season = seasons.firstOrNull { it.number == selectedSeason } ?: seasons.firstOrNull()
             if (season != null) {
-                item { SeasonHeader(season = season, onKeepSeason = onKeepSeason) }
+                item { Box(pageSides) { SeasonHeader(season = season, onKeepSeason = onKeepSeason) } }
                 if (season.packedPrints.isNotEmpty()) {
                     item {
-                        PackedSeasonBanner(
-                            season = season,
-                            onPlay = onPlayPrint,
-                            onKeep = onKeep,
-                        )
+                        Box(pageSides) {
+                            PackedSeasonBanner(
+                                season = season,
+                                onPlay = onPlayPrint,
+                                onKeep = onKeep,
+                            )
+                        }
                     }
                 }
                 items(season.episodes, key = { "ep-${season.number}-${it.numberWithinSeason}" }) { episode ->
                     // A packed season is one file: its ladder is the season's, not an episode's.
                     val episodeKey = if (episode.onlyPacked) null else episode.numberWithinSeason
                     val scopeLabel = rungScopeLabel(season.number, episodeKey)
-                    EpisodeRow(
-                        episode = episode,
-                        progress = episodeProgress[season.number to episode.numberWithinSeason],
-                        isDownloaded = episode.prints.any { print ->
-                            print.links.any { link ->
-                                link.streamId.isNotBlank() && link.streamId in downloadedHandles
-                            }
-                        },
-                        onPlayPrint = onPlayPrint,
-                        onOpenExternal = onOpenExternal,
-                        onKeep = onKeep,
-                        scopeLabel = scopeLabel,
-                        canChooseQuality = hasRungs(season.number, episodeKey),
-                        showQuality = ladderScope == scopeLabel && !rungs.ladder.isEmpty,
-                        onChooseQuality = {
-                            onAskRungs(season.number, episodeKey)
-                        },
-                        rungs = rungs,
-                    )
+                    Box(pageSides) {
+                        EpisodeRow(
+                            episode = episode,
+                            progress = episodeProgress[season.number to episode.numberWithinSeason],
+                            isDownloaded = episode.prints.any { print ->
+                                print.links.any { link ->
+                                    link.streamId.isNotBlank() && link.streamId in downloadedHandles
+                                }
+                            },
+                            onPlayPrint = onPlayPrint,
+                            onOpenExternal = onOpenExternal,
+                            onKeep = onKeep,
+                            scopeLabel = scopeLabel,
+                            canChooseQuality = hasRungs(season.number, episodeKey),
+                            showQuality = ladderScope == scopeLabel && !rungs.ladder.isEmpty,
+                            onChooseQuality = {
+                                onAskRungs(season.number, episodeKey)
+                            },
+                            rungs = rungs,
+                        )
+                    }
                 }
             }
         } else {
@@ -1081,22 +1127,26 @@ internal fun DetailContent(
                 val shownPrints = if (showAllFiles) workPrints else workPrints.take(3)
                 val workCopies = copyNumbers(workPrints)
                 items(shownPrints, key = { "print-${it.releaseId}" }) { print ->
-                    PrintCard(
-                        print = print,
-                        onPlayPrint = onPlayPrint,
-                        onOpenExternal = onOpenExternal,
-                        onKeep = onKeep,
-                        copyIndex = workCopies[print.releaseId]?.first ?: 1,
-                        copyTotal = workCopies[print.releaseId]?.second ?: 1,
-                    )
+                    Box(pageSides) {
+                        PrintCard(
+                            print = print,
+                            onPlayPrint = onPlayPrint,
+                            onOpenExternal = onOpenExternal,
+                            onKeep = onKeep,
+                            copyIndex = workCopies[print.releaseId]?.first ?: 1,
+                            copyTotal = workCopies[print.releaseId]?.second ?: 1,
+                        )
+                    }
                 }
                 if (workPrints.size > 3) {
                     item {
-                        TextButton(onClick = { showAllFiles = !showAllFiles }) {
-                            Text(
-                                if (showAllFiles) "Show fewer files"
-                                else "Show all ${workPrints.size} files",
-                            )
+                        Box(pageSides) {
+                            TextButton(onClick = { showAllFiles = !showAllFiles }) {
+                                Text(
+                                    if (showAllFiles) "Show fewer files"
+                                    else "Show all ${workPrints.size} files",
+                                )
+                            }
                         }
                     }
                 }
@@ -1106,7 +1156,9 @@ internal fun DetailContent(
         if (similarTitles.isNotEmpty()) {
             item(contentType = "similar-titles") {
                 Column(
-                    modifier = Modifier.bringIntoViewRequester(similarBringIntoView),
+                    modifier = Modifier
+                        .bringIntoViewRequester(similarBringIntoView)
+                        .then(pageSides),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     SectionHeader(title = "More Like This")
@@ -1132,25 +1184,34 @@ private fun DetailHeroSection(
     capabilities: List<String>,
     seasonCount: Int,
     includedLine: String?,
+    /** The page's side padding — the fallback pads itself with it; the bleed does not. */
+    pageSides: Modifier,
 ) {
     val backdropUrl = remember(post.backdropList) {
         post.backdropList.firstOrNull { it.isNotBlank() }
     }
     if (backdropUrl == null) {
-        PosterHeader(
-            post = post,
-            capabilities = capabilities,
-            seasonCount = seasonCount,
-            includedLine = includedLine,
-        )
+        // Detail review (Nov 2026, P1): the no-backdrop fallback is
+        // kept — the poster + title block, padded like any other item.
+        Box(pageSides) {
+            PosterHeader(
+                post = post,
+                capabilities = capabilities,
+                seasonCount = seasonCount,
+                includedLine = includedLine,
+            )
+        }
         return
     }
+    // Detail review (Nov 2026, P1): the hero bleeds full-width — a 16:9
+    // backdrop with no radius, a stronger bottom scrim, and the title
+    // block over the scrim. The floating mini-poster is gone: the
+    // backdrop IS the artwork now.
     Box(modifier = Modifier.fillMaxWidth()) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(176.dp)
-                .clip(RoundedCornerShape(16.dp)),
+                .aspectRatio(16f / 9f),
         ) {
             CatalogImage(
                 url = backdropUrl,
@@ -1164,22 +1225,112 @@ private fun DetailHeroSection(
                     .fillMaxSize()
                     .background(
                         Brush.verticalGradient(
-                            0f to MaterialTheme.colorScheme.background.copy(alpha = 0.08f),
-                            0.55f to MaterialTheme.colorScheme.background.copy(alpha = 0.58f),
+                            0f to Color.Transparent,
+                            0.45f to MaterialTheme.colorScheme.background.copy(alpha = 0.35f),
+                            0.75f to MaterialTheme.colorScheme.background.copy(alpha = 0.75f),
                             1f to MaterialTheme.colorScheme.background,
                         ),
                     ),
             )
         }
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Spacer(Modifier.height(92.dp))
-            PosterHeader(
-                post = post,
-                capabilities = capabilities,
-                seasonCount = seasonCount,
-                includedLine = includedLine,
-            )
+        DetailTitleBlock(
+            post = post,
+            capabilities = capabilities,
+            seasonCount = seasonCount,
+            includedLine = includedLine,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .then(pageSides)
+                .padding(bottom = 16.dp),
+        )
+    }
+}
+
+/**
+ * Detail review (Nov 2026, P1): the hero's meta line, built once and
+ * shared by the full-bleed overlay and the no-backdrop poster header —
+ * the two must never drift apart. Pure so the meta rules are testable
+ * without a device.
+ */
+internal fun detailMetaParts(post: PostDetail, seasonCount: Int): List<String> =
+    listOfNotNull(
+        // M3 (home review, Nov 2026): the year comes from [Post.yearLabel],
+        // the guarded choke point — the old inline `takeIf { it > 0 }`
+        // let an impossible year straight onto the header.
+        post.yearLabel,
+        post.typeLabel,
+        // P-5 (Session 121): normalize again at the render site — a language that
+        // arrives as a raw JSON array string ("[\"Tamil\", \"English\"]") reads
+        // "Tamil, English". Idempotent with the mapper-side normalization.
+        // F2 (Batch A): "Unknown"/"N/A" are dropped — the server sends those
+        // when nothing was recorded, and a meta line must never read "Unknown".
+        WireText.listOf(post.language).map { it.trim() }.filter(::isKnownLanguage)
+            .joinToString(", ").takeIf { it.isNotBlank() },
+        formatRuntimeMinutes(post.runtimeMinutes),
+        if (seasonCount > 0) "$seasonCount ${if (seasonCount == 1) "season" else "seasons"}" else null,
+    )
+
+/**
+ * Detail review (Nov 2026, P1): the title + meta + included line +
+ * rating + genre chips, shared by the full-bleed hero overlay and the
+ * no-backdrop poster header — one block, two placements, so a fix to
+ * the meta or the chips lands in both.
+ */
+@Composable
+private fun DetailTitleBlock(
+    post: PostDetail,
+    capabilities: List<String>,
+    seasonCount: Int,
+    includedLine: String?,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        // Robo run 3: this title text is identical to the bar title above
+        // it, so the big title carries its own spoken name.
+        // Detail redesign (Nov 2026): the painted title is the cleaned
+        // one — the server's display title when it sent one, else the
+        // clean title with its year/language/type suffix stripped, so
+        // "No Hard Feelings (2023) English Movie" paints as
+        // "No Hard Feelings" above a meta line that already states them.
+        val titleText = detailDisplayTitle(post)
+        Text(
+            text = UserWords.breakableTitle(titleText),
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onBackground,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.semantics { contentDescription = "Title: $titleText" },
+        )
+        val meta = detailMetaParts(post, seasonCount)
+        if (meta.isNotEmpty()) {
+            Text(meta.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        includedLine?.let { line ->
+            Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
+        }
+        UserWords.displayRating(post.imdbRating)?.let { rating ->
+            RatingBadge(rating = "$rating IMDb")
+        }
+        GenreChipsRow(chips = post.genreList + capabilities)
+    }
+}
+
+/** The scrollable genre + capability chips, shared by both hero shapes. */
+@Composable
+private fun GenreChipsRow(
+    chips: List<String>,
+    modifier: Modifier = Modifier,
+) {
+    // UI-fix P1-D5: genres + capabilities were two identical scrolling
+    // pill rows under the title. One row now; capabilities ride with
+    // the genres.
+    if (chips.isEmpty()) return
+    Row(
+        modifier = modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        chips.forEach { CapabilityChip(it) }
     }
 }
 
@@ -1233,61 +1384,38 @@ private fun PosterHeader(
             }
         }
 
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            // Robo run 3: this title text is identical to the bar title above
-            // it, so the big title carries its own spoken name.
-            // Detail redesign (Nov 2026): the painted title is the cleaned
-            // one — the server's display title when it sent one, else the
-            // clean title with its year/language/type suffix stripped, so
-            // "No Hard Feelings (2023) English Movie" paints as
-            // "No Hard Feelings" above a meta line that already states them.
-            val titleText = detailDisplayTitle(post)
-            Text(
-                text = UserWords.breakableTitle(titleText),
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onBackground,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.semantics { contentDescription = "Title: $titleText" },
-            )
-            // M3 (home review, Nov 2026): the year comes from [Post.yearLabel],
-            // the guarded choke point — the old inline `takeIf { it > 0 }`
-            // let an impossible year straight onto the header.
-            val meta = listOfNotNull(
-                post.yearLabel,
-                post.typeLabel,
-                // P-5 (Session 121): normalize again at the render site — a language that
-                // arrives as a raw JSON array string ("[\"Tamil\", \"English\"]") reads
-                // "Tamil, English". Idempotent with the mapper-side normalization.
-                // F2 (Batch A): "Unknown"/"N/A" are dropped — the server sends those
-                // when nothing was recorded, and a meta line must never read "Unknown".
-                WireText.listOf(post.language).map { it.trim() }.filter(::isKnownLanguage)
-                    .joinToString(", ").takeIf { it.isNotBlank() },
-                formatRuntimeMinutes(post.runtimeMinutes),
-                if (seasonCount > 0) "$seasonCount ${if (seasonCount == 1) "season" else "seasons"}" else null,
-            )
-            if (meta.isNotEmpty()) {
-                Text(meta.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            includedLine?.let { line ->
-                Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
-            }
-            UserWords.displayRating(post.imdbRating)?.let { rating ->
-                RatingBadge(rating = "$rating IMDb")
-            }
-            // UI-fix P1-D5: genres + capabilities were two identical scrolling
-            // pill rows under the title. One row now; capabilities ride with
-            // the genres.
-            val allChips = post.genreList + capabilities
-            if (allChips.isNotEmpty()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    allChips.forEach { CapabilityChip(it) }
-                }
-            }
+        // Detail review (Nov 2026, P1): the title block is shared with
+        // the full-bleed hero overlay — one block, two placements.
+        DetailTitleBlock(
+            post = post,
+            capabilities = capabilities,
+            seasonCount = seasonCount,
+            includedLine = includedLine,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+/**
+ * Detail review (Nov 2026, P1): one 40dp translucent circular target
+ * for the transparent top bar — the same scrim-circle pattern the
+ * season header's download button uses, so the back and More icons
+ * read over any hero artwork.
+ */
+@Composable
+private fun DetailTopBarTarget(
+    onClick: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.6f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        IconButton(onClick = onClick, modifier = Modifier.size(40.dp)) {
+            content()
         }
     }
 }
@@ -1305,6 +1433,7 @@ internal fun heroPlayablePrint(prints: List<RankedPrint>): RankedPrint? =
 
 @Composable
 private fun PrimaryActions(
+    modifier: Modifier = Modifier,
     bestPrint: RankedPrint?,
     hasAnyPrint: Boolean,
     /** The latest scope this device stopped in — null shows plain Play. */
@@ -1318,7 +1447,7 @@ private fun PrimaryActions(
     deadEndReason: String? = null,
 ) {
     Column(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         // UI-fix P1-D1: the hero button plays video, nothing else. A title

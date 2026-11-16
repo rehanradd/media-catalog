@@ -21,9 +21,11 @@ import org.junit.Test
 class DetailContentPaddingTest {
 
     @Test
-    fun portraitIsUnchanged() {
-        // No cutout, no system bars beyond what the Scaffold already asks:
-        // 16 dp sides, Scaffold top, Scaffold bottom + 40 dp breathing room.
+    fun portraitTopIsZeroUnderTheTransparentBar() {
+        // Detail review (Nov 2026, P1): the page is edge-to-edge now —
+        // the transparent top bar floats over the full-bleed hero, so the
+        // content takes no top offset at all. 16 dp sides, Scaffold
+        // bottom + 40 dp breathing room, unchanged.
         val padding = detailContentPadding(
             scaffoldPadding = PaddingValues(top = 64.dp, bottom = 24.dp),
             safeDrawingPadding = PaddingValues(0.dp),
@@ -31,7 +33,7 @@ class DetailContentPaddingTest {
         )
         assertEquals(16.dp, padding.calculateLeftPadding(LayoutDirection.Ltr))
         assertEquals(16.dp, padding.calculateRightPadding(LayoutDirection.Ltr))
-        assertEquals(64.dp, padding.calculateTopPadding())
+        assertEquals(0.dp, padding.calculateTopPadding())
         assertEquals(64.dp, padding.calculateBottomPadding())
     }
 
@@ -65,13 +67,14 @@ class DetailContentPaddingTest {
     fun insetsAreNeverDoubleCounted() {
         // The Scaffold already asks for 48 dp at the bottom (navigation
         // bar) and safe drawing asks for the same 48 dp: the content gets
-        // 48 dp + 40 dp of breathing room, not 48 + 48 + 40.
+        // 48 dp + 40 dp of breathing room, not 48 + 48 + 40. The top is
+        // 0 regardless — the transparent bar floats over the hero.
         val padding = detailContentPadding(
             scaffoldPadding = PaddingValues(top = 24.dp, bottom = 48.dp),
             safeDrawingPadding = PaddingValues(top = 24.dp, bottom = 48.dp),
             layoutDirection = LayoutDirection.Ltr,
         )
-        assertEquals(24.dp, padding.calculateTopPadding())
+        assertEquals(0.dp, padding.calculateTopPadding())
         assertEquals(88.dp, padding.calculateBottomPadding())
     }
 
