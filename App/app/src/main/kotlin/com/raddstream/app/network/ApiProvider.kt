@@ -93,7 +93,10 @@ open class ApiProvider @Inject constructor(
      * by a stale fallback.
      */
     fun resolveSessionUrl(savedUrl: String): String {
-        val saved = runCatching { normalizeServerUrl(savedUrl) }.getOrNull() ?: savedUrl
+        // Normalize eagerly: a malformed saved URL must still throw here, the
+        // way currentBaseUrl() always did (ApiProviderBaseUrlTest pins it) —
+        // swallowing it would turn a broken setting into a silent wrong one.
+        val saved = normalizeServerUrl(savedUrl)
         val decision = sessionDecision ?: return saved
         if (decision.savedUrl != saved) {
             sessionDecision = null
