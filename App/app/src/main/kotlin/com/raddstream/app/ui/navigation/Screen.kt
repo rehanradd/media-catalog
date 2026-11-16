@@ -57,6 +57,12 @@ sealed class Screen(val route: String) {
     object LiveTv : Screen("live_tv")
     object MyList : Screen("my_list")
     object Settings : Screen("settings")
+    /**
+     * The debug-only field-test harness (plan §8). It exists in every build
+     * as a route, but no NavGraph entry and no Settings row exist unless
+     * DEBUG — in release it is unreachable.
+     */
+    object ResolveTest : Screen("resolve_test")
     object Help : Screen("help")
     object Languages : Screen("languages")
     object WatchHistory : Screen("watch_history")

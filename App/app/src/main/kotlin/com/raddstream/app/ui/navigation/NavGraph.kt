@@ -52,12 +52,14 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.raddstream.app.BuildConfig
 import com.raddstream.app.R
 import com.raddstream.app.brand.Brand
 import com.raddstream.app.data.RemoteFeatures
 import com.raddstream.app.network.models.PanelTheme
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.player.PlayerSessionStore
+import com.raddstream.app.resolve.ResolveTestScreen
 import com.raddstream.app.ui.components.rememberReduceMotion
 import com.raddstream.app.ui.screens.BrowseScreen
 import com.raddstream.app.ui.screens.CheckInScreen
@@ -665,7 +667,18 @@ fun RaddStreamNavGraph(
                     onOpenHelp = { navController.navigate(Screen.Help.route) },
                     onOpenLanguages = { navController.navigate(Screen.Languages.route) },
                     onOpenWatchHistory = { navController.navigate(Screen.WatchHistory.route) },
+                    onOpenResolveTest = { navController.navigate(Screen.ResolveTest.route) },
                 )
+            }
+
+            // Debug-only field-test harness (plan §8): the entry exists only
+            // in DEBUG builds, so the screen is unreachable in release.
+            if (BuildConfig.DEBUG) {
+                composable(Screen.ResolveTest.route) {
+                    ResolveTestScreen(
+                        onBackClick = { navController.popBackStack() },
+                    )
+                }
             }
 
             composable(Screen.Help.route) {

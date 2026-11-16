@@ -221,4 +221,33 @@
     <string name="mylist_popular_title">Trending to Start Your List</string>
     <string name="mylist_popular_subtitle">Hand-picked picks to jumpstart your queue</string>
     <string name="mylist_empty_message">Tap the heart on any title to save it here.</string>
+
+    <!-- ═══ RESOLVE TEST (debug-only harness, 2026-11-16) ═══
+         The manual field-test screen. Debug builds only: no NavGraph entry
+         and no Settings row exist unless DEBUG, so none of this ships. -->
+    <string name="resolve_test_title">Resolve Test (debug)</string>
+    <string name="resolve_test_intro">Debug-only manual test. It mints direct links from the sample list and records timing, data and battery. Nothing runs in the background.</string>
+    <string name="resolve_test_open">Open resolve test</string>
+    <string name="resolve_test_run_all">Run all</string>
+    <string name="resolve_test_export">Export results</string>
+    <string name="resolve_test_copy_json">Copy results JSON</string>
+    <string name="resolve_test_clear">Clear results</string>
+    <string name="resolve_test_mint_again">Mint again</string>
+    <string name="resolve_test_running">Running — one link at a time, in order.</string>
+    <string name="resolve_test_back">Back</string>
+    <string name="resolve_test_status_pending">Pending</string>
+    <string name="resolve_test_status_running">Running…</string>
+    <string name="resolve_test_status_minted">Minted in %1$d ms</string>
+    <string name="resolve_test_status_failed">Failed: %1$s</string>
+    <string name="resolve_test_item_meta">%1$s · %2$s · #%3$s</string>
+    <string name="resolve_test_load_failed">The sample list could not be loaded.</string>
+    <string name="resolve_test_export_failed">Export failed.</string>
+    <string name="resolve_test_copied">Results JSON copied.</string>
+    <string name="resolve_test_share_title">Share results</string>
+    <string name="resolve_test_share_subject">Resolve test results</string>
+    <string name="resolve_test_summary_header">Resolve test — %1$s, %2$s</string>
+    <string name="resolve_test_summary_suffix">WebView data-directory suffix applied: %1$s</string>
+    <string name="resolve_test_summary_group">%1$s: %2$d of %3$d minted</string>
+    <string name="resolve_test_summary_totals">Battery change across attempts: %1$s pp; data used: %2$s bytes</string>
+    <string name="resolve_test_summary_session_checks">Session checks (excluded from counts): %1$d</string>
 </resources>

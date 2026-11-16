@@ -75,6 +75,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -88,6 +89,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.raddstream.app.BuildConfig
+import com.raddstream.app.R
 import com.raddstream.app.brand.Brand
 import com.raddstream.app.data.RegionChoices
 import com.raddstream.app.data.RemoteFeatures
@@ -167,6 +170,8 @@ fun SettingsScreen(
     onOpenHelp: () -> Unit = {},
     onOpenLanguages: () -> Unit = {},
     onOpenWatchHistory: () -> Unit = {},
+    /** Debug-only harness entry; the NavGraph only navigates here in DEBUG. */
+    onOpenResolveTest: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -1018,6 +1023,25 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+
+            // ── Resolve test (debug-only harness, plan §8) ─────────────
+            // A manual field-test screen, never a production feature: it
+            // mints direct links from the baked sample list and records the
+            // measurements. The row exists only in DEBUG builds.
+            if (BuildConfig.DEBUG) {
+                SettingsCard(title = stringResource(R.string.resolve_test_title)) {
+                    Text(
+                        stringResource(R.string.resolve_test_intro),
+                        style = settingsHelperStyle,
+                    )
+                    OutlinedButton(
+                        onClick = onOpenResolveTest,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(stringResource(R.string.resolve_test_open))
+                    }
+                }
             }
 
             // ── Advanced ───────────────────────────────────────────────
