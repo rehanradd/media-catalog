@@ -30,3 +30,8 @@ Base: 76db046f (STALE). Main is now 53700d7e (harness-fix merged 23:31, Android 
 - Player ladder treats a 429 as a failed handle, tries the next one immediately (no Retry-After honoring) — retry-storm follow-up.
 - Data note: "Kesariya@100 ★ 10.0" looks fake — flag for the owner, not fixed here.
 - Session log: App/docs/SESSION_HISTORY.md (appended). Next: stage reviewed paths only, run ~/workspace/pre-push-checks.py, rebase onto 53700d7e, commit, push via bundle + Oracle VM askpass route. Watch for the mass Robolectric flake on branch CI (re-run, do NOT "fix" those tests).
+
+## D9 — disclaimer testTag for the Robo script (2026-11-16 ~23:40 PKT)
+- Robo run 2 (matrix-3p2ysll1q0ed7) failed on action 2 of 12: WAIT found "I Understand" but VIEW_CLICKED on that text failed — text tap matched a non-clickable Text node; dialog stayed up, resolve test never ran.
+- Fix (second commit on this branch, on top of a6d83fa5): `testTag("disclaimer_confirm")` on the first-run confirm Button + `testTag("disclaimer_decline")` on Decline in DisclaimerDialog.kt (no visual change); robo-resolve-test.json action 2 matches by `resourceId: "disclaimer_confirm"` (action 1 text wait unchanged, 12 actions total).
+- DisclaimerDialogTest asserts by text only — tags cannot break it. Push re-runs CI on the new tip; the CI-green debug APK from that tip is the one for Robo run 3 (harness + screenshot fixes + testTag).

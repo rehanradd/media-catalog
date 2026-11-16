@@ -27,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -197,13 +198,21 @@ internal fun DisclaimerDialog(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
+                        // D9 (screenshot-fix 2026-11-16): the Robo script taps
+                        // this button by resourceId, not by text — the text
+                        // tap matched a non-clickable Text node and the
+                        // dialog never dismissed (Robo run 2, action 2).
+                        // No visual change: a test tag only.
                         Button(
                             onClick = onConfirm,
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().testTag("disclaimer_confirm"),
                         ) {
                             Text(confirmLabel)
                         }
-                        TextButton(onClick = onDecline ?: {}) {
+                        TextButton(
+                            onClick = onDecline ?: {},
+                            modifier = Modifier.testTag("disclaimer_decline"),
+                        ) {
                             Text(dismissLabel ?: "")
                         }
                     }
