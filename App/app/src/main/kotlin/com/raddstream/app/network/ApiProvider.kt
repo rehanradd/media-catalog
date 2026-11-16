@@ -25,8 +25,8 @@ import retrofit2.converter.gson.GsonConverterFactory
  */
 internal val DETAIL_PATH_REGEX: Regex = Regex("^/api/v1/posts/[0-9]+$")
 
-/** The shared client's read timeout — the budget every call gets unless [readTimeoutSecondsForPath] says longer. */
-internal const val DEFAULT_READ_TIMEOUT_SECONDS: Long = 15
+/** The shared client's read timeout — the budget every call gets unless [readTimeoutSecondsForPath] says longer. Int, not Long: this project's OkHttp `Chain.withReadTimeout` / `withConnectTimeout` take Int seconds, and a Long budget failed `compileDebugKotlin` (CI 43930521368). */
+internal const val DEFAULT_READ_TIMEOUT_SECONDS: Int = 15
 
 /**
  * The read timeout, in seconds, for one catalog path (screenshot-fix
@@ -37,7 +37,7 @@ internal const val DEFAULT_READ_TIMEOUT_SECONDS: Long = 15
  * mid-body. Everything else keeps the 15 s default. Pure, so
  * [ApiProviderTimeoutTest] pins the mapping without a network call.
  */
-internal fun readTimeoutSecondsForPath(path: String): Long = when {
+internal fun readTimeoutSecondsForPath(path: String): Int = when {
     path.startsWith("/api/v2/works/") -> 60
     path == "/api/v1/live-tv/channels" -> 45
     DETAIL_PATH_REGEX.matches(path) -> 30

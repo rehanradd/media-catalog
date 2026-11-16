@@ -16,28 +16,28 @@ class ApiProviderTimeoutTest {
 
     @Test
     fun worksDetailGets60Seconds() {
-        assertEquals(60L, readTimeoutSecondsForPath("/api/v2/works/8521"))
-        assertEquals(60L, readTimeoutSecondsForPath("/api/v2/works/1"))
+        assertEquals(60, readTimeoutSecondsForPath("/api/v2/works/8521"))
+        assertEquals(60, readTimeoutSecondsForPath("/api/v2/works/1"))
     }
 
     @Test
     fun liveTvChannelsGet45Seconds() {
-        assertEquals(45L, readTimeoutSecondsForPath("/api/v1/live-tv/channels"))
+        assertEquals(45, readTimeoutSecondsForPath("/api/v1/live-tv/channels"))
     }
 
     @Test
     fun v1DetailGets30Seconds() {
-        assertEquals(30L, readTimeoutSecondsForPath("/api/v1/posts/70430"))
-        assertEquals(30L, readTimeoutSecondsForPath("/api/v1/posts/11204"))
+        assertEquals(30, readTimeoutSecondsForPath("/api/v1/posts/70430"))
+        assertEquals(30, readTimeoutSecondsForPath("/api/v1/posts/11204"))
     }
 
     @Test
     fun listSearchStreamAndPlayStayOnThe15SecondDefault() {
-        assertEquals(15L, readTimeoutSecondsForPath("/api/v1/posts"))
-        assertEquals(15L, readTimeoutSecondsForPath("/api/v1/stream"))
-        assertEquals(15L, readTimeoutSecondsForPath("/api/v2/search"))
-        assertEquals(15L, readTimeoutSecondsForPath("/api/v2/play"))
-        assertEquals(15L, readTimeoutSecondsForPath("/api/v1/live-tv/channels/1"))
-        assertEquals(15L, readTimeoutSecondsForPath("/api/v1/app/remote-config"))
+        assertEquals(15, readTimeoutSecondsForPath("/api/v1/posts"))
+        assertEquals(15, readTimeoutSecondsForPath("/api/v1/stream"))
+        assertEquals(15, readTimeoutSecondsForPath("/api/v2/search"))
+        assertEquals(15, readTimeoutSecondsForPath("/api/v2/play"))
+        assertEquals(15, readTimeoutSecondsForPath("/api/v1/live-tv/channels/1"))
+        assertEquals(15, readTimeoutSecondsForPath("/api/v1/app/remote-config"))
     }
 }

@@ -35,3 +35,8 @@ Base: 76db046f (STALE). Main is now 53700d7e (harness-fix merged 23:31, Android 
 - Robo run 2 (matrix-3p2ysll1q0ed7) failed on action 2 of 12: WAIT found "I Understand" but VIEW_CLICKED on that text failed — text tap matched a non-clickable Text node; dialog stayed up, resolve test never ran.
 - Fix (second commit on this branch, on top of a6d83fa5): `testTag("disclaimer_confirm")` on the first-run confirm Button + `testTag("disclaimer_decline")` on Decline in DisclaimerDialog.kt (no visual change); robo-resolve-test.json action 2 matches by `resourceId: "disclaimer_confirm"` (action 1 text wait unchanged, 12 actions total).
 - DisclaimerDialogTest asserts by text only — tags cannot break it. Push re-runs CI on the new tip; the CI-green debug APK from that tip is the one for Robo run 3 (harness + screenshot fixes + testTag).
+
+## CI fixes (2026-11-16 ~23:50 PKT)
+- First push's CI failed on BOTH workflows (real, not flakes). Android 43930521368: `compileDebugKotlin` — ApiProvider.kt:168 passed a Long where this project's OkHttp `Chain.withReadTimeout` expects Int; lint failed on the same error. Fix: `DEFAULT_READ_TIMEOUT_SECONDS` + `readTimeoutSecondsForPath` now Int end to end; test assertions 60L/45L/30L/15L → plain Ints.
+- Backend 43930521584: `test_docs_invariants.py` — CONTINUITY.md claimed 165 archive files, checkpoints holds 166 after the new checkpoint file. Fix: "166 session files (164 dated + 2 undated)"; verified 22/22 locally.
+- Third commit on the branch; CI re-run owed on the new tip; that tip's CI-green debug APK is the one for Robo run 3.
