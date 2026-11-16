@@ -77,9 +77,31 @@ class PlayerDefaultsTest {
     // ── 480p default start (owner order 07:01 PKT 16 Nov) ───────────────────
 
     @Test
-    fun `no saved default starts at 480p`() {
-        assertEquals("480p" to false, resolveStartBand(null, true, "auto", rungs, defaultBandSet = false))
-        assertEquals("480p" to false, resolveStartBand(null, true, "", rungs, defaultBandSet = false))
+    fun `no saved default starts at 480p with Auto on`() {
+        assertEquals("480p" to true, resolveStartBand(null, true, "auto", rungs, defaultBandSet = false))
+        assertEquals("480p" to true, resolveStartBand(null, true, "", rungs, defaultBandSet = false))
+    }
+
+    @Test
+    fun `480p start keeps Auto on on a taller ladder`() {
+        assertEquals(
+            "480p" to true,
+            resolveStartBand(
+                null, true, "auto",
+                listOf("2160p", "1080p", "720p", "480p"), defaultBandSet = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `a start band missing from this ladder falls back to 480p with Auto on`() {
+        // The production case is a tapped rung the quality gate filtered out of
+        // the ladder before this ran: Auto climbs only within the allowed rungs,
+        // since the director is armed on the filtered list.
+        assertEquals(
+            "480p" to true,
+            resolveStartBand("1080p", false, "auto", listOf("720p", "480p"), defaultBandSet = false),
+        )
     }
 
     @Test
