@@ -220,5 +220,5 @@
          its own line. Both now read as viewer copy. -->
     <string name="mylist_popular_title">Trending to Start Your List</string>
     <string name="mylist_popular_subtitle">Hand-picked picks to jumpstart your queue</string>
-    <string name="mylist_empty_message">Tap the heart on any title to save it here for quick access.</string>
+    <string name="mylist_empty_message">Tap the heart on any title to save it here.</string>
 </resources>
