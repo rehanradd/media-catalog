@@ -8,6 +8,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.network.models.PostDetail
 import com.raddstream.app.player.LadderForScope
+import com.raddstream.app.player.QualityLadder
 import com.raddstream.app.player.QualityOption
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.ResumePoint
@@ -51,7 +52,11 @@ class DetailPaywallTest {
 
     private fun option(band: String, title: String) = QualityOption(
         band = band,
-        title = title,
+        // The rung title is sanitized at the server-tier crossing point
+        // in production (QualityLadder.sanitizeRungTitle), so the
+        // fixture sanitizes too — the pill's description names the
+        // title the viewer actually sees, not the raw server label.
+        title = QualityLadder.sanitizeRungTitle(band, title),
         streamId = "h-$band",
         playUrl = "http://127.0.0.1:8080/api/v1/stream?id=h-$band",
         sizeBytes = null,
