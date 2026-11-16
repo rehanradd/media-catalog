@@ -155,9 +155,9 @@ object Brand {
      * plain HTTP, used for one session when the HTTPS primary is unreachable).
      * It is a fallback only: the deadman switch may hand it to the app as a
      * session-only override, and it must never overwrite a saved HTTPS primary.
-     * It is NOT a release escape hatch — the release network policy still
-     * permits cleartext for loopback hosts only, so this address takes effect
-     * in debug builds and in a release only if the owner ever allows the host.
+     * The owner allowed cleartext for this one host (2026-11-16), so the
+     * generated release network policy permits HTTP to it — a named-host
+     * exception, never a global cleartext switch.
      */
     val fallbackServerUrl: String
         get() = string("network.fallback_server_url")

@@ -217,9 +217,10 @@ run**: read `App/**`'s `ci.yml` result and step count, not a local XML.
 none of the four keystore variables, and the only build that can talk to the deployed host:
 `App/app/src/debug/res/xml/network_security_config.xml` sets
 `cleartextTrafficPermitted="true"`, while a **release** build reads
-`brand.properties:199 network.release_cleartext_for_default_host=false`, so a signed release APK
-cannot reach `http://92.4.95.252` over plain HTTP at all — a deployment fact about what is
-testable, not a reason to loosen release policy.
+`brand.properties` `network.release_cleartext_for_default_host=false`, so a signed release APK
+cannot reach the default host over plain HTTP — but the owner allowed one named-host exception
+(2026-11-16) for the fallback IP `92.4.95.252`, so a signed release APK can reach that one
+address over plain HTTP when the deadman switch hands it over.
 
 **How to get a signed release:** push a `v*.*.*` tag → `release.yml`. It needs
 `KEYSTORE_BASE64`, `KEY_STORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`, **and it works**: `v1.0.4` is

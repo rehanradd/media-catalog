@@ -79,21 +79,37 @@ val brandResDir = File(layout.buildDirectory.get().asFile, "generated/res/brand"
 // The hosts a release build may talk to over plain HTTP. Derived, never typed.
 //
 // Off by default: `App/AGENTS.md` §11 forbids relaxing network security to make a
-// release work over HTTP, so the shipped policy is loopback-only (a developer's own
-// API on their machine or the emulator). One brand key —
-// `network.release_cleartext_for_default_host` — adds the default server's host, and
-// only that host, when the owner decides cleartext to their own catalog is acceptable.
-// Third-party media origins are never added: their URLs already arrive as our own
-// redirector handles.
+// release work over HTTP, so the shipped policy is loopback (a developer's own API
+// on their machine or the emulator) plus one named host: the deadman-switch
+// fallback from `network.fallback_server_url`, and only when that URL is plain
+// HTTP — the owner allowed cleartext for this one host (2026-11-16) so the
+// session-only fallback works in a release build. One further brand key —
+// `network.release_cleartext_for_default_host` — adds the default server's host,
+// and only that host, when the owner decides cleartext to their own catalog is
+// acceptable. Third-party media origins are never added: their URLs already
+// arrive as our own redirector handles.
 fun brandReleaseCleartextAllowed(): Boolean =
     brand("network.release_cleartext_for_default_host", "false").equals("true", ignoreCase = true)
 
+// The deadman-switch fallback host, and only when its URL is plain HTTP: an
+// HTTPS fallback needs no exception, so it adds none. Derived, never typed.
+fun brandFallbackCleartextHost(): String? {
+    val uri = runCatching { URI(brand("network.fallback_server_url", "")) }.getOrNull()
+        ?: return null
+    if (!uri.scheme.equals("http", ignoreCase = true)) return null
+    return uri.host?.takeIf { it.isNotEmpty() }
+}
+
 fun brandCleartextHosts(): List<String> {
     val local = listOf("127.0.0.1", "localhost", "10.0.2.2")
-    if (!brandReleaseCleartextAllowed()) return local.sorted()
+    val fallback = listOfNotNull(brandFallbackCleartextHost())
+    if (!brandReleaseCleartextAllowed()) return (local + fallback)
+        .filter { it.isNotEmpty() && !it.contains('/') && !it.contains(':') }
+        .distinct()
+        .sorted()
     val fromUrl = runCatching { URI(brand("network.default_server_url", "")).host }.getOrNull()
     val extras = brand("network.cleartext.extra_hosts", "").split(',', ' ').map { it.trim() }
-    return (local + listOfNotNull(fromUrl) + extras)
+    return (local + fallback + listOfNotNull(fromUrl) + extras)
         .filter { it.isNotEmpty() && !it.contains('/') && !it.contains(':') }
         .distinct()
         .sorted()
@@ -401,18 +417,24 @@ fun brandDefaultHost(): String? =
     runCatching { URI(brand("network.default_server_url", "")).host }.getOrNull()?.takeIf { it.isNotEmpty() }
 
 // The one cleartext exception, in the platform's own format. Generated so that
-// changing `network.default_server_url` or the release switch changes it with no
-// second place to edit. The same file carries the `<pin-set>` for the default
-// host when `network.tls_pins` is set: the app enforces the same pins in code
+// changing `network.default_server_url`, `network.fallback_server_url`, or the
+// release switch changes it with no second place to edit. The same file carries
+// the `<pin-set>` for the default host when `network.tls_pins` is set: the app enforces the same pins in code
 // (`ApiProvider`), and the platform enforces them here, so a release build
 // refuses a certificate that neither the pins nor the platform trust. A
 // user-chosen server is never pinned.
 fun brandNetworkPolicyXml(): String {
     val hosts = brandCleartextHosts()
-    val policy = if (brandReleaseCleartextAllowed()) {
-        "cleartext is permitted for the one host this brand ships against"
-    } else {
-        "cleartext is permitted for loopback only, so a release build reaches a TLS catalog"
+    val extra = hosts - setOf("127.0.0.1", "localhost", "10.0.2.2")
+    val policy = when {
+        brandReleaseCleartextAllowed() ->
+            "cleartext is permitted for the one host this brand ships against"
+        extra.isEmpty() ->
+            "cleartext is permitted for loopback only, so a release build reaches a TLS catalog"
+        else ->
+            "cleartext is permitted for loopback plus the plain-HTTP fallback host " +
+                "(${extra.joinToString(", ")}), so a release build can fall back to it " +
+                "when the TLS catalog is unreachable"
     }
     return buildString {
         appendLine("<?xml version=\"1.0\" encoding=\"utf-8\"?>")
