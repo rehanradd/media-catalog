@@ -1100,11 +1100,11 @@ class PublicEdgeHttpTests(FixtureMixin):
     def setUp(self):
         self.make_ledger()
         redact.limiter._buckets.clear()
-        # The shipped default gates 1080p behind VIP, and this suite asserts
-        # the public edge's redirect behaviour for a free viewer — not the
-        # gate, which has its own tests — so the fixture declares the gate
-        # off explicitly. A test that wanted the gate on would flip it the
-        # way `enable_quality_gate` does.
+        # The shipped default is free (launch plan Phase 0, G-1), and this
+        # suite asserts the public edge's redirect behaviour for a free
+        # viewer — not the gate, which has its own tests — so the fixture
+        # declares the gate off explicitly anyway. A test that wanted the
+        # gate on would flip it the way `enable_quality_gate` does.
         import admin_panel
         with sqlite3.connect(self.db_path) as conn:
             admin_panel._ensure_monetization(conn)
@@ -1393,7 +1393,7 @@ class PublicEdgeHttpTests(FixtureMixin):
     # ---- audit critical 5: server-side 720p free cap ----------------------- #
     def enable_quality_gate(self):
         """Flip the operator's `feature_quality_gate` on for this ledger.
-        The shipped default is on since the security release, but the flip
+        The shipped default is off (launch plan Phase 0, G-1), so the flip
         stays explicit here: these tests prove the gate's behaviour, not the
         default, and an explicit flip keeps them green if the default ever
         moves again."""
@@ -1405,22 +1405,23 @@ class PublicEdgeHttpTests(FixtureMixin):
                 "WHERE id = 1")
             conn.commit()
 
-    def test_the_shipped_default_gates_without_any_operator_flip(self):
-        """The security release flipped the default on: a fresh ledger —
-        no operator save, no explicit flip — must refuse a free 1080p
-        viewer, because a deployment that ships with the gate off gives
-        premium quality away until someone remembers to turn it on. The
-        class fixture sets the gate off for its other tests, so this one
-        deletes the row first: `_ensure_monetization` then re-seeds it, and
-        the value it seeds is the default under test."""
+    def test_the_shipped_default_is_free_until_the_operator_flips_it(self):
+        """Launch plan Phase 0, G-1: the canonical default is OFF — the live
+        catalog row, the panel v2 DDL, the published snapshot and the app
+        default all say 0. A fresh ledger — no operator save, no explicit
+        flip — must NOT refuse a free 1080p viewer, because a deployment
+        that ships with the gate on locks premium quality until someone
+        remembers to turn it off. The class fixture sets the gate off for
+        its other tests, so this one deletes the row first:
+        `_ensure_monetization` then re-seeds it, and the value it seeds is
+        the default under test."""
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("DELETE FROM app_remote_config WHERE id = 1")
             conn.commit()
         sid_1080 = self.source_id(self.post_id)
-        self.assertEqual(
-            "premium_quality_requires_vip",
+        self.assertIsNone(
             viewer.quality_gate_block_reason(sid_1080, {}, {}),
-            "a fresh deployment must gate premium quality by default")
+            "a fresh deployment must not gate premium quality by surprise")
 
     def test_the_quality_gate_refuses_premium_bands_for_free_viewers(self):
         """Audit critical 5: the 720p free cap lived only in the app — a
