@@ -46,3 +46,8 @@ Base: 76db046f (STALE). Main is now 53700d7e (harness-fix merged 23:31, Android 
 - Record run 43933693941 (workflow 418582550, numeric id) SUCCESS; its 11 renders byte-identical to the viewed ones. 2 more goldens (detailSeriesEpisodes 0.12%, posterCardSingleRankedWithProgress 0.20%) differ sub-visibly, within verify tolerance, refreshed anyway; old/new pairs viewed, identical.
 - All 13 refreshed goldens committed (fourth commit). Backend re-run 43932104496 SUCCESS — first attempt failed on the known token-minting flake (mint_token embeds the expiry second; a boundary crossing changes the handle tail); local 26/26 OK, main green, no Python touched — re-run, not a fix.
 - CI re-run owed on the new tip; that tip's CI-green debug APK is the one for Robo run 3.
+
+## CI GREEN (2026-11-16 ~00:10 PKT 17 Nov)
+- Tip 609c0381: Android 43934956702 SUCCESS + Backend 43934956692 SUCCESS.
+- Debug APK (artifact app-debug-852): `~/workspace/apk-screenshot-fix-609c0381/app-debug.apk` (26,670,677 B, SHA-256 e1591c6e3c96d1e349bab041c9ebcbc9552460b04c2075abcdc39d99833865fc). Carries the harness (main 53700d7e) + all screenshot fixes + disclaimer testTag. That is the APK for Robo run 3.
+- Do NOT merge — report delivered to parent.
