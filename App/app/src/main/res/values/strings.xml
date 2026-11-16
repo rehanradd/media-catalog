@@ -213,4 +213,12 @@
     <string name="search_filters_help">Filters narrow the whole catalog — only the year range applies to the titles already loaded.</string>
     <string name="embed_load_failed">The page did not load: %1$s</string>
     <string name="embed_load_failed_unknown">The page did not load</string>
+    <!-- ═══ MY LIST (review, 2026-11-16) ═══
+         The starter rail's old title ("Most copies" / "Well-stocked catalog
+         picks") read like warehouse inventory, not a streaming shelf; the
+         empty-state message wrapped with "for quick access." orphaned on
+         its own line. Both now read as viewer copy. -->
+    <string name="mylist_popular_title">Trending to Start Your List</string>
+    <string name="mylist_popular_subtitle">Hand-picked picks to jumpstart your queue</string>
+    <string name="mylist_empty_message">Tap the heart on any title to save it here for quick access.</string>
 </resources>

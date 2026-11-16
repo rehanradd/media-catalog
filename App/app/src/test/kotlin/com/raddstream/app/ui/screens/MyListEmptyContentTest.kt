@@ -10,17 +10,22 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.ui.components.EmptyState
 import com.raddstream.app.ui.components.PosterCard
 import com.raddstream.app.ui.theme.RaddStreamTheme
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -35,9 +40,11 @@ import org.robolectric.RobolectricTestRunner
  * was laid out with no height left — off-screen, its three poster cards
  * collapsed to a strip at the content's bottom edge, one per column. The
  * message now takes the remaining space (weight 1f) and the row takes its
- * natural height. These tests pin both halves: the new layout's cards are
- * full-height tiles, and the old shape (reproduced here) really did starve
- * them under the 48dp floor.
+ * natural height. The My List review (Nov 2026) went further and stopped
+ * the empty state claiming the space at all (`fillScreen = false`, no
+ * weight), so the rail pulls up directly underneath it. These tests pin
+ * both halves: the new layout's cards are full-height tiles, and the old
+ * shape (reproduced here) really did starve them under the 48dp floor.
  *
  * Runs on the JVM under Robolectric because this project has no emulator image.
  *
@@ -69,9 +76,18 @@ class MyListEmptyContentTest {
     )
 
     private fun clickableHeights(): List<Dp> {
-        val clickable = compose.onAllNodes(hasClickAction())
-        clickable.assertCountEquals(popular.size)
-        return clickable.fetchSemanticsNodes().map {
+        // My List review (Nov 2026): each rail card now carries two click
+        // targets — the tile body and the save heart — so the heights here
+        // are the tile bodies only. The hearts are 48dp by construction and
+        // would fail the poster's >100dp floor; they announce themselves as
+        // "Save <title> to My List" / "Remove <title> from My List".
+        val tiles = compose.onAllNodes(hasClickAction()).fetchSemanticsNodes().filter { node ->
+            val description = node.config.getOrNull(SemanticsProperties.ContentDescription)
+                ?.joinToString(" ") ?: ""
+            !description.startsWith("Save ") && !description.startsWith("Remove ")
+        }
+        assertEquals(popular.size, tiles.size)
+        return tiles.map {
             with(compose.density) { it.boundsInRoot.height.toDp() }
         }
     }
@@ -84,14 +100,15 @@ class MyListEmptyContentTest {
                     MyListEmptyContent(
                         popular = popular,
                         onPostClick = {},
+                        onToggleFavorite = {},
                         modifier = Modifier.width(360.dp),
                     )
                 }
             }
         }
         // The row is visible: its heading is on screen, not pushed below the fold.
-        compose.onNodeWithText("Most copies").assertIsDisplayed()
-        // The only clickables are the three poster cards — one per title.
+        compose.onNodeWithText("Trending to Start Your List").assertIsDisplayed()
+        // The only tile clickables are the three poster cards — one per title.
         val heights = clickableHeights()
         assertTrue(
             "PopularRow cards measure $heights, expected every card a full-height tile (>= 48dp)",
@@ -101,6 +118,75 @@ class MyListEmptyContentTest {
             "PopularRow cards measure $heights, expected poster height, not a collapsed strip",
             heights.all { it > 100.dp },
         )
+    }
+
+    @Test
+    fun saveToggleCallsOnToggleFavoriteAndNotOnPostClick() {
+        val toggled = mutableListOf<Post>()
+        val opened = mutableListOf<Post>()
+        compose.setContent {
+            RaddStreamTheme {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopStart) {
+                    MyListEmptyContent(
+                        popular = popular,
+                        onPostClick = { opened += it },
+                        onToggleFavorite = { toggled += it },
+                        modifier = Modifier.width(360.dp),
+                    )
+                }
+            }
+        }
+        // My List review (Nov 2026): the rail finally has the heart its own
+        // empty-state copy promises ("tap the heart") — one per card.
+        compose.onNodeWithContentDescription("Save Inception to My List").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Save Inception to My List").performClick()
+        assertEquals(listOf(1), toggled.map { it.id })
+        assertTrue("tapping the heart must not open the title", opened.isEmpty())
+    }
+
+    @Test
+    fun savedToggleAnnouncesRemoval() {
+        compose.setContent {
+            RaddStreamTheme {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopStart) {
+                    MyListEmptyContent(
+                        popular = popular,
+                        onPostClick = {},
+                        isFavorite = { it.id == 1 },
+                        onToggleFavorite = {},
+                        modifier = Modifier.width(360.dp),
+                    )
+                }
+            }
+        }
+        // A saved card's heart is the filled state: it announces removal,
+        // and no "Save" toggle for that title exists any more.
+        compose.onNodeWithContentDescription("Remove Inception from My List").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Save Inception to My List").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Save Dune to My List").assertIsDisplayed()
+    }
+
+    @Test
+    fun tappingTheCardBodyStillOpensDetail() {
+        val toggled = mutableListOf<Post>()
+        val opened = mutableListOf<Post>()
+        compose.setContent {
+            RaddStreamTheme {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopStart) {
+                    MyListEmptyContent(
+                        popular = popular,
+                        onPostClick = { opened += it },
+                        onToggleFavorite = { toggled += it },
+                        modifier = Modifier.width(360.dp),
+                    )
+                }
+            }
+        }
+        // The tile's own sentence is its click target; the heart eats only
+        // its own tap, so opening the title never also saves it.
+        compose.onNodeWithContentDescription("Inception, 2024 · Movie").performClick()
+        assertEquals(listOf(1), opened.map { it.id })
+        assertTrue("opening the title must not save it", toggled.isEmpty())
     }
 
     @Test

@@ -28,7 +28,7 @@ import org.robolectric.RobolectricTestRunner
 /**
  * Mockup (Nov 2026): the My List sort chips are 48dp tall, all three
  * fully visible in one row in mockup order, the active chip jade-filled
- * — and the "Most copies" rail sits below the grid as a full-span
+ * — and the "Trending to Start Your List" rail sits below the grid as a full-span
  * footer whenever the trending load produced titles. Runs on the JVM
  * under Robolectric because this project has no emulator image.
  *
@@ -124,7 +124,7 @@ class MyListMockupScreenTest {
     }
 
     @Test
-    fun popularRowRendersTheMostCopiesRail() {
+    fun popularRowRendersTheTrendingRail() {
         compose.setContent {
             RaddStreamTheme {
                 Box(Modifier.width(390.dp)) {
@@ -139,8 +139,10 @@ class MyListMockupScreenTest {
                 }
             }
         }
-        compose.onNodeWithText("Most copies").assertIsDisplayed()
-        compose.onNodeWithText("Well-stocked catalog picks to start your list")
+        // My List review (Nov 2026): the rail's old "Most copies" title
+        // read like warehouse inventory; the shelf now says what it is.
+        compose.onNodeWithText("Trending to Start Your List").assertIsDisplayed()
+        compose.onNodeWithText("Hand-picked picks to jumpstart your queue")
             .assertIsDisplayed()
         compose.onNodeWithText("Inception").assertIsDisplayed()
         compose.onNodeWithText("Dune").assertIsDisplayed()

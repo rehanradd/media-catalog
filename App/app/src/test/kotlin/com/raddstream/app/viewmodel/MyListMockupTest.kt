@@ -2,6 +2,7 @@ package com.raddstream.app.viewmodel
 
 import com.raddstream.app.data.local.FavoritePost
 import com.raddstream.app.data.local.WatchHistoryEntity
+import com.raddstream.app.network.models.Post
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -193,5 +194,56 @@ class MyListMockupTest {
     fun `empty history paints nothing`() {
         assertEquals(emptyMap<Int, Float>(), myListProgressByPostId(emptyList()))
         assertNull(myListProgressByPostId(emptyList())[1])
+    }
+
+    // Starter shelf (My List review, Nov 2026)
+
+    private fun shelfPost(id: Int, title: String, posterUrl: String?) = Post(
+        id = id,
+        title = title,
+        cleanTitle = title,
+        year = 2024,
+        contentType = "movie",
+        posterUrl = posterUrl,
+    )
+
+    @Test
+    fun `starter shelf drops a posterless first title and backfills`() {
+        // The review's screenshot: Kesariya@100 sat first with a grey tile.
+        // The shelf drops it and pulls the next posterful candidate up, so
+        // the rail still shows three real posters.
+        val shelf = starterShelf(
+            listOf(
+                shelfPost(1, "Kesariya@100", null),
+                shelfPost(2, "The Penguin", "https://cdn.example/penguin.jpg"),
+                shelfPost(3, "Gen V", "https://cdn.example/genv.jpg"),
+                shelfPost(4, "Dune", "https://cdn.example/dune.jpg"),
+            ),
+        )
+        assertEquals(listOf("The Penguin", "Gen V", "Dune"), shelf.map { it.title })
+    }
+
+    @Test
+    fun `starter shelf drops a blank poster url too`() {
+        val shelf = starterShelf(
+            listOf(
+                shelfPost(1, "No Art", ""),
+                shelfPost(2, "Has Art", "https://cdn.example/art.jpg"),
+            ),
+        )
+        assertEquals(listOf("Has Art"), shelf.map { it.title })
+    }
+
+    @Test
+    fun `starter shelf caps at three posterful titles`() {
+        val shelf = starterShelf(
+            (1..6).map { shelfPost(it, "Title $it", "https://cdn.example/$it.jpg") },
+        )
+        assertEquals(listOf("Title 1", "Title 2", "Title 3"), shelf.map { it.title })
+    }
+
+    @Test
+    fun `starter shelf with no posters is empty`() {
+        assertTrue(starterShelf(listOf(shelfPost(1, "No Art", null))).isEmpty())
     }
 }

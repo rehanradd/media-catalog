@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -125,6 +126,20 @@ internal fun stripMyListTitleSuffixes(title: String, year: Int?, contentType: St
 }
 
 /**
+ * The starter shelf for the empty state (and the loaded grid's footer):
+ * only titles with real poster art, at most three, in the server's
+ * trending order. A posterless title paints a grey tile that makes the
+ * catalog look broken, so it never reaches the rail — and the shelf is
+ * drawn from all six loaded candidates, so dropping one still leaves
+ * three. Saved titles stay on the shelf with a filled heart (the toggle's
+ * saved state) instead of being filtered out: the rail is the place the
+ * viewer saves from, so hiding a just-saved title would hide the very
+ * feedback the toggle promises.
+ */
+internal fun starterShelf(popular: List<Post>): List<Post> =
+    popular.filter { !it.posterUrl.isNullOrBlank() }.take(3)
+
+/**
  * The progress bar each saved tile paints, keyed by post id: the latest
  * watch row for that title, and only when it is resumable — started and
  * not within the end guard — so a finished title paints no bar and a row
@@ -184,14 +199,12 @@ class MyListViewModel @Inject constructor(
             refusedOf = { it.id in refused },
         )
         val sorted = sortMyList(visible, sort, watchedTitles(history))
-        val favoriteIds = visible.mapTo(HashSet()) { it.id }
-        val curatedShelf = popular.filterNot { it.id in favoriteIds }.take(3)
         MyListUiState(
             favorites = sorted.map(::myListDisplayPost),
             sort = sort,
             isLoading = false,
             hiddenCount = list.size - visible.size,
-            popular = curatedShelf,
+            popular = starterShelf(popular),
             removedTitle = removedTitle,
             progressByPostId = myListProgressByPostId(history),
         )
@@ -266,5 +279,34 @@ class MyListViewModel @Inject constructor(
     fun clearRemovedNotice() {
         lastRemoved = null
         removedTitleFlow.value = null
+    }
+
+    /**
+     * My List review (Nov 2026): the starter rail's save toggle — the same
+     * add/remove Detail and Home use. A v2 row has no v1 post id (its `id`
+     * is the negative work-id sentinel), so Room cannot key it: the toggle
+     * first resolves the work to its v1 post through the `work_ref` bridge
+     * and toggles THAT row — the same bridge as HomeViewModel's
+     * `resolveV1Post`. An unresolvable work is a no-op here; Detail runs
+     * the same resolution and is the place that can say why.
+     */
+    fun toggleFavorite(post: Post) {
+        viewModelScope.launch {
+            val target = resolveV1Post(post) ?: return@launch
+            if (favoritesRepository.isFavorite(target.id).first()) {
+                favoritesRepository.removeFavorite(target.id)
+            } else {
+                favoritesRepository.addFavorite(target)
+            }
+        }
+    }
+
+    /** The v1 post for a row, or the row itself when it already is one. Null when unresolvable. */
+    private suspend fun resolveV1Post(post: Post): Post? {
+        if (post.workId == null) return post
+        val ref = post.workRef?.takeIf { it.isNotBlank() } ?: return null
+        return runCatching {
+            catalogRepository.getPosts(workRef = ref, page = 1, limit = 1).results.firstOrNull()
+        }.getOrNull()
     }
 }

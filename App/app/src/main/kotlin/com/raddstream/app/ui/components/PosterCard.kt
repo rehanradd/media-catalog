@@ -115,6 +115,16 @@ fun PosterCard(
      * Null everywhere else — no synthetic rank numbers are ever invented.
      */
     rank: Int? = null,
+    /**
+     * My List review (Nov 2026): the compact meta line for the 3-up
+     * starter rail — rating and year only, "★ 8.6 • 2024", no type word.
+     * Three segments truncate to "S..." in a 3-up cell; Home and Search
+     * rails have room and keep the full "★ 6.7 | 2026 | Series" line, so
+     * this stays false everywhere except [PopularRow]. The type stays in
+     * the tile's spoken sentence and on Detail — only the painted rail
+     * line loses it.
+     */
+    compactMeta: Boolean = false,
 ) {
     // Rail-title cleanup (Nov 2026): the tile paints the same clean title
     // Detail and the hero paint ([UserWords.detailTitle] — the server's
@@ -145,11 +155,7 @@ fun PosterCard(
     // Mockup (Nov 2026): the meta line carries the rating too — one line,
     // "★ 6.7 | 2026 | Series" — so the rating badge that used to ride the
     // poster is gone: it would say the same number twice on one tile.
-    val details = listOfNotNull(
-        UserWords.displayRating(post.imdbRating)?.let { "★ $it" },
-        post.yearLabel,
-        typeLabel,
-    ).joinToString(" | ")
+    val details = posterMetaLine(post, compactMeta)
     // The spoken sentence keeps the old shape — "2024 · Movie" — and the
     // rating arrives once, as "rating 8.6 out of 10" below, so a screen
     // reader never hears the number twice.
@@ -379,7 +385,13 @@ fun PosterCard(
                             "Save $title to My List"
                         },
                         tint = if (isFavorite) {
-                            MaterialTheme.colorScheme.secondary
+                            // My List review (Nov 2026): a saved heart is
+                            // jade, the brand primary. The coral secondary
+                            // read as an error state next to the jade My
+                            // List tab — and the empty-state heart is jade
+                            // too, so a saved tile and the empty state
+                            // finally agree on what "saved" looks like.
+                            MaterialTheme.colorScheme.primary
                         } else {
                             MaterialTheme.colorScheme.onSurface
                         },
@@ -495,6 +507,29 @@ fun PosterCard(
         }
     }
 }
+/**
+ * My List review (Nov 2026): the rail meta line, as one pure function so
+ * the compact form is assertable without a layout. Full form is
+ * "★ 6.7 | 2026 | Series"; the compact form (the 3-up starter rail, where
+ * three segments truncate to "S...") drops the type word and joins with a
+ * bullet — "★ 8.6 • 2024". The type stays in the tile's spoken sentence
+ * and on Detail; only the painted rail line loses it. An absent rating or
+ * year simply leaves its slot out — never an invented value.
+ */
+internal fun posterMetaLine(post: Post, compact: Boolean): String =
+    if (compact) {
+        listOfNotNull(
+            UserWords.displayRating(post.imdbRating)?.let { "★ $it" },
+            post.yearLabel,
+        ).joinToString(" • ")
+    } else {
+        listOfNotNull(
+            UserWords.displayRating(post.imdbRating)?.let { "★ $it" },
+            post.yearLabel,
+            post.typeLabel,
+        ).joinToString(" | ")
+    }
+
 /**
  * F25 (Batch B): the placeholder tile as Android Studio sees it — a title
  * with no poster art, so the F6 gradient + title treatment is visible

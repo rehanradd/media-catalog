@@ -46,6 +46,7 @@ import com.raddstream.app.ui.screens.EdgeFeedbackLine
 import com.raddstream.app.ui.screens.EdgeHud
 import com.raddstream.app.ui.screens.HomeContent
 import com.raddstream.app.ui.screens.Hud
+import com.raddstream.app.ui.screens.MyListEmptyContent
 import com.raddstream.app.ui.screens.TopBar
 import com.raddstream.app.ui.screens.SearchContent
 import com.raddstream.app.ui.screens.RungActions
@@ -195,6 +196,25 @@ class PaparazziPreviewTest {
                     PosterCard(post = salaars, modifier = Modifier.width(112.dp), rank = 2)
                     PosterCard(post = noHardFeelings, modifier = Modifier.width(112.dp))
                 }
+            }
+        }
+    }
+
+    // My List review (Nov 2026): the empty state — the jade heart in its
+    // tinted container, the retitled starter rail, the compact
+    // "★ 7.0 • 2023" meta, and the rail pulled up under the message
+    // instead of floating in a void. The first card is saved, so the shot
+    // also pins the filled jade heart against the two outline hearts.
+    @Test
+    fun myListEmptyState() {
+        paparazzi.snapshot {
+            themed {
+                MyListEmptyContent(
+                    popular = listOf(jawan, salaars, mclintock),
+                    onPostClick = {},
+                    isFavorite = { it.id == 1 },
+                    onToggleFavorite = {},
+                )
             }
         }
     }

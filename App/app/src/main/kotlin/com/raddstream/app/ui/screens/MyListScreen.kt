@@ -1,6 +1,8 @@
 package com.raddstream.app.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -17,6 +19,7 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.History
@@ -39,12 +42,16 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.raddstream.app.R
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.ui.components.CatalogGridColumns
 import com.raddstream.app.ui.components.ChipRowSkeleton
@@ -65,6 +72,15 @@ fun MyListScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
+
+    // My List review (Nov 2026): the starter rail's saved state — a v1 id
+    // match, or a work_ref match for a v2 rail row whose id is the negative
+    // work-id sentinel (see MyListViewModel.toggleFavorite). The filled
+    // heart on a rail card reads this; the rail keeps a just-saved title
+    // instead of filtering it out.
+    val isFavorite: (Post) -> Boolean = { post ->
+        state.favorites.any { it.id == post.id || (post.workRef != null && it.workRef == post.workRef) }
+    }
 
     // One tap removes the row; the way back is the snackbar, not a dialog
     // the viewer had to answer first. Dismissing the snackbar without
@@ -122,15 +138,8 @@ fun MyListScreen(
                 // Saying "your list is empty" would be a second loss on top of the first one.
                 title = "Nothing to show from your list",
                 message = state.hiddenNotice
-                    ?: "Tap the heart on any movie or series to save it here for quick access.",
-                icon = {
-                    Icon(
-                        Icons.Default.FavoriteBorder,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.secondary,
-                        modifier = Modifier.size(40.dp),
-                    )
-                },
+                    ?: stringResource(R.string.mylist_empty_message),
+                icon = { MyListEmptyHeartIcon() },
                 modifier = Modifier.padding(contentPadding),
                 action = {
                     OutlinedButton(onClick = onBrowseClick) { Text("Browse the catalog") }
@@ -139,6 +148,8 @@ fun MyListScreen(
             state.favorites.isEmpty() -> MyListEmptyContent(
                 popular = state.popular,
                 onPostClick = onPostClick,
+                isFavorite = isFavorite,
+                onToggleFavorite = { viewModel.toggleFavorite(it) },
                 modifier = Modifier.fillMaxSize().padding(contentPadding),
             )
             else -> Column(Modifier.fillMaxSize().padding(contentPadding)) {
@@ -192,6 +203,8 @@ fun MyListScreen(
                             PopularRow(
                                 popular = state.popular,
                                 onPostClick = onPostClick,
+                                isFavorite = isFavorite,
+                                onToggleFavorite = { viewModel.toggleFavorite(it) },
                                 horizontalPadding = 0.dp,
                             )
                         }
@@ -246,68 +259,107 @@ internal fun MyListSortRow(
 }
 
 /**
- * Robo run 8: the My List empty state never showed its "Most copies"
- * row — and Robo measured three 32dp clickables just above the nav bar.
- * Both are the same layout bug: [EmptyState] is a fillMaxSize Box, so inside
- * the Column it took the whole height and the [PopularRow] below it was laid
- * out with no height left — off-screen, its three poster cards collapsed to
- * a strip at the content's bottom edge, one per column. The message now takes
- * the remaining space (weight 1f) and the row takes its natural height, so
- * the suggestions are visible and every card is a full-height tile.
- * Internal so MyListEmptyContentTest can pin it without the Hilt ViewModel.
+ * My List review (Nov 2026): the empty state no longer claims the whole
+ * screen. Robo run 8's shape — [EmptyState] with `weight(1f)` — centred
+ * the heart and message in a tall void and pushed the rail to the bottom
+ * edge; the empty state now wraps its own content (`fillScreen = false`,
+ * no weight), so the rail pulls up directly underneath it. The remaining
+ * space below the rail is the end of the content, not a void in the
+ * middle of it. Internal so MyListEmptyContentTest can pin it without the
+ * Hilt ViewModel.
  */
 @Composable
 internal fun MyListEmptyContent(
     popular: List<Post>,
     onPostClick: (Post) -> Unit,
     modifier: Modifier = Modifier,
+    isFavorite: (Post) -> Boolean = { false },
+    onToggleFavorite: ((Post) -> Unit)? = null,
 ) {
     Column(modifier = modifier) {
         EmptyState(
             title = "Your list is empty",
-            message = "Tap the heart on any movie or series to save it here for quick access.",
-            icon = {
-                Icon(
-                    Icons.Default.FavoriteBorder,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.secondary,
-                    modifier = Modifier.size(40.dp),
-                )
-            },
-            modifier = Modifier.weight(1f).fillMaxWidth(),
+            message = stringResource(R.string.mylist_empty_message),
+            icon = { MyListEmptyHeartIcon() },
+            fillScreen = false,
+            modifier = Modifier.fillMaxWidth(),
         )
         if (popular.isNotEmpty()) {
-            PopularRow(popular = popular, onPostClick = onPostClick)
+            PopularRow(
+                popular = popular,
+                onPostClick = onPostClick,
+                isFavorite = isFavorite,
+                onToggleFavorite = onToggleFavorite,
+                // The loaded grid's contentPadding already leaves 24dp
+                // below its last row; the empty state's Column has no such
+                // padding, so the rail carries its own — the cards sit
+                // 24dp above the bottom nav instead of tight against it.
+                modifier = Modifier.padding(bottom = 16.dp),
+            )
         }
+    }
+}
+
+/**
+ * My List review (Nov 2026): the empty-state heart, jade in a jade-tinted
+ * rounded-square container (Stitch). The old heart was coral
+ * (`colorScheme.secondary`) — an error colour next to the jade My List
+ * tab, and the opposite of what "tap the heart to save" should look like.
+ * Shared by both empty states (the hidden-notice variant and the empty
+ * content) so the two never drift apart again.
+ */
+@Composable
+private fun MyListEmptyHeartIcon() {
+    Box(
+        modifier = Modifier
+            .size(64.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            Icons.Default.FavoriteBorder,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(40.dp),
+        )
     }
 }
 
 /**
  * Three titles for an empty list — the server's own trending order (most
  * prints and mirrors first), not this viewer's history and not a popularity
- * claim: the ledger has no play counts. A tap opens the title; saving it
- * from there is what fills the list.
+ * claim: the ledger has no play counts. A tap opens the title; the heart
+ * on the poster saves it without leaving the screen (the same toggle
+ * Detail and Home use — [PosterCard]'s TopStart heart, filled jade once
+ * saved). The heart is the toggle the empty-state message names ("tap the
+ * heart"), so the rail finally has the control its own copy promises.
+ * The rail title is viewer copy, not ledger jargon: "Most copies" read
+ * like warehouse inventory.
  */
 @Composable
 internal fun PopularRow(
     popular: List<Post>,
     onPostClick: (Post) -> Unit,
     horizontalPadding: androidx.compose.ui.unit.Dp = 16.dp,
+    isFavorite: (Post) -> Boolean = { false },
+    onToggleFavorite: ((Post) -> Unit)? = null,
+    modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = horizontalPadding, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
-                "Most copies",
+                stringResource(R.string.mylist_popular_title),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onBackground,
             )
             Text(
-                "Well-stocked catalog picks to start your list",
+                stringResource(R.string.mylist_popular_subtitle),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -320,6 +372,12 @@ internal fun PopularRow(
                 PosterCard(
                     post = post,
                     onClick = { onPostClick(post) },
+                    isFavorite = isFavorite(post),
+                    onToggleFavorite = onToggleFavorite?.let { toggle -> { toggle(post) } },
+                    // The 3-up cells are too narrow for the full
+                    // "★ 8.6 | 2024 | Series" line — it truncated to
+                    // "S..." on every card. Rating + year only.
+                    compactMeta = true,
                     modifier = Modifier.weight(1f),
                 )
             }
