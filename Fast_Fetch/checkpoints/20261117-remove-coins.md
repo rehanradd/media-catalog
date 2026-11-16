@@ -296,3 +296,14 @@ merged 00:21 PKT 17 Nov; header-pill collision cleared).
 - **Follow-up left in the tree, out of scope:** the Help "Watch" FAQ still
   says "Free viewers play up to 720p. 1080p and 4K need VIP." — gate-ON
   copy while the gate is OFF. Flagged, not changed.
+
+## CI fixup (17 Nov, after first push)
+
+- Android CI 43943553176 FAILED on `compileDebugUnitTestKotlin`:
+  `CreditDownloadUrlTest.kt` referenced the deleted `creditDownloadUrl`
+  function (unresolved reference x4). The test file was missed in the
+  first sweep — it contains no coin/streak word, only the `&credit=` URL
+  shape of the removed coin-charging download path. Deleted the file;
+  the free download URL builder (`downloadRedirectUrl`, no credit param)
+  is still pinned by `ApiProviderTest`. Backend CI 43943553204 SUCCESS on
+  the same SHA. Re-pushed as a fixup commit.
