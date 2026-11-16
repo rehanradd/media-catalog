@@ -11,7 +11,7 @@ enum class Challenge {
 }
 
 enum class AttemptKind {
-    NORMAL, SESSION_CHECK,
+    NORMAL, SESSION_CHECK, REPEAT,
 }
 
 enum class ResolveEngine {

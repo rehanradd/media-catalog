@@ -59,6 +59,7 @@ import com.raddstream.app.data.RemoteFeatures
 import com.raddstream.app.network.models.PanelTheme
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.player.PlayerSessionStore
+import com.raddstream.app.resolve.PressTestScreen
 import com.raddstream.app.resolve.ResolveTestScreen
 import com.raddstream.app.ui.components.rememberReduceMotion
 import com.raddstream.app.ui.screens.BrowseScreen
@@ -668,6 +669,7 @@ fun RaddStreamNavGraph(
                     onOpenLanguages = { navController.navigate(Screen.Languages.route) },
                     onOpenWatchHistory = { navController.navigate(Screen.WatchHistory.route) },
                     onOpenResolveTest = { navController.navigate(Screen.ResolveTest.route) },
+                    onOpenPressTest = { navController.navigate(Screen.PressTest.route) },
                 )
             }
 
@@ -676,6 +678,12 @@ fun RaddStreamNavGraph(
             if (BuildConfig.DEBUG) {
                 composable(Screen.ResolveTest.route) {
                     ResolveTestScreen(
+                        onBackClick = { navController.popBackStack() },
+                        onOpenPressTest = { navController.navigate(Screen.PressTest.route) },
+                    )
+                }
+                composable(Screen.PressTest.route) {
+                    PressTestScreen(
                         onBackClick = { navController.popBackStack() },
                     )
                 }

@@ -250,4 +250,38 @@
     <string name="resolve_test_summary_group">%1$s: %2$d of %3$d minted</string>
     <string name="resolve_test_summary_totals">Battery change across attempts: %1$s pp; data used: %2$s bytes</string>
     <string name="resolve_test_summary_session_checks">Session checks (excluded from counts): %1$d</string>
+
+    <!-- ═══ PRESS TEST (debug-only harness, G-10, 2026-11-16) ═══
+         The second phone's press/download test. Debug builds only: no
+         NavGraph entry and no Settings row exist unless DEBUG, so none of
+         this ships. -->
+    <string name="press_test_title">Press Test (debug)</string>
+    <string name="press_test_intro">Run this on the second phone (never opted in, never resolved) on home Wi-Fi, after the minted links are banked on the server. It presses Play once per banked link through the real path and taps Download once per banked link, then cancels the download after the first byte.</string>
+    <string name="press_test_control_note">Control links are excluded: they have no banked direct link, so this phase covers filepress + 1fichier only (40 links).</string>
+    <string name="press_test_open">Open press test</string>
+    <string name="press_test_run_all">Run all (40)</string>
+    <string name="press_test_export">Export results</string>
+    <string name="press_test_copy_json">Copy results JSON</string>
+    <string name="press_test_clear">Clear results</string>
+    <string name="press_test_repeat_group">Repeat %1$s</string>
+    <string name="press_test_repeat_note">A group scored 15–17 of 20 on a press bar, so it gets one repeat run.</string>
+    <string name="press_test_running">Running — one link at a time, in order.</string>
+    <string name="press_test_back">Back</string>
+    <string name="press_test_status_pending">Pending</string>
+    <string name="press_test_status_running">Running…</string>
+    <string name="press_test_status_pressed">Pressed: 302 in %1$d ms · first frame in %2$d ms · first byte in %3$d ms</string>
+    <string name="press_test_status_failed">Failed: %1$s</string>
+    <string name="press_test_item_meta">%1$s · %2$s · #%3$s</string>
+    <string name="press_test_load_failed">The sample list could not be loaded.</string>
+    <string name="press_test_export_failed">Export failed.</string>
+    <string name="press_test_copied">Results JSON copied.</string>
+    <string name="press_test_share_title">Share results</string>
+    <string name="press_test_share_subject">Press test results</string>
+    <string name="press_test_summary_header">Press test — %1$s, %2$s</string>
+    <string name="press_test_summary_kind">Run kind: %1$s</string>
+    <string name="press_test_summary_probe_note">Each press also issues one no-follow probe GET to the same redirector URL before the player starts, so the server log shows two banked stream hits per press.</string>
+    <string name="press_test_summary_log_note">The no-resolve-log check is not claimed here: this phone cannot see the server log. Check it on the VM from the press and mint timestamps in the JSON.</string>
+    <string name="press_test_summary_repeat_heading">Repeat runs (scored separately):</string>
+    <string name="press_test_summary_group">%1$s:</string>
+    <string name="press_test_summary_bar">  %1$s: %2$d of %3$d pass (Wilson 95%% CI %4$s–%5$s)</string>
 </resources>

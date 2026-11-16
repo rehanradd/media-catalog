@@ -172,6 +172,8 @@ fun SettingsScreen(
     onOpenWatchHistory: () -> Unit = {},
     /** Debug-only harness entry; the NavGraph only navigates here in DEBUG. */
     onOpenResolveTest: () -> Unit = {},
+    /** Debug-only harness entry for the press test; same DEBUG-only reachability. */
+    onOpenPressTest: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -1040,6 +1042,12 @@ fun SettingsScreen(
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text(stringResource(R.string.resolve_test_open))
+                    }
+                    OutlinedButton(
+                        onClick = onOpenPressTest,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(stringResource(R.string.press_test_open))
                     }
                 }
             }

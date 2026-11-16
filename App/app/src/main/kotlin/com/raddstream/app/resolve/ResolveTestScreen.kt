@@ -41,6 +41,7 @@ import com.raddstream.app.R
 @Composable
 fun ResolveTestScreen(
     onBackClick: () -> Unit,
+    onOpenPressTest: () -> Unit = {},
     viewModel: ResolveTestViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
@@ -104,6 +105,14 @@ fun ResolveTestScreen(
                     enabled = !state.running && state.results.isNotEmpty(),
                 ) {
                     Text(stringResource(R.string.resolve_test_clear))
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = onOpenPressTest,
+                    enabled = !state.running,
+                ) {
+                    Text(stringResource(R.string.press_test_open))
                 }
             }
             if (state.running) {

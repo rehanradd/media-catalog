@@ -63,6 +63,11 @@ sealed class Screen(val route: String) {
      * DEBUG — in release it is unreachable.
      */
     object ResolveTest : Screen("resolve_test")
+    /**
+     * The G-10 press/download test: the second screen of the debug-only
+     * field-test harness. Same DEBUG-only reachability as [ResolveTest].
+     */
+    object PressTest : Screen("press_test")
     object Help : Screen("help")
     object Languages : Screen("languages")
     object WatchHistory : Screen("watch_history")
