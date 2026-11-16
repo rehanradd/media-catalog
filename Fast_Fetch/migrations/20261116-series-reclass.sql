@@ -49,8 +49,9 @@
 --   rows whose releases carry none.
 -- DRY-RUN (do this before applying): copy the live DB with
 --   sqlite3 <live.db> ".backup <copy.db>"   (never plain cp on the WAL DB)
--- run this file against the COPY, check `SELECT changes()` is 3,551 and
--- spot-check posts 14691/45528/48275 (must flip) and 126011/88029
+-- run this file against the COPY, check `SELECT changes()` is 5,305
+-- (dry-run 2026-11-16; re-verify on a fresh copy — the catalog moves)
+-- and spot-check posts 14691/45528/48275 (must flip) and 126011/88029
 -- (must NOT flip), then delete the copy. Apply to live only through the
 -- gate (backup + live test); the statement is idempotent (re-running it
 -- changes 0 rows) and runs inside one transaction.
