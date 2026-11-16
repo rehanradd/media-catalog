@@ -77,7 +77,9 @@ class DashboardPaywallTest {
     }
 
     @Test
-    fun guestHintNamesMembershipNotCoinsWhileTheQualityGateIsOff() {
+    fun guestHintHidesWhileTheQualityGateIsOff() {
+        // The signed-out hint only renders while the gate is ON; with the
+        // gate OFF a guest sees the Premium card and no hint at all.
         compose.setContent {
             RaddStreamTheme {
                 DashboardContent(
@@ -89,7 +91,23 @@ class DashboardPaywallTest {
             }
         }
         compose.onNodeWithText("Sign in from Settings to see your coins, streak and membership here.").assertDoesNotExist()
-        compose.onNodeWithText("Sign in from Settings to see your membership here.").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Sign in from Settings to see your membership here.").assertDoesNotExist()
         compose.onNodeWithText("Premium").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun guestHintNamesMembershipNotCoinsWhileTheQualityGateIsOn() {
+        compose.setContent {
+            RaddStreamTheme {
+                DashboardContent(
+                    state = AccountOverviewUiState(signedIn = false, paywallVisible = true),
+                    onBackClick = {},
+                    onOpenProfile = {},
+                    onOpenVipUpgrade = {},
+                )
+            }
+        }
+        compose.onNodeWithText("Sign in from Settings to see your coins, streak and membership here.").assertDoesNotExist()
+        compose.onNodeWithText("Sign in from Settings to see your membership here.").performScrollTo().assertIsDisplayed()
     }
 }
