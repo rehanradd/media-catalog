@@ -34,15 +34,20 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.calculateLeftPadding
+import androidx.compose.foundation.layout.calculateRightPadding
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -61,7 +66,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Check
@@ -69,14 +73,9 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.Forward10
-import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.ListAlt
 import androidx.compose.material.icons.filled.LocalMovies
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.LockOpen
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PictureInPicture
 import androidx.compose.material.icons.filled.PlayArrow
@@ -84,7 +83,6 @@ import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Sync
-import androidx.compose.material.icons.filled.VolumeMute
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.AlertDialog
@@ -134,6 +132,8 @@ import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
@@ -147,6 +147,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.view.WindowInsetsCompat
@@ -213,6 +214,7 @@ import com.raddstream.app.ui.theme.RaddCaptionPlateArgb
 import com.raddstream.app.ui.theme.RaddCoral400
 import com.raddstream.app.ui.theme.RaddCurrent500
 import com.raddstream.app.ui.theme.RaddDanger
+import com.raddstream.app.ui.theme.RaddInk950
 import com.raddstream.app.ui.theme.PlayerChromeTheme
 import com.raddstream.app.ui.theme.RaddHudPillIdle
 import com.raddstream.app.ui.theme.RaddHudToast
@@ -572,6 +574,15 @@ private fun PlayerScreenContent(
         // 2 — our own subtitle overlay (external SRT/VTT with delay)
         SubtitleOverlay(state, vm)
 
+        // Review fix (16 Nov): a paused picture sits behind a 30% scrim so the
+        // frozen frame reads as paused, not stuck. Above the surface but below
+        // the gesture plane, so taps still reach the gestures and the chrome
+        // above it stays bright. Not during a start, while buffering, or
+        // after the end card — those states narrate themselves.
+        if (!state.isPlaying && state.startPhase == StartPhase.NONE && !state.isBuffering && !state.isEnded) {
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.30f)))
+        }
+
         // 3 — gesture plane (single full-screen layer, lanes split by pointerInput)
         GestureOverlay(
             state = state,
@@ -685,7 +696,7 @@ private fun PlayerScreenContent(
             }
         }
         if (state.locked) {
-            UnlockFab(chrome, onUnlock = { vm.setLocked(false) })
+            UnlockFab(onUnlock = { vm.setLocked(false) })
         }
 
         // 6 — narration cards
@@ -1510,13 +1521,33 @@ private fun BoostBadge() {
 
 // ── 5. Chrome bars ─────────────────────────────────────────────────────────────
 
+/**
+ * Review fix (16 Nov): one shared left/right rail for the whole chrome — top
+ * bar, live mark, control row, scrubber and time rows all sit on it. 48dp,
+ * or the display cutout + 16dp when the cutout is wider. The old chrome used
+ * three different rails (4dp / 4dp / 12dp), so the edges never lined up.
+ */
+internal fun playerSafeRailDp(cutoutLeft: Dp, cutoutRight: Dp): Dp =
+    maxOf(48.dp, cutoutLeft + 16.dp, cutoutRight + 16.dp)
+
+@Composable
+private fun playerChromeRail(): Dp {
+    val cutout = WindowInsets.displayCutout.asPaddingValues()
+    val direction = LocalLayoutDirection.current
+    return playerSafeRailDp(
+        cutoutLeft = cutout.calculateLeftPadding(direction),
+        cutoutRight = cutout.calculateRightPadding(direction),
+    )
+}
+
 @Composable
 internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit, onShowPrintSheet: () -> Unit) {
     val print = state.activeRendition
+    val rail = playerChromeRail()
     val topGradient = Brush.verticalGradient(
         colors = listOf(
-            Color.Black.copy(alpha = 0.70f),
-            Color.Black.copy(alpha = 0.30f),
+            Color.Black.copy(alpha = 0.82f),
+            Color.Black.copy(alpha = 0.35f),
             Color.Transparent,
         )
     )
@@ -1529,7 +1560,8 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
             // the immersive frame is untouched.
             .statusBarsPadding()
             .background(topGradient)
-            .padding(start = 4.dp, end = 4.dp, top = 4.dp, bottom = 8.dp),
+            .heightIn(min = 104.dp)
+            .padding(start = rail, end = rail, top = 4.dp, bottom = 8.dp),
     ) {
     Row(
         modifier = Modifier
@@ -1537,7 +1569,11 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IconButton(onClick = onBack) {
-            Icon(Icons.Default.ArrowBack, stringResource(R.string.player_back), tint = Color.White)
+            Icon(
+                painter = painterResource(R.drawable.ic_player_back),
+                contentDescription = stringResource(R.string.player_back),
+                tint = Color.White,
+            )
         }
         Spacer(Modifier.width(6.dp))
         Column(Modifier.weight(1f)) {
@@ -1560,13 +1596,13 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
                 // is a rank ("Rank #1"), not a rung — printing it would repeat the
                 // title's job badly. The tags are still worth showing on their own,
                 // and the line is dropped entirely when there is nothing to say.
-                // Mockup: a live channel's subtitle is the broadcast, not the
-                // title's metadata — "Live Broadcast". No year, no rung:
-                // a live picture has neither to print. Hate-audit H17: the
-                // "• HLS" half was engineer jargon; a viewer does not need
-                // the transport, on live or on VOD.
+                // Review fix (16 Nov): a live channel has no subtitle at all — the
+                // single live mark rides the bottom row, and a live picture has
+                // no year or rung to print. The title centres vertically on its own.
+                // Hate-audit H17: the "• HLS" half was engineer jargon; a viewer
+                // does not need the transport, on live or on VOD.
                 val subtitle = if (state.isLive) {
-                    stringResource(R.string.player_live_broadcast)
+                    ""
                 } else {
                     buildString {
                         state.titleYear?.let { append(it.toString()) }
@@ -1599,32 +1635,6 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
                 }
             }
         }
-        // Mockup: the live badge rides the top bar, jade on dark — the same
-        // live fact the bottom row prints, so a viewer who opens the chrome
-        // sees it at the top too. Never on a VOD.
-        if (state.isLive) {
-            Row(
-                modifier = Modifier
-                    .border(1.dp, RaddCurrent500, RoundedCornerShape(8.dp))
-                    .background(Color.Black.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Box(
-                    Modifier
-                        .size(6.dp)
-                        .background(RaddCurrent500, CircleShape),
-                )
-                Text(
-                    text = stringResource(R.string.player_live).uppercase(),
-                    color = RaddCurrent500,
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-            Spacer(Modifier.width(6.dp))
-        }
         if (state.sleep.mode == SleepMode.COUNTDOWN) {
             Icon(
                 Icons.Default.Bedtime,
@@ -1648,31 +1658,48 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
         // stub ("Ali Baba …") on a narrow phone. It now rides its own row above
         // the scrubber in BottomControls, where it cannot crowd anything.
         IconButton(onClick = onLock) {
-            Icon(Icons.Default.Lock, stringResource(R.string.player_lock), tint = Color.White)
+            Icon(
+                painter = painterResource(R.drawable.ic_player_lock),
+                contentDescription = stringResource(R.string.player_lock),
+                tint = Color.White,
+            )
         }
+        // Review fix (16 Nov): this button switches the source — it opens the
+        // print sheet — so it wears the swap glyph and says so. It is not a
+        // guide: no programme data exists anywhere in the player.
         IconButton(onClick = onShowPrintSheet) {
-            Icon(Icons.Default.ListAlt, stringResource(R.string.player_prints_tools), tint = Color.White)
+            Icon(
+                painter = painterResource(R.drawable.ic_player_switch_source),
+                contentDescription = stringResource(R.string.player_prints_title),
+                tint = Color.White,
+            )
         }
         }
     }
 }
 
 /**
- * The centre transport (mockup): a large frosted play/pause on the picture,
+ * The centre transport (mockup): a large frosted play button on the picture,
  * flanked by visible ±10s skip buttons — every rival shows them, and the
  * hidden double-tap alone was both undiscoverable and accident-prone
  * (hate-audit H5/H13). The skips are VOD-only: a live channel has no
- * position to move, so on live the centre button stands alone. Visible
- * whenever the chrome is up and the picture is actually playing or paused
- * — never over a start card (the card narrates the wait) and never over
- * the buffering spinner (the two would stack). A tap here toggles
- * play/pause only: the button sits in the chrome layer above the gesture
- * plane, so the tap is consumed here and never also toggles the chrome.
- * When the chrome auto-hides, the button goes with it and the picture is
- * clean. An ended title restarts from the beginning, the same rule the
- * bottom bar's play button follows. The centre button and double-tap-centre
- * share one toggle path
- * ([com.raddstream.app.viewmodel.PlayerViewModel.togglePlayPause]); a
+ * position to move, so on live the centre button stands alone.
+ *
+ * Review fix (16 Nov) — a deliberate-decision reversal: the centre button
+ * now shows ONLY while paused. During playback it is gone: it duplicated the
+ * bottom row's play/pause, and a big frosted circle over a moving picture
+ * reads as a second transport, not a shortcut. The paused picture already
+ * keeps its HUD up, so the button is the affordance that says "tap to
+ * resume" — the bottom row stays the transport while playing.
+ *
+ * Never over a start card (the card narrates the wait) and never over the
+ * buffering spinner (the two would stack). A tap here toggles play/pause
+ * only: the button sits in the chrome layer above the gesture plane, so the
+ * tap is consumed here and never also toggles the chrome. When the chrome
+ * auto-hides, the button goes with it and the picture is clean. An ended
+ * title restarts from the beginning, the same rule the bottom bar's play
+ * button follows. The centre button and double-tap-centre share one toggle
+ * path ([com.raddstream.app.viewmodel.PlayerViewModel.togglePlayPause]); a
  * double-tap on the button is one toggle, not two — the second tap inside
  * the platform double-tap window is the double-tap's second half, not a
  * new press, so it is dropped.
@@ -1685,9 +1712,10 @@ internal fun CenterPlayPause(
     onSeekBy: (Long) -> Unit,
 ) {
     if (state.startPhase != StartPhase.NONE || state.isBuffering) return
-    val label = stringResource(
-        if (state.isPlaying) R.string.player_pause else R.string.player_play,
-    )
+    // Review fix (16 Nov): paused-only. While playing the bottom row is the
+    // transport; the centre button would duplicate it over the picture.
+    if (state.isPlaying) return
+    val label = stringResource(R.string.player_play)
     var lastCentreToggleNs by remember { mutableLongStateOf(0L) }
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Row(
@@ -1720,9 +1748,7 @@ internal fun CenterPlayPause(
             ) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Icon(
-                        painter = painterResource(
-                            if (state.isPlaying) R.drawable.ic_player_pause else R.drawable.ic_player_play,
-                        ),
+                        painter = painterResource(R.drawable.ic_player_play),
                         contentDescription = null,
                         tint = Color.White,
                         modifier = Modifier.size(40.dp),
@@ -1864,7 +1890,12 @@ internal fun EdgeHud(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             ControlTarget(label = stringResource(R.string.player_back), onClick = onBack) {
-                Icon(Icons.Default.ArrowBack, null, tint = Color.White, modifier = Modifier.size(20.dp))
+                Icon(
+                    painter = painterResource(R.drawable.ic_player_back),
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp),
+                )
             }
             Text(
                 text = state.pendingTitle ?: state.activeRendition?.displayLabel() ?: Brand.name,
@@ -1944,7 +1975,12 @@ internal fun EdgeHud(
                 )
             }
             ControlTarget(label = stringResource(R.string.player_lock), onClick = onLock) {
-                Icon(Icons.Default.Lock, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                Icon(
+                    painter = painterResource(R.drawable.ic_player_lock),
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(18.dp),
+                )
             }
         }
     }
@@ -1977,11 +2013,15 @@ internal fun BottomControls(
 ) {
     var showVolumeDialog by remember { mutableStateOf(false) }
     val chrome = PlayerChromeTheme.forId(state.playerTheme)
+    val rail = playerChromeRail()
+    // Review fix (16 Nov): the bottom scrim is a full-height gradient — the
+    // old one went transparent exactly where the live mark sits, so the mark
+    // read over a bright ticker instead of over the dark.
     val bottomGradient = Brush.verticalGradient(
         colors = listOf(
             Color.Transparent,
-            Color.Black.copy(alpha = 0.5f),
-            Color.Black.copy(alpha = 0.85f),
+            Color.Black.copy(alpha = 0.48f),
+            Color.Black.copy(alpha = 0.92f),
         )
     )
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
@@ -1989,7 +2029,8 @@ internal fun BottomControls(
             Modifier
                 .fillMaxWidth()
                 .background(bottomGradient)
-                .padding(bottom = 8.dp),
+                .heightIn(min = 136.dp)
+                .padding(horizontal = rail, bottom = 8.dp),
         ) {
             // SC §3: pause is discovery — the cast strip. Tapping an actor
             // searches them. Only while paused: a strip that appears mid-play
@@ -1999,7 +2040,7 @@ internal fun BottomControls(
                 LazyRow(
                     Modifier
                         .fillMaxWidth()
-                        .padding(start = 12.dp, end = 12.dp, top = 8.dp),
+                        .padding(top = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     items(state.castNames, key = { it }) { actor ->
@@ -2022,7 +2063,7 @@ internal fun BottomControls(
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .padding(start = 12.dp, end = 12.dp, top = 8.dp),
+                        .padding(top = 8.dp),
                 ) {
                     KeepChip(state, onKeepCurrent)
                 }
@@ -2055,8 +2096,7 @@ internal fun BottomControls(
                 )
                 Row(
                     Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp),
+                        .fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     // App-design audit #3/#4: current time and total duration are
@@ -2088,16 +2128,20 @@ internal fun BottomControls(
                     )
                 }
             } else if (state.isLive) {
-                LiveMark()
+                // Review fix (16 Nov): the single live mark in the whole
+                // chrome — jade while playing, muted grey reading PAUSED
+                // while paused, so a frozen live picture never reads live.
+                LiveMark(paused = !state.isPlaying, modifier = Modifier.padding(bottom = 8.dp))
             }
+            // Review fix (16 Nov): a D-43 reversal. SpaceEvenly spread the six
+            // primaries into a row of identical islands with no relation between
+            // them; the groups now read as two clusters — transport on the
+            // left, tools on the right — the way every rival lays them out.
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                    .padding(vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                // D-43: the labels need room to breathe — the six primaries
-                // spread across the bar instead of packing left.
-                horizontalArrangement = Arrangement.SpaceEvenly,
             ) {
                 val subtitleWord = subtitleStatusLabel(state, stringResource(R.string.player_off))
                 val volumePercent = (state.userVolume * 100).toInt()
@@ -2106,74 +2150,91 @@ internal fun BottomControls(
                 // in the More sheet — nothing was deleted, only moved. The row no
                 // longer scrolls: six 48 dp buttons fit every phone, and a hidden
                 // seventh button would be a button that lies.
-                PlayerControlButton(
-                    { if (state.isEnded) onPlayFromStart() else onTogglePlayPause() },
-                    if (state.isPlaying) stringResource(R.string.player_pause) else stringResource(R.string.player_play),
-                    iconSize = 40.dp,
+                Row(
+                    modifier = Modifier.testTag("player-controls-left"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Icon(
-                        painter = if (state.isPlaying) painterResource(R.drawable.ic_player_pause) else painterResource(R.drawable.ic_player_play),
-                        contentDescription = null,
-                        tint = Color.White,
-                    )
-                }
-                PlayerControlButton(
-                    { onToggleMute() },
-                    if (state.userVolume > 0f) stringResource(R.string.player_volume, volumePercent)
-                    else stringResource(R.string.player_volume_muted),
-                    onLongClick = { showVolumeDialog = true },
-                ) {
-                    if (state.userVolume > 0f) {
+                    PlayerControlButton(
+                        { if (state.isEnded) onPlayFromStart() else onTogglePlayPause() },
+                        if (state.isPlaying) stringResource(R.string.player_pause) else stringResource(R.string.player_play),
+                        iconSize = 40.dp,
+                    ) {
                         Icon(
-                            painter = painterResource(R.drawable.ic_player_volume),
+                            painter = if (state.isPlaying) painterResource(R.drawable.ic_player_pause) else painterResource(R.drawable.ic_player_play),
                             contentDescription = null,
                             tint = Color.White,
                         )
-                    } else {
-                        // No brand icon for muted: the speaker with waves would lie
-                        // about the state, so the Material mute mark stays.
+                    }
+                    PlayerControlButton(
+                        { onToggleMute() },
+                        if (state.userVolume > 0f) stringResource(R.string.player_volume, volumePercent)
+                        else stringResource(R.string.player_volume_muted),
+                        onLongClick = { showVolumeDialog = true },
+                    ) {
+                        if (state.userVolume > 0f) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_player_volume),
+                                contentDescription = null,
+                                tint = Color.White,
+                            )
+                        } else {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_player_volume_muted),
+                                contentDescription = null,
+                                tint = Color.White,
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.weight(1f))
+                Row(
+                    modifier = Modifier.testTag("player-controls-right"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    PlayerControlButton(
+                        { onShowSubtitleSheet() },
+                        stringResource(R.string.player_subtitles_label, subtitleWord),
+                        selected = subtitleActive(state),
+                    ) {
+                        Icon(painterResource(R.drawable.ic_player_subtitles), null, tint = if (subtitleActive(state)) RaddCurrent500 else Color.White)
+                    }
+                    // 25c: the Quality primary never vanishes — on a single-rung title
+                    // it stays visible, and tapping it says why instead of
+                    // opening a sheet with one row. Six primaries, always. The
+                    // mockup prints the rung as a text pill ("1080P") instead of
+                    // an icon, so the quality reads without opening the sheet.
+                    QualityPill(
+                        state = state,
+                        onShowQualitySheet = onShowQualitySheet,
+                        onMessage = onMessage,
+                    )
+                    PlayerControlButton(
+                        { onToggleFullscreen() },
+                        if (state.fullscreen) stringResource(R.string.player_exit_fullscreen)
+                        else stringResource(R.string.player_fullscreen),
+                    ) {
+                        if (state.fullscreen) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_player_fullscreen_exit),
+                                contentDescription = null,
+                                tint = Color.White,
+                            )
+                        } else {
+                            Icon(painterResource(R.drawable.ic_player_fullscreen), null, tint = Color.White)
+                        }
+                    }
+                    PlayerControlButton(
+                        { onShowMoreSheet() },
+                        stringResource(R.string.player_more),
+                    ) {
                         Icon(
-                            Icons.Default.VolumeMute,
-                            null,
+                            painter = painterResource(R.drawable.ic_player_more),
+                            contentDescription = null,
                             tint = Color.White,
                         )
                     }
-                }
-                PlayerControlButton(
-                    { onShowSubtitleSheet() },
-                    stringResource(R.string.player_subtitles_label, subtitleWord),
-                    selected = subtitleActive(state),
-                ) {
-                    Icon(painterResource(R.drawable.ic_player_subtitles), null, tint = if (subtitleActive(state)) RaddCurrent500 else Color.White)
-                }
-                // 25c: the Quality primary never vanishes — on a single-rung title
-                // it stays visible, dimmed, and tapping it says why instead of
-                // opening a sheet with one row. Six primaries, always. The
-                // mockup prints the rung as a text pill ("1080P") instead of
-                // an icon, so the quality reads without opening the sheet.
-                QualityPill(
-                    state = state,
-                    onShowQualitySheet = onShowQualitySheet,
-                    onMessage = onMessage,
-                )
-                PlayerControlButton(
-                    { onToggleFullscreen() },
-                    if (state.fullscreen) stringResource(R.string.player_exit_fullscreen)
-                    else stringResource(R.string.player_fullscreen),
-                ) {
-                    if (state.fullscreen) {
-                        // No brand icon for exit: the expand-corners mark would lie
-                        // about the state, so the Material exit mark stays.
-                        Icon(Icons.Default.FullscreenExit, null, tint = Color.White)
-                    } else {
-                        Icon(painterResource(R.drawable.ic_player_fullscreen), null, tint = Color.White)
-                    }
-                }
-                PlayerControlButton(
-                    { onShowMoreSheet() },
-                    stringResource(R.string.player_more),
-                ) {
-                    Icon(Icons.Default.MoreVert, null, tint = Color.White)
                 }
             }
         }
@@ -2330,9 +2391,12 @@ private fun PlayerControlButton(
  * "Auto") is the label, so the viewer reads the quality without opening
  * the sheet. Same press contract as the other primaries (48dp minimum,
  * Button role, spoken label), only the shape is a rounded rectangle, so it
- * cannot ride [ControlTarget]'s circle clip. Single rung: the pill stays,
- * dimmed, and tapping it says why instead of opening a sheet with one row
- * — the 25c rule, unchanged. A hand-picked rung prints jade, Auto white.
+ * cannot ride [ControlTarget]'s circle clip. Single rung: the pill stays in
+ * FULL white and tapping it says why instead of opening a sheet with one
+ * row — the 25c rule, unchanged. Review fix (16 Nov): the old pill painted
+ * the rung at 40% opacity, which reads as a disabled control on a tappable
+ * one — a tappable control never dims. A hand-picked rung prints jade, Auto
+ * white.
  */
 @Composable
 private fun QualityPill(
@@ -2342,17 +2406,8 @@ private fun QualityPill(
 ) {
     val context = LocalContext.current
     val label = stringResource(R.string.player_quality_label, state.qualityLabel)
-    val dimmed = !state.canSwitchQuality
-    val textColor = when {
-        dimmed -> Color.White.copy(alpha = 0.4f)
-        !state.qualityAuto -> RaddCurrent500
-        else -> Color.White
-    }
-    val borderColor = when {
-        dimmed -> Color.White.copy(alpha = 0.25f)
-        !state.qualityAuto -> RaddCurrent500
-        else -> Color.White.copy(alpha = 0.4f)
-    }
+    val textColor = if (!state.qualityAuto) RaddCurrent500 else Color.White
+    val borderColor = if (!state.qualityAuto) RaddCurrent500 else Color.White.copy(alpha = 0.4f)
     Box(
         modifier = Modifier
             .heightIn(min = MinControlTarget)
@@ -2414,7 +2469,9 @@ private fun Scrubber(
             // Hate-audit H6: 24dp of track + 12dp of padding each side = a
             // 48dp touch height, the floor the 44dp row missed. The thumb
             // stays 16dp at rest (20dp dragging); only the grab area grows.
-            .padding(horizontal = 12.dp, vertical = 12.dp)
+            // Review fix (16 Nov): no horizontal padding of its own — the
+            // column's shared rail is the left/right edge now.
+            .padding(vertical = 12.dp)
             .height(24.dp)
             .semantics(mergeDescendants = true) {
                 contentDescription = seekDescription
@@ -2519,16 +2576,46 @@ private fun Scrubber(
     }
 }
 
+/**
+ * Review fix (16 Nov): the locked state is a pill, not a floating button —
+ * an outlined padlock + "Screen locked • Tap to unlock", centred at the
+ * bottom, always visible while locked. The old button was a small lock-open
+ * icon at the right edge that said nothing about what to do. The 2.5s
+ * flash-on-tap from the spec is not implemented: the pill stays up the
+ * whole time the screen is locked, so a viewer who locks by accident can
+ * always see how to get out.
+ */
 @Composable
-private fun UnlockFab(chrome: PlayerChromeTheme, onUnlock: () -> Unit) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterEnd) {
+private fun UnlockFab(onUnlock: () -> Unit) {
+    val hint = stringResource(R.string.player_locked_hint)
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
         Surface(
-            color = chrome.bar,
-            shape = MaterialTheme.shapes.small,
-            modifier = Modifier.padding(16.dp),
+            color = RaddInk950,
+            shape = RoundedCornerShape(percent = 50),
+            modifier = Modifier
+                .padding(bottom = 48.dp)
+                .border(1.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(percent = 50))
+                .clickable(onClick = onUnlock, role = Role.Button)
+                .semantics { contentDescription = hint },
         ) {
-            IconButton(onClick = onUnlock) {
-                Icon(Icons.Default.LockOpen, stringResource(R.string.player_unlock), tint = Color.White)
+            Row(
+                Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_player_lock_open),
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(18.dp),
+                )
+                Text(
+                    hint,
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                )
             }
         }
     }
@@ -2856,33 +2943,46 @@ private fun LockedTimeChip(positionMs: Long, durationMs: Long, lowRam: Boolean, 
  */
 
 /**
- * F29 (Batch B): the live mark — a red dot and the word Live, in place of the
+ * F29 (Batch B): the live mark — a dot and the word Live, in place of the
  * scrubber + time row a live stream does not have. It says what the stream
  * is; it promises no position, because a live window has none to show.
  * Hate-audit H16: the Stitch mockup showed a seek bar + elapsed time on
  * live — copying it would reintroduce the Discover Pakistan 2:00:12 bug
  * (073e454e). A live elapsed counter is meaningless (elapsed since what?)
  * and a bar implies a rewind that does not exist, so the mark stays.
+ *
+ * Review fix (16 Nov): this is now the SINGLE live mark in the whole
+ * chrome — the top-bar pill and the "Live Broadcast" subtitle are gone, so
+ * this pill carries the fact alone. A jade dot + white LIVE on an 80%
+ * black pill, inside the bottom scrim's opaque zone. While paused the dot
+ * mutes to grey and the word reads PAUSED, so a frozen live picture never
+ * reads as live.
  */
 @Composable
-private fun LiveMark(modifier: Modifier = Modifier) {
+private fun LiveMark(paused: Boolean = false, modifier: Modifier = Modifier) {
     Row(
         modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .clip(RoundedCornerShape(percent = 50))
+            .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(percent = 50))
+            .background(Color.Black.copy(alpha = 0.80f), RoundedCornerShape(percent = 50))
+            .padding(horizontal = 10.dp, vertical = 4.dp)
+            .heightIn(min = 26.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Box(
             modifier = Modifier
-                .size(8.dp)
-                .background(MaterialTheme.colorScheme.error, CircleShape),
+                .size(6.dp)
+                .background(if (paused) Color(0xFF8E8E93) else RaddCurrent500, CircleShape),
         )
         Text(
-            text = stringResource(R.string.player_live),
+            text = if (paused) stringResource(R.string.player_paused).uppercase()
+            else stringResource(R.string.player_live).uppercase(),
             color = Color.White,
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.SemiBold,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 0.08.em,
+            maxLines = 1,
         )
     }
 }

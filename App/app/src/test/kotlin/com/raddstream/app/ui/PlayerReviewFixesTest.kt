@@ -1,0 +1,270 @@
+package com.raddstream.app.ui
+
+import android.content.Context
+import androidx.compose.ui.test.assertHasClickAction
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onChildren
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.unit.dp
+import androidx.test.core.app.ApplicationProvider
+import com.raddstream.app.R
+import com.raddstream.app.player.LadderRung
+import com.raddstream.app.player.PlaybackInfo
+import com.raddstream.app.player.PlaybackRendition
+import com.raddstream.app.player.PlayerUiState
+import com.raddstream.app.player.PrintInfo
+import com.raddstream.app.ui.screens.BottomControls
+import com.raddstream.app.ui.screens.CenterPlayPause
+import com.raddstream.app.ui.screens.playerSafeRailDp
+import com.raddstream.app.ui.theme.RaddStreamTheme
+import java.io.File
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+
+/**
+ * The 16 Nov player review fixes, pinned in code: the malformed pause/play
+ * vectors lost their foot, the subtitles glyph is a caption card (no chat
+ * bubble), the centre transport is paused-only, the bottom row carries the
+ * single live mark, the Quality pill never dims, the control row is two
+ * groups on one shared rail, and the icons are one outlined family.
+ */
+@RunWith(RobolectricTestRunner::class)
+class PlayerReviewFixesTest {
+
+    @get:Rule
+    val compose = createComposeRule()
+
+    private val context: Context
+        get() = ApplicationProvider.getApplicationContext()
+
+    private val repoRoot: File by lazy {
+        var dir: File? = File("").absoluteFile
+        while (dir != null) {
+            if (File(dir, "brand.properties").isFile) return@lazy dir
+            dir = dir.parentFile
+        }
+        error("brand.properties not found above ${File("").absolutePath}")
+    }
+
+    private val mainSrc: File get() = File(repoRoot, "App/app/src/main")
+    private val drawables: File get() = File(mainSrc, "res/drawable")
+
+    private val playerScreen: String by lazy {
+        File(mainSrc, "kotlin/com/raddstream/app/ui/screens/PlayerScreen.kt").readText()
+    }
+
+    private fun drawable(name: String): String {
+        val file = File(drawables, "$name.xml")
+        assertTrue("$name.xml is missing at ${file.path}", file.isFile)
+        return file.readText()
+    }
+
+    private fun pathCount(xml: String): Int = xml.split("android:pathData=").size - 1
+
+    // ── the vectors ─────────────────────────────────────────────────────────
+
+    @Test
+    fun `pause and play lost the foot curve`() {
+        val pause = drawable("ic_player_pause")
+        assertEquals("pause must be two bars and nothing else", 2, pathCount(pause))
+        assertFalse("pause still carries the foot curve", pause.contains("20.2"))
+        val play = drawable("ic_player_play")
+        assertEquals("play must be one triangle and nothing else", 1, pathCount(play))
+        assertFalse("play still carries the foot curve", play.contains("20.2"))
+    }
+
+    @Test
+    fun `subtitles is a caption card, not a chat bubble`() {
+        val xml = drawable("ic_player_subtitles")
+        assertEquals("subtitles must be a rect plus two caption lines", 3, pathCount(xml))
+        assertFalse("subtitles still carries the bubble tail", xml.contains("19.5"))
+        assertTrue("subtitles must start with the rounded rect", xml.contains("M6,4 H18"))
+        assertTrue("subtitles must carry the top caption line", xml.contains("M7.5,9.5"))
+    }
+
+    @Test
+    fun `fullscreen is the bolder variant`() {
+        assertTrue(
+            "fullscreen must use the 2.5dp stroke",
+            drawable("ic_player_fullscreen").contains("android:strokeWidth=\"2.5\""),
+        )
+    }
+
+    @Test
+    fun `the one outlined family has a vector for every replaced control`() {
+        listOf(
+            "ic_player_back", "ic_player_lock", "ic_player_lock_open",
+            "ic_player_more", "ic_player_volume_muted",
+            "ic_player_fullscreen_exit", "ic_player_switch_source",
+        ).forEach { name ->
+            assertTrue("$name.xml is missing", File(drawables, "$name.xml").isFile)
+        }
+    }
+
+    @Test
+    fun `no filled Material icon survives in the player chrome`() {
+        listOf(
+            "Icons.Default.ArrowBack", "Icons.Default.Lock", "Icons.Default.ListAlt",
+            "Icons.Default.MoreVert", "Icons.Default.VolumeMute",
+            "Icons.Default.FullscreenExit", "Icons.Default.LockOpen",
+        ).forEach { icon ->
+            assertFalse("PlayerScreen still paints $icon", playerScreen.contains(icon))
+        }
+    }
+
+    @Test
+    fun `the quality pill never dims`() {
+        val start = playerScreen.indexOf("private fun QualityPill(")
+        assertTrue("QualityPill is gone", start >= 0)
+        val end = playerScreen.indexOf("\nprivate fun Scrubber(", start)
+        assertTrue("cannot find the end of QualityPill", end > start)
+        val pill = playerScreen.substring(start, end)
+        assertFalse("QualityPill still dims a tappable control", pill.contains("dimmed"))
+        assertFalse("QualityPill still paints 40% text", pill.contains("alpha = 0.4f"))
+    }
+
+    @Test
+    fun `the dead live strings are gone`() {
+        assertFalse("player_live_broadcast still used", playerScreen.contains("player_live_broadcast"))
+        assertFalse("player_prints_tools still used", playerScreen.contains("player_prints_tools"))
+    }
+
+    // ── the shared rail, pure ───────────────────────────────────────────────
+
+    @Test
+    fun `the safe rail is 48dp, or the cutout plus 16dp when wider`() {
+        assertEquals(48.dp, playerSafeRailDp(0.dp, 0.dp))
+        assertEquals(48.dp, playerSafeRailDp(32.dp, 0.dp))
+        assertEquals(56.dp, playerSafeRailDp(40.dp, 0.dp))
+        assertEquals(56.dp, playerSafeRailDp(0.dp, 40.dp))
+        assertEquals(64.dp, playerSafeRailDp(48.dp, 0.dp))
+    }
+
+    // ── the composed chrome ─────────────────────────────────────────────────
+
+    private fun vodBase(isPlaying: Boolean = true) = PlayerUiState(
+        connected = true,
+        isPlaying = isPlaying,
+        positionMs = 2_730_000L,
+        bufferedMs = 3_000_000L,
+        durationMs = 9_540_000L,
+        userVolume = 0.8f,
+        pendingTitle = "Jawan",
+        titleYear = 2023,
+        activeRendition = PlaybackRendition(
+            print = PrintInfo(resolution = "1080p"),
+            playback = PlaybackInfo(label = "Fast direct"),
+        ),
+        qualityBand = "1080p",
+        qualityAuto = true,
+        autoQualityBand = "1080p",
+        qualityRungs = listOf(
+            LadderRung(band = "1080p", streamId = "h-1080p"),
+            LadderRung(band = "720p", streamId = "h-720p"),
+        ),
+    )
+
+    private fun liveBase(isPlaying: Boolean = true) = vodBase(isPlaying).copy(
+        isLive = true,
+        pendingTitle = "Madani Channel Urdu",
+        titleYear = null,
+        durationMs = 7_200_000L,
+        positionMs = 3_600_000L,
+        activeRendition = PlaybackRendition(
+            print = PrintInfo(resolution = "1080p"),
+            playback = PlaybackInfo(label = "Live", playUrl = "https://example.com/live.m3u8"),
+        ),
+    )
+
+    private fun setBottom(state: PlayerUiState) {
+        compose.setContent {
+            RaddStreamTheme {
+                BottomControls(
+                    state = state,
+                    onPlayFromStart = {},
+                    onTogglePlayPause = {},
+                    onToggleMute = {},
+                    onShowSubtitleSheet = {},
+                    onShowQualitySheet = {},
+                    onToggleFullscreen = {},
+                    onShowMoreSheet = {},
+                    onSeekTo = {},
+                    onSetUserVolume = {},
+                    onSetAudioBoostLevel = {},
+                    onKeepCurrent = {},
+                    onEnterPip = {},
+                    onActivity = {},
+                    onScrubCommit = {},
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `exactly one live mark rides the bottom row`() {
+        setBottom(liveBase())
+        assertEquals(
+            "the bottom row must carry exactly one LIVE",
+            1,
+            compose.onAllNodesWithText("LIVE").fetchSemanticsNodes().size,
+        )
+        compose.onNodeWithText("Live").assertDoesNotExist()
+        compose.onNodeWithText("Live Broadcast").assertDoesNotExist()
+    }
+
+    @Test
+    fun `a paused live picture reads PAUSED, never LIVE`() {
+        setBottom(liveBase(isPlaying = false))
+        compose.onNodeWithText("PAUSED").assertIsDisplayed()
+        compose.onNodeWithText("LIVE").assertDoesNotExist()
+    }
+
+    @Test
+    fun `the control row is two groups, transport left and tools right`() {
+        setBottom(vodBase())
+        compose.onNodeWithTag("player-controls-left").assertIsDisplayed()
+        compose.onNodeWithTag("player-controls-right").assertIsDisplayed()
+        compose.onNodeWithTag("player-controls-left").onChildren().assertCountEquals(2)
+        compose.onNodeWithTag("player-controls-right").onChildren().assertCountEquals(4)
+    }
+
+    @Test
+    fun `a single-rung quality pill stays visible and tappable`() {
+        setBottom(
+            vodBase().copy(
+                qualityAuto = false,
+                qualityRungs = listOf(LadderRung(band = "1080p", streamId = "h-1080p")),
+            ),
+        )
+        compose.onNodeWithText("1080P").assertIsDisplayed()
+        compose.onNodeWithText("1080P").assertHasClickAction()
+    }
+
+    @Test
+    fun `a paused live centre shows the play button and no skips`() {
+        compose.setContent {
+            RaddStreamTheme {
+                CenterPlayPause(
+                    state = liveBase(isPlaying = false),
+                    onTogglePlayPause = {},
+                    onPlayFromStart = {},
+                    onSeekBy = {},
+                )
+            }
+        }
+        compose.onNodeWithContentDescription(context.getString(R.string.player_play)).assertIsDisplayed()
+        compose.onNodeWithContentDescription(context.getString(R.string.player_rewind_10))
+            .assertDoesNotExist()
+        compose.onNodeWithContentDescription(context.getString(R.string.player_forward_10))
+            .assertDoesNotExist()
+    }
+}

@@ -32,14 +32,16 @@ import org.robolectric.RobolectricTestRunner
 
 /**
  * The Stitch player mockup, pinned in code: the gestures popup is gone, the
- * top bar badges live, the live row is the LIVE mark only (no bar, no time
- * — hate-audit H16: the mockup's live seek bar is not copied), the VOD row
- * prints current + total, the quality control is a text pill showing the
- * rung, and the centre of the picture carries a play/pause button flanked
- * by ±10s skip buttons. Fixtures mirror PaparazziPreviewTest's playerBase
- * so the two suites can never drift apart silently. The popups restyle
- * (Stitch sheets) is pinned the same way where a piece can be composed —
- * the switch-source row — and by its preset lists where it cannot: the
+ * top bar carries no live badge (the single live mark rides the bottom
+ * row), the live row is the LIVE mark only (no bar, no time — hate-audit
+ * H16: the mockup's live seek bar is not copied), the VOD row prints
+ * current + total, the quality control is a text pill showing the rung, and
+ * the centre of the picture carries a play button while paused, flanked by
+ * ±10s skip buttons — never while playing, where the bottom row is the
+ * transport. Fixtures mirror PaparazziPreviewTest's playerBase so the two
+ * suites can never drift apart silently. The popups restyle (Stitch
+ * sheets) is pinned the same way where a piece can be composed — the
+ * switch-source row — and by its preset lists where it cannot: the
  * sheets themselves are private and take the ViewModel, so their chrome
  * lives in PlayerControlSemanticsTest's source-drift test.
  */
@@ -111,7 +113,10 @@ class PlayerMockupTest {
     }
 
     @Test
-    fun `live top bar shows the LIVE badge and the broadcast subtitle`() {
+    fun `live top bar carries no live badge and no broadcast subtitle`() {
+        // Review fix (16 Nov): the single live mark rides the bottom row —
+        // the top bar neither badges live nor prints a broadcast subtitle.
+        // The channel title stands alone, centred vertically.
         compose.setContent {
             RaddStreamTheme {
                 TopBar(
@@ -122,8 +127,8 @@ class PlayerMockupTest {
                 )
             }
         }
-        compose.onNodeWithText("LIVE").assertIsDisplayed()
-        compose.onNodeWithText("Live Broadcast").assertIsDisplayed()
+        compose.onNodeWithText("LIVE").assertDoesNotExist()
+        compose.onNodeWithText("Live Broadcast").assertDoesNotExist()
         compose.onNodeWithText("Madani Channel Urdu").assertIsDisplayed()
     }
 
@@ -146,7 +151,7 @@ class PlayerMockupTest {
     @Test
     fun `live bottom row is the LIVE mark only, never a time or a bar`() {
         setBottom(liveBase())
-        compose.onNodeWithText("Live").assertIsDisplayed()
+        compose.onNodeWithText("LIVE").assertIsDisplayed()
         // The fixture's duration is 2:00:00 and its position 1:00:00 — a live
         // row must print neither: a live window has no position to show.
         compose.onNodeWithText("1:00:00").assertDoesNotExist()
@@ -184,10 +189,12 @@ class PlayerMockupTest {
     }
 
     @Test
-    fun `centre button shows pause while playing, play while paused`() {
-        // One content, driven by state: a second setContent in the same
-        // test throws (IllegalStateException), so the pause→play flip
-        // goes through a state holder instead.
+    fun `centre button shows only while paused, never while playing`() {
+        // Review fix (16 Nov): the centre button is the paused-state
+        // affordance — during playback the bottom row is the transport and
+        // the centre is empty. One content, driven by state: a second
+        // setContent in the same test throws (IllegalStateException), so the
+        // playing→paused flip goes through a state holder instead.
         var playing by mutableStateOf(true)
         compose.setContent {
             RaddStreamTheme {
@@ -199,7 +206,8 @@ class PlayerMockupTest {
                 )
             }
         }
-        compose.onNodeWithContentDescription(context.getString(R.string.player_pause)).assertIsDisplayed()
+        compose.onNodeWithContentDescription(context.getString(R.string.player_pause)).assertDoesNotExist()
+        compose.onNodeWithContentDescription(context.getString(R.string.player_play)).assertDoesNotExist()
         compose.runOnIdle { playing = false }
         compose.onNodeWithContentDescription(context.getString(R.string.player_play)).assertIsDisplayed()
     }
@@ -210,7 +218,7 @@ class PlayerMockupTest {
         compose.setContent {
             RaddStreamTheme {
                 CenterPlayPause(
-                    state = vodBase(isPlaying = true),
+                    state = vodBase(isPlaying = false),
                     onTogglePlayPause = {},
                     onPlayFromStart = {},
                     onSeekBy = { seeks += it },
@@ -226,6 +234,9 @@ class PlayerMockupTest {
 
     @Test
     fun `live centre shows no skip buttons`() {
+        // Review fix (16 Nov): while playing the centre is empty entirely —
+        // no skips on live, and no centre button either. The paused live
+        // centre (button, still no skips) is pinned in PlayerReviewFixesTest.
         compose.setContent {
             RaddStreamTheme {
                 CenterPlayPause(
@@ -240,7 +251,8 @@ class PlayerMockupTest {
             .assertDoesNotExist()
         compose.onNodeWithContentDescription(context.getString(R.string.player_forward_10))
             .assertDoesNotExist()
-        compose.onNodeWithContentDescription(context.getString(R.string.player_pause)).assertIsDisplayed()
+        compose.onNodeWithContentDescription(context.getString(R.string.player_pause)).assertDoesNotExist()
+        compose.onNodeWithContentDescription(context.getString(R.string.player_play)).assertDoesNotExist()
     }
 
     @Test

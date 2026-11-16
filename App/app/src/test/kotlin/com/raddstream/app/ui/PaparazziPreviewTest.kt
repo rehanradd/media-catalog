@@ -908,19 +908,9 @@ class PaparazziPreviewTest {
         }
     }
 
-    @Test
-    fun playerCenterPlaying() {
-        paparazzi.snapshot {
-            themed {
-                CenterPlayPause(
-                    state = playerBase(isPlaying = true),
-                    onTogglePlayPause = {},
-                    onPlayFromStart = {},
-                    onSeekBy = {},
-                )
-            }
-        }
-    }
+    // Review fix (16 Nov): the centre button exists only while paused, so
+    // there is no playing-centre shot to record — the subject is gone.
+    // playerCenterPaused below is the centre shot now.
 
     @Test
     fun playerCenterPaused() {
@@ -998,7 +988,8 @@ class PaparazziPreviewTest {
 
     @Test
     fun playerBottomSingleRung() {
-        // 25c: one rung only — the Quality primary stays visible, dimmed,
+        // 25c: one rung only — the Quality primary stays visible, in full
+        // white (review fix, 16 Nov: a tappable control never dims),
         // instead of vanishing.
         shotBottom(
             playerBase().copy(

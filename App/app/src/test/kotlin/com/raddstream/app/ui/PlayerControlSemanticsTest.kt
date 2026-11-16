@@ -589,9 +589,13 @@ class PlayerControlSemanticsTest {
                 source.contains(gone),
             )
         }
-        // The mockup's centre transport exists, and the top bar names live.
+        // The mockup's centre transport exists, and the top bar does NOT badge
+        // live (review fix, 16 Nov): the single live mark rides the bottom
+        // row, so the top bar carries no live pill and no broadcast subtitle.
+        // (The subtitle branch still reads state.isLive — to return empty —
+        // so only the painted strings are asserted here.)
         assertTrue("the centre play/pause button is missing", source.contains("CenterPlayPause("))
-        assertTrue("TopBar must badge a live channel", topBar.contains("state.isLive"))
-        assertTrue("TopBar live badge must say Live", topBar.contains("R.string.player_live"))
+        assertFalse("TopBar still says Live — the mark lives in the bottom row", topBar.contains("R.string.player_live"))
+        assertFalse("TopBar still prints a broadcast subtitle", topBar.contains("player_live_broadcast"))
     }
 }
