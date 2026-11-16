@@ -1,7 +1,9 @@
 package com.raddstream.app.resolve
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 
 /**
@@ -42,9 +44,11 @@ object Filepress {
      */
     fun encodeFilename(url: String): String {
         if (url.isEmpty()) return url
-        val head = url.substringBeforeLast('/', "")
-        if (head == url) return url
-        val tail = url.substringAfterLast('/')
+        // rpartition semantics: no '/' means no segment to encode.
+        val slash = url.lastIndexOf('/')
+        if (slash < 0) return url
+        val head = url.substring(0, slash)
+        val tail = url.substring(slash + 1)
         val decoded = percentDecode(tail)
         return head + "/" + percentEncode(decoded)
     }
@@ -75,7 +79,13 @@ object Filepress {
         for (byte in segment.toByteArray(Charsets.UTF_8)) {
             val c = byte.toInt() and 0xFF
             val ch = c.toChar()
-            if (ch.isLetterOrDigit() || ch == '.' || ch == '-' || ch == '_' || ch == '~') {
+            // ASCII letters/digits only: urllib quote's always-safe set is
+            // [A-Za-z0-9_.-~]. Char.isLetterOrDigit() is wrong here — it
+            // accepts non-ASCII letters, so byte 0xC3 would leak out as a
+            // raw 'Ã' instead of %C3.
+            if ((ch in 'a'..'z' || ch in 'A'..'Z' || ch in '0'..'9') ||
+                ch == '.' || ch == '-' || ch == '_' || ch == '~'
+            ) {
                 out.append(ch)
             } else {
                 out.append('%')
@@ -124,7 +134,12 @@ class HttpChainEngine(private val transport: ResolveHttpTransport) {
 
     suspend fun resolve(bridgeUrl: String): ChainResult {
         return try {
-            withTimeout(Filepress.WALL_CAP_MS) { resolveUntimed(bridgeUrl) }
+            // The transport does blocking OkHttp execute() calls: they must
+            // run on Dispatchers.IO, never on the ViewModel's Main thread —
+            // two 15 s POSTs + a probe on Main would ANR the test phone.
+            withContext(Dispatchers.IO) {
+                withTimeout(Filepress.WALL_CAP_MS) { resolveUntimed(bridgeUrl) }
+            }
         } catch (_: TimeoutCancellationException) {
             ChainResult.Failed("wall_cap", null)
         } catch (e: CancellationException) {

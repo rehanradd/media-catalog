@@ -23,10 +23,18 @@ class FilepressEncodeFilenameTest {
     }
 
     @Test
-    fun `plus stays a plus, never a space`() {
+    fun `plus is encoded as percent-2B like the server encodes it`() {
+        // urllib quote(safe=".-_~") encodes '+' as %2B. The "plus stays a
+        // plus" rule is on the DECODE side: unquote never turns '+' into a
+        // space (that is unquote_plus) — so an already-encoded %2B decodes
+        // to '+' and re-encodes to %2B, never to a space.
         assertEquals(
-            "https://cdn.example.com/a+b.mp4",
+            "https://cdn.example.com/a%2Bb.mp4",
             Filepress.encodeFilename("https://cdn.example.com/a+b.mp4"),
+        )
+        assertEquals(
+            "https://cdn.example.com/a%2Bb.mp4",
+            Filepress.encodeFilename("https://cdn.example.com/a%2Bb.mp4"),
         )
     }
 
