@@ -41,6 +41,7 @@ import com.raddstream.app.ui.screens.FilterRail
 import com.raddstream.app.ui.screens.FilterSheetBody
 import com.raddstream.app.ui.screens.CenterPlayPause
 import com.raddstream.app.ui.screens.CenterSpinner
+import com.raddstream.app.ui.screens.ChipRow
 import com.raddstream.app.ui.screens.EdgeFeedbackLine
 import com.raddstream.app.ui.screens.EdgeHud
 import com.raddstream.app.ui.screens.HomeContent
@@ -222,6 +223,28 @@ class PaparazziPreviewTest {
                         modifier = Modifier.heightIn(min = 48.dp),
                     )
                 }
+            }
+        }
+    }
+
+    /**
+     * Settings review (Gemini 5.5/10, 2026-11-16): the real ChipRow from
+     * SettingsScreen — the 44dp visible pill (12dp label padding) and the
+     * strengthened selected state (1.5dp jade border + 16% jade tint fill,
+     * unselected softened to #333333 / #B3B3B3). The golden is the only
+     * place the pill height is observable: semantics merge the label into
+     * the chip node, so a unit test sees the 48dp touch target, not the
+     * 44dp pill.
+     */
+    @Test
+    fun settingsChipRow() {
+        paparazzi.snapshot {
+            themed {
+                ChipRow(
+                    options = listOf("Auto", "High", "Medium", "Battery saver"),
+                    selectedIndex = 1,
+                    onSelect = {},
+                )
             }
         }
     }

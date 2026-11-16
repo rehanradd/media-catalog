@@ -214,6 +214,20 @@ val RaddDanger           = brandColor(BuildConfig.BRAND_COLORS_DARK_DANGER)
 /** Warning glyph/text where Gold is too "premium"-coded. 9.9:1 vs 950. */
 val RaddWarning          = brandColor(BuildConfig.BRAND_COLORS_DARK_WARNING)
 
+// ── 11b. SETTINGS REVIEW (Gemini 5.5/10, 2026-11-16) ────────────────────────
+// The review's exact values, as named roles — raw paint lives here and
+// nowhere else (BrandDriftTest). Dark-screen values: the Settings screen
+// is reviewed in dark, and these greys are fixed, like the pill paints
+// above; a light scheme shows the same fixed greys.
+/** Grouped section card fill: flat neutral #1A1A1A, no nested inner boxes. */
+val RaddSettingsCard     = Color(0xFF1A1A1A)
+/** Helper text: 13sp Regular, 1.4 line-height. 7.4:1 vs #1A1A1A. */
+val RaddSettingsHelper   = Color(0xFFA3ABA8)
+/** Unselected chip border, softened so it no longer outweighs the selected state. */
+val RaddChipBorderSoft   = Color(0xFF333333)
+/** Unselected chip label. 8.3:1 vs #1A1A1A. */
+val RaddChipLabelSoft    = Color(0xFFB3B3B3)
+
 // ── 12. DAYBREAK — light scheme neutrals + primaries ────────────────────────
 // Light mode is "the same water at noon": warm-cool paper, same jade current
 // deepened to 700 so it survives daylight. All pairs verified AA; muted tiers

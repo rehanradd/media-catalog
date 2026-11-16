@@ -1,7 +1,5 @@
 package com.raddstream.app.ui.screens
 
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.snap
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -43,6 +41,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -68,6 +67,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -78,6 +80,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.font.FontWeight
@@ -93,9 +96,11 @@ import com.raddstream.app.player.AudioBoost
 import com.raddstream.app.player.AudioBoostUi
 import com.raddstream.app.share.LanShareStatus
 import com.raddstream.app.ui.components.RaddDialogTitle
-import com.raddstream.app.ui.components.raddFilterChipColors
-import com.raddstream.app.ui.components.rememberReduceMotion
-import com.raddstream.app.ui.theme.RaddMotion
+import com.raddstream.app.ui.theme.RaddChipBorderSoft
+import com.raddstream.app.ui.theme.RaddChipLabelSoft
+import com.raddstream.app.ui.theme.RaddSettingsCard
+import com.raddstream.app.ui.theme.RaddSettingsHelper
+import com.raddstream.app.ui.theme.RaddTextFamily
 import com.raddstream.app.ui.theme.RaddTokens
 import com.raddstream.app.ui.theme.brandSp
 import com.raddstream.app.viewmodel.AccountCardCopy
@@ -122,6 +127,27 @@ internal val subtitleOptions = listOf("Off", "English", "Hindi", "Urdu", "Tamil"
  * disabled. Internal so that test can read the same value the buttons use.
  */
 internal const val DisabledButtonContentAlpha = 0.65f
+
+/**
+ * Settings review (Gemini 5.5/10, 2026-11-16): the screen's two text roles.
+ * Group headers — section headings, card titles, in-card row titles — are
+ * 13sp Medium; helpers are 13sp Regular in #A3ABA8 at 1.4 line-height
+ * (18sp). Both go through brandSp so typography.scale still reaches them.
+ */
+private val settingsGroupTitleStyle = TextStyle(
+    fontFamily = RaddTextFamily,
+    fontWeight = FontWeight.Medium,
+    fontSize = brandSp(13),
+    lineHeight = brandSp(18),
+)
+
+private val settingsHelperStyle = TextStyle(
+    fontFamily = RaddTextFamily,
+    fontWeight = FontWeight.Normal,
+    fontSize = brandSp(13),
+    lineHeight = brandSp(18),
+    color = RaddSettingsHelper,
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -172,14 +198,44 @@ fun SettingsScreen(
         // the title is paint, not a second announcement. The same treatment
         // applies to any other screen whose TopAppBar title exactly matches its
         // nav-tab label; Settings was the one Robo flagged.
-        topBar = { TopAppBar(title = { Text("Settings", modifier = Modifier.clearAndSetSemantics { }) }) },
+        // Review fix: the screen title is 24sp SemiBold (headlineSmall), not
+        // the 22sp default — the hierarchy's top rung.
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        "Settings",
+                        style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
+                        modifier = Modifier.clearAndSetSemantics { },
+                    )
+                },
+            )
+        },
     ) { contentPadding ->
+        // Review fix: scrolled content used to shear off at the hard edge
+        // under the app bar (the Image quality chips clipped with no title
+        // above them). The column carries extra top air, and a short fade
+        // from the background colour sits over its top edge, so content
+        // dissolves under the bar instead of cutting off. Paint only — it
+        // draws no clicks and the scroll underneath still works. The
+        // colour is read here, in composition: drawWithContent is not a
+        // @Composable scope and cannot read the theme itself.
+        val fadeBackground = MaterialTheme.colorScheme.background
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(contentPadding)
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp),
+                .padding(start = 16.dp, end = 16.dp, top = 24.dp, bottom = 16.dp)
+                .drawWithContent {
+                    drawContent()
+                    drawRect(
+                        brush = Brush.verticalGradient(
+                            colors = listOf(fadeBackground, Color.Transparent),
+                        ),
+                        size = Size(size.width, 28.dp.toPx()),
+                    )
+                },
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
             SettingsSectionHeading("Watching")
@@ -240,13 +296,12 @@ fun SettingsScreen(
                 // change (audit #50) — the chips that duplicated it are gone.
                 Text(
                     "Audio, subtitles and subtitle size, in one place. Changes here apply everywhere, including the player.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = settingsHelperStyle,
                 )
             }
 
             // Mockup: the card carries its sliders icon at the top-right.
-            SettingsCard(title = "Playback & Display", icon = Icons.Default.Tune) {
+            SettingsCard(title = "Playback & display", icon = Icons.Default.Tune) {
                 Spacer(Modifier.height(10.dp))
                 PreferenceRowTitle("Image quality")
                 ChipRow(ImageQuality.entries.toList().map { it.label }, ImageQuality.entries.indexOf(state.prefs.imageQuality)) { idx ->
@@ -254,7 +309,10 @@ fun SettingsScreen(
                 }
 
                 Spacer(Modifier.height(10.dp))
-                PreferenceRowTitle("Poster loading on mobile data")
+                // Review fix: the title above this toggle repeated its own
+                // label ("Poster loading on mobile data" over "Load poster
+                // images over mobile data") — the toggle stands alone now,
+                // with a one-line helper in plain words.
                 SwitchRow(
                     checked = state.prefs.downloadOnMobileData,
                     onCheckedChange = viewModel::setDownloadOnMobileData,
@@ -263,23 +321,23 @@ fun SettingsScreen(
                 // A keep is gated by the Wi-Fi-only switch in the Offline card above,
                 // not by this one — this switch only ever governed the thumbnails.
                 Text(
-                    "A title you download follows the Wi-Fi-only switch in the Offline card; this only " +
-                        "governs the thumbnails on the screens you browse.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    "Only poster thumbnails use mobile data. Downloads follow the Wi-Fi-only switch.",
+                    style = settingsHelperStyle,
                 )
 
                 Spacer(Modifier.height(10.dp))
-                PreferenceRowTitle("Data Saver")
+                // Review fix: same shape as the poster toggle — the "Data
+                // saver" title repeated the switch label, and the helper
+                // exposed server jargon ("the server is asked for its
+                // data-saving copy"). One line, plain words.
                 SwitchRow(
                     checked = state.prefs.dataSaver,
                     onCheckedChange = viewModel::setDataSaver,
                     label = "Save mobile data while watching",
                 )
                 Text(
-                    "On mobile data, titles start at 480p and the server is asked for its data-saving copy. Wi-Fi is untouched, and you can still switch a title up in the player.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    "On mobile data, titles start at 480p. You can still switch up in the player.",
+                    style = settingsHelperStyle,
                 )
 
                 Spacer(Modifier.height(10.dp))
@@ -287,6 +345,14 @@ fun SettingsScreen(
                 ChipRow(KeepTtl.entries.map { it.label }, KeepTtl.entries.indexOf(state.prefs.keepTtl)) { idx ->
                     viewModel.setKeepTtl(KeepTtl.entries.toList()[idx])
                 }
+                // The retention is temp/cache-scoped (verified against
+                // TtlPolicy: the sweep only ever ages AUTO_PREVIEW bytes,
+                // and a file the viewer explicitly kept is never
+                // auto-deleted) — so the label says what it is, plainly.
+                Text(
+                    "Only files the app fetched on its own. Downloads you kept are never removed.",
+                    style = settingsHelperStyle,
+                )
 
                 Spacer(Modifier.height(10.dp))
                 // Mockup: the title and its percent share one row, the slider
@@ -306,20 +372,39 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                     }
-                    Slider(
-                        value = state.prefs.audioBoost.coerceIn(0f, AudioBoostUi.MAX_OFFERED_LEVEL),
-                        onValueChange = viewModel::setAudioBoost,
-                        valueRange = 0f..AudioBoostUi.MAX_OFFERED_LEVEL,
-                        modifier = Modifier.fillMaxWidth(),
+                    // Review fix: what the slider adjusts, in one line — the
+                    // app's own playback volume, riding on the device volume.
+                    Text(
+                        "In-app playback volume, relative to your device volume.",
+                        style = settingsHelperStyle,
                     )
+                    // Review fix: the thumb at 100% used to sit ~16dp from
+                    // the screen edge, inside the back-gesture zone. The
+                    // track is inset 12dp inside the 16dp card padding —
+                    // 28dp from the viewport edge — and the touch area is
+                    // 48dp tall.
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Slider(
+                            value = state.prefs.audioBoost.coerceIn(0f, AudioBoostUi.MAX_OFFERED_LEVEL),
+                            onValueChange = viewModel::setAudioBoost,
+                            valueRange = 0f..AudioBoostUi.MAX_OFFERED_LEVEL,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp),
+                        )
+                    }
                 }
                 // Still worth saying: below the ceiling the boost is real, but it rides on the
                 // viewer's own system volume, so the caption states what is applied, not what
                 // was asked. The range above is already the range this build can honour.
                 Text(
                     AudioBoostUi.honestSummary(state.prefs.audioBoost, 1f),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = settingsHelperStyle,
                 )
 
                 // Wallpaper colour is a brand decision, not a user one: this brand file
@@ -337,8 +422,7 @@ fun SettingsScreen(
                 Text(
                     "Saved on this device, and applied the next time each one matters: image size " +
                         "from the next poster, the download duration from the next download.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = settingsHelperStyle,
                 )
             }
 
@@ -355,8 +439,7 @@ fun SettingsScreen(
                 )
                 Text(
                     "When this is off, an episode ends on the Next Episode button instead of moving on by itself.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = settingsHelperStyle,
                 )
                 SwitchRow(
                     checked = state.prefs.autoplayPreviews,
@@ -365,8 +448,7 @@ fun SettingsScreen(
                 )
                 Text(
                     "When this is off, the Home hero stays on the first poster until you swipe it.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = settingsHelperStyle,
                 )
                 // PL-10: opt-in auto-enter picture-in-picture. Off by default: a
                 // window the viewer did not open is a window they did not ask for.
@@ -377,8 +459,7 @@ fun SettingsScreen(
                 )
                 Text(
                     "When this is on, leaving the player while a title is playing keeps it playing in a small window.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = settingsHelperStyle,
                 )
 
                 Spacer(Modifier.height(10.dp))
@@ -390,8 +471,7 @@ fun SettingsScreen(
                 }
                 Text(
                     "The quality a new title starts on. Auto lets the player pick; a fixed choice starts there and stays.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = settingsHelperStyle,
                 )
 
                 Spacer(Modifier.height(10.dp))
@@ -415,8 +495,7 @@ fun SettingsScreen(
                 }
                 Text(
                     "The same size the player sheet offers while watching; it applies from the next playback.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = settingsHelperStyle,
                 )
             }
 
@@ -426,8 +505,7 @@ fun SettingsScreen(
                 SettingsCard(title = "Offline", icon = Icons.Default.Download) {
                     Text(
                         "Manage downloaded titles, view storage use and expiry.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = settingsHelperStyle,
                     )
                     Spacer(Modifier.height(10.dp))
                     SwitchRow(
@@ -437,8 +515,7 @@ fun SettingsScreen(
                     )
                     Text(
                         "Downloads happen only when this phone is on Wi-Fi. Turn it off to download on mobile data too.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = settingsHelperStyle,
                     )
                     Spacer(Modifier.height(10.dp))
                     SwitchRow(
@@ -448,8 +525,7 @@ fun SettingsScreen(
                     )
                     Text(
                         "A finished download deletes itself to free space. A finished series episode deletes its own download too — only the episode you just watched, never the rest of the season.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = settingsHelperStyle,
                     )
                     Spacer(Modifier.height(10.dp))
                     OutlinedButton(onClick = onOpenDownloads, modifier = Modifier.fillMaxWidth()) {
@@ -470,13 +546,11 @@ fun SettingsScreen(
                     )
                     Text(
                         lanShareStatusLine(state.lanShareStatus),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = settingsHelperStyle,
                     )
                     Text(
                         "Only devices on your Wi-Fi can see them.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = settingsHelperStyle,
                     )
                 }
             }
@@ -508,8 +582,7 @@ fun SettingsScreen(
                     "This clears only the poster images the app has fetched; they come back as you " +
                         "browse. Videos you downloaded for offline are not touched here — they are removed " +
                         "individually on the Downloads screen.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = settingsHelperStyle,
                 )
             }
 
@@ -519,7 +592,7 @@ fun SettingsScreen(
             // upgrade button) hides while the quality gate is OFF — every
             // viewer is premium then, and there is nothing to sell.
             if (state.paywallVisible) {
-                SettingsCard(title = "VIP Membership", icon = Icons.Default.Star) {
+                SettingsCard(title = "VIP membership", icon = Icons.Default.Star) {
                 // The plan summary: what this install actually has (VIP with its
                 // date, a payment waiting, the free VIP days, or free) plus the
                 // operator's published prices when the server sent any. The
@@ -555,8 +628,7 @@ fun SettingsScreen(
                     "Support the catalog with a monthly or yearly membership. Pay through " +
                         "JazzCash, EasyPaisa or Raast, then submit the transaction ID from " +
                         "your confirmation.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = settingsHelperStyle,
                 )
                 Button(onClick = onOpenVipUpgrade, modifier = Modifier.fillMaxWidth()) {
                     Text(if (state.planIsVip) "View membership" else "Upgrade to VIP")
@@ -576,8 +648,7 @@ fun SettingsScreen(
                             "list, watch history and resume points stay on this device. Sign in only " +
                             "if you want them on another device."
                     },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = settingsHelperStyle,
                 )
 
                 // Free launch: the Dashboard / Profile / Coins doors hide
@@ -603,8 +674,7 @@ fun SettingsScreen(
                     if (daysLeft > 0) {
                         Text(
                             AccountCardCopy.TRIAL_HONESTY,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = settingsHelperStyle,
                         )
                     }
                 }
@@ -682,8 +752,7 @@ fun SettingsScreen(
                                 "someone's number gets them nowhere. An account is only as strong as " +
                                 "its key, so keep the key somewhere safe, and sign out on any device " +
                                 "that is not yours.",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = settingsHelperStyle,
                         )
                         AccountLabelField(
                             value = account.labelInput,
@@ -746,8 +815,7 @@ fun SettingsScreen(
                             Text(
                                 "Key on this device: ${account.keyHint}. The full key was shown once, when it " +
                                     "was created, and is not stored anywhere it can be re-displayed.",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = settingsHelperStyle,
                             )
                         }
                         AccountLabelField(
@@ -768,13 +836,11 @@ fun SettingsScreen(
                         )
                         Text(
                             AccountCardCopy.LINK_BONUS,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = settingsHelperStyle,
                         )
                         Text(
                             AccountCardCopy.LINK_PIN_MEANING,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = settingsHelperStyle,
                         )
                         OutlinedButton(
                             onClick = viewModel::openLinkForm,
@@ -805,8 +871,7 @@ fun SettingsScreen(
                         "title this app cannot reference stays on this device. Your saved list " +
                         "is read from this device either way — offline, it shows exactly what it " +
                         "always showed.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = settingsHelperStyle,
                 )
             }
 
@@ -816,8 +881,7 @@ fun SettingsScreen(
             SettingsCard(title = "Watch history", icon = Icons.Default.History) {
                 Text(
                     "Everything you watched on this phone, newest first — including titles you finished.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = settingsHelperStyle,
                 )
                 OutlinedButton(
                     onClick = onOpenWatchHistory,
@@ -834,8 +898,7 @@ fun SettingsScreen(
             SettingsCard(title = "Help", icon = Icons.Default.Help) {
                 Text(
                     "How to watch, download, and use VIP and coins.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = settingsHelperStyle,
                 )
                 OutlinedButton(
                     onClick = onOpenHelp,
@@ -849,8 +912,7 @@ fun SettingsScreen(
             SettingsCard(title = "Contact us", icon = Icons.Default.Email) {
                 Text(
                     "Report a problem, ask about a payment, or ask for a title to be taken down. No account needed.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = settingsHelperStyle,
                 )
                 OutlinedButton(
                     onClick = viewModel::openContactForm,
@@ -886,8 +948,7 @@ fun SettingsScreen(
                 val disclaimer = state.disclaimer.effective()
                 Text(
                     "Version ${disclaimer.version} — what this app is, and what it is not.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = settingsHelperStyle,
                 )
                 OutlinedButton(
                     onClick = viewModel::openDisclaimer,
@@ -915,8 +976,7 @@ fun SettingsScreen(
                     "Share anonymous totals with ${Brand.name}: plays, " +
                         "playback failures, and crashes. Nothing that can " +
                         "identify you or what you watch is ever sent.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = settingsHelperStyle,
                 )
                 SwitchRow(
                     checked = state.analyticsConsent == true,
@@ -935,8 +995,7 @@ fun SettingsScreen(
                         "settings_about_body",
                         "${Brand.shortName} finds movies and shows from public catalogs and plays them in one place.",
                     ),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = settingsHelperStyle,
                 )
                 Text(
                     "Version ${Brand.versionName}",
@@ -957,7 +1016,7 @@ fun SettingsScreen(
             }
             if (showAdvanced) {
                             // ── Server Connection ──────────────────────────────────────
-                            SettingsCard(title = "Catalog Server", icon = Icons.Default.Storage) {
+                            SettingsCard(title = "Catalog server", icon = Icons.Default.Storage) {
                                 // The address is never printed here: a saved server reads as
                                 // "Connected", and the field opens only when the viewer asks
                                 // to change it. The test still fetches the counts for its own
@@ -1028,15 +1087,15 @@ fun SettingsScreen(
  * F15 (Batch B): the heading's top padding is 16dp, not 8dp — the sections
  * read as sections, with air above each heading, instead of the heading
  * sitting on the card above it.
+ *
+ * Review fix: sentence case, 13sp Medium — the old all-caps labelMedium
+ * read as a second, louder voice than the card titles it introduces.
  */
 @Composable
 private fun SettingsSectionHeading(text: String) {
-    // Mockup: section headings are small all-caps grey labels ("WATCHING",
-    // "DOWNLOADS", "ACCOUNT"), not title-sized text — the cards carry the weight.
     Text(
-        text.uppercase(),
-        style = MaterialTheme.typography.labelMedium.copy(letterSpacing = brandSp(1.2)),
-        fontWeight = FontWeight.SemiBold,
+        text,
+        style = settingsGroupTitleStyle,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(top = 16.dp),
     )
@@ -1052,14 +1111,18 @@ private fun SettingsCard(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(RaddTokens.Radius.Card))
-            .background(MaterialTheme.colorScheme.surface)
+            // Review fix: flat #1A1A1A grouped section card, no nested inner
+            // boxes — the old surface fill sat one more tint inside the
+            // #121212 canvas. The title stays the group header (13sp
+            // Medium); no second header layer is added on top of it.
+            .background(RaddSettingsCard)
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         // Mockup: the title sits left, the card's icon at the top-right —
         // the icon is a label for the card, not a bullet before its title.
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onBackground, modifier = Modifier.weight(1f))
+            Text(title, style = settingsGroupTitleStyle, color = MaterialTheme.colorScheme.onBackground, modifier = Modifier.weight(1f))
             if (icon != null) {
                 Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -1119,8 +1182,7 @@ internal fun AccountLabelField(
     )
     Text(
         "Only so you can tell your own account apart. This stays on the device and is never sent.",
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        style = settingsHelperStyle,
     )
     if (onSave != null) {
         TextButton(onClick = onSave) { Text("Save label") }
@@ -1128,7 +1190,10 @@ internal fun AccountLabelField(
 }
 
 @Composable
-private fun PreferenceRowTitle(text: String) {    Text(text, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
+private fun PreferenceRowTitle(text: String) {
+    // Review fix: in-card row titles are group headers too — 13sp Medium,
+    // the same rung as the card titles, below the 16sp control labels.
+    Text(text, style = settingsGroupTitleStyle, color = MaterialTheme.colorScheme.onSurface)
 }
 
 /**
@@ -1142,12 +1207,6 @@ internal fun audioLevelPercent(level: Float): String =
 @Composable
 internal fun SwitchRow(checked: Boolean, onCheckedChange: (Boolean) -> Unit, label: String) {
     val haptics = LocalHapticFeedback.current
-    val reduceMotion = rememberReduceMotion()
-    val rowTint by animateColorAsState(
-        targetValue = if (checked) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent,
-        animationSpec = if (reduceMotion) snap() else RaddMotion.defaultEffects(),
-        label = "switchRowTint",
-    )
     Row(
         // Robo run 4: the row-level merged name ("<label>, on/off") never
         // reached Robo — the Switch's own toggleable node is what a screen
@@ -1156,19 +1215,23 @@ internal fun SwitchRow(checked: Boolean, onCheckedChange: (Boolean) -> Unit, lab
         // toggleable state is what announces on/off. The painted label is
         // paint-only, so the words are heard once, on the control itself.
         // Internal so the a11y test can pin the spoken name directly.
+        //
+        // Review fix: the row used to paint its own tinted inner box
+        // (an 8% primary rounded fill when on) — a nested container
+        // inside the card. Rows sit flat on the card surface now; the
+        // Switch itself carries the state. The label is a control label:
+        // 16sp Medium, white.
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 48.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(rowTint)
             .padding(horizontal = 8.dp, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Text(
             label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface,
+            style = MaterialTheme.typography.titleMedium,
+            color = Color.White,
             modifier = Modifier.weight(1f).clearAndSetSemantics { },
         )
         Switch(
@@ -1217,12 +1280,27 @@ internal fun AccountNavRow(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ChipRow(options: List<String>, selectedIndex: Int, onSelect: (Int) -> Unit) {
+internal fun ChipRow(options: List<String>, selectedIndex: Int, onSelect: (Int) -> Unit) {
     // Audit #46: a plain Row clipped the longest chip ("Battery saver") on a
     // narrow phone — and a chip label must never break mid-word. A FlowRow
     // wraps the group to a second line instead, each chip sizing to its
     // own words (the contact categories below already wrap for the same
     // reason).
+    //
+    // Review fix, two parts. (1) Visible height: the chip used to read
+    // ~32dp tall while its touch target was 48dp (Audit #54) — the
+    // heightIn only stretched the touch area, not the pill. The label
+    // now carries 12dp vertical padding, so the pill itself is 44dp
+    // (20sp text + 24dp), inside the 48dp touch target. (2) Selected
+    // state: verified against raddFilterChipColors() — the selected chip
+    // was a borderless dark-green fill (primaryContainer) while the
+    // unselected chips carried bright 1dp outlines, so the unselected
+    // state outweighed the selected one. Selected now gets a crisp
+    // 1.5dp jade border + 16% jade tint fill with a white label;
+    // unselected softens to #333333 / #B3B3B3. This override is
+    // Settings-only: the shared token (and its pinned preview) is
+    // untouched, so no other screen's chips move.
+    // Internal so the review test can pin the height and the selection.
     FlowRow(
         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1230,12 +1308,23 @@ private fun ChipRow(options: List<String>, selectedIndex: Int, onSelect: (Int) -
     ) {
         options.forEachIndexed { idx, label ->
             FilterChip(
-                colors = raddFilterChipColors(),
+                colors = FilterChipDefaults.filterChipColors(
+                    containerColor = Color.Transparent,
+                    labelColor = RaddChipLabelSoft,
+                    selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
+                    selectedLabelColor = Color.White,
+                ),
+                border = FilterChipDefaults.filterChipBorder(
+                    enabled = true,
+                    selected = idx == selectedIndex,
+                    borderColor = RaddChipBorderSoft,
+                    selectedBorderColor = MaterialTheme.colorScheme.primary,
+                    borderWidth = 1.dp,
+                    selectedBorderWidth = 1.5.dp,
+                ),
                 selected = idx == selectedIndex,
                 onClick = { onSelect(idx) },
-                label = { Text(label, maxLines = 1) },
-                // Audit #54: a FilterChip is 32 dp tall — the touch-target
-                // floor is 48 dp, so the chip itself carries it.
+                label = { Text(label, maxLines = 1, modifier = Modifier.padding(vertical = 12.dp)) },
                 modifier = Modifier.heightIn(min = 48.dp),
             )
         }
