@@ -198,4 +198,46 @@ class DetailRedesignTest {
         compose.onNodeWithText("Similar").performClick()
         compose.onNodeWithText("More Like This").assertIsDisplayed()
     }
+
+    private fun oneSeason() = listOf(
+        SeasonGroup(
+            number = 1,
+            episodes = listOf(
+                EpisodeGroup(
+                    season = 1,
+                    numberWithinSeason = 1,
+                    absoluteNumber = 1,
+                    title = "Pilot",
+                    prints = emptyList(),
+                ),
+            ),
+            packedPrints = emptyList(),
+        ),
+    )
+
+    @Test
+    fun seriesEpisodesSitAboveTheQualityChip() {
+        // Detail review (Nov 2026, P2): seasons and episodes come
+        // before the quality choice — the viewer picks what to watch
+        // first, then the picture it plays in.
+        content(isSeries = true, seasons = oneSeason(), selectedSeason = 1)
+        compose.onNodeWithText("Quality: Auto (720p)").performScrollTo()
+        val seasonTop = compose.onNodeWithText("Season 1")
+            .fetchSemanticsNode().boundsInRoot.top
+        val chipTop = compose.onNodeWithText("Quality: Auto (720p)")
+            .fetchSemanticsNode().boundsInRoot.top
+        assertTrue(seasonTop < chipTop)
+    }
+
+    @Test
+    fun seriesQualityChipOpensTheRungSheet() {
+        // Detail review (Nov 2026, P2): a series folds the work-level
+        // ladder into a chip; tapping it opens the same rung card in a
+        // bottom sheet. Before the tap the card's "Quality" header is
+        // nowhere on the page.
+        content(isSeries = true, seasons = oneSeason(), selectedSeason = 1)
+        compose.onNodeWithText("Quality").assertDoesNotExist()
+        compose.onNodeWithText("Quality: Auto (720p)").performScrollTo().performClick()
+        compose.onNodeWithText("Quality").assertIsDisplayed()
+    }
 }

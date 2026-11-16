@@ -49,6 +49,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Download
@@ -922,6 +923,10 @@ internal fun DetailContent(
     // It only renders when the quality ladder cannot fold the title at all
     // (no option groups from the server) — the ladder is the choice then.
     var showAllFiles by remember { mutableStateOf(false) }
+    // Detail review (Nov 2026, P2): the series quality sheet — the rung
+    // card in a bottom sheet instead of inline.
+    var showQualitySheet by remember { mutableStateOf(false) }
+    val qualitySheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     // The dead end's way out: the similar rail is the last item on the
     // page, and the requester is what scrolls it into view from the
     // actions above. Owned here, so the button and the rail agree.
@@ -1050,46 +1055,11 @@ internal fun DetailContent(
             }
         }
 
-        // One row per quality band, exactly as the server collapsed the copies of this
-        // title: the viewer picks a picture, never a server, and never a list of links.
-        // An episode's rungs belong under that episode, not up here.
-        if (!rungs.ladder.isEmpty && ladderScope == null) {
-            item {
-                QualityRungCard(
-                    modifier = pageSides,
-                    ladder = rungs.ladder,
-                    selectedBand = rungs.selectedBand,
-                    onPlayRung = rungs.onPlay,
-                    onKeepRung = rungs.onKeep,
-                    tierLabel = rungs.tierLabel,
-                    preferredAudio = rungs.preferredAudio,
-                )
-            }
-        }
-
-        // A cam warning is a quality fact, not a count: the version
-        // summary that used to carry it is gone, but a title whose only
-        // copies are cam recordings must still say so in plain words.
-        if (allPrints.any { it.isCam }) {
-            item {
-                Text(
-                    text = "Some copies here are cam recordings — low quality.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = pageSides,
-                )
-            }
-        }
-
-        // Cast, from the catalog's own scraped list — only what the server
-        // actually stored, parsed into names (see parseCastNames). A title
-        // with no cast data shows no section at all: no fake names, no
-        // empty "Cast" header. A tap searches that actor's titles.
-        val cast = parseCastNames(post.castNames)
-        if (cast.isNotEmpty()) {
-            item { Box(pageSides) { CastSection(cast = cast, onActorClick = onActorClick) } }
-        }
-
+        // Detail review (Nov 2026, P2): seasons and episodes come
+        // before the quality choice — the viewer picks what to watch
+        // first, then the picture it plays in. The work-level ladder
+        // below folds into a chip for a series (the sheet), so the
+        // episodes are the page, not a preface to a second long card.
         if (isSeries) {
             if (seasons.size > 5) {
                 item { Box(pageSides) { SeasonDropdown(seasons = seasons, selectedSeason = selectedSeason, onSelect = onSelectSeason) } }
@@ -1137,7 +1107,66 @@ internal fun DetailContent(
                     }
                 }
             }
-        } else {
+        }
+
+        // One row per quality band, exactly as the server collapsed the copies of this
+        // title: the viewer picks a picture, never a server, and never a list of links.
+        // An episode's rungs belong under that episode, not up here.
+        if (!rungs.ladder.isEmpty && ladderScope == null) {
+            if (isSeries) {
+                item {
+                    Row(modifier = pageSides.fillMaxWidth()) {
+                        FilterChip(
+                            selected = false,
+                            onClick = { showQualitySheet = true },
+                            label = { Text(qualityChipLabel(rungs.ladder)) },
+                            trailingIcon = {
+                                Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                            },
+                            colors = raddFilterChipColors(),
+                            modifier = Modifier.heightIn(min = 48.dp),
+                        )
+                    }
+                }
+            } else {
+                item {
+                    QualityRungCard(
+                        modifier = pageSides,
+                        ladder = rungs.ladder,
+                        selectedBand = rungs.selectedBand,
+                        onPlayRung = rungs.onPlay,
+                        onKeepRung = rungs.onKeep,
+                        tierLabel = rungs.tierLabel,
+                        preferredAudio = rungs.preferredAudio,
+                    )
+                }
+            }
+        }
+
+        // A cam warning is a quality fact, not a count: the version
+        // summary that used to carry it is gone, but a title whose only
+        // copies are cam recordings must still say so in plain words.
+        if (allPrints.any { it.isCam }) {
+            item {
+                Text(
+                    text = "Some copies here are cam recordings — low quality.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = pageSides,
+                )
+            }
+        }
+
+        // Cast, from the catalog's own scraped list — only what the server
+        // actually stored, parsed into names (see parseCastNames). A title
+        // with no cast data shows no section at all: no fake names, no
+        // empty "Cast" header. A tap searches that actor's titles.
+        val cast = parseCastNames(post.castNames)
+        if (cast.isNotEmpty()) {
+            item { Box(pageSides) { CastSection(cast = cast, onActorClick = onActorClick) } }
+        }
+
+        if (!isSeries) {
             // The ladder already folds one best copy per band, so the
             // version list is gone — except when the server sent no
             // ladder at all for this title, in which case the prints
@@ -1205,6 +1234,34 @@ internal fun DetailContent(
                         )
                     }
                 }
+            }
+        }
+    }
+
+    // Detail review (Nov 2026, P2): the series quality sheet — the same
+    // rung card as the movie page, in a bottom sheet instead of inline,
+    // so the seasons and episodes stay the page. The sheet's own
+    // rememberModalBottomSheetState lives above (skipPartiallyExpanded),
+    // the same shape as the report dialog.
+    if (showQualitySheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showQualitySheet = false },
+            sheetState = qualitySheetState,
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+            ) {
+                QualityRungCard(
+                    ladder = rungs.ladder,
+                    selectedBand = rungs.selectedBand,
+                    onPlayRung = rungs.onPlay,
+                    onKeepRung = rungs.onKeep,
+                    tierLabel = rungs.tierLabel,
+                    preferredAudio = rungs.preferredAudio,
+                )
             }
         }
     }
@@ -1510,6 +1567,24 @@ private fun DetailTopBarTarget(
  */
 internal fun heroPlayablePrint(prints: List<RankedPrint>): RankedPrint? =
     prints.filter { it.playableHere }.maxByOrNull { it.rankKey }
+
+/**
+ * Detail review (Nov 2026, P2): the series quality chip's label — the
+ * Auto band the ladder would play, or the download-only state when no
+ * rung plays here. The Auto band itself may not play (a locked top
+ * rung); then the first rung that does play names the quality. Pure so
+ * DetailQualityChipTest pins it.
+ */
+internal fun qualityChipLabel(ladder: LadderForScope): String {
+    val playableBand = ladder.effectiveAutoBand?.takeIf { band ->
+        ladder.options.any { it.band == band && it.playsHere }
+    } ?: ladder.options.firstOrNull { it.playsHere }?.band
+    return if (playableBand != null) {
+        "Quality: Auto ($playableBand)"
+    } else {
+        "Quality: Download only"
+    }
+}
 
 @Composable
 private fun PrimaryActions(
