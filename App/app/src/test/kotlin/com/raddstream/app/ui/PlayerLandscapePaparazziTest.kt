@@ -5,6 +5,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import app.cash.paparazzi.DeviceConfig
 import app.cash.paparazzi.Paparazzi
+import com.android.resources.ScreenOrientation
 import com.raddstream.app.player.KeepUiState
 import com.raddstream.app.player.LadderRung
 import com.raddstream.app.player.PlaybackInfo
@@ -29,12 +30,15 @@ class PlayerLandscapePaparazziTest {
 
     @get:Rule
     val paparazzi = Paparazzi(
-        // Paparazzi 1.3.5 has no orientation knob on DeviceConfig — the
-        // frame is landscape because it is wider than it is tall, the way
-        // the framework derives orientation from the display metrics.
+        // The render size comes from DeviceConfig.orientation, not from
+        // the raw dimensions: hardwareConfig takes max(w, h) for
+        // LANDSCAPE and min(w, h) for PORTRAIT, so swapping the
+        // dimensions alone still renders portrait (proven by record run
+        // 43793676923: 461x1000 with a clipped More button). The enum
+        // lives in com.android.resources, not in app.cash.paparazzi —
+        // importing the latter does not resolve (run 43790680404).
         deviceConfig = DeviceConfig.PIXEL_5.copy(
-            screenWidth = DeviceConfig.PIXEL_5.screenHeight,
-            screenHeight = DeviceConfig.PIXEL_5.screenWidth,
+            orientation = ScreenOrientation.LANDSCAPE,
         ),
     )
 
