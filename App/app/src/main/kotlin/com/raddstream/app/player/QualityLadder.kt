@@ -288,6 +288,42 @@ object QualityLadder {
     )
 
     /**
+     * Detail review (Nov 2026, P0): the rung's painted title — a clean
+     * tier name, never the server's raw codec label. The server's rung
+     * labels carry codec words ("HD · X264", "Full HD · X264",
+     * "4K Ultra HD · HEVC") that read as download-file names, not quality
+     * tiers, and the same band can arrive under different spellings. The
+     * band is the row key, so it names the tier; a band the app does not
+     * know is resolved from the label's resolution words; a label with no
+     * resolution in it is passed through verbatim — the fallback, never an
+     * invention. The painted titles still carry the resolution words the
+     * quality gate reads (`isPremiumLabel`: "4k", "1080", "720"), so no
+     * rung changes its VIP verdict. Pure so RungTitleSanitizerTest pins
+     * the vectors.
+     */
+    internal fun sanitizeRungTitle(band: String, title: String): String =
+        when (band.trim().lowercase()) {
+            "2160p", "4k", "uhd" -> "4K Ultra HD"
+            "1080p", "fullhd", "fhd" -> "1080p Full HD"
+            "720p", "hd" -> "720p HD"
+            "480p" -> "480p"
+            "sd" -> "SD"
+            else -> titleFromLabel(title) ?: title.trim()
+        }
+
+    /** Resolution words in a raw server label, or null when the label names no resolution. */
+    private fun titleFromLabel(title: String): String? {
+        val lower = title.lowercase()
+        return when {
+            "2160" in lower || "4k" in lower || "ultra hd" in lower -> "4K Ultra HD"
+            "1080" in lower || "full hd" in lower -> "1080p Full HD"
+            "720" in lower -> "720p HD"
+            "480" in lower -> "480p"
+            else -> null
+        }
+    }
+
+    /**
      * One rung → one row. A rung with no winner is skipped: the server folded every
      * copy of the print into that winner, so an empty rung means the band exists in
      * no copy at all and there is nothing honest to offer.
@@ -298,8 +334,11 @@ object QualityLadder {
         if (id.isEmpty()) return null
         return QualityOption(
             band = band,
-            title = label?.takeIf { it.isNotBlank() } ?: quality?.takeIf { it.isNotBlank() }
-            ?: band,
+            title = sanitizeRungTitle(
+                band,
+                label?.takeIf { it.isNotBlank() } ?: quality?.takeIf { it.isNotBlank() }
+                    ?: band,
+            ),
             streamId = id,
             playUrl = winner.bestUrl,
             sizeBytes = winner.fileSizeBytes,
