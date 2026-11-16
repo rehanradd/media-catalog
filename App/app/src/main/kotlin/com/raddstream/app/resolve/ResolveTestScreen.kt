@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -38,6 +39,7 @@ import com.raddstream.app.R
  * background and touches no production resolve path. Unreachable in release
  * builds: no NavGraph entry and no Settings row exist unless DEBUG.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ResolveTestScreen(
     onBackClick: () -> Unit,
