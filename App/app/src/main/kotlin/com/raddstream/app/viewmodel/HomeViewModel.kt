@@ -195,31 +195,6 @@ data class HomeUiState(
      * blank page.
      */
     val isOffline: Boolean = false,
-    /**
-     * The daily check-in, on Home where the viewer actually is. The count is
-     * this device's own (one open a day, recorded at launch); the ladder and
-     * the wallet are the server's. The card renders only once the ladder
-     * arrives — an absent plan is never shown as a zero. `serverStreak` is
-     * the server's claimed-days count, the only number the card may present
-     * as "Day N"; null until the overview answers, and the card must not
-     * print a day number from the local count in the meantime (HO-6).
-     */
-    val streakCount: Int = 0,
-    val serverStreak: Int? = null,
-    val streakLadder: Map<Int, Int> = emptyMap(),
-    val coinBalance: Int = 0,
-    val signedIn: Boolean = false,
-    val claimedToday: Boolean = false,
-    val isClaiming: Boolean = false,
-    val claimMessage: String? = null,
-    /**
-     * Free launch: the paywall surfaces (check-in nudge, coins, upsells)
-     * render only while the operator's quality gate is ON. The gate flag
-     * is the free-launch switch — gate OFF means every viewer is premium
-     * and the nudge hides. Defaults true (gate on) so a build that has
-     * not heard from the panel yet behaves exactly as today.
-     */
-    val paywallVisible: Boolean = true,
     /** Session 121 (P-26): the ids on this device's My List, so the hero's toggle reads live. */
     val favoriteIds: Set<Int> = emptySet(),
     /**
@@ -600,7 +575,6 @@ class HomeViewModel @Inject constructor(
     init {
         observeContinueWatching()
         observeFavorites()
-        observeDailyCheckIn()
         observeTrialNote()
         observePickThreeDone()
         observePickThreeShown()
@@ -620,93 +594,6 @@ class HomeViewModel @Inject constructor(
 
     /** The seed post id the "Because you watch" rail is loaded for, or null when no rail is loaded. */
     private var relatedSeedId: Int? = null
-
-    /**
-     * The daily check-in's facts, read not written: the streak count is this
-     * device's own, the ladder and the wallet are the server's, and the claim
-     * is the same call the VIP screen makes — one owner, so Home and VIP can
-     * never disagree about what today pays.
-     */
-    private fun observeDailyCheckIn() {
-        viewModelScope.launch {
-            settingsRepository.loginStreakCount.collect { count ->
-                _uiState.update { it.copy(streakCount = count) }
-            }
-        }
-        // Free launch: the quality-gate flag is the free-launch switch.
-        // Gate OFF hides the paywall surfaces (this nudge first); the
-        // default true keeps today's behaviour until the panel answers.
-        viewModelScope.launch {
-            settingsRepository.qualityGateEnabled.collect { enabled ->
-                _uiState.update { it.copy(paywallVisible = enabled) }
-            }
-        }
-        viewModelScope.launch {
-            syncAccountRepository.signedIn.collect { signed ->
-                _uiState.update { it.copy(signedIn = signed) }
-                if (signed) loadCheckInWallet()
-            }
-        }
-    }
-
-    private fun loadCheckInWallet() {
-        viewModelScope.launch {
-            val ladder = syncAccountRepository.loadStreakLadder()
-            val balance = syncAccountRepository.loadCoinBalance()
-            val overview = syncAccountRepository.loadAccountOverview()
-            _uiState.update {
-                it.copy(
-                    streakLadder = ladder.ifEmpty { it.streakLadder },
-                    coinBalance = balance ?: it.coinBalance,
-                    serverStreak = overview?.streak?.currentStreak ?: it.serverStreak,
-                )
-            }
-        }
-    }
-
-    /**
-     * Claim today's check-in — the same call, guards and words as the VIP
-     * screen's claim, so a grant the server paid is never presented twice
-     * and an unreachable server is never presented as "already claimed".
-     */
-    fun claimDailyLogin() {
-        val state = _uiState.value
-        if (!state.signedIn || state.isClaiming || state.claimedToday) return
-        viewModelScope.launch {
-            _uiState.update { it.copy(isClaiming = true, claimMessage = null) }
-            try {
-                val earned = syncAccountRepository.claimDailyLogin()
-                if (earned == null) {
-                    _uiState.update {
-                        it.copy(claimMessage = "Could not reach the server — try again later.")
-                    }
-                    return@launch
-                }
-                val balance = syncAccountRepository.loadCoinBalance()
-                _uiState.update {
-                    it.copy(
-                        claimedToday = true,
-                        coinBalance = balance ?: it.coinBalance,
-                        // The claim answer carries the server's count — keep
-                        // the card on it without waiting for a re-read.
-                        serverStreak = earned.currentStreak,
-                        claimMessage = when {
-                            earned.status == "same_day_noop" -> "Already claimed today."
-                            earned.currentStreak > 7 ->
-                                "Streak day ${earned.currentStreak} — the 7-day ladder is complete."
-                            earned.pass != null ->
-                                "+${earned.coinsGranted} coins — Day ${earned.currentStreak} of 7, and a 24-hour pass."
-                            earned.coinsGranted > 0 ->
-                                "+${earned.coinsGranted} coins — Day ${earned.currentStreak} of 7."
-                            else -> "Day ${earned.currentStreak} of 7."
-                        },
-                    )
-                }
-            } finally {
-                _uiState.update { it.copy(isClaiming = false) }
-            }
-        }
-    }
 
     /**
      * The app-open surface, asked once per Home entry and capped at one impression per four hours

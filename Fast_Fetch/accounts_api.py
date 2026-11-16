@@ -558,6 +558,29 @@ def _settings(catalog):
     return values or {}
 
 
+def _coins_enabled(values):
+    """The coins master switch (2026-11-17, coins removal): off unless the
+    operator's `coins_enabled` knob is 1. A row that predates the knob, or no
+    row at all, reads as off — every mint/spend route fails closed. This is
+    a flag, never a coin amount, so `engagement._resolve_coin_knob`'s "a
+    stored 0 means the shipped number" rule does not apply to it."""
+    raw = values.get("coins_enabled", 0)
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, (int, float)):
+        return raw == 1
+    return str(raw).strip().lower() in ("1", "true", "on", "yes")
+
+
+def _coins_off(path):
+    """The refusal every mint/spend route answers while coins are off: 403
+    `forbidden`, no ledger row, no grant, no spend. The code is the closed
+    list's own 403 — an undeclared code would answer `not_found` 404, which
+    would lie about a route that exists. Reads (balance, caps, history,
+    overview) stay open — they mint nothing and the ledger stays auditable."""
+    return _problem("forbidden", 403, "coins are turned off", path)
+
+
 def _civil_zone(values):
     """The zone a streak day is counted in, and the hour it rolls over — the two
     `app_remote_config` knobs the streak owns, passed through unresolved so
@@ -968,7 +991,7 @@ def route_post(path, body, *, db_path, catalog_path, secret, headers,
                         season=int(row.get("season_number") or 0),
                         episode=int(row.get("episode_number") or 0),
                         duration_seconds=duration)
-                    if seen["observed"]:
+                    if seen["observed"] and _coins_enabled(values):
                         grant = engagement.grant_finish_watch(
                             wallet, account["account_id"], work=work,
                             season=int(row.get("season_number") or 0),
@@ -1029,6 +1052,9 @@ def route_post(path, body, *, db_path, catalog_path, secret, headers,
                 return _problem("invalid_params", 400, "no such earning reason", path)
             account = accounts.authenticate(db_path, key, tracker=LIMITER)
             values = _settings(catalog)
+            # Coins off: the claim pays nothing, and no ledger row is written.
+            if not _coins_enabled(values):
+                return _coins_off(path)
             zone = _civil_zone(values)
             with closing(engagement.connect(db_path)) as wallet:
                 day = engagement.record_engagement_day(
@@ -1054,7 +1080,11 @@ def route_post(path, body, *, db_path, catalog_path, secret, headers,
             refusal = _REFUSED_REWARDS.get(plan)
             if refusal:
                 return _problem("forbidden", 403, refusal, path)
-            ladder = engagement.resolve_ladder(_settings(catalog))
+            values = _settings(catalog)
+            # Coins off: no spend, no pass is minted.
+            if not _coins_enabled(values):
+                return _coins_off(path)
+            ladder = engagement.resolve_ladder(values)
             # The ladder is the whole name space: no reward table lives here, so a tier
             # the operator's row prices is a tier this route can sell, and nothing else.
             if plan not in ladder:
@@ -1099,6 +1129,9 @@ def route_post(path, body, *, db_path, catalog_path, secret, headers,
             if key_refusal is not None:
                 return key_refusal
             values = _settings(catalog)
+            # Coins off: no spend, no credit is minted.
+            if not _coins_enabled(values):
+                return _coins_off(path)
             with closing(engagement.connect(db_path)) as wallet:
                 try:
                     credit = engagement.redeem_download_credit(
@@ -1137,6 +1170,9 @@ def route_post(path, body, *, db_path, catalog_path, secret, headers,
                                 "work_ref is not a handle this service minted", path)
             account = accounts.authenticate(db_path, key, tracker=LIMITER)
             values = _settings(catalog)
+            # Coins off: the share pays nothing.
+            if not _coins_enabled(values):
+                return _coins_off(path)
             with closing(engagement.connect(db_path)) as wallet:
                 share = engagement.grant_share(
                     wallet, account["account_id"], work=work, values=values)
@@ -1162,6 +1198,9 @@ def route_post(path, body, *, db_path, catalog_path, secret, headers,
             if key_refusal is not None:
                 return key_refusal
             values = _settings(catalog)
+            # Coins off: no spend, no request is queued.
+            if not _coins_enabled(values):
+                return _coins_off(path)
             with closing(engagement.connect(db_path)) as wallet:
                 try:
                     request = engagement.request_movie(
@@ -1192,6 +1231,9 @@ def route_post(path, body, *, db_path, catalog_path, secret, headers,
             if key_refusal is not None:
                 return key_refusal
             values = _settings(catalog)
+            # Coins off: no spend, no theme is bought.
+            if not _coins_enabled(values):
+                return _coins_off(path)
             with closing(engagement.connect(db_path)) as wallet:
                 owned = engagement.owned_themes(wallet, account["account_id"])
                 if theme in owned:

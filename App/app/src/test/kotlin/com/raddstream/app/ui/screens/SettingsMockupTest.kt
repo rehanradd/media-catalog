@@ -51,7 +51,6 @@ class SettingsMockupTest {
                     paywallVisible = false,
                     onOpenDashboard = {},
                     onOpenProfile = {},
-                    onOpenCoins = {},
                 )
             }
         }
@@ -62,22 +61,20 @@ class SettingsMockupTest {
 
     @Test
     fun accountNavRowShowsWhenGateOn() {
-        var coinsOpened = false
         compose.setContent {
             RaddStreamTheme {
                 AccountNavRow(
                     paywallVisible = true,
                     onOpenDashboard = {},
                     onOpenProfile = {},
-                    onOpenCoins = { coinsOpened = true },
                 )
             }
         }
         compose.onNodeWithText("Dashboard").assertIsDisplayed()
         compose.onNodeWithText("Profile").assertIsDisplayed()
-        compose.onNodeWithText("Coins").assertIsDisplayed()
-        compose.onNodeWithText("Coins").performClick()
-        assertTrue(coinsOpened)
+        // The Coins door was removed 2026-11-17 with the coins/check-in
+        // removal: it does not exist even with the gate ON.
+        compose.onNodeWithText("Coins").assertDoesNotExist()
     }
 
     @Test

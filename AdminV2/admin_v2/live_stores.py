@@ -83,7 +83,7 @@ REMOTE_CONFIG_FIELDS = [
     "monetag_zone_id", "adsterra_tag_id", "shrinkme_api_token",
     "droplink_api_token", "maintenance_mode", "apk_update_url",
     "feature_downloads", "feature_pure_cinema", "feature_chromecast",
-    "feature_quality_gate",
+    "feature_quality_gate", "coins_enabled",
 ] + COIN_REDEEM_FIELDS
 REMOTE_CONFIG_SECRETS = ("shrinkme_api_token", "droplink_api_token")
 
@@ -1609,11 +1609,21 @@ class LiveStores:
             if k in fields and not (0 <= int(fields[k]) <= 10_000_000):
                 raise bad("Coin price must be between 0 and 10,000,000.")
         for k in ("maintenance_mode", "feature_downloads", "feature_pure_cinema",
-                  "feature_chromecast", "feature_quality_gate"):
+                  "feature_chromecast", "feature_quality_gate", "coins_enabled"):
             if k in fields and int(fields[k]) not in (0, 1):
                 raise bad("That flag must be 0 or 1.")
         conn = self._rw(self.catalog_path, "catalog")
         try:
+            # New columns are additive: a catalog created before this flag
+            # existed gains it here, the same way v1 `_ensure_monetization`
+            # adds missing columns at read time. Without this, the first
+            # monetization save on an old catalog 500s on `no such column:
+            # coins_enabled` — the live catalog has no such column yet.
+            cols = {r[1] for r in
+                    conn.execute("PRAGMA table_info(app_remote_config)")}
+            if "coins_enabled" not in cols:
+                conn.execute("ALTER TABLE app_remote_config ADD COLUMN"
+                             " coins_enabled INTEGER NOT NULL DEFAULT 0")
             conn.execute("BEGIN IMMEDIATE")
             try:
                 sets = ", ".join("%s=?" % k for k in fields)

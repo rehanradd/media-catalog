@@ -11,7 +11,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -33,20 +32,17 @@ import com.raddstream.app.viewmodel.AccountOverviewUiState
 import com.raddstream.app.viewmodel.AccountViewModel
 
 /**
- * The dashboard: one screen that answers "where do I stand?" — the coin
- * balance, the streak, and the membership, each from the server's own read,
- * with a door to each of the screens that owns the detail. Session 123:
- * the app had no dashboard at all; the wallet lived inside the VIP screen
- * and nowhere else. A guest (no account yet) sees the same doors with the
- * numbers replaced by the honest "sign in to see this" — the screen never
- * invents a balance for someone who has none.
+ * The dashboard: one screen that answers "where do I stand?" — the
+ * membership, from the server's own read, with a door to the profile.
+ * (The coin balance and the streak lived here until coins and daily
+ * check-in were removed 2026-11-17.) A guest (no account yet) sees the
+ * same doors with the numbers replaced by the honest "sign in to see
+ * this" — the screen never invents a membership for someone who has none.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DashboardScreen(
     onBackClick: () -> Unit,
-    onOpenCheckIn: () -> Unit,
-    onOpenCoins: () -> Unit,
     onOpenProfile: () -> Unit,
     onOpenVipUpgrade: () -> Unit,
     viewModel: AccountViewModel = hiltViewModel(),
@@ -55,8 +51,6 @@ fun DashboardScreen(
     DashboardContent(
         state = state,
         onBackClick = onBackClick,
-        onOpenCheckIn = onOpenCheckIn,
-        onOpenCoins = onOpenCoins,
         onOpenProfile = onOpenProfile,
         onOpenVipUpgrade = onOpenVipUpgrade,
     )
@@ -64,18 +58,15 @@ fun DashboardScreen(
 
 /**
  * The dashboard's body, split from the screen so tests can render it with
- * a fake state (the Home pattern: HomeScreen + HomeContent). The paywall
- * surfaces — coins card, streak card, "Coins and history" — render only
- * while the operator's quality gate is ON; gate OFF means every viewer is
- * premium, so they hide and the membership card says so.
+ * a fake state (the Home pattern: HomeScreen + HomeContent). Gate OFF
+ * means every viewer is premium, so the membership card says so and
+ * offers no upsell; gate ON shows the VIP state instead.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DashboardContent(
     state: AccountOverviewUiState,
     onBackClick: () -> Unit,
-    onOpenCheckIn: () -> Unit,
-    onOpenCoins: () -> Unit,
     onOpenProfile: () -> Unit,
     onOpenVipUpgrade: () -> Unit,
 ) {
@@ -109,57 +100,10 @@ fun DashboardContent(
             }
             if (!state.signedIn && state.paywallVisible) {
                 Text(
-                    "Sign in from Settings to see your coins, streak and membership here.",
+                    "Sign in from Settings to see your membership here.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-            }
-            // Free launch: the coins card hides while the quality gate is OFF.
-            if (state.paywallVisible) {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Coins", style = MaterialTheme.typography.labelLarge)
-                        Text(
-                            "${state.coinBalance} coins",
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        Text(
-                            "Your balance, from the server's ledger — never a number this phone made up.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
-            // Free launch: the streak card (and its check-in door) hides
-            // while the quality gate is OFF.
-            if (state.paywallVisible) {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Check-in streak", style = MaterialTheme.typography.labelLarge)
-                        Text(
-                            "${state.currentStreak} days in a row",
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        Text(
-                            "Best: ${state.bestStreak} days. Claim every day to keep it going.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Button(onClick = onOpenCheckIn, modifier = Modifier.fillMaxWidth()) {
-                            Text(if (state.claimedToday) "Check-in — claimed today" else "Open check-in")
-                        }
-                    }
-                }
             }
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -198,11 +142,6 @@ fun DashboardContent(
                             }
                         }
                     }
-                }
-            }
-            if (state.paywallVisible) {
-                OutlinedButton(onClick = onOpenCoins, modifier = Modifier.fillMaxWidth()) {
-                    Text("Coins and history")
                 }
             }
             OutlinedButton(onClick = onOpenProfile, modifier = Modifier.fillMaxWidth()) {

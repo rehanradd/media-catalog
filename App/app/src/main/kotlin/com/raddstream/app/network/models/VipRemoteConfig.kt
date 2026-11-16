@@ -97,10 +97,6 @@ data class VipRemoteConfig(
     val featureFlags: VipRemoteFeatureFlags = VipRemoteFeatureFlags(),
     /** Ad-network ids, displayed nowhere: they only decide whether a slot has real inventory. */
     val ads: VipRemoteAds = VipRemoteAds(),
-    /** Coin-wallet payout rules. The balance is displayed on the VIP screen ("Wallet: N coins"). */
-    val wallet: VipRemoteWallet = VipRemoteWallet(),
-    /** The login-streak length and reward. Displayed on the VIP screen as a StreakCard (Session 56), shown only when the operator publishes streak rules; the count is device-local. */
-    val streak: VipRemoteStreak = VipRemoteStreak(),
     /**
      * The server's own ad cadence, which outranks [ads] for the three caps because it is the
      * number the enforcement side reads. Absent from every deployment today, and an absent block
@@ -326,6 +322,17 @@ data class VipRemoteFeatureFlags(
      */
     @SerializedName(value = "quality_gate", alternate = ["quality_gating_enabled"])
     val qualityGate: Boolean = false,
+    /**
+     * The master coins switch (2026-11-17): the server publishes `coins` in
+     * `feature_flags`, driven by its `coins_enabled` knob (default 0). Defaults
+     * FALSE like `qualityGate`, for the same reason: coins are not a feature
+     * the viewer already had, so a body that never sets it must keep coins
+     * off. The app reads nothing from it today — every coin surface is
+     * deleted, not gated — but the flag documents the served-OFF contract
+     * and is the switch the owner flips to bring coins back.
+     */
+    @SerializedName("coins")
+    val coins: Boolean = false,
 )
 
 /**
@@ -385,60 +392,14 @@ data class VipRemoteAds(
 }
 
 /**
- * The coin wallet the owner's plan pays rewarded views and a kept streak into. Parsed here and
- * displayed nowhere yet: no screen in this build renders a balance, and a number the app cannot
- * explain is a number it must not invent. Every default is the inert one — zero coins, switch off
- * — so an absent `wallet` object cannot make this client promise a payout.
- */
-data class VipRemoteWallet(
-    @SerializedName(value = "wallet_enabled", alternate = ["feature_wallet", "coins_enabled"])
-    val enabled: Boolean = false,
-    @SerializedName(value = "coin_reward_preroll", alternate = ["coins_per_preroll", "reward_preroll_coins"])
-    val coinsPerPreRoll: Int = 0,
-    @SerializedName(value = "coin_reward_streak", alternate = ["coins_per_streak", "reward_streak_coins"])
-    val coinsPerStreak: Int = 0,
-    /** What one device may earn in a day. Zero means the operator set no ceiling, not no wallet. */
-    @SerializedName(value = "coin_daily_cap", alternate = ["coins_daily_limit", "daily_coin_cap"])
-    val dailyCoinCap: Int = 0,
-) {
-    /** True when there is at least one way to earn, so a balance screen has something to show. */
-    val hasAnyEarningRule: Boolean
-        get() = enabled && (coinsPerPreRoll > 0 || coinsPerStreak > 0)
-}
-
-/**
- * The login streak the owner's plan rewards after a week. `days` is the one field whose default is
- * a real number rather than zero, because the pillar itself is "7 consecutive days" and a partial
- * body that omits the length must not silently shorten or lengthen a promise the operator made.
- */
-data class VipRemoteStreak(
-    @SerializedName(value = "streak_enabled", alternate = ["feature_streak", "login_streak_enabled"])
-    val enabled: Boolean = false,
-    @SerializedName(value = "streak_days", alternate = ["streak_length_days", "streak_target_days"])
-    val days: Int = DEFAULT_DAYS,
-    @SerializedName(value = "streak_reward_coins", alternate = ["streak_bonus_coins"])
-    val rewardCoins: Int = 0,
-) {
-    companion object {
-        /** The owner's pillar: seven days in a row. */
-        const val DEFAULT_DAYS = 7
-    }
-
-    /** A length the server never filled in is not a streak; a zero-day "streak" rewards nothing. */
-    val isConfigured: Boolean
-        get() = enabled && days > 0
-}
-
-/**
  * The engagement pillar's read projection — `Fast_Fetch/engagement.py:remote_view()`, published
  * under `/api/v1/app/remote-config` as `engagement`.
  *
  * Only `cadence` is decoded, and only because it is the one part of that body that changes what a
  * viewer sees: the caps on how often an ad may fire. The `wallet`, `streak` and `passes` shapes in
- * the same server object are not decoded *here* — this file's [wallet] and [streak] are the older
- * top-level keys, and a field decoded and then dropped is exactly the `maintenanceMode` mistake
- * this file's own watcher log records. When a screen draws a balance or a streak, it decodes what
- * it draws, from the body it is actually pointed at.
+ * the same server object are not decoded — coins and daily check-in were removed 2026-11-17,
+ * so no screen draws a balance or a streak any more, and a field decoded and then dropped is
+ * exactly the `maintenanceMode` mistake this file's own watcher log records.
  */
 data class VipRemoteEngagement(
     val cadence: VipRemoteAdCadence = VipRemoteAdCadence(),

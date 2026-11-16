@@ -132,10 +132,19 @@ class ServedBodyCompletenessTests(unittest.TestCase):
         body = admin_panel.remote_config(_fresh_catalog_conn())
         self.assertEqual(body["feature_flags"],
                          {"downloads": True, "pure_cinema": True,
-                          "chromecast": True, "quality_gate": False})
+                          "chromecast": True, "quality_gate": False,
+                          "coins": False})
         for value in body["feature_flags"].values():
             self.assertIsInstance(value, bool)
         self.assertEqual(body["free_quality_cap"], "720p")
+
+    def test_coins_flag_follows_the_row(self):
+        """Coins master switch (2026-11-17): off by default, on when the
+        operator flips `coins_enabled` to 1 — the flag the app decodes."""
+        conn = _fresh_catalog_conn()
+        self.assertFalse(admin_panel.remote_config(conn)["feature_flags"]["coins"])
+        conn.execute("UPDATE app_remote_config SET coins_enabled = 1 WHERE id = 1")
+        self.assertTrue(admin_panel.remote_config(conn)["feature_flags"]["coins"])
 
     def test_fresh_row_serves_the_canonical_coin_prices(self):
         body = admin_panel.remote_config(_fresh_catalog_conn())
@@ -165,7 +174,8 @@ class ServedBodyCompletenessTests(unittest.TestCase):
         self.assertTrue(body["settings_unavailable"])
         self.assertEqual(body["feature_flags"],
                          {"downloads": True, "pure_cinema": True,
-                          "chromecast": True, "quality_gate": False})
+                          "chromecast": True, "quality_gate": False,
+                          "coins": False})
         for value in body["feature_flags"].values():
             self.assertIsInstance(value, bool)
         self.assertEqual(body["free_quality_cap"], "720p")

@@ -406,7 +406,7 @@ class SubScreensMockupTest {
         assertTrue(expanded)
         compose.onNodeWithText("Watch").assertIsDisplayed()
         compose.onNodeWithText("Download").assertIsDisplayed()
-        compose.onNodeWithText("VIP and coins").assertIsDisplayed()
+        compose.onNodeWithText("VIP").assertIsDisplayed()
         compose.onNodeWithText("Need more help?").assertIsDisplayed()
     }
 }

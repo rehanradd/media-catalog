@@ -1711,7 +1711,7 @@ SETTINGS_UNAVAILABLE = "the settings row is unavailable"
 #: shows these keys read-only; a save carrying one is refused outright.
 _V1_READ_ONLY_FLAGS = frozenset({
     "maintenance_mode", "feature_pure_cinema", "feature_chromecast",
-    "feature_downloads", "feature_quality_gate",
+    "feature_downloads", "feature_quality_gate", "coins_enabled",
 })
 
 _TEXT = "text"
@@ -1796,6 +1796,15 @@ MONETIZATION_FIELDS = (
     # `_ensure_monetization` only adds a missing row, so an existing
     # deployment keeps whatever its operator set.
     ("feature_quality_gate", "Charge VIP for 1080p/4K", _FLAG, 0),
+    # Coins master switch (2026-11-17, coins removal): OFF by default, like
+    # the gate. When 0, the account routes grant nothing and spend nothing —
+    # `accounts_api` refuses every mint/spend route with 403 and the
+    # finish-watch grant is skipped, while progress writes, balances and the
+    # ledger itself are untouched. The app reads it as `feature_flags.coins`
+    # (see `remote_config` below). Flipping it to 1 brings coins back; the
+    # knob is a flag, never a coin amount, so `_resolve_coin_knob`'s
+    # "a stored 0 means the shipped number" rule does not apply to it.
+    ("coins_enabled", "Coins: master switch (off = no grants, no spends)", _FLAG, 0),
     # The free cap lives on this row (launch plan Phase 0, G-8): the served
     # cap is the catalog value, not `tuning_settings`. A TEXT column is
     # created `DEFAULT ''` (see `_column_ddl`), so a row that predates this
@@ -2441,6 +2450,9 @@ def remote_config(conn):
             # ledger says "not VIP" would hide 1080p and 4K from a viewer the operator
             # never asked it to restrict.
             "quality_gate": flag("feature_quality_gate"),
+            # Coins master switch (2026-11-17): off by default, and an absent
+            # key on an old row reads as off too — `flag()` defaults to 0.
+            "coins": flag("coins_enabled"),
         },
         "vip": {
             "monthly_pkr": int(values.get("vip_monthly_pkr") or 0),
@@ -3666,6 +3678,7 @@ def _config_card(monetization):
     out += toggle("feature_chromecast")
     out += toggle("feature_downloads")
     out += toggle("feature_quality_gate")
+    out += toggle("coins_enabled")
     out += ('<p class="hint">Feature flags are edited in the v2 panel '
             '(Monetization) so every flip is versioned, snapshotted and '
             'audited. This card shows the live values read-only.</p>')

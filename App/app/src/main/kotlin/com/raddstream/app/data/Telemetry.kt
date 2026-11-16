@@ -170,8 +170,6 @@ object Telemetry {
 
     fun recordRewardedCompletion() = counters?.record("rewarded_completions")
 
-    fun recordCoinsGranted(coins: Int) = counters?.record("coins_granted", coins)
-
     /** The non-zero counts to ride the next progress report, if any. */
     fun takeUsageSnapshot(): Map<String, Int> = counters?.snapshot() ?: emptyMap()
 

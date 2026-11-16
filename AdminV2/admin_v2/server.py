@@ -1474,6 +1474,7 @@ def _page_monetization(self, user, sess, query):
         flag_field("feature_pure_cinema", "Pure cinema"),
         flag_field("feature_chromecast", "Chromecast"),
         flag_field("feature_quality_gate", "Quality gate"),
+        flag_field("coins_enabled", "Coins"),
         templates.esc(mon.get("apk_update_url") or ""),
     )
     return templates.layout("Monetization", body, active="monetization")

@@ -345,6 +345,10 @@ class TestMigrationsV4V5(unittest.TestCase):
             "coin_redeem_download, coin_redeem_request, coin_redeem_theme "
             "FROM app_remote_config_v2 WHERE id=1").fetchone()
         self.assertEqual(tuple(row), (500, 1200, 5000, 100, 300, 250))
+        # Coins master switch (2026-11-17): a fresh v2 row is OFF.
+        self.assertEqual(conn.execute(
+            "SELECT coins_enabled FROM app_remote_config_v2 WHERE id=1"
+            ).fetchone()[0], 0)
 
     def test_migrate_is_idempotent(self):
         from admin_v2.store import migrate

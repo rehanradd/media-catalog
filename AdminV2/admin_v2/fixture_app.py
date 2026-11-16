@@ -19,6 +19,7 @@ import time
 V1_REMOTE_CONFIG_KEYS = {
     "maintenance_mode", "apk_update_url", "feature_downloads",
     "feature_pure_cinema", "feature_chromecast", "feature_quality_gate",
+    "coins_enabled",
     "vip_monthly_pkr", "vip_yearly_pkr", "pak_till_id",
     "pak_jazzcash_number", "pak_easypaisa_number", "pak_raast_id",
     "monetag_zone_id", "adsterra_tag_id",
@@ -52,6 +53,7 @@ def public_remote_config(service):
         "pure_cinema": bool(cfg["feature_pure_cinema"]),
         "chromecast": bool(cfg["feature_chromecast"]),
         "quality_gate": bool(cfg["feature_quality_gate"]),
+        "coins": bool(cfg["coins_enabled"]),
     }
     for _name in list(_feat):
         if service.is_paused("feature", _name):
@@ -102,6 +104,7 @@ def old_app_parse(public_config):
         "feature_pure_cinema": flags.get("pure_cinema"),
         "feature_chromecast": flags.get("chromecast"),
         "feature_quality_gate": flags.get("quality_gate"),
+        "coins_enabled": flags.get("coins"),
         "vip_monthly_pkr": vip.get("monthly_pkr"),
         "vip_yearly_pkr": vip.get("yearly_pkr"),
         "pak_till_id": pays.get("jazzcash_till_id"),

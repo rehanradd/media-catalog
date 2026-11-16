@@ -60,15 +60,15 @@ import com.raddstream.app.viewmodel.HelpViewModel
  * Stitch sub-screens mockup (Nov 2026): "Frequently asked questions",
  * "Report a problem", "Contact us", "About" — each a card with
  * an icon and a chevron, no bottom nav. The answers to the questions are the
- * four short sections this screen always carried (Watch, Download, VIP and
- * coins, Need more help?), so tapping the first row opens them in place
+ * four short sections this screen always carried (Watch, Download, VIP,
+ * Need more help?), so tapping the first row opens them in place
  * instead of inventing new words. A problem report goes through the same
  * contact sink the Detail screen's broken-stream report uses; Contact opens
  * the Contact form in Settings, as this screen's own note always said; About
  * shows the same About text and version Settings shows.
  *
  * Every sentence is a fact the app already proves elsewhere — the free 720p cap, the
- * direct downloads, the VIP prices, the coin sources — so this screen never has to be
+ * direct downloads, the VIP prices — so this screen never has to be
  * re-checked against the server. It is static on purpose: no network call,
  * nothing that can fail while a viewer is stuck. The one thing it cannot answer itself
  * is a person's own problem, so the last section sends them to the Contact form in
@@ -200,11 +200,9 @@ internal fun HelpContent(
                     "Downloads are direct files — nothing extra is installed.",
             )
             HelpSection(
-                title = "VIP and coins",
+                title = "VIP",
                 body = "VIP is PKR 200 a month or PKR 1,500 a year, paid by JazzCash, EasyPaisa or Raast. " +
-                    "Coins come from checking in every day, sharing a title, and finishing one. " +
-                    "Coins buy a 24-hour VIP pass, a direct download, a player theme, or a movie request — " +
-                    "see the VIP screen for the prices.",
+                    "See the VIP screen for the plans and how to pay.",
             )
             HelpSection(
                 title = "Need more help?",

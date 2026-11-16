@@ -15,11 +15,8 @@ import com.raddstream.app.brand.Brand
 import com.raddstream.app.network.models.AccountEntitlement
 import com.raddstream.app.network.models.PanelDisclaimer
 import com.raddstream.app.network.models.PanelTheme
-import com.raddstream.app.player.LoginStreak
 import com.raddstream.app.player.SubtitleColor
 import com.raddstream.app.player.SubtitleUiSettings
-import com.raddstream.app.player.loginStreakDay
-import com.raddstream.app.player.nextLoginStreak
 import com.raddstream.app.ui.theme.PlayerChromeTheme
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.concurrent.atomic.AtomicBoolean
@@ -402,35 +399,6 @@ class ServerSettingsRepository @Inject constructor(
         dataStore.edit { preferences ->
             if (done) preferences[FIRST_BROWSE_DONE_KEY] = true
             else preferences.remove(FIRST_BROWSE_DONE_KEY)
-        }
-    }
-
-    /**
-     * The login streak (plan §5 step 19): consecutive days this device opened the app, counted
-     * locally because no server route carries a per-user progress count. The last day is a local
-     * epoch day (-1 means never opened); the count is how many in a row that is. The two move
-     * together, always — a count stored without its anchor would survive a missed day.
-     */
-    val loginStreakLastDay: Flow<Long> = dataStore.data.map { preferences ->
-        preferences[LOGIN_STREAK_LAST_DAY_KEY] ?: -1L
-    }
-
-    val loginStreakCount: Flow<Int> = dataStore.data.map { preferences ->
-        preferences[LOGIN_STREAK_COUNT_KEY] ?: 0
-    }
-
-    /** Record that this device opened the app today. A second open the same day changes nothing. */
-    suspend fun recordLoginDay(nowMs: Long = System.currentTimeMillis()) {
-        val today = loginStreakDay(nowMs)
-        val current = LoginStreak(
-            lastDay = loginStreakLastDay.first().takeIf { it >= 0L },
-            count = loginStreakCount.first(),
-        )
-        val next = nextLoginStreak(current, today)
-        if (next == current) return
-        dataStore.edit { preferences ->
-            preferences[LOGIN_STREAK_LAST_DAY_KEY] = next.lastDay ?: today
-            preferences[LOGIN_STREAK_COUNT_KEY] = next.count
         }
     }
 
@@ -1127,8 +1095,6 @@ class ServerSettingsRepository @Inject constructor(
         private val PICK_THREE_DONE_KEY = booleanPreferencesKey("pick_three_done")
         private val PICK_THREE_SHOWN_KEY = booleanPreferencesKey("pick_three_shown")
         private val FIRST_BROWSE_DONE_KEY = booleanPreferencesKey("first_browse_done")
-        private val LOGIN_STREAK_LAST_DAY_KEY = longPreferencesKey("login_streak_last_day")
-        private val LOGIN_STREAK_COUNT_KEY = intPreferencesKey("login_streak_count")
         private val AUTOPLAY_NEXT_KEY = booleanPreferencesKey("player_autoplay_next")
         private val AUTO_PIP_KEY = booleanPreferencesKey("player_auto_pip")
         private val AUTOPLAY_PREVIEWS_KEY = booleanPreferencesKey("player_autoplay_previews")

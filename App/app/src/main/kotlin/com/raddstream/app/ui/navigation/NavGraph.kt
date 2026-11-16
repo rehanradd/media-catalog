@@ -63,8 +63,6 @@ import com.raddstream.app.resolve.PressTestScreen
 import com.raddstream.app.resolve.ResolveTestScreen
 import com.raddstream.app.ui.components.rememberReduceMotion
 import com.raddstream.app.ui.screens.BrowseScreen
-import com.raddstream.app.ui.screens.CheckInScreen
-import com.raddstream.app.ui.screens.CoinsScreen
 import com.raddstream.app.ui.screens.DashboardScreen
 import com.raddstream.app.ui.screens.DeadLinkScreen
 import com.raddstream.app.ui.screens.DetailScreen
@@ -551,15 +549,6 @@ fun RaddStreamNavGraph(
                     onSetupServerClick = { navController.navigate(Screen.Setup.route) },
                     onOpenLocalFiles = { navController.navigate(Screen.LocalFiles.route) },
                     onOpenDownloads = { navController.navigate(Screen.Downloads.route) },
-                    // Session 123: the Home check-in card opens the standalone
-                    // check-in screen — the card claims, the screen shows the week.
-                    onOpenCheckIn = { navController.navigate(Screen.CheckIn.route) },
-                    // Session 123 (HO-7): a guest's sign-in door is Settings,
-                    // where the account card lives.
-                    onOpenSignIn = { navController.navigate(Screen.Settings.route) },
-                    // Mockup (Nov 2026): the header's Coin Wallet pill opens
-                    // the VIP screen, which shows "Wallet: N coins".
-                    onOpenWallet = { navController.navigate(Screen.VipUpgrade.route) },
                     heroMax = theme.heroMax,
                     heroAutoplay = theme.heroAutoplay && autoplayPreviews,
                     heroIntervalMs = theme.heroIntervalS * 1_000L,
@@ -661,10 +650,8 @@ fun RaddStreamNavGraph(
                     onOpenDownloads = { navController.navigate(Screen.Downloads.route) },
                     onOpenVipUpgrade = { navController.navigate(Screen.VipUpgrade.route) },
                     onOpenRegionChoice = { navController.navigate(Screen.Region.route) },
-                    // Session 123: the account screens, from the Account card.
                     onOpenDashboard = { navController.navigate(Screen.Dashboard.route) },
                     onOpenProfile = { navController.navigate(Screen.Profile.route) },
-                    onOpenCoins = { navController.navigate(Screen.Coins.route) },
                     onOpenHelp = { navController.navigate(Screen.Help.route) },
                     onOpenLanguages = { navController.navigate(Screen.Languages.route) },
                     onOpenWatchHistory = { navController.navigate(Screen.WatchHistory.route) },
@@ -712,38 +699,24 @@ fun RaddStreamNavGraph(
             composable(Screen.VipUpgrade.route) {
                 VipUpgradeScreen(
                     onBackClick = { navController.popBackStack() },
-                    // Session 123: the wallet on the VIP screen opens the coins
-                    // screen, where the balance and the history live.
-                    onOpenCoins = { navController.navigate(Screen.Coins.route) },
                 )
             }
 
             // Session 123: the account screens — the dashboard that answers
-            // "where do I stand?", the standalone check-in, the coins, and the
-            // profile. None of them is a tab; Settings, Home and VIP link here.
+            // "where do I stand?" and the profile. None of them is a tab;
+            // Settings, Home and VIP link here.
             composable(Screen.Dashboard.route) {
                 DashboardScreen(
                     onBackClick = { navController.popBackStack() },
-                    onOpenCheckIn = { navController.navigate(Screen.CheckIn.route) },
-                    onOpenCoins = { navController.navigate(Screen.Coins.route) },
                     onOpenProfile = { navController.navigate(Screen.Profile.route) },
                     onOpenVipUpgrade = { navController.navigate(Screen.VipUpgrade.route) },
                 )
-            }
-
-            composable(Screen.CheckIn.route) {
-                CheckInScreen(onBackClick = { navController.popBackStack() })
-            }
-
-            composable(Screen.Coins.route) {
-                CoinsScreen(onBackClick = { navController.popBackStack() })
             }
 
             composable(Screen.Profile.route) {
                 ProfileScreen(
                     onBackClick = { navController.popBackStack() },
                     onOpenDashboard = { navController.navigate(Screen.Dashboard.route) },
-                    onOpenCoins = { navController.navigate(Screen.Coins.route) },
                 )
             }
 

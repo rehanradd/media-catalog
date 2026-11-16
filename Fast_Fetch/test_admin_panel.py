@@ -731,7 +731,8 @@ class Monetization(Fixture):
         self.assertEqual(data["apk_update_url"], "")
         self.assertEqual(data["feature_flags"],
                          {"downloads": True, "pure_cinema": True,
-                          "chromecast": True, "quality_gate": False})
+                          "chromecast": True, "quality_gate": False,
+                          "coins": False})
 
     def test_the_non_flag_controls_round_trip_through_the_save_and_the_public_body(self):
         """Non-flag controls still round-trip through the v1 save: the URL

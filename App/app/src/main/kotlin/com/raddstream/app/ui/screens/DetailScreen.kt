@@ -494,7 +494,7 @@ fun DetailScreen(
                 isFavorite = state.isFavorite,
                 onToggleFavorite = viewModel::toggleFavorite,
                 onShare = {
-                    shareTitle(context, post) { viewModel.reportShare(post.workRef) }
+                    shareTitle(context, post)
                 },
                 onReport = { showReportDialog = true },
                 onOpenLanguages = onOpenLanguages,
@@ -2634,7 +2634,7 @@ private fun RankedPrint.spokenBadgeFacts(): String {
 }
 
 // ── Platform helpers (share keeps the app's own copy honest) ────────────────
-private fun shareTitle(context: Context, post: PostDetail, onShared: () -> Unit) {
+private fun shareTitle(context: Context, post: PostDetail, onShared: () -> Unit = {}) {
     val title = post.cleanTitle?.takeIf { it.isNotBlank() } ?: post.title
     // The template is the operator's words; the link is the app's own deep
     // link to the title's page — a share that only says "check this out"
@@ -2648,9 +2648,9 @@ private fun shareTitle(context: Context, post: PostDetail, onShared: () -> Unit)
     }
     try {
         context.startActivity(Intent.createChooser(intent, "Share via").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        // The chooser firing is the share, as far as this phone can know: the
-        // server pays once a day on the report, and a failed report is silent
-        // because the share already left the phone.
+        // The chooser firing is the share, as far as this phone can know.
+        // (Sharing used to report to the server for a coin grant; that
+        // report is gone with coins, 2026-11-17.)
         onShared()
     } catch (_: Exception) {
         Toast.makeText(context, "No share target available", Toast.LENGTH_SHORT).show()

@@ -36,7 +36,6 @@ import com.raddstream.app.player.PreviewRequest
 import com.raddstream.app.player.QualityLadder
 import com.raddstream.app.player.QualityOption
 import com.raddstream.app.player.SubtitleTrackInfo
-import com.raddstream.app.player.creditDownloadUrl
 import com.raddstream.app.repository.CatalogRepository
 import com.raddstream.app.repository.FavoritesRepository
 import com.raddstream.app.repository.V2DetailResult
@@ -153,16 +152,6 @@ data class DetailUiState(
      * never read a line that claims the download waits for Wi-Fi.
      */
     val wifiOnlyDownloads: Boolean = true,
-    /**
-     * Session 76 (Build 4): the direct-download price (coins for one movie)
-     * and the viewer's balance, read when the keep dialog opens so a free
-     * viewer can see what a direct link costs and whether they can afford it.
-     * Zero price means the server predates the credit — no direct link is offered.
-     */
-    val downloadCreditPrice: Int = 0,
-    val coinBalance: Int = 0,
-    /** The answer to a [directDownloadUrlFor] ask that could not open a link. */
-    val directLinkMessage: String? = null,
     val isReportingIssue: Boolean = false,
     /** F18: related titles from GET /api/v1/related, excluding the active work. */
     val similarTitles: List<Post> = emptyList(),
@@ -390,7 +379,6 @@ class DetailViewModel @Inject constructor(
         loadDetail()
         observeFavorite()
         observeEntitlement()
-        observeServerBase()
         observeDownloads()
     }
 
@@ -414,28 +402,6 @@ class DetailViewModel @Inject constructor(
         }
     }
 
-    /**
-     * Keep the server origin for the coins "Direct Link" action — the
-     * bought-credit URL is built off it. Free downloads never leave the
-     * app: there is no free web-link route any more.
-     */
-    private fun observeServerBase() {
-        viewModelScope.launch {
-            settingsRepository.serverUrl.collect { base ->
-                serverBaseUrl = base ?: ""
-            }
-        }
-    }
-
-    /**
-     * Whether this viewer is owed a page without the house card. Both inputs are pushed, so a
-     * membership approved while this screen was open removes the card without a reload; the
-     * rule itself lives in [RewardedVipPass.isAdFree], which the player applies identically.
-     *
-     * The entitlement also decides which sources exist on this page (see [VipQualityGate]), so
-     * the same push rebuilds the gated layout and ladder — a viewer who upgrades while looking
-     * at a title gets its 4K rungs without reopening the screen.
-     */
     private fun observeEntitlement() {
         viewModelScope.launch {
             syncAccountRepository.entitlement.collect { earned ->
@@ -488,8 +454,6 @@ class DetailViewModel @Inject constructor(
 
     private var serverVip: Boolean = false
     private var rewardedExpiresAt: Long = 0L
-    /** Session 73 (Phase 5): the server origin this install talks to, kept for the Web Download link. Empty until DataStore answers. */
-    private var serverBaseUrl: String = ""
 
     /**
      * The operator's switch, not this screen's opinion. On is the shipped default — the
@@ -1068,68 +1032,7 @@ class DetailViewModel @Inject constructor(
                         resumable = meta?.resumable ?: false,
                         target = target,
                     ),
-                    directLinkMessage = null,
                 )
-            }
-            // Session 76 (Build 4): a free viewer asking for a file can also
-            // buy a direct link with coins — read the price and the balance
-            // while the dialog is open, so the button can say what it costs
-            // and whether the wallet covers it. VIP viewers never see it;
-            // their downloads are already direct.
-            if (!_uiState.value.vip) {
-                val price = syncAccountRepository.loadDownloadCreditPrice()
-                val balance = syncAccountRepository.loadCoinBalance()
-                _uiState.update {
-                    it.copy(
-                        downloadCreditPrice = price,
-                        coinBalance = balance ?: it.coinBalance,
-                    )
-                }
-            }
-        }
-    }
-
-    /**
-     * Session 76 (Build 4): buy one direct download of [handle] with coins and
-     * hand back the browser URL that spends the credit. Null when the server
-     * cannot be reached or the credit is already spent — the reason is in
-     * [DetailUiState.directLinkMessage], never invented here.
-     */
-    suspend fun directDownloadUrlFor(handle: String): String? {
-        val credit = syncAccountRepository.redeemDownloadCredit(handle)
-        if (credit == null) {
-            _uiState.update {
-                it.copy(directLinkMessage = "Could not reach the server — try again.")
-            }
-            return null
-        }
-        val token = credit.token
-        if (token.isNullOrBlank()) {
-            _uiState.update {
-                it.copy(directLinkMessage = "That direct link was already used.")
-            }
-            return null
-        }
-        _uiState.update { it.copy(coinBalance = credit.balance, directLinkMessage = null) }
-        return creditDownloadUrl(serverBaseUrl, handle, token)
-    }
-
-    /**
-     * Report one share of this title, after the chooser already fired. The
-     * server pays once a day, so the message shows only when the server says
-     * it granted — a second share the same day is silent, not a nag. A failed
-     * report is silent too: the share already left the phone, and a coin
-     * report must never undo it.
-     */
-    fun reportShare(workRef: String?) {
-        val ref = workRef?.takeIf { it.isNotBlank() } ?: return
-        viewModelScope.launch {
-            val share = syncAccountRepository.reportShare(ref)
-            if (share != null && share.granted && share.coins > 0) {
-                _uiState.update {
-                    it.copy(actionMessage = "+${share.coins} coins for sharing",
-                            coinBalance = share.balance)
-                }
             }
         }
     }
@@ -1137,7 +1040,7 @@ class DetailViewModel @Inject constructor(
     /** The viewer confirmed the size and the quality: start whichever system owns the copy. */
     fun confirmKeep() {
         val pending = _uiState.value.pendingKeep ?: return
-        _uiState.update { it.copy(pendingKeep = null, directLinkMessage = null) }
+        _uiState.update { it.copy(pendingKeep = null) }
         // Session 123: the gate again, at confirm time — the Wi-Fi state can
         // change while the dialog is open, and the confirm is the moment the
         // bytes would actually start. A viewer who walked out of Wi-Fi range
@@ -1171,7 +1074,7 @@ class DetailViewModel @Inject constructor(
     /** The viewer declined the download: nothing started, nothing to clean up except the ask. */
     fun dismissKeep() {
         lastDownload = null
-        _uiState.update { it.copy(pendingKeep = null, directLinkMessage = null) }
+        _uiState.update { it.copy(pendingKeep = null) }
     }
 
     /**

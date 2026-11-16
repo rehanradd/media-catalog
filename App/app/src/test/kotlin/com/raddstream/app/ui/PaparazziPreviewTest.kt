@@ -321,11 +321,6 @@ class PaparazziPreviewTest {
             ),
         ),
         trialDaysRemaining = 5,
-        streakCount = 2,
-        serverStreak = 2,
-        streakLadder = mapOf(1 to 5, 2 to 10, 3 to 15, 7 to 50),
-        coinBalance = 120,
-        signedIn = true,
         favoriteIds = setOf(1),
         facets = FacetsResponse(
             genres = listOf(FacetEntry("action", "Action", 120), FacetEntry("drama", "Drama", 98)),

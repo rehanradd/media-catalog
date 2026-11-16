@@ -306,29 +306,37 @@ class VipRemoteConfigTest {
     }
 
     /**
-     * The wallet and the streak are parsed and displayed nowhere: no screen in this build renders a
-     * balance, and a number the app cannot explain is a number it must not invent. Both therefore
-     * have to default inert, and `hasAnyEarningRule` has to be false for a body that only turned a
-     * switch on without ever naming a payout.
+     * Coins were removed 2026-11-17: there is no wallet or streak shape in
+     * the config any more — no screen renders a balance, and a number the
+     * app cannot explain is a number it must not invent. What survives is
+     * one reversible flag, `feature_flags.coins`, served OFF by default:
+     * the owner brings coins back by flipping it, never by shipping a new
+     * build. The app reads nothing from it today; the flag documents the
+     * served-OFF contract.
      */
     @Test
-    fun `an absent wallet and streak decode to the inert shape`() {
-        val config = gson.fromJson("""{"success": true}""", VipRemoteConfig::class.java)
+    fun `the coins flag defaults off and follows the served body`() {
+        val absent = gson.fromJson("""{"success": true}""", VipRemoteConfig::class.java)
+        assertFalse(absent.featureFlags.coins)
 
-        assertFalse(config.wallet.enabled)
-        assertEquals(0, config.wallet.coinsPerPreRoll)
-        assertEquals(0, config.wallet.coinsPerStreak)
-        assertEquals(0, config.wallet.dailyCoinCap)
-        assertFalse(config.wallet.hasAnyEarningRule)
+        val on = gson.fromJson(
+            """{"feature_flags": {"coins": true}}""",
+            VipRemoteConfig::class.java,
+        )
+        assertTrue(on.featureFlags.coins)
 
-        assertFalse(config.streak.enabled)
-        assertEquals(VipRemoteStreak.DEFAULT_DAYS, config.streak.days)
-        assertEquals(0, config.streak.rewardCoins)
-        assertFalse(config.streak.isConfigured)
+        val off = gson.fromJson(
+            """{"feature_flags": {"coins": false}}""",
+            VipRemoteConfig::class.java,
+        )
+        assertFalse(off.featureFlags.coins)
     }
 
     @Test
-    fun `a configured wallet and streak are honoured`() {
+    fun `wallet and streak keys in the body are ignored, not errors`() {
+        // The server may still publish coin numbers inside `engagement`;
+        // the app must decode the body and simply have nowhere to put
+        // them — no crash, no wallet, no streak, coins still off.
         val config = gson.fromJson(
             """
             {"wallet": {"wallet_enabled": true, "coin_reward_preroll": 5,
@@ -337,34 +345,7 @@ class VipRemoteConfigTest {
             """.trimIndent(),
             VipRemoteConfig::class.java,
         )
-
-        assertTrue(config.wallet.enabled)
-        assertEquals(5, config.wallet.coinsPerPreRoll)
-        assertEquals(40, config.wallet.coinsPerStreak)
-        assertEquals(100, config.wallet.dailyCoinCap)
-        assertTrue(config.wallet.hasAnyEarningRule)
-
-        assertTrue(config.streak.enabled)
-        assertEquals(7, config.streak.days)
-        assertEquals(40, config.streak.rewardCoins)
-        assertTrue(config.streak.isConfigured)
-    }
-
-    @Test
-    fun `a switch on with no payout rule is not a promise of coins`() {
-        val wallet = gson.fromJson(
-            """{"wallet": {"wallet_enabled": true}}""",
-            VipRemoteConfig::class.java,
-        ).wallet
-
-        assertTrue(wallet.enabled)
-        assertFalse("nothing earns, so a balance screen has nothing to show", wallet.hasAnyEarningRule)
-
-        val streak = gson.fromJson(
-            """{"streak": {"streak_enabled": true, "streak_days": 0}}""",
-            VipRemoteConfig::class.java,
-        ).streak
-        assertFalse("a zero-day streak rewards nothing and must not be advertised", streak.isConfigured)
+        assertFalse(config.featureFlags.coins)
     }
 
     /**
@@ -396,8 +377,9 @@ class VipRemoteConfigTest {
         // Present but inert: the old body has no cadence, so the client's own caps stand.
         assertFalse(config.ads.enabled)
         assertEquals(AdCadenceLimits.SHIPPED, AdCadenceLimits.from(config.ads))
-        assertFalse(config.wallet.enabled)
-        assertFalse(config.streak.enabled)
+        // No wallet or streak shape any more (removed 2026-11-17); the
+        // coins flag defaults off for a body that never named it.
+        assertFalse(config.featureFlags.coins)
     }
 
     /**

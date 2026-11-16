@@ -2,7 +2,6 @@ package com.raddstream.app.ui.screens
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.raddstream.app.ui.theme.RaddStreamTheme
@@ -20,59 +19,16 @@ import org.robolectric.RobolectricTestRunner
 
 /**
  * The Stitch sheets/dialogs mockups (dialogs-mockup-20261115): the
- * check-in circles, the consent card, the two keep confirms, the report
- * rows and the update dialog — each pinned against its mockup, with real
- * data from the code, never the mockup's example numbers.
+ * consent card, the two keep confirms, the report rows and the update
+ * dialog — each pinned against its mockup, with real data from the code,
+ * never the mockup's example numbers. The check-in circles and sheet
+ * tests were removed 2026-11-17 with the coins/check-in removal.
  */
 @RunWith(RobolectricTestRunner::class)
 class DialogsMockupTest {
 
     @get:Rule
     val compose = createComposeRule()
-
-    private val ladder = mapOf(1 to 5, 2 to 5, 3 to 10, 4 to 10, 5 to 15, 6 to 15, 7 to 20)
-
-    // ── check-in circles (shared by the sheet and the full screen) ──
-
-    @Test
-    fun checkInCirclesShowSevenDaysWithTwoClaimed() {
-        compose.setContent {
-            RaddStreamTheme {
-                CheckInDayCircles(currentStreak = 2, targetDays = 7)
-            }
-        }
-        for (day in 1..7) {
-            compose.onNodeWithText("Day $day").assertIsDisplayed()
-        }
-        compose.onNodeWithContentDescription("Day 1 claimed").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Day 2 claimed").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Day 3 claimed").assertDoesNotExist()
-        compose.onNodeWithContentDescription("Day 3 not claimed").assertIsDisplayed()
-    }
-
-    @Test
-    fun checkInSheetBodyShowsCirclesAndCheckInWithoutCoins() {
-        compose.setContent {
-            RaddStreamTheme {
-                CheckInSheetBody(
-                    streakCount = 2,
-                    serverStreak = 2,
-                    streakLadder = ladder,
-                    coinBalance = 25,
-                    signedIn = true,
-                    claimedToday = false,
-                    isClaiming = false,
-                    claimMessage = null,
-                    onClaim = {},
-                )
-            }
-        }
-        compose.onNodeWithText("Day 2 of 7 — keep the streak going.").assertIsDisplayed()
-        compose.onNodeWithText("Check in").assertIsDisplayed()
-        compose.onNodeWithText("+5 coins").assertDoesNotExist()
-        compose.onNodeWithText("Claim 10 coins for Day 3").assertDoesNotExist()
-        compose.onNodeWithText("See all rewards").assertIsDisplayed()
-    }
 
     // ── consent card (the welcome + analytics mockups, one sheet) ──
 

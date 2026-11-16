@@ -27,15 +27,19 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.compose.runtime.collectAsState
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import com.raddstream.app.viewmodel.AccountOverviewUiState
 import com.raddstream.app.viewmodel.AccountViewModel
 
 /**
  * The profile: what this account is, on the server's own record. Session
  * 123: the app had no profile screen — the account existed only as a sync
- * key in Settings and a trial countdown. This screen shows the membership,
- * the streak the server counts, and the dates the server recorded, and
- * nothing the server did not say: no name, no phone, no invented identity.
+ * key in Settings and a trial countdown. This screen shows the membership
+ * and the dates the server recorded, and nothing the server did not say:
+ * no name, no phone, no invented identity. (The streak and coin balance
+ * lived here until coins and daily check-in were removed 2026-11-17.)
  * Signing out drops the key on this device and tells the server to revoke
  * it, so the account cannot be reopened from a copy of the key.
  */
@@ -44,7 +48,6 @@ import com.raddstream.app.viewmodel.AccountViewModel
 fun ProfileScreen(
     onBackClick: () -> Unit,
     onOpenDashboard: () -> Unit,
-    onOpenCoins: () -> Unit,
     viewModel: AccountViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -52,17 +55,14 @@ fun ProfileScreen(
         state = state,
         onBackClick = onBackClick,
         onOpenDashboard = onOpenDashboard,
-        onOpenCoins = onOpenCoins,
         onSignOut = { viewModel.signOut() },
     )
 }
 
 /**
  * The profile's body, split from the screen so tests can render it with a
- * fake state (the Home pattern: HomeScreen + HomeContent). The paywall
- * lines — streak, coins, "Coins and history" — render only while the
- * operator's quality gate is ON; gate OFF means every viewer is premium,
- * so they hide and the membership line says so.
+ * fake state (the Home pattern: HomeScreen + HomeContent). Gate OFF means
+ * every viewer is premium, so the membership line says so.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -70,7 +70,6 @@ fun ProfileContent(
     state: AccountOverviewUiState,
     onBackClick: () -> Unit,
     onOpenDashboard: () -> Unit,
-    onOpenCoins: () -> Unit,
     onSignOut: () -> Unit,
 ) {
     Scaffold(
@@ -121,26 +120,16 @@ fun ProfileContent(
                             style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.Bold,
                         )
-                        if (state.paywallVisible) {
-                            Text(
-                                "Check-in streak: ${state.currentStreak} days (best ${state.bestStreak}).",
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
-                            Text(
-                                "Coins: ${state.coinBalance}.",
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
-                        }
                         state.createdAt?.let { created ->
                             Text(
-                                "Account created: ${formatCoinDay(created)}.",
+                                "Account created: ${formatAccountDay(created)}.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                         state.lastSeenAt?.let { seen ->
                             Text(
-                                "Last seen: ${formatCoinDay(seen)}.",
+                                "Last seen: ${formatAccountDay(seen)}.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -154,11 +143,6 @@ fun ProfileContent(
                 }
                 OutlinedButton(onClick = onOpenDashboard, modifier = Modifier.fillMaxWidth()) {
                     Text("Open dashboard")
-                }
-                if (state.paywallVisible) {
-                    OutlinedButton(onClick = onOpenCoins, modifier = Modifier.fillMaxWidth()) {
-                        Text("Coins and history")
-                    }
                 }
                 Button(
                     onClick = onSignOut,
@@ -176,4 +160,11 @@ fun ProfileContent(
             }
         }
     }
+}
+
+/** An epoch-seconds date as "d MMM yyyy" — the account dates on the profile. */
+private fun formatAccountDay(epochSeconds: Double): String {
+    if (epochSeconds <= 0.0) return ""
+    return SimpleDateFormat("d MMM yyyy", Locale.getDefault())
+        .format(Date((epochSeconds * 1_000).toLong()))
 }

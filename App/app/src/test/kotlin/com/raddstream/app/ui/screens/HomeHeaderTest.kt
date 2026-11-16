@@ -1,9 +1,7 @@
 package com.raddstream.app.ui.screens
 
-import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -13,7 +11,6 @@ import com.raddstream.app.network.models.Post
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.HomeSection
 import com.raddstream.app.viewmodel.HomeUiState
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -21,14 +18,12 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 
 /**
- * The Home header (mockup, Nov 2026): one compact row pinned above the
- * scroll — check-in pill left, centred two-line logo, Coin Wallet pill
- * right — replacing the M12 banner. The claim flow and streak logic are
- * untouched (they live in the sheet now, pinned by the sheet-body test
- * below); what this pins is the header itself: the pills render, the gate
- * hides them, the logo stays, the pill opens the sheet, the wallet pill
- * opens the wallet — and the filter chips under it filter the rails in
- * place, with the hero card inset 16dp from the screen edges.
+ * The Home header (2026-11-17, coins removal): the header is logo-only —
+ * the Check-in pill and the Coin Wallet pill are gone, and with them the
+ * check-in sheet, the streak ladder and the coin balance. What this pins
+ * is the header itself: the centred logo stays, no pill exists in any
+ * state, and the filter chips under it still filter the rails in place,
+ * with the hero card inset 16dp from the screen edges.
  */
 @RunWith(RobolectricTestRunner::class)
 class HomeHeaderTest {
@@ -36,148 +31,20 @@ class HomeHeaderTest {
     @get:Rule
     val compose = createComposeRule()
 
-    private val ladder = mapOf(1 to 5, 2 to 5, 3 to 10)
-
     @Test
-    fun headerShowsCheckInPillWalletPillAndCentredLogo() {
+    fun headerIsLogoOnlyWithNoCoinOrCheckInSurface() {
         compose.setContent {
             RaddStreamTheme {
-                HomeContent(
-                    state = HomeUiState(
-                        streakLadder = ladder,
-                        serverStreak = 2,
-                        signedIn = true,
-                        coinBalance = 25,
-                        paywallVisible = true,
-                    ),
-                    heroAutoplay = false,
-                )
+                HomeContent(state = HomeUiState(), heroAutoplay = false)
             }
         }
-        compose.onNodeWithTag(CheckInPillTag).assertIsDisplayed()
-        compose.onNodeWithTag(CoinWalletPillTag).assertIsDisplayed()
         compose.onNodeWithTag(HomeLogoTag).assertIsDisplayed()
-        compose.onNodeWithText("Check-in:").assertIsDisplayed()
-        compose.onNodeWithText("Day 2 of 3").assertIsDisplayed()
-        compose.onNodeWithText("COIN WALLET").assertIsDisplayed()
-        compose.onNodeWithText("25 coins").assertIsDisplayed()
-    }
-
-    @Test
-    fun headerGuestShowsSignIn() {
-        compose.setContent {
-            RaddStreamTheme {
-                HomeContent(
-                    state = HomeUiState(
-                        streakLadder = ladder,
-                        signedIn = false,
-                        paywallVisible = true,
-                    ),
-                    heroAutoplay = false,
-                )
-            }
-        }
-        compose.onNodeWithText("Sign in").assertIsDisplayed()
-    }
-
-    @Test
-    fun headerClaimedShowsClaimed() {
-        compose.setContent {
-            RaddStreamTheme {
-                HomeContent(
-                    state = HomeUiState(
-                        streakLadder = ladder,
-                        serverStreak = 2,
-                        signedIn = true,
-                        claimedToday = true,
-                        paywallVisible = true,
-                    ),
-                    heroAutoplay = false,
-                )
-            }
-        }
-        compose.onNodeWithText("Claimed").assertIsDisplayed()
-    }
-
-    @Test
-    fun headerHidesPillsWhileTheQualityGateIsOff() {
-        // Free launch: gate OFF means every viewer is premium, so both
-        // pills hide even though the server published a ladder — and the
-        // centred logo stays on its own.
-        compose.setContent {
-            RaddStreamTheme {
-                HomeContent(
-                    state = HomeUiState(streakLadder = ladder, paywallVisible = false),
-                    heroAutoplay = false,
-                )
-            }
-        }
-        compose.onNodeWithTag(CheckInPillTag).assertDoesNotExist()
-        compose.onNodeWithTag(CoinWalletPillTag).assertDoesNotExist()
-        compose.onNodeWithTag(HomeLogoTag).assertIsDisplayed()
-    }
-
-    @Test
-    fun tappingTheCheckInPillOpensTheSheet() {
-        compose.setContent {
-            RaddStreamTheme {
-                HomeContent(
-                    state = HomeUiState(
-                        streakLadder = ladder,
-                        serverStreak = 2,
-                        signedIn = true,
-                        paywallVisible = true,
-                    ),
-                    heroAutoplay = false,
-                )
-            }
-        }
-        compose.onNodeWithTag(CheckInPillTag).performClick()
-        compose.onNodeWithText("See all rewards").assertIsDisplayed()
-        compose.onNodeWithText("Day 3").assertIsDisplayed()
-        // The sheet shows the streak now, not what each day paid.
-        compose.onNodeWithText("+10 coins").assertDoesNotExist()
-    }
-
-    @Test
-    fun tappingTheCoinPillOpensTheWallet() {
-        var walletOpened = false
-        compose.setContent {
-            RaddStreamTheme {
-                HomeContent(
-                    state = HomeUiState(streakLadder = ladder, paywallVisible = true),
-                    onOpenWallet = { walletOpened = true },
-                    heroAutoplay = false,
-                )
-            }
-        }
-        compose.onNodeWithTag(CoinWalletPillTag).performClick()
-        assertTrue(walletOpened)
-    }
-
-    @Test
-    fun checkInSheetBodyShowsCirclesAndClaim() {
-        compose.setContent {
-            RaddStreamTheme {
-                CheckInSheetBody(
-                    streakCount = 2,
-                    serverStreak = 2,
-                    streakLadder = ladder,
-                    coinBalance = 25,
-                    signedIn = true,
-                    claimedToday = false,
-                    isClaiming = false,
-                    claimMessage = null,
-                    onClaim = {},
-                )
-            }
-        }
-        compose.onNodeWithText("Day 1").assertIsDisplayed()
-        // No day names an amount any more — the circles say which days
-        // are done, not what they paid.
-        compose.onNodeWithText("Day 3").assertIsDisplayed()
-        compose.onNodeWithText("Check in").assertIsDisplayed()
-        compose.onNodeWithText("See all rewards").assertIsDisplayed()
+        // The pills are gone, not hidden: no tag, no text, in any state.
+        compose.onNodeWithTag("checkInPill").assertDoesNotExist()
+        compose.onNodeWithTag("coinWalletPill").assertDoesNotExist()
+        compose.onNodeWithText("Check-in:").assertDoesNotExist()
+        compose.onNodeWithText("COIN WALLET").assertDoesNotExist()
+        compose.onNodeWithText("coins").assertDoesNotExist()
     }
 
     // ── the filter chips ───────────────────────────────────────────────
@@ -210,8 +77,6 @@ class HomeHeaderTest {
                 items = (1..7).map { fakePost(200 + it, "Movie Title $it", "movie") },
             ),
         ),
-        streakLadder = ladder,
-        paywallVisible = true,
     )
 
     @Test
@@ -290,8 +155,6 @@ class HomeHeaderTest {
                                 items = listOf(fakePost(1, "Hero Title", "movie")),
                             ),
                         ),
-                        streakLadder = ladder,
-                        paywallVisible = true,
                     ),
                     heroAutoplay = false,
                 )

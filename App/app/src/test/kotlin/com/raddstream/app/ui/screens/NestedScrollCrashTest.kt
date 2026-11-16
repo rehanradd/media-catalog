@@ -27,12 +27,10 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.data.UserRegion
 import com.raddstream.app.data.local.LocalVideoFile
-import com.raddstream.app.network.models.CoinLedgerEntry
 import com.raddstream.app.network.models.FacetEntry
 import com.raddstream.app.network.models.FacetsResponse
 import com.raddstream.app.network.models.LiveTvChannel
 import com.raddstream.app.network.models.PanelDisclaimer
-import com.raddstream.app.network.models.PassTier
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.network.models.PostDetail
 import com.raddstream.app.network.models.ReleaseDetail
@@ -98,8 +96,8 @@ import org.robolectric.RobolectricTestRunner
  * landscape test is the regression test for that fix — it threw before it
  * and must compose after it.
  *
- * Screens that take a Hilt ViewModel directly (Coins, Settings, VIP, Live
- * TV grid branch, My List grid branch, Downloads, Player, Check-in) cannot
+ * Screens that take a Hilt ViewModel directly (Settings, VIP, Live TV
+ * grid branch, My List grid branch, Downloads, Player) cannot
  * be rendered without that ViewModel; their lazy children were verified by
  * reading (no lazy inside any of them) and their extractable sections are
  * rendered here inside a verticalScroll column instead, reproducing the
@@ -115,7 +113,6 @@ class NestedScrollCrashTest {
     @get:Rule
     val compose = createComposeRule()
 
-    private val ladder = mapOf(1 to 5, 2 to 5, 3 to 10, 4 to 10, 5 to 15, 6 to 15, 7 to 20)
 
     private fun samplePost(id: Int, title: String, year: Int = 2024) = Post(
         id = id,
@@ -139,11 +136,6 @@ class NestedScrollCrashTest {
     ) = HomeUiState(
         sections = sections,
         continueWatching = continueWatching,
-        streakLadder = ladder,
-        serverStreak = 2,
-        signedIn = true,
-        coinBalance = 25,
-        paywallVisible = true,
         pickThreeDone = pickThreeDone,
         firstBrowseDone = firstBrowseDone,
         facets = FacetsResponse(
@@ -480,15 +472,6 @@ class NestedScrollCrashTest {
 
     private val accountState = AccountOverviewUiState(
         signedIn = true,
-        coinBalance = 120,
-        currentStreak = 5,
-        bestStreak = 9,
-        streakLadder = ladder,
-        passCatalog = mapOf("monthly" to PassTier(coins = 100, pkr = 250)),
-        history = listOf(
-            CoinLedgerEntry(id = 1, delta = 5, reason = "daily_login", source = "checkin", createdAt = 1_791_000_000.0),
-            CoinLedgerEntry(id = 2, delta = 10, reason = "rewarded_ad", source = "ads", createdAt = 1_791_086_400.0),
-        ),
         paywallVisible = true,
     )
 
@@ -499,8 +482,6 @@ class NestedScrollCrashTest {
                 DashboardContent(
                     state = accountState,
                     onBackClick = {},
-                    onOpenCheckIn = {},
-                    onOpenCoins = {},
                     onOpenProfile = {},
                     onOpenVipUpgrade = {},
                 )
@@ -517,7 +498,6 @@ class NestedScrollCrashTest {
                     state = accountState,
                     onBackClick = {},
                     onOpenDashboard = {},
-                    onOpenCoins = {},
                     onSignOut = {},
                 )
             }
@@ -668,27 +648,6 @@ class NestedScrollCrashTest {
     }
 
     @Test
-    fun checkInSheetInsideBottomSheet() {
-        compose.setContent {
-            RaddStreamTheme {
-                CheckInSheet(
-                    streakCount = 2,
-                    serverStreak = 2,
-                    streakLadder = ladder,
-                    coinBalance = 25,
-                    signedIn = true,
-                    claimedToday = false,
-                    isClaiming = false,
-                    claimMessage = null,
-                    onClaim = {},
-                    onDismiss = {},
-                )
-            }
-        }
-        compose.onNodeWithText("Day 2 of 7 — keep the streak going.").assertIsDisplayed()
-    }
-
-    @Test
     fun reportBrokenStreamSheetInsideBottomSheet() {
         compose.setContent {
             RaddStreamTheme {
@@ -829,7 +788,6 @@ class NestedScrollCrashTest {
                         paywallVisible = true,
                         onOpenDashboard = {},
                         onOpenProfile = {},
-                        onOpenCoins = {},
                     )
                     SwitchRow(checked = true, onCheckedChange = {}, label = "Autoplay previews")
                 }

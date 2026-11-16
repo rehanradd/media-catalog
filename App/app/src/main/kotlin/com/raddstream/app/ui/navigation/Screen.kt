@@ -73,10 +73,8 @@ sealed class Screen(val route: String) {
     object WatchHistory : Screen("watch_history")
     object Downloads : Screen("downloads")
     object VipUpgrade : Screen("vip_upgrade")
-    /** Session 123: the account screens — the dashboard, the standalone check-in, the coins, and the profile. */
+    /** Session 123: the account screens — the dashboard and the profile. (Coins and check-in were removed 2026-11-17; their routes are gone with them.) */
     object Dashboard : Screen("dashboard")
-    object CheckIn : Screen("check_in")
-    object Coins : Screen("coins")
     object Profile : Screen("profile")
     object Browse : Screen("browse/{type}") {
         const val ARG_TYPE = "type"

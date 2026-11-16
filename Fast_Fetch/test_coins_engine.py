@@ -103,6 +103,11 @@ class Wallet(unittest.TestCase):
         self.addCleanup(limiter.stop)
         self.key = self.enroll()
         self.account_id = self.own_id(self.key)
+        # Coins are ON for the engine tests below: they exercise the grant
+        # and spend rules, and the master switch (off by default) would
+        # refuse every one of them. `CoinsOff` flips this back.
+        if getattr(self, "COINS_ON", True):
+            self.settings(coins_enabled=1)
 
     # ── the wire ──────────────────────────────────────────────────────────
     def get(self, path, query=None, headers=None, key=_DEFAULT):
@@ -1593,6 +1598,90 @@ class DriftGuard(Wallet):
         self.assertEqual([row["delta"] for row in self.rows()], [100, -20])
         self.assertEqual(self._ledger_sum(), 80)
         self._assert_no_drift()
+class CoinsOff(Wallet):
+    """The coins master switch (2026-11-17, coins removal): off by default,
+    and every mint/spend route refuses with 403 `forbidden` while it is
+    off — no ledger row, no grant, no spend. Reads (balance, caps, history)
+    stay open: they mint nothing and the ledger stays auditable. Progress
+    writes still land; only the finish-watch grant is skipped, and the reply
+    still carries `coins_earned: 0`."""
+
+    COINS_ON = False
+
+    def observe(self, seconds_ago=500, position=10):
+        """Seed the observation a real viewing leaves (FinishWatch's own
+        helper, restated here — CoinsOff does not inherit that class)."""
+        first_seen = time.time() - seconds_ago
+        with closing(sqlite3.connect(str(self.state))) as conn:
+            conn.execute(
+                """INSERT OR REPLACE INTO watch_observations
+                   (account_id, work_key, season_number, episode_number,
+                    first_seen_at, last_seen_at, max_position_seconds)
+                   VALUES(?, ?, ?, ?, ?, ?, ?)""",
+                (self.account_id, VISIBLE, 0, 0, first_seen,
+                 first_seen, position))
+            conn.commit()
+
+    def test_earn_share_and_redeems_are_403_and_write_nothing(self):
+        self.grant(engagement.resolve_ladder()["day"]["coins"])
+        before = self.wallet_state()
+        for answered in (
+            self.post(f"{COINS}/earn", {"reason": "daily_login"}),
+            self.post(f"{COINS}/share",
+                      {"work_ref": redact.mint_text(VISIBLE, SECRET)}),
+            self.post(f"{COINS}/redeem", {"plan": "day"}),
+            self.post(f"{COINS}/redeem-download",
+                      {"handle": redact.mint_token(1234, SECRET)}),
+            self.post(f"{COINS}/request-movie", {"title": "Dune: Part Three"}),
+            self.post(f"{COINS}/redeem-theme", {"theme": "midnight"}),
+        ):
+            self.assertEqual(answered[0], 403, answered)
+            self.assertEqual(self.code(answered), "forbidden")
+            self.assertIn("coins are turned off",
+                          self.body(answered).get("detail", ""))
+        self.assertEqual(self.wallet_state(), before)
+        self.assertEqual(len(self.rows()), 1, self.rows())
+
+    def test_an_explicit_zero_row_is_off_too(self):
+        """A row that exists and says 0 is off — the switch is a flag, never
+        a coin amount, so `_resolve_coin_knob`'s 'stored 0 means the shipped
+        number' rule does not apply to it."""
+        self.settings(coins_enabled=0)
+        answered = self.post(f"{COINS}/earn", {"reason": "daily_login"})
+        self.assertEqual(answered[0], 403, answered)
+        self.assertEqual(self.code(answered), "forbidden")
+        self.assertEqual(self.rows(), [])
+
+    def test_a_finished_title_still_records_progress_but_earns_zero(self):
+        self.observe()
+        answered = self.post(f"{P}/progress", {
+            "work_ref": redact.mint_text(VISIBLE, SECRET),
+            "season_number": 0, "episode_number": 0,
+            "position_seconds": 950, "duration_seconds": 1000,
+            "client_updated_at": time.time()})
+        body = self.body(answered)
+        self.assertEqual(body["coins_earned"], 0)
+        self.assertEqual(body["progress"]["position_seconds"], 950)
+        self.assertEqual([row for row in self.rows()
+                          if row["reason"] == "finish_watch"], [])
+
+    def test_reads_stay_open_while_coins_are_off(self):
+        self.grant(100)
+        self.assertEqual(self.body(self.get(COINS))["balance"], 100)
+        self.assertEqual(self.get(f"{COINS}/caps")[0], 200)
+        self.assertEqual(self.get(f"{COINS}/history")[0], 200)
+        self.assertEqual(len(self.body(self.get(f"{COINS}/history"))["entries"]), 1)
+
+    def test_turning_coins_back_on_restores_the_grant(self):
+        """The switch is reversible: the same fixture with the flag flipped
+        to 1 grants exactly as before."""
+        self.assertEqual(self.post(f"{COINS}/earn",
+                                   {"reason": "daily_login"})[0], 403)
+        self.settings(coins_enabled=1)
+        answered = self.post(f"{COINS}/earn", {"reason": "daily_login"})
+        self.assertEqual(answered[0], 200, answered)
+        self.assertEqual(self.body(answered)["earned"]["coins_granted"],
+                         engagement.resolve_streak_grants()["coins"][1])
 
 
 if __name__ == "__main__":

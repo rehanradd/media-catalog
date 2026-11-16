@@ -163,10 +163,9 @@ fun SettingsScreen(
     onOpenDownloads: () -> Unit = {},
     onOpenVipUpgrade: () -> Unit = {},
     onOpenRegionChoice: () -> Unit = {},
-    /** Session 123: the account screens — dashboard, profile, coins. */
+    /** Session 123: the account screens — dashboard, profile. */
     onOpenDashboard: () -> Unit = {},
     onOpenProfile: () -> Unit = {},
-    onOpenCoins: () -> Unit = {},
     onOpenHelp: () -> Unit = {},
     onOpenLanguages: () -> Unit = {},
     onOpenWatchHistory: () -> Unit = {},
@@ -674,15 +673,15 @@ fun SettingsScreen(
                     style = settingsHelperStyle,
                 )
 
-                // Free launch: the Dashboard / Profile / Coins doors hide
-                // while the quality gate is OFF — the coins and VIP machinery
-                // they open is hidden while every viewer is premium. The VIP
-                // Membership card above is gated on the same flag.
+                // Free launch: the Dashboard / Profile doors hide while the
+                // quality gate is OFF — the account screens they open are
+                // hidden while every viewer is premium. The VIP Membership
+                // card above is gated on the same flag. (The Coins door
+                // lived here until coins were removed 2026-11-17.)
                 AccountNavRow(
                     paywallVisible = state.paywallVisible,
                     onOpenDashboard = onOpenDashboard,
                     onOpenProfile = onOpenProfile,
-                    onOpenCoins = onOpenCoins,
                 )
 
                 // ── the free days this install was granted ───────────────────────
@@ -920,7 +919,7 @@ fun SettingsScreen(
             // the Help screen, and the Contact form is for a person's own problem.
             SettingsCard(title = "Help", icon = Icons.Default.Help) {
                 Text(
-                    "How to watch, download, and use VIP and coins.",
+                    "How to watch, download, and use VIP.",
                     style = settingsHelperStyle,
                 )
                 OutlinedButton(
@@ -1297,31 +1296,28 @@ internal fun SwitchRow(checked: Boolean, onCheckedChange: (Boolean) -> Unit, lab
 }
 
 /**
- * The Account card's doors to the Dashboard, Profile and Coins screens.
- * Free launch: the whole row hides while the quality gate is OFF — the coins
- * and VIP machinery those screens open is hidden while every viewer is
- * premium — so the gate decision lives here, where the paywall tests can pin
- * it without rendering the whole Settings screen.
+ * The Account card's doors to the Dashboard and Profile screens.
+ * Free launch: the whole row hides while the quality gate is OFF — the
+ * account screens those doors open are hidden while every viewer is
+ * premium — so the gate decision lives here, where the paywall tests can
+ * pin it without rendering the whole Settings screen. (The Coins door
+ * lived here until coins were removed 2026-11-17.)
  */
 @Composable
 internal fun AccountNavRow(
     paywallVisible: Boolean,
     onOpenDashboard: () -> Unit,
     onOpenProfile: () -> Unit,
-    onOpenCoins: () -> Unit,
 ) {
     if (!paywallVisible) return
     // Session 123: the account screens live here — the dashboard that
-    // answers "where do I stand?", the profile, and the coins.
+    // answers "where do I stand?", and the profile.
     Row {
         TextButton(onClick = onOpenDashboard) {
             Text("Dashboard")
         }
         TextButton(onClick = onOpenProfile) {
             Text("Profile")
-        }
-        TextButton(onClick = onOpenCoins) {
-            Text("Coins")
         }
     }
 }

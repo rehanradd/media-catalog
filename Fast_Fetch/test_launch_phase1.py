@@ -75,13 +75,13 @@ from admin_v2.services import Service
 _NUMERIC_FIELDS = {
     "vip_monthly_pkr", "vip_yearly_pkr",
     "maintenance_mode", "feature_downloads", "feature_pure_cinema",
-    "feature_chromecast", "feature_quality_gate",
+    "feature_chromecast", "feature_quality_gate", "coins_enabled",
 } | set(panel_store.COIN_REDEEM_FIELDS)
 
 # Flags the v1 panel shows read-only after Phase 1 (D-6).
 _V1_READ_ONLY_FLAGS = (
     "maintenance_mode", "feature_pure_cinema", "feature_chromecast",
-    "feature_downloads", "feature_quality_gate",
+    "feature_downloads", "feature_quality_gate", "coins_enabled",
 )
 
 
@@ -375,6 +375,14 @@ class Phase1V1ReadOnly(unittest.TestCase):
         self.assertIn("v2 panel", " ".join(rejected))
         after = dict(admin_panel._read_monetization(conn))
         self.assertEqual(after, before)
+
+        # The coins switch is a flag too: v1 refuses it the same way.
+        saved, rejected = admin_panel._save_monetization(
+            conn, {"coins_enabled": 1})
+        self.assertIsNone(saved)
+        self.assertTrue(rejected)
+        self.assertIn("v2 panel", " ".join(rejected))
+        self.assertEqual(dict(admin_panel._read_monetization(conn)), before)
 
         saved, rejected = admin_panel._save_monetization(
             conn, {"vip_monthly_pkr": 250})

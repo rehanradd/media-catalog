@@ -1392,7 +1392,10 @@ class PlayerViewModel @Inject constructor(
         if (!syncSignedIn) return
         if (!forced && !syncAccountRepository.progressReportDue()) return
         viewModelScope.launch {
-            val coinsEarned = syncAccountRepository.reportProgress(
+            // The progress report still rides to the server (resume depends
+            // on it), but the finish-watch coin grant is gone with coins:
+            // the server answers coins_earned 0 and no toast is shown.
+            syncAccountRepository.reportProgress(
                 workRef = scope.workRef,
                 season = scope.season,
                 episode = scope.episode,
@@ -1400,12 +1403,6 @@ class PlayerViewModel @Inject constructor(
                 durationMs = durationMs,
                 forced = forced,
             )
-            // The server pays once per finished title; the toast is the only
-            // sign the viewer gets, and it shows only when the server says it
-            // paid — never on a position the server did not reward.
-            if (coinsEarned > 0) {
-                _events.emit(PlayerEvent.Message("+$coinsEarned coins for finishing this title"))
-            }
         }
     }
 

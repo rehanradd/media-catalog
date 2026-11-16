@@ -36,14 +36,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.History
@@ -51,7 +48,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -59,10 +55,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -118,7 +112,6 @@ import com.raddstream.app.ui.components.prefetchHeroArt
 import com.raddstream.app.ui.components.rememberReduceMotion
 import com.raddstream.app.ui.layout.CardGeometry
 import com.raddstream.app.ui.theme.RaddMotion
-import com.raddstream.app.ui.theme.RaddSignalGold
 import com.raddstream.app.update.InAppUpdate
 import com.raddstream.app.viewmodel.HomeFilter
 import com.raddstream.app.viewmodel.HomeSection
@@ -135,7 +128,6 @@ private data class JumpOff(val label: String, val type: String?)
  *  auto-advance cycle does not outlast attention. */
 private const val HERO_LIMIT = 6
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     onSearchClick: () -> Unit,
@@ -157,12 +149,6 @@ fun HomeScreen(
     onOpenLocalFiles: () -> Unit = {},
     /** Kept-for-offline titles (Media Vault). */
     onOpenDownloads: () -> Unit = {},
-    /** Session 123: the check-in card opens the standalone check-in screen. */
-    onOpenCheckIn: () -> Unit = {},
-    /** Session 123 (HO-7): a guest's way into an account — Settings, where sign-in lives. */
-    onOpenSignIn: () -> Unit = {},
-    /** Mockup (Nov 2026): the header's Coin Wallet pill — the wallet/profile screen. */
-    onOpenWallet: () -> Unit = {},
     /** The operator's hero knobs from the panel theme: 0 hides the hero slot. */
     heroMax: Int = HERO_LIMIT,
     /** M5 (home review, Nov 2026): manual-swipe by default — see [HeroCarousel]. */
@@ -210,9 +196,10 @@ fun HomeScreen(
         }
     }
 
-    // Mockup (Nov 2026): no top bar any more — the header (check-in pill,
-    // centred logo, Coin Wallet pill) lives in HomeContent, pinned above the
-    // scroll, so the Scaffold keeps only the snackbar. The refresh icon went
+    // Mockup (Nov 2026): no top bar any more — the header (the centred
+    // logo on its own; the check-in and Coin Wallet pills were removed
+    // 2026-11-17 with coins and daily check-in) lives in HomeContent,
+    // pinned above the scroll, so the Scaffold keeps only the snackbar. The refresh icon went
     // with the bar: it read as operator chrome, and a refresh control with
     // no label next to it is not a viewer control.
     Scaffold(
@@ -233,9 +220,6 @@ fun HomeScreen(
             onSetupServerClick = onSetupServerClick,
             onOpenLocalFiles = onOpenLocalFiles,
             onOpenDownloads = onOpenDownloads,
-            onOpenCheckIn = onOpenCheckIn,
-            onOpenSignIn = onOpenSignIn,
-            onOpenWallet = onOpenWallet,
             onRefresh = viewModel::refresh,
             onRetrySection = viewModel::retrySection,
             onDismissBroadcast = { viewModel.dismissBroadcast(it) },
@@ -245,7 +229,6 @@ fun HomeScreen(
             onPickThreeShown = viewModel::markPickThreeShown,
             onPickThreeVisitEnded = viewModel::endPickThreeVisit,
             onDismissTrialNote = viewModel::dismissTrialNote,
-            onClaimDailyLogin = viewModel::claimDailyLogin,
         )
 
         state.updateNotice?.let { update ->
@@ -313,10 +296,6 @@ internal fun HomeContent(
     onSetupServerClick: () -> Unit = {},
     onOpenLocalFiles: () -> Unit = {},
     onOpenDownloads: () -> Unit = {},
-    onOpenCheckIn: () -> Unit = {},
-    onOpenSignIn: () -> Unit = {},
-    /** Mockup (Nov 2026): the header's Coin Wallet pill — the wallet/profile screen. */
-    onOpenWallet: () -> Unit = {},
     onRefresh: () -> Unit = {},
     onRetrySection: (String) -> Unit = {},
     onDismissBroadcast: (Int) -> Unit = {},
@@ -326,16 +305,14 @@ internal fun HomeContent(
     onPickThreeShown: () -> Unit = {},
     onPickThreeVisitEnded: () -> Unit = {},
     onDismissTrialNote: () -> Unit = {},
-    onClaimDailyLogin: () -> Unit = {},
 ) {
     // Mockup (Nov 2026): the header replaces the M12 banner — one compact
-    // row pinned above the scroll (check-in pill, centred logo, Coin Wallet
-    // pill), and the scroll starts under it. The body below keeps its
-    // indentation (it was one Column deep); only the nesting changed. The
-    // Scaffold no longer has a top bar, so the outer Column carries the
-    // status-bar inset itself — without it the header would draw under the
-    // status bar.
-    var showCheckInSheet by remember { mutableStateOf(false) }
+    // row pinned above the scroll (the centred logo on its own, since the
+    // check-in and Coin Wallet pills were removed 2026-11-17), and the
+    // scroll starts under it. The body below keeps its indentation (it was
+    // one Column deep); only the nesting changed. The Scaffold no longer
+    // has a top bar, so the outer Column carries the status-bar inset
+    // itself — without it the header would draw under the status bar.
     // The filter chips are UI-local state: they filter the rails already on
     // screen, so no ViewModel round-trip and no reload on a tap.
     var filter by remember { mutableStateOf(HomeFilter.All) }
@@ -345,17 +322,7 @@ internal fun HomeContent(
             .statusBarsPadding()
             .then(modifier),
     ) {
-        HomeHeader(
-            streakCount = state.streakCount,
-            serverStreak = state.serverStreak,
-            streakLadder = state.streakLadder,
-            coinBalance = state.coinBalance,
-            signedIn = state.signedIn,
-            claimedToday = state.claimedToday,
-            paywallVisible = state.paywallVisible,
-            onOpenSheet = { showCheckInSheet = true },
-            onOpenWallet = onOpenWallet,
-        )
+        HomeHeader()
         Column(
             modifier = Modifier
                 .weight(1f)
@@ -637,114 +604,31 @@ internal fun HomeContent(
         }
         }
     }
-    if (showCheckInSheet) {
-        CheckInSheet(
-            streakCount = state.streakCount,
-            serverStreak = state.serverStreak,
-            streakLadder = state.streakLadder,
-            coinBalance = state.coinBalance,
-            signedIn = state.signedIn,
-            claimedToday = state.claimedToday,
-            isClaiming = state.isClaiming,
-            claimMessage = state.claimMessage,
-            onClaim = onClaimDailyLogin,
-            onOpenCheckIn = { showCheckInSheet = false; onOpenCheckIn() },
-            onOpenSignIn = onOpenSignIn,
-            onDismiss = { showCheckInSheet = false },
-        )
-    }
 }
 
 /** The header's tap targets for the header test. */
-internal const val CheckInPillTag = "checkInPill"
-internal const val CoinWalletPillTag = "coinWalletPill"
 internal const val HomeLogoTag = "homeLogo"
 internal const val HomeFilterRowTag = "homeFilterRow"
 
 /**
- * Mockup (Nov 2026): the Home header — one compact row pinned above the
- * scroll, replacing the M12 banner. Left: the check-in pill (calendar icon,
- * two lines, same states the banner had — the day number is still the
- * server's claimed count, never the device's open count — and a tap opens
- * the same [CheckInSheet]; the claim itself happens inside the sheet, so
- * the banner's inline Claim button is gone with the banner). Centre: the
- * two-line logo, RADD in white bold over STREAM in jade. Right: the Coin
- * Wallet pill (gold coin, balance), opening the wallet/profile screen.
- *
- * Free launch: while the quality gate is OFF both pills hide — the same
- * rule the banner lived by — and the centred logo stays on its own. The
- * logo is a weighted centred column, so it stays centred whether one pill,
- * both, or neither is showing.
+ * The Home header (2026-11-17): the centred two-line logo on its own.
+ * The check-in pill and the Coin Wallet pill lived here until coins and
+ * daily check-in were removed — the header takes no state any more, and it
+ * is not gated on the quality gate: the logo shows whether the gate is on
+ * or off. Screenshot-fix D8 (2026-11-16) had already shrunk the header so
+ * the hero starts higher; with the pills gone the row is just the logo.
  */
 @Composable
-internal fun HomeHeader(
-    streakCount: Int,
-    serverStreak: Int?,
-    streakLadder: Map<Int, Int>,
-    coinBalance: Int,
-    signedIn: Boolean,
-    claimedToday: Boolean,
-    paywallVisible: Boolean,
-    onOpenSheet: () -> Unit,
-    onOpenWallet: () -> Unit,
-) {
-    val targetDays = streakLadder.keys.maxOrNull() ?: 7
-    // Screenshot-fix D8 (2026-11-16): the header ate the first screen —
-    // two-line pills at 8dp padding + a titleLarge logo + 8dp row padding
-    // put the hero ~190dp down on a narrow phone. The pills keep their
-    // two lines and the 48dp touch floor, but the padding and the logo
-    // shrink so the hero starts higher. The chips row below keeps its
-    // 48dp chips (the touch floor); the space comes from here and the
-    // spacer under the row, not from shrinking a tap target.
+internal fun HomeHeader() {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
+        horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (paywallVisible && streakLadder.isNotEmpty()) {
-            Surface(
-                onClick = onOpenSheet,
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                shape = RoundedCornerShape(50),
-                modifier = Modifier.testTag(CheckInPillTag),
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Icon(
-                        Icons.Default.DateRange,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(16.dp),
-                    )
-                    Column {
-                        Text(
-                            text = "Check-in:",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Text(
-                            text = when {
-                                !signedIn -> "Sign in"
-                                claimedToday -> "Claimed"
-                                signedIn && serverStreak != null -> "Day $serverStreak of $targetDays"
-                                else -> "Claim today"
-                            },
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                        )
-                    }
-                }
-            }
-        }
         Column(
-            modifier = Modifier.weight(1f).testTag(HomeLogoTag),
+            modifier = Modifier.testTag(HomeLogoTag),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             val nameParts = Brand.name.uppercase().split(" ")
@@ -760,54 +644,6 @@ internal fun HomeHeader(
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary,
             )
-        }
-        if (paywallVisible) {
-            Surface(
-                onClick = onOpenWallet,
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                shape = RoundedCornerShape(50),
-                modifier = Modifier.testTag(CoinWalletPillTag),
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    // No coin drawable exists in the repo: the gold circle
-                    // with a black "C" is the coin. The letter is decorative
-                    // — the pill's own lines already say "Coin Wallet" — so
-                    // it is cleared from the accessibility tree.
-                    Box(
-                        modifier = Modifier
-                            .size(18.dp)
-                            .clip(CircleShape)
-                            .background(RaddSignalGold)
-                            .clearAndSetSemantics {},
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = "C",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.Black,
-                        )
-                    }
-                    Column {
-                        Text(
-                            text = "COIN WALLET",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                        Text(
-                            text = "$coinBalance coins",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                        )
-                    }
-                }
-            }
         }
     }
 }
@@ -1250,242 +1086,6 @@ internal fun AppUpdateDialog(
                 textAlign = TextAlign.Center,
             )
         }
-    }
-}
-
-/**
- * The check-in card's day line, as a pure function so the wording is pinned
- * by a test (HO-6): the day number is the server's claimed count, never the
- * device's open count; until the server answers, no day number is printed
- * at all; a guest reads the honest local wording. A streak past the ladder
- * reads complete, never an eighth promise. No coin amounts anywhere: the
- * claim still pays the server's ladder, but the sheet shows the streak,
- * not the price.
- */
-internal fun checkInDayLine(
-    signedIn: Boolean,
-    serverStreak: Int?,
-    streakCount: Int,
-    targetDays: Int,
-): String = when {
-    signedIn && serverStreak != null ->
-        "Day ${serverStreak.coerceIn(1, targetDays)} of $targetDays — keep the streak going."
-    signedIn ->
-        "Check in to keep your streak going."
-    else ->
-        "You've opened the app $streakCount days in a row."
-}
-
-/**
- * The claim button's label (HO-8): the mockup's plain "Check in" — the
- * button never names an amount, so there is nothing to invent and nothing
- * to keep in step with the ladder.
- */
-internal fun claimButtonLabel(
-    isClaiming: Boolean,
-): String {
-    if (isClaiming) return "Claiming…"
-    return "Check in"
-}
-
-/**
- * The check-in ladder as a bottom sheet: the banner's tap target. Same state
- * and same claim as the banner — the sheet adds the ladder rows, so the
- * viewer sees what each day pays before claiming. "See all rewards" leaves
- * for the standalone check-in screen; the sheet closes first, so coming
- * back does not find it still open.
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-internal fun CheckInSheet(
-    streakCount: Int,
-    serverStreak: Int?,
-    streakLadder: Map<Int, Int>,
-    coinBalance: Int,
-    signedIn: Boolean,
-    claimedToday: Boolean,
-    isClaiming: Boolean,
-    claimMessage: String?,
-    onClaim: () -> Unit,
-    onOpenCheckIn: () -> Unit = {},
-    onOpenSignIn: () -> Unit = {},
-    onDismiss: () -> Unit = {},
-) {
-    val targetDays = streakLadder.keys.maxOrNull() ?: 7
-    val currentStreak = serverStreak ?: 0
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-    ) {
-        CheckInSheetBody(
-            streakCount = streakCount,
-            serverStreak = serverStreak,
-            streakLadder = streakLadder,
-            coinBalance = coinBalance,
-            signedIn = signedIn,
-            claimedToday = claimedToday,
-            isClaiming = isClaiming,
-            claimMessage = claimMessage,
-            onClaim = onClaim,
-            onOpenCheckIn = onOpenCheckIn,
-            onOpenSignIn = onOpenSignIn,
-        )
-    }
-}
-
-/**
- * The 7-day ladder as circles, one per day: a claimed day is a jade disc
- * with a check, a day still to come is a dark disc with its number, and
- * the day's label sits underneath. Shared by the sheet and the standalone
- * screen, so the two can never disagree about what a claimed day looks
- * like. No amounts anywhere — the circles say which days are done, not
- * what they paid.
- */
-@Composable
-internal fun CheckInDayCircles(
-    currentStreak: Int,
-    targetDays: Int,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        for (day in 1..targetDays) {
-            val claimed = day <= currentStreak
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .background(
-                            color = if (claimed) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.surfaceVariant
-                            },
-                            shape = CircleShape,
-                        )
-                        .semantics {
-                            contentDescription = if (claimed) {
-                                "Day $day claimed"
-                            } else {
-                                "Day $day not claimed"
-                            }
-                        },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (claimed) {
-                        Icon(
-                            Icons.Default.Check,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onPrimary,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    } else {
-                        Text(
-                            "$day",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-                Text(
-                    "Day $day",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (claimed) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                )
-            }
-        }
-    }
-}
-
-/**
- * The sheet's content on its own, so the ladder and the claim are pinned by
- * a test without opening a sheet (the Search filter sheet does the same).
- */
-@Composable
-internal fun CheckInSheetBody(
-    streakCount: Int,
-    serverStreak: Int?,
-    streakLadder: Map<Int, Int>,
-    coinBalance: Int,
-    signedIn: Boolean,
-    claimedToday: Boolean,
-    isClaiming: Boolean,
-    claimMessage: String?,
-    onClaim: () -> Unit,
-    onOpenCheckIn: () -> Unit = {},
-    onOpenSignIn: () -> Unit = {},
-) {
-    val targetDays = streakLadder.keys.maxOrNull() ?: 7
-    val currentStreak = serverStreak ?: 0
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp)
-            .padding(bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-            Text(
-                text = "Daily check-in",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
-            )
-            CheckInDayCircles(
-                currentStreak = currentStreak,
-                targetDays = targetDays,
-            )
-            Text(
-                text = when {
-                    !signedIn -> "Sign in to check in."
-                    claimedToday -> claimMessage ?: "Claimed for today."
-                    else -> checkInDayLine(signedIn, serverStreak, streakCount, targetDays)
-                },
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            when {
-                !signedIn -> {
-                    Button(
-                        onClick = onOpenSignIn,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                    ) {
-                        Text("Sign in to check in")
-                    }
-                }
-                claimedToday -> {
-                    Text(
-                        text = claimMessage ?: "Claimed for today — come back tomorrow.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                else -> {
-                    Button(
-                        onClick = onClaim,
-                        enabled = !isClaiming,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                    ) {
-                        Text(claimButtonLabel(isClaiming))
-                    }
-                }
-            }
-            // The mockup shows no link here, but the sheet is the Home
-            // path to the standalone screen — dropping it would strand
-            // the full ladder. It stays, as the one quiet row.
-            TextButton(
-                onClick = onOpenCheckIn,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-            ) {
-                Text("See all rewards")
-            }
     }
 }
 
