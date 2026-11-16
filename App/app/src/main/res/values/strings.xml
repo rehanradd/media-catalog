@@ -229,6 +229,7 @@
     <string name="resolve_test_intro">Debug-only manual test. It mints direct links from the sample list and records timing, data and battery. Nothing runs in the background.</string>
     <string name="resolve_test_open">Open resolve test</string>
     <string name="resolve_test_run_all">Run all</string>
+    <string name="resolve_test_run_control">Run control only</string>
     <string name="resolve_test_export">Export results</string>
     <string name="resolve_test_copy_json">Copy results JSON</string>
     <string name="resolve_test_clear">Clear results</string>

@@ -18,10 +18,12 @@ class HttpChainEngineTest {
     ) : ResolveHttpTransport {
         val postUrls = ArrayList<String>()
         val postBodies = ArrayList<String>()
+        val postHeaders = ArrayList<Map<String, String>>()
 
         override suspend fun postJson(url: String, jsonBody: String, headers: Map<String, String>): TransportResponse {
             postUrls.add(url)
             postBodies.add(jsonBody)
+            postHeaders.add(headers)
             return posts[url] ?: TransportResponse(404, emptyMap(), ByteArray(0))
         }
 
@@ -67,7 +69,7 @@ class HttpChainEngineTest {
             mapOf("https://new3.filepress.lat/api/file/downlaod/" to statusResponse(403)),
         )
         val result = HttpChainEngine(transport).resolve("https://filebee.xyz/file/646fcb392a2127d45896d91f")
-        assertEquals(ChainResult.Failed("downlaod: blocked:403", null), result)
+        assertEquals(ChainResult.Failed("download: blocked:403", null), result)
     }
 
     @Test
@@ -76,7 +78,7 @@ class HttpChainEngineTest {
             mapOf("https://new3.filepress.lat/api/file/downlaod/" to statusResponse(404)),
         )
         val result = HttpChainEngine(transport).resolve("https://filebee.xyz/file/646fcb392a2127d45896d91f")
-        assertEquals(ChainResult.Failed("downlaod: dead:404", null), result)
+        assertEquals(ChainResult.Failed("download: dead:404", null), result)
     }
 
     @Test
@@ -88,7 +90,7 @@ class HttpChainEngineTest {
             ),
         )
         val result = HttpChainEngine(transport).resolve("https://filebee.xyz/file/646fcb392a2127d45896d91f")
-        assertEquals(ChainResult.Failed("downlaod: METHOD_HIDDEN", null), result)
+        assertEquals(ChainResult.Failed("download: METHOD_HIDDEN", null), result)
     }
 
     @Test
@@ -99,7 +101,7 @@ class HttpChainEngineTest {
             ),
         )
         assertEquals(
-            ChainResult.Failed("downlaod: empty token", null),
+            ChainResult.Failed("download: empty token", null),
             HttpChainEngine(emptyToken).resolve("https://filebee.xyz/file/646fcb392a2127d45896d91f"),
         )
         val emptyLinks = FakeTransport(
@@ -109,9 +111,88 @@ class HttpChainEngineTest {
             ),
         )
         assertEquals(
-            ChainResult.Failed("downlaod2: empty link list", null),
+            ChainResult.Failed("download2: empty link list", null),
             HttpChainEngine(emptyLinks).resolve("https://filebee.xyz/file/646fcb392a2127d45896d91f"),
         )
+    }
+
+    @Test
+    fun `run-1 regression - a 301 on the first POST is followed by re-POSTing to the Location`() = runBlocking {
+        val transport = FakeTransport(
+            mapOf(
+                "https://new3.filepress.lat/api/file/downlaod/" to TransportResponse(
+                    301,
+                    mapOf("location" to "https://new4.filepress.lat/api/file/downlaod/"),
+                    ByteArray(0),
+                ),
+                "https://new4.filepress.lat/api/file/downlaod/" to jsonResponse("""{"status":true,"data":"tok123"}"""),
+                "https://new3.filepress.lat/api/file/downlaod2/" to jsonResponse("""{"status":true,"data":["https://cdn.example.com/f.mkv"]}"""),
+            ),
+        )
+        val result = HttpChainEngine(transport).resolve("https://filebee.xyz/file/646fcb392a2127d45896d91f")
+        assertTrue(result is ChainResult.Minted)
+        // The redirect target got the same POST body, not a GET.
+        assertEquals(
+            listOf(
+                "https://new3.filepress.lat/api/file/downlaod/",
+                "https://new4.filepress.lat/api/file/downlaod/",
+                "https://new3.filepress.lat/api/file/downlaod2/",
+            ),
+            transport.postUrls,
+        )
+        assertTrue(transport.postBodies[1].contains("\"id\":\"646fcb392a2127d45896d91f\""))
+        // The Referer was re-based to the redirect target's origin.
+        assertEquals("https://new4.filepress.lat", transport.postHeaders[1]["Referer"])
+    }
+
+    @Test
+    fun `a relative Location resolves against the request URL`() = runBlocking {
+        val transport = FakeTransport(
+            mapOf(
+                "https://new3.filepress.lat/api/file/downlaod/" to TransportResponse(
+                    302,
+                    mapOf("location" to "/api/file/downlaod-alt/"),
+                    ByteArray(0),
+                ),
+            ),
+        )
+        // The fake has no entry for the resolved URL, so it 404s — but the
+        // point is the engine asked the resolved URL, not the Location raw.
+        val result = HttpChainEngine(transport).resolve("https://filebee.xyz/file/646fcb392a2127d45896d91f")
+        assertEquals(ChainResult.Failed("download: dead:404", null), result)
+        assertEquals(
+            listOf(
+                "https://new3.filepress.lat/api/file/downlaod/",
+                "https://new3.filepress.lat/api/file/downlaod-alt/",
+            ),
+            transport.postUrls,
+        )
+    }
+
+    @Test
+    fun `a redirect with no Location fails as http-301`() = runBlocking {
+        val transport = FakeTransport(
+            mapOf("https://new3.filepress.lat/api/file/downlaod/" to statusResponse(301)),
+        )
+        val result = HttpChainEngine(transport).resolve("https://filebee.xyz/file/646fcb392a2127d45896d91f")
+        assertEquals(ChainResult.Failed("download: http:301", null), result)
+        assertEquals(1, transport.postUrls.size)
+    }
+
+    @Test
+    fun `a redirect loop fails after the hop cap`() = runBlocking {
+        val transport = FakeTransport(
+            mapOf(
+                "https://new3.filepress.lat/api/file/downlaod/" to TransportResponse(
+                    301,
+                    mapOf("location" to "https://new3.filepress.lat/api/file/downlaod/"),
+                    ByteArray(0),
+                ),
+            ),
+        )
+        val result = HttpChainEngine(transport).resolve("https://filebee.xyz/file/646fcb392a2127d45896d91f")
+        assertEquals(ChainResult.Failed("download: redirect_loop", null), result)
+        assertEquals(HttpChainEngine.MAX_REDIRECTS + 1, transport.postUrls.size)
     }
 
     @Test

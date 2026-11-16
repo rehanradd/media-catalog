@@ -12,6 +12,7 @@ import android.net.TrafficStats
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Process
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.raddstream.app.R
@@ -57,6 +58,7 @@ class ResolveTestViewModel @Inject constructor(
     private val transport: ResolveHttpTransport = OkHttpResolveTransport()
     private val httpChain = HttpChainEngine(transport)
     private val webViewEngine = WebViewEngine(appContext, transport)
+    private var sampleSet: ResolveSampleSet? = null
 
     init {
         viewModelScope.launch {
@@ -64,6 +66,7 @@ class ResolveTestViewModel @Inject constructor(
             if (set == null) {
                 _state.update { it.copy(loadError = appContext.getString(R.string.resolve_test_load_failed)) }
             } else {
+                sampleSet = set
                 _state.update { it.copy(samples = set.ordered(), blocklist = set.blocklist) }
             }
         }
@@ -85,8 +88,58 @@ class ResolveTestViewModel @Inject constructor(
                 val result = runAttempt(sample, AttemptKind.NORMAL)
                 _state.update { it.copy(results = it.results + result) }
             }
+            logSummary()
             _state.update { it.copy(running = false, runningLinkId = null) }
         }
+    }
+
+    /**
+     * Runs only the 10 control samples (filemoon + rpmplay — hosts that
+     * should mint). Short enough for a Firebase Robo run: the full 50 takes
+     * ~13 minutes, the control set ~1–5. Same logging as a full run.
+     */
+    fun runControlOnly() {
+        if (_state.value.running) return
+        viewModelScope.launch {
+            val control = sampleSet?.control ?: emptyList()
+            val header = newRunHeader()
+            _state.update { it.copy(running = true, runHeader = header, results = emptyList()) }
+            for (sample in control) {
+                _state.update { it.copy(runningLinkId = sample.linkId) }
+                val result = runAttempt(sample, AttemptKind.NORMAL)
+                _state.update { it.copy(results = it.results + result) }
+            }
+            logSummary()
+            _state.update { it.copy(running = false, runningLinkId = null) }
+        }
+    }
+
+    /**
+     * One logcat line per attempt plus a summary line at the end of a run.
+     * The export leaves the phone only through the share sheet, so logcat is
+     * how an emulator run (Firebase Robo) reports its mint counts back.
+     */
+    private fun logAttempt(result: AttemptResult) {
+        Log.i(
+            LOG_TAG,
+            "RESOLVE_ATTEMPT linkId=${result.linkId} service=${result.service} " +
+                "success=${result.success} error=${result.error ?: "-"} " +
+                "timeMs=${result.timeToResolveMs}",
+        )
+    }
+
+    private fun logSummary() {
+        val results = _state.value.results
+        fun count(service: String): String {
+            val group = results.filter { it.service == service }
+            return "${group.count { it.success }}/${group.size}"
+        }
+        Log.i(
+            LOG_TAG,
+            "RESOLVE_SUMMARY total=${results.count { it.success }}/${results.size} " +
+                "filepress=${count("filepress")} 1fichier=${count("1fichier")} " +
+                "filemoon=${count("filemoon")} rpmplay=${count("rpmplay")}",
+        )
     }
 
     /** Re-attempts one link, logged as a session check and excluded from the summary counts. */
@@ -171,6 +224,11 @@ class ResolveTestViewModel @Inject constructor(
         )
     }
 
+    companion object {
+        /** Logcat tag for the per-attempt and summary lines (Robo reads these). */
+        const val LOG_TAG = "ResolveTest"
+    }
+
     private suspend fun runAttempt(sample: ResolveSample, kind: AttemptKind): AttemptResult {
         val startedAt = System.currentTimeMillis()
         val batteryBefore = batteryPct()
@@ -237,7 +295,7 @@ class ResolveTestViewModel @Inject constructor(
             webviewPssKbAfter = if (isWebView) processPssKb() else null,
             challenge = challenge,
             error = error,
-        )
+        ).also { logAttempt(it) }
     }
 
     private fun batteryPct(): Int? {

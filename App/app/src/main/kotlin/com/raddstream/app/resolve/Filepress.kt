@@ -17,6 +17,11 @@ object Filepress {
     const val BASE_URL = "https://new3.filepress.lat"
     const val USER_AGENT =
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+    // The API's own spelling is "indexDownlaod" and "/api/file/downlaod[/2]/":
+    // those strings go on the wire unchanged. Only the harness's step labels
+    // in failure notes use correct English ("download:" / "download2:") —
+    // deliberately diverging from the server's host_resolvers.py vocabulary,
+    // which still writes "downlaod:".
     const val METHOD = "indexDownlaod"
     const val TIMEOUT_SECONDS = 15L
 
@@ -159,18 +164,18 @@ class HttpChainEngine(private val transport: ResolveHttpTransport) {
         )
         val firstBody = """{"id":"$fileId","method":"${Filepress.METHOD}","captchaValue":null}"""
         val first = apiCall("/api/file/downlaod/", firstBody, headers)
-        if (first is Filepress.ApiOutcome.Fail) return ChainResult.Failed("downlaod: ${first.note}", null)
+        if (first is Filepress.ApiOutcome.Fail) return ChainResult.Failed("download: ${first.note}", null)
         val token = (first as Filepress.ApiOutcome.Ok).data as? JsonValue.Str
         if (token == null || token.value.isEmpty()) {
-            return ChainResult.Failed("downlaod: empty token", null)
+            return ChainResult.Failed("download: empty token", null)
         }
         val secondBody = """{"id":"${token.value}","method":"${Filepress.METHOD}","captchaValue":null}"""
         val second = apiCall("/api/file/downlaod2/", secondBody, headers)
-        if (second is Filepress.ApiOutcome.Fail) return ChainResult.Failed("downlaod2: ${second.note}", null)
+        if (second is Filepress.ApiOutcome.Fail) return ChainResult.Failed("download2: ${second.note}", null)
         val links = (second as Filepress.ApiOutcome.Ok).data as? JsonValue.Arr
         val firstLink = links?.items?.firstOrNull() as? JsonValue.Str
         if (firstLink == null || firstLink.value.isEmpty()) {
-            return ChainResult.Failed("downlaod2: empty link list", null)
+            return ChainResult.Failed("download2: empty link list", null)
         }
         val minted = Filepress.encodeFilename(firstLink.value)
         val probe = runRangeProbe(transport, minted)
@@ -178,11 +183,60 @@ class HttpChainEngine(private val transport: ResolveHttpTransport) {
     }
 
     private suspend fun apiCall(endpoint: String, body: String, headers: Map<String, String>): Filepress.ApiOutcome {
-        val response = try {
-            transport.postJson(Filepress.BASE_URL + endpoint, body, headers)
-        } catch (e: Exception) {
-            return Filepress.ApiOutcome.Fail("fetch_error:${e.javaClass.simpleName}")
+        // Run 1 (22:00–22:13 PKT 16 Nov, owner's phone): all 20 first POSTs
+        // came back HTTP 301. The transport never follows redirects, so the
+        // chain died on the redirect itself. The FileBee mirrors rotate
+        // (server note: new2 301s to new3), so follow 301/302/303/307/308 by
+        // re-POSTing the same JSON body to the Location, up to a cap — a GET
+        // would be meaningless to this API, so 301/302/303 are followed with
+        // the same POST, like 307/308. The Referer is re-based to the new
+        // origin on each hop: a mismatched Referer turns the answer into
+        // INVALID_REQUEST. A redirect with no Location, or past the cap,
+        // fails like any other non-200.
+        var url = Filepress.BASE_URL + endpoint
+        var currentHeaders = headers
+        repeat(MAX_REDIRECTS + 1) {
+            val response = try {
+                transport.postJson(url, body, currentHeaders)
+            } catch (e: Exception) {
+                return Filepress.ApiOutcome.Fail("fetch_error:${e.javaClass.simpleName}")
+            }
+            val status = response.status
+            if (status in REDIRECT_STATUSES) {
+                val location = response.headers["location"]?.trim().orEmpty()
+                val next = if (location.isEmpty()) null else resolveUrl(url, location)
+                if (next == null) return Filepress.ApiOutcome.Fail("http:$status")
+                url = next
+                currentHeaders = currentHeaders + ("Referer" to originOf(url))
+            } else {
+                return Filepress.parseApiResponse(status, response.body.toString(Charsets.UTF_8))
+            }
         }
-        return Filepress.parseApiResponse(response.status, response.body.toString(Charsets.UTF_8))
+        return Filepress.ApiOutcome.Fail("redirect_loop")
+    }
+
+    internal fun resolveUrl(base: String, location: String): String? {
+        return try {
+            java.net.URI(base).resolve(location).toString()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    internal fun originOf(url: String): String {
+        return try {
+            val uri = java.net.URI(url)
+            "${uri.scheme}://${uri.authority}"
+        } catch (_: Exception) {
+            Filepress.BASE_URL
+        }
+    }
+
+    companion object {
+        /** Redirect statuses the chain follows by re-POSTing to the Location. */
+        val REDIRECT_STATUSES = setOf(301, 302, 303, 307, 308)
+
+        /** Max redirect hops per API call before failing as `redirect_loop`. */
+        const val MAX_REDIRECTS = 5
     }
 }

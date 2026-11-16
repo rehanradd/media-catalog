@@ -97,6 +97,14 @@ fun ResolveTestScreen(
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
+                    onClick = viewModel::runControlOnly,
+                    enabled = !state.running && state.samples.isNotEmpty(),
+                ) {
+                    Text(stringResource(R.string.resolve_test_run_control))
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
                     onClick = viewModel::copyResultsJson,
                     enabled = !state.running && state.results.isNotEmpty(),
                 ) {
