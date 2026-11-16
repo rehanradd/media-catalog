@@ -8,7 +8,7 @@ import org.junit.Test
 class ProbeVerdictTest {
 
     private val empty = ByteArray(0)
-    private val ebml = byteArrayOf(0x1A, 0x45, 0xDF.toByte(), 0xA3.toByte(), 0x42, 0x82)
+    private val ebml = byteArrayOf(0x1A, 0x45, 0xDF.toByte(), 0xA3.toByte(), 0x42, 0x82.toByte())
     private val ftyp = byteArrayOf(0x00, 0x00, 0x00, 0x00, 'f'.code.toByte(), 't'.code.toByte(), 'y'.code.toByte(), 'p'.code.toByte())
     private val hls = "#EXTM3U\n#EXT-X-VERSION:3".toByteArray(Charsets.UTF_8)
     private val html = "<html><body>nope</body></html>".toByteArray(Charsets.UTF_8)

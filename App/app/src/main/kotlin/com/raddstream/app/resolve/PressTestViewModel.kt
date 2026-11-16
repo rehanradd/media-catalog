@@ -82,7 +82,7 @@ import okhttp3.Request
  * verifies "no resolve log line for this press" from the recorded
  * epoch timestamps, on the VM — this phone cannot see the server log.
  */
-@OptIn(UnstableApi::class)
+@androidx.annotation.OptIn(UnstableApi::class)
 @HiltViewModel
 class PressTestViewModel @Inject constructor(
     @ApplicationContext private val appContext: Context,

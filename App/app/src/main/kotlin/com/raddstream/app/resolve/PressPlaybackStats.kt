@@ -18,7 +18,7 @@ import androidx.media3.exoplayer.source.MediaLoadData
  * numbers — that is what the unit tests feed, because building a real
  * [AnalyticsListener.EventTime] needs a player and a timeline.
  */
-@OptIn(UnstableApi::class)
+@androidx.annotation.OptIn(UnstableApi::class)
 class PressStatsCollector(
     /** [SystemClock.elapsedRealtime] at the press, so durations are monotonic. */
     private val pressStartedElapsedMs: Long,
@@ -108,7 +108,7 @@ class PressStatsCollector(
  * short; the history lists would only cost memory) and the callback hands
  * the finished session's totals to the same collector.
  */
-@OptIn(UnstableApi::class)
+@androidx.annotation.OptIn(UnstableApi::class)
 fun pressStatsListener(collector: PressStatsCollector): PlaybackStatsListener {
     return PlaybackStatsListener(false) { _, playbackStats ->
         playbackStats?.let { collector.applyPlaybackStats(it.totalPlayTimeMs, it.totalRebufferCount) }
