@@ -1325,14 +1325,41 @@ private fun GenreChipsRow(
     // UI-fix P1-D5: genres + capabilities were two identical scrolling
     // pill rows under the title. One row now; capabilities ride with
     // the genres.
+    // Detail review (Nov 2026, P1): the last chip hard-clipped at the
+    // right edge reads as broken — a 32dp fade mask, the same treatment
+    // Search's filter rail gets, so the row reads as scrollable. Local
+    // to this file: no shared fade component (the Home fix owns the
+    // shared files right now).
     if (chips.isEmpty()) return
-    Row(
-        modifier = modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        chips.forEach { CapabilityChip(it) }
+    Box(modifier = modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            chips.forEach { CapabilityChip(it) }
+        }
+        // The overlay carries no click handling, so taps pass through to
+        // the chips beneath it.
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .width(32.dp)
+                .fillMaxHeight()
+                .background(
+                    Brush.horizontalGradient(
+                        colors = listOf(
+                            Color.Transparent,
+                            MaterialTheme.colorScheme.background,
+                        ),
+                    ),
+                )
+                .testTag(GenreChipsFadeTag),
+        )
     }
 }
+
+/** Test tag for the genre-chips right-edge fade (see [GenreChipsRow]). */
+internal const val GenreChipsFadeTag = "genre-chips-fade"
 
 @Composable
 private fun PosterHeader(
