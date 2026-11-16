@@ -1603,7 +1603,13 @@ def _public_art(result: dict, *, base_url: str, secret: str) -> dict:
 
 def listing_kwargs(query: dict, *, operator: bool, for_search: bool) -> dict:
     kwargs = {
-        "content_type": _q(query, "type") or _q(query, "work_type") or None,
+        # `content_type` is the name the function layer and the docs use;
+        # `type`/`work_type` are the legacy aliases the app sends today.
+        # The explicit name wins when several are sent. (2026-11-16:
+        # `content_type=series` was silently dropped here, so v2 browse
+        # and search returned the whole catalog for it.)
+        "content_type": (_q(query, "content_type") or _q(query, "type")
+                         or _q(query, "work_type") or None),
         "genres": _q_list(query, "genre", "genres"),
         "languages": _q_list(query, "language", "languages"),
         "qualities": _q_list(query, "quality", "qualities"),

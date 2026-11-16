@@ -7114,7 +7114,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         elif path == "/api/v1/posts":
             q = query_params.get("q", [""])[0]
-            ctype = query_params.get("type", [""])[0]
+            # `content_type` is the name the function layer and the docs use;
+            # `type` is the legacy alias the app sends today. The explicit
+            # name wins when both are sent; the alias keeps old clients
+            # working. (2026-11-16: `content_type=series` was silently
+            # dropped here, so the filter returned the whole catalog.)
+            ctype = (query_params.get("content_type", [""])[0]
+                     or query_params.get("type", [""])[0])
             page = bounded_int(query_params, "page", 1, 1, 1_000_000)
             limit = bounded_int(query_params, "limit", 20, 1, 100)
             if (page - 1) * limit > POSTS_MAX_OFFSET:
@@ -7152,7 +7158,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             # params as /api/v1/posts, the same page window, the same
             # 503 on a search that runs past the deadline.
             q = query_params.get("q", [""])[0]
-            ctype = query_params.get("type", [""])[0]
+            # Same alias as /api/v1/posts above: `content_type` wins,
+            # `type` is the legacy alias the app sends.
+            ctype = (query_params.get("content_type", [""])[0]
+                     or query_params.get("type", [""])[0])
             page = bounded_int(query_params, "page", 1, 1, 1_000_000)
             limit = bounded_int(query_params, "limit", 20, 1, 100)
             if (page - 1) * limit > POSTS_MAX_OFFSET:
@@ -7209,7 +7218,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             try:
                 data = api_v1_get_trending(
                     page=page, limit=limit,
-                    content_type=query_params.get("type", [""])[0],
+                    # Same alias as /api/v1/posts: `content_type` wins,
+                    # `type` is the legacy alias the app sends.
+                    content_type=(query_params.get("content_type", [""])[0]
+                                  or query_params.get("type", [""])[0]),
                     base_url=base_url)
             except sqlite3.OperationalError as exc:
                 if str(exc) != "interrupted":
