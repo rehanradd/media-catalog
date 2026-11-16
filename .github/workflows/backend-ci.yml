@@ -32,6 +32,7 @@ name: 🐍 Backend CI — Stdlib Python Tests
 #     - Fast_Fetch/test_site_scout.py        (site discovery / spec phases)
 #     - Fast_Fetch/test_backup_manager.py    (offsite backup tooling)
 #     - Fast_Fetch/test_usage_stats.py       (operator counters + token gate)
+#     - Fast_Fetch/test_playback_beacon.py  (playback beacon: host × network quality counters)
 #     - Fast_Fetch/test_operator_isolation.py(two real loopback servers, socket-level
 #       routing — the layer every other suite calls as a function)
 #     - Fast_Fetch/test_media_search.py      (by-media matcher: the bounded candidate
@@ -453,6 +454,12 @@ jobs:
       # rule, and the fail-closed token gate. Offline, stdlib, no network.
       - name: 🧪 test_usage_stats.py
         run: python3 -S Fast_Fetch/test_usage_stats.py
+
+      # The playback beacon: one finished session folds into per-(host × network)
+      # quality counters on the same progress write — handle resolved from our own
+      # ledger and discarded, no new route. Offline, stdlib, no network.
+      - name: 🧪 test_playback_beacon.py
+        run: python3 -S Fast_Fetch/test_playback_beacon.py
 
       # Two real servers on loopback and a real socket between them — the only suite
       # that can catch the operator-port gate being routed around rather than removed.

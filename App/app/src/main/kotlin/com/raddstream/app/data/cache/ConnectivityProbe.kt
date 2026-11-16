@@ -24,26 +24,36 @@ class ConnectivityProbe @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
 
-    fun current(): NetworkClass = runCatching {
-        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-            ?: return NetworkClass.MOBILE
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val network = cm.activeNetwork ?: return NetworkClass.NONE
-            val caps = cm.getNetworkCapabilities(network) ?: return NetworkClass.NONE
-            when {
-                caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> NetworkClass.WIFI
-                caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> NetworkClass.WIFI
-                caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> NetworkClass.MOBILE
-                else -> NetworkClass.MOBILE
+    fun current(): NetworkClass = current(context)
+
+    companion object {
+        /**
+         * The same read, without injection — the player service is a plain
+         * `MediaSessionService` Hilt cannot reach, and it needs the network
+         * class at session start. One implementation, two doors: this is the
+         * only place the transport is read.
+         */
+        fun current(context: Context): NetworkClass = runCatching {
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                ?: return NetworkClass.MOBILE
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val network = cm.activeNetwork ?: return NetworkClass.NONE
+                val caps = cm.getNetworkCapabilities(network) ?: return NetworkClass.NONE
+                when {
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> NetworkClass.WIFI
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> NetworkClass.WIFI
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> NetworkClass.MOBILE
+                    else -> NetworkClass.MOBILE
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                when (val info = cm.activeNetworkInfo) {
+                    null -> NetworkClass.NONE
+                    else -> if (info.type == ConnectivityManager.TYPE_WIFI) NetworkClass.WIFI else NetworkClass.MOBILE
+                }
             }
-        } else {
-            @Suppress("DEPRECATION")
-            when (val info = cm.activeNetworkInfo) {
-                null -> NetworkClass.NONE
-                else -> if (info.type == ConnectivityManager.TYPE_WIFI) NetworkClass.WIFI else NetworkClass.MOBILE
-            }
-        }
-    }.getOrDefault(NetworkClass.MOBILE)
+        }.getOrDefault(NetworkClass.MOBILE)
+    }
 
     /**
      * Is the active connection METERED — the one signal the poster loader needs before it spends a

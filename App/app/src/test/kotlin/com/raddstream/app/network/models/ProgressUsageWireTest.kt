@@ -1,6 +1,7 @@
 package com.raddstream.app.network.models
 
 import com.google.gson.Gson
+import com.raddstream.app.data.PlaybackBeacon
 import com.raddstream.app.data.Telemetry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -65,5 +66,47 @@ class ProgressUsageWireTest {
         val decoded = gson.fromJson(gson.toJson(request), ProgressRequest::class.java)
         assertEquals(usage, decoded.usage)
         assertTrue(decoded.usage!!.keys.all { it in Telemetry.USAGE_FIELDS })
+    }
+
+    @Test
+    fun `a progress write carries the beacon block`() {
+        val request = ProgressRequest(
+            workRef = "w1",
+            positionSeconds = 120.0,
+            durationSeconds = 600.0,
+            clientUpdatedAt = 1794064800.0,
+            playbackBeacon = listOf(
+                PlaybackBeacon(
+                    sid = "sid-1",
+                    streamId = "handle-1",
+                    band = "480p",
+                    brBps = 1_200_000L,
+                    bytesTotal = 8_000_000L,
+                    loadMsTotal = 4000L,
+                    ttfbMs = 850L,
+                    stalls = 1,
+                    rebufferMs = 1200L,
+                    outcome = "played",
+                    error = null,
+                    net = "wifi",
+                ),
+            ),
+        )
+        val decoded = gson.fromJson(gson.toJson(request), ProgressRequest::class.java)
+        assertEquals(1, decoded.playbackBeacon?.size)
+        assertEquals("sid-1", decoded.playbackBeacon?.first()?.sid)
+        assertEquals("handle-1", decoded.playbackBeacon?.first()?.streamId)
+        assertEquals("played", decoded.playbackBeacon?.first()?.outcome)
+    }
+
+    @Test
+    fun `no beacon block means no beacon key on the wire`() {
+        // Gson omits nulls, so a viewer who declined analytics sends a body
+        // byte-identical to the one before this field existed.
+        val request = ProgressRequest(workRef = "w1", positionSeconds = 10.0)
+        val json = gson.toJson(request)
+        assertFalse("playback_beacon key leaked into a body with no block: $json", json.contains("playback_beacon"))
+        val decoded = gson.fromJson(json, ProgressRequest::class.java)
+        assertEquals(null, decoded.playbackBeacon)
     }
 }

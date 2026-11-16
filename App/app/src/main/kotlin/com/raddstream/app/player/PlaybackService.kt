@@ -29,7 +29,10 @@ import androidx.media3.exoplayer.text.TextRenderer
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.raddstream.app.brand.Brand
+import com.raddstream.app.data.PlaybackBeaconErrors
+import com.raddstream.app.data.PlaybackBeacons
 import com.raddstream.app.data.Telemetry
+import com.raddstream.app.data.cache.ConnectivityProbe
 import com.raddstream.app.player.subtitles.OffsetSubtitleDecoderFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -74,6 +77,9 @@ class PlaybackService : MediaSessionService() {
     private val store: PlayerSessionStore = PlayerSessionStore.Instance
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var failover: FailoverStateMachine? = null
+
+    /** The beacon recorder: one finished session's measurements, per load. */
+    private val beaconRecorder = PlaybackBeaconRecorder()
 
     /**
      * The stall watchdog (2026-11-12 rework, audit #1): one job per load,
@@ -450,6 +456,7 @@ class PlaybackService : MediaSessionService() {
         exo.setMediaItem(item)
         exo.prepare()
         exo.playWhenReady = true
+        beginBeaconFor(rendition, isLocalCopy)
         // Every load of a real address is a title being watched, which is the whole trigger a
         // preview has. A hop to a backup of the same print seeds again through the same line, and
         // the engine's own idempotence turns that second ask into no second row. A kept copy played
@@ -502,6 +509,9 @@ class PlaybackService : MediaSessionService() {
                 beforeFirstFrame = true,
                 isLocalCopyAttempt = lastLoadedWasLocalCopy,
             )
+            // The beacon counts a hung start as a failure of this load; the
+            // session finalises when the hop replaces it.
+            beaconRecorder.noteWatchdogTimeout()
             applyDecision(bundle, decision, preservePositionMs = lastKnownPositionMs)
         }
     }
@@ -565,6 +575,49 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
+    /**
+     * Begin measuring this load for the beacon — or finalise the previous
+     * load and measure nothing, when there is no host to rank.
+     *
+     * A kept copy played from disk names no handle of the redirector's, and
+     * a deep-linked load with no handle staged is the same: neither starts
+     * a session. The previous session finalises here either way, so a
+     * failover hop or a rung change records the load it replaces instead of
+     * dropping it.
+     */
+    private fun beginBeaconFor(rendition: PlaybackRendition, isLocalCopy: Boolean) {
+        val streamId = if (isLocalCopy) null
+            else rendition.playback.streamId?.takeIf { it.isNotBlank() }
+        val band = streamId?.let { bandOfRendition(rendition) }
+        val finished = if (streamId != null && band != null) {
+            beaconRecorder.start(
+                streamId,
+                band,
+                AdaptiveQualitySwitcher.nominalBitrateFor(band),
+                beaconNetFor(ConnectivityProbe.current(applicationContext)),
+            )
+        } else {
+            beaconRecorder.finishCurrent()
+        }
+        finished?.let { PlaybackBeacons.record(it) }
+    }
+
+    /**
+     * The beacon's closed error class for a player failure. Only the two IO
+     * codes are mapped — a network failure and a network timeout are the
+     * ones the host owns. Everything else reads "unknown": the failover
+     * machine already translates the exact code into human words for the
+     * viewer, and the beacon must not invent a decode/drm split it cannot
+     * prove from the code alone. The server counts "unknown" failures
+     * outside the host's column, so an unmapped code never blames a host it
+     * cannot name.
+     */
+    private fun beaconErrorCode(error: PlaybackException): String = when (error.errorCode) {
+        PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED -> PlaybackBeaconErrors.NETWORK
+        PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT -> PlaybackBeaconErrors.TIMEOUT
+        else -> PlaybackBeaconErrors.UNKNOWN
+    }
+
     // ── Auto quality: measured throughput → the next rung of the staged ladder ────
 
     /**
@@ -610,6 +663,7 @@ class PlaybackService : MediaSessionService() {
         private fun feedSample(loadEventInfo: LoadEventInfo, mediaLoadData: MediaLoadData) {
             if (mediaLoadData.trackType !in MEASURABLE_TRACK_TYPES) return
             store.autoQuality.push(loadEventInfo.bytesLoaded, loadEventInfo.loadDurationMs)
+            beaconRecorder.noteLoadSample(loadEventInfo.bytesLoaded, loadEventInfo.loadDurationMs)
         }
     }
 
@@ -807,6 +861,12 @@ class PlaybackService : MediaSessionService() {
                     // landed, and a later rebuffer is the buffering spinner's
                     // job, not a failed start.
                     disarmStartWatchdog()
+                    // The beacon's first frame: the start is over, and any
+                    // buffering from here is a stall. The call also closes a
+                    // stall that was open, so a rebuffer that ends in READY
+                    // is counted even if it ends the session.
+                    beaconRecorder.noteFirstFrame()
+                    beaconRecorder.noteBufferingEnded()
                     // Session 155: the start error (if any) is spent — a
                     // later give-up must not report a stale start failure.
                     store.clearStartError()
@@ -814,6 +874,12 @@ class PlaybackService : MediaSessionService() {
                         player?.seekTo(pos)
                         pendingResumeMs = null
                     }
+                }
+
+                Player.STATE_BUFFERING -> {
+                    // Buffering after the first frame is a stall; buffering
+                    // before it is the start, and the recorder ignores that.
+                    beaconRecorder.noteBufferingStarted()
                 }
 
                 Player.STATE_ENDED -> handleEnded()
@@ -835,6 +901,11 @@ class PlaybackService : MediaSessionService() {
         }
 
         override fun onPlayerError(error: PlaybackException) {
+            // The beacon records the failure class now; the session itself
+            // finalises as "failed" when the next load replaces it, or when
+            // the service is destroyed — the failover machine may still hop,
+            // and a hop is a new session, not the end of this one.
+            beaconRecorder.noteError(beaconErrorCode(error))
             // Tracking A: a network failure while buffering is a buffer
             // failure; anything else (decode, renderer) is a playback error.
             // The split is the one the server's per-class report reads, and
@@ -940,9 +1011,17 @@ class PlaybackService : MediaSessionService() {
 
             is NextEpisodeAction.NextBundleRequest,
             is NextEpisodeAction.CalibrationNeeded,
-            -> store.awaitNextEpisode(action)
+            -> {
+                // The bundle ends here; the next episode is a new load with
+                // a new beacon. This session played: a first frame landed.
+                beaconRecorder.finishCurrent()?.let { PlaybackBeacons.record(it) }
+                store.awaitNextEpisode(action)
+            }
 
-            NextEpisodeAction.StopHere, NextEpisodeAction.Unknown -> Unit
+            NextEpisodeAction.StopHere, NextEpisodeAction.Unknown -> {
+                // Nothing further loads: the session ends here.
+                beaconRecorder.finishCurrent()?.let { PlaybackBeacons.record(it) }
+            }
         }
     }
 
@@ -955,6 +1034,10 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        // The session ends with the service: played if a frame landed,
+        // failed if an error was recorded, abandoned otherwise. Anything
+        // still pending rides the next progress write from the store.
+        beaconRecorder.finishCurrent()?.let { PlaybackBeacons.record(it) }
         scope.cancel()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             thermalListener?.let { listener ->

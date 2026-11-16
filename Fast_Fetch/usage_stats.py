@@ -50,6 +50,7 @@ import sqlite3
 import time
 
 import accounts
+import redact
 
 #: Bumped when the shape below changes in a way an old row cannot be read as.
 SCHEMA_VERSION = 1
@@ -113,6 +114,50 @@ METRICS = frozenset({
     "rewarded_completion",
     "coin_granted",
 })
+#: A session id is a client-minted UUID (36 chars): the same shape rule as a
+#: dimension label, but with room for it. It is shape-checked, never stored.
+_SID_RE = re.compile(r"^[A-Za-z0-9._+-]{1,64}$")
+#: One progress submission may not carry a phonebook of sessions.
+MAX_BEACONS_PER_SUBMISSION = 20
+#: The outcomes a playback session may end in. `played` means a first frame
+#: landed (the load delivered video, even if a later rung change superseded
+#: it); `failed` means a player error or a start timeout killed it; `abandoned`
+#: means the load was replaced before any frame, with no error — the viewer
+#: left, or an auto swap moved first.
+BEACON_OUTCOMES = frozenset({"played", "failed", "abandoned"})
+#: The closed error vocabulary a beacon may carry. Only `network` and
+#: `timeout` count against the host — a decode or DRM failure is the device,
+#: not the file, and `unknown` is the honest bucket for anything the app could
+#: not classify. A failed beacon with no error (or one outside this set) reads
+#: as `unknown`, never as a host failure.
+BEACON_ERRORS = frozenset({"network", "timeout", "decode", "drm", "unknown"})
+#: The host-attributable failure classes: the two that say the file host did
+#: not deliver. Everything else a failed beacon carries lands in
+#: `plays_failed_other` instead.
+BEACON_HOST_ERRORS = frozenset({"network", "timeout"})
+#: The network classes a beacon may name. The app sends the coarse transport
+#: (`ConnectivityProbe`): wifi, cellular, or nothing — never a carrier, an
+#: SSID, or a signal reading.
+BEACON_NETS = frozenset({"wifi", "mobile", "none"})
+#: TTFB is stored as bucket counts, never as individual timings: the 50th
+#: percentile is then the bucket the cumulative count crosses, which is all a
+#: ranking needs and no per-session value ever rests on disk.
+#: Bounds are milliseconds; the last bucket is open-ended.
+TTFB_BUCKETS = ((500, "ttfb_lt500"), (1000, "ttfb_500_1000"),
+                (2000, "ttfb_1000_2000"), (5000, "ttfb_2000_5000"))
+TTFB_BUCKET_MIDPOINTS = {"ttfb_lt500": 250, "ttfb_500_1000": 750,
+                         "ttfb_1000_2000": 1500, "ttfb_2000_5000": 3500,
+                         "ttfb_gt5000": 7500}
+#: A host × network pair counts only once it has this many plays in the
+#: window: fewer than that and a single good or bad evening is the ranking.
+HOST_QUALITY_MIN_PLAYS = 20
+#: The ranking window, in days. Older rows stay on disk (they are history, not
+#: a leak) but stop counting: a host that was fast in October does not get to
+#: coast on it in December.
+HOST_QUALITY_WINDOW_DAYS = 30
+#: Recency decay inside the window: each day older multiplies the day's
+#: contribution by this. A 30-day-old day weighs ~4% of today's.
+HOST_QUALITY_DECAY_PER_DAY = 0.9
 #: Metrics only the phone can tell us about; the server cannot see them.
 REPORTED_ONLY = frozenset({
     "playback_attempt",
@@ -187,11 +232,35 @@ _DDL = (
         PRIMARY KEY (day, dim, value, metric)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS usage_host_quality (
+        day               INTEGER NOT NULL,
+        host              TEXT NOT NULL,
+        net               TEXT NOT NULL,
+        plays             INTEGER NOT NULL DEFAULT 0,
+        plays_ok          INTEGER NOT NULL DEFAULT 0,
+        plays_failed      INTEGER NOT NULL DEFAULT 0,
+        plays_failed_other INTEGER NOT NULL DEFAULT 0,
+        plays_abandoned   INTEGER NOT NULL DEFAULT 0,
+        bytes_total       INTEGER NOT NULL DEFAULT 0,
+        load_ms_total     INTEGER NOT NULL DEFAULT 0,
+        ttfb_lt500        INTEGER NOT NULL DEFAULT 0,
+        ttfb_500_1000     INTEGER NOT NULL DEFAULT 0,
+        ttfb_1000_2000    INTEGER NOT NULL DEFAULT 0,
+        ttfb_2000_5000    INTEGER NOT NULL DEFAULT 0,
+        ttfb_gt5000       INTEGER NOT NULL DEFAULT 0,
+        stalls            INTEGER NOT NULL DEFAULT 0,
+        rebuffer_ms_total INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (day, host, net)
+    )
+    """,
     "CREATE INDEX IF NOT EXISTS idx_usage_device_last_seen"
     " ON usage_device(last_seen_at)",
     "CREATE INDEX IF NOT EXISTS idx_usage_device_install_day"
     " ON usage_device(install_day)",
     "CREATE INDEX IF NOT EXISTS idx_usage_metric_day ON usage_metric(day)",
+    "CREATE INDEX IF NOT EXISTS idx_usage_host_quality_day"
+    " ON usage_host_quality(day)",
 )
 
 
@@ -523,6 +592,286 @@ def record_client_usage(db, payload, *, headers=None,
     return written
 
 
+# ── playback beacon: per-(host × network) quality counters ────────────────
+
+def _beacon_int(value, maximum: int) -> int:
+    """A whole, non-negative beacon number, clamped — or -1 for not-a-number.
+
+    Booleans are numbers to `int()` and would smuggle a `True` in as 1, so
+    they are refused outright; a float that is integral is accepted, because
+    JSON has one number type and the app may send `1200.0` for `1200`.
+    """
+    if isinstance(value, bool):
+        return -1
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return -1
+    if number != number or number < 0:
+        return -1
+    return min(int(number), int(maximum))
+
+
+def _beacon_host(catalog, secret: str, stream_id, now: float) -> str:
+    """The file host behind one beacon's opaque handle, or `""` for none.
+
+    The app never names a hoster — its play addresses carry no hoster name by
+    design — so the handle is the only link, and it is resolved here, from our
+    own ledger, and then discarded: the stream id is never stored, and a
+    handle this server did not mint (forged, or lapsed past its expiry) names
+    no host at all. `signed_only` matches the public stream route: a bare row
+    id is not a handle.
+    """
+    if catalog is None or not secret:
+        return ""
+    try:
+        row_id = redact.parse_token(stream_id, secret, signed_only=True,
+                                    now=now)
+    except Exception:                                  # noqa: BLE001 — a bad handle is a drop, not a 500
+        return ""
+    if row_id is None:
+        return ""
+    try:
+        row = catalog.execute(
+            "SELECT service FROM download_sources WHERE id = ?",
+            (int(row_id),)).fetchone()
+    except (sqlite3.Error, TypeError, ValueError):
+        return ""
+    if row is None:
+        return ""
+    return clean_value(row[0])
+
+
+def _ttfb_bucket(ttfb_ms: int) -> str | None:
+    """The bucket one first-load time falls in, or `None` for no measurement.
+
+    A zero means no media load happened in the session (abandoned before the
+    player moved a byte), which is not a fast load — it is the absence of one,
+    and it must not land in the `<500 ms` bucket and flatter the host.
+    """
+    if ttfb_ms <= 0:
+        return None
+    for bound, name in TTFB_BUCKETS:
+        if ttfb_ms < bound:
+            return name
+    return "ttfb_gt5000"
+
+
+_BEACON_UPSERT = (
+    "INSERT INTO usage_host_quality(day, host, net, plays, plays_ok,"
+    " plays_failed, plays_failed_other, plays_abandoned, bytes_total,"
+    " load_ms_total, ttfb_lt500, ttfb_500_1000, ttfb_1000_2000,"
+    " ttfb_2000_5000, ttfb_gt5000, stalls, rebuffer_ms_total)"
+    " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+    " ON CONFLICT(day, host, net) DO UPDATE SET"
+    " plays = plays + excluded.plays,"
+    " plays_ok = plays_ok + excluded.plays_ok,"
+    " plays_failed = plays_failed + excluded.plays_failed,"
+    " plays_failed_other = plays_failed_other + excluded.plays_failed_other,"
+    " plays_abandoned = plays_abandoned + excluded.plays_abandoned,"
+    " bytes_total = bytes_total + excluded.bytes_total,"
+    " load_ms_total = load_ms_total + excluded.load_ms_total,"
+    " ttfb_lt500 = ttfb_lt500 + excluded.ttfb_lt500,"
+    " ttfb_500_1000 = ttfb_500_1000 + excluded.ttfb_500_1000,"
+    " ttfb_1000_2000 = ttfb_1000_2000 + excluded.ttfb_1000_2000,"
+    " ttfb_2000_5000 = ttfb_2000_5000 + excluded.ttfb_2000_5000,"
+    " ttfb_gt5000 = ttfb_gt5000 + excluded.ttfb_gt5000,"
+    " stalls = stalls + excluded.stalls,"
+    " rebuffer_ms_total = rebuffer_ms_total + excluded.rebuffer_ms_total"
+)
+
+
+def record_playback_beacon(db, payload, *, catalog=None, secret: str = "",
+                           now: float | None = None) -> dict:
+    """Fold the optional `playback_beacon` block of an existing progress POST
+    into per-(host × network) quality counters.
+
+    The block rides on `POST /api/v2/account/progress` beside the `usage`
+    block — the same already-authenticated, already-allow-listed route, so no
+    new public surface appears. One list entry is one finished playback
+    session: its handle resolves to a host here and is then discarded, so the
+    stored row names a day, a host and a network class and nothing else — no
+    session id, no stream id, no title, no device. A beacon the shape check
+    refuses, a handle that does not resolve, or a submission past the cap is
+    dropped and counted, never stored.
+
+    Returns `{"accepted": n, "dropped": n}`; a caller that cannot resolve a
+    host (no catalog handle, no secret) drops every beacon and says so in the
+    count, rather than storing unattributed rows. Analytics never breaks the
+    user's request: every failure path here rolls back and returns quietly.
+    """
+    stamp = float(now if now is not None else time.time())
+    bucket = day_of(stamp)
+    accepted = 0
+    dropped = 0
+    block = payload.get("playback_beacon") if isinstance(payload, dict) else None
+    if not isinstance(block, list):
+        return {"accepted": 0, "dropped": 0}
+    if len(block) > MAX_BEACONS_PER_SUBMISSION:
+        dropped += len(block) - MAX_BEACONS_PER_SUBMISSION
+        block = block[:MAX_BEACONS_PER_SUBMISSION]
+    try:
+        with _borrow(db) as conn:
+            for entry in block:
+                if not isinstance(entry, dict):
+                    dropped += 1
+                    continue
+                outcome = entry.get("outcome")
+                net = entry.get("net")
+                error = entry.get("error")
+                if outcome not in BEACON_OUTCOMES or net not in BEACON_NETS:
+                    dropped += 1
+                    continue
+                if error is not None and error not in BEACON_ERRORS:
+                    dropped += 1
+                    continue
+                if outcome == "failed" and error is None:
+                    error = "unknown"
+                sid = entry.get("sid")
+                if not isinstance(sid, str) or not _SID_RE.match(sid.strip()):
+                    dropped += 1
+                    continue
+                host = _beacon_host(catalog, secret, entry.get("stream_id"),
+                                    stamp)
+                if not host or host == UNKNOWN_VALUE:
+                    dropped += 1
+                    continue
+                ttfb = _beacon_int(entry.get("ttfb_ms"), 600_000)
+                nbytes = _beacon_int(entry.get("bytes"), 100 * 1024 * 1024 * 1024)
+                load_ms = _beacon_int(entry.get("load_ms"), 86_400_000)
+                stalls = _beacon_int(entry.get("stalls"), 10_000)
+                rebuffer = _beacon_int(entry.get("rebuffer_ms"), 86_400_000)
+                br = _beacon_int(entry.get("br"), 100_000_000)
+                if min(ttfb, nbytes, load_ms, stalls, rebuffer, br) < 0:
+                    dropped += 1
+                    continue
+                ttfb_bucket = _ttfb_bucket(ttfb)
+                conn.execute(
+                    _BEACON_UPSERT,
+                    (bucket, host, net, 1,
+                     1 if outcome == "played" else 0,
+                     1 if outcome == "failed" and error in BEACON_HOST_ERRORS else 0,
+                     1 if outcome == "failed" and error not in BEACON_HOST_ERRORS else 0,
+                     1 if outcome == "abandoned" else 0,
+                     nbytes, load_ms,
+                     1 if ttfb_bucket == "ttfb_lt500" else 0,
+                     1 if ttfb_bucket == "ttfb_500_1000" else 0,
+                     1 if ttfb_bucket == "ttfb_1000_2000" else 0,
+                     1 if ttfb_bucket == "ttfb_2000_5000" else 0,
+                     1 if ttfb_bucket == "ttfb_gt5000" else 0,
+                     stalls, rebuffer))
+                accepted += 1
+            conn.commit()
+    except sqlite3.Error:
+        return {"accepted": 0, "dropped": accepted + dropped}
+    return {"accepted": accepted, "dropped": dropped}
+
+
+def _host_quality_aggregate(rows, *, today: int, min_plays: int) -> dict:
+    """Fold day rows into per-(host × network) scores.
+
+    The floor is on raw plays in the window: a pair with fewer has no score,
+    and is listed under `below_floor` so the operator can see the near-misses
+    instead of wondering where a host went. The reported rates are decayed —
+    each day older weighs 0.9× the day before — so a host that recovered last
+    week outranks one that was fast a month ago. `mean_ttfb_ms` and `p50_ttfb`
+    read the bucket midpoints; the p50 is the bucket the cumulative count
+    crosses, which is all a ranking needs from bucketed timings.
+    """
+    grouped: dict[tuple[str, str], dict] = {}
+    for row in rows:
+        key = (str(row["host"]), str(row["net"]))
+        slot = grouped.setdefault(key, {
+            "plays": 0, "plays_weighted": 0.0,
+            "plays_ok": 0.0, "plays_failed": 0.0,
+            "plays_failed_other": 0.0, "plays_abandoned": 0.0,
+            "bytes_total": 0.0, "load_ms_total": 0.0,
+            "ttfb": {name: 0.0 for name in TTFB_BUCKET_MIDPOINTS},
+            "stalls": 0.0, "rebuffer_ms_total": 0.0,
+        })
+        weight = HOST_QUALITY_DECAY_PER_DAY ** max(0, today - int(row["day"]))
+        slot["plays"] += int(row["plays"])
+        slot["plays_weighted"] += float(row["plays"]) * weight
+        for field in ("plays_ok", "plays_failed", "plays_failed_other",
+                      "plays_abandoned", "bytes_total", "load_ms_total",
+                      "stalls", "rebuffer_ms_total"):
+            slot[field] += float(row[field]) * weight
+        for name in TTFB_BUCKET_MIDPOINTS:
+            slot["ttfb"][name] += float(row[name]) * weight
+    hosts: dict[str, dict] = {}
+    below_floor: list[dict] = []
+    for (host, net), slot in sorted(grouped.items()):
+        if slot["plays"] < min_plays:
+            below_floor.append({"host": host, "net": net,
+                                "plays": slot["plays"]})
+            continue
+        ttfb_samples = sum(slot["ttfb"].values())
+        ttfb_mean = None
+        ttfb_p50 = None
+        if ttfb_samples > 0:
+            ttfb_mean = round(sum(TTFB_BUCKET_MIDPOINTS[name] * count
+                                  for name, count in slot["ttfb"].items())
+                              / ttfb_samples, 1)
+            half = ttfb_samples / 2.0
+            running = 0.0
+            for name in ("ttfb_lt500", "ttfb_500_1000", "ttfb_1000_2000",
+                         "ttfb_2000_5000", "ttfb_gt5000"):
+                running += slot["ttfb"][name]
+                if running >= half:
+                    ttfb_p50 = name
+                    break
+        plays = slot["plays"]
+        weighted = slot["plays_weighted"]
+        stats = {
+            "plays": plays,
+            "ok_rate": round(slot["plays_ok"] / weighted, 4) if weighted else None,
+            "fail_rate": round(slot["plays_failed"] / weighted, 4) if weighted else None,
+            "fail_other_rate": round(slot["plays_failed_other"] / weighted, 4) if weighted else None,
+            "abandon_rate": round(slot["plays_abandoned"] / weighted, 4) if weighted else None,
+            "mean_ttfb_ms": ttfb_mean,
+            "p50_ttfb_bucket": ttfb_p50,
+            "stalls_per_play": round(slot["stalls"] / weighted, 3) if weighted else None,
+            "mean_rebuffer_ms": round(slot["rebuffer_ms_total"] / weighted, 1) if weighted else None,
+            "mean_mtp_bps": (round(slot["bytes_total"] * 8000.0
+                                   / slot["load_ms_total"])
+                             if slot["load_ms_total"] > 0 else None),
+        }
+        hosts.setdefault(host, {})[net] = stats
+    return {"hosts": hosts, "below_floor": below_floor}
+
+
+def host_quality_summary(db, *, now: float | None = None,
+                         window_days: int = HOST_QUALITY_WINDOW_DAYS,
+                         min_plays: int = HOST_QUALITY_MIN_PLAYS) -> dict:
+    """The operator's answer for \"which host is fast, on which network\".
+
+    Collection only — nothing here ranks a pick yet; the ranking slice reads
+    this shape when it lands. Rows older than the window are history, not
+    input, and a pair under the floor has no score at all, so a single good
+    evening cannot crown a host the ranking will then trust.
+    """
+    stamp = float(now if now is not None else time.time())
+    today = day_of(stamp)
+    window_days = max(1, int(window_days))
+    from_day = today - window_days + 1
+    with _borrow(db) as conn:
+        try:
+            rows = conn.execute(
+                "SELECT day, host, net, plays, plays_ok, plays_failed,"
+                " plays_failed_other, plays_abandoned, bytes_total,"
+                " load_ms_total, ttfb_lt500, ttfb_500_1000, ttfb_1000_2000,"
+                " ttfb_2000_5000, ttfb_gt5000, stalls, rebuffer_ms_total"
+                " FROM usage_host_quality WHERE day >= ?"
+                " ORDER BY day",
+                (from_day,)).fetchall()
+        except sqlite3.Error:
+            rows = []
+    out = _host_quality_aggregate(rows, today=today, min_plays=int(min_plays))
+    out["window_days"] = window_days
+    out["min_plays"] = int(min_plays)
+    return out
+
+
 # ── the report ───────────────────────────────────────────────────────────────
 
 def _scalar(conn, sql, *args, default=0):
@@ -775,6 +1124,7 @@ def summary(db, *, now: float | None = None, window_days: int = 30) -> dict:
     payload["revenue_estimate"] = revenue_estimate(
         metrics=metrics, users=payload["active_users"]["mau"] or installs,
         days=window_days)
+    payload["playback_by_host"] = host_quality_summary(db, now=stamp)
     payload["sources"] = {
         "observed_by_server": sorted(METRICS - REPORTED_ONLY),
         "reported_by_client": sorted(REPORTED_ONLY),

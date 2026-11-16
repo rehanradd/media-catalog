@@ -1,6 +1,7 @@
 package com.raddstream.app.sync
 
 import com.google.gson.Gson
+import com.raddstream.app.data.PlaybackBeacons
 import com.raddstream.app.data.ServerSettingsRepository
 import com.raddstream.app.data.Telemetry
 import com.raddstream.app.data.local.FavoriteDao
@@ -489,6 +490,11 @@ class SyncAccountRepository @Inject constructor(
         // in between survive because the acknowledgement subtracts exactly
         // what was sent. A viewer who declined totals snapshots empty.
         val usageSnapshot = Telemetry.takeUsageSnapshot()
+        // The playback beacon rides the same call under the same rule:
+        // finished sessions wait in the store, the snapshot is taken before
+        // the call, and only a landed report forgets them. A viewer who
+        // declined analytics has nothing pending to send.
+        val beacons = PlaybackBeacons.takePending()
         var coinsEarned = 0
         val ack = attempt(hadWorkRef = true) { api, auth ->
             val response = api.putProgress(
@@ -501,6 +507,7 @@ class SyncAccountRepository @Inject constructor(
                     durationSeconds = durationSeconds,
                     clientUpdatedAt = stamp,
                     usage = usageSnapshot.ifEmpty { null },
+                    playbackBeacon = beacons.ifEmpty { null },
                 ),
             )
             coinsEarned = response.coinsEarned
@@ -508,6 +515,7 @@ class SyncAccountRepository @Inject constructor(
         }
         if (ack == SyncAck.WRITTEN) {
             if (usageSnapshot.isNotEmpty()) Telemetry.acknowledgeUsage(usageSnapshot)
+            if (beacons.isNotEmpty()) PlaybackBeacons.acknowledge(beacons)
             if (coinsEarned > 0) Telemetry.recordCoinsGranted(coinsEarned)
         }
         // Fold our own report into the mirror at once, so this device resumes from where

@@ -1,6 +1,7 @@
 package com.raddstream.app.network.models
 
 import com.google.gson.annotations.SerializedName
+import com.raddstream.app.data.PlaybackBeacon
 
 /*
  * ─────────────────────────────────────────────────────────────────────────────
@@ -227,6 +228,15 @@ data class ProgressRequest(
      * its per-day counters. Never a title, a query, or an identifier.
      */
     @SerializedName("usage") val usage: Map<String, Int>? = null,
+    /**
+     * The playback beacon: one finished session per entry, at most 20 — the
+     * server's per-submission cap. Same ride, same law as [usage]: null
+     * means "nothing to report", Gson omits it, and a viewer who declined
+     * analytics sends a body byte-identical to the one before this field
+     * existed. The server resolves each entry's opaque handle to a host
+     * from its own ledger and stores only per-(host × network) counters.
+     */
+    @SerializedName("playback_beacon") val playbackBeacon: List<PlaybackBeacon>? = null,
 )
 
 /**

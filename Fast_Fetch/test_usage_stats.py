@@ -877,12 +877,13 @@ class AggregateOnlySchemaTests(TempLedger):
                   self.rows("SELECT name FROM sqlite_master WHERE type='table'"
                             " AND name LIKE 'usage_%'")}
         self.assertEqual(tables, {"usage_device", "usage_metric",
-                                  "usage_dim_metric"})
+                                  "usage_dim_metric", "usage_host_quality"})
         for table in sorted(tables):
             for column in self.columns(table):
                 self.assertNotIn(column.lower(), self.NEVER,
                                  "%s.%s" % (table, column))
-        for table in ("usage_metric", "usage_dim_metric"):
+        for table in ("usage_metric", "usage_dim_metric",
+                      "usage_host_quality"):
             self.assertNotIn("device_hash", self.columns(table), table)
             self.assertNotIn("device_class", self.columns(table), table)
 

@@ -9,6 +9,7 @@ import androidx.work.WorkManager
 import com.raddstream.app.brand.Brand
 import com.raddstream.app.data.CrashReporting
 import com.raddstream.app.data.DeviceIdentity
+import com.raddstream.app.data.PlaybackBeacons
 import com.raddstream.app.data.RemoteConfigWatcher
 import com.raddstream.app.data.ServerSettingsRepository
 import com.raddstream.app.data.Telemetry
@@ -86,6 +87,7 @@ class RaddStreamApplication : Application(), Configuration.Provider {
         // that throws simply leaves the snapshot at "not consented".
         Telemetry.init(this)
         Telemetry.installCrashHandler()
+        PlaybackBeacons.init(this)
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             runCatching { Telemetry.refresh(settingsRepository) }
         }

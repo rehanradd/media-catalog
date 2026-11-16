@@ -480,6 +480,24 @@ def _note_client_usage(db_path, payload, key, headers):
         return {}
 
 
+def _note_playback_beacon(db_path, payload, catalog, secret):
+    """Fold the optional `playback_beacon` block of the same POST into the
+    per-(host × network) quality counters.
+
+    Same ride, same law as `_note_client_usage`: the progress write is the one
+    already-authenticated, already-allow-listed route, so no new public surface
+    appears. The catalog handle and the signing secret are what let the
+    beacon's opaque handle resolve to a host from our own ledger — without
+    either, every beacon in the block is dropped and counted, never stored
+    unattributed. Analytics never breaks the user's request.
+    """
+    try:
+        return usage_stats.record_playback_beacon(
+            db_path, payload, catalog=catalog, secret=secret)
+    except Exception:                                # noqa: BLE001 — counting never fails a request
+        return {"accepted": 0, "dropped": 0}
+
+
 # ── refusal wrapping ─────────────────────────────────────────────────────────
 
 def _refused(error: Exception, path: str) -> tuple:
@@ -925,6 +943,7 @@ def route_post(path, body, *, db_path, catalog_path, secret, headers,
                                         catalog=catalog,
                                         tracker=LIMITER)
             _note_client_usage(db_path, payload, key, headers)
+            _note_playback_beacon(db_path, payload, catalog, secret)
             # A finished title pays once, ever: 90% watched counts as finished
             # because the player may never report exactly 100%. The grant is a
             # server-side decision on numbers the server already holds — the
