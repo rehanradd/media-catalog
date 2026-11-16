@@ -7423,6 +7423,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     with get_db() as conn:
                         hit = resolved_cache.lookup_cache(conn, int(source_id),
                                                           want="watch")
+                        if hit is not None:
+                            # Fill-hit measurement (play-fast §2 (j)):
+                            # one aggregate counter bump per served press
+                            # (pool vs JIT vs cold — no link id, no user).
+                            # This connection is fresh per `with` block, so
+                            # a 250 ms busy_timeout here cannot stall the
+                            # 302 behind a merge's write lock; a dropped
+                            # count only understates the share, never the
+                            # answer.
+                            conn.execute("PRAGMA busy_timeout = 250")
+                            resolved_cache.note_serve_outcome(
+                                conn, route="stream",
+                                served_from=hit.get("source") or "jit")
                 except Exception:      # noqa: BLE001
                     hit = None         # a cache problem must never break playback
 
@@ -7484,6 +7497,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     import resolved_cache
                     with get_db() as conn:
                         resolved_cache.record_resolved_cache(conn, int(source_id), res)
+                        # Fill-hit measurement: this press just paid for a
+                        # full resolve (see the hit branch above).
+                        conn.execute("PRAGMA busy_timeout = 250")
+                        resolved_cache.note_serve_outcome(
+                            conn, route="stream", served_from="cold")
                 except Exception:      # noqa: BLE001
                     pass
 
@@ -7590,6 +7608,26 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     with get_db() as conn:
                         hit = resolved_cache.lookup_cache(
                             conn, int(source_id), want="download")
+                        if hit is not None and hit.get("kind") == "file":
+                            # Fill-hit measurement (play-fast §2 (j)): one
+                            # aggregate counter bump per served download
+                            # (pool vs JIT — no link id, no user). Counted
+                            # here, on the lookup connection itself: the
+                            # hit path's connection count is pinned at 3
+                            # (see HITPATH_CONNECTIONS.md), so this must
+                            # never open a fourth. The 250 ms busy_timeout
+                            # bounds the counter write behind a merge's
+                            # lock; a dropped count only understates the
+                            # share, never the answer. Its own try/except
+                            # so a counter fault can never turn a hit into
+                            # a miss.
+                            try:
+                                conn.execute("PRAGMA busy_timeout = 250")
+                                resolved_cache.note_serve_outcome(
+                                    conn, route="download",
+                                    served_from=hit.get("source") or "jit")
+                            except Exception:      # noqa: BLE001
+                                pass
                 except Exception:      # noqa: BLE001
                     hit = None         # a cache fault must not change the answer
                 if hit and hit.get("kind") == "file":
@@ -7633,6 +7671,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         with get_db() as conn:
                             resolved_cache.record_resolved_cache(
                                 conn, int(source_id), res)
+                            # Fill-hit measurement: this download just paid
+                            # for a full resolve (see the hit note above).
+                            conn.execute("PRAGMA busy_timeout = 250")
+                            resolved_cache.note_serve_outcome(
+                                conn, route="download", served_from="cold")
                     except Exception:      # noqa: BLE001
                         pass
                 elif not full:

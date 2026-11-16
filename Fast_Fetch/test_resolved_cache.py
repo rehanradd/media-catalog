@@ -23,6 +23,7 @@ import threading
 import time
 import unittest
 import urllib.error
+from unittest import mock
 
 os.environ.setdefault("RADD_SKIP_LIVE_ENRICH", "1")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -1491,6 +1492,76 @@ class TuningKnobsTests(unittest.TestCase):
                     resolved_cache._pool_recheck_seconds(), 6 * 3600.0)
         finally:
             tmp.cleanup()
+
+
+class TestFillServeStats(unittest.TestCase):
+    """The fill-hit measurement: share of 19:00-23:00 presses served from
+    fill-warmed rows. Aggregates only — one counter row per (day, hour,
+    route), no per-press and no per-user records."""
+
+    def test_note_increments_per_day_hour_route(self):
+        conn = fresh_conn()
+        resolved_cache.note_serve_outcome(conn, route="stream", served_from="pool")
+        resolved_cache.note_serve_outcome(conn, route="stream", served_from="pool")
+        resolved_cache.note_serve_outcome(conn, route="stream", served_from="cold")
+        resolved_cache.note_serve_outcome(conn, route="download", served_from="jit")
+        rows = conn.execute(
+            "SELECT day, hour, route, pool_hits, jit_hits, cold_resolves "
+            "FROM fill_serve_stats ORDER BY hour, route").fetchall()
+        today = time.strftime("%Y-%m-%d")
+        hour = int(time.strftime("%H"))
+        self.assertEqual(rows, [
+            (today, hour, "download", 0, 1, 0),
+            (today, hour, "stream", 2, 0, 1),
+        ])
+
+    def test_serve_share_pool_share_math(self):
+        """Counts aggregate per hour; the window sums 19..22 and excludes
+        hour 23. ``note_serve_outcome`` stamps local time, so the test
+        pins localtime to each hour it records."""
+        conn = fresh_conn()
+        day = "2026-11-16"
+
+        def note(hour, served_from):
+            when = time.struct_time((2026, 11, 16, hour, 30, 0, 0, 320, 0))
+            with mock.patch.object(resolved_cache.time, "localtime",
+                                   return_value=when):
+                resolved_cache.note_serve_outcome(
+                    conn, route="stream", served_from=served_from)
+
+        for hour, pool, jit, cold in ((19, 8, 1, 1), (20, 5, 2, 3),
+                                      (23, 7, 0, 0)):
+            for _ in range(pool):
+                note(hour, "pool")
+            for _ in range(jit):
+                note(hour, "jit")
+            for _ in range(cold):
+                note(hour, "cold")
+        share = resolved_cache.serve_share(conn, day=day, route="stream")
+        self.assertEqual(share["pool_hits"], 13)
+        self.assertEqual(share["jit_hits"], 3)
+        self.assertEqual(share["cold_resolves"], 4)
+        self.assertEqual(share["total"], 20)
+        self.assertAlmostEqual(share["pool_share"], 13 / 20)
+
+    def test_serve_share_empty_window_is_none_not_crash(self):
+        conn = fresh_conn()
+        share = resolved_cache.serve_share(conn, day="2026-11-16")
+        self.assertEqual(share["total"], 0)
+        self.assertIsNone(share["pool_share"])
+
+    def test_invalid_served_from_and_route_are_ignored(self):
+        """A bad label must never poison the counters or raise on the
+        serve path — the note call sits inside a live request. The table
+        is never even created for an ignored note."""
+        conn = fresh_conn()
+        resolved_cache.note_serve_outcome(conn, route="stream", served_from="bogus")
+        resolved_cache.note_serve_outcome(conn, route="bogus", served_from="pool")
+        resolved_cache.note_serve_outcome(conn, route="STREAM", served_from="POOL")
+        share = resolved_cache.serve_share(
+            conn, day=time.strftime("%Y-%m-%d"), hour_lo=0, hour_hi=23)
+        self.assertEqual(share["total"], 0)
+        self.assertIsNone(share["pool_share"])
 
 
 if __name__ == "__main__":

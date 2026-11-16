@@ -1,0 +1,33 @@
+[Unit]
+Description=Pre-peak fill: warm the top-200 titles' start + auto links before the evening peak (play-fast §2 (j))
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/radd-stream
+# The live catalog path, the same value radd-stream.service carries. The
+# worker reads it through RADD_DB_PATH at import (config.py freezes DB_PATH),
+# so it must be set here rather than left to a --db flag.
+Environment=RADD_DB_PATH=/home/ubuntu/radd-stream-data/merged_catalog_20261025.db
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+# One --fill run of the top 200 titles at 18:00 PKT: the start rung (480p)
+# plus the auto rung per title, pins first, hubcloud-family links last.
+# --workers 2 halves the wall time against the ~12-18 s a cold unwrap
+# costs; the worker's own load gate (--load-ceiling 4.0, --max-wait-seconds
+# 300) still pauses or yields the run while the box is busy, and the shared
+# flock yields it at once when a sweep or top-up is running. Nice=19 + idle
+# IO class, the same deprioritisation as the sweep unit. TimeoutStartSec
+# 7200: a full cold fill can legitimately run over an hour.
+ExecStart=/usr/bin/python3 -S /opt/radd-stream/Fast_Fetch/prefetch_worker.py --once --fill --limit 200 --workers 2 --load-ceiling 4.0 --max-wait-seconds 300
+Nice=19
+IOSchedulingClass=idle
+TimeoutStartSec=7200
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

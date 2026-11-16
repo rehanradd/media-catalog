@@ -1,0 +1,15 @@
+[Unit]
+Description=Pre-peak fill every evening at 18:00 PKT (play-fast §2 (j))
+
+[Timer]
+# 18:00, one hour before the 19:00-23:00 peak — late enough that the 5 h
+# FSLv2 URLs minted here still live at the peak's tail (~23:00), early
+# enough that a ~30 min fill finishes before the peak. Offset from the
+# 18:30 sweep (the shared flock serialises them if they ever meet) and
+# from the 20:01 autocrawl (the fill waits for the merge's lock).
+OnCalendar=*-*-* 18:00:00
+RandomizedDelaySec=300
+Persistent=true
+
+[Install]
+WantedBy=timers.target

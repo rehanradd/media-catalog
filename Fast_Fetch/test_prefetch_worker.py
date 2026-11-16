@@ -26,6 +26,7 @@ fixture (or a scratch temp file for the CLI test) with a stubbed resolver.
 
 from __future__ import annotations
 
+import argparse
 import os
 import sqlite3
 import subprocess
@@ -42,6 +43,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fast_fetch  # noqa: E402
 import prefetch_worker  # noqa: E402
 import resolved_cache  # noqa: E402
+import tiers  # noqa: E402
 
 
 #: The only tables the worker's queries touch, with the columns `tiers`
@@ -231,6 +233,203 @@ class TestSweepWarmsCache(unittest.TestCase):
         self.assertEqual(calls, [])
 
 
+def _add_post(conn, post_id, title="Film"):
+    conn.execute("INSERT INTO posts VALUES (?, ?, ?, 0, ?)",
+                 (post_id, title, title, "film-%d" % post_id))
+    conn.commit()
+
+
+def _add_release(conn, post_id, release_id, source_id, quality,
+                 kind="direct", service="pixeldrain", source_url=None):
+    conn.execute(
+        "INSERT INTO releases VALUES (?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL)",
+        (release_id, post_id, quality))
+    conn.execute(
+        """INSERT INTO download_sources
+           (id, release_id, kind, status, source_url, service, source_name,
+            http_status, is_resumable, file_size_bytes, mime_type)
+           VALUES (?, ?, ?, 'active', ?, ?, ?, 200, 1, 2000000000, 'video/mp4')""",
+        (source_id, release_id, kind,
+         source_url or "https://pixeldrain.com/api/file/TEST%d" % source_id,
+         service, service.capitalize()))
+    conn.commit()
+
+
+class TestFillLinks(unittest.TestCase):
+    def test_start_plus_auto_rungs(self):
+        """A fill warms the rung the player presses first (480p) AND the
+        auto rung (1080p) — warming the Tier-1 winner alone would leave
+        the 480p first press cold."""
+        conn = _make_conn()
+        _add_post(conn, 1, "Multi Band")
+        _add_release(conn, 1, 10, 100, "480p")
+        _add_release(conn, 1, 11, 101, "720p")
+        _add_release(conn, 1, 12, 102, "1080p")
+        self.assertEqual(
+            prefetch_worker.fill_links_for_post(conn, tiers, 1), [100, 102])
+
+    def test_single_band_dedupes_to_one_link(self):
+        """No 480p rung: the start rung falls back to auto, so one link."""
+        conn = _make_conn()
+        _add_post(conn, 1)
+        _add_release(conn, 1, 10, 100, "1080p")
+        self.assertEqual(
+            prefetch_worker.fill_links_for_post(conn, tiers, 1), [100])
+
+    def test_download_only_warms_nothing(self):
+        conn = _make_conn()
+        _add_post(conn, 1)
+        _add_release(conn, 1, 10, 100, "1080p", kind="download")
+        self.assertEqual(
+            prefetch_worker.fill_links_for_post(conn, tiers, 1), [])
+
+
+class TestFillSweep(unittest.TestCase):
+    def _run(self, conn, calls, **over):
+        kwargs = dict(limit=10, min_fresh=3600.0, load_ceiling=4.0,
+                      fail_backoff=900.0, dry_run=False, verbose=False,
+                      max_wait_seconds=300.0, _failure_backoff={},
+                      mode="fill", pins=())
+        kwargs.update(over)
+        with mock.patch.object(fast_fetch, "get_db",
+                               side_effect=lambda: _yield_conn(conn)), \
+             mock.patch.object(fast_fetch, "resolve_live_source",
+                               side_effect=_fake_resolve_factory(calls)), \
+             mock.patch.object(prefetch_worker, "current_load",
+                               return_value=0.1):
+            return prefetch_worker.prefetch_once(**kwargs)
+
+    def test_pins_go_first(self):
+        """Pins resolve in pin order, not priority order."""
+        conn = _make_conn()
+        _add_post(conn, 1, "Low")
+        _add_release(conn, 1, 10, 100, "1080p")
+        _add_post(conn, 2, "High")
+        _add_release(conn, 2, 20, 200, "1080p")
+        _add_release(conn, 2, 21, 201, "1080p")
+        calls: list = []
+        stats = self._run(conn, calls, pins=(1, 2), limit=2)
+        self.assertEqual(stats["pins"], 2)
+        self.assertEqual([c[0] for c in calls], [100, 200])
+
+    def test_flagged_pin_is_dropped(self):
+        """A pin is an operator's wish, never a bypass of the adult law."""
+        conn = _make_conn()
+        _add_public_post(conn)
+        _add_flagged_post(conn)
+        calls: list = []
+        stats = self._run(conn, calls, pins=(2, 1), limit=2)
+        self.assertEqual(stats["pins"], 1)
+        self.assertEqual([c[0] for c in calls], [100])
+
+    def test_hubcloud_family_resolves_last(self):
+        """A hubcloud-family link resolves last even when its title has the
+        higher priority — its FSL/FSLv2 clock must start as late as
+        possible."""
+        conn = _make_conn()
+        _add_post(conn, 1, "Hub")
+        _add_release(conn, 1, 10, 100, "1080p", service="hubcloud",
+                     source_url="https://hubcloud.example/file/1")
+        _add_release(conn, 1, 11, 101, "1080p", service="hubcloud",
+                     source_url="https://hubcloud.example/file/2")
+        _add_post(conn, 2, "Pixel")
+        _add_release(conn, 2, 20, 200, "1080p")
+        calls: list = []
+        self._run(conn, calls, limit=2)
+        self.assertEqual([c[0] for c in calls], [200, 100])
+
+    def test_fill_warmup_cap_bounds_links(self):
+        """The cap slices links, start rung first: a cap of 1 keeps the
+        480p link and drops the auto rung."""
+        conn = _make_conn()
+        _add_post(conn, 1, "Multi")
+        _add_release(conn, 1, 10, 100, "480p")
+        _add_release(conn, 1, 11, 101, "1080p")
+        calls: list = []
+        stats = self._run(conn, calls, limit=1, warmup_count=1)
+        self.assertEqual(stats["links"], 1)
+        self.assertEqual([c[0] for c in calls], [100])
+
+
+class TestParsePins(unittest.TestCase):
+    def test_caps_at_twenty_and_dedupes(self):
+        pins = prefetch_worker.parse_pins(",".join(str(i) for i in range(1, 23)))
+        self.assertEqual(len(pins), 20)
+        self.assertEqual(pins[0], 1)
+        self.assertEqual(prefetch_worker.parse_pins("5, 5, 7"), (5, 7))
+
+    def test_bad_entries_dropped(self):
+        self.assertEqual(prefetch_worker.parse_pins("12, nope, -4, 0, 9"),
+                         (12, 9))
+        self.assertEqual(prefetch_worker.parse_pins(""), ())
+        self.assertEqual(prefetch_worker.parse_pins(None), ())
+
+
+class TestPrefetchLock(unittest.TestCase):
+    def test_second_acquire_fails_until_released(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "prefetch.lock")
+            first = prefetch_worker._try_flock(path)
+            self.assertIsNotNone(first)
+            self.assertIsNone(prefetch_worker._try_flock(path))
+            first.close()
+            third = prefetch_worker._try_flock(path)
+            self.assertIsNotNone(third)
+            third.close()
+
+    def test_autocrawl_wait_returns_false_when_held(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "autocrawl.lock")
+            held = prefetch_worker._try_flock(path)
+            self.assertIsNotNone(held)
+            try:
+                with mock.patch.object(prefetch_worker, "LOAD_POLL_SECONDS", 0.01):
+                    self.assertFalse(
+                        prefetch_worker.wait_for_autocrawl_lock(path, 0.05))
+            finally:
+                held.close()
+            self.assertTrue(prefetch_worker.wait_for_autocrawl_lock(path, 0.05))
+
+    def test_guarded_sweep_yields_when_locked(self):
+        """A held family lock yields the run without resolving anything;
+        once free, the same guarded call runs the sweep."""
+        conn = _make_conn()
+        _add_public_post(conn)
+        calls: list = []
+        with tempfile.TemporaryDirectory() as tmp:
+            lock = str(Path(tmp) / "prefetch.lock")
+            held = prefetch_worker._try_flock(lock)
+            self.assertIsNotNone(held)
+            args = argparse.Namespace(
+                dry_run=False, lock_path=lock,
+                autocrawl_lock_path=str(Path(tmp) / "nope.lock"),
+                max_autocrawl_wait_seconds=300.0, min_fresh=3600.0,
+                load_ceiling=4.0, fail_backoff=900.0, verbose=False,
+                max_wait_seconds=0.05)
+            try:
+                with mock.patch.object(fast_fetch, "resolve_live_source",
+                                       side_effect=_fake_resolve_factory(calls)):
+                    stats = prefetch_worker._run_one_sweep(
+                        args=args, limit=1, workers=1, warmup_count=None,
+                        failure_backoff={}, pins=(), fill=False)
+                self.assertIsNone(stats, "a held lock must yield the run")
+                self.assertEqual(calls, [])
+            finally:
+                held.close()
+            with mock.patch.object(fast_fetch, "get_db",
+                                   side_effect=lambda: _yield_conn(conn)), \
+                 mock.patch.object(fast_fetch, "resolve_live_source",
+                                   side_effect=_fake_resolve_factory(calls)), \
+                 mock.patch.object(prefetch_worker, "current_load",
+                                   return_value=0.1):
+                stats = prefetch_worker._run_one_sweep(
+                    args=args, limit=1, workers=1, warmup_count=None,
+                    failure_backoff={}, pins=(), fill=False)
+            self.assertIsNotNone(stats)
+            self.assertEqual(stats["resolved"], 1)
+            self.assertEqual([c[0] for c in calls], [100])
+
+
 class TestAdultExclusion(unittest.TestCase):
     def test_flagged_and_twin_posts_are_never_selected(self):
         """Adult law, at the query: a flagged post is out, and so is every
@@ -353,6 +552,30 @@ class TestRunModeUnits(unittest.TestCase):
             self.assertNotIn(f"{hour}:00", src,
                              "must not collide with the autocrawl slots")
 
+    def test_fill_units(self):
+        """Fill at 18:00 (top 200, workers 2) and top-up at 21:00 (top 50,
+        waits up to 45 min for the autocrawl merge). The sweep units stay
+        untouched — the fill and the sweep serialise through the shared
+        flock, they never merge into one unit."""
+        fill_svc = self._read("radd-prefetch-fill.service")
+        self.assertIn("--once --fill --limit 200 --workers 2", fill_svc)
+        self.assertIn("--load-ceiling 4.0", fill_svc)
+        self.assertIn("TimeoutStartSec=7200", fill_svc)
+        self.assertIn("Nice=19", fill_svc)
+        self.assertIn("IOSchedulingClass=idle", fill_svc)
+        self.assertIn(
+            "RADD_DB_PATH=/home/ubuntu/radd-stream-data/merged_catalog_20261025.db",
+            fill_svc)
+        fill_timer = self._read("radd-prefetch-fill.timer")
+        self.assertIn("OnCalendar=*-*-* 18:00:00", fill_timer)
+        self.assertIn("Persistent=true", fill_timer)
+        topup_svc = self._read("radd-prefetch-topup.service")
+        self.assertIn("--once --topup --workers 2", topup_svc)
+        self.assertIn("--max-autocrawl-wait-seconds 2700", topup_svc)
+        topup_timer = self._read("radd-prefetch-topup.timer")
+        self.assertIn("OnCalendar=*-*-* 21:00:00", topup_timer)
+        self.assertIn("Persistent=true", topup_timer)
+
 
 class TestCliDryRun(unittest.TestCase):
     def test_dry_run_plans_without_banking_or_network(self):
@@ -372,6 +595,31 @@ class TestCliDryRun(unittest.TestCase):
                 capture_output=True, text=True, timeout=120)
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
             self.assertIn("would resolve source #100", proc.stdout)
+            conn = sqlite3.connect(db)
+            n = conn.execute("SELECT COUNT(*) FROM resolved_cache").fetchone()[0]
+            conn.close()
+            self.assertEqual(n, 0, "a dry run must bank nothing")
+
+    def test_fill_dry_run_plans_both_rungs(self):
+        """--fill --dry-run plans the start rung AND the auto rung, banks
+        nothing, and never touches the network."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "scratch.db"
+            conn = sqlite3.connect(db)
+            conn.executescript(_SCHEMA)
+            conn.commit()
+            _add_post(conn, 5, "Multi Band")
+            _add_release(conn, 5, 50, 500, "480p")
+            _add_release(conn, 5, 51, 501, "1080p")
+            conn.close()
+            script = Path(__file__).resolve().parent / "prefetch_worker.py"
+            proc = subprocess.run(
+                [sys.executable, "-S", str(script), "--once", "--fill",
+                 "--dry-run", "--db", str(db)],
+                capture_output=True, text=True, timeout=120)
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertIn("would resolve source #500", proc.stdout)
+            self.assertIn("would resolve source #501", proc.stdout)
             conn = sqlite3.connect(db)
             n = conn.execute("SELECT COUNT(*) FROM resolved_cache").fetchone()[0]
             conn.close()

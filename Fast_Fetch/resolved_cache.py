@@ -60,6 +60,8 @@ __all__ = [
     "lookup_cache",
     "record_resolved_cache",
     "note_failure",
+    "note_serve_outcome",
+    "serve_share",
     "REVERIFY_MARGIN_SECONDS",
     "MAX_FAIL_COUNT",
 ]
@@ -395,6 +397,99 @@ def record_resolved_cache(conn: sqlite3.Connection, link_id: int,
     return {"link_id": int(link_id), "url": url, "category": category,
             "kind": kind, "expires_at": expires_at, "source": source,
             "reverify_after": reverify_after}
+
+
+#: Fill-hit measurement (play-fast §2 (j), 2026-11-16): one aggregate row
+#: per (day, hour, route) counting how presses were served — from a
+#: pool-banked row, from a JIT-banked row, or from a cold resolve. No link
+#: id, no user, no URL, no identity: aggregates only, the same shape as
+#: `usage_stats`. The pre-peak fill banks with source='pool', and it is the
+#: only pool run in the evening (sweeps 00:30/06:30/12:30, fill 18:00,
+#: top-up 21:00), so the 19:00–23:00 pool share IS the fill's measured
+#: effect — with one documented over-count: a 12:30 sweep row on a
+#: permanent direct file (24 h cap) can still serve at 19:00. In practice
+#: the evening pool is FSL/FSLv2/temporary rows, dead long before then.
+_FILL_SERVE_DDL = (
+    "CREATE TABLE IF NOT EXISTS fill_serve_stats ("
+    " day TEXT NOT NULL, hour INTEGER NOT NULL, route TEXT NOT NULL,"
+    " pool_hits INTEGER NOT NULL DEFAULT 0,"
+    " jit_hits INTEGER NOT NULL DEFAULT 0,"
+    " cold_resolves INTEGER NOT NULL DEFAULT 0,"
+    " PRIMARY KEY (day, hour, route))"
+)
+
+_SERVE_COLUMNS = {"pool": "pool_hits", "jit": "jit_hits", "cold": "cold_resolves"}
+
+
+def _ensure_fill_serve_stats(conn: sqlite3.Connection) -> None:
+    try:
+        conn.execute("SELECT 1 FROM fill_serve_stats LIMIT 0")
+    except sqlite3.Error:
+        conn.execute(_FILL_SERVE_DDL)
+
+
+def note_serve_outcome(conn: sqlite3.Connection, *, route: str,
+                       served_from: str) -> None:
+    """Count one served press by how it was served. Never raises.
+
+    ``route`` is 'stream' or 'download'; ``served_from`` is 'pool' (a
+    pool-banked row answered it), 'jit' (a JIT-banked row answered it) or
+    'cold' (the request path just paid for a full resolve). Anything else
+    is ignored, not counted. The caller owns the transaction (same
+    contract as `record_resolved_cache`); a failure here must never change
+    the answer the user gets, so every error is swallowed. The write is
+    one upsert per serve on a connection the caller already holds — and
+    the caller sets a short busy_timeout first (see viewer.py): a counter
+    must never make a 302 wait on a merge's write lock.
+    """
+    column = _SERVE_COLUMNS.get(served_from)
+    if column is None or route not in ("stream", "download"):
+        return
+    try:
+        _ensure_fill_serve_stats(conn)
+        now = time.localtime()
+        day = time.strftime("%Y-%m-%d", now)
+        conn.execute(
+            "INSERT INTO fill_serve_stats "
+            "(day, hour, route, pool_hits, jit_hits, cold_resolves) "
+            "VALUES (?, ?, ?, 0, 0, 0) "
+            "ON CONFLICT(day, hour, route) DO NOTHING",
+            (day, now.tm_hour, route))
+        conn.execute(
+            "UPDATE fill_serve_stats SET %s = %s + 1 "
+            "WHERE day = ? AND hour = ? AND route = ?" % (column, column),
+            (day, now.tm_hour, route))
+    except Exception:      # noqa: BLE001 — a counter must never break playback
+        return
+
+
+def serve_share(conn: sqlite3.Connection, *, day: str, hour_lo: int = 19,
+                hour_hi: int = 22, route: str | None = None) -> dict:
+    """Pool-served share over one day's hour window (the fill-hit number).
+
+    Returns {"pool_hits", "jit_hits", "cold_resolves", "total",
+    "pool_share"} for hours hour_lo..hour_hi inclusive (local time — the
+    box runs PKT, so 19..22 IS the evening peak). `route` narrows to
+    'stream' or 'download'; None sums both. `pool_share` is None when
+    nothing was served in the window. Read-only; never raises.
+    """
+    try:
+        _ensure_fill_serve_stats(conn)
+        sql = ("SELECT COALESCE(SUM(pool_hits), 0), "
+               "COALESCE(SUM(jit_hits), 0), COALESCE(SUM(cold_resolves), 0) "
+               "FROM fill_serve_stats WHERE day = ? AND hour >= ? AND hour <= ?")
+        params: list = [day, int(hour_lo), int(hour_hi)]
+        if route is not None:
+            sql += " AND route = ?"
+            params.append(route)
+        pool, jit, cold = conn.execute(sql, params).fetchone()
+        total = int(pool) + int(jit) + int(cold)
+        return {"pool_hits": int(pool), "jit_hits": int(jit),
+                "cold_resolves": int(cold), "total": total,
+                "pool_share": (int(pool) / total) if total else None}
+    except Exception:      # noqa: BLE001 — a read helper answers empty, never raises
+        return {"pool_hits": 0, "jit_hits": 0, "cold_resolves": 0,
+                "total": 0, "pool_share": None}
 
 
 def note_failure(conn: sqlite3.Connection, link_id: int) -> int:

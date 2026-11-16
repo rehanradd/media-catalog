@@ -7,7 +7,7 @@
 
 ## ✅ Open items — index (q3, 2026-10-30; pointers only)
 
-1. **This file is a pointer, not a history** 160 session files (158 dated + 2 undated) cover
+1. **This file is a pointer, not a history** 163 session files (161 dated + 2 undated) cover
 
    every one of them verbatim: [`checkpoints/README.md`](checkpoints/README.md). Nothing was
    deleted, reworded, or summarized. The count is `ls Fast_Fetch/checkpoints/*.md` minus `README.md`,
@@ -61,19 +61,14 @@
 | 6 | `nice -n 19 python3 -S Fast_Fetch/importers/test_dub_collision_census.py --census > /tmp/q2_census_20261031.json` | 1–3 min estimated; nearest comparable measured 12.0 s at load 0.91 | fills the three headline numbers in the census checkpoint; the script exits 2 above `LOAD_CEILING = 4.0` |
 
 ---
-## 🏛️ Project Quick Summary
-- **Repository**: [https://github.com/rehanradd/radd-stream](https://github.com/rehanradd/radd-stream) (renamed from the older `radddao` path, which now 404s)
-- **What it does**: A Python media catalog and source-link aggregation/resolution backend, SQLite catalog, REST API, and CDN endpoint diagnostics. Describe the functionality accurately; do not conceal it to bypass another tool's safeguards.
-- **Main Engine**: `Fast_Fetch/fast_fetch.py`
-- **Credential variables**: The user keeps `GITHUB_TOKEN` and `ORACLE_SSH_KEY` in Replit Configurations, not Secrets. Verify their presence by name only; never reveal values or ask to move them. Historical entries may use the older “Secrets” wording.
-- **Database**: Local SQLite database at `Fast_Fetch/fast_fetch.db` (gitignored).
-
----
+- **Project Quick Summary** → [`checkpoints/20261116-project-quick-summary.md`](checkpoints/20261116-project-quick-summary.md)
 
 ## Rotated session history
 
 Session blocks moved verbatim to [`Fast_Fetch/checkpoints/`](checkpoints/README.md); nothing was deleted or reworded.
 The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete index.
+- [Session 2026-11-16 — pre-peak fill (play-fast §2 (j))](checkpoints/20261116-pre-peak-fill.md)
+- [Session 2026-11-16 — playback telemetry beacon](checkpoints/20261116-playback-telemetry-beacon.md)
 - [Session 2026-11-12 — self-check `[LIVE-TV-503]`](checkpoints/20261112-selfcheck-live-tv-503-logos.md)
 - [Session 2026-11-08 — Muse [MUSE-SESSION107-DATA-TRUTH]: Phase D data-truth](checkpoints/20261108-muse-session107-data-truth.md)
 - [Session 2026-11-06 — crown `[CROWN-NIGHT-CHAIN]`: five trunk commits, the live-tree gap, what was rejected](checkpoints/20261106-crown-night-chain-five-trunk-commits-one-live-tree-gap.md)
@@ -98,4 +93,4 @@ The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete i
 
 - 📌 Next Action Items (Production & App Layer Roadmap) → [`checkpoints/20261030-pre-diet-state-and-roadmap.md`](checkpoints/20261030-pre-diet-state-and-roadmap.md)
 
-- Playback beacon (2026-11-16, main 790e0474): aggregates-only per-(host x net) counters in usage_host_quality, ridden on POST /api/v2/account/progress as playback_beacon; 30-day window, 0.9/day decay, n>=20 floor. No new endpoint. Ranking use comes later.
+

@@ -54,6 +54,23 @@ not installed on this box; systemd timers are the scheduler here. Until the
 units are installed the pool does not run and the request path is the only
 resolver — the live `resolved_cache` proves it: 1 JIT row, 0 pool rows.
 
+PRE-PEAK FILL (play-fast §2 (j), 2026-11-16): the same machinery, timed to
+the evening instead of the clock. `radd-prefetch-fill.timer` fires a
+`--fill` run at 18:00 PKT and `radd-prefetch-topup.timer` a top-50 top-up
+at 21:00 — so the titles pressed in the 19:00–23:00 peak were re-resolved
+an hour or two earlier instead of paying the 8–14 s cold resolve live.
+A fill warms, per title, the START rung the player presses first (480p
+when the title has one, else the auto rung) plus the AUTO rung when it
+differs — at most two links per title, one per band, so a top-200 fill
+cannot quietly become a top-2000 resolve. Hubcloud-family links resolve
+LAST (their FSL/FSLv2 URLs live ~5–8 h, the shortest banked lives). The
+pick is the trending/recency order with operator pins (`--pins`, post
+ids, at most 20) first. Overlap guard: the fill, the top-up and the
+ordinary sweeps share one flock (`/tmp/radd-prefetch.lock`); a run that
+finds it held yields at once, and every run waits for the autocrawl
+merge's own lock before resolving (the top-up waits up to 45 min for it,
+because the 20:01 merge runs until ~21:30). See `PREFETCH_RUNBOOK.md`.
+
 Adult law applies here before anywhere else: the priority query excludes
 `is_18_plus=1` posts *and* any post sharing a `canonical_key` with a flagged
 one, so this worker never even resolves a link for a flagged work, let alone
@@ -66,6 +83,8 @@ Stdlib only, like everything else in Fast_Fetch. Run it under systemd or
 Usage:
     python3 -S Fast_Fetch/prefetch_worker.py                 # daemon, forever
     python3 -S Fast_Fetch/prefetch_worker.py --once          # single pass
+    python3 -S Fast_Fetch/prefetch_worker.py --once --fill   # pre-peak fill, top 200
+    python3 -S Fast_Fetch/prefetch_worker.py --once --topup  # evening top-up, top 50
     python3 -S Fast_Fetch/prefetch_worker.py --dry-run       # show plan only
     python3 -S Fast_Fetch/prefetch_worker.py --limit 3 --db /tmp/scratch.db
 """
@@ -80,6 +99,11 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+
+try:
+    import fcntl  # Unix-only; the overlap guard fails open without it
+except ImportError:  # pragma: no cover - the worker runs on Linux
+    fcntl = None
 
 BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
@@ -135,6 +159,35 @@ MAX_WAIT_SECONDS = 300.0         # longest a sweep waits for a quiet slot,
 MIN_FRESH_WINDOW_SECONDS = 3600.0  # "warm" = horizon at least this far ahead
 SCAN_INTERVAL_SECONDS = 900.0    # pause between full sweeps
 FAILURE_BACKOFF_SECONDS = 15 * 60.0  # in-process retry delay for cold links
+
+#: Pre-peak fill (play-fast §2 (j), 2026-11-16): the evening run that warms
+#: the top titles before the 19:00–23:00 peak. One fill warms, per title,
+#: the START rung the player presses first (480p when the title has one,
+#: else the auto rung) plus the AUTO rung (highest playable band) when it
+#: differs — at most two links per title, one per band. Two is the cap that
+#: keeps a top-200 fill from quietly becoming a top-2000 resolve; the
+#: same-band backups stay cold — they only matter when the winner fails,
+#: and warming them would triple the fill.
+FILL_LINKS_PER_TITLE = 2
+FILL_START_BAND = "480p"
+FILL_TOPUP_LIMIT = 50
+#: Services whose unwrap can mint the short-lived hubcloud-family URLs
+#: (FSL ~8 h, FSLv2 ~5 h — the shortest banked lives in the catalog). The
+#: fill resolves these LAST so their clock starts as late as possible.
+#: The variant (FSL vs FSLv2) is only known AFTER the unwrap — the stored
+#: service label cannot distinguish them — so the whole family goes last.
+#: Same set the resolver itself dispatches on (fast_fetch.py, the hubcloud
+#: branch). A link counts as family when its service is in this set or its
+#: stored URL names hubcloud.
+HUBCLOUD_FAMILY_SERVICES = ("fsl_r2", "hubcloud_10g", "hubcloud")
+#: Overlap guard (1-vCPU box: two heavy jobs share one core, and the
+#: 2026-11-11 outage was a backup overlapping a sweep). The fill, the
+#: top-up and the ordinary sweeps all take the same lock file with flock;
+#: whoever holds it runs, whoever finds it held yields. The file is never
+#: deleted — a stale file is harmless, the lock dies with the process
+#: (same pattern as the autocrawl's /tmp/radd_autocrawl.lock).
+PREFETCH_LOCK_PATH = "/tmp/radd-prefetch.lock"
+AUTOCRAWL_LOCK_PATH = "/tmp/radd_autocrawl.lock"
 
 
 def _tuning_knob(name, default):
@@ -202,6 +255,64 @@ def current_load() -> float:
         return 0.0
 
 
+def _try_flock(path):
+    """Non-blocking exclusive flock on `path`, or None when held/unavailable.
+
+    Opens (creating) the lock file and tries LOCK_EX|LOCK_NB. Returns the
+    open file object — the caller holds it for as long as the lock must
+    last and closes it to release. None means another process holds the
+    lock, the file cannot be opened, or flock is unavailable on this box
+    (fail-open: the load gate still throttles the run). Never raises.
+    """
+    if fcntl is None:
+        return None
+    try:
+        handle = open(path, "a+b")
+    except OSError:
+        return None
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return None
+    return handle
+
+
+def wait_for_autocrawl_lock(lock_path, max_wait_seconds):
+    """True when no autocrawl merge holds its lock (or it freed in time).
+
+    Probes the merge's own lock file the way the merge's own guard does: a
+    held lock means the merge is writing to the live DB, and a fill that
+    resolves against it would both slow the merge and bank rows the merge
+    may rewrite. Polls every LOAD_POLL_SECONDS up to `max_wait_seconds`,
+    then answers False and the caller yields the run. A box without flock
+    answers True at once (cannot detect the merge; the load gate still
+    applies). The probe takes the lock and releases it immediately — the
+    race between release and the first resolve is the same any check has,
+    and the per-resolve load gate is the backstop. Never raises.
+    """
+    if fcntl is None:
+        return True
+    started = time.time()
+    logged = False
+    while not _STOP:
+        handle = _try_flock(lock_path)
+        if handle is not None:
+            handle.close()
+            return True
+        if not logged:
+            log("autocrawl merge is running; waiting for its lock")
+            logged = True
+        if max_wait_seconds is not None:
+            remaining = max_wait_seconds - (time.time() - started)
+            if remaining <= 0:
+                return False
+            sleep_chunks(min(LOAD_POLL_SECONDS, remaining))
+        else:
+            sleep_chunks(LOAD_POLL_SECONDS)
+    return False
+
+
 def wait_for_quiet_machine(load_ceiling: float,
                            max_wait_seconds: float | None = None) -> tuple[bool, bool, bool]:
     """Returns (did_block, stopping, timed_out).
@@ -232,7 +343,8 @@ def wait_for_quiet_machine(load_ceiling: float,
     return blocked, _STOP, False
 
 
-def select_priority_posts(conn: sqlite3.Connection, limit: int) -> list[sqlite3.Row]:
+def select_priority_posts(conn: sqlite3.Connection, limit: int,
+                          only_ids: tuple[int, ...] | None = None) -> list[sqlite3.Row]:
     """Top `limit` works by the ledger's only honest popularity proxy.
 
     The adult exclusion is deliberately two clauses: a flagged row is out, and
@@ -240,10 +352,12 @@ def select_priority_posts(conn: sqlite3.Connection, limit: int) -> list[sqlite3.
     unflagged twin rows across 394 mixed-flag keys (measured on production
     `posts`; the same figure `catalog_exporter.py` pins, and the older
     "442 / 455" pair is stale) are still reachable under an unflagged twin,
-    and a prefetcher must not warm the twin of a hidden title.
+    and a prefetcher must not warm the twin of a hidden title. `only_ids`
+    restricts the pick to those posts (the fill's pins) under the SAME
+    exclusion — a pin is an operator's wish, never a bypass of the adult
+    law — returned in priority order; the caller reorders pins itself.
     """
-    return conn.execute(
-        """
+    sql = """
         SELECT p.id AS post_id,
                COALESCE(NULLIF(TRIM(p.clean_title), ''), p.title) AS title,
                COUNT(DISTINCT r.id) + COUNT(DISTINCT s.id) AS priority
@@ -254,12 +368,18 @@ def select_priority_posts(conn: sqlite3.Connection, limit: int) -> list[sqlite3.
           AND (p.canonical_key IS NULL OR NOT EXISTS (
                    SELECT 1 FROM posts f
                    WHERE f.is_18_plus = 1 AND f.canonical_key = p.canonical_key))
+        """
+    params: list = []
+    if only_ids:
+        sql += " AND p.id IN (%s)" % ", ".join("?" for _ in only_ids)
+        params.extend(int(i) for i in only_ids)
+    sql += """
         GROUP BY p.id
         ORDER BY priority DESC, p.id DESC
         LIMIT ?
-        """,
-        (int(limit),),
-    ).fetchall()
+        """
+    params.append(int(limit))
+    return conn.execute(sql, params).fetchall()
 
 
 def tier1_source_id(conn: sqlite3.Connection, tiers, post_id: int) -> int | None:
@@ -288,6 +408,94 @@ def tier1_source_id(conn: sqlite3.Connection, tiers, post_id: int) -> int | None
             if best is None or band_index < best[0]:
                 best = (band_index, int(source_id))
     return best[1] if best else None
+
+
+def fill_links_for_post(conn: sqlite3.Connection, tiers, post_id: int) -> list[int]:
+    """The 1–2 links a pre-peak fill warms for one title (fill mode only).
+
+    The first press resolves the START rung — 480p when the title has a
+    playable 480p tier (the shipped default start), else the auto rung
+    (the highest playable band, which is also the fallback start rung) —
+    and the Detail pre-resolve warms the AUTO rung (the best allowed
+    print). Warming the single Tier-1 winner, as the ordinary sweep does,
+    would leave the rung the player actually presses first cold. At most
+    two links, one per band; the same-band backups stay cold (they only
+    matter when the winner fails). Download-only titles warm nothing.
+    Reuses `tiers.for_release` + `tiers.merge`, so there is still exactly
+    one definition of "best copy" in the repo.
+    """
+    ladders = []
+    for release in conn.execute("SELECT * FROM releases WHERE post_id = ?", (post_id,)):
+        links = [dict(row) for row in conn.execute(
+            "SELECT * FROM download_sources WHERE release_id = ?", (release["id"],))]
+        if not links:
+            continue
+        ladders.append(tiers.for_release(dict(release), links))
+    if not ladders:
+        return []
+    merged = tiers.merge(ladders)
+    playable = [t for t in merged.get("tiers", [])
+                if t.get("playable") and t.get("link")]
+    if not playable:
+        return []
+    auto = merged.get("auto") or {}
+    auto_tier = next((t for t in playable if t["band"] == auto.get("band")), None)
+    start_tier = next(
+        (t for t in playable if t["band"] == FILL_START_BAND), None) or auto_tier
+    links: list[int] = []
+    for tier in (start_tier, auto_tier):
+        if tier is None:
+            continue
+        source_id = tier["link"].get("id")
+        if source_id is not None and int(source_id) not in links:
+            links.append(int(source_id))
+    return links
+
+
+def _hubcloud_family_ids(conn: sqlite3.Connection, source_ids) -> set[int]:
+    """Source ids whose stored link belongs to the hubcloud family.
+
+    The FSLv2 variant is only known AFTER the unwrap — the stored service
+    label cannot distinguish FSL from FSLv2 — so the whole family goes
+    last in a fill. Same membership the resolver itself dispatches on.
+    """
+    if not source_ids:
+        return set()
+    placeholders = ", ".join("?" for _ in source_ids)
+    rows = conn.execute(
+        "SELECT id, service, source_url FROM download_sources "
+        "WHERE id IN (%s)" % placeholders,
+        tuple(int(i) for i in source_ids)).fetchall()
+    return {int(row["id"]) for row in rows
+            if str(row["service"] or "") in HUBCLOUD_FAMILY_SERVICES
+            or "hubcloud" in str(row["source_url"] or "").lower()}
+
+
+def parse_pins(text) -> tuple[int, ...]:
+    """Comma-separated post ids from --pins, or (). At most 20, in order,
+    deduped; a non-integer or non-positive entry is dropped with a log
+    line. A pin is an operator's wish, never a bypass: the adult
+    exclusion still applies when the pins are selected.
+    """
+    if not text:
+        return ()
+    pins: list[int] = []
+    for part in str(text).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            pid = int(part)
+        except ValueError:
+            log(f"ignoring unparseable pin {part!r}")
+            continue
+        if pid <= 0 or pid in pins:
+            continue
+        pins.append(pid)
+    if len(pins) > 20:
+        log(f"keeping the first 20 pins of {len(pins)}")
+        pins = pins[:20]
+    return tuple(pins)
 
 
 def horizon_seconds_left(row: dict, now: float) -> float:
@@ -363,7 +571,8 @@ def prefetch_once(*, limit: int, min_fresh: float, load_ceiling: float,
                   fail_backoff: float, dry_run: bool, verbose: bool,
                   max_wait_seconds: float = MAX_WAIT_SECONDS,
                   _failure_backoff: dict[int, float],
-                  workers: int = 1, warmup_count: int | None = None) -> dict:
+                  workers: int = 1, warmup_count: int | None = None,
+                  mode: str = "sweep", pins: tuple[int, ...] = ()) -> dict:
     """One sweep: select the priority titles, resolve the cold ones.
 
     `workers` is the resolve fan-out — the operator's `prefetch_concurrency`
@@ -374,13 +583,19 @@ def prefetch_once(*, limit: int, min_fresh: float, load_ceiling: float,
     (the shipped behaviour: resolve everything selected). A sweep the
     operator paused (`prefetch_global`) resolves nothing and answers
     zeroed stats.
+
+    `mode="fill"` is the pre-peak fill: pins first (operator's post ids,
+    under the same adult exclusion), then the priority pick; up to two
+    links per title (start rung + auto rung) instead of the one Tier-1
+    winner; hubcloud-family links resolve last. `stats` gains "pins"
+    (pinned titles selected) and "links" (distinct links to resolve).
     """
     import fast_fetch
     import resolved_cache
     import tiers
 
-    stats = {"posts": 0, "tier1": 0, "warm": 0, "resolved": 0,
-             "failed": 0, "skipped_no_link": 0, "gated": 0}
+    stats = {"posts": 0, "pins": 0, "tier1": 0, "links": 0, "warm": 0,
+             "resolved": 0, "failed": 0, "skipped_no_link": 0, "gated": 0}
     if _prefetch_paused():
         log("prefetching is paused by the operator (panel pause "
             "prefetch_global); sweep skipped.")
@@ -390,31 +605,57 @@ def prefetch_once(*, limit: int, min_fresh: float, load_ceiling: float,
     with fast_fetch.get_db() as conn:
         resolved_cache.init_resolved_cache(conn)
         conn.commit()
-        posts = select_priority_posts(conn, limit)
+        if mode == "fill" and pins:
+            pinned = select_priority_posts(conn, len(pins), only_ids=pins)
+            order = {pid: idx for idx, pid in enumerate(pins)}
+            pinned = sorted(pinned,
+                            key=lambda r: order.get(r["post_id"], len(order)))
+            stats["pins"] = len(pinned)
+            pinned_ids = {r["post_id"] for r in pinned}
+            rest = [p for p in
+                    select_priority_posts(conn, limit + len(pinned))
+                    if p["post_id"] not in pinned_ids]
+            posts = pinned + rest[:max(0, limit - len(pinned))]
+        else:
+            posts = select_priority_posts(conn, limit)
         stats["posts"] = len(posts)
         if verbose or dry_run:
             log(f"selected {len(posts)} priority titles")
-        # Phase 1 (serial, cheap): which posts need a resolve at all.
+        # Phase 1 (serial, cheap): which posts need a resolve at all. A
+        # fill warms up to two links per title (start rung + auto rung);
+        # a sweep warms the one Tier-1 winner.
         todo = []
         for post in posts:
             if _STOP:
                 break
-            source_id = tier1_source_id(conn, tiers, post["post_id"])
-            if source_id is None:
+            if mode == "fill":
+                source_ids = fill_links_for_post(conn, tiers, post["post_id"])
+            else:
+                one = tier1_source_id(conn, tiers, post["post_id"])
+                source_ids = [one] if one is not None else []
+            if not source_ids:
                 stats["skipped_no_link"] += 1
                 continue
             stats["tier1"] += 1
-            hit = resolved_cache.lookup_cache(conn, source_id, now=now)
-            if hit is not None and horizon_seconds_left(hit, now) >= min_fresh:
-                stats["warm"] += 1
-                continue
-            if now < _failure_backoff.get(source_id, 0.0):
-                continue
-            todo.append((source_id, post["title"]))
+            for source_id in source_ids:
+                hit = resolved_cache.lookup_cache(conn, source_id, now=now)
+                if hit is not None and horizon_seconds_left(hit, now) >= min_fresh:
+                    stats["warm"] += 1
+                    continue
+                if now < _failure_backoff.get(source_id, 0.0):
+                    continue
+                todo.append((source_id, post["title"]))
+        # A fill resolves hubcloud-family links last: their FSL/FSLv2 URLs
+        # live ~5–8 h, the shortest banked lives, so their clock must start
+        # as late as possible. Stable sort keeps pick order inside each group.
+        if mode == "fill" and todo:
+            family = _hubcloud_family_ids(conn, [sid for sid, _ in todo])
+            todo = sorted(todo, key=lambda item: 1 if item[0] in family else 0)
         # The warmup cap bounds one sweep's resolves; the rest wait for
         # the next sweep. None (unwired panel) means no cap.
         if warmup_count is not None:
             todo = todo[:max(0, int(warmup_count))]
+        stats["links"] = len(todo)
         if dry_run:
             for source_id, title in todo:
                 log(f"would resolve source #{source_id} for '{title}'")
@@ -486,6 +727,44 @@ def prefetch_once(*, limit: int, min_fresh: float, load_ceiling: float,
     return stats
 
 
+def _run_one_sweep(*, args, limit, workers, warmup_count, failure_backoff,
+                   pins, fill):
+    """One sweep under the overlap guard, or None when this run yields.
+
+    The guard has two halves: our own family's lock (fail fast — a second
+    prefetch job never queues behind the first; the timer re-fires) and
+    the autocrawl merge's lock (wait up to --max-autocrawl-wait-seconds,
+    then yield — the top-up waits up to 45 min for it, because the 20:01
+    merge runs until ~21:30). Dry runs skip both: they touch nothing
+    remote. A box without flock fails open — the load gate still
+    throttles the run. The lock is held only for this sweep, so a daemon's
+    next sweep re-checks instead of starving the timer.
+    """
+    lock_handle = None
+    if not args.dry_run and fcntl is not None:
+        lock_handle = _try_flock(args.lock_path)
+        if lock_handle is None:
+            log("another prefetch job holds the lock; yielding this run")
+            return None
+    try:
+        if not args.dry_run and not wait_for_autocrawl_lock(
+                args.autocrawl_lock_path, args.max_autocrawl_wait_seconds):
+            log("autocrawl merge still running after "
+                f"{args.max_autocrawl_wait_seconds:.0f}s; yielding this run")
+            return None
+        return prefetch_once(limit=limit, min_fresh=args.min_fresh,
+                             load_ceiling=args.load_ceiling,
+                             fail_backoff=args.fail_backoff,
+                             dry_run=args.dry_run, verbose=args.verbose,
+                             max_wait_seconds=args.max_wait_seconds,
+                             _failure_backoff=failure_backoff,
+                             workers=workers, warmup_count=warmup_count,
+                             mode="fill" if fill else "sweep", pins=pins)
+    finally:
+        if lock_handle is not None:
+            lock_handle.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Background prefetch pool keeping Tier-1 links warm in resolved_cache.")
@@ -514,6 +793,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--fail-backoff", type=float, default=FAILURE_BACKOFF_SECONDS,
                         help="seconds before retrying a failed link (900)")
     parser.add_argument("--once", action="store_true", help="single sweep, then exit")
+    parser.add_argument("--fill", action="store_true",
+                        help="pre-peak fill: start rung + auto rung per title, "
+                             "pins first, hubcloud-family links last")
+    parser.add_argument("--topup", action="store_true",
+                        help="evening top-up: a --fill of the top 50 titles")
+    parser.add_argument("--pins", default=None,
+                        help="comma-separated post ids warmed first in a fill "
+                             "(at most 20; a flagged or missing pin is dropped)")
+    parser.add_argument("--lock-path", default=PREFETCH_LOCK_PATH,
+                        help="shared flock between fill, top-up and sweeps "
+                             "(default /tmp/radd-prefetch.lock)")
+    parser.add_argument("--autocrawl-lock-path", default=AUTOCRAWL_LOCK_PATH,
+                        help="the autocrawl merge's lock file "
+                             "(default /tmp/radd_autocrawl.lock)")
+    parser.add_argument("--max-autocrawl-wait-seconds", type=float,
+                        default=MAX_WAIT_SECONDS,
+                        help="longest a run waits for the autocrawl merge to "
+                             "finish, then yields (300; the top-up passes 2700)")
     parser.add_argument("--dry-run", action="store_true",
                         help="print what would be resolved; touch nothing remote")
     parser.add_argument("--verbose", action="store_true")
@@ -529,20 +826,40 @@ def main(argv: list[str] | None = None) -> int:
             "prefetch_global); not starting.")
         return 0
 
-    limit = (args.limit if args.limit is not None
-             else _tuning_knob("prefetch_queue", TOP_N))
+    # A fill is its own scale, not the panel's sweep knobs: the panel's
+    # `prefetch_queue` seed is 100 and its `warmup_count` bound is 200,
+    # and a fill warms up to two links per title — consulting them here
+    # would silently halve the fill. So a fill takes TOP_N (200, or 50
+    # for a top-up) and a warmup cap of two links per title; an explicit
+    # --limit / --warmup-count still wins over both. The sweep keeps the
+    # knob behaviour exactly as shipped.
+    fill = bool(args.fill or args.topup)
+    if args.topup:
+        limit = (args.limit if args.limit is not None else FILL_TOPUP_LIMIT)
+    elif fill:
+        limit = (args.limit if args.limit is not None else TOP_N)
+    else:
+        limit = (args.limit if args.limit is not None
+                 else _tuning_knob("prefetch_queue", TOP_N))
     workers = (args.workers if args.workers is not None
                else _tuning_knob("prefetch_concurrency", 1))
-    warmup_count = (args.warmup_count if args.warmup_count is not None
-                    else _tuning_knob("warmup_count", None))
+    if args.warmup_count is not None:
+        warmup_count = args.warmup_count
+    elif fill:
+        warmup_count = FILL_LINKS_PER_TITLE * limit
+    else:
+        warmup_count = _tuning_knob("warmup_count", None)
     # None (unwired panel) means no cap; a stored 0 means "warm up
     # nothing" and is honoured as an empty todo list by prefetch_once.
+    pins = parse_pins(args.pins) if fill else ()
 
     signal.signal(signal.SIGINT, _handle_stop)
     signal.signal(signal.SIGTERM, _handle_stop)
 
-    log(f"starting: top {limit}, workers {workers}, "
+    log(f"starting ({'fill' if fill else 'sweep'}): top {limit}, "
+        f"workers {workers}, "
         f"warmup cap {warmup_count if warmup_count is not None else 'none'}, "
+        f"pins {len(pins)}, "
         f"fresh window {args.min_fresh:.0f}s, "
         f"load ceiling {args.load_ceiling:.1f}, "
         f"db {os.environ.get('RADD_DB_PATH', 'default')}")
@@ -550,16 +867,13 @@ def main(argv: list[str] | None = None) -> int:
     while True:
         started = time.time()
         try:
-            stats = prefetch_once(limit=limit, min_fresh=args.min_fresh,
-                                  load_ceiling=args.load_ceiling,
-                                  fail_backoff=args.fail_backoff,
-                                  dry_run=args.dry_run, verbose=args.verbose,
-                                  max_wait_seconds=args.max_wait_seconds,
-                                  _failure_backoff=failure_backoff,
-                                  workers=workers,
-                                  warmup_count=warmup_count)
-            log("sweep: " + " ".join(f"{k}={v}" for k, v in stats.items()) +
-                f" in {time.time() - started:.1f}s")
+            stats = _run_one_sweep(
+                args=args, limit=limit, workers=workers,
+                warmup_count=warmup_count, failure_backoff=failure_backoff,
+                pins=pins, fill=fill)
+            if stats is not None:
+                log("sweep: " + " ".join(f"{k}={v}" for k, v in stats.items()) +
+                    f" in {time.time() - started:.1f}s")
         except Exception as exc:
             log(f"sweep failed: {type(exc).__name__}: {exc}")
             if args.dry_run:
