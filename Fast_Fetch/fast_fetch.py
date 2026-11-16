@@ -1543,6 +1543,10 @@ def _init_db(db_path: Path | None = None) -> None:
             cast_names TEXT,
             is_18_plus INTEGER DEFAULT 0,
             is_animated INTEGER DEFAULT 0,
+            duration TEXT,
+            director TEXT,
+            release_date TEXT,
+            raw_meta TEXT,
             lastmod TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -1634,6 +1638,15 @@ def _init_db(db_path: Path | None = None) -> None:
             "canonical_key": "TEXT DEFAULT NULL",
             "tmdb_id": "INTEGER DEFAULT NULL",
             "imdb_id": "TEXT DEFAULT NULL",
+            # Wave 0 (2026-11-16): the merge carries these four from staging;
+            # a fresh DB gets them from CREATE TABLE above, an existing one
+            # from this ALTER pass. Stored verbatim (TEXT) — sites spell a
+            # runtime "2h 15m", "PT2H8M" or "7200" and a date "2025-01-31"
+            # or "31 January 2020"; normalising is separate work.
+            "duration": "TEXT",
+            "director": "TEXT",
+            "release_date": "TEXT",
+            "raw_meta": "TEXT",
         }
         for col, col_t in p_cols.items():
             if col not in existing_p_cols:
@@ -5758,6 +5771,10 @@ def _save_scraped_data(data: dict, *, ensure_db: bool = True,
                     genres = ?,
                     synopsis = ?,
                     cast_names = COALESCE(NULLIF(?, ''), cast_names),
+                    duration = COALESCE(NULLIF(?, ''), duration),
+                    director = COALESCE(NULLIF(?, ''), director),
+                    release_date = COALESCE(NULLIF(?, ''), release_date),
+                    raw_meta = COALESCE(NULLIF(?, ''), raw_meta),
                     tmdb_id = COALESCE(?, tmdb_id),
                     imdb_id = COALESCE(?, imdb_id),
                     industry = COALESCE(NULLIF(industry, ''), ?),
@@ -5781,6 +5798,10 @@ def _save_scraped_data(data: dict, *, ensure_db: bool = True,
                     chosen_genres,
                     chosen_synopsis,
                     data.get("cast_names"),
+                    data.get("duration"),
+                    data.get("director"),
+                    data.get("release_date"),
+                    data.get("raw_meta"),
                     tmdb_id,
                     imdb_id,
                     data.get("industry"),
@@ -5799,11 +5820,12 @@ def _save_scraped_data(data: dict, *, ensure_db: bool = True,
                 INSERT INTO posts (
                     url, slug, title, clean_title, year, content_type, seasons,
                     poster_url, backdrop_urls, imdb_rating, genres, synopsis,
-                    cast_names, tmdb_id, imdb_id,
+                    cast_names, duration, director, release_date, raw_meta,
+                    tmdb_id, imdb_id,
                     is_18_plus, is_animated, source_site, industry, country, language,
                     canonical_key, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 RETURNING id;
                 """,
                 (
@@ -5820,6 +5842,10 @@ def _save_scraped_data(data: dict, *, ensure_db: bool = True,
                     data.get("genres"),
                     data.get("synopsis"),
                     data.get("cast_names"),
+                    data.get("duration"),
+                    data.get("director"),
+                    data.get("release_date"),
+                    data.get("raw_meta"),
                     tmdb_id,
                     imdb_id,
                     data.get("is_18_plus", 0),

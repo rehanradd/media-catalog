@@ -131,6 +131,15 @@ def _collect_staging_post(src_conn: sqlite3.Connection, post: sqlite3.Row,
         "genres": _pick(post, "genres"),
         "synopsis": _pick(post, "synopsis"),
         "cast_names": _pick(post, "cast_names"),
+        # Wave 0 (2026-11-16): the merge never picked these, so staging
+        # metadata in them could never reach the live catalog. Values are
+        # carried verbatim; `runtime` is the shared-parser/Cinemeta
+        # spelling of the same field. `raw_meta` is stored-only — public
+        # paths project through redact.VIEWS, never dict(row).
+        "duration": _pick(post, "duration", "runtime"),
+        "director": _pick(post, "director"),
+        "release_date": _pick(post, "release_date"),
+        "raw_meta": _pick(post, "raw_meta"),
         "is_18_plus": _pick(post, "is_18_plus", default=0),
         "is_animated": _pick(post, "is_animated", default=0),
         "source_site": site,
@@ -196,6 +205,12 @@ def _collect_unified_post(src_conn: sqlite3.Connection, post: sqlite3.Row) -> di
         "genres": post["genres"] if "genres" in post.keys() else None,
         "synopsis": post["synopsis"] if "synopsis" in post.keys() else None,
         "cast_names": post["cast_names"] if "cast_names" in post.keys() else None,
+        # Wave 0 (2026-11-16): same gap as the staging collector — a source
+        # already on the unified schema dropped these four on the floor too.
+        "duration": post["duration"] if "duration" in post.keys() else None,
+        "director": post["director"] if "director" in post.keys() else None,
+        "release_date": post["release_date"] if "release_date" in post.keys() else None,
+        "raw_meta": post["raw_meta"] if "raw_meta" in post.keys() else None,
         "is_18_plus": post["is_18_plus"],
         "is_animated": post["is_animated"] if "is_animated" in post.keys() else 0,
         "source_site": post["source_site"],

@@ -673,5 +673,220 @@ class IngestDedupMergeTests(unittest.TestCase):
                 self.assertEqual((rel["season"], rel["episode"]), ("S01", None))
 
 
+class Wave0MergeMetadataTests(unittest.TestCase):
+    """Wave 0 (2026-11-16): duration, director, release_date survive the merge
+    and raw_meta is carried through to the live catalog.
+
+    The audit found `merge_catalogs.py` never picked any of the four, so
+    staging metadata in those columns could never reach the live catalog —
+    the 99.99% runtime gap, even though 8 of 10 Group C importers capture
+    a duration at staging. Values are stored verbatim (TEXT): sites spell a
+    runtime "2h 15m", "PT2H8M", "7200" or "01:18:02", and a release date
+    "2025-01-31" or "31 January 2020" — normalising those spellings is a
+    separate piece of work, and guessing wrong is worse than storing the
+    page's own words.
+    """
+
+    _RAW_META = '{"file_info": {"Duration": "2h 15m", "Director": "Ankit Sakhiya"}}'
+
+    def _make_staging_db_with_metadata(self, path: Path, *, duration_col="duration",
+                                       with_metadata=True):
+        """hdhub4u-family staging schema plus the four Wave 0 columns."""
+        conn = sqlite3.connect(path)
+        conn.executescript(
+            """
+            CREATE TABLE posts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                canonical_key TEXT, title TEXT, original_title TEXT, year INTEGER,
+                media_type TEXT, imdb_id TEXT, tmdb_id TEXT, poster_url TEXT,
+                backdrop_url TEXT, rating REAL, genres TEXT, synopsis TEXT,
+                languages TEXT, is_18_plus INTEGER DEFAULT 0, site TEXT, post_url TEXT,
+                duration TEXT, runtime TEXT, director TEXT, release_date TEXT,
+                raw_meta TEXT
+            );
+            CREATE TABLE releases (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                post_id INTEGER, label TEXT, quality TEXT, resolution TEXT,
+                size_bytes INTEGER, season_number INTEGER, episode_number INTEGER,
+                codec TEXT, bridge_url TEXT, audio_languages TEXT
+            );
+            CREATE TABLE sources (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                release_id INTEGER, source_name TEXT, service TEXT, resource_id TEXT,
+                source_url TEXT, final_url TEXT, is_temporary INTEGER, quality TEXT
+            );
+            """
+        )
+        if with_metadata:
+            duration_value, runtime_value = (
+                ("2h 15m", None) if duration_col == "duration" else (None, "2h 15m"))
+            conn.execute(
+                "INSERT INTO posts (canonical_key, title, original_title, year,"
+                " media_type, poster_url, genres, synopsis, languages, is_18_plus,"
+                " site, post_url, duration, runtime, director, release_date, raw_meta)"
+                " VALUES ('laalo_2025', 'Laalo', 'Laalo (2025)', 2025, 'movie',"
+                " 'https://cdn/p.jpg', '[\"Drama\"]', 'A Krishna devotee.',"
+                " '[\"Gujarati\"]', 0, 'filmiyin',"
+                " 'https://filmiyin.example/laalo-2025/', ?, ?, 'Ankit Sakhiya',"
+                " '2025-01-31', ?)",
+                (duration_value, runtime_value, self._RAW_META),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO posts (canonical_key, title, original_title, year,"
+                " media_type, poster_url, genres, synopsis, languages, is_18_plus,"
+                " site, post_url) VALUES ('laalo_2025', 'Laalo', 'Laalo (2025)', 2025,"
+                " 'movie', 'https://cdn/p.jpg', '[\"Drama\"]', 'A Krishna devotee.',"
+                " '[\"Gujarati\"]', 0, 'filmiyin', 'https://filmiyin.example/laalo-2025/')")
+        post_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.execute(
+            "INSERT INTO releases (post_id, label, quality, size_bytes, codec,"
+            " bridge_url, audio_languages) VALUES (?, 'Laalo 1080p', '1080p',"
+            " 2408476672, 'x264', 'https://link.example/?id=9', '[\"Gujarati\"]')",
+            (post_id,),
+        )
+        rel_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.execute(
+            "INSERT INTO sources (release_id, source_name, service, resource_id,"
+            " source_url, final_url, is_temporary, quality) VALUES"
+            " (?, 'HubCloud', 'hubcloud', '9', 'https://link.example/?id=9',"
+            " 'https://hubcloud.ist/drive/9', 0, '1080p')",
+            (rel_id,),
+        )
+        conn.commit()
+        conn.close()
+
+    def _target_row(self, tgt_db: Path):
+        with sqlite3.connect(tgt_db) as conn:
+            conn.row_factory = sqlite3.Row
+            return conn.execute(
+                "SELECT duration, director, release_date, raw_meta FROM posts"
+            ).fetchone()
+
+    def test_staging_duration_director_release_date_and_raw_meta_survive_merge(self):
+        with tempfile.TemporaryDirectory() as td:
+            src_db = Path(td) / "filmiyin.db"
+            tgt_db = Path(td) / "unified.db"
+            self._make_staging_db_with_metadata(src_db)
+
+            stats = merge_catalogs.merge_site_db(src_db, tgt_db, verbose=False)
+            self.assertEqual(stats["posts_merged"], 1)
+
+            row = self._target_row(tgt_db)
+            self.assertEqual(row["duration"], "2h 15m")
+            self.assertEqual(row["director"], "Ankit Sakhiya")
+            self.assertEqual(row["release_date"], "2025-01-31")
+            self.assertEqual(row["raw_meta"], self._RAW_META)
+
+    def test_runtime_spelling_is_picked_up_as_duration(self):
+        """The shared parser/Cinemeta spell the field `runtime`; the staging
+        columns of Group C spell it `duration`. Both must land."""
+        with tempfile.TemporaryDirectory() as td:
+            src_db = Path(td) / "filmiyin.db"
+            tgt_db = Path(td) / "unified.db"
+            self._make_staging_db_with_metadata(src_db, duration_col="runtime")
+
+            merge_catalogs.merge_site_db(src_db, tgt_db, verbose=False)
+            row = self._target_row(tgt_db)
+            self.assertEqual(row["duration"], "2h 15m")
+            self.assertEqual(row["director"], "Ankit Sakhiya")
+
+    def test_remerge_without_metadata_never_blanks_stored_values(self):
+        """A re-merge that carries none of the four fields must not blank what
+        an earlier page stored — the same incoming-non-empty-wins rule as cast."""
+        with tempfile.TemporaryDirectory() as td:
+            src_db = Path(td) / "filmiyin.db"
+            tgt_db = Path(td) / "unified.db"
+            fast_fetch.DB_PATH = tgt_db
+            fast_fetch.init_db()
+            with sqlite3.connect(tgt_db) as conn:
+                conn.execute(
+                    "INSERT INTO posts (url, slug, title, clean_title, year,"
+                    " content_type, source_site, canonical_key, duration, director,"
+                    " release_date, raw_meta) VALUES"
+                    " ('https://filmiyin.example/laalo-2025/', 'laalo-2025',"
+                    " 'Laalo (2025)', 'Laalo', 2025, 'movie', 'filmiyin',"
+                    " 'laalo_2025', '2h 15m', 'Ankit Sakhiya', '2025-01-31', ?)",
+                    (self._RAW_META,),
+                )
+            self._make_staging_db_with_metadata(src_db, with_metadata=False)
+
+            merge_catalogs.merge_site_db(src_db, tgt_db, verbose=False)
+            row = self._target_row(tgt_db)
+            self.assertEqual(row["duration"], "2h 15m")
+            self.assertEqual(row["director"], "Ankit Sakhiya")
+            self.assertEqual(row["release_date"], "2025-01-31")
+            self.assertEqual(row["raw_meta"], self._RAW_META)
+
+    def test_remerge_with_new_metadata_replaces_stored_values(self):
+        with tempfile.TemporaryDirectory() as td:
+            src_db = Path(td) / "filmiyin.db"
+            tgt_db = Path(td) / "unified.db"
+            fast_fetch.DB_PATH = tgt_db
+            fast_fetch.init_db()
+            with sqlite3.connect(tgt_db) as conn:
+                conn.execute(
+                    "INSERT INTO posts (url, slug, title, clean_title, year,"
+                    " content_type, source_site, canonical_key, duration, director,"
+                    " release_date, raw_meta) VALUES"
+                    " ('https://filmiyin.example/laalo-2025/', 'laalo-2025',"
+                    " 'Laalo (2025)', 'Laalo', 2025, 'movie', 'filmiyin',"
+                    " 'laalo_2025', '1h 30m', 'Old Director', '2024-01-01',"
+                    " '{\"old\": true}')")
+            self._make_staging_db_with_metadata(src_db)
+
+            merge_catalogs.merge_site_db(src_db, tgt_db, verbose=False)
+            row = self._target_row(tgt_db)
+            self.assertEqual(row["duration"], "2h 15m")
+            self.assertEqual(row["director"], "Ankit Sakhiya")
+            self.assertEqual(row["release_date"], "2025-01-31")
+            self.assertEqual(row["raw_meta"], self._RAW_META)
+
+    def test_init_db_migrates_an_existing_catalog_to_the_four_columns(self):
+        """The live catalog is an existing DB: CREATE TABLE is a no-op there,
+        so the four columns must arrive through the `p_cols` ALTER pass."""
+        with tempfile.TemporaryDirectory() as td:
+            legacy_db = Path(td) / "legacy.db"
+            with sqlite3.connect(legacy_db) as conn:
+                conn.execute(
+                    "CREATE TABLE posts (id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                    " url TEXT UNIQUE NOT NULL, slug TEXT, title TEXT,"
+                    " clean_title TEXT, year INTEGER, content_type TEXT,"
+                    " cast_names TEXT)")
+            fast_fetch.DB_PATH = legacy_db
+            fast_fetch.init_db()
+            with sqlite3.connect(legacy_db) as conn:
+                cols = {r[1] for r in conn.execute("PRAGMA table_info(posts)")}
+            for col in ("duration", "director", "release_date", "raw_meta"):
+                self.assertIn(col, cols)
+
+    def test_unified_source_carries_the_four_fields(self):
+        """A source that already uses the unified schema must not drop them
+        either — the same gap lived in `_collect_unified_post`."""
+        with tempfile.TemporaryDirectory() as td:
+            src_db = Path(td) / "source.db"
+            tgt_db = Path(td) / "unified.db"
+            fast_fetch.DB_PATH = src_db
+            fast_fetch.init_db()
+            with sqlite3.connect(src_db) as conn:
+                conn.execute(
+                    "INSERT INTO posts (url, slug, title, clean_title, year,"
+                    " content_type, source_site, canonical_key, duration, director,"
+                    " release_date, raw_meta) VALUES"
+                    " ('https://site.example/laalo/', 'laalo', 'Laalo (2025)',"
+                    " 'Laalo', 2025, 'movie', 'site', 'laalo_2025', '2h 15m',"
+                    " 'Ankit Sakhiya', '2025-01-31', ?)",
+                    (self._RAW_META,),
+                )
+
+            stats = merge_catalogs.merge_site_db(src_db, tgt_db, verbose=False)
+            self.assertEqual(stats["posts_merged"], 1)
+            row = self._target_row(tgt_db)
+            self.assertEqual(row["duration"], "2h 15m")
+            self.assertEqual(row["director"], "Ankit Sakhiya")
+            self.assertEqual(row["release_date"], "2025-01-31")
+            self.assertEqual(row["raw_meta"], self._RAW_META)
+
+
 if __name__ == "__main__":
     unittest.main()
