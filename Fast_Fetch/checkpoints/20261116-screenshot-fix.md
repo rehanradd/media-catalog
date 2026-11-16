@@ -40,3 +40,9 @@ Base: 76db046f (STALE). Main is now 53700d7e (harness-fix merged 23:31, Android 
 - First push's CI failed on BOTH workflows (real, not flakes). Android 43930521368: `compileDebugKotlin` — ApiProvider.kt:168 passed a Long where this project's OkHttp `Chain.withReadTimeout` expects Int; lint failed on the same error. Fix: `DEFAULT_READ_TIMEOUT_SECONDS` + `readTimeoutSecondsForPath` now Int end to end; test assertions 60L/45L/30L/15L → plain Ints.
 - Backend 43930521584: `test_docs_invariants.py` — CONTINUITY.md claimed 165 archive files, checkpoints holds 166 after the new checkpoint file. Fix: "166 session files (164 dated + 2 undated)"; verified 22/22 locally.
 - Third commit on the branch; CI re-run owed on the new tip; that tip's CI-green debug APK is the one for Robo run 3.
+
+## Paparazzi goldens (2026-11-16 ~00:05 PKT 17 Nov)
+- Fixed tip's Android CI 43932104493: lint + build + unit tests all green; only the Paparazzi verify gate failed — 11 goldens drifted, all from the intended layout changes. New renders viewed by eye (contact sheet): nothing clipped/overlapped/missing; header compact, dots tight under hero, detail titles clear.
+- Record run 43933693941 (workflow 418582550, numeric id) SUCCESS; its 11 renders byte-identical to the viewed ones. 2 more goldens (detailSeriesEpisodes 0.12%, posterCardSingleRankedWithProgress 0.20%) differ sub-visibly, within verify tolerance, refreshed anyway; old/new pairs viewed, identical.
+- All 13 refreshed goldens committed (fourth commit). Backend re-run 43932104496 SUCCESS — first attempt failed on the known token-minting flake (mint_token embeds the expiry second; a boundary crossing changes the handle tail); local 26/26 OK, main green, no Python touched — re-run, not a fix.
+- CI re-run owed on the new tip; that tip's CI-green debug APK is the one for Robo run 3.
