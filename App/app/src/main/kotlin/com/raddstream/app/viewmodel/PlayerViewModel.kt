@@ -192,11 +192,14 @@ class PlayerViewModel @Inject constructor(
     /**
      * The viewer's own player defaults (plan §5 step 10, P36): autoplay-next, on until
      * the viewer turns it off (plan D4), and the standing default quality band ("auto"
-     * = no default). Collected, not sampled, so a change in Settings reaches a player
-     * that is already running before the next episode ends.
+     * = no default). [defaultQualitySet] tells a picked "Auto" apart from a never
+     * picked one: only the second starts playback at 480p. Collected, not sampled,
+     * so a change in Settings reaches a player that is already running before the
+     * next episode ends.
      */
     private var autoplayNext: Boolean = true
     private var defaultQualityBand: String = LadderForScope.AUTO
+    private var defaultQualitySet: Boolean = false
 
     private val sleepTimer = SleepTimer()
 
@@ -472,6 +475,9 @@ class PlayerViewModel @Inject constructor(
         }
         viewModelScope.launch {
             settingsRepository.defaultQuality.collect { band -> defaultQualityBand = band }
+        }
+        viewModelScope.launch {
+            settingsRepository.defaultQualitySet.collect { set -> defaultQualitySet = set }
         }
         // The player chrome theme this device wears: collected, not sampled, so
         // a change on the VIP screen reaches a player that is already running.
@@ -1092,6 +1098,7 @@ class PlayerViewModel @Inject constructor(
             stagedAuto = staged.auto,
             defaultBand = defaultQualityBand,
             rungBands = rungs.map { it.band },
+            defaultBandSet = defaultQualitySet,
         )
         // Data Saver caps the start on mobile data — 480p when the ladder has it —
         // and the auto pointer with it, so Auto cannot quietly start above the cap.

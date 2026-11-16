@@ -467,6 +467,16 @@ class ServerSettingsRepository @Inject constructor(
         preferences[DEFAULT_QUALITY_KEY]?.takeIf { it.isNotBlank() } ?: "auto"
     }
 
+    /**
+     * True once the viewer has picked a default quality in Settings — any rung,
+     * "Auto" included. The player needs this apart from [defaultQuality]: "auto"
+     * means both "never picked" and "picked Auto", and only the first starts
+     * playback at 480p.
+     */
+    val defaultQualitySet: Flow<Boolean> = dataStore.data.map { preferences ->
+        preferences.contains(DEFAULT_QUALITY_KEY)
+    }
+
     suspend fun saveDefaultQuality(band: String) {
         dataStore.edit { preferences ->
             preferences[DEFAULT_QUALITY_KEY] = band

@@ -59,7 +59,7 @@ class PlayerDefaultsTest {
     }
 
     @Test
-    fun `no default means Auto keeps its pick`() {
+    fun `an explicit Auto default keeps Auto's pick`() {
         assertEquals("1080p" to true, resolveStartBand("1080p", true, "auto", rungs))
     }
 
@@ -72,6 +72,32 @@ class PlayerDefaultsTest {
     fun `no staged band falls back to the default, then the first rung`() {
         assertEquals("720p" to false, resolveStartBand(null, true, "720p", rungs))
         assertEquals("1080p" to true, resolveStartBand(null, true, "auto", rungs))
+    }
+
+    // ── 480p default start (owner order 07:01 PKT 16 Nov) ───────────────────
+
+    @Test
+    fun `no saved default starts at 480p`() {
+        assertEquals("480p" to false, resolveStartBand(null, true, "auto", rungs, defaultBandSet = false))
+        assertEquals("480p" to false, resolveStartBand(null, true, "", rungs, defaultBandSet = false))
+    }
+
+    @Test
+    fun `no saved default and no 480p rung falls back to the first rung`() {
+        assertEquals(
+            "1080p" to true,
+            resolveStartBand(null, true, "auto", listOf("1080p", "720p"), defaultBandSet = false),
+        )
+    }
+
+    @Test
+    fun `no saved default never overrides an explicit tap`() {
+        assertEquals("720p" to false, resolveStartBand("720p", false, "auto", rungs, defaultBandSet = false))
+    }
+
+    @Test
+    fun `a saved default still wins over the 480p start`() {
+        assertEquals("720p" to false, resolveStartBand(null, true, "720p", rungs, defaultBandSet = false))
     }
 
     // ── Session 153: the player waits out the slow resolve ───────────────
