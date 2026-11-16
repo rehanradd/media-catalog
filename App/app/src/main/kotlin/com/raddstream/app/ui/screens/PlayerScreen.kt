@@ -45,8 +45,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.calculateLeftPadding
-import androidx.compose.foundation.layout.calculateRightPadding
 import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -2030,7 +2028,7 @@ internal fun BottomControls(
                 .fillMaxWidth()
                 .background(bottomGradient)
                 .heightIn(min = 136.dp)
-                .padding(horizontal = rail, bottom = 8.dp),
+                .padding(start = rail, end = rail, bottom = 8.dp),
         ) {
             // SC §3: pause is discovery — the cast strip. Tapping an actor
             // searches them. Only while paused: a strip that appears mid-play
