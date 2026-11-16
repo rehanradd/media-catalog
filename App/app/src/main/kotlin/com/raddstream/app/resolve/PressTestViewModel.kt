@@ -320,6 +320,8 @@ class PressTestViewModel @Inject constructor(
      * The sampled link's opaque handle: the post detail's source whose
      * link id matches the sample. Null when the detail cannot be read or
      * names no such source — the press cannot start without a handle.
+     * (PostDetail carries no `sources` of its own — the sources live on
+     * its releases, so the search flattens `releases[].sources[]`.)
      */
     private suspend fun lookupHandle(sample: ResolveSample): String? {
         val detail = try {
@@ -327,7 +329,9 @@ class PressTestViewModel @Inject constructor(
         } catch (_: Exception) {
             null
         } ?: return null
-        return detail.sources.firstOrNull { it.linkId?.toLong() == sample.linkId }
+        return detail.releases
+            .flatMap { it.sources }
+            .firstOrNull { it.linkId?.toLong() == sample.linkId }
             ?.streamId?.takeIf { it.isNotBlank() }
     }
 
