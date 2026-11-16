@@ -7,7 +7,7 @@
 
 ## ✅ Open items — index (q3, 2026-10-30; pointers only)
 
-1. **This file is a pointer, not a history** 160 session files (158 dated + 2 undated) cover
+1. **This file is a pointer, not a history** 161 session files (159 dated + 2 undated) cover
 
    every one of them verbatim: [`checkpoints/README.md`](checkpoints/README.md). Nothing was
    deleted, reworded, or summarized. The count is `ls Fast_Fetch/checkpoints/*.md` minus `README.md`,
@@ -29,7 +29,7 @@
    "Project Identity" is the law, `docs/SPEC_ADULT_FLAG_EVIDENCE.md` the receipts.
 6. Still open, design only: the link-health sweep — `docs/LINK_HEALTH_SWEEP.md` prices it at ≈ 7 days
    of this box and concludes it is not feasible as one run; the 429-parking and per-run cap are unbuilt.
-7. Queued quiet-window actions (load-gated, nothing run tonight): see "🕒 Queued" below.
+7. Queued quiet-window actions (load-gated, nothing run tonight): see [`checkpoints/20261116-selfcheck-continuity-trim.md`](checkpoints/20261116-selfcheck-continuity-trim.md).
 8. The documentation-diet notes that were items 8–9 here are rotated verbatim into
    [`checkpoints/20261031-q2-humtv-status-and-rotated-diet-notes.md`](checkpoints/20261031-q2-humtv-status-and-rotated-diet-notes.md).
 9. `[Q2-HUMTV-STATUS]` — the Hum TV importer exists on trunk, is import-clean, and is byte-identical
@@ -49,16 +49,9 @@
 
 ---
 
-## 🕒 Queued quiet-window actions (run only when `cat /proc/loadavg` 1-min is under 4)
+## 🕒 Queued quiet-window actions — rotated out
 
-| # | exact command | expected cost | why |
-|---|---|---|---|
-| 1 | `python3 -S Fast_Fetch/site_scout.py https://movibd.com --max-samples 20 --timeout 12 --retries 1` | ~26 requests to one host, minutes, serial at 1 in-flight per host | measured from this box 2026-10-30: `movibd.online` is a parked stub (every path returns the same 370-byte iframe page), `movibd.top` returned `blocked: challenge` on all 10 samples, `movibd.com` answered its homepage with 17,786 bytes of real HTML and the scout recorded `https://movibd.com/sitemap.xml` as the discovered sitemap (blueprints `movibd_blueprint.json`, `movibd_com_blueprint.json`) |
-| 2 | new `Fast_Fetch/importers/import_movibd.py` + `test_movibd_import.py` writing to **`movibd.db` staging only** | unknown N posts; price = `N × 2 pages × 1.1 s / distinct_hosts` — never into `fast_fetch.db` or the merged catalog | repo rule 9 (per-site staging DB) |
-| 3 | the adult-twin count against the live 6.4 GB catalog — **no command exists yet, writing it is the task** | a single `WHERE is_18_plus=1` count measured 26.46 s by qoder4 2026-10-30, so a scan of that size is a load-under-4-only action | the re-key residual in item 5 |
-| 4 | the 3.7 M-link health sweep | ≈ 7 days thread-bound (`docs/LINK_HEALTH_SWEEP.md` §1) | not scheduled; design doc only |
-| 5 | `nice -n 19 python3 -S Fast_Fetch/importers/import_humtv.py sync --db /home/ubuntu/radd-stream-data/humtv.db` then `nice -n 19 python3 -S Fast_Fetch/importers/import_humtv.py crawl --db /home/ubuntu/radd-stream-data/humtv.db --workers 1 --delay 0.5` | sync ≈ 1–2 min (57 REST pages); crawl ≈ 2.5–4.5 h serial for 5,625 pages (`workers != 1` refused in code); verify `--limit 200` ≈ 5 min | **Start only at load1 < 3.5; stop (Ctrl-C) at 4.0.** Self-stops too: MemAvailable < 2,500 MB or SwapFree < 800 MB refuses, a 429 pauses and the row stays queued, Ctrl-C leaves the rest `scraped=0` and resumable. Staging vault only |
-| 6 | `nice -n 19 python3 -S Fast_Fetch/importers/test_dub_collision_census.py --census > /tmp/q2_census_20261031.json` | 1–3 min estimated; nearest comparable measured 12.0 s at load 0.91 | fills the three headline numbers in the census checkpoint; the script exits 2 above `LOAD_CEILING = 4.0` |
+Moved verbatim to [`checkpoints/20261116-selfcheck-continuity-trim.md`](checkpoints/20261116-selfcheck-continuity-trim.md) on 2026-11-16 (byte-budget trim: the index was 12,255 B, ceiling 12,000 B). Run only when `cat /proc/loadavg` 1-min is under 4.
 
 ---
 ## 🏛️ Project Quick Summary
