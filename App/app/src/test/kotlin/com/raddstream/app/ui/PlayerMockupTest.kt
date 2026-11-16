@@ -1,14 +1,18 @@
 package com.raddstream.app.ui
 
 import android.content.Context
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import com.raddstream.app.R
 import com.raddstream.app.player.GestureMapper
@@ -89,25 +93,32 @@ class PlayerMockupTest {
     )
 
     private fun setBottom(state: PlayerUiState) {
+        // Review fix (16 Nov): the player is landscape-only, and the bottom
+        // row's honest minimum (~447dp: two 48dp rails + six 48dp primaries +
+        // the quality pill) is wider than the default portrait test window —
+        // composing it there clips the More button off-screen. The frame
+        // below is landscape-wide, the way the real player is.
         compose.setContent {
             RaddStreamTheme {
-                BottomControls(
-                    state = state,
-                    onPlayFromStart = {},
-                    onTogglePlayPause = {},
-                    onToggleMute = {},
-                    onShowSubtitleSheet = {},
-                    onShowQualitySheet = {},
-                    onToggleFullscreen = {},
-                    onShowMoreSheet = {},
-                    onSeekTo = {},
-                    onSetUserVolume = {},
-                    onSetAudioBoostLevel = {},
-                    onKeepCurrent = {},
-                    onEnterPip = {},
-                    onActivity = {},
-                    onScrubCommit = {},
-                )
+                Box(Modifier.requiredWidth(800.dp)) {
+                    BottomControls(
+                        state = state,
+                        onPlayFromStart = {},
+                        onTogglePlayPause = {},
+                        onToggleMute = {},
+                        onShowSubtitleSheet = {},
+                        onShowQualitySheet = {},
+                        onToggleFullscreen = {},
+                        onShowMoreSheet = {},
+                        onSeekTo = {},
+                        onSetUserVolume = {},
+                        onSetAudioBoostLevel = {},
+                        onKeepCurrent = {},
+                        onEnterPip = {},
+                        onActivity = {},
+                        onScrubCommit = {},
+                    )
+                }
             }
         }
     }

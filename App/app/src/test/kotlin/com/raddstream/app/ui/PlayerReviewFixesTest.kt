@@ -130,7 +130,12 @@ class PlayerReviewFixesTest {
         assertTrue("cannot find the end of QualityPill", end > start)
         val pill = playerScreen.substring(start, end)
         assertFalse("QualityPill still dims a tappable control", pill.contains("dimmed"))
-        assertFalse("QualityPill still paints 40% text", pill.contains("alpha = 0.4f"))
+        // The 40% white still lives in the border (the Auto pill's outline),
+        // which is fine — the TEXT must print full white, never dimmed.
+        assertTrue(
+            "QualityPill text must print full white",
+            pill.contains("val textColor = if (!state.qualityAuto) RaddCurrent500 else Color.White"),
+        )
     }
 
     @Test

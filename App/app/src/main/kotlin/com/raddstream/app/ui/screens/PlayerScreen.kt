@@ -226,6 +226,7 @@ import com.raddstream.app.ui.theme.RaddPlayerStage
 import com.raddstream.app.ui.theme.RaddSuccess
 import com.raddstream.app.ui.theme.RaddTideIndigo
 import com.raddstream.app.ui.theme.RaddTokens
+import com.raddstream.app.ui.theme.RaddWhisperOnInk
 import com.raddstream.app.ui.theme.brandSp
 import com.raddstream.app.ui.theme.paint
 import com.raddstream.app.viewmodel.PlayerEvent
@@ -2971,7 +2972,9 @@ private fun LiveMark(paused: Boolean = false, modifier: Modifier = Modifier) {
         Box(
             modifier = Modifier
                 .size(6.dp)
-                .background(if (paused) Color(0xFF8E8E93) else RaddCurrent500, CircleShape),
+                // Review fix (16 Nov): the paused dot is the palette's muted
+                // grey, not a raw hex — the brand palette owns every paint.
+                .background(if (paused) RaddWhisperOnInk else RaddCurrent500, CircleShape),
         )
         Text(
             text = if (paused) stringResource(R.string.player_paused).uppercase()

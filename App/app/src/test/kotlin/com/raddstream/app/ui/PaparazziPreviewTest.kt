@@ -26,7 +26,6 @@ import com.raddstream.app.network.models.Playability
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.network.models.PostDetail
 import com.raddstream.app.network.models.ReleaseLabelParsing
-import com.raddstream.app.player.KeepUiState
 import com.raddstream.app.player.LadderForScope
 import com.raddstream.app.player.LadderRung
 import com.raddstream.app.player.PlaybackInfo
@@ -40,7 +39,6 @@ import com.raddstream.app.ui.screens.DetailContent
 import com.raddstream.app.ui.screens.EpisodeRow
 import com.raddstream.app.ui.screens.FilterRail
 import com.raddstream.app.ui.screens.FilterSheetBody
-import com.raddstream.app.ui.screens.BottomControls
 import com.raddstream.app.ui.screens.CenterPlayPause
 import com.raddstream.app.ui.screens.CenterSpinner
 import com.raddstream.app.ui.screens.EdgeFeedbackLine
@@ -848,30 +846,6 @@ class PaparazziPreviewTest {
         ),
     )
 
-    private fun shotBottom(state: PlayerUiState) {
-        paparazzi.snapshot {
-            themed {
-                BottomControls(
-                    state = state,
-                    onPlayFromStart = {},
-                    onTogglePlayPause = {},
-                    onToggleMute = {},
-                    onShowSubtitleSheet = {},
-                    onShowQualitySheet = {},
-                    onToggleFullscreen = {},
-                    onShowMoreSheet = {},
-                    onSeekTo = {},
-                    onSetUserVolume = {},
-                    onSetAudioBoostLevel = {},
-                    onKeepCurrent = {},
-                    onEnterPip = {},
-                    onActivity = {},
-                    onScrubCommit = {},
-                )
-            }
-        }
-    }
-
     @Test
     fun playerTopBar() {
         paparazzi.snapshot {
@@ -955,49 +929,9 @@ class PaparazziPreviewTest {
         }
     }
 
-    @Test
-    fun playerBottomPlaying() {
-        shotBottom(playerBase())
-    }
-
-    @Test
-    fun playerBottomPaused() {
-        shotBottom(
-            playerBase(isPlaying = false).copy(
-                castNames = listOf("Shah Rukh Khan", "Nayanthara", "Vijay Sethupathi"),
-                keep = KeepUiState.Stored(playableOffline = true, note = null),
-            ),
-        )
-    }
-
-    @Test
-    fun playerBottomLive() {
-        // F29: a live HLS playlist can report a finite DVR-window duration
-        // (Discover Pakistan: 2:00:12) — the shot must show the LIVE mark
-        // and no seekable scrubber, whatever the duration claims. The
-        // Stitch mockup's live seek bar + elapsed time is NOT copied here
-        // (hate-audit H16); the mark is the whole live row.
-        shotBottom(
-            playerBase().copy(
-                isLive = true,
-                durationMs = 7_200_000L,
-                positionMs = 3_600_000L,
-            ),
-        )
-    }
-
-    @Test
-    fun playerBottomSingleRung() {
-        // 25c: one rung only — the Quality primary stays visible, in full
-        // white (review fix, 16 Nov: a tappable control never dims),
-        // instead of vanishing.
-        shotBottom(
-            playerBase().copy(
-                qualityAuto = false,
-                qualityRungs = listOf(LadderRung(band = "1080p", streamId = "h-1080p")),
-            ),
-        )
-    }
+    // Review fix (16 Nov): the bottom-row shots moved to
+    // PlayerLandscapePaparazziTest — the row needs a landscape frame, and a
+    // portrait golden would enshrine a clipped More button.
 
     @Test
     fun playerGhost() {
