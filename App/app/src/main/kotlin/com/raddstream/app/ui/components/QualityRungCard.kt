@@ -24,10 +24,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.raddstream.app.R
 import com.raddstream.app.player.LadderForScope
 import com.raddstream.app.player.QualityOption
 import com.raddstream.app.player.carriesPreferredAudio
@@ -80,7 +82,15 @@ fun QualityRungCard(
             color = MaterialTheme.colorScheme.onBackground,
         )
         Text(
-            text = "Auto plays the best picture your plan can hold.",
+            // Detail review (Nov 2026, P0): when no rung plays here there
+            // is no Auto to play — the card is a download list, so name the
+            // real state instead of promising Auto. `R.string` strings are
+            // resourced (the old line was a hardcoded literal).
+            text = if (ladder.options.any { it.playsHere }) {
+                stringResource(R.string.detail_quality_auto_plays)
+            } else {
+                stringResource(R.string.detail_quality_select_download)
+            },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

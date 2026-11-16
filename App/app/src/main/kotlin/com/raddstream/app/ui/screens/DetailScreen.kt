@@ -96,6 +96,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -874,6 +875,11 @@ internal fun DetailContent(
 ) {
     val allPrints = (workPrints + seasons.flatMap { it.episodes.flatMap { e -> e.prints } } + seasons.flatMap { it.packedPrints })
     val bestPrint = allPrints.maxByOrNull { it.rankKey }
+    // Detail review (Nov 2026, P0): the hero's Play target — the best
+    // print that can actually start here. The hero shows AND plays this
+    // print; the keep/download target stays the best-ranked print
+    // (`bestPrint` above), unchanged.
+    val heroPrint = heroPlayablePrint(allPrints) ?: bestPrint
     // UI-fix P1-D2: the file list folds to 3 until the viewer asks for all.
     // It only renders when the quality ladder cannot fold the title at all
     // (no option groups from the server) — the ladder is the choice then.
@@ -910,11 +916,22 @@ internal fun DetailContent(
 
         item {
             PrimaryActions(
-                bestPrint = bestPrint,
+                // Detail review (Nov 2026, P0): the hero's Play must be the
+                // best print that can actually start here — the ladder's Auto
+                // rung — not the best-ranked print. The old shape hid Play
+                // when only the best print could not play here, while the
+                // ladder below still offered Play on another rung: the two
+                // regions disagreed about the same title. When nothing plays
+                // here the fallback is the best-ranked print, so the
+                // download-only and provider-page branches below read exactly
+                // as before. This is the same decision `playBest` makes
+                // (`bestPlayablePrintOf` on the gated layout), so the hero
+                // button and autoplay can never disagree either.
+                bestPrint = heroPrint,
                 hasAnyPrint = allPrints.isNotEmpty(),
                 resume = resume,
                 onPlayResume = onPlayResume,
-                onPlay = { bestPrint?.let(onPlayPrint) },
+                onPlay = { heroPrint?.let(onPlayPrint) },
                 onKeep = { bestPrint?.let(onKeep) },
                 onStartOver = onStartOver,
                 isFavorite = isFavorite,
@@ -1257,6 +1274,17 @@ private fun PosterHeader(
     }
 }
 
+/**
+ * Detail review (Nov 2026, P0): the hero's Play target — the best print
+ * that can actually start here, or null when none can. The best-ranked
+ * print is not the answer: on a gated title it can be a 4K print this
+ * viewer may not play, while a 720p print below it plays fine. Pure so
+ * DetailHeroPlayTest pins the matrix (playable best / playable non-best /
+ * download-only / no prints).
+ */
+internal fun heroPlayablePrint(prints: List<RankedPrint>): RankedPrint? =
+    prints.filter { it.playableHere }.maxByOrNull { it.rankKey }
+
 @Composable
 private fun PrimaryActions(
     bestPrint: RankedPrint?,
@@ -1358,7 +1386,7 @@ private fun PrimaryActions(
                 )
             } else if (hasAnyPrint) {
                 Text(
-                    text = "Not available to stream yet — download it instead.",
+                    text = stringResource(R.string.detail_not_available_stream),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
