@@ -1,7 +1,11 @@
 package com.raddstream.app.resolve
 
-import com.sun.net.httpserver.HttpServer
-import java.net.InetSocketAddress
+import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.net.Socket
+import java.net.SocketException
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -148,40 +152,20 @@ class WebViewDetectorTest {
             "....ftypisom".toByteArray(Charsets.US_ASCII).copyInto(it)
         }
         val m3u8 = "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\nseg0.ts\n".toByteArray(Charsets.UTF_8)
-        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
-            createContext("/page.html") { exchange ->
-                val body = """<html><body><video src="/stream/video.mp4"></video><script>fetch("/hls/list.m3u8")</script></body></html>""".toByteArray(Charsets.UTF_8)
-                exchange.responseHeaders.set("Content-Type", "text/html")
-                exchange.sendResponseHeaders(200, body.size.toLong())
-                exchange.responseBody.use { it.write(body) }
-            }
-            createContext("/stream/video.mp4") { exchange ->
-                exchange.responseHeaders.set("Content-Type", "video/mp4")
-                exchange.sendResponseHeaders(200, mp4.size.toLong())
-                exchange.responseBody.use { it.write(mp4) }
-            }
-            createContext("/hls/list.m3u8") { exchange ->
-                exchange.responseHeaders.set("Content-Type", "application/vnd.apple.mpegurl")
-                exchange.sendResponseHeaders(200, m3u8.size.toLong())
-                exchange.responseBody.use { it.write(m3u8) }
-            }
-            createContext("/hls/seg0.ts") { exchange ->
-                val body = ByteArray(188) { 0x47 }
-                exchange.responseHeaders.set("Content-Type", "video/mp2t")
-                exchange.sendResponseHeaders(200, body.size.toLong())
-                exchange.responseBody.use { it.write(body) }
-            }
-            createContext("/app.js") { exchange ->
-                val body = "console.log(1)".toByteArray(Charsets.UTF_8)
-                exchange.responseHeaders.set("Content-Type", "text/javascript")
-                exchange.sendResponseHeaders(200, body.size.toLong())
-                exchange.responseBody.use { it.write(body) }
-            }
-            executor = null
-            start()
-        }
+        // Minimal hand-rolled HTTP server: com.sun.net.httpserver is NOT on
+        // the Android unit-test compile classpath (CI run 43919653116 failed
+        // compileDebugUnitTestKotlin on `Unresolved reference 'sun'`), so the
+        // fixture serves over a raw ServerSocket instead — pure java.net.
+        val routes = mapOf(
+            "/page.html" to ("text/html" to """<html><body><video src="/stream/video.mp4"></video><script>fetch("/hls/list.m3u8")</script></body></html>""".toByteArray(Charsets.UTF_8)),
+            "/stream/video.mp4" to ("video/mp4" to mp4),
+            "/hls/list.m3u8" to ("application/vnd.apple.mpegurl" to m3u8),
+            "/hls/seg0.ts" to ("video/mp2t" to ByteArray(188) { 0x47 }),
+            "/app.js" to ("text/javascript" to "console.log(1)".toByteArray(Charsets.UTF_8)),
+        )
+        val server = FixtureHttpServer(routes).also { it.start() }
         try {
-            val base = "http://127.0.0.1:${server.address.port}"
+            val base = "http://127.0.0.1:${server.port}"
             // What the WebView records while the fixture page plays: the
             // playlist, the segments, the mp4 and the static assets.
             val recorded = listOf(
@@ -211,7 +195,75 @@ class WebViewDetectorTest {
                 transport.close()
             }
         } finally {
-            server.stop(0)
+            server.stop()
+        }
+    }
+
+    /**
+     * Serves canned (content-type, body) pairs over loopback. Answers 200
+     * with the full body for any route it knows (the probe's Range header is
+     * ignored, exactly as the fixture's contract states) and 404 otherwise.
+     * One request per connection, `Connection: close`, headers read
+     * byte-by-byte up to the blank line — the same shape as FakeSyncServer
+     * in NewPhoneProgressPullTest, which documents why `com.sun` is out.
+     */
+    private class FixtureHttpServer(private val routes: Map<String, Pair<String, ByteArray>>) {
+        private val serverSocket = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
+        val port: Int get() = serverSocket.localPort
+        private val acceptThread = Thread({
+            while (!serverSocket.isClosed) {
+                try {
+                    val socket = serverSocket.accept()
+                    Thread({ handle(socket) }, "fixture-http").apply { isDaemon = true }.start()
+                } catch (_: SocketException) {
+                    // Closed while accepting; stop quietly.
+                    break
+                } catch (_: IOException) {
+                    // A transient accept failure must not kill the server.
+                    continue
+                }
+            }
+        }, "fixture-http-accept").also { it.isDaemon = true }
+
+        fun start() = acceptThread.start()
+
+        fun stop() = serverSocket.close()
+
+        private fun handle(socket: Socket) {
+            try {
+                serve(socket)
+            } catch (_: IOException) {
+                // One bad connection must not kill the server thread.
+            }
+        }
+
+        private fun serve(socket: Socket) {
+            socket.use { s ->
+                val input = s.getInputStream()
+                val head = ByteArrayOutputStream()
+                // Read byte by byte until the blank line that ends the headers.
+                var tail = 0
+                while (true) {
+                    val byte = input.read()
+                    if (byte < 0) return
+                    head.write(byte)
+                    tail = (tail shl 8) or byte
+                    if (tail == 0x0D0A0D0A) break
+                }
+                val requestLine = head.toString(Charsets.US_ASCII).split("\r\n").firstOrNull()
+                    ?.split(" ") ?: return
+                val path = requestLine.getOrNull(1)?.substringBefore("?") ?: "/"
+                val (contentType, body) = routes[path]
+                    ?: ("text/plain" to "not found".toByteArray(Charsets.UTF_8))
+                val status = if (routes.containsKey(path)) 200 else 404
+                val out = s.getOutputStream()
+                out.write(
+                    "HTTP/1.1 $status OK\r\nContent-Type: $contentType\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n"
+                        .toByteArray(Charsets.US_ASCII),
+                )
+                out.write(body)
+                out.flush()
+            }
         }
     }
 }

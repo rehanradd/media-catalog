@@ -117,6 +117,13 @@ Two enablers in this branch:
 
 ## Verification
 
-- CI: (run ids in the parent report — do NOT merge until green).
+- CI, first push e250a7c5: Backend 43919653458 SUCCESS; Android 43919653116
+  FAILED at `compileDebugUnitTestKotlin` (main compile + lint passed) —
+  `WebViewDetectorTest` used `com.sun.net.httpserver.HttpServer`, which the
+  Android unit-test classpath does not resolve. Fixed in the follow-up commit:
+  the fixture now serves over a raw `ServerSocket` (`FixtureHttpServer`, the
+  same shape as `NewPhoneProgressPullTest`'s `FakeSyncServer`, which documents
+  the same red on run 42323050286). No production code changed in the fixup.
+  Second-push run ids in the parent report.
 - Emulator: Firebase Robo control run owed before the owner re-runs; see the
   Robo script and the parent report for the matrix + mint counts.
