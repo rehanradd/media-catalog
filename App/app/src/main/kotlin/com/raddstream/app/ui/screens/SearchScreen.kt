@@ -391,9 +391,11 @@ fun SearchScreen(
  * The field searches titles and cast names; only the prompt is unified
  * with Home's bar, not the capability.
  * Mockup (Nov 2026): one rounded field, 52dp tall, 16dp corners, prompt
- * "Search titles, genres, or cast" (search review: the old "Search movies,
- * shows, anime" mismatched the chips — SERIES, not "shows" — and omitted
- * KPOP; the new prompt names what the field takes).
+ * "Search titles or cast" (screenshot-fix D2, 2026-11-16: the old
+ * "Search titles, genres, or cast" truncated mid-word — "Search titles,
+ * genres, or" — on a narrow phone, because the field is too narrow for
+ * 30 characters next to the search icon. The shorter prompt names what
+ * the field takes and fits).
  */
 @Composable
 internal fun SearchField(
@@ -404,7 +406,7 @@ internal fun SearchField(
     // Audit #17: the Home search bar names what it takes — titles and
     // shows — while Search keeps the shorter hint. The review's prompt
     // names all three: titles, genres, or cast.
-    label: String = "Search titles, genres, or cast",
+    label: String = "Search titles or cast",
 ) {
     TextField(
         value = query,

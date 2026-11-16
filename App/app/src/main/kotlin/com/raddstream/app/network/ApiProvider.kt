@@ -18,6 +18,33 @@ import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 
 /**
+ * The v1 detail path — GET /api/v1/posts/{numeric-id} — whose 55-89 KB
+ * body gets the longer read budget in [ApiProvider]'s timeout
+ * interceptor (screenshot-fix 2026-11-16). The regex form keeps the
+ * list/search prefix location (/api/v1/posts) on the default budget.
+ */
+internal val DETAIL_PATH_REGEX: Regex = Regex("^/api/v1/posts/[0-9]+$")
+
+/** The shared client's read timeout — the budget every call gets unless [readTimeoutSecondsForPath] says longer. */
+internal const val DEFAULT_READ_TIMEOUT_SECONDS: Long = 15
+
+/**
+ * The read timeout, in seconds, for one catalog path (screenshot-fix
+ * 2026-11-16). The big bodies get longer budgets — the v2 works detail
+ * is a 441 KB payload (60 s), the Live TV channel list is 167 KB
+ * (45 s), a v1 detail is 55-89 KB (30 s) — because at the 2-25 KB/s
+ * the owner's phone showed, the 15 s default killed every attempt
+ * mid-body. Everything else keeps the 15 s default. Pure, so
+ * [ApiProviderTimeoutTest] pins the mapping without a network call.
+ */
+internal fun readTimeoutSecondsForPath(path: String): Long = when {
+    path.startsWith("/api/v2/works/") -> 60
+    path == "/api/v1/live-tv/channels" -> 45
+    DETAIL_PATH_REGEX.matches(path) -> 30
+    else -> DEFAULT_READ_TIMEOUT_SECONDS
+}
+
+/**
  * Builds (and caches) the Retrofit client for the server the user picked.
  *
  * WHAT IS DELIBERATELY NOT INSTALLED: no `HttpLoggingInterceptor`. Even with provenance gone
@@ -120,6 +147,31 @@ open class ApiProvider @Inject constructor(
             val clientBuilder = OkHttpClient.Builder()
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(15, TimeUnit.SECONDS)
+                // Screenshot-fix (2026-11-16): the 15 s read timeout is a
+                // per-read silence budget, and the big catalog bodies do
+                // not fit it on a slow connection — GET /api/v2/works/{id}
+                // is a 441 KB payload (measured 2026-11-16) and the Live TV
+                // channel list is 167 KB, so at the 2-25 KB/s the owner's
+                // phone showed, every attempt died mid-body and the detail
+                // retry burned all 4 attempts before showing
+                // "Couldn't load this title" — a load that was merely slow
+                // read as a failure. The big bodies get a longer read
+                // budget (see [readTimeoutSecondsForPath]); the default
+                // stays 15 s for everything else, so a dead small call
+                // still fails fast. Per-request, not a second client: the
+                // timeout rides the call, and the retry policy in
+                // DetailViewModel still bounds the attempts.
+                .addInterceptor { chain ->
+                    val path = chain.request().url.encodedPath
+                    val readSeconds = readTimeoutSecondsForPath(path)
+                    val timeoutChain = if (readSeconds != DEFAULT_READ_TIMEOUT_SECONDS) {
+                        chain.withReadTimeout(readSeconds, TimeUnit.SECONDS)
+                            .withConnectTimeout(15, TimeUnit.SECONDS)
+                    } else {
+                        chain
+                    }
+                    timeoutChain.proceed(timeoutChain.request())
+                }
                 // Every request carries the app's own User-Agent, including its
                 // version name: the config fetch is how the server learns
                 // which build is asking, and the discovery probes already

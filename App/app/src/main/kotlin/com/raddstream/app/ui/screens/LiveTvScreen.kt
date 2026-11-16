@@ -18,10 +18,14 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Tv
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -114,6 +118,21 @@ fun LiveTvScreen(
             state.channels.isEmpty() -> EmptyState(
                 title = "No live channels right now",
                 message = "Live channels will appear here when they are available.",
+                // Screenshot-fix D3 (2026-11-16): the empty tab photographed
+                // as a bare black void — no message, no illustration. The
+                // state gets a TV mark and a Retry, so an empty list reads
+                // as a state, never as a broken screen.
+                icon = {
+                    Icon(
+                        Icons.Default.Tv,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(48.dp),
+                    )
+                },
+                action = {
+                    Button(onClick = { viewModel.refresh() }) { Text("Retry") }
+                },
                 modifier = Modifier.fillMaxSize().padding(contentPadding),
             )
             else -> Column(Modifier.fillMaxSize().padding(contentPadding)) {

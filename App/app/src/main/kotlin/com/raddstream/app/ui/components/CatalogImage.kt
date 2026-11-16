@@ -293,8 +293,13 @@ fun ImageFallbackCard(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.padding(8.dp),
         ) {
+            // Screenshot-fix D4 (2026-11-16): the tile fallback read as a
+            // broken dark box — a 30dp mark and a two-line titleSmall that
+            // truncated mid-word ("The Gentlemen (Season 1 - 2) Du...").
+            // The mark is bigger and the full title gets three lines, so a
+            // failed poster still names its title instead of looking empty.
             RaddStreamMark(
-                diameter = if (tone == FallbackTone.Hero || large) 48.dp else 30.dp,
+                diameter = if (tone == FallbackTone.Hero || large) 48.dp else 40.dp,
                 color = MaterialTheme.colorScheme.primary.copy(
                     alpha = if (tone == FallbackTone.Hero || large) 1f else 0.55f,
                 ),
@@ -302,7 +307,7 @@ fun ImageFallbackCard(
             // Session 121 (P-15): the label is the title itself, never punctuation.
             // A label with no letter or digit in it — a "?" from a mistyped title, or
             // a stray symbol — renders as the mark alone instead of a stray glyph.
-            // F6: the full title, up to two lines — the initials ("AL") told a
+            // F6: the full title, up to three lines — the initials ("AL") told a
             // viewer nothing about which title failed to load.
             val safeLabel = label?.takeIf { it.any { ch -> ch.isLetterOrDigit() } }
             if (!safeLabel.isNullOrBlank()) {
@@ -312,7 +317,7 @@ fun ImageFallbackCard(
                     style = if (large) MaterialTheme.typography.titleMedium
                     else MaterialTheme.typography.titleSmall,
                     textAlign = TextAlign.Center,
-                    maxLines = 2,
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(top = 6.dp),
                 )

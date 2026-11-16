@@ -2741,7 +2741,7 @@ class PlayerViewModel @Inject constructor(
         is KeepResult.Stored -> "Kept for offline"
         is KeepResult.OnlyPlayableInApp -> "Kept — file is app-private (playable here only)"
         is KeepResult.StorageFull -> "Storage full — free up space and keep again"
-        is KeepResult.Interrupted -> "Keep interrupted — will resume from already-saved bytes"
+        is KeepResult.Interrupted -> "Keep interrupted — will resume"
         is KeepResult.Failed -> "Keep failed: ${result.message}"
         KeepResult.EngineNotWired -> "Keep engine not available in this build"
     }

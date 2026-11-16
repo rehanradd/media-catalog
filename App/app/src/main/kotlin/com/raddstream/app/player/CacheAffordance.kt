@@ -94,7 +94,12 @@ object CacheAffordance {
             )
             CacheState.INTERRUPTED -> KeepUiState.Blocked(
                 CacheState.INTERRUPTED,
-                "Keep interrupted — will resume from ${formatBytes(snapshot.bytesSaved)}",
+                // Screenshot-fix D5 (2026-11-16): the old message named the
+                // saved bytes ("will resume from 128.4 MB") and the toast
+                // cut it mid-word — "Keep interrupted — will res...". The
+                // byte count already rides on the Keep chip; the toast
+                // only needs the outcome, in 30 characters.
+                "Keep interrupted — will resume",
             )
             CacheState.STORAGE_FULL -> KeepUiState.Blocked(
                 CacheState.STORAGE_FULL,

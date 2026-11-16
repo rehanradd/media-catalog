@@ -5,13 +5,16 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MimeTypes
 import com.raddstream.app.network.models.LiveTvChannel
+import com.raddstream.app.network.models.LiveTvChannelsResponse
 import com.raddstream.app.player.PlayerSessionStore
 import com.raddstream.app.repository.CatalogRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.IOException
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -21,10 +24,12 @@ import kotlinx.coroutines.withTimeout
 /**
  * The Live TV tab's state: one server fetch, then client-side filtering.
  *
- * The served list is small (17 channels at v1), so the category chips and
- * the name search filter the rows already on the device instead of a
- * network round-trip per tap. The endpoint's own `?category=` filter stays
- * available for a day the list grows large enough to page.
+ * The served list is 759 channels (measured 2026-11-16 — the "17
+ * channels" the old comment claimed is years stale), a 167 KB body, so
+ * the category chips and the name search filter the rows already on the
+ * device instead of a network round-trip per tap. The endpoint's own
+ * `?category=` filter stays available for a day the list grows large
+ * enough to page.
  *
  * A channel is played by its signed `stream_id` handle through the existing
  * player — this ViewModel never holds, shows or routes an upstream URL.
@@ -78,7 +83,7 @@ class LiveTvViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
             try {
-                val response = repository.getLiveTvChannels()
+                val response = fetchChannelsWithRetry()
                 saveCache(response.channels, response.categories)
                 _uiState.update {
                     it.copy(
@@ -114,6 +119,30 @@ class LiveTvViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Screenshot-fix (2026-11-16): the channel list is a 167 KB body and
+     * the phone that photographed an empty Live TV tab was on a 2-25 KB/s
+     * connection — one stalled read must not be the whole story. One
+     * silent retry for a transport failure (a read timeout is an
+     * [IOException]) before the error/cache path in [refresh] below; a
+     * second failure is the error, not a third attempt. Cancellation
+     * aborts at once, never retries.
+     */
+    private suspend fun fetchChannelsWithRetry(): LiveTvChannelsResponse {
+        var attempt = 0
+        while (true) {
+            attempt++
+            try {
+                return repository.getLiveTvChannels()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: IOException) {
+                if (attempt >= LIVE_TV_FETCH_MAX_ATTEMPTS) throw error
+                delay(LIVE_TV_FETCH_RETRY_DELAY_MS)
+            }
+        }
+    }
+
     private fun saveCache(channels: List<LiveTvChannel>, categories: List<String>) {
         runCatching {
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -134,6 +163,9 @@ class LiveTvViewModel @Inject constructor(
             "Live TV is having trouble right now. Check your connection or try again."
         private const val PREFS_NAME = "live_tv_cache"
         private const val KEY_CACHED_LIST = "cached_list"
+        /** One silent retry of a failed channel fetch — see [fetchChannelsWithRetry]. */
+        private const val LIVE_TV_FETCH_MAX_ATTEMPTS = 2
+        private const val LIVE_TV_FETCH_RETRY_DELAY_MS = 1_000L
     }
 
     fun onCategorySelected(category: String?) {

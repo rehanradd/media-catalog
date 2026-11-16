@@ -392,8 +392,7 @@ fun DetailScreen(
             state.error != null && post == null -> Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(detailPadding)
-                    .verticalScroll(rememberScrollState()),
+                    .padding(detailPadding),
             ) {
                 // F9 (Batch B): the failure names the title when the list row
                 // is still in this process — a poster + title above the error,
@@ -403,29 +402,56 @@ fun DetailScreen(
                     DetailErrorHeader(post = fallback)
                     Spacer(Modifier.height(16.dp))
                 }
-                ErrorState(
-                    title = "Couldn't load this title",
-                    message = state.error ?: "Unable to load title.",
-                    onRetry = viewModel::loadDetail,
-                    // F9 (Batch A): a failed title needs a way out that is not
-                    // "retry forever" — back to browse. The message itself is
-                    // already specific by error type (see friendlyNetworkError in
-                    // the ViewModel: offline, timeout, 429, 404 and 5xx each get
-                    // their own words); this branch only adds the exit.
-                    secondaryLabel = "Back to browse",
-                    onSecondary = onBackClick,
-                    fillScreen = false,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(4.dp))
-                TextButton(
-                    onClick = { showReportDialog = true },
-                    modifier = Modifier
-                        .align(Alignment.CenterHorizontally)
-                        .heightIn(min = 48.dp)
-                        .testTag("detail_report_broken_button"),
+                // D6 (screenshot-fix 2026-11-16): the error block centres in
+                // the space below the header instead of hugging the top and
+                // leaving a black void under the actions. The block scrolls
+                // inside its own box, so a small screen or large font never
+                // clips it.
+                Box(
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Text("Report broken stream")
+                    Column(
+                        modifier = Modifier.verticalScroll(rememberScrollState()),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        ErrorState(
+                            title = "Couldn't load this title",
+                            message = state.error ?: "Unable to load title.",
+                            onRetry = viewModel::loadDetail,
+                            // F9 (Batch A): a failed title needs a way out that is not
+                            // "retry forever" — back to browse. The message itself is
+                            // already specific by error type (see friendlyNetworkError in
+                            // the ViewModel: offline, timeout, 429, 404 and 5xx each get
+                            // their own words); this branch only adds the exit.
+                            secondaryLabel = "Back to browse",
+                            onSecondary = onBackClick,
+                            fillScreen = false,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        TextButton(
+                            onClick = { showReportDialog = true },
+                            modifier = Modifier
+                                .align(Alignment.CenterHorizontally)
+                                .heightIn(min = 48.dp)
+                                .testTag("detail_report_broken_button"),
+                        ) {
+                            Text("Report broken stream")
+                        }
+                        // D6: one honest line about the usual cause — a big
+                        // title on a slow connection — so the screen answers
+                        // the "why" instead of only offering Retry.
+                        Text(
+                            text = "Titles are large files — a weak signal is the usual cause. Retry when your connection is steadier.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 12.dp, start = 24.dp, end = 24.dp),
+                        )
+                    }
                 }
             }
             post != null -> DetailContent(
@@ -1285,7 +1311,13 @@ private fun DetailHeroSection(
     if (backdropUrl == null) {
         // Detail review (Nov 2026, P1): the no-backdrop fallback is
         // kept — the poster + title block, padded like any other item.
-        Box(pageSides) {
+        // Screenshot-fix D1 (2026-11-16): this branch starts at y=0
+        // (detailContentPadding top is 0 for the full-bleed hero), so
+        // the poster + title slid under the status bar and the title
+        // collided with the clock and signal icons (Resident Evil,
+        // The Paradise). The fallback has no artwork to bleed, so it
+        // starts below the status bar AND the floating top bar (64dp).
+        Box(pageSides.statusBarsPadding().padding(top = 64.dp)) {
             PosterHeader(
                 post = post,
                 capabilities = capabilities,
@@ -1299,7 +1331,16 @@ private fun DetailHeroSection(
     // backdrop with no radius, a stronger bottom scrim, and the title
     // block over the scrim. The floating mini-poster is gone: the
     // backdrop IS the artwork now.
-    Box(modifier = Modifier.fillMaxWidth()) {
+    // Screenshot-fix D1 (2026-11-16): the title block is five rows tall
+    // (title + meta + pill + rating + genres) and bottom-aligned in a
+    // 16:9 hero, so on a narrow phone its top reached into the floating
+    // top bar and the title ran under the back arrow (Kraven the
+    // Hunter). The hero keeps a minimum height of 296dp — status bar +
+    // top bar (88dp) + a two-line title block (188dp) + bottom padding
+    // (16dp) + a margin — so the block's top can never enter the bar's
+    // zone, whatever the backdrop's aspect gives. The backdrop still
+    // bleeds edge-to-edge at the top; only the box below it grows.
+    Box(modifier = Modifier.fillMaxWidth().heightIn(min = 296.dp)) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1330,6 +1371,11 @@ private fun DetailHeroSection(
             capabilities = capabilities,
             seasonCount = seasonCount,
             includedPill = includedPill,
+            // D1: the hero title caps at two lines — a three-line title
+            // is what pushed the block into the top bar. The full title
+            // stays in the block's semantics and on the no-backdrop
+            // header, which keeps three lines.
+            titleMaxLines = 2,
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .then(pageSides)
@@ -1378,6 +1424,8 @@ private fun DetailTitleBlock(
     seasonCount: Int,
     includedPill: String?,
     modifier: Modifier = Modifier,
+    /** Screenshot-fix D1 (2026-11-16): the hero caps at two lines — see [DetailHeroSection]. */
+    titleMaxLines: Int = 3,
 ) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         // Robo run 3: this title text is identical to the bar title above
@@ -1393,7 +1441,7 @@ private fun DetailTitleBlock(
             style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onBackground,
-            maxLines = 3,
+            maxLines = titleMaxLines,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.semantics { contentDescription = "Title: $titleText" },
         )
@@ -1401,29 +1449,40 @@ private fun DetailTitleBlock(
         if (meta.isNotEmpty()) {
             Text(meta.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        includedPill?.let { pill ->
-            // Detail review (Nov 2026, P1): the included line is a pill
-            // now, not a sentence. VIP draws the eye in the rung pill's
-            // own colours (primaryContainer); a free viewer reads the
-            // cap. The ViewModel is the only producer — it emits "VIP"
-            // or "Free · up to X" — so the VIP check is an exact match
-            // on its own word.
-            Pill(
-                text = pill,
-                backgroundColor = if (pill == "VIP") {
-                    MaterialTheme.colorScheme.primaryContainer
-                } else {
-                    MaterialTheme.colorScheme.surfaceVariant
-                },
-                contentColor = if (pill == "VIP") {
-                    MaterialTheme.colorScheme.onPrimaryContainer
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
-            )
-        }
-        UserWords.displayRating(post.imdbRating)?.let { rating ->
-            RatingBadge(rating = "$rating IMDb")
+        // Screenshot-fix D1 (2026-11-16): the VIP pill and the IMDb badge
+        // share one row now, not two stacked rows — the stacked pair was
+        // 36dp of the title block's height, and that height is what pushed
+        // the block's top into the floating top bar on a narrow phone.
+        // Either may be absent; the row only renders what exists.
+        val rating = UserWords.displayRating(post.imdbRating)?.let { "$it IMDb" }
+        if (includedPill != null || rating != null) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                includedPill?.let { pill ->
+                    // Detail review (Nov 2026, P1): the included line is a pill
+                    // now, not a sentence. VIP draws the eye in the rung pill's
+                    // own colours (primaryContainer); a free viewer reads the
+                    // cap. The ViewModel is the only producer — it emits "VIP"
+                    // or "Free · up to X" — so the VIP check is an exact match
+                    // on its own word.
+                    Pill(
+                        text = pill,
+                        backgroundColor = if (pill == "VIP") {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant
+                        },
+                        contentColor = if (pill == "VIP") {
+                            MaterialTheme.colorScheme.onPrimaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
+                rating?.let { RatingBadge(rating = it) }
+            }
         }
         GenreChipsRow(chips = post.genreList + capabilities)
     }

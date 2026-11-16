@@ -257,10 +257,15 @@ fun HeroCarousel(
             // Below the card, on the page background: no pill behind the
             // dots — the pill was contrast over bright artwork, and down
             // here there is no artwork behind them.
+            // Screenshot-fix D7 (2026-11-16): 4dp above the dots, not
+            // 10dp — the dots sat in a dead gap between the hero card
+            // and the next row. The dots row itself stays 48dp (the tap
+            // floor, pinned by HeroIndicatorTest); only the dead padding
+            // around it shrinks.
             background = false,
             modifier = Modifier
                 .align(Alignment.CenterHorizontally)
-                .padding(top = 10.dp),
+                .padding(top = 4.dp),
         )
     }
     }

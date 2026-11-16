@@ -372,7 +372,9 @@ internal fun HomeContent(
             selected = filter,
             onSelect = { chosen -> filter = if (chosen == filter) HomeFilter.All else chosen },
         )
-        Spacer(Modifier.height(8.dp))
+        // Screenshot-fix D8 (2026-11-16): 4dp, not 8dp — the chips row is
+        // 48dp already, and the gap under it is dead space before the hero.
+        Spacer(Modifier.height(4.dp))
 
         // M6 (home review, Nov 2026): the home search bar is gone. It was
         // a third door to the same place — the Search tab is the empty-query
@@ -454,12 +456,17 @@ internal fun HomeContent(
                         autoplay = heroAutoplay,
                         intervalMs = heroIntervalMs,
                     )
-                    Spacer(Modifier.height(12.dp))
+                    // Screenshot-fix D7 (2026-11-16): 6dp, not 12dp — the
+                    // gap between the dots and the next row was the second
+                    // dead gap in the hero stack.
+                    Spacer(Modifier.height(6.dp))
                 } else if (state.sections.any { it.loading }) {
                     // Hold the hero's footprint while the first rail lands, so the page
                     // never flashes a bare background and then jumps when it fills in.
                     HeroSkeleton()
-                    Spacer(Modifier.height(12.dp))
+                    // D7: same 6dp as the loaded hero — the skeleton must
+                    // hold the same footprint, not a taller one.
+                    Spacer(Modifier.height(6.dp))
                 }
             }
             // B3: the Continue Watching slot is pinned here, under the hero,
@@ -682,10 +689,17 @@ internal fun HomeHeader(
     onOpenWallet: () -> Unit,
 ) {
     val targetDays = streakLadder.keys.maxOrNull() ?: 7
+    // Screenshot-fix D8 (2026-11-16): the header ate the first screen —
+    // two-line pills at 8dp padding + a titleLarge logo + 8dp row padding
+    // put the hero ~190dp down on a narrow phone. The pills keep their
+    // two lines and the 48dp touch floor, but the padding and the logo
+    // shrink so the hero starts higher. The chips row below keeps its
+    // 48dp chips (the touch floor); the space comes from here and the
+    // spacer under the row, not from shrinking a tap target.
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = 16.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -697,7 +711,7 @@ internal fun HomeHeader(
                 modifier = Modifier.testTag(CheckInPillTag),
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
@@ -705,7 +719,7 @@ internal fun HomeHeader(
                         Icons.Default.DateRange,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(18.dp),
+                        modifier = Modifier.size(16.dp),
                     )
                     Column {
                         Text(
@@ -736,13 +750,13 @@ internal fun HomeHeader(
             val nameParts = Brand.name.uppercase().split(" ")
             Text(
                 text = nameParts.getOrNull(0) ?: "RADD",
-                style = MaterialTheme.typography.titleLarge,
+                style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onBackground,
             )
             Text(
                 text = nameParts.getOrNull(1) ?: "STREAM",
-                style = MaterialTheme.typography.labelLarge,
+                style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary,
             )
@@ -755,7 +769,7 @@ internal fun HomeHeader(
                 modifier = Modifier.testTag(CoinWalletPillTag),
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
@@ -765,7 +779,7 @@ internal fun HomeHeader(
                     // it is cleared from the accessibility tree.
                     Box(
                         modifier = Modifier
-                            .size(20.dp)
+                            .size(18.dp)
                             .clip(CircleShape)
                             .background(RaddSignalGold)
                             .clearAndSetSemantics {},
@@ -1010,7 +1024,9 @@ private fun StartWatchingPlaceholder(onBrowse: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            // Screenshot-fix D7 (2026-11-16): 8dp vertical, not 12dp —
+            // the third dead gap in the hero stack, above this row.
+            .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {

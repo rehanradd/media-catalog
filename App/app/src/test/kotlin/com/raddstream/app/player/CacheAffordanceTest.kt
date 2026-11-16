@@ -2,6 +2,7 @@ package com.raddstream.app.player
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -45,5 +46,26 @@ class CacheAffordanceTest {
             ),
         )
         assertNull(CacheAffordance.keepingProgress(KeepUiState.Stored(true, null)))
+    }
+
+    @Test
+    fun `interrupted message is short enough for a toast`() {
+        // Screenshot-fix D5 (2026-11-16): the old message named the saved
+        // bytes and the toast cut it mid-word — "Keep interrupted — will
+        // res...". The toast only needs the outcome; the byte count rides
+        // on the Keep chip. 30 characters fits a toast on a narrow phone.
+        val snapshot = CacheSnapshot(
+            state = CacheState.INTERRUPTED,
+            bytesSaved = 128_400_000L,
+            totalBytes = 3_050_000_000L,
+            isEstimate = false,
+            bytesPerSec = 0L,
+            resumable = true,
+            previewExpiresAt = null,
+        )
+        val state = CacheAffordance.uiStateFor(snapshot, keepRequested = true)
+        val text = CacheAffordance.chipText(state)
+        assertEquals("Keep interrupted — will resume", text)
+        assertTrue(text.length <= 30)
     }
 }
