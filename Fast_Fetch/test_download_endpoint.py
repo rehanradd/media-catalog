@@ -48,9 +48,10 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 def _ingest(conn, title, *, is_18_plus, direct_url, quality="720p"):
     # The fixture is a free-tier print on purpose: the server-side quality
-    # gate (audit critical 5) 402s 1080p/2160p for a free viewer, so a
-    # 1080p fixture would 402 every ordinary download test below. The gate
-    # itself is pinned by its own tests at the bottom of this file.
+    # gate (audit critical 5) 402s 1080p/2160p for a free viewer when it is
+    # on, so a 1080p fixture would 402 every ordinary download test below
+    # if the gate were flipped on. The gate itself is pinned by its own
+    # tests at the bottom of this file.
     data = {
         "url": f"https://{SITE}/movie/{title.lower().replace(' ', '-')}/",
         "slug": title.lower().replace(" ", "-"),
@@ -503,7 +504,17 @@ class DownloadEndpointTests(unittest.TestCase):
     def test_a_premium_download_is_402_for_a_free_user(self):
         """The 720p free cap is server-side, not app-only: a free viewer
         asking for a 1080p print gets 402 `premium_quality_requires_vip`,
-        never the file — and the body names no hoster and no URL."""
+        never the file — and the body names no hoster and no URL.
+
+        The gate is flipped on explicitly here: the shipped default is OFF
+        (launch plan Phase 0, G-1), so this test proves the enforcement,
+        not the default.
+        """
+        admin_panel._ensure_monetization(self.conn)
+        self.conn.execute(
+            "UPDATE app_remote_config SET feature_quality_gate = 1 "
+            "WHERE id = 1")
+        self.conn.commit()
         premium_id = _ingest(self.conn, "Premium Film", is_18_plus=0,
                              direct_url="https://media.example.test/premium.mp4",
                              quality="1080p")
