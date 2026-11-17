@@ -93,7 +93,6 @@ import com.raddstream.app.R
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.player.PastedText
 import com.raddstream.app.player.classifyPastedText
-import com.raddstream.app.ui.components.CardGeometry
 import com.raddstream.app.ui.components.EmptyState
 import com.raddstream.app.ui.components.InlineLoadFailure
 import com.raddstream.app.ui.components.ErrorState
@@ -103,6 +102,7 @@ import com.raddstream.app.ui.components.SearchResultsSkeleton
 import com.raddstream.app.ui.components.SectionHeader
 import com.raddstream.app.ui.components.SkeletonBox
 import com.raddstream.app.ui.components.raddFilterChipColors
+import com.raddstream.app.ui.layout.CardGeometry
 import com.raddstream.app.viewmodel.GenreFilter
 import com.raddstream.app.viewmodel.LanguageFilter
 import com.raddstream.app.viewmodel.IndustryFilter
