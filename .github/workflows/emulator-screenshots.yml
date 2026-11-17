@@ -1,7 +1,13 @@
 # Emulator screenshots — on-demand, free (public repo)
-# PREPARED 2026-11-17 by the emulator hunt. NOT yet committed to the repo:
-# add as .github/workflows/emulator-screenshots.yml on a branch, let Android CI
-# pass, merge to main. Then run it from Actions > Emulator screenshots > Run workflow.
+# First dispatch (run 43999661140) FAILED at "Install Android SDK":
+# android-actions/setup-android@v2 ran `sdkmanager --licenses`
+# interactively ("7 of 8 SDK package licenses not accepted", y/N with no
+# input) and then tried to install the obsolete `tools` package ("Failed to
+# find package 'tools'", sdkmanager exit 1). The `tools` package was never
+# in our list — v2's internals invoked it. Fix (2026-11-17): mirror ci.yml
+# exactly — setup-android v4.0.4 pinned to the same commit SHA, runner
+# pinned to ubuntu-24.04, all actions SHA-pinned, google-services.json
+# restored before the Gradle build (the debug build needs it, same as CI).
 #
 # What it does: builds the debug APK, boots a free hardware-accelerated
 # emulator (KVM on the GitHub-hosted Ubuntu runner — free and unlimited for
@@ -31,20 +37,20 @@ permissions:
 
 jobs:
   screenshots:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Set up JDK 17 (temurin)
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad  # v6.1.0
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Restore Gradle caches
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: |
             ~/.gradle/caches
@@ -55,9 +61,16 @@ jobs:
             gradle-${{ runner.os }}-
 
       - name: Install Android SDK (platform-tools, android-35, build-tools 35.0.0)
-        uses: android-actions/setup-android@v2
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd  # v4.0.4
         with:
           packages: "platform-tools platforms;android-35 build-tools;35.0.0"
+
+      - name: Restore google-services.json (CI secret, never committed)
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -z "$GOOGLE_SERVICES_JSON" ]; then echo "GOOGLE_SERVICES_JSON secret is empty" >&2; exit 1; fi
+          echo "$GOOGLE_SERVICES_JSON" | base64 -d > App/app/google-services.json
 
       - name: Build debug APK
         working-directory: App
@@ -150,7 +163,7 @@ jobs:
 
       - name: Upload screenshots + video
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: emulator-shots-${{ github.run_number }}
           path: emu-shots/
