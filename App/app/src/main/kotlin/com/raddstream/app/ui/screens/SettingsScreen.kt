@@ -73,6 +73,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -195,10 +196,9 @@ fun SettingsScreen(
     var showAccountDetails by remember { mutableStateOf(false) }
     // D2: the contact card's and the column's top edges in window
     // coordinates, in pixels — recorded on layout so the deep link can
-    // scroll to the card. (LayoutCoordinates has no position-in-parent
-    // on this Compose version — the compiler rejects positionInParent —
-    // so the offset is derived from the two window bounds instead, the
-    // same boundsInWindow the player already uses for its own bounds.)
+    // scroll to the card. The offset is derived from the two window
+    // bounds (boundsInWindow, the same call the player uses for its own
+    // bounds), not from a position-in-parent helper.
     var contactCardTopInWindow by remember { mutableStateOf<Float?>(null) }
     var columnTopInWindow by remember { mutableStateOf<Float?>(null) }
     var deepLinkScrolled by remember { mutableStateOf(false) }
