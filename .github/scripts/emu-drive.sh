@@ -207,8 +207,24 @@ if [ -z "$APP_PKG" ]; then
   echo "FAIL: no com.raddstream.app* package found after install" >&2
   exit 1
 fi
-MAIN_ACTIVITY="$APP_PKG/.MainActivity"
+# The launcher ACTIVITY class is NOT "$APP_PKG.MainActivity": the
+# manifest declares android:name=".MainActivity" against namespace
+# com.raddstream.app, while the debug suffix only changes the PACKAGE.
+# Run 44027036003 proved it: the plain install SUCCEEDED
+# ("Installed package: com.raddstream.app.debug") but `am start -n
+# com.raddstream.app.debug/.MainActivity` failed with "Error type 3 ...
+# does not exist" — the real component is
+# com.raddstream.app.debug/com.raddstream.app.MainActivity. Resolve
+# the launcher from the device instead of guessing the class name;
+# fall back to the old "$APP_PKG/.MainActivity" form if resolution
+# finds nothing (other flavors may keep package == namespace).
+MAIN_ACTIVITY=$(adb shell cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER "$APP_PKG" 2>/dev/null | tr -d '\r' | grep '/' | tail -n 1 || true)
+if [ -z "$MAIN_ACTIVITY" ]; then
+  echo "WARN: resolve-activity found no launcher for $APP_PKG, falling back to $APP_PKG/.MainActivity" >&2
+  MAIN_ACTIVITY="$APP_PKG/.MainActivity"
+fi
 echo "Installed package: $APP_PKG"
+echo "Launcher activity: $MAIN_ACTIVITY"
 # Start video capture in the background (killed after the flow).
 adb shell screenrecord --time-limit "$SECONDS" /sdcard/radd-demo.mp4 &
 REC_PID=$!
