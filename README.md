@@ -15,7 +15,7 @@ Agent manual: `AGENTS.md`. Session logs: `Fast_Fetch/CONTINUITY.md`,
   `https://radd-stream.ccwu.cc/?folder=/home/ubuntu/radd-stream-work`
 - **Live tree: `/opt/radd-stream`** — look, never edit. It moves only through
   the gate deploy below.
-- **Repo:** `https://github.com/rehanradd/radd-stream`, one branch (`main`).
+- **Repo:** `https://github.com/rehanradd/media-catalog`, one branch (`main`).
   `/tmp/muse-panel-push` and `/tmp/muse-r2-push` on the VM are Muse's
   machinery — never touch them.
 
