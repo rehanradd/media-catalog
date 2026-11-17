@@ -35,6 +35,11 @@
 # not exist" and the app never launched at all. The old script
 # swallowed that failure (|| true) and screenshotted the launcher.
 # The package is now derived from the device after install (below).
+# Run 44040083866 (head 91ddbe80) FAILED EARLIER STILL: the app launched
+# but never came to the foreground within 120s (focus: '') — no crash
+# evidence, no screenshot, empty artifact. The timeout path in
+# wait_for_app_focus now dumps a frame + dumpsys window + crash logcat
+# into $OUT, and the first wait is 180s for the slow software emulator.
 # The workflow uploads emu-shots/ with `if: always()`, so a failed run
 # still leaves its (launcher) frames as evidence of what went wrong.
 set -euo pipefail
@@ -200,6 +205,14 @@ wait_for_app_focus() {
     now=$(date +%s)
     if [ $((now - start)) -ge "$timeout" ]; then
       echo "FAIL: app never came to foreground within ${timeout}s (focus now: '$(focused_pkg)')" >&2
+      # Run 44040083866: the app launched (am start OK) but never
+      # foregrounded, and left NO evidence — no screenshot, no logcat,
+      # empty artifact (the upload step found nothing in $OUT). Dump
+      # diagnostics into $OUT before failing so the next such failure
+      # is diagnosable: current frame, window state, crash lines.
+      adb exec-out screencap -p > "$OUT/focus-timeout.png" 2>/dev/null || true
+      adb shell dumpsys window > "$OUT/focus-timeout-dumpsys-window.txt" 2>/dev/null || true
+      adb logcat -d -t 300 2>/dev/null | grep -i -E 'raddstream|AndroidRuntime|FATAL|crash' > "$OUT/focus-timeout-logcat.txt" || true
       return 1
     fi
     sleep 5
@@ -285,7 +298,12 @@ adb shell am start -n "$MAIN_ACTIVITY"
 # The app must actually reach the foreground — on the software emulator
 # the launcher can ANR here and the app never draws a frame (runs
 # 44014294998 / 44013690073). Fail instead of screenshotting the launcher.
-wait_for_app_focus 120 || exit 1
+# 180s, not 120s: run 44040083866's emulator was slow throughout (boot
+# 596s, install ~79s) and the app never foregrounded within 120s — the
+# wait may simply have been too short for this runner, and the timeout
+# path now dumps diagnostics (above) so a real crash is distinguishable
+# from slowness.
+wait_for_app_focus 180 || exit 1
 sleep 4
 screenshot "01-disclaimer.png"
 
