@@ -1,4 +1,4 @@
-# Radd Stream
+# Media Catalog
 
 A media-catalog and source-link service with a REST API and an Android client.
 The backend aggregates public catalog metadata and source links into SQLite;
@@ -50,9 +50,9 @@ domain changes, update the payload and this section together:
 - **Watchdog:** `Fast_Fetch/radd_watchdog.py`, monitor/alert only. Timers:
   light every 15 min, medium hourly, heavy Wed 02:00.
 - **Backups:** gate backups go to the private Hugging Face dataset
-  `radddao/radd-stream-gate-backups`. 10 of 11 done on 2026-11-17; the last
-  one (postfill) remains. The two newest gate backups stay on disk as
-  rollback nets — never delete them.
+  `radddao/radd-stream-gate-backups`. All 11 done and verified 2026-11-17.
+  The two newest gate backups stay on disk as rollback nets — never
+  delete them.
 
 ## Build, test, push, deploy
 
