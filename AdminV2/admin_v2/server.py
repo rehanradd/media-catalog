@@ -224,7 +224,19 @@ class AdminApp:
         nxt = body.pop("_next", None) if isinstance(body, dict) else None
         if isinstance(body, dict):
             body.pop("csrf_token", None)
-        data = fn(user)
+        try:
+            data = fn(user)
+        except ApiError as exc:
+            # A browser form gets no use from a JSON error body: send
+            # the operator back to the page with the real reason in the
+            # query string, where layout() renders it as a panel error.
+            # JSON callers still get the JSON error from handle().
+            if self._is_form(headers) and is_write:
+                target = nxt or "/admin"
+                sep = "&" if "?" in target else "?"
+                return (303, "text/html", b"", None,
+                        target + sep + "error=" + urllib.parse.quote(exc.message, safe=""))
+            raise
         ip = mask_ip(headers.get("X-Forwarded-For", ""))
         _ = ip
         if self._is_form(headers) and is_write:
@@ -817,6 +829,7 @@ def _page_broadcasts(self, user, sess, query):
 
 def _page_live(self, user, sess, query):
     live = self.service.get_live(user)
+    error = (query.get("error", [""])[0] if query.get("error") else "")
     sched = self.service.list_scheduled(user)["items"]
     hist = self.service.list_config_history(user)["items"]
     hid = templates.form_hidden(sess.get("csrf_token"), "/admin/live")
@@ -827,9 +840,12 @@ def _page_live(self, user, sess, query):
                  '<p>Nothing has been published yet. The app is serving its built-in defaults.</p></div>')
     else:
         lv = live["live"]
-        body += ('<div class="card"><h3>Live now — version %s</h3>'
+        cat_v = live.get("live_catalog_version")
+        serving = ((" · app serving v%s" % templates.esc(cat_v))
+                   if cat_v is not None else "")
+        body += ('<div class="card"><h3>Live now — version %s%s</h3>'
                  '<p>Published %s by %s · %s enabled section(s).</p></div>') % (
-            templates.esc(lv["config_version"]),
+            templates.esc(lv["config_version"]), serving,
             templates.fmt_datetime(lv["published_at"]),
             templates.esc(lv.get("published_by_name") or "system"),
             templates.esc(lv["sections"]))
@@ -870,7 +886,7 @@ def _page_live(self, user, sess, query):
                     name, " selected" if cur == 0 else "",
                     " selected" if cur == 1 else "")
     body += ('<div class="card"><h3>Draft settings</h3>'
-             '<p>App update, brand and region. Saves as a draft — publish to go live.</p>'
+             '<p>App update, brand, region and maintenance mode. Saves as a draft — publish to go live.</p>'
              '<form method="post" action="/admin/api/v2/remote-config">%s'
              '<label>Minimum version code</label><input name="min_version_code" type="number" value="%s">'
              '<label>Latest version code</label><input name="latest_version_code" type="number" value="%s">'
@@ -932,7 +948,7 @@ def _page_live(self, user, sess, query):
 <div class="stickybar"><button type="submit">Roll back to version %s</button></div></form></div>""" % (
             templates.esc(h["config_version"]), hid,
             templates.esc(h["config_version"]), templates.esc(h["config_version"]))
-    return templates.layout("Live", body, active="live")
+    return templates.layout("Live", body, active="live", error=error)
 
 
 def _page_live_tv(self, user, sess, query):
@@ -1410,6 +1426,7 @@ def _page_monetization(self, user, sess, query):
     are password fields, never prefilled: blank means "keep the stored
     token" (put_monetization strips empty tokens before saving)."""
     mon = self.service.get_monetization(user)
+    error = (query.get("error", [""])[0] if query.get("error") else "")
     hid = templates.form_hidden(sess.get("csrf_token"), "/admin/monetization")
 
     def num_field(name, label, unit):
@@ -1450,7 +1467,7 @@ def _page_monetization(self, user, sess, query):
              '<div class="card"><h3>Ad zones</h3>%s%s</div>'
              '<div class="card"><h3>Tokens (blank keeps the stored one)</h3>'
              '<p class="muted">ShrinkMe: %s. Droplink: %s.</p>%s%s</div>'
-             '<div class="card"><h3>Flags</h3>%s%s%s%s%s</div>'
+             '<div class="card"><h3>Flags</h3>%s%s%s%s%s%s</div>'
              '<label for="mon-apk_update_url">APK update URL</label>'
              '<input id="mon-apk_update_url" name="apk_update_url" type="text" value="%s">'
              '<div class="stickybar"><button type="submit">Save monetization</button></div></form>') % (
@@ -1477,7 +1494,7 @@ def _page_monetization(self, user, sess, query):
         flag_field("coins_enabled", "Coins"),
         templates.esc(mon.get("apk_update_url") or ""),
     )
-    return templates.layout("Monetization", body, active="monetization")
+    return templates.layout("Monetization", body, active="monetization", error=error)
 
 
 def _page_data_health(self, user, sess, query):

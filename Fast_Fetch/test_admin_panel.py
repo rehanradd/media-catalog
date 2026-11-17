@@ -1282,6 +1282,21 @@ class Fleet(Fixture):
         for site in admin_panel.FLEET_SITES:
             self.assertNotIn(site, blob)
 
+    def test_the_public_remote_config_carries_config_version(self):
+        """The version the v2 panel stamps onto the served row on every
+        catalog write, so a phone can tell which publish it is serving.
+        0 on a row that predates stamping; the stamped value after."""
+        with admin_panel._session(self.db_path) as conn:
+            public = admin_panel.remote_config(conn)
+        self.assertEqual(public["config_version"], 0)
+        with admin_panel._session(self.db_path) as conn:
+            conn.execute("ALTER TABLE app_remote_config ADD COLUMN "
+                         "config_version INTEGER NOT NULL DEFAULT 0")
+            conn.execute("UPDATE app_remote_config SET config_version=7 WHERE id=1")
+            conn.commit()
+            stamped = admin_panel.remote_config(conn)
+        self.assertEqual(stamped["config_version"], 7)
+
     def test_the_body_actions_consume_a_body(self):
         self.assertTrue(admin_panel.takes_body(admin_panel.RUN_SCRAPER_PATH))
         self.assertTrue(admin_panel.takes_body(admin_panel.SAVE_MONETIZATION_PATH))

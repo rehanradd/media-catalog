@@ -87,7 +87,12 @@ REMOTE_CONFIG_FIELDS = [
 ] + COIN_REDEEM_FIELDS
 REMOTE_CONFIG_SECRETS = ("shrinkme_api_token", "droplink_api_token")
 
-# v1 admin_panel._ENGINE_SYNC_SITES / _SCRIPT_SYNC_FLAGS, verbatim.
+# Columns stored as INTEGER (everything else in REMOTE_CONFIG_FIELDS is TEXT).
+_REMOTE_CONFIG_INT_FIELDS = frozenset({
+    "vip_monthly_pkr", "vip_yearly_pkr", "maintenance_mode",
+    "feature_downloads", "feature_pure_cinema", "feature_chromecast",
+    "feature_quality_gate", "coins_enabled",
+} | set(COIN_REDEEM_FIELDS))
 ENGINE_SYNC_SITES = frozenset({
     "vegamovies", "rogmovies", "ssrmovies", "7starhd", "katmoviehd",
     "multimovies", "10xflix", "hdhub4u", "filmyzilla",
@@ -1578,7 +1583,13 @@ class LiveStores:
                 "SELECT * FROM app_remote_config WHERE id=1").fetchone()
             if not r:
                 raise LiveUnavailable("No app_remote_config row here.")
-            return {k: r[k] for k in REMOTE_CONFIG_FIELDS if k in r.keys()}
+            out = {k: r[k] for k in REMOTE_CONFIG_FIELDS if k in r.keys()}
+            # The published version the app is serving: not a setting the
+            # operator edits, so it is never in REMOTE_CONFIG_FIELDS, but
+            # every reader of this row wants to know it.
+            if "config_version" in r.keys():
+                out["config_version"] = r["config_version"]
+            return out
         finally:
             conn.close()
 
@@ -1593,15 +1604,26 @@ class LiveStores:
         out["droplink_configured"] = bool(row.get("droplink_api_token"))
         return out
 
-    def save_remote_config(self, fields):
+    def save_remote_config(self, fields, config_version=None):
         """v1 save-monetization pattern: partial save, validated,
         all-or-nothing, updated_at=time.time(). WRITE path: tests run
-        this on a COPY only; live use needs a catalog backup first."""
+        this on a COPY only; live use needs a catalog backup first.
+
+        config_version stamps the published version onto the served row
+        in the same UPDATE, so a flag change is never live without a
+        version the panel (and the app) can see. It is a separate
+        argument, never a member of `fields`: callers must not be able
+        to stamp an arbitrary version by posting it."""
         unknown = sorted(set(fields) - set(REMOTE_CONFIG_FIELDS))
         if unknown:
             raise bad("Unknown field: %s" % ",".join(unknown))
         if not fields:
             raise bad("Empty body clears nothing. Send at least one field.")
+        if config_version is not None:
+            try:
+                config_version = int(config_version)
+            except (TypeError, ValueError):
+                raise bad("config_version must be a whole number.")
         for k in ("vip_monthly_pkr", "vip_yearly_pkr"):
             if k in fields and not (0 <= int(fields[k]) <= 10_000_000):
                 raise bad("VIP price must be between 0 and 10,000,000.")
@@ -1614,22 +1636,37 @@ class LiveStores:
                 raise bad("That flag must be 0 or 1.")
         conn = self._rw(self.catalog_path, "catalog")
         try:
-            # New columns are additive: a catalog created before this flag
+            # New columns are additive: a catalog created before a field
             # existed gains it here, the same way v1 `_ensure_monetization`
-            # adds missing columns at read time. Without this, the first
-            # monetization save on an old catalog 500s on `no such column:
-            # coins_enabled` — the live catalog has no such column yet.
+            # adds missing columns at read time. Before this, only
+            # coins_enabled was ensured, so the first save carrying
+            # apk_update_url on an old catalog 500'd on `no such column:
+            # apk_update_url` — after the panel draft had already
+            # committed, so the operator saw "Something went wrong" for
+            # a save that half-succeeded. Every column being written is
+            # ensured now, not just the newest one.
             cols = {r[1] for r in
                     conn.execute("PRAGMA table_info(app_remote_config)")}
-            if "coins_enabled" not in cols:
-                conn.execute("ALTER TABLE app_remote_config ADD COLUMN"
-                             " coins_enabled INTEGER NOT NULL DEFAULT 0")
+            ensure = set(fields)
+            if config_version is not None:
+                ensure.add("config_version")
+            for key in sorted(ensure):
+                if key not in cols:
+                    coltype = ("INTEGER NOT NULL DEFAULT 0"
+                               if key in _REMOTE_CONFIG_INT_FIELDS
+                               or key == "config_version"
+                               else "TEXT NOT NULL DEFAULT ''")
+                    conn.execute("ALTER TABLE app_remote_config ADD COLUMN %s %s"
+                                 % (key, coltype))
+            write = dict(fields)
+            if config_version is not None:
+                write["config_version"] = config_version
             conn.execute("BEGIN IMMEDIATE")
             try:
-                sets = ", ".join("%s=?" % k for k in fields)
+                sets = ", ".join("%s=?" % k for k in write)
                 conn.execute(
                     "UPDATE app_remote_config SET %s, updated_at=? WHERE id=1"
-                    % sets, list(fields.values()) + [time.time()])
+                    % sets, list(write.values()) + [time.time()])
                 conn.execute("COMMIT")
             except Exception:
                 try:

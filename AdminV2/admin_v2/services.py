@@ -1237,11 +1237,16 @@ class Service:
         """
         row = self._config_row()
         staged = {k: row[k] for k in MONETIZATION_FIELDS}
+        # The version this publish will land at: the snapshot below
+        # bumps to exactly this number, so the served row and the
+        # snapshot agree. Stamped in the same catalog write as the
+        # flags themselves — a flag change is never live unversioned.
+        expected_version = row["config_version"] + 1
         live = self._live_catalog()
         if live is not None:
             # WRITE path: tests run this on a COPY; live use needs a
             # catalog backup before first use (see handoff).
-            live.save_remote_config(dict(staged))
+            live.save_remote_config(dict(staged), config_version=expected_version)
         before_version = row["config_version"]
         try:
             new_version = self._record_versioned_snapshot(actor["id"])
@@ -1328,6 +1333,14 @@ class Service:
                    "brand_primary", "brand_accent", "region_order", "free_quality_cap",
                    "maintenance_mode", "apk_update_url"}
         self._validate_body(body, allowed)
+        # A cleared text field arrives as "" (JSON) or is dropped
+        # entirely (HTML form, whose blank values never reach the body):
+        # "" means "clear it", never "store an empty string that fails
+        # validation on the next save". NULL renders as blank in the
+        # form and is skipped by the panel-feed theme read.
+        for k in ("brand_primary", "brand_accent", "region_order"):
+            if k in body and body[k] in ("", None):
+                body[k] = None
         # Form posts send "" for a cleared number; store NULL, not "".
         for k in ("min_version_code", "latest_version_code"):
             if k in body and (body[k] == "" or body[k] is None):
@@ -1343,11 +1356,13 @@ class Service:
                     body[k] = int(body[k])
                 except (TypeError, ValueError):
                     raise bad("%s must be 0 or 1." % k)
-        if "brand_primary" in body and not valid_hex(body["brand_primary"]):
+        if ("brand_primary" in body and body["brand_primary"] is not None
+                and not valid_hex(body["brand_primary"])):
             raise bad("Brand colour must be a hex colour.")
-        if "brand_accent" in body and not valid_hex(body["brand_accent"]):
+        if ("brand_accent" in body and body["brand_accent"] is not None
+                and not valid_hex(body["brand_accent"])):
             raise bad("Brand colour must be a hex colour.")
-        if "region_order" in body:
+        if "region_order" in body and body["region_order"] is not None:
             parts = [p.strip() for p in body["region_order"].split(",")]
             if any(p not in ("pakistan", "india", "asia", "international") for p in parts):
                 raise bad("Region order must use only pakistan, india, asia, international.")
@@ -1360,16 +1375,11 @@ class Service:
                 % ", ".join("%s=?" % k for k in body),
                 list(body.values()) + [actor["id"], NOW()])
             self.admin.commit()
-        # maintenance_mode / apk_update_url are real app fields: when a
-        # live catalog is wired, the draft also writes them to the live
-        # app_remote_config row (the app reads that row, not the draft).
-        # v2-only fields (versions, brand, region order) stay panel-only
-        # and are served via v2's own endpoint, labelled app-side pending.
-        live = self._live_catalog()
-        if live is not None:
-            real_fields = {k: body[k] for k in ("maintenance_mode", "apk_update_url") if k in body}
-            if real_fields:
-                live.save_remote_config(real_fields)
+        # Draft only: nothing here reaches the app. maintenance_mode and
+        # apk_update_url are real app fields, but they used to be written
+        # to the live catalog at draft time — so the app saw a draft the
+        # Live page still called "waiting to go out", with no version
+        # bump and no snapshot. They go out at publish now (_do_publish).
         after = self._redacted_config(self._config_row())
         self.audit(actor["id"], "remote_config.draft", "app_remote_config", 1, before, after, ip)
         return after
@@ -1415,6 +1425,29 @@ class Service:
             raise forbidden("This would leave the app home empty. Enable at least one section first.")
         row = self._config_row()
         new_version = row["config_version"] + 1
+        # The draft fields the live catalog carries go out with the
+        # publish, not at draft time: before this, draft_remote_config
+        # wrote maintenance_mode straight to the catalog, so the app saw
+        # a draft the Live page still called "waiting to go out" — and
+        # publish itself wrote nothing the app reads. Catalog first
+        # (§3.1): a failure here leaves the draft and the version
+        # untouched, and the operator gets the real reason instead of a
+        # half-published state. The new version is stamped onto the
+        # served row in the same write, so a flag change is never live
+        # without a version the panel (and the app) can see.
+        live = self._live_catalog()
+        if live is not None:
+            live_fields = {
+                "maintenance_mode": int(row.get("maintenance_mode") or 0),
+                "apk_update_url": row.get("apk_update_url") or "",
+            }
+            try:
+                live.save_remote_config(live_fields, config_version=new_version)
+            except ApiError:
+                raise
+            except Exception as exc:
+                raise ApiError("internal",
+                               "The live catalog could not be updated: %s" % exc, 500)
         snap = {"config": self._redacted_config(row), "home": self._home_snapshot()}
         snap["config"]["config_version"] = new_version
         with WRITE_LOCK:
@@ -1494,11 +1527,26 @@ class Service:
                     continue
                 if draft_config.get(key) != live_config.get(key):
                     changed.append(key)
+        # The version the app is actually serving, read off the served
+        # row itself — not the panel's snapshot version. The two agree
+        # after a clean publish; they differ while a draft is waiting,
+        # or after a publish that reached the catalog but not the
+        # snapshot. None when no live catalog is wired (or the row
+        # predates version stamping).
+        live_catalog_version = None
+        catalog = self._live_catalog()
+        if catalog is not None:
+            try:
+                live_catalog_version = catalog.read_remote_config_masked().get(
+                    "config_version")
+            except Exception:
+                live_catalog_version = None
         return {
             "live": live,
             "draft": {"config_version": draft_row["config_version"],
                       "config": draft_config, "sections": draft_sections},
             "changed_keys": changed,
+            "live_catalog_version": live_catalog_version,
         }
 
     def schedule_publish(self, actor, body, ip=""):
@@ -1645,7 +1693,7 @@ class Service:
             live_fields = {k: v for k, v in values.items()
                            if k in MONETIZATION_FIELDS}
             if live_fields:
-                live.save_remote_config(live_fields)
+                live.save_remote_config(live_fields, config_version=new_version)
         self.audit(actor["id"], "remote_config.rollback", "app_remote_config", 1,
                    {"config_version": row["config_version"]}, {"config_version": new_version}, ip)
         return {"config_version": new_version, "restored_from": body["version"],

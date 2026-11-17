@@ -46,6 +46,10 @@ MATRIX = {
     "reject_payment": ("POST", "/admin/api/v2/payments/{id}/reject", "ledger_fixture.payment_claims.status", "payment_list"),
     "monetization": ("PUT", "/admin/api/v2/monetization", "app_remote_config_v2.vip_monthly_pkr", "public_remote_config"),
     "monetization_form_save": ("POST", "/admin/api/v2/monetization", "app_remote_config_v2.vip_monthly_pkr", "public_remote_config"),
+    # Repair path for a 'published but not snapshotted' monetization
+    # publish: re-publishes what the draft holds. Was missing from the
+    # matrix since Phase 1 added the route, so the orphan audit failed.
+    "publish_monetization": ("POST", "/admin/api/v2/monetization/publish", "app_remote_config_history", "public_remote_config"),
     "data_health": ("GET", "/admin/api/v2/data-health", "cat_projection_meta", "analytics_rows"),
     "contact_list": ("GET", "/admin/api/v2/contact", "contact_messages.status", "contact_status"),
     "contact_status": ("POST", "/admin/api/v2/contact/{id}/status", "contact_messages.status", "contact_status"),

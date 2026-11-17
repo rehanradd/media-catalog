@@ -2418,10 +2418,28 @@ def remote_config(conn):
         # `featureFlags.downloads === true` must not depend on SQLite's truthiness.
         return bool(_as_flag(values.get(key, 0)))
 
+    # The published version the served row carries (stamped by the v2
+    # panel on every catalog write; 0 on a row that predates stamping).
+    # Read separately, never added to MONETIZATION_FIELDS: the v1 card
+    # must not render it as an editable setting, and the field spec is
+    # what _ensure_monetization adds columns from. A missing column is
+    # an old row, not an error.
+    try:
+        _cv = conn.execute(
+            "SELECT config_version FROM app_remote_config WHERE id=1"
+        ).fetchone()
+        config_version = int(_cv[0] or 0) if _cv else 0
+    except sqlite3.Error:
+        config_version = 0
+
     return {
         "success": True,
         "currency": "PKR",
         "updated_at": int(values.get("updated_at") or 0),
+        # Flat and additive, never nested: a client that has not been
+        # updated reads what it always read; an updated one reads this
+        # too and can tell which publish it is serving.
+        "config_version": config_version,
         # Flat and a real boolean, same rule as every other flag below: a client
         # that writes `if (cfg.settingsUnavailable) keepLastGood()` must not have to
         # guess whether `0` and `false` mean different things.
