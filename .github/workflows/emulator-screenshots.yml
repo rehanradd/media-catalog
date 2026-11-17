@@ -10,11 +10,17 @@
 # restored before the Gradle build (the debug build needs it, same as CI).
 # Second dispatch (run 44002960788) FAILED at the capture step, not the SDK:
 # the emulator DID boot ("Emulator booted", 593 s — software mode, no KVM on
-# the hosted runner) but the script died at once: `OUT="$GITHUB_WORKSPACE/emu-shots"`
-# expanded to empty inside android-emulator-runner's script context, so
-# `mkdir -p ""` failed ("cannot create directory ''", exit 1). Fix: fall back
-# to $PWD (`${GITHUB_WORKSPACE:-$PWD}`) and raise emulator-boot-timeout
-# 600 -> 900 s (boot took 593 s, 7 s inside the old limit).
+# the hosted runner) but the script died at once: `mkdir -p ""` failed
+# ("cannot create directory ''", exit 1). The first diagnosis (empty
+# $GITHUB_WORKSPACE) was WRONG: the action runs the script LINE BY LINE, each
+# line in its own fresh `sh -c`, so a variable set on one line (OUT, APK,
+# REC_PID, the tap_text function) does not exist on the next — OUT was unset
+# in the mkdir shell, and the `${GITHUB_WORKSPACE:-$PWD}` fallback could not
+# help. Third dispatch (run 44009742313, on main 00774499) died the same way
+# at the same mkdir. Fix (2026-11-17): write the whole drive script to
+# drive-emu.sh in a normal step and run it as ONE shell (`bash drive-emu.sh`)
+# inside the runner step, so all variables/functions live in one process.
+# (emulator-boot-timeout was already raised 600 -> 900 s; boot took 593 s.)
 #
 # What it does: builds the debug APK, boots a free hardware-accelerated
 # emulator (KVM on the GitHub-hosted Ubuntu runner — free and unlimited for
@@ -85,6 +91,84 @@ jobs:
           chmod +x gradlew
           ./gradlew :app:assembleDebug --no-daemon --stacktrace --console=plain
 
+      - name: Write emulator drive script
+        run: |
+          cat > drive-emu.sh <<'DRIVE_EOF'
+          set -e
+          APK="App/app/build/outputs/apk/debug/app-debug.apk"
+          # $GITHUB_WORKSPACE is empty inside this action's script context
+          # (run 44002960788 died on `mkdir -p ""`); $PWD is the checkout.
+          OUT="${GITHUB_WORKSPACE:-$PWD}/emu-shots"
+          mkdir -p "$OUT"
+          adb install -r "$APK"
+          # Start video capture in the background (killed after the flow).
+          adb shell screenrecord --time-limit ${{ inputs.screenrecord_seconds }} /sdcard/radd-demo.mp4 &
+          REC_PID=$!
+          adb shell am start -n com.raddstream.app/.MainActivity
+          sleep 12
+          adb exec-out screencap -p > "$OUT/01-disclaimer.png"
+
+          # Tap a UI node by its exact visible text (uiautomator dump -> centre tap).
+          tap_text() {
+            local want="$1" tries=0
+            while [ "$tries" -lt 6 ]; do
+              adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
+              adb pull -q /sdcard/ui.xml /tmp/ui.xml 2>/dev/null || true
+              XY=$(python3 - "$want" <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          want = sys.argv[1]
+          try:
+              root = ET.parse('/tmp/ui.xml').getroot()
+          except Exception:
+              sys.exit(0)
+          for n in root.iter('node'):
+              if (n.get('text') or '') == want or (n.get('content-desc') or '') == want:
+                  b = n.get('bounds', '')
+                  nums = b.replace('[', ' ').replace(']', ' ').replace(',', ' ').split()
+                  if len(nums) == 4:
+                      x = (int(nums[0]) + int(nums[2])) // 2
+                      y = (int(nums[1]) + int(nums[3])) // 2
+                      print(f"{x} {y}")
+                      break
+          PY
+          )
+              if [ -n "$XY" ]; then
+                adb shell input tap $XY
+                return 0
+              fi
+              tries=$((tries + 1))
+              sleep 3
+            done
+            echo "WARN: text '$want' not found after retries" >&2
+            return 1
+          }
+
+          tap_text "I understand" || true
+          sleep 4
+          adb exec-out screencap -p > "$OUT/02-welcome.png"
+          tap_text "Continue" || true
+          sleep 10
+          adb exec-out screencap -p > "$OUT/03-home-top.png"
+          # Long-home capture: scroll down in steps, one shot per step.
+          adb shell input swipe 540 1600 540 600 400
+          sleep 3
+          adb exec-out screencap -p > "$OUT/04-home-scrolled-1.png"
+          adb shell input swipe 540 1600 540 600 400
+          sleep 3
+          adb exec-out screencap -p > "$OUT/05-home-scrolled-2.png"
+          # Back to top, settle, final home shot.
+          adb shell input keyevent 3
+          sleep 2
+          adb shell am start -n com.raddstream.app/.MainActivity
+          sleep 6
+          adb exec-out screencap -p > "$OUT/06-home-final.png"
+          sleep 2
+          kill $REC_PID 2>/dev/null || true
+          sleep 2
+          adb pull -q /sdcard/radd-demo.mp4 "$OUT/radd-demo.mp4" 2>/dev/null || echo "no video pulled"
+          ls -la "$OUT"
+          DRIVE_EOF
+          chmod +x drive-emu.sh
       - name: Boot emulator, drive app, capture screenshots + video
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -95,81 +179,7 @@ jobs:
           cores: 2
           emulator-boot-timeout: 900
           disable-animations: true
-          script: |
-            set -e
-            APK="App/app/build/outputs/apk/debug/app-debug.apk"
-            # $GITHUB_WORKSPACE is empty inside this action's script context
-            # (run 44002960788 died on `mkdir -p ""`); $PWD is the checkout.
-            OUT="${GITHUB_WORKSPACE:-$PWD}/emu-shots"
-            mkdir -p "$OUT"
-            adb install -r "$APK"
-            # Start video capture in the background (killed after the flow).
-            adb shell screenrecord --time-limit ${{ inputs.screenrecord_seconds }} /sdcard/radd-demo.mp4 &
-            REC_PID=$!
-            adb shell am start -n com.raddstream.app/.MainActivity
-            sleep 12
-            adb exec-out screencap -p > "$OUT/01-disclaimer.png"
-
-            # Tap a UI node by its exact visible text (uiautomator dump -> centre tap).
-            tap_text() {
-              local want="$1" tries=0
-              while [ "$tries" -lt 6 ]; do
-                adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
-                adb pull -q /sdcard/ui.xml /tmp/ui.xml 2>/dev/null || true
-                XY=$(python3 - "$want" <<'PY'
-            import sys, xml.etree.ElementTree as ET
-            want = sys.argv[1]
-            try:
-                root = ET.parse('/tmp/ui.xml').getroot()
-            except Exception:
-                sys.exit(0)
-            for n in root.iter('node'):
-                if (n.get('text') or '') == want or (n.get('content-desc') or '') == want:
-                    b = n.get('bounds', '')
-                    nums = b.replace('[', ' ').replace(']', ' ').replace(',', ' ').split()
-                    if len(nums) == 4:
-                        x = (int(nums[0]) + int(nums[2])) // 2
-                        y = (int(nums[1]) + int(nums[3])) // 2
-                        print(f"{x} {y}")
-                        break
-            PY
-            )
-                if [ -n "$XY" ]; then
-                  adb shell input tap $XY
-                  return 0
-                fi
-                tries=$((tries + 1))
-                sleep 3
-              done
-              echo "WARN: text '$want' not found after retries" >&2
-              return 1
-            }
-
-            tap_text "I understand" || true
-            sleep 4
-            adb exec-out screencap -p > "$OUT/02-welcome.png"
-            tap_text "Continue" || true
-            sleep 10
-            adb exec-out screencap -p > "$OUT/03-home-top.png"
-            # Long-home capture: scroll down in steps, one shot per step.
-            adb shell input swipe 540 1600 540 600 400
-            sleep 3
-            adb exec-out screencap -p > "$OUT/04-home-scrolled-1.png"
-            adb shell input swipe 540 1600 540 600 400
-            sleep 3
-            adb exec-out screencap -p > "$OUT/05-home-scrolled-2.png"
-            # Back to top, settle, final home shot.
-            adb shell input keyevent 3
-            sleep 2
-            adb shell am start -n com.raddstream.app/.MainActivity
-            sleep 6
-            adb exec-out screencap -p > "$OUT/06-home-final.png"
-            sleep 2
-            kill $REC_PID 2>/dev/null || true
-            sleep 2
-            adb pull -q /sdcard/radd-demo.mp4 "$OUT/radd-demo.mp4" 2>/dev/null || echo "no video pulled"
-            ls -la "$OUT"
-
+          script: bash drive-emu.sh
       - name: Upload screenshots + video
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
