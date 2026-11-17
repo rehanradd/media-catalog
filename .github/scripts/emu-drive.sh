@@ -35,21 +35,17 @@
 # not exist" and the app never launched at all. The old script
 # swallowed that failure (|| true) and screenshotted the launcher.
 # The package is now derived from the device after install (below).
-# Run 44048613561 (head bbdfab85) got PAST the focus wait (the bbdfab85
-# fix worked — app foregrounded, Disclaimer dismissed on try 6) but died
-# on Welcome: the app's catalog probe failed ("We couldn't find the
-# catalog at that address. Check its address in Settings.") and Continue
-# is DISABLED until the probe succeeds — tap_text "Continue" "succeeds"
-# (a disabled button still carries the text) but the tap is a no-op, so
-# 03-home-top was byte-identical to 02-welcome and the frozen-screen
-# guard tripped. The default server (brand.properties
-# network.default_server_url=https://raddstream.duckdns.org) answers 200
-# from outside, so the failure is emulator-side — no/insufficient AVD
-# network/DNS, a too-short probe timeout on the slow emulator, or TLS —
-# unproven, because the script never tapped Connect and captured no
-# logcat on this path. Fix: retry the probe via Connect (up to 2x) and,
-# if it still fails, dump logcat + an in-emulator network probe into
-# $OUT and fail with a clear message instead of the frozen-screen one.
+# Run 44053140525 (head 30d056ed) died EARLIER: the Disclaimer was
+# never dismissed — tap_text 'I understand' burned all 6 tries against
+# the "Process system isn't responding" dialog (dump 4153 bytes / 12
+# nodes = dialog only), tapping Wait (540,1363) after tries 2–5, and the
+# dialog NEVER cleared. The Connect fix never got exercised. The dialog
+# is system_server starving on the TCG emulator (boot 570s); tapping
+# Wait doesn't clear it — only wall-clock recovery does, and 6 tries at
+# ~8s between dumps (~2 min) wasn't always enough (run 44048613561
+# recovered on try 6; this run didn't in 6). Fix: tap_text retries
+# 6 -> 10 and the sleep after an ANR Wait tap 5s -> 15s, so a slow
+# system_server gets ~4 min to recover before the run fails.
 # The workflow uploads emu-shots/ with `if: always()`, so a failed run
 # still leaves its (launcher) frames as evidence of what went wrong.
 set -euo pipefail
@@ -81,7 +77,7 @@ PREV_MD5=""
 # Tap a UI node by its exact visible text (uiautomator dump -> centre tap).
 tap_text() {
   local want="$1" tries=0
-  while [ "$tries" -lt 6 ]; do
+  while [ "$tries" -lt 10 ]; do
     # Never reuse a stale dump: a failed dump/pull must read as "no
     # ui.xml pulled" for THIS try, not silently match the previous
     # screen's nodes.
@@ -143,13 +139,16 @@ PY
       if [ -n "$WXY" ]; then
         echo "tap_text '$want': ANR dialog present — tapping Wait ($WXY)" >&2
         adb shell input tap $WXY
-        sleep 5
+        # Run 44053140525: the Wait tap doesn't clear the dialog — only
+        # system_server recovering does. Give it 15s before re-dumping
+        # instead of 5s, or the retries burn out while it is still busy.
+        sleep 15
       fi
     fi
     if [ -f /tmp/ui.xml ]; then
-      echo "tap_text '$want' try $((tries + 1))/6: not found (ui.xml $(wc -c < /tmp/ui.xml) bytes, $(grep -o '<node' /tmp/ui.xml | wc -l) nodes)" >&2
+      echo "tap_text '$want' try $((tries + 1))/10: not found (ui.xml $(wc -c < /tmp/ui.xml) bytes, $(grep -o '<node' /tmp/ui.xml | wc -l) nodes)" >&2
     else
-      echo "tap_text '$want' try $((tries + 1))/6: not found (no ui.xml pulled — dump to $UI_DUMP failed)" >&2
+      echo "tap_text '$want' try $((tries + 1))/10: not found (no ui.xml pulled — dump to $UI_DUMP failed)" >&2
     fi
     tries=$((tries + 1))
     sleep 3
