@@ -335,6 +335,35 @@ class PropagationTests(LedgerTestCase):
         for index, (old, new) in enumerate(zip(before, after)):
             self.assertEqual(old[:9], new[:9], f"identity columns of row {old[0]} changed")
 
+    def test_completed_run_feeds_host_health(self):
+        """The sweep is the only scheduled measurement job, so it must keep
+        host_health fresh: one probe outcome per verdict, keyed by the link's
+        own host. Regression for the 2026-11-17 finding (103.5h stale while
+        the sweep ran fine every 6h)."""
+        summary = self.run_sweep()
+        self.assertEqual(summary["host_health"],
+                         {"hosts": 7, "successes": 5, "failures": 2})
+        health = {row["host"]: row for row in self.conn.execute(
+            "SELECT * FROM host_health")}
+        self.assertEqual(set(health), {
+            "cdn.example.com", "mirror.example.com", "gone.example.com",
+            "token.example.com", "bridge.example.com", "late1.test",
+            "late2.test"})
+        # Answered (active or expired) closes the circuit; dead counts a failure.
+        for host in ("cdn.example.com", "mirror.example.com",
+                     "token.example.com", "bridge.example.com", "late1.test"):
+            self.assertEqual(health[host]["probes"], 1, host)
+            self.assertEqual(health[host]["successes"], 1, host)
+            self.assertEqual(health[host]["consecutive_failures"], 0, host)
+        for host in ("gone.example.com", "late2.test"):
+            self.assertEqual(health[host]["probes"], 1, host)
+            self.assertEqual(health[host]["successes"], 0, host)
+            self.assertEqual(health[host]["consecutive_failures"], 1, host)
+        for row in health.values():
+            self.assertGreater(row["measured_at"], 0)
+        # No row for a link we never probed.
+        self.assertNotIn("127.0.0.1", health)
+
     def test_unprobeable_and_unanswered_rows_are_left_alone(self):
         self.run_sweep()
         magnet = self.row(self.MAGNET)

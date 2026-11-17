@@ -46,6 +46,14 @@ What this module adds
 5. **Honest statistics.** ``status_summary()`` / ``stats_payload()`` count real
    states and report ``unverified_sources`` + ``verification_coverage``, which is
    the number an operator needs and today's SQL cannot produce.
+6. **Host measurement.** Every completed run feeds its verdicts into
+   ``host_health`` (``serve_verify``'s table, via its own recorders) — one
+   probe outcome per verdict — so the per-host live-rate and the circuit
+   breaker are measured by the same sweep that measures the links. Before
+   this, only the serve path's live probe wrote that table, and the serve
+   path stopped reaching it (banked presses short-circuit before any probe,
+   and the live ``_verify_tier_link`` caller passes ``live=False``), so the
+   table went 103.5h stale while the sweep ran fine every 6h (2026-11-17).
 
 Status mapping (``classify()``, pure and network-free)
 ------------------------------------------------------
@@ -85,6 +93,7 @@ import json
 import sqlite3
 import sys
 import time
+import urllib.parse
 from pathlib import Path
 
 try:  # normal package-style import when run as Fast_Fetch/link_state.py
@@ -706,6 +715,80 @@ def _rank_expr() -> str:
 RANK_SCORE_EXPR = _rank_expr()
 
 
+def _host_of_url(url: str) -> str:
+    """Hostname of a verdict's URL, lowercased; "" when there is none.
+
+    Identical to ``serve_verify._host_of`` (netloc, not hostname) so the
+    sweep and the serve path key the same host the same way: the host is the
+    authority that answered (or failed to), never the path or the query.
+    """
+    try:
+        return urllib.parse.urlsplit(str(url or "")).netloc.lower()
+    except ValueError:
+        return ""
+
+
+#: Statuses in which the endpoint *answered*: the host is alive even when the
+#: link itself is unusable — 401/403/429 is an expired signature or a
+#: throttle, not a dead host (see ``classify()`` and
+#: ``serve_verify.verify_candidate``). ``dead`` is the only failure: the
+#: endpoint gave no usable answer.
+_HOST_OK_STATUSES = (STATUS_ACTIVE, STATUS_EXPIRED)
+
+
+def _host_outcomes(updates: list) -> list[tuple[str, bool]]:
+    """(host, answered?) pairs for one batch of verdicts.
+
+    Keyed by the link's own host (``source_url`` — the bridge/download host
+    ``circuit_open`` and ``host_rank_score`` are keyed by), not the resolved
+    file's host: a dead file on a shared CDN says nothing about the CDN, and
+    the existing ``host_health`` rows are all bridge hosts.
+    """
+    outcomes: list[tuple[str, bool]] = []
+    for item in updates or []:
+        host = _host_of_url(item.get("source_url") or item.get("final_url") or "")
+        if not host:
+            continue
+        outcomes.append((host, item.get("status") in _HOST_OK_STATUSES))
+    return outcomes
+
+
+def _record_host_health(conn: sqlite3.Connection,
+                        outcomes: list[tuple[str, bool]]) -> dict:
+    """Feed one run's verdicts into ``host_health`` (best-effort, never fatal).
+
+    Uses ``serve_verify``'s own recorders, so the circuit-breaker semantics
+    (consecutive failures, doubling back-off, ``measured_at``) cannot drift
+    from the serve path's. Failures replay first, then successes, so a host
+    that answered at least once in this run ends with a closed circuit and
+    ``consecutive_failures = 0``; a host that answered nothing keeps its
+    failure streak. Returns {"hosts", "successes", "failures"}.
+    """
+    counts = {"hosts": 0, "successes": 0, "failures": 0}
+    if not outcomes:
+        return counts
+    try:
+        try:
+            from Fast_Fetch import serve_verify
+        except ImportError:
+            import serve_verify  # type: ignore
+    except ImportError:
+        return counts
+    counts["hosts"] = len({host for host, _ in outcomes})
+    try:
+        for host, answered in outcomes:
+            if not answered:
+                serve_verify.record_host_failure(conn, host)
+                counts["failures"] += 1
+        for host, answered in outcomes:
+            if answered:
+                serve_verify.record_host_success(conn, host)
+                counts["successes"] += 1
+    except sqlite3.Error:
+        pass
+    return counts
+
+
 def propagate(conn: sqlite3.Connection, *, scope: str = "default", prober=None,
               batch_size: int = DEFAULT_BATCH_SIZE, max_batches: int | None = None,
               workers: int = 4, only_unchecked: bool = True,
@@ -741,7 +824,8 @@ def propagate(conn: sqlite3.Connection, *, scope: str = "default", prober=None,
             only un-probeable ids advance the offset without counting a batch.
 
     Returns a summary dict: rows_checked / rows_updated / batches / by_status /
-    last_id / state ('complete' or 'running').
+    last_id / state ('complete' or 'running') / host_health (hosts measured,
+    successes, failures — only on a real, non-dry run).
     """
     if not dry_run:
         ensure_schema(conn)
@@ -779,6 +863,10 @@ def propagate(conn: sqlite3.Connection, *, scope: str = "default", prober=None,
                "rows_updated": 0, "rows_probed": 0, "by_status": {}, "last_id": cursor,
                "state": "running", "dry_run": bool(dry_run), "plan_only": plan_only,
                "schema_ready": "checked_at" in evidence}
+    # Per-host outcomes for this run; fed into host_health when the run
+    # finalises (normal completion) or parks its cursor (interrupted) — never
+    # on a dry run, which writes nothing.
+    host_outcomes: list[tuple[str, bool]] = []
     if plan_only:
         summary["note"] = ("plan: counted the rows that need a verdict, made no request,"
                            " wrote nothing. Pass --apply to work through them.")
@@ -830,6 +918,7 @@ def propagate(conn: sqlite3.Connection, *, scope: str = "default", prober=None,
             for item in updates:
                 summary["by_status"][item["status"]] = \
                     summary["by_status"].get(item["status"], 0) + 1
+            host_outcomes.extend(_host_outcomes(updates))
             summary["rows_checked"] += len(rows)
             summary["rows_updated"] += 0 if dry_run else len(updates)
             summary["rows_probed"] += len(rows)
@@ -857,6 +946,10 @@ def propagate(conn: sqlite3.Connection, *, scope: str = "default", prober=None,
                     " rows_updated = ?, by_status = ?, detail = 'end' WHERE run_id = ?",
                     (time.time(), summary["rows_checked"], summary["rows_updated"],
                      json.dumps(summary["by_status"], sort_keys=True), run_id))
+                # The sweep is the only scheduled measurement job left: feed
+                # its verdicts into host_health in the same transaction, so a
+                # run either records its links and its hosts, or neither.
+                summary["host_health"] = _record_host_health(conn, host_outcomes)
     except BaseException as exc:  # interrupted, killed, network blowup: keep the cursor
         if not dry_run:
             try:
@@ -870,6 +963,8 @@ def propagate(conn: sqlite3.Connection, *, scope: str = "default", prober=None,
                         " rows_updated = ?, detail = ? WHERE run_id = ?",
                         (time.time(), summary["rows_checked"], summary["rows_updated"],
                          f"interrupted {type(exc).__name__}"[:200], run_id))
+                    # Committed batches still measured their hosts.
+                    summary["host_health"] = _record_host_health(conn, host_outcomes)
             except sqlite3.Error:
                 pass
         raise
