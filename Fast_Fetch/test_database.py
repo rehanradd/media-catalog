@@ -642,6 +642,42 @@ class DatabaseSaveTests(unittest.TestCase):
         # Unknown legacy attribution is left unknown instead of being guessed from posts.source_site.
         self.assertIsNone(self.rows("SELECT source_site FROM releases WHERE post_id = ?", (post_id,))[0][0])
 
+    def test_init_db_skips_the_post_sources_backfill_when_complete(self):
+        # Search-speed (2026-11-17): the backfill used to run on every
+        # process start (~15s cold on the live catalog). Once complete,
+        # later starts must skip it (marker), and a new post filed without
+        # a row must be backfilled incrementally — never by re-scanning
+        # every post.
+        fast_fetch.init_db()
+        marker = self.rows(
+            "SELECT value FROM schema_backfill_state WHERE key = 'post_sources'")[0][0]
+        max_id, count = (int(part) for part in marker.split(":"))
+        # The marker stores `max_post_id or 0`: an empty posts table
+        # reads back as None, which is the same 0.
+        self.assertEqual(
+            max_id, self.rows("SELECT MAX(id) FROM posts")[0][0] or 0)
+        self.assertEqual(
+            count,
+            self.rows("SELECT COUNT(*) FROM post_sources")[0][0])
+        # Second start: the marker stands, the table is untouched.
+        fast_fetch.init_db()
+        self.assertEqual(
+            self.rows(
+                "SELECT value FROM schema_backfill_state"
+                " WHERE key = 'post_sources'")[0][0],
+            marker)
+        # A new post filed without a post_sources row is backfilled.
+        with fast_fetch.get_db() as conn:
+            conn.execute(
+                "INSERT INTO posts (url, slug, title, clean_title, year,"
+                " content_type, source_site) VALUES (?, ?, ?, ?, 2024,"
+                " 'movie', 'newsite')",
+                ("https://newsite.example/film/", "film", "Film", "Film"))
+        fast_fetch.init_db()
+        self.assertEqual(
+            self.rows("SELECT COUNT(*) FROM post_sources WHERE url = ?",
+                      ("https://newsite.example/film/",))[0][0], 1)
+
     def test_init_db_creates_the_detail_path_indexes(self):
         """Appetize FAILED 2: `init_db` must mint `idx_posts_year` (the
         family work-ref lookup seeks it) and, when the projection table is

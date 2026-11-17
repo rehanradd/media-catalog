@@ -1507,6 +1507,93 @@ def init_db(db_path: Path | None = None) -> None:
         _init_db(db_path)
 
 
+def _backfill_post_sources(conn, floor_id) -> None:
+    """INSERT OR IGNORE the post_sources rows for posts (all, or id > floor)."""
+    if floor_id is None:
+        conn.execute("""
+            INSERT OR IGNORE INTO post_sources
+                (post_id, source_site, url, source_title, source_slug)
+            SELECT id, COALESCE(NULLIF(source_site, ''), 'unknown'), url, title, slug
+            FROM posts
+            WHERE url IS NOT NULL AND url != ''
+        """)
+    else:
+        conn.execute("""
+            INSERT OR IGNORE INTO post_sources
+                (post_id, source_site, url, source_title, source_slug)
+            SELECT id, COALESCE(NULLIF(source_site, ''), 'unknown'), url, title, slug
+            FROM posts
+            WHERE url IS NOT NULL AND url != '' AND id > ?
+        """, (floor_id,))
+
+
+def _set_backfill_marker(conn, max_post_id) -> None:
+    """Record that post_sources covers every post up to `max_post_id`."""
+    ps_count = conn.execute("SELECT COUNT(*) FROM post_sources").fetchone()[0]
+    conn.execute(
+        "INSERT OR REPLACE INTO schema_backfill_state (key, value)"
+        " VALUES ('post_sources', ?)",
+        (f"{max_post_id or 0}:{ps_count}",))
+
+
+def _ensure_post_sources_backfill(conn) -> None:
+    """Keep post_sources complete without paying for it on every start.
+
+    Search-speed (2026-11-17): the backfill used to run on EVERY process
+    start — an INSERT...SELECT over all posts with a PK seek per row
+    (~2.8s warm, ~15s cold on the live catalog: the first request after
+    a restart 504s). Both writers (save_scraped_data, merge_catalogs)
+    upsert post_sources per post, so once the backfill has run the table
+    is complete; the marker records that, and later starts skip it. The
+    marker stores (max posts id, post_sources row count) at backfill
+    time: a dropped table (count 0) or new posts (max id moved) both
+    invalidate it, so the backfill runs again — fully when the table is
+    incomplete, incrementally (id > marker) for new posts only. A marker
+    that never existed proves completeness once with a single anti-join
+    (~1s) instead of paying the full backfill.
+    """
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS schema_backfill_state ("
+        "key TEXT PRIMARY KEY, value TEXT)")
+    marker = conn.execute(
+        "SELECT value FROM schema_backfill_state WHERE key = 'post_sources'"
+    ).fetchone()
+    max_post_id = conn.execute("SELECT MAX(id) FROM posts").fetchone()[0]
+    ps_count = conn.execute("SELECT COUNT(*) FROM post_sources").fetchone()[0]
+    marked_max, marked_count = None, None
+    if marker is not None:
+        try:
+            marked_max, marked_count = (
+                int(part) for part in str(marker[0]).split(":", 1))
+        except (TypeError, ValueError):
+            marked_max, marked_count = None, None
+    if (marked_max is not None and marked_count is not None
+            and marked_max == (max_post_id or 0)
+            and marked_count == ps_count):
+        return  # already complete: nothing to do
+    if marker is None:
+        # First run with the marker: prove completeness once with a
+        # single anti-join instead of paying the full backfill. Zero
+        # missing rows means the writers already covered every post.
+        missing = conn.execute(
+            "SELECT COUNT(*) FROM posts p WHERE p.url IS NOT NULL"
+            " AND p.url != '' AND p.id NOT IN"
+            " (SELECT post_id FROM post_sources)").fetchone()[0]
+        if missing:
+            _backfill_post_sources(conn, None)
+        _set_backfill_marker(conn, max_post_id)
+        return
+    if (marked_max is not None and marked_count is not None
+            and max_post_id is not None and marked_max < max_post_id
+            and ps_count >= marked_count):
+        _backfill_post_sources(conn, marked_max)  # only new posts
+    else:
+        # Marker corrupt, max id shrank, or rows lost from post_sources:
+        # the full backfill is the honest answer.
+        _backfill_post_sources(conn, None)
+    _set_backfill_marker(conn, max_post_id)
+
+
 def _init_db(db_path: Path | None = None) -> None:
     with get_db(db_path) as conn:
         conn.executescript("""
@@ -1804,13 +1891,7 @@ def _init_db(db_path: Path | None = None) -> None:
         conn.executescript(POST_ARTWORK_DDL)
 
         # Preserve each known post's original source URL when upgrading older DBs.
-        conn.execute("""
-            INSERT OR IGNORE INTO post_sources
-                (post_id, source_site, url, source_title, source_slug)
-            SELECT id, COALESCE(NULLIF(source_site, ''), 'unknown'), url, title, slug
-            FROM posts
-            WHERE url IS NOT NULL AND url != ''
-        """)
+        _ensure_post_sources_backfill(conn)
 
         cursor.execute("PRAGMA table_info(download_sources)")
         existing_s_cols = {r[1] for r in cursor.fetchall()}

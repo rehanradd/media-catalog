@@ -68,14 +68,20 @@ import unicodedata
 
 #: The main search index: title + cast, one MATCH answers both.
 FTS_TABLE = "fts_posts"
-#: The trigram candidate index: titles + cast, for the typo-correction
-#: engine and the /posts substring search. `cast_names` joined the
-#: index with the /posts candidate pass (2026-11-13): without it the
-#: trigram MATCH is not a superset of the search's four-column LIKE,
-#: and a cast-only row would be dropped from the candidates.
+#: The trigram candidate index: titles + cast + slug + title, for the
+#: typo-correction engine and the /posts substring search. `cast_names`
+#: joined the index with the /posts candidate pass (2026-11-13); `slug`
+#: and `title` joined it with the search-speed fix (2026-11-17): without
+#: them the trigram MATCH is not a superset of the search's four-column
+#: LIKE, and a slug-only row ("Kaguya", slug `kaguya-sama-love-is-war-...`)
+#: or a title-only row (a truncated `clean_title`, e.g. "IS") would be
+#: dropped from the candidates — measured on the live catalog, 65 of
+#: 6,220 rows for `q=love`. A table built before this shape keeps serving
+#: the LIKE scan until `migrate_search_indexes.py apply --with-fts-posts`
+#: rebuilds it; `trigram_covers_search` is the shape guard.
 TRI_TABLE = "fts_posts_tri"
 FTS_COLUMNS = ("clean_title", "cast_names")
-TRI_COLUMNS = ("clean_title", "cast_names")
+TRI_COLUMNS = ("clean_title", "cast_names", "slug", "title")
 #: Sync triggers, one set per table (`_ai`/`_ad`/`_au`).
 TRIGGERS = (
     "fts_posts_ai", "fts_posts_ad", "fts_posts_au",
@@ -245,6 +251,21 @@ def trigram_covers_cast(conn) -> bool:
     """
     return (trigram_available(conn)
             and "cast_names" in _tri_columns(conn))
+
+
+def trigram_covers_search(conn) -> bool:
+    """True when the trigram index can bound a `/api/v1/posts` substring search.
+
+    The uncapped candidate pass (`viewer._posts_search_trigram_match`)
+    needs the trigram MATCH to be a superset of the search's four-column
+    LIKE — clean_title, cast_names, slug AND title. A trigram table built
+    before `slug` and `title` joined `TRI_COLUMNS` (the live shape until
+    a rebuild) covers titles + cast only, so a slug-only or title-only
+    row would be dropped from the candidates: False means "fall back to
+    the LIKE scan", never an error, and never a smaller answer.
+    """
+    return (trigram_available(conn)
+            and set(TRI_COLUMNS) <= _tri_columns(conn))
 
 
 def _tri_shape_stale(conn) -> bool:

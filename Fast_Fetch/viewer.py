@@ -3174,6 +3174,33 @@ def _posts_search_candidate_ids(conn, query, limit):
     return ids
 
 
+def _posts_search_trigram_match(conn, query) -> str | None:
+    """The FTS5 MATCH string for the uncapped trigram pass, or None.
+
+    Search-speed (2026-11-17): the bounded candidate pass above caps at
+    900 ids (the 999-variable budget), so a broad query ("love": 9,621
+    gram-matching rows on the live catalog) falls through to the
+    full-table LIKE scan. The same MATCH as an uncapped subquery —
+    `p.id IN (SELECT rowid FROM fts_posts_tri WHERE fts_posts_tri
+    MATCH ?)` — bounds the scan without a cap and returns exactly the
+    rows the LIKE would (COUNT `love` 0.40s -> 0.03s, same total), because
+    the MATCH is evaluated once by the index, not once per row. None
+    means "use the LIKE scan": no grams, or the live trigram table does
+    not index every LIKE column yet (`fts_posts.trigram_covers_search`
+    — the live shape until `migrate_search_indexes.py apply
+    --with-fts-posts` rebuilds it with `slug` + `title`). The LIKE stays
+    as the verifier in the caller, exactly as on the bounded pass.
+    """
+    if not fts_posts.trigram_covers_search(conn):
+        return None
+    tokens = search_fuzzy.tokenize(query)
+    grams = sorted({gram for token in tokens
+                    for gram in search_fuzzy.candidate_grams(token)})
+    if not grams:
+        return None
+    return fts_posts.trigram_match(grams)
+
+
 def _resolve_work_ref(conn, work_ref: str):
     """The post id a minted work handle names, or None.
 
@@ -4057,7 +4084,15 @@ def api_v1_get_posts(query: str = "", content_type: str = "", page: int = 1,
                 # substring match (`Salaar` shares grams with `Salary
                 # Man`). When the index is absent, stale, or the candidate
                 # set would be truncated, the clause is exactly the old
-                # LIKE — same rows, same order, just slower.
+                # LIKE — same rows, same order, just slower. Search-speed
+                # (2026-11-17): a truncated set no longer falls straight
+                # through to the full-table LIKE — when the live trigram
+                # table indexes every LIKE column (`fts_posts.
+                # trigram_covers_search`), the same MATCH bounds the scan
+                # as an uncapped subquery instead (COUNT `love` 0.40s ->
+                # 0.03s on the live catalog, same rows). Until the index
+                # is rebuilt with `slug` + `title`, the guard is False and
+                # the LIKE below runs exactly as before.
                 candidate_limit = max(
                     0, min(_POSTS_TRIGRAM_LIMIT,
                            999 - _POSTS_TRIGRAM_RESERVE - len(hidden)))
@@ -4072,8 +4107,18 @@ def api_v1_get_posts(query: str = "", content_type: str = "", page: int = 1,
                     params.extend([q_param, q_param, q_param, q_param])
                     search_param_count = len(candidate_ids) + 4
                 else:
-                    where_clauses.append(f"({_search_like_clause()})")
-                    params.extend([q_param, q_param, q_param, q_param])
+                    trigram_match = _posts_search_trigram_match(conn, query)
+                    if trigram_match is not None:
+                        where_clauses.append(
+                            "(p.id IN (SELECT rowid FROM fts_posts_tri"
+                            " WHERE fts_posts_tri MATCH ?)"
+                            f" AND ({_search_like_clause()}))")
+                        params.extend([trigram_match,
+                                       q_param, q_param, q_param, q_param])
+                        search_param_count = 5
+                    else:
+                        where_clauses.append(f"({_search_like_clause()})")
+                        params.extend([q_param, q_param, q_param, q_param])
         # Facet filters, shared with /api/v1/works (see
         # `_facet_filter_clauses`). `region=` is the alias for
         # `industry=`; an explicit `industry=` wins.

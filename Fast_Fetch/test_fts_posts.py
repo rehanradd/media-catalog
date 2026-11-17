@@ -201,8 +201,9 @@ class FtsBuildTests(Fixture):
     def test_absent_before_rebuild_available_after(self):
         conn = sqlite3.connect(":memory:")
         conn.execute("CREATE TABLE posts (id INTEGER PRIMARY KEY,"
-                     " clean_title TEXT, cast_names TEXT)")
-        conn.execute("INSERT INTO posts VALUES (1, 'Salaar', '[\"Prabhas\"]')")
+                     " clean_title TEXT, cast_names TEXT,"
+                     " slug TEXT, title TEXT)")
+        conn.execute("INSERT INTO posts VALUES (1, 'Salaar', '[\"Prabhas\"]', 'salaar', 'Salaar')")
         self.assertFalse(fts_posts.fts_available(conn))
         self.assertFalse(fts_posts.trigram_available(conn))
         self.assertIsNone(fts_posts.search_candidate_ids(conn, "salaar"))
@@ -364,12 +365,65 @@ class PostsTrigramTests(Fixture):
         self.assertIsNone(
             viewer._posts_search_candidate_ids(self.conn, "%", 875))
 
+    def test_uncapped_trigram_pass_is_a_superset_of_the_like(self):
+        # Search-speed (2026-11-17): the bounded pass caps at 900 ids, so
+        # a broad query falls through to the full-table LIKE. The uncapped
+        # subquery must return exactly the rows the LIKE would — including
+        # a slug-only row, which the old two-column index dropped (65 of
+        # 6,220 rows for `q=love` on the live catalog).
+        self.assertTrue(fts_posts.trigram_covers_search(self.conn))
+        # A slug-only row: "love" lives in the slug, nowhere else.
+        row = self.conn.execute(
+            "INSERT INTO posts (url, slug, title, clean_title, year,"
+            " content_type, source_site, is_18_plus, canonical_key)"
+            " VALUES (?, ?, ?, ?, 2024, 'movie', 'somecdn.site', 0, ?)",
+            ("https://somecdn.site/movie/kaguya-2024/",
+             "kaguya-sama-love-is-war-season-1", "Kaguya (2024)", "Kaguya",
+             "kaguya_2024")).lastrowid
+        self.conn.commit()
+        match = viewer._posts_search_trigram_match(self.conn, "love")
+        self.assertIsNotNone(match)
+        sub_ids = {int(r[0]) for r in self.conn.execute(
+            "SELECT rowid FROM fts_posts_tri WHERE fts_posts_tri MATCH ?",
+            (match,))}
+        self.assertIn(row, sub_ids)
+        self.assertTrue(self._like_ids("love") <= sub_ids)
+        # The bounded pass, forced to truncate, must fall back to the same
+        # subquery rather than the full scan: with limit 2 the "dune" set
+        # (two films) truncates.
+        self.assertIsNone(
+            viewer._posts_search_candidate_ids(self.conn, "dune", 2))
+        self.assertIsNotNone(
+            viewer._posts_search_trigram_match(self.conn, "dune"))
+
+    def test_old_trigram_shape_does_not_cover_search(self):
+        # A live table built before `slug` + `title` joined the index:
+        # the uncapped pass must stay off and the search falls back to
+        # the LIKE scan — never a smaller answer.
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE posts (id INTEGER PRIMARY KEY,"
+                     " clean_title TEXT, cast_names TEXT,"
+                     " slug TEXT, title TEXT)")
+        conn.execute("CREATE VIRTUAL TABLE fts_posts_tri USING fts5("
+                     "clean_title, cast_names, content='posts',"
+                     " content_rowid='id', tokenize='trigram')")
+        conn.execute("INSERT INTO posts VALUES (1, 'Salaar',"
+                     " '[\"Prabhas\"]', 'salaar', 'Salaar')")
+        conn.execute("INSERT INTO fts_posts_tri(fts_posts_tri)"
+                     " VALUES('rebuild')")
+        self.assertTrue(fts_posts.trigram_covers_cast(conn))
+        self.assertFalse(fts_posts.trigram_covers_search(conn))
+        self.assertIsNone(
+            viewer._posts_search_trigram_match(conn, "salaar"))
+        conn.close()
+
     def test_rebuild_migrates_a_stale_trigram_shape(self):
         # A live database built before `cast_names` joined the index:
         # the old table, the old one-column triggers, and rows.
         conn = sqlite3.connect(":memory:")
         conn.execute("CREATE TABLE posts (id INTEGER PRIMARY KEY,"
-                     " clean_title TEXT, cast_names TEXT)")
+                     " clean_title TEXT, cast_names TEXT,"
+                     " slug TEXT, title TEXT)")
         # The live pair: the main index in its current shape, the
         # trigram table in the old one-column shape.
         conn.execute("CREATE VIRTUAL TABLE fts_posts USING fts5("
@@ -394,7 +448,7 @@ class PostsTrigramTests(Fixture):
                      " INSERT INTO fts_posts_tri(rowid, clean_title)"
                      " VALUES (new.id, new.clean_title); END")
         conn.execute("INSERT INTO posts VALUES (1, 'Jawan',"
-                     " '[\"Shah Rukh Khan\"]')")
+                     " '[\"Shah Rukh Khan\"]', 'jawan', 'Jawan')")
         conn.execute("INSERT INTO fts_posts_tri(fts_posts_tri)"
                      " VALUES('rebuild')")
         self.assertFalse(fts_posts.trigram_covers_cast(conn))
@@ -458,6 +512,26 @@ class PostsTrigramTests(Fixture):
             like_only = answer(query)
             self.assertEqual(with_tri, like_only, query)
             fts_posts.rebuild_fts(self.conn)
+
+    def test_api_v1_get_posts_uses_the_uncapped_pass_when_candidates_truncate(self):
+        # Search-speed (2026-11-17): force the bounded pass to truncate
+        # (limit 2 on a two-film query) and assert the API still answers
+        # exactly what the LIKE fallback answers — via the uncapped
+        # subquery, not the full-table scan. This is the only test that
+        # exercises the subquery branch through api_v1_get_posts itself.
+        with mock.patch.object(viewer, "_POSTS_TRIGRAM_LIMIT", 2):
+            result = viewer.api_v1_get_posts(query="dune")
+        self.conn.execute("DROP TABLE IF EXISTS fts_posts_tri")
+        for trigger in ("fts_posts_tri_ai", "fts_posts_tri_ad",
+                        "fts_posts_tri_au"):
+            self.conn.execute(f"DROP TRIGGER IF EXISTS {trigger}")
+        self.conn.commit()
+        like_only = viewer.api_v1_get_posts(query="dune")
+        self.assertEqual(
+            (result["total"], [int(r["id"]) for r in result["results"]]),
+            (like_only["total"],
+             [int(r["id"]) for r in like_only["results"]]))
+        fts_posts.rebuild_fts(self.conn)
 
     def test_curly_apostrophe_title_found_by_straight_apostrophe_query(self):
         # Gate caveat 4 (2026-11-13): q="Devil's Plan" (straight U+0027)

@@ -1645,15 +1645,30 @@ def site_needles(db_path=None) -> frozenset[str]:
             with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
                 # Session 125: serve-path pragmas.
                 db_pragmas.apply_serve_pragmas(conn)
-                has_cat_sites = conn.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cat_work_sites'"
-                ).fetchone()
-                if has_cat_sites:
-                    for (value,) in conn.execute("SELECT DISTINCT source_site FROM cat_work_sites"):
+                # Search-speed (2026-11-17): the projected text snapshot
+                # carries the same source_site vocabulary the live DISTINCT
+                # below reads (~40 rows vs a DISTINCT over 413k+
+                # cat_work_sites, 5.8s at process start on the live
+                # catalog, measured 2026-11-17). The snapshot is the fast
+                # path; a stale or absent snapshot falls back to the live
+                # scan, exactly like the download_sources snapshot below.
+                # No UNATTRIBUTED filter here: site_needles is detection,
+                # and 'vegamovies' is a site we scrape — only
+                # site_text_needles (rewriting) excludes it.
+                text_snapshot = _snapshot_text_needle_values(conn)
+                if text_snapshot is not None:
+                    for value in text_snapshot:
                         needles.add(str(value or "").strip().lower())
                 else:
-                    for (value,) in conn.execute("SELECT DISTINCT source_site FROM posts"):
-                        needles.add(str(value or "").strip().lower())
+                    has_cat_sites = conn.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cat_work_sites'"
+                    ).fetchone()
+                    if has_cat_sites:
+                        for (value,) in conn.execute("SELECT DISTINCT source_site FROM cat_work_sites"):
+                            needles.add(str(value or "").strip().lower())
+                    else:
+                        for (value,) in conn.execute("SELECT DISTINCT source_site FROM posts"):
+                            needles.add(str(value or "").strip().lower())
                 # For download_sources, scan when table is small or indexed; _registry_needles()
                 # already carries all canonical hosters and services.
                 # Session 147: the snapshot is the fast path — the projection

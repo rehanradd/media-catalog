@@ -844,6 +844,16 @@ class NeedleSnapshotTests(FixtureMixin):
                 "source_name = 'Zzsnapshotprobe Mirror' WHERE id = ?",
                 (row[0],))
 
+    def _plant_distinctive_site(self):
+        """Give one post a source_site that exists nowhere else — not in
+        BASE_NEEDLES, not in the registry — so the test can tell the
+        snapshot apart from every other vocabulary source."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE posts SET source_site = 'zzsnapshotsite'"
+                " WHERE id = ?", (self.post_id,))
+            conn.commit()
+
     def _build_snapshot(self, stamp="T1", projected="T1"):
         with sqlite3.connect(self.db_path) as conn:
             count = redact.rebuild_site_needle_snapshot(conn)
@@ -887,6 +897,28 @@ class NeedleSnapshotTests(FixtureMixin):
         # Stamps disagree, so the snapshot is ignored and the live scan —
         # which now finds nothing — is the honest answer.
         self.assertNotIn("zzsnapshotprobe", redact.site_needles(self.db_path))
+
+    def test_text_snapshot_serves_source_site_after_posts_gone(self):
+        # Search-speed (2026-11-17): site_needles() reads the source_site
+        # vocabulary from the projected text snapshot, not from a live
+        # DISTINCT over cat_work_sites — so it must keep serving after the
+        # source rows are gone, exactly like the service snapshot.
+        self._plant_distinctive_site()
+        self._build_snapshot()
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM posts")
+            conn.commit()
+        self.assertIn("zzsnapshotsite", redact.site_needles(self.db_path))
+
+    def test_stale_text_snapshot_falls_back_to_the_live_scan(self):
+        self._plant_distinctive_site()
+        self._build_snapshot(stamp="T1", projected="T2")
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM posts")
+            conn.commit()
+        # Stamps disagree, so the text snapshot is ignored and the live
+        # scan — which now finds nothing — is the honest answer.
+        self.assertNotIn("zzsnapshotsite", redact.site_needles(self.db_path))
 
     def test_rebuild_on_a_db_without_download_sources_returns_zero(self):
         with tempfile.TemporaryDirectory() as d:
