@@ -7,7 +7,7 @@
 
 ## ✅ Open items — index (q3, 2026-10-30; pointers only)
 
-1. **This file is a pointer, not a history** 171 session files (169 dated + 2 undated) cover
+1. **This file is a pointer, not a history** 173 session files (171 dated + 2 undated) cover
 
    every one of them verbatim: [`checkpoints/README.md`](checkpoints/README.md). Nothing was
    deleted, reworded, or summarized. The count is `ls Fast_Fetch/checkpoints/*.md` minus `README.md`,
@@ -67,6 +67,7 @@
 
 Session blocks moved verbatim to [`Fast_Fetch/checkpoints/`](checkpoints/README.md); nothing was deleted or reworded.
 The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete index.
+- [Session 2026-11-17 — HF full-gate backup push `[HF-BACKUP-FULLGATE]`](checkpoints/20261117-hf-backup-fullgate.md)
 - [Session 2026-11-17 — search speed: residual search cost + the `_ensure_schema` first-request 504](checkpoints/20261117-search-speed.md)
 - [Session 2026-11-16 — pre-peak fill (play-fast §2 (j))](checkpoints/20261116-pre-peak-fill.md)
 - [Session 2026-11-16 — playback telemetry beacon](checkpoints/20261116-playback-telemetry-beacon.md)

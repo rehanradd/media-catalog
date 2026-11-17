@@ -1,4 +1,5 @@
 import os
+import shutil
 import sqlite3
 import subprocess
 import tempfile
@@ -346,6 +347,290 @@ class DiskGrowthTests(unittest.TestCase):
             code = main(self._main_args())
         self.assertEqual(code, 0)
         pruned.assert_called_once()
+
+
+class FullGateTests(unittest.TestCase):
+    """--full-gate: one existing gate-backup .db -> zstd + manifest -> HF dataset.
+
+    Offline: the zstd binary is faked by a copy (the real binary is exercised
+    on the VM, where it exists); git is faked the same way the HF upload tests
+    already fake it.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.out = self.root / "out"
+        self.out.mkdir()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _make_catalog(self, name="gate-backup-20261117-f3ad1e46.db"):
+        db = self.root / name
+        conn = sqlite3.connect(db)
+        conn.execute("CREATE TABLE posts (id INTEGER PRIMARY KEY, is_18_plus INTEGER DEFAULT 0)")
+        conn.execute("CREATE TABLE releases (id INTEGER PRIMARY KEY, post_id INTEGER)")
+        conn.execute("CREATE TABLE download_sources (id INTEGER PRIMARY KEY, release_id INTEGER)")
+        conn.execute("CREATE TABLE cat_links (id INTEGER PRIMARY KEY, post_id INTEGER)")
+        conn.executemany("INSERT INTO posts (is_18_plus) VALUES (?)", [(0,), (1,)])
+        conn.executemany("INSERT INTO releases (post_id) VALUES (?)", [(1,), (1,), (2,)])
+        conn.executemany("INSERT INTO download_sources (release_id) VALUES (?)", [(1,), (2,)])
+        conn.executemany("INSERT INTO cat_links (post_id) VALUES (?)", [(1,), (2,), (2,), (1,)])
+        conn.commit()
+        conn.close()
+        return db
+
+    def _make_wal_catalog(self, name="gate-backup-20261117-f3ad1e46.db"):
+        db = self._make_catalog(name)
+        conn = sqlite3.connect(db)
+        self.assertEqual(
+            conn.execute("PRAGMA journal_mode=WAL").fetchone()[0], "wal"
+        )
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        conn.close()
+        for suffix in ("-shm", "-wal"):
+            sidecar = Path(str(db) + suffix)
+            if sidecar.exists():
+                sidecar.unlink()
+        return db
+
+    @staticmethod
+    def _fake_compress(source, dest, level=3):
+        shutil.copy2(source, dest)
+        return 0.1
+
+    def test_db_info_counts_include_cat_links_and_pragmas(self):
+        from backup_manager import _fullgate_db_info
+
+        db = self._make_catalog()
+        info = _fullgate_db_info(db)
+        self.assertEqual(info["integrity_check"], "ok")
+        self.assertGreater(info["page_count"], 0)
+        self.assertEqual(info["page_size"], 4096)
+        self.assertEqual(info["counts"]["posts"], 2)
+        self.assertEqual(info["counts"]["posts_adult"], 1)
+        self.assertEqual(info["counts"]["releases"], 3)
+        self.assertEqual(info["counts"]["download_sources"], 2)
+        self.assertEqual(info["counts"]["cat_links"], 4)
+
+    def test_db_info_skip_integrity_records_skipped_and_keeps_counts(self):
+        from backup_manager import _fullgate_db_info
+
+        db = self._make_catalog()
+        info = _fullgate_db_info(db, skip_integrity=True)
+        self.assertEqual(info["integrity_check"], "skipped")
+        self.assertGreater(info["page_count"], 0)
+        self.assertEqual(info["counts"]["posts"], 2)
+        self.assertEqual(info["counts"]["cat_links"], 4)
+
+    def test_db_info_leaves_no_sidecar_on_wal_db(self):
+        from backup_manager import _fullgate_db_info
+
+        db = self._make_wal_catalog()
+        info = _fullgate_db_info(db)
+        self.assertEqual(info["integrity_check"], "ok")
+        self.assertEqual(info["counts"]["posts"], 2)
+        # Only the db itself: a plain mode=ro open builds a WAL-index beside
+        # the file (and cannot clean it up); immutable=1 leaves nothing.
+        self.assertEqual(
+            sorted(p.name for p in self.root.glob(db.name + "*")), [db.name]
+        )
+
+    def test_gate_commit_parsed_from_filename(self):
+        from backup_manager import _fullgate_gate_commit
+
+        self.assertEqual(
+            _fullgate_gate_commit("gate-backup-20261117-f3ad1e46.db"), "f3ad1e46"
+        )
+        self.assertEqual(
+            _fullgate_gate_commit("gate-backup-trending-cache-20261112.db"), ""
+        )
+
+    def test_manifest_records_hashes_geometry_and_counts(self):
+        from backup_manager import calculate_sha256, create_fullgate_archive
+
+        db = self._make_catalog()
+        with (
+            patch("backup_manager._compress_zstd", side_effect=self._fake_compress),
+            patch("backup_manager.free_bytes", return_value=100 * 2**30),
+        ):
+            zst, manifest_path, manifest = create_fullgate_archive(db, self.out)
+        self.assertTrue(zst.exists())
+        self.assertTrue(manifest_path.exists())
+        self.assertEqual(manifest["mode"], "full-gate")
+        self.assertEqual(manifest["gate_commit"], "f3ad1e46")
+        self.assertEqual(manifest["source"]["filename"], db.name)
+        self.assertEqual(manifest["source"]["bytes"], db.stat().st_size)
+        self.assertEqual(manifest["source"]["sha256"], calculate_sha256(db))
+        self.assertEqual(manifest["archive"]["filename"], zst.name)
+        self.assertEqual(manifest["archive"]["sha256"], calculate_sha256(zst))
+        self.assertEqual(manifest["archive"]["compressor"], "zstd -3")
+        self.assertEqual(manifest["database"]["integrity_check"], "ok")
+        self.assertEqual(manifest["database"]["counts"]["cat_links"], 4)
+
+    def test_manifest_records_skipped_integrity_with_flag(self):
+        from backup_manager import create_fullgate_archive
+
+        db = self._make_catalog()
+        with (
+            patch("backup_manager._compress_zstd", side_effect=self._fake_compress),
+            patch("backup_manager.free_bytes", return_value=100 * 2**30),
+        ):
+            _zst, _mp, manifest = create_fullgate_archive(
+                db, self.out, skip_source_integrity=True
+            )
+        self.assertEqual(manifest["database"]["integrity_check"], "skipped")
+        self.assertEqual(manifest["database"]["counts"]["cat_links"], 4)
+
+    def test_space_guard_refuses_before_writing_anything(self):
+        from backup_manager import BackupSpaceError, create_fullgate_archive
+
+        db = self._make_catalog()
+        with patch("backup_manager.free_bytes", return_value=1024):
+            with self.assertRaises(BackupSpaceError):
+                create_fullgate_archive(db, self.out)
+        self.assertEqual(list(self.out.glob("*.zst")), [])
+
+    def test_lfs_patterns_include_zst_and_upload_tracks_it(self):
+        from backup_manager import HF_LFS_PATTERNS, upload_to_huggingface
+
+        self.assertIn("*.zst", HF_LFS_PATTERNS)
+        archive = self.root / "gate-backup-20261117-f3ad1e46.zst"
+        archive.write_bytes(b"fake zstd bytes")
+        calls: list[list[str]] = []
+
+        def run_git(args, cwd, env):
+            calls.append([str(a) for a in args])
+            stdout = "main\n" if args[:2] == ["symbolic-ref", "--short"] else ""
+            return subprocess.CompletedProcess(args, 0, stdout=stdout, stderr="")
+
+        with patch("backup_manager._run_git", side_effect=run_git), patch.dict(
+            os.environ,
+            {"HF_TOKEN": "hf_testtoken", "HF_DATASET_REPO": "radddao/radd-stream-gate-backups"},
+        ):
+            self.assertTrue(upload_to_huggingface(archive))
+        tracked = [c[2] for c in calls if c[:2] == ["lfs", "track"]]
+        self.assertIn("*.zst", tracked)
+
+    def _manifest(self, db):
+        from backup_manager import create_fullgate_archive
+
+        with (
+            patch("backup_manager._compress_zstd", side_effect=self._fake_compress),
+            patch("backup_manager.free_bytes", return_value=100 * 2**30),
+        ):
+            _zst, _mp, manifest = create_fullgate_archive(db, self.out)
+        return manifest
+
+    def test_verify_happy_path(self):
+        from backup_manager import calculate_sha256, verify_fullgate
+
+        db = self._make_catalog()
+        manifest = self._manifest(db)
+        zst_name = manifest["archive"]["filename"]
+        zst_path = self.out / zst_name
+
+        def fake_stream(repo_id, filename, dest_db):
+            shutil.copy2(zst_path, dest_db)
+            return zst_path.stat().st_size, calculate_sha256(zst_path), True, ""
+
+        work = self.root / "verify"
+        with (
+            patch("backup_manager.hf_remote_listing",
+                  return_value={zst_name: zst_path.stat().st_size}),
+            patch("backup_manager._stream_restore", side_effect=fake_stream),
+            patch("backup_manager.free_bytes", return_value=100 * 2**30),
+        ):
+            ok, report = verify_fullgate(
+                zst_name, manifest, "radddao/radd-stream-gate-backups", work
+            )
+        self.assertTrue(ok, report)
+        for step in ("listing", "sha256", "zstd_frame", "integrity_check", "counts"):
+            self.assertTrue(report["steps"][step].startswith("ok"), (step, report))
+        self.assertEqual(list(work.iterdir()), [])  # scratch removed on success
+
+    def test_verify_fails_on_sha_mismatch_and_counts_mismatch(self):
+        from backup_manager import calculate_sha256, verify_fullgate
+
+        db = self._make_catalog()
+        manifest = self._manifest(db)
+        zst_name = manifest["archive"]["filename"]
+        zst_path = self.out / zst_name
+
+        def fake_stream_wrong_sha(repo_id, filename, dest_db):
+            shutil.copy2(zst_path, dest_db)
+            return zst_path.stat().st_size, "0" * 64, True, ""
+
+        def fake_stream_ok(repo_id, filename, dest_db):
+            shutil.copy2(zst_path, dest_db)
+            return zst_path.stat().st_size, calculate_sha256(zst_path), True, ""
+
+        work = self.root / "verify"
+        with (
+            patch("backup_manager.hf_remote_listing",
+                  return_value={zst_name: zst_path.stat().st_size}),
+            patch("backup_manager._stream_restore",
+                  side_effect=fake_stream_wrong_sha),
+            patch("backup_manager.free_bytes", return_value=100 * 2**30),
+        ):
+            ok, report = verify_fullgate(
+                zst_name, manifest, "radddao/radd-stream-gate-backups", work
+            )
+        self.assertFalse(ok)
+        self.assertTrue(report["steps"]["sha256"].startswith("FAIL"))
+
+        manifest["database"]["counts"]["posts"] += 1
+        with (
+            patch("backup_manager.hf_remote_listing",
+                  return_value={zst_name: zst_path.stat().st_size}),
+            patch("backup_manager._stream_restore", side_effect=fake_stream_ok),
+            patch("backup_manager.free_bytes", return_value=100 * 2**30),
+        ):
+            ok, report = verify_fullgate(
+                zst_name, manifest, "radddao/radd-stream-gate-backups", work
+            )
+        self.assertFalse(ok)
+        self.assertTrue(report["steps"]["counts"].startswith("FAIL"))
+
+    def test_main_fullgate_exit_codes(self):
+        from backup_manager import main
+
+        db = self._make_catalog()
+        with (
+            patch("backup_manager.run_fullgate",
+                  return_value=(db, db, {"archive": {}}, True)),
+        ):
+            self.assertEqual(main(["--full-gate", str(db)]), 0)
+        with (
+            patch("backup_manager.run_fullgate",
+                  return_value=(db, db, {"archive": {}}, False)),
+        ):
+            self.assertEqual(main(["--full-gate", str(db)]), 1)
+
+    def test_main_fullgate_passes_skip_flag(self):
+        from backup_manager import main
+
+        db = self._make_catalog()
+        with patch(
+            "backup_manager.run_fullgate",
+            return_value=(db, db, {"archive": {}}, True),
+        ) as mock:
+            self.assertEqual(
+                main(["--full-gate", str(db), "--skip-source-integrity"]), 0
+            )
+        self.assertTrue(mock.call_args.kwargs["skip_source_integrity"])
+        with patch(
+            "backup_manager.run_fullgate",
+            return_value=(db, db, {"archive": {}}, True),
+        ) as mock:
+            self.assertEqual(main(["--full-gate", str(db)]), 0)
+        self.assertFalse(mock.call_args.kwargs["skip_source_integrity"])
+
+    def test_main_verify_fullgate_needs_manifest(self):
+        from backup_manager import main
+
+        self.assertEqual(main(["--verify-full-gate", "x.zst"]), 1)
 
 
 if __name__ == "__main__":

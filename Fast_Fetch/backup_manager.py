@@ -19,6 +19,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -26,8 +27,9 @@ import sys
 import tarfile
 import tempfile
 import time
-import urllib.request
 import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 BASE_DIR = Path(__file__).parent.resolve()
@@ -43,16 +45,24 @@ def calculate_sha256(filepath: str | Path) -> str:
     return h.hexdigest()
 
 
-def _db_row_counts(db_path: Path) -> dict:
-    """Row counts for a catalog database, tolerant of the per-site schema families."""
+def _db_row_counts(db_path: Path, conn=None) -> dict:
+    """Row counts for a catalog database, tolerant of the per-site schema families.
+
+    Pass an open connection to count on it instead of opening a second one:
+    _fullgate_db_info lends its read-only, immutable connection so no extra
+    open touches the file at all. A passed connection is borrowed, never
+    closed here.
+    """
     counts: dict[str, int] = {}
+    own_conn = conn is None
     try:
-        conn = sqlite3.connect(str(db_path))
+        if own_conn:
+            conn = sqlite3.connect(str(db_path))
     except sqlite3.Error:
         return counts
     try:
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        for table in ("posts", "releases", "download_sources", "sources", "post_sources", "sitemap_cache"):
+        for table in ("posts", "releases", "download_sources", "cat_links", "sources", "post_sources", "sitemap_cache"):
             if table in tables:
                 counts[table] = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
         if "posts" in tables and any(
@@ -71,7 +81,8 @@ def _db_row_counts(db_path: Path) -> dict:
     except sqlite3.Error:
         pass
     finally:
-        conn.close()
+        if own_conn:
+            conn.close()
     return counts
 
 
@@ -528,6 +539,12 @@ def _hf_git_env(tmp_dir: Path) -> dict:
     return env
 
 
+# LFS-tracked suffixes in a Hugging Face dataset clone. A .zst committed as a
+# plain git blob fails the push (and a multi-GB blob would break the clone);
+# keep this list in sync with the archive kinds upload_to_huggingface writes.
+HF_LFS_PATTERNS = ("*.tar.gz", "*.db", "*.zip", "*.zst")
+
+
 def upload_to_huggingface(
     archive_path: Path,
     manifest: dict | None = None,
@@ -567,7 +584,7 @@ def upload_to_huggingface(
         repo_dir.mkdir(parents=True, exist_ok=True)
 
         _run_git(["lfs", "install"], repo_dir, env)
-        for pattern in ("*.tar.gz", "*.db", "*.zip"):
+        for pattern in HF_LFS_PATTERNS:
             _run_git(["lfs", "track", pattern], repo_dir, env)
 
         shutil.copy2(archive_path, repo_dir / archive_path.name)
@@ -604,6 +621,317 @@ def upload_to_huggingface(
         return True
 
 
+# ---------------------------------------------------------------------------
+# Full-gate mode: push one already-existing gate-backup .db to a dedicated
+# private Hugging Face dataset, compressed with zstd, verified on restore.
+#
+# The slim path re-snapshots the LIVE databases (needs ~19 GB headroom, and its
+# 2x space guard refuses on this disk); this mode streams the backup file that
+# already exists, so it needs ~6 GB free and never makes a second 10 GB copy.
+# ---------------------------------------------------------------------------
+
+FULLGATE_REPO_DEFAULT = "radddao/radd-stream-gate-backups"
+FULLGATE_MIN_FREE_BYTES = 6 * 2**30
+FULLGATE_TABLES = ("posts", "releases", "download_sources", "cat_links")
+
+
+def _fullgate_gate_commit(db_name: str) -> str:
+    """Gate commit embedded in a gate-backup filename, '' when there is none."""
+    match = re.match(r"gate-backup-(?:\d{8}-)?([0-9a-f]{7,40})\.db$", db_name)
+    return match.group(1) if match else ""
+
+
+def _fullgate_db_info(db_path: Path, skip_integrity: bool = False) -> dict:
+    """Page geometry, integrity_check and row counts for a static backup file.
+
+    Read-only open: a gate backup is a finished file, never a live WAL db, and
+    the counts run on the same read-only connection so no -shm/-wal sidecar
+    is created beside the source. immutable=1 is what actually does that: a
+    plain mode=ro open still builds a WAL-index beside the file (and, being
+    read-only, cannot clean it up on close), while immutable skips WAL
+    recovery entirely. Safe here because the file is a finished .backup
+    snapshot with no -wal sibling — and the .zst archives the main file only,
+    so manifest, archive and restore all see exactly the same bytes.
+    integrity_check on a 10 GB file takes minutes on one vCPU; callers run
+    this detached. skip_integrity records "skipped" instead of running it —
+    safe only because the source was integrity-checked at gate time AND the
+    restore side re-checks it in verify_fullgate. Never use it for the verify
+    path: verify_fullgate always calls this with the default.
+    """
+    info: dict = {"integrity_check": "unknown", "counts": {}}
+    uri = "file:" + urllib.parse.quote(str(db_path), safe="/") + "?mode=ro&immutable=1"
+    conn = sqlite3.connect(uri, uri=True)
+    try:
+        row = conn.execute(
+            "SELECT page_count, freelist_count, page_size FROM "
+            "pragma_page_count(), pragma_freelist_count(), pragma_page_size()"
+        ).fetchone()
+        info["page_count"], info["freelist_count"], info["page_size"] = (
+            int(v) for v in row
+        )
+        if skip_integrity:
+            info["integrity_check"] = "skipped"
+        else:
+            texts = [str(r[0]) for r in conn.execute("PRAGMA integrity_check").fetchall()]
+            info["integrity_check"] = "ok" if texts == ["ok"] else "; ".join(texts)[:500]
+        info["counts"] = _db_row_counts(db_path, conn=conn)
+    finally:
+        conn.close()
+    return info
+
+
+def _compress_zstd(source: Path, dest: Path, level: int = 3) -> float:
+    """Stream source through `zstd -<level>` into dest. Returns wall seconds."""
+    zstd = shutil.which("zstd")
+    if not zstd:
+        raise RuntimeError("zstd binary not found on PATH")
+    started = time.time()
+    with open(source, "rb") as fin, open(dest, "wb") as fout:
+        res = subprocess.run(
+            [zstd, f"-{level}", "-T0", "--stdout"],
+            stdin=fin, stdout=fout, stderr=subprocess.PIPE, text=True,
+        )
+    if res.returncode != 0:
+        raise RuntimeError(
+            f"zstd failed (rc={res.returncode}): {res.stderr.strip()[:300]}"
+        )
+    return time.time() - started
+
+
+def create_fullgate_archive(
+    db_path: Path, out_dir: Path, zstd_level: int = 3,
+    skip_source_integrity: bool = False,
+) -> tuple[Path, Path, dict]:
+    """Compress one gate-backup .db to .zst + manifest JSON. No second 10 GB copy."""
+    db_path = Path(db_path)
+    if not db_path.exists():
+        raise FileNotFoundError(f"gate backup not found: {db_path}")
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if free_bytes(out_dir) < FULLGATE_MIN_FREE_BYTES:
+        raise BackupSpaceError(
+            f"full-gate needs {FULLGATE_MIN_FREE_BYTES / 2**30:.0f} GiB free in {out_dir}, "
+            f"has {free_bytes(out_dir) / 2**30:.2f} GiB."
+        )
+    zst_path = out_dir / (db_path.stem + ".zst")
+    manifest_path = out_dir / (db_path.stem + ".manifest.json")
+    print(f"[*] Compressing {db_path.name} with zstd -{zstd_level} ...", flush=True)
+    seconds = _compress_zstd(db_path, zst_path, zstd_level)
+    if skip_source_integrity:
+        print("[*] Reading source geometry + counts (read-only; source "
+              "integrity skipped — gate-time + restore-side checks apply) ...", flush=True)
+    else:
+        print("[*] Reading source geometry + integrity (read-only) ...", flush=True)
+    info = _fullgate_db_info(db_path, skip_integrity=skip_source_integrity)
+    manifest = {
+        "mode": "full-gate",
+        "created_utc": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
+        "source_commit": _git_head_sha(),
+        "gate_commit": _fullgate_gate_commit(db_path.name),
+        "source": {
+            "filename": db_path.name,
+            "bytes": db_path.stat().st_size,
+            "sha256": calculate_sha256(db_path),
+        },
+        "archive": {
+            "filename": zst_path.name,
+            "bytes": zst_path.stat().st_size,
+            "sha256": calculate_sha256(zst_path),
+            "compressor": f"zstd -{zstd_level}",
+            "compress_seconds": round(seconds, 1),
+        },
+        "database": info,
+    }
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    print(
+        f"[✓] {zst_path.name}: {manifest['archive']['bytes'] / 2**30:.2f} GiB "
+        f"({manifest['source']['bytes'] / manifest['archive']['bytes']:.2f}x, "
+        f"{seconds:.0f}s), integrity={info['integrity_check']}",
+        flush=True,
+    )
+    return zst_path, manifest_path, manifest
+
+
+def run_fullgate(
+    db_path: Path, out_dir: Path, repo_id: str,
+    skip_source_integrity: bool = False,
+) -> tuple[Path, Path, dict, bool]:
+    """Compress + manifest + upload one gate backup. The bool is the upload verdict."""
+    zst_path, manifest_path, manifest = create_fullgate_archive(
+        db_path, out_dir, skip_source_integrity=skip_source_integrity
+    )
+    uploaded = upload_to_huggingface(
+        zst_path, manifest=manifest, repo_id=repo_id, extra_files=[manifest_path]
+    )
+    if uploaded:
+        listing = hf_remote_listing(repo_id)
+        if listing is None or listing.get(zst_path.name) != zst_path.stat().st_size:
+            print(
+                f"[!] Upload reported success but the HF listing does not confirm "
+                f"{zst_path.name}",
+                file=sys.stderr,
+            )
+            return zst_path, manifest_path, manifest, False
+    return zst_path, manifest_path, manifest, uploaded
+
+
+def _stream_restore(
+    repo_id: str, zst_name: str, dest_db: Path
+) -> tuple[int, str, bool, str]:
+    """Stream the .zst out of HF straight through `zstd -d` into dest_db.
+
+    One pass does three checks at once: the SHA-256 is computed over the bytes
+    as they arrive, and the decompressor validates the zstd frame (its checksum
+    covers the decompressed bytes — exactly what `zstd -t` does, by
+    decompressing to /dev/null). The .zst is never stored on disk: on this box
+    the download + a scratch decompress together do NOT fit (short by ~339 MB
+    even at zero margin), while the streaming pass needs only the restored db.
+
+    Returns (bytes downloaded, sha256 hex, frame valid, zstd stderr snippet).
+    """
+    token = os.environ.get("HF_TOKEN", "")
+    if not token:
+        raise RuntimeError("HF_TOKEN not set; cannot download from a private dataset")
+    zstd = shutil.which("zstd")
+    if not zstd:
+        raise RuntimeError("zstd binary not found on PATH")
+    url = (
+        f"https://huggingface.co/datasets/{repo_id}/resolve/main/"
+        f"{urllib.parse.quote(zst_name)}"
+    )
+    request = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    hasher = hashlib.sha256()
+    downloaded = 0
+    err_path = Path(str(dest_db) + ".zstd.err")
+    with open(dest_db, "wb") as fout, open(err_path, "wb") as ferr:
+        proc = subprocess.Popen(
+            [zstd, "-d", "-q", "--stdout"],
+            stdin=subprocess.PIPE, stdout=fout, stderr=ferr,
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=120) as resp:
+                while chunk := resp.read(1024 * 1024):
+                    hasher.update(chunk)
+                    downloaded += len(chunk)
+                    try:
+                        proc.stdin.write(chunk)
+                    except BrokenPipeError:
+                        break
+            proc.stdin.close()
+        except Exception:
+            proc.kill()
+            raise
+        proc.wait()
+    err_text = err_path.read_text(errors="replace").strip()[:300] if err_path.exists() else ""
+    err_path.unlink(missing_ok=True)
+    return downloaded, hasher.hexdigest(), proc.returncode == 0, err_text
+
+
+def verify_fullgate(
+    zst_name: str, manifest: dict, repo_id: str, work_dir: Path
+) -> tuple[bool, dict]:
+    """The verification steps, in order. Nothing is deleted by this function
+    except its own scratch on the success path.
+
+    1. HF listing shows the file at the manifest size.
+    2. Fresh download SHA-256 matches the manifest (hashed over the stream).
+    3. The zstd frame validates (checked by the streaming decompressor —
+       `zstd -t` is the same check run against a stored file, which this disk
+       cannot hold alongside the restored db; see _stream_restore).
+    4. The streamed restore lands in scratch; PRAGMA integrity_check is ok.
+    5. page_count + posts/releases/download_sources/cat_links equal the manifest.
+    6. (Logging by the caller.) Returns (ok, report).
+    """
+    work_dir = Path(work_dir)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    report: dict = {"file": zst_name, "repo": repo_id, "steps": {}}
+    archive = manifest["archive"]
+    database = manifest["database"]
+    # Only the restored db is stored (streaming verify); the source byte count
+    # is exact, so a 256 MiB margin is ample.
+    need = int(manifest["source"]["bytes"]) + 256 * 2**20
+    if free_bytes(work_dir) < need:
+        report["steps"]["space"] = (
+            f"FAIL need {need / 2**30:.2f} GiB free in {work_dir}, "
+            f"have {free_bytes(work_dir) / 2**30:.2f} GiB"
+        )
+        return False, report
+
+    # 1. HF listing confirms the file at the manifest size.
+    listing = hf_remote_listing(repo_id)
+    if listing is None:
+        report["steps"]["listing"] = "FAIL could not read the HF listing"
+        return False, report
+    if listing.get(zst_name) != int(archive["bytes"]):
+        report["steps"]["listing"] = (
+            f"FAIL HF lists {zst_name} as {listing.get(zst_name)}, "
+            f"manifest says {archive['bytes']}"
+        )
+        return False, report
+    report["steps"]["listing"] = f"ok {archive['bytes']} bytes on HF"
+
+    # 2 + 3. Stream the download through zstd -d into a scratch db, hashing
+    # the compressed bytes on the way and letting the decompressor validate
+    # the frame.
+    stem = zst_name[:-4] if zst_name.endswith(".zst") else zst_name + ".restored"
+    restored = work_dir / (stem + ".db")
+    print(f"[*] Streaming {zst_name} from HF through zstd -d ...", flush=True)
+    try:
+        downloaded, sha, frame_ok, err = _stream_restore(
+            repo_id, zst_name, restored
+        )
+    except Exception as e:  # noqa: BLE001 - a failed stream is a failed verify
+        report["steps"]["download"] = f"FAIL {e}"
+        return False, report
+    report["steps"]["download"] = f"ok {downloaded} bytes"
+    if sha != archive["sha256"]:
+        report["steps"]["sha256"] = (
+            f"FAIL streamed sha {sha} != manifest {archive['sha256']}"
+        )
+        restored.unlink(missing_ok=True)
+        return False, report
+    report["steps"]["sha256"] = "ok matches manifest"
+    if not frame_ok:
+        report["steps"]["zstd_frame"] = f"FAIL zstd -d failed: {err}"
+        restored.unlink(missing_ok=True)
+        return False, report
+    report["steps"]["zstd_frame"] = "ok validated by streaming decompression"
+    report["steps"]["decompress"] = f"ok {restored.stat().st_size} bytes"
+
+    # 4. The restored db must pass integrity_check.
+    info = _fullgate_db_info(restored)
+    if info["integrity_check"] != "ok":
+        report["steps"]["integrity_check"] = f"FAIL {info['integrity_check']}"
+        return False, report
+    report["steps"]["integrity_check"] = "ok"
+
+    # 5. Page geometry + the four counts equal the manifest.
+    mismatches = []
+    for key in ("page_count", "freelist_count", "page_size"):
+        if int(info[key]) != int(database[key]):
+            mismatches.append(
+                f"{key}: restored {info[key]} != manifest {database[key]}"
+            )
+    for table in FULLGATE_TABLES:
+        if table in database["counts"] and int(info["counts"].get(table, -1)) != int(
+            database["counts"][table]
+        ):
+            mismatches.append(
+                f"{table}: restored {info['counts'].get(table)} "
+                f"!= manifest {database['counts'][table]}"
+            )
+    if mismatches:
+        report["steps"]["counts"] = "FAIL " + "; ".join(mismatches)
+        return False, report
+    report["steps"]["counts"] = "ok " + ", ".join(
+        f"{t}={info['counts'].get(t)}" for t in FULLGATE_TABLES if t in info["counts"]
+    )
+    report["steps"]["page_count"] = f"ok {info['page_count']}"
+    restored.unlink(missing_ok=True)  # scratch verified; free the room
+    report["steps"]["scratch"] = "removed"
+    return True, report
+
+
 def snapshot_code(output_dir: Path) -> Path | None:
     """Packs the tracked source tree at HEAD so the code rides along with the data."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -635,7 +963,46 @@ def main(argv=None) -> int:
     parser.add_argument("--all", action="store_true", help="Upload to all configured services (GitHub + HF + Telegram + R2)")
     parser.add_argument("--dry-run", action="store_true", help="Snapshot & compress only, do not upload")
     parser.add_argument("--no-code", action="store_true", help="Do not pack the tracked source tree alongside the databases")
+    parser.add_argument("--full-gate", metavar="DB", help="Push one existing gate-backup .db to the full-gate HF dataset (zstd + manifest + upload)")
+    parser.add_argument("--verify-full-gate", metavar="NAME", help="Verify one pushed .zst against its manifest (download + restore test)")
+    parser.add_argument("--manifest", metavar="PATH", help="Manifest JSON for --verify-full-gate")
+    parser.add_argument("--repo", metavar="ID", help="Hugging Face dataset repo id (default: HF_FULLGATE_REPO env or radddao/radd-stream-gate-backups)")
+    parser.add_argument("--fullgate-out", metavar="DIR", help="Directory for the .zst + manifest, or the verify scratch dir (default: the source file's directory)")
+    parser.add_argument("--skip-source-integrity", action="store_true", help="With --full-gate only: skip the source PRAGMA integrity_check (minutes on one vCPU). The source was checked at gate time and the restore side re-checks it in --verify-full-gate; the manifest records integrity_check as 'skipped'.")
     args = parser.parse_args(argv)
+
+    if args.full_gate:
+        repo_id = args.repo or os.environ.get("HF_FULLGATE_REPO", "") or FULLGATE_REPO_DEFAULT
+        out_dir = Path(args.fullgate_out) if args.fullgate_out else Path(args.full_gate).parent
+        try:
+            _zst, _mp, _man, uploaded = run_fullgate(
+                Path(args.full_gate), out_dir, repo_id,
+                skip_source_integrity=args.skip_source_integrity,
+            )
+        except (BackupSpaceError, FileNotFoundError, RuntimeError) as e:
+            print(f"[!] full-gate failed: {e}", file=sys.stderr)
+            return 1
+        return 0 if uploaded else 1
+
+    if args.verify_full_gate:
+        repo_id = args.repo or os.environ.get("HF_FULLGATE_REPO", "") or FULLGATE_REPO_DEFAULT
+        manifest_path = Path(args.manifest) if args.manifest else None
+        if manifest_path is None or not manifest_path.exists():
+            print("[!] --verify-full-gate needs --manifest <file>.manifest.json", file=sys.stderr)
+            return 1
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        work_dir = (
+            Path(args.fullgate_out)
+            if args.fullgate_out
+            else Path(staging_root()) / "fullgate-verify"
+        )
+        try:
+            ok, report = verify_fullgate(args.verify_full_gate, manifest, repo_id, work_dir)
+        except (BackupSpaceError, RuntimeError) as e:
+            print(f"[!] verify failed: {e}", file=sys.stderr)
+            return 1
+        print(json.dumps(report, indent=2))
+        return 0 if ok else 1
 
     data_dir = Path(args.dir)
     if not data_dir.exists():
