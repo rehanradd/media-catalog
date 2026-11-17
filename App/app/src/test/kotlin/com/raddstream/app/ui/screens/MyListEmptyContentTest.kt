@@ -11,11 +11,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.Dp
@@ -189,6 +191,49 @@ class MyListEmptyContentTest {
         compose.onNodeWithContentDescription("Inception, 2024 · Movie").performClick()
         assertEquals(listOf(1), opened.map { it.id })
         assertTrue("opening the title must not save it", toggled.isEmpty())
+    }
+
+    @Test
+    fun railSkeletonStandsInWhileTrendingLoads() {
+        // My List review (Nov 2026): the empty state used to show its
+        // message naming a heart that was not on screen yet — the rail
+        // pops in underneath later, or never. While the load is in
+        // flight the skeleton stands in for the three tiles.
+        compose.setContent {
+            RaddStreamTheme {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopStart) {
+                    MyListEmptyContent(
+                        popular = emptyList(),
+                        popularLoading = true,
+                        onPostClick = {},
+                        onToggleFavorite = {},
+                        modifier = Modifier.width(360.dp),
+                    )
+                }
+            }
+        }
+        compose.onNodeWithTag("posterRailSkeleton").assertIsDisplayed()
+        compose.onNodeWithText("Trending to Start Your List").assertDoesNotExist()
+    }
+
+    @Test
+    fun settledEmptyLoadShowsNoSkeletonAndNoRail() {
+        compose.setContent {
+            RaddStreamTheme {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopStart) {
+                    MyListEmptyContent(
+                        popular = emptyList(),
+                        popularLoading = false,
+                        onPostClick = {},
+                        onToggleFavorite = {},
+                        modifier = Modifier.width(360.dp),
+                    )
+                }
+            }
+        }
+        compose.onNodeWithTag("posterRailSkeleton").assertDoesNotExist()
+        compose.onNodeWithText("Trending to Start Your List").assertDoesNotExist()
+        compose.onNodeWithText("Your list is empty").assertIsDisplayed()
     }
 
     @Test

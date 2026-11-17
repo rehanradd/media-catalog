@@ -22,8 +22,21 @@ class MyListSortTest {
             fav(3, "Watched New", addedAt = 400L),
             fav(4, "Unwatched Old", addedAt = 200L),
         )
-        val sorted = sortMyList(rows, ListSort.UNWATCHED, setOf("Watched Old", "Watched New"))
+        val sorted = sortMyList(rows, ListSort.UNWATCHED, setOf(1, 3))
         assertEquals(listOf(2, 4, 3, 1), sorted.map { it.id })
+    }
+
+    @Test
+    fun `same-title twins never cross-mark each other`() {
+        // My List review (Nov 2026): "Unwatched first" used to match by
+        // title string, so finishing one "Dune" marked every "Dune" —
+        // remake or same-name series — watched. Identity is the post id.
+        val rows = listOf(
+            fav(1, "Dune", addedAt = 100L),
+            fav(2, "Dune", addedAt = 300L),
+        )
+        val sorted = sortMyList(rows, ListSort.UNWATCHED, setOf(1))
+        assertEquals(listOf(2, 1), sorted.map { it.id })
     }
 
     @Test

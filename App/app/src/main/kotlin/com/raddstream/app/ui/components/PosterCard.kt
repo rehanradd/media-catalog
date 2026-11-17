@@ -290,11 +290,15 @@ fun PosterCard(
                         .height(3.dp)
                         .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.55f)),
                 ) {
+                    // My List review (Nov 2026): the bar is jade, not grey —
+                    // the same primary Home's Continue Watching rail paints,
+                    // so a half-watched saved title reads as progress, not
+                    // as a loading strip. Only My List passes a fraction.
                     Box(
                         Modifier
                             .fillMaxWidth(fraction.coerceIn(0f, 1f))
                             .fillMaxHeight()
-                            .background(MaterialTheme.colorScheme.onSurfaceVariant),
+                            .background(MaterialTheme.colorScheme.primary),
                     )
                 }
             }

@@ -89,6 +89,22 @@ class FavoritesRepository @Inject constructor(
         report(postId, row?.workRef, removal = true)
     }
 
+    /**
+     * Put a removed row back exactly as it was — same `addedAt`, same
+     * fields — so Undo restores the title to the place it was taken from
+     * instead of re-inserting it as "just added" at the top of the
+     * recently-added order. The insert is REPLACE, so restoring a row
+     * that is somehow already there rewrites it with its own values
+     * rather than duplicating it. The sync report runs the same as an
+     * ordinary save: the row is back on the device, so the server
+     * should hear about it again.
+     */
+    suspend fun restoreFavorite(row: FavoritePost) {
+        favoriteDao.insert(row)
+        recordAnswer(row.id, flag = null, AdultPolicy.ServerAnswer.LISTED)
+        report(row.id, row.workRef, removal = false)
+    }
+
     suspend fun toggleFavorite(detail: PostDetail): Boolean {
         val currentlyFavorite = favoriteDao.isFavorite(detail.id).first()
         if (currentlyFavorite) {

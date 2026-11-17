@@ -220,10 +220,15 @@
          The starter rail's old title ("Most copies" / "Well-stocked catalog
          picks") read like warehouse inventory, not a streaming shelf; the
          empty-state message wrapped with "for quick access." orphaned on
-         its own line. Both now read as viewer copy. -->
+         its own line. Both now read as viewer copy. The subtitle dropped
+         "Hand-picked picks" (Nov 2026): it claimed human curation for
+         the server's own trending order. -->
     <string name="mylist_popular_title">Trending to Start Your List</string>
-    <string name="mylist_popular_subtitle">Hand-picked picks to jumpstart your queue</string>
+    <string name="mylist_popular_subtitle">Trending titles to start your list</string>
     <string name="mylist_empty_message">Tap the heart on any title to save it here.</string>
+    <string name="mylist_count_one">1 title</string>
+    <string name="mylist_count_many">%1$d titles</string>
+    <string name="mylist_save_failed">Couldn\'t save — check your connection</string>
 
     <!-- ═══ RESOLVE TEST (debug-only harness, 2026-11-16) ═══
          The manual field-test screen. Debug builds only: no NavGraph entry

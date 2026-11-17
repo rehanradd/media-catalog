@@ -56,6 +56,48 @@ class DownloadsRulesTest {
     }
 
     @Test
+    fun `watched ids match by post id, never by title`() {
+        // My List review (Nov 2026): the same end-guard as watchedTitles,
+        // but the identity is the post id — two works sharing a clean
+        // title must never cross-mark each other.
+        val finished = movieRow(title = "Dune", positionMs = 3_600_000L)
+        val half = WatchHistoryEntity(
+            workRef = "work-2",
+            postId = 102,
+            title = "Dune",
+            posterUrl = null,
+            seasonNumber = 0,
+            episodeNumber = 0,
+            positionMs = 1_800_000L,
+            durationMs = 3_600_000L,
+            updatedAt = 1_000L,
+        )
+        assertEquals(setOf(101), watchedPostIds(listOf(finished, half)))
+    }
+
+    @Test
+    fun `a finished episode marks its series watched by post id`() {
+        val episode = WatchHistoryEntity(
+            workRef = "work-9",
+            postId = 9,
+            title = "Gen V",
+            posterUrl = null,
+            seasonNumber = 2,
+            episodeNumber = 5,
+            positionMs = 3_600_000L,
+            durationMs = 3_600_000L,
+            updatedAt = 1_000L,
+        )
+        assertEquals(setOf(9), watchedPostIds(listOf(episode)))
+    }
+
+    @Test
+    fun `an unroutable row is not a finished work`() {
+        val row = movieRow(positionMs = 3_600_000L).copy(postId = 0)
+        assertTrue(watchedPostIds(listOf(row)).isEmpty())
+    }
+
+    @Test
     fun `the keep-confirm size is a real size or an honest unknown`() {
         assertEquals("Size unknown", keepSizeLabel(null))
         assertEquals("Size unknown", keepSizeLabel(0L))

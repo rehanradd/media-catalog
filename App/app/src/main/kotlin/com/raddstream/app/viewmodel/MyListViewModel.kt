@@ -47,6 +47,12 @@ data class MyListUiState(
      * rather than an invented one.
      */
     val progressByPostId: Map<Int, Float> = emptyMap(),
+    /**
+     * The same fact in words, keyed the same way ("S2:E5 · 23 min left",
+     * "23 min left" — see [myListProgressLabelByPostId]). The tile speaks
+     * it; a bare bar never says which episode or how much is left.
+     */
+    val progressLabelByPostId: Map<Int, String> = emptyMap(),
 ) {
     /** [AdultPolicy.hiddenNotice] — a number, because a notice naming a hidden title is a list of one. */
     val hiddenNotice: String? get() = AdultPolicy.hiddenNotice(hiddenCount)
@@ -55,17 +61,21 @@ data class MyListUiState(
 /**
  * The My List order, as one pure function: recently-added and title are the
  * old orders; unwatched-first puts titles with no finished watch row ahead
- * of finished ones, then recently-added inside each half. "Finished" is the
- * rail's own end-guard, via [watchedTitles] — a half-watched title still
- * counts as unwatched, and a series counts as watched when any episode of
- * it is finished.
+ * of finished ones, then recently-added inside each half. "Finished" is by
+ * post id, via [watchedPostIds] — a half-watched title still counts as
+ * unwatched, and a series counts as watched when any episode of it is
+ * finished. Matching by id, not by title string: two works sharing a clean
+ * title (a remake, a same-name series) must never cross-mark each other,
+ * and the title itself is written in two shapes (Detail writes the clean
+ * title, Home's undo-remove path the raw one), so a string match can miss
+ * a work's own finished row.
  */
 fun sortMyList(
     posts: List<FavoritePost>,
     sort: ListSort,
-    watchedTitles: Set<String>,
+    watchedPostIds: Set<Int>,
 ): List<FavoritePost> {
-    fun isWatched(post: FavoritePost) = (post.cleanTitle ?: post.title) in watchedTitles
+    fun isWatched(post: FavoritePost) = post.id in watchedPostIds
     return when (sort) {
         ListSort.RECENT -> posts.sortedByDescending { it.addedAt }
         ListSort.TITLE -> posts.sortedBy { (it.cleanTitle ?: it.title).lowercase() }
@@ -140,23 +150,94 @@ internal fun starterShelf(popular: List<Post>): List<Post> =
     popular.filter { !it.posterUrl.isNullOrBlank() }.take(3)
 
 /**
- * The progress bar each saved tile paints, keyed by post id: the latest
- * watch row for that title, and only when it is resumable — started and
- * not within the end guard — so a finished title paints no bar and a row
- * with no duration paints none either (no honest fraction exists). The
- * mockup's bars under two posters are illustrative, not data: a bar
- * appears only where a real row says the viewer stopped halfway.
+ * The latest resumable watch row per title: the newest row for each post
+ * id, kept only when it is resumable — started and not within the end
+ * guard — so a finished title and a row with no duration both drop out
+ * here, once, instead of each consumer re-deciding it. The mockup's bars
+ * under two posters are illustrative, not data: a bar appears only where
+ * a real row says the viewer stopped halfway.
  */
-internal fun myListProgressByPostId(history: List<WatchHistoryEntity>): Map<Int, Float> =
+internal fun latestResumableRowsByPostId(
+    history: List<WatchHistoryEntity>,
+): Map<Int, WatchHistoryEntity> =
     history
         .groupBy { it.postId }
         .mapNotNull { (postId, rows) ->
             val latest = rows.maxByOrNull { it.updatedAt } ?: return@mapNotNull null
             if (!latest.resumable) return@mapNotNull null
-            ContinueWatchingTile.progressFraction(latest.positionMs, latest.durationMs)
+            postId to latest
+        }
+        .toMap()
+
+/**
+ * The progress bar each saved tile paints, keyed by post id: the latest
+ * watch row for that title, and only when it is resumable — started and
+ * not within the end guard — so a finished title paints no bar and a row
+ * with no duration paints none either (no honest fraction exists).
+ */
+internal fun myListProgressByPostId(history: List<WatchHistoryEntity>): Map<Int, Float> =
+    latestResumableRowsByPostId(history)
+        .mapNotNull { (postId, row) ->
+            ContinueWatchingTile.progressFraction(row.positionMs, row.durationMs)
                 ?.let { postId to it }
         }
         .toMap()
+
+/**
+ * The same fact in words, keyed the same way: the episode scope when the
+ * row has one ("S2:E5") plus what remains ("23 min left"), from the same
+ * [ContinueWatchingTile] helpers Home's Continue Watching rail already
+ * speaks. A movie row has no scope, so it says only what remains. Absent
+ * exactly where the bar is absent — the two maps agree on which titles
+ * have anything honest to say.
+ */
+internal fun myListProgressLabelByPostId(
+    history: List<WatchHistoryEntity>,
+): Map<Int, String> =
+    latestResumableRowsByPostId(history)
+        .mapNotNull { (postId, row) ->
+            listOfNotNull(
+                ContinueWatchingTile.scopeLabel(row.seasonNumber, row.episodeNumber),
+                ContinueWatchingTile.progressLabel(row.positionMs, row.durationMs),
+            ).joinToString(" · ").takeIf { it.isNotBlank() }?.let { postId to it }
+        }
+        .toMap()
+
+/**
+ * One removed row, kept verbatim so Undo restores the title to the place
+ * it was taken from instead of re-inserting it as "just added" at the
+ * top. The row carries its own `addedAt`; the title is the display title
+ * the snackbar already showed, kept beside it so the stack never has to
+ * re-derive what the viewer read.
+ */
+internal data class RemovedFavorite(val row: FavoritePost, val title: String)
+
+/**
+ * The removals waiting on their snackbar, newest last. One tap removes
+ * the row at once; the way back is the snackbar, not a dialog — and a
+ * second remove while the first snackbar is still up must not eat the
+ * first undo: each removal keeps its own entry, and the screen works
+ * through them one snackbar at a time, newest first. The top title is
+ * what the screen's snackbar shows; popping it (Undo or dismiss) surfaces
+ * the next entry, or nothing when the stack is empty.
+ */
+internal class MyListUndoStack {
+    private val entries = ArrayDeque<RemovedFavorite>()
+
+    val topTitle: String? get() = entries.lastOrNull()?.title
+
+    val size: Int get() = entries.size
+
+    fun push(entry: RemovedFavorite) {
+        entries.addLast(entry)
+    }
+
+    fun pop(): RemovedFavorite? = entries.removeLastOrNull()
+
+    fun clear() {
+        entries.clear()
+    }
+}
 
 @HiltViewModel
 class MyListViewModel @Inject constructor(
@@ -168,7 +249,30 @@ class MyListViewModel @Inject constructor(
     private val sortFlow = MutableStateFlow(ListSort.RECENT)
     private val popularFlow = MutableStateFlow<List<Post>>(emptyList())
     private val removedTitleFlow = MutableStateFlow<String?>(null)
-    private var lastRemoved: Post? = null
+    /**
+     * Whether the trending load has settled — success or failure, either
+     * is an answer. The empty state shows a rail skeleton while this is
+     * false, so the rail never pops in underneath a message that names a
+     * heart that is not on screen yet.
+     */
+    private val popularSettledFlow = MutableStateFlow(false)
+    val popularSettled: StateFlow<Boolean> = popularSettledFlow
+    /**
+     * The rail heart's save failed to resolve — the tap must never
+     * silently do nothing. The screen shows the snackbar and clears this;
+     * the ViewModel carries only the signal, the message lives in strings.
+     */
+    private val saveFailedFlow = MutableStateFlow(false)
+    val saveFailed: StateFlow<Boolean> = saveFailedFlow
+    private val undoStack = MyListUndoStack()
+    /**
+     * The visible rows as the combine last sorted them, so [remove] can
+     * keep the raw row (with its `addedAt`) instead of the display Post
+     * that carries none. Updated on every emission, on the same scope
+     * that runs the combine; [remove] runs on Main, where the screen
+     * called it from.
+     */
+    private var latestVisibleRows: List<FavoritePost> = emptyList()
     private var popularLoaded = false
 
     // Six flows, combined as two triples: the typed `combine` overloads this
@@ -198,7 +302,8 @@ class MyListViewModel @Inject constructor(
             flagOf = FavoritePost::is18Plus,
             refusedOf = { it.id in refused },
         )
-        val sorted = sortMyList(visible, sort, watchedTitles(history))
+        val sorted = sortMyList(visible, sort, watchedPostIds(history))
+        latestVisibleRows = sorted
         MyListUiState(
             favorites = sorted.map(::myListDisplayPost),
             sort = sort,
@@ -207,6 +312,7 @@ class MyListViewModel @Inject constructor(
             popular = starterShelf(popular),
             removedTitle = removedTitle,
             progressByPostId = myListProgressByPostId(history),
+            progressLabelByPostId = myListProgressLabelByPostId(history),
         )
     }.stateIn(
         scope = viewModelScope,
@@ -238,16 +344,27 @@ class MyListViewModel @Inject constructor(
         viewModelScope.launch {
             // The empty/starter list needs something to point at, and the only honest
             // order this app can name is the server's own trending order —
-            // most prints and mirrors first. Loaded once when <= 1 favorite is visible,
-            // fetching 6 candidates so excluding an already-saved favorite still leaves 3.
+            // most prints and mirrors first. Loaded while the list is small
+            // (at most one visible favorite), fetching 6 candidates so
+            // excluding an already-saved favorite still leaves 3. The gate
+            // is the list's size, not the session's history: a ViewModel
+            // born onto two saves never loads, and one born onto one save
+            // does — the same list shows the shelf the same way in every
+            // session. The latch is set only by a load that produced
+            // titles: an empty answer (offline, or a server that sent
+            // nothing) retries on the next emission instead of going quiet
+            // for this ViewModel's life, and the settled flag tells the
+            // empty state the rail is done arriving either way.
             uiState.collect { state ->
                 if (!state.isLoading && state.favorites.size <= 1 && !popularLoaded) {
-                    popularLoaded = true
-                    popularFlow.value = runCatching {
+                    val loaded = runCatching {
                         catalogRepository.browseWorksV2(sort = "trending", limit = 6)?.posts
                             ?.takeIf { it.isNotEmpty() }
                             ?: catalogRepository.getPosts(sort = "trending", page = 1, limit = 6).results
                     }.getOrNull() ?: emptyList()
+                    popularFlow.value = loaded
+                    popularLoaded = loaded.isNotEmpty()
+                    popularSettledFlow.value = true
                 }
             }
         }
@@ -259,26 +376,41 @@ class MyListViewModel @Inject constructor(
 
     /**
      * One tap removes the row at once — no held tile, no confirm dialog.
-     * The row is only ever one Undo away: the removed post is kept in memory
-     * and [undoRemoval] puts it back, and the snackbar is the way back.
+     * The row is only ever one Undo away: the removed row is kept verbatim
+     * (with its `addedAt`) on the undo stack, and the snackbar is the way
+     * back. A second remove while the first snackbar is still up pushes a
+     * second entry instead of overwriting the first — the screen works
+     * through the stack one snackbar at a time, newest first.
      */
     fun remove(postId: Int) {
-        val post = uiState.value.favorites.firstOrNull { it.id == postId } ?: return
-        lastRemoved = post
-        removedTitleFlow.value = post.displayTitle
+        val display = uiState.value.favorites.firstOrNull { it.id == postId } ?: return
+        // The display Post carries no `addedAt`; the raw row does. The
+        // fallback (a row the snapshot missed) rebuilds from the display
+        // post and loses the original position — better than losing the
+        // undo entirely, and unreachable for a row the screen just drew.
+        val row = latestVisibleRows.firstOrNull { it.id == postId }
+            ?: FavoritePost.fromPost(display)
+        undoStack.push(RemovedFavorite(row, display.displayTitle))
+        removedTitleFlow.value = undoStack.topTitle
         viewModelScope.launch { favoritesRepository.removeFavorite(postId) }
     }
 
     fun undoRemoval() {
-        val post = lastRemoved ?: return
-        lastRemoved = null
-        removedTitleFlow.value = null
-        viewModelScope.launch { favoritesRepository.addFavorite(post) }
+        val entry = undoStack.pop() ?: return
+        removedTitleFlow.value = undoStack.topTitle
+        viewModelScope.launch { favoritesRepository.restoreFavorite(entry.row) }
     }
 
     fun clearRemovedNotice() {
-        lastRemoved = null
-        removedTitleFlow.value = null
+        // The snackbar went away without Undo: that removal stands, and
+        // the next queued removal — if a second tap stacked one behind
+        // it — surfaces its own snackbar.
+        undoStack.pop()
+        removedTitleFlow.value = undoStack.topTitle
+    }
+
+    fun clearSaveFailed() {
+        saveFailedFlow.value = false
     }
 
     /**
@@ -287,12 +419,18 @@ class MyListViewModel @Inject constructor(
      * is the negative work-id sentinel), so Room cannot key it: the toggle
      * first resolves the work to its v1 post through the `work_ref` bridge
      * and toggles THAT row — the same bridge as HomeViewModel's
-     * `resolveV1Post`. An unresolvable work is a no-op here; Detail runs
-     * the same resolution and is the place that can say why.
+     * `resolveV1Post`. An unresolvable work is not a silent no-op any
+     * more: the screen says the save failed, because a heart that ignores
+     * a tap reads as broken whatever the resolution design behind it.
+     * Detail runs the same resolution and is the place that can say why.
      */
     fun toggleFavorite(post: Post) {
         viewModelScope.launch {
-            val target = resolveV1Post(post) ?: return@launch
+            val target = resolveV1Post(post)
+            if (target == null) {
+                saveFailedFlow.value = true
+                return@launch
+            }
             if (favoritesRepository.isFavorite(target.id).first()) {
                 favoritesRepository.removeFavorite(target.id)
             } else {

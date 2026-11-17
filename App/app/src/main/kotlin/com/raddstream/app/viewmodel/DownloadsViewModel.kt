@@ -406,6 +406,22 @@ fun watchedTitles(rows: List<WatchHistoryEntity>): Set<String> =
         .filter { it.isNotBlank() }
         .toSet()
 
+/**
+ * The ids of finished works, from watch-history rows — the same
+ * end-guard as [watchedTitles], matched by identity instead of by title
+ * string. My List's "Unwatched first" sort uses this: two works sharing
+ * a clean title (a remake, a same-name series) must never cross-mark
+ * each other, and a series counts as watched when any episode of it is
+ * finished, because every episode row carries the series' own post id.
+ * Rows that cannot be routed to a work (`postId <= 0`) are not finished
+ * works and drop out here.
+ */
+fun watchedPostIds(rows: List<WatchHistoryEntity>): Set<Int> =
+    rows.filter { it.durationMs > 0 && it.positionMs >= it.durationMs - WatchHistoryEntity.END_GUARD_MS }
+        .map { it.postId }
+        .filter { it > 0 }
+        .toSet()
+
 /** The "Free up space" line: the real bytes this screen's downloads hold, and the honest way to free them. */
 internal fun freeUpSpaceMessage(downloadsBytes: Long): String =
     if (downloadsBytes > 0) {

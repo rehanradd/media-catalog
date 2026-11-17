@@ -58,7 +58,9 @@ import com.raddstream.app.ui.components.ChipRowSkeleton
 import com.raddstream.app.ui.components.EmptyState
 import com.raddstream.app.ui.components.PosterCard
 import com.raddstream.app.ui.components.PosterGridSkeleton
+import com.raddstream.app.ui.components.PosterRailSkeleton
 import com.raddstream.app.viewmodel.ListSort
+import com.raddstream.app.viewmodel.MyListUiState
 import com.raddstream.app.viewmodel.MyListViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -71,7 +73,10 @@ fun MyListScreen(
     viewModel: MyListViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val popularSettled by viewModel.popularSettled.collectAsState()
+    val saveFailed by viewModel.saveFailed.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
+    val saveFailedMessage = stringResource(R.string.mylist_save_failed)
 
     // My List review (Nov 2026): the starter rail's saved state — a v1 id
     // match, or a work_ref match for a v2 rail row whose id is the negative
@@ -97,6 +102,16 @@ fun MyListScreen(
         } else {
             viewModel.clearRemovedNotice()
         }
+    }
+
+    // My List review (Nov 2026): the rail heart's save failed to resolve
+    // — a tap that silently does nothing reads as broken, so the screen
+    // says so. One message for every failure here; Detail is the place
+    // that can say why a particular work will not resolve.
+    LaunchedEffect(saveFailed) {
+        if (!saveFailed) return@LaunchedEffect
+        snackbarHostState.showSnackbar(saveFailedMessage)
+        viewModel.clearSaveFailed()
     }
 
     Scaffold(
@@ -133,82 +148,184 @@ fun MyListScreen(
                 ChipRowSkeleton(widths = listOf(128, 80, 112))
                 PosterGridSkeleton(modifier = Modifier.weight(1f))
             }
-            state.favorites.isEmpty() && state.hiddenCount > 0 -> EmptyState(
-                // Nothing here is "empty" — the rows exist and this build may not show them.
-                // Saying "your list is empty" would be a second loss on top of the first one.
-                title = "Nothing to show from your list",
-                message = state.hiddenNotice
-                    ?: stringResource(R.string.mylist_empty_message),
-                icon = { MyListEmptyHeartIcon() },
-                modifier = Modifier.padding(contentPadding),
-                action = {
-                    OutlinedButton(onClick = onBrowseClick) { Text("Browse the catalog") }
-                },
+            state.favorites.isEmpty() && state.hiddenCount > 0 -> MyListHiddenContent(
+                hiddenNotice = state.hiddenNotice,
+                popular = state.popular,
+                popularLoading = !popularSettled,
+                onPostClick = onPostClick,
+                isFavorite = isFavorite,
+                onToggleFavorite = { viewModel.toggleFavorite(it) },
+                onBrowseClick = onBrowseClick,
+                modifier = Modifier.fillMaxSize().padding(contentPadding),
             )
             state.favorites.isEmpty() -> MyListEmptyContent(
                 popular = state.popular,
+                popularLoading = !popularSettled,
                 onPostClick = onPostClick,
                 isFavorite = isFavorite,
                 onToggleFavorite = { viewModel.toggleFavorite(it) },
                 modifier = Modifier.fillMaxSize().padding(contentPadding),
             )
-            else -> Column(Modifier.fillMaxSize().padding(contentPadding)) {
-                state.hiddenNotice?.let { notice ->
-                    Text(
-                        text = notice,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-                    )
-                }
-                // The sync/status line is gone on purpose (mockup, Nov
-                // 2026): syncing happens silently, and a line about it is
-                // operator chrome on a screen about the viewer's list.
-                // The sync itself is untouched — only its sentence is.
-                MyListSortRow(
-                    sort = state.sort,
-                    onSort = { viewModel.setSort(it) },
-                    modifier = Modifier.padding(vertical = 4.dp),
+            else -> MyListLoadedContent(
+                state = state,
+                onPostClick = onPostClick,
+                onRemove = { viewModel.remove(it) },
+                onSort = { viewModel.setSort(it) },
+                isFavorite = isFavorite,
+                onToggleFavorite = { viewModel.toggleFavorite(it) },
+                modifier = Modifier.fillMaxSize().padding(contentPadding),
+            )
+        }
+    }
+}
+
+/**
+ * My List review (Nov 2026): the hidden list — every saved row is one
+ * this build may not draw — gets the same shape as the truly-empty state
+ * instead of the barest screen in the app: the notice, the way out, and
+ * the trending rail underneath it when the load produced titles. The
+ * viewer who lost their whole list is the one who most needs a way back
+ * into the catalog, and the rail was already loaded and held in state —
+ * this branch just never read it. Internal so the mockup test can pin
+ * the rail and the 48dp Browse button without the Hilt ViewModel.
+ */
+internal const val MyListBrowseButtonTag = "myListBrowseCatalog"
+
+@Composable
+internal fun MyListHiddenContent(
+    hiddenNotice: String?,
+    popular: List<Post>,
+    onPostClick: (Post) -> Unit,
+    onBrowseClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    popularLoading: Boolean = false,
+    isFavorite: (Post) -> Boolean = { false },
+    onToggleFavorite: ((Post) -> Unit)? = null,
+) {
+    Column(modifier = modifier) {
+        EmptyState(
+            // Nothing here is "empty" — the rows exist and this build may not show them.
+            // Saying "your list is empty" would be a second loss on top of the first one.
+            title = "Nothing to show from your list",
+            message = hiddenNotice
+                ?: stringResource(R.string.mylist_empty_message),
+            icon = { MyListEmptyHeartIcon() },
+            fillScreen = false,
+            modifier = Modifier.fillMaxWidth(),
+            action = {
+                OutlinedButton(
+                    onClick = onBrowseClick,
+                    // The empty state's only way out is the one button a
+                    // new viewer is most likely to tap — it gets the 48dp
+                    // floor every other control on this screen already has.
+                    modifier = Modifier.testTag(MyListBrowseButtonTag).heightIn(min = 48.dp),
+                ) { Text("Browse the catalog") }
+            },
+        )
+        if (popular.isNotEmpty()) {
+            PopularRow(
+                popular = popular,
+                onPostClick = onPostClick,
+                isFavorite = isFavorite,
+                onToggleFavorite = onToggleFavorite,
+                modifier = Modifier.padding(bottom = 16.dp),
+            )
+        } else if (popularLoading) {
+            PosterRailSkeleton(cells = 3, modifier = Modifier.padding(bottom = 16.dp))
+        }
+    }
+}
+
+/**
+ * The loaded list: the saved count, the sort chips, and the grid — with
+ * the starter shelf as a full-span footer while the list is still small.
+ * Internal so the mockup test can pin the count, the progress words and
+ * the shelf gate without the Hilt ViewModel.
+ */
+@Composable
+internal fun MyListLoadedContent(
+    state: MyListUiState,
+    onPostClick: (Post) -> Unit,
+    onRemove: (Int) -> Unit,
+    onSort: (ListSort) -> Unit,
+    isFavorite: (Post) -> Boolean,
+    onToggleFavorite: (Post) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    // The count names every saved title, hidden ones included — a row
+    // this build may not draw is still saved, and the notice below says
+    // how many are hidden.
+    val totalSaved = state.favorites.size + state.hiddenCount
+    Column(modifier = modifier) {
+        state.hiddenNotice?.let { notice ->
+            Text(
+                text = notice,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+            )
+        }
+        Text(
+            text = if (totalSaved == 1) {
+                stringResource(R.string.mylist_count_one)
+            } else {
+                stringResource(R.string.mylist_count_many, totalSaved)
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
+        )
+        // The sync/status line is gone on purpose (mockup, Nov
+        // 2026): syncing happens silently, and a line about it is
+        // operator chrome on a screen about the viewer's list.
+        // The sync itself is untouched — only its sentence is.
+        MyListSortRow(
+            sort = state.sort,
+            onSort = onSort,
+            modifier = Modifier.padding(vertical = 4.dp),
+        )
+        LazyVerticalGrid(
+            columns = CatalogGridColumns,
+            modifier = Modifier.weight(1f),
+            contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp, start = 16.dp, end = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            items(state.favorites, key = { it.id }) { post ->
+                PosterCard(
+                    post = post,
+                    onClick = { onPostClick(post) },
+                    onRemove = { onRemove(post.id) },
+                    // The bar paints only where a real watch row
+                    // says the viewer stopped halfway — never a
+                    // bar for a title with no position (see
+                    // MyListViewModel.myListProgressByPostId) — and
+                    // the words travel with it now ("S2:E5 · 23 min
+                    // left"), so the tile speaks its progress
+                    // instead of painting a silent grey bar.
+                    progressFraction = state.progressByPostId[post.id],
+                    progressLabel = state.progressLabelByPostId[post.id],
                 )
-                LazyVerticalGrid(
-                    columns = CatalogGridColumns,
-                    modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp, start = 16.dp, end = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
+            }
+            // F12 & Small #9: place the starter shelf inside the scrolling grid as
+            // a full-span footer when the trending load produced titles, so compact
+            // or scaled screens never clip either the favorites or the suggestions.
+            // The shelf is a *starter* shelf: it shows only while the list is
+            // small (at most one visible favorite), so a two-save list shows
+            // it the same way in every session instead of depending on
+            // whether this ViewModel was born onto one save or two.
+            if (state.popular.isNotEmpty() && state.favorites.size <= 1) {
+                item(
+                    key = "my_list_starter_shelf",
+                    span = { GridItemSpan(maxLineSpan) },
                 ) {
-                    items(state.favorites, key = { it.id }) { post ->
-                        PosterCard(
-                            post = post,
-                            onClick = { onPostClick(post) },
-                            onRemove = { viewModel.remove(post.id) },
-                            // The bar paints only where a real watch row
-                            // says the viewer stopped halfway — never a
-                            // bar for a title with no position (see
-                            // MyListViewModel.myListProgressByPostId).
-                            progressFraction = state.progressByPostId[post.id],
-                        )
-                    }
-                    // F12 & Small #9: place the starter shelf inside the scrolling grid as
-                    // a full-span footer when the trending load produced titles, so compact
-                    // or scaled screens never clip either the favorites or the suggestions.
-                    // The load itself still only runs while <= 1 favorite is visible (see
-                    // MyListViewModel) — this footer only decides where the titles it
-                    // already has are shown.
-                    if (state.popular.isNotEmpty()) {
-                        item(
-                            key = "my_list_starter_shelf",
-                            span = { GridItemSpan(maxLineSpan) },
-                        ) {
-                            PopularRow(
-                                popular = state.popular,
-                                onPostClick = onPostClick,
-                                isFavorite = isFavorite,
-                                onToggleFavorite = { viewModel.toggleFavorite(it) },
-                                horizontalPadding = 0.dp,
-                            )
-                        }
-                    }
+                    PopularRow(
+                        popular = state.popular,
+                        onPostClick = onPostClick,
+                        isFavorite = isFavorite,
+                        onToggleFavorite = { onToggleFavorite(it) },
+                        horizontalPadding = 0.dp,
+                    )
                 }
             }
         }
@@ -273,6 +390,13 @@ internal fun MyListEmptyContent(
     popular: List<Post>,
     onPostClick: (Post) -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * The trending load is still in flight: the rail skeleton stands in
+     * for the three tiles, so the empty message never names a heart that
+     * is not on screen yet — and a failed load settles to no rail at all
+     * instead of holding the skeleton forever.
+     */
+    popularLoading: Boolean = false,
     isFavorite: (Post) -> Boolean = { false },
     onToggleFavorite: ((Post) -> Unit)? = null,
 ) {
@@ -296,6 +420,8 @@ internal fun MyListEmptyContent(
                 // 24dp above the bottom nav instead of tight against it.
                 modifier = Modifier.padding(bottom = 16.dp),
             )
+        } else if (popularLoading) {
+            PosterRailSkeleton(cells = 3, modifier = Modifier.padding(bottom = 16.dp))
         }
     }
 }

@@ -196,6 +196,85 @@ class MyListMockupTest {
         assertNull(myListProgressByPostId(emptyList())[1])
     }
 
+    // Progress in words (My List review, Nov 2026): the same rows say
+    // what remains, in the same words Home's Continue Watching rail
+    // speaks — and stay silent exactly where the bar stays absent.
+
+    private fun episodeRow(
+        postId: Int,
+        season: Int,
+        episode: Int,
+        positionMs: Long,
+        durationMs: Long,
+        updatedAt: Long = 1_000L,
+    ) = WatchHistoryEntity(
+        workRef = "work-$postId-s$season-e$episode",
+        postId = postId,
+        title = "Title $postId",
+        posterUrl = null,
+        seasonNumber = season,
+        episodeNumber = episode,
+        positionMs = positionMs,
+        durationMs = durationMs,
+        updatedAt = updatedAt,
+    )
+
+    @Test
+    fun `a resumable movie says how much is left`() {
+        assertEquals(
+            mapOf(1 to "1 min left"),
+            myListProgressLabelByPostId(
+                listOf(row(1, positionMs = 60_000L, durationMs = 120_000L)),
+            ),
+        )
+    }
+
+    @Test
+    fun `a resumable episode names its scope and what remains`() {
+        assertEquals(
+            mapOf(1 to "S2:E5 · 23 min left"),
+            myListProgressLabelByPostId(
+                listOf(
+                    episodeRow(
+                        1, season = 2, episode = 5,
+                        positionMs = 2_220_000L, durationMs = 3_600_000L,
+                    ),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `a finished title says nothing`() {
+        assertTrue(
+            myListProgressLabelByPostId(
+                listOf(row(1, positionMs = 115_000L, durationMs = 120_000L)),
+            ).isEmpty(),
+        )
+    }
+
+    @Test
+    fun `a row with no duration says nothing`() {
+        assertTrue(
+            myListProgressLabelByPostId(
+                listOf(row(1, positionMs = 60_000L, durationMs = 0L)),
+            ).isEmpty(),
+        )
+    }
+
+    @Test
+    fun `labels agree with bars on which titles have anything to say`() {
+        val history = listOf(
+            row(1, positionMs = 60_000L, durationMs = 120_000L, updatedAt = 1_000L),
+            row(2, positionMs = 115_000L, durationMs = 120_000L, updatedAt = 1_000L),
+            row(3, positionMs = 60_000L, durationMs = 0L, updatedAt = 1_000L),
+        )
+        assertEquals(
+            myListProgressByPostId(history).keys,
+            myListProgressLabelByPostId(history).keys,
+        )
+    }
+
     // Starter shelf (My List review, Nov 2026)
 
     private fun shelfPost(id: Int, title: String, posterUrl: String?) = Post(
