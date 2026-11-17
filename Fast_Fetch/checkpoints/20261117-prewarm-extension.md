@@ -38,10 +38,18 @@ no Play 302 is cached; no `expires_at` trust added.
 
 ## Verification
 
-Local: `test_prefetch_worker.py` 27/27 OK (26 + 1 new). Full backend
-gate (`run-backend-gate.py`) + importer tests solo: see the branch
-report (run after the commit). NOT live — gate deploy is the
-supervisor's call; the top-up service file needs no reinstall (no
-`--limit` in its ExecStart), only the code deploy + the next 21:00
-firing. Next measurement after it lands: re-run the coverage probe at
-~21:30 PKT and compare top-100 warm share against today's 66/200.
+Local: `test_prefetch_worker.py` 27/27 OK (26 + 1 new);
+`test_docs_invariants.py` 22/22 OK; all 34 importer suites
+(`Fast_Fetch/importers/test_*.py`) OK. Full backend gate
+(`run-backend-gate.py`, 91 modules): 90/91 — the one failure was
+`test_redact.py`, 1 error, a socket `TimeoutError` in its local-HTTP
+tests, the documented load flake (AGENTS.md: fails identically on the
+clean base under load); re-ran solo at load 1.21: 116/116 OK, so the
+gate is effectively 91/91. Branch `muse/prewarm-extension-20261117`,
+commit `eaf29f3c`, pushed via the bundle route; Backend CI run
+44117068648 **success** (4m5s). NOT merged (supervisor's call), NOT
+live — gate deploy is the supervisor's call; the top-up service file
+needs no reinstall (no `--limit` in its ExecStart), only the code
+deploy + the next 21:00 firing. Next measurement after it lands:
+re-run the coverage probe at ~21:30 PKT and compare top-100 warm share
+against today's 66/200.
