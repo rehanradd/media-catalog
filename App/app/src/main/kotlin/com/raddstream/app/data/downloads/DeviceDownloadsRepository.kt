@@ -55,6 +55,13 @@ data class DeviceDownload(
      */
     val bytesPerSec: Long = 0L,
     val etaSeconds: Long? = null,
+    /**
+     * Why this download failed, in viewer words — the stored
+     * [DeviceDownloadEntity.error] (the completion gate's specific reason,
+     * or the exception that stopped the transfer). Null when the download
+     * never failed, or when there is nothing specific to say.
+     */
+    val failureReason: String? = null,
 ) {
     val progress: Float
         get() = if (bytesTotal > 0) {
@@ -458,6 +465,9 @@ class DeviceDownloadsRepository @Inject constructor(
         fileName = fileName,
         bytesPerSec = liveRates[id]?.first ?: 0L,
         etaSeconds = liveRates[id]?.second,
+        // The failure reason is stored, not guessed: the row renders it
+        // under the generic line instead of hiding it in the database.
+        failureReason = if (state == DeviceDownloadState.FAILED) error else null,
     )
 
     /** Rolling progress samples per download (bytes, monotonic ms), last five only. */

@@ -8,7 +8,15 @@ import javax.inject.Inject
 
 /**
  * Listens for system boot completion and package update events to automatically
- * resume any public downloads or keep transfers that were interrupted by a shutdown.
+ * resume any public downloads that were interrupted by a shutdown.
+ *
+ * Keeps are deliberately NOT resumed here: a keep transfer resumes only when
+ * the app opens and the cache engine runner starts ticking. Resuming keeps from
+ * this receiver would need a foreground service (or WorkManager) to survive
+ * the broadcast — a single tick launched from `onReceive` dies with the
+ * process the moment the broadcast returns, so it would promise a resume it
+ * cannot keep. The old comment claimed keeps too; that was the promise, not
+ * the behaviour.
  */
 @AndroidEntryPoint
 class BootReceiver : BroadcastReceiver() {

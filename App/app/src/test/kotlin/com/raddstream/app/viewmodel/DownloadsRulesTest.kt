@@ -34,31 +34,9 @@ class DownloadsRulesTest {
     )
 
     @Test
-    fun `a finished movie is a watched title, a half-watched one is not`() {
-        val watched = watchedTitles(
-            listOf(
-                movieRow("Finished Film"),
-                movieRow("Half Film", positionMs = 1_800_000L),
-                movieRow("Unknown Length", durationMs = 0L),
-                movieRow("", positionMs = 3_600_000L),
-            ),
-        )
-        assertEquals(setOf("Finished Film"), watched)
-    }
-
-    @Test
-    fun `the end guard is the same ten seconds the rail uses`() {
-        // 9 seconds short of the end is still watching, not finished.
-        val watched = watchedTitles(listOf(movieRow(positionMs = 3_600_000L - 9_000L)))
-        assertEquals(setOf("Example Film"), watched)
-        val notYet = watchedTitles(listOf(movieRow(positionMs = 3_600_000L - 11_000L)))
-        assertTrue(notYet.isEmpty())
-    }
-
-    @Test
     fun `watched ids match by post id, never by title`() {
-        // My List review (Nov 2026): the same end-guard as watchedTitles,
-        // but the identity is the post id — two works sharing a clean
+        // My List review (Nov 2026): the same end-guard as the rail, but
+        // the identity is the post id — two works sharing a clean
         // title must never cross-mark each other.
         val finished = movieRow(title = "Dune", positionMs = 3_600_000L)
         val half = WatchHistoryEntity(
@@ -219,6 +197,19 @@ class DownloadsRulesTest {
         assertEquals("Cancel", keepActionLabel(KeepState.PAUSED))
         assertEquals("Retry", keepActionLabel(KeepState.FAILED))
         assertEquals("Retry", keepActionLabel(KeepState.NO_SPACE))
-        assertNull(keepActionLabel(KeepState.EXPIRED))
+        assertEquals("Retry", keepActionLabel(KeepState.GATED))
+    }
+
+    @Test
+    fun `failure tokens map to viewer words, unknown tokens map to nothing`() {
+        assertEquals("The source stopped responding.", failureReasonFor("ephemeral_dead"))
+        assertEquals("The link expired and could not be refreshed.", failureReasonFor("no_fresh_url"))
+        assertEquals("A network error interrupted the download.", failureReasonFor("transient"))
+        assertEquals("The download could not be completed.", failureReasonFor("sequential_failed"))
+        assertNull(failureReasonFor("something_new"))
+        assertNull(failureReasonFor(null))
+        // The park reasons are states, not failures: they never reach this mapping.
+        assertNull(failureReasonFor("gated"))
+        assertNull(failureReasonFor("no_space"))
     }
 }

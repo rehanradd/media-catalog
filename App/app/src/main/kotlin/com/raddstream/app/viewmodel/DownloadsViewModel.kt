@@ -13,10 +13,12 @@ import com.raddstream.app.data.cache.KeepTtlHolder
 import com.raddstream.app.data.cache.OfflineCacheEngine
 import com.raddstream.app.data.downloads.DeviceDownload
 import com.raddstream.app.data.downloads.DeviceDownloadsRepository
+import com.raddstream.app.data.downloads.DownloadSpeed
 import com.raddstream.app.data.local.WatchHistoryDao
 import com.raddstream.app.data.local.WatchHistoryEntity
 import com.raddstream.app.repository.CacheRepository
 import com.raddstream.app.repository.CatalogRepository
+import com.raddstream.app.repository.KeepOutcome
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -27,7 +29,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 
-enum class KeepState { QUEUED, DOWNLOADING, PAUSED, READY, EXPIRING, EXPIRED, NO_SPACE, FAILED }
+enum class KeepState { QUEUED, DOWNLOADING, PAUSED, READY, EXPIRING, NO_SPACE, FAILED, GATED }
 
 /**
  * One offline keep as the Downloads screen should render it, projected from the cache engine's
@@ -54,9 +56,32 @@ data class KeptItem(
      * ever holding a URL or a host. No provenance and no locator — an identity inside this app.
      */
     val sourceKey: String = "",
+    /**
+     * Live transfer rate in bytes/second (0 while calculating or stalled, never a guess) — the
+     * same rolling rate the device rows carry, so the keep row can show speed and ETA too.
+     */
+    val bytesPerSec: Long = 0L,
+    /**
+     * The catalog post id this keep belongs to (0 = unknown). The auto-delete sweep matches on
+     * it, never on the title — two works sharing a title must never cross-delete each other.
+     */
+    val postId: Int = 0,
+    /**
+     * Why this keep failed, in viewer words (null when there is nothing specific to say). The
+     * engine stores stable tokens; this is the mapped sentence, never the raw token.
+     */
+    val failureReason: String? = null,
 ) {
     val progress: Float
         get() = if (bytesTotal > 0) (bytesDownloaded.toFloat() / bytesTotal.toFloat()).coerceIn(0f, 1f) else 0f
+
+    /** Seconds until this keep finishes at the live rate, or null while calculating. */
+    val etaSeconds: Long?
+        get() = if (bytesPerSec > 0) {
+            DownloadSpeed.etaSeconds((bytesTotal - bytesDownloaded).coerceAtLeast(0L), bytesPerSec)
+        } else {
+            null
+        }
 
     /**
      * Robo run 9: a keep whose engine task has a blank title and a "Rank #1"
@@ -134,8 +159,9 @@ data class DownloadsUiState(
     val items: List<KeptItem> = emptyList(),
     val storage: StorageInfo? = null,
     val isLoading: Boolean = true,
-    val engineAvailable: Boolean = false,
     val statusMessage: String? = null,
+    /** The notice names a sweep deletion that can still be undone (re-downloaded). */
+    val canUndoSweep: Boolean = false,
 ) {
     val hasAnything: Boolean get() = deviceDownloads.isNotEmpty() || items.isNotEmpty()
 
@@ -174,16 +200,22 @@ class DownloadsViewModel @Inject constructor(
 
     private var autoDeleteWatched: Boolean = true
 
+    /** The auto-delete sweep runs once per ViewModel lifetime, not on every list emission. */
+    private var sweepDone = false
+
+    /** Keeps the last sweep deleted, so Undo can re-queue them (fresh download, bytes are gone). */
+    private var lastSwept: List<KeptItem> = emptyList()
+
     init {
         viewModelScope.launch {
             settingsRepository.autoDeleteWatched.collect { autoDeleteWatched = it }
         }
         viewModelScope.launch {
-            _uiState.update { it.copy(storage = readStorage(), engineAvailable = true) }
+            _uiState.update { it.copy(storage = readStorage()) }
         }
         viewModelScope.launch {
             cacheRepository.tasksFlow().collect { rows ->
-                val items = rows.map(::toKeptItem)
+                val items = rows.mapNotNull(::toKeptItem)
                 _uiState.update { it.copy(items = items, isLoading = false) }
                 sweepWatched(items)
             }
@@ -214,7 +246,10 @@ class DownloadsViewModel @Inject constructor(
         }
     }
 
-    fun clearStatus() = _uiState.update { it.copy(statusMessage = null) }
+    fun clearStatus() {
+        lastSwept = emptyList()
+        _uiState.update { it.copy(statusMessage = null, canUndoSweep = false) }
+    }
 
     /**
      * Real, cheap, and always meaningful: how much space is left on the app's primary storage.
@@ -239,25 +274,35 @@ class DownloadsViewModel @Inject constructor(
 
     /**
      * Delete finished movies on their own, to free the space. Only a fully
-     * downloaded keep (READY/EXPIRING) whose title is in the watched set is
+     * downloaded keep (READY/EXPIRING) whose post id is in the watched set is
      * touched — a download still in flight is never deleted, and a series
-     * keep never matches, because the watched set holds movie titles only.
+     * keep never matches, because the watched set holds movie rows only.
      * Series episodes are deleted at the player instead, when the episode
      * ends (`PlayerViewModel.maybeAutoDeleteWatchedEpisode`): there the
      * identity is the episode's own cache key, so one watched episode can
-     * never delete the rest of the season. The notice names what went, so
-     * the deletion is never silent.
+     * never delete the rest of the season. The notice names what went, and
+     * offers Undo — so the deletion is never silent and never final.
+     *
+     * Matched by post id, never by title: two works sharing a title (a
+     * remake, a same-name series) must never cross-delete each other, and a
+     * keep whose post id was never plumbed (0, legacy rows) is never swept.
+     * Runs once per ViewModel lifetime: the old every-emission sweep could
+     * delete a finished movie the moment Downloads opened, before the viewer
+     * could replay it.
      */
     private fun sweepWatched(items: List<KeptItem>) {
-        if (!autoDeleteWatched) return
+        if (sweepDone || !autoDeleteWatched) return
+        sweepDone = true
         viewModelScope.launch {
-            val watched = runCatching { watchedTitles(watchHistoryDao.findMovieRows()) }.getOrNull()
+            val watched = runCatching { watchedPostIds(watchHistoryDao.findMovieRows()) }.getOrNull()
                 ?: return@launch
             if (watched.isEmpty()) return@launch
             val finished = items.filter {
-                (it.state == KeepState.READY || it.state == KeepState.EXPIRING) && it.title in watched
+                (it.state == KeepState.READY || it.state == KeepState.EXPIRING) &&
+                    it.postId > 0 && it.postId in watched
             }
             if (finished.isEmpty()) return@launch
+            lastSwept = finished
             finished.forEach { item ->
                 item.id.toLongOrNull()?.let { runCatching { cacheRepository.cancel(it) } }
             }
@@ -267,6 +312,52 @@ class DownloadsViewModel @Inject constructor(
                         "Deleted ${finished.first().title} — you finished watching it."
                     } else {
                         "Deleted ${finished.size} finished downloads."
+                    },
+                    canUndoSweep = true,
+                )
+            }
+        }
+    }
+
+    /**
+     * Undo the last auto-delete sweep: re-queue each deleted keep from its
+     * stored handle, so it downloads again from scratch — the bytes are
+     * gone, and no Undo can pretend otherwise. A keep whose handle is gone
+     * cannot come back, so it is skipped and the notice says what happened.
+     */
+    fun undoSweep() {
+        val swept = lastSwept
+        lastSwept = emptyList()
+        _uiState.update { it.copy(statusMessage = null, canUndoSweep = false) }
+        if (swept.isEmpty()) return
+        viewModelScope.launch {
+            var restored = 0
+            swept.forEach { item ->
+                val handle = item.streamHandle?.takeIf { it.isNotBlank() } ?: return@forEach
+                val ok = runCatching {
+                    cacheRepository.keep(
+                        handle = handle,
+                        title = item.title,
+                        sizeBytes = item.bytesTotal.takeIf { it > 0 },
+                        resumable = true,
+                        printLabel = item.printLabel,
+                        postId = item.postId,
+                    )
+                }.getOrNull()
+                if (ok is KeepOutcome.Enqueued ||
+                    ok is KeepOutcome.AlreadyKept
+                ) {
+                    restored++
+                }
+            }
+            _uiState.update { s ->
+                s.copy(
+                    statusMessage = if (restored == swept.size) {
+                        if (restored == 1) "Downloading ${swept.first().title} again." else "Downloading ${restored} titles again."
+                    } else if (restored > 0) {
+                        "Downloading $restored of ${swept.size} titles again — the rest could not be re-queued."
+                    } else {
+                        "Could not re-queue those downloads."
                     },
                 )
             }
@@ -278,6 +369,15 @@ class DownloadsViewModel @Inject constructor(
         viewModelScope.launch {
             runCatching { cacheRepository.resume(taskId) }
                 .onFailure { _uiState.update { s -> s.copy(statusMessage = "Could not resume that download.") } }
+        }
+    }
+
+    /** Pause a keep: its bytes stay on disk and the engine leaves it alone until Resume. */
+    fun pause(item: KeptItem) {
+        val taskId = item.id.toLongOrNull() ?: return
+        viewModelScope.launch {
+            runCatching { cacheRepository.pause(taskId) }
+                .onFailure { _uiState.update { s -> s.copy(statusMessage = "Could not pause that download.") } }
         }
     }
 
@@ -299,20 +399,27 @@ class DownloadsViewModel @Inject constructor(
      * Project one engine task onto a list row. Every field is honest: the state comes straight from
      * the state machine, a pause is only labelled "no space" when the engine parked it for that
      * reason, and a finished ephemeral keep gets the retention window's own expiry stamp.
+     *
+     * Returns null for a row that must never render: DELETED is already filtered by the query,
+     * and EXPIRED is never written by any code (the sweeper retires expired tasks straight to
+     * DELETED), so a row in either state is a stale read, not a list entry.
      */
-    private fun toKeptItem(task: CacheTaskEntity): KeptItem {
+    private fun toKeptItem(task: CacheTaskEntity): KeptItem? {
         val now = System.currentTimeMillis()
         val expiresAt = expiryFor(task)
         val state = when (task.stateEnum) {
             CacheTaskState.QUEUED -> KeepState.QUEUED
             CacheTaskState.LOADING -> KeepState.DOWNLOADING
             CacheTaskState.PAUSED ->
-                if (task.lastError == CacheCoordinator.ERR_NO_SPACE) KeepState.NO_SPACE else KeepState.PAUSED
+                when (task.lastError) {
+                    CacheCoordinator.ERR_NO_SPACE -> KeepState.NO_SPACE
+                    CacheCoordinator.ERR_GATED -> KeepState.GATED
+                    else -> KeepState.PAUSED
+                }
             CacheTaskState.COMPLETED ->
                 if (expiresAt != null && expiresAt - now <= EXPIRING_SOON_MILLIS) KeepState.EXPIRING else KeepState.READY
-            CacheTaskState.EXPIRED -> KeepState.EXPIRED
             CacheTaskState.FAILED -> KeepState.FAILED
-            CacheTaskState.DELETED -> KeepState.EXPIRED // filtered by the query; defensive mapping
+            CacheTaskState.EXPIRED, CacheTaskState.DELETED -> return null
         }
         return KeptItem(
             id = task.id.toString(),
@@ -328,6 +435,11 @@ class DownloadsViewModel @Inject constructor(
             expiresAtMillis = expiresAt,
             streamHandle = task.resourceId?.takeIf { it.isNotBlank() },
             sourceKey = task.sourceKey,
+            bytesPerSec = cacheRepository.liveRateBytesPerSec(task.id),
+            // The task row's releaseId carries the catalog post id for a
+            // keep (0 = unknown, never auto-deleted); see CacheSeeds.
+            postId = task.releaseId.toInt().takeIf { it > 0 } ?: 0,
+            failureReason = if (state == KeepState.FAILED) failureReasonFor(task.lastError) else null,
         )
     }
 
@@ -381,7 +493,7 @@ class DownloadsViewModel @Inject constructor(
     /** The retention window's own expiry for a finished ephemeral keep; null for a permanent one. */
     private fun expiryFor(task: CacheTaskEntity): Long? {
         if (task.originEnum == CacheOrigin.USER_KEEP) return null
-        if (task.stateEnum != CacheTaskState.COMPLETED && task.stateEnum != CacheTaskState.EXPIRED) return null
+        if (task.stateEnum != CacheTaskState.COMPLETED) return null
         // Read live from [KeepTtlHolder] — the same source the sweep deletes against — so this row
         // cannot promise a minute the engine has no intention of honouring. A settings change lands
         // on the next task emission; nothing here owns a timer of its own.
@@ -394,33 +506,34 @@ class DownloadsViewModel @Inject constructor(
 }
 
 /**
- * Titles of finished movies, from watch-history rows. A row counts only
- * when the viewer reached the end — the same end-guard the Continue
- * Watching rail uses — so a half-watched film stays. Series rows never
- * reach this helper (the DAO returns movie rows only), so one watched
- * episode can never delete a season keep.
- */
-fun watchedTitles(rows: List<WatchHistoryEntity>): Set<String> =
-    rows.filter { it.durationMs > 0 && it.positionMs >= it.durationMs - WatchHistoryEntity.END_GUARD_MS }
-        .map { it.title }
-        .filter { it.isNotBlank() }
-        .toSet()
-
-/**
  * The ids of finished works, from watch-history rows — the same
- * end-guard as [watchedTitles], matched by identity instead of by title
+ * end-guard as the Continue Watching rail, matched by identity instead of by title
  * string. My List's "Unwatched first" sort uses this: two works sharing
  * a clean title (a remake, a same-name series) must never cross-mark
  * each other, and a series counts as watched when any episode of it is
  * finished, because every episode row carries the series' own post id.
  * Rows that cannot be routed to a work (`postId <= 0`) are not finished
- * works and drop out here.
+ * works and drop out here. The Downloads auto-delete sweep uses this too:
+ * a finished movie's keep is deleted by post id, never by title.
  */
 fun watchedPostIds(rows: List<WatchHistoryEntity>): Set<Int> =
     rows.filter { it.durationMs > 0 && it.positionMs >= it.durationMs - WatchHistoryEntity.END_GUARD_MS }
         .map { it.postId }
         .filter { it > 0 }
         .toSet()
+
+/**
+ * The engine's stable failure token, in viewer words. A token with no
+ * mapping renders nothing — the generic line stands alone rather than
+ * leaking an internal token onto the screen.
+ */
+internal fun failureReasonFor(lastError: String?): String? = when (lastError) {
+    "ephemeral_dead" -> "The source stopped responding."
+    "no_fresh_url" -> "The link expired and could not be refreshed."
+    "transient" -> "A network error interrupted the download."
+    "sequential_failed" -> "The download could not be completed."
+    else -> null
+}
 
 /** The "Free up space" line: the real bytes this screen's downloads hold, and the honest way to free them. */
 internal fun freeUpSpaceMessage(downloadsBytes: Long): String =

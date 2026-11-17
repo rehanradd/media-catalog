@@ -2706,6 +2706,10 @@ class PlayerViewModel @Inject constructor(
                 resumable = rendition.playback.resumable || rendition.playback.acceptsRanges == true,
                 printLabel = rendition.displayLabel(),
                 title = _ui.value.pendingTitle ?: "",
+                // The staged sync scope carries this work's post id (Detail
+                // staged it at play time); without it the keep can never be
+                // matched by the Downloads auto-delete sweep, so it is kept.
+                postId = store.currentSyncScope()?.postId ?: 0,
             )
             val result = try {
                 engine.adopt(request)

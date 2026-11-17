@@ -6,10 +6,13 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.dp
 import com.raddstream.app.data.downloads.DeviceDownload
 import com.raddstream.app.data.downloads.DeviceDownloadState
+import com.raddstream.app.ui.components.DownloadsSkeleton
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.KeepState
 import com.raddstream.app.viewmodel.KeptItem
@@ -50,6 +53,7 @@ class DownloadsMockupTest {
         localUri: String? = null,
         bytesPerSec: Long = 0L,
         etaSeconds: Long? = null,
+        failureReason: String? = null,
     ) = DeviceDownload(
         id = id,
         title = title,
@@ -62,6 +66,7 @@ class DownloadsMockupTest {
         fileName = "file-$id.mp4",
         bytesPerSec = bytesPerSec,
         etaSeconds = etaSeconds,
+        failureReason = failureReason,
     )
 
     private fun keep(
@@ -72,6 +77,9 @@ class DownloadsMockupTest {
         bytesDownloaded: Long = 0L,
         bytesTotal: Long = 0L,
         streamHandle: String? = null,
+        bytesPerSec: Long = 0L,
+        expiresAtMillis: Long? = null,
+        failureReason: String? = null,
     ) = KeptItem(
         id = id,
         title = title,
@@ -79,8 +87,10 @@ class DownloadsMockupTest {
         bytesDownloaded = bytesDownloaded,
         bytesTotal = bytesTotal,
         state = state,
-        expiresAtMillis = null,
+        expiresAtMillis = expiresAtMillis,
         streamHandle = streamHandle,
+        bytesPerSec = bytesPerSec,
+        failureReason = failureReason,
     )
 
     @Test
@@ -187,9 +197,262 @@ class DownloadsMockupTest {
                 )
             }
         }
-        compose.onNodeWithText("45% · 450 MB / 1.0 GB").assertIsDisplayed()
+        // Percent + bytes + speed/ETA: no live rate yet, so "calculating",
+        // never a guessed number — the same rule as the device row.
+        compose.onNodeWithText("45% · 450 MB / 1.0 GB · calculating…").assertIsDisplayed()
+        compose.onNode(hasContentDescription("Pause Echoes of Silence")).assertIsDisplayed()
         compose.onNode(hasContentDescription("Cancel Echoes of Silence")).assertIsDisplayed()
         compose.onNode(hasContentDescription("Play Echoes of Silence")).assertDoesNotExist()
+    }
+
+    @Test
+    fun downloadingKeepRowShowsSpeedAndEtaWhenTheEngineReportsARate() {
+        compose.setContent {
+            RaddStreamTheme {
+                KeptItemRow(
+                    item = keep(
+                        id = "7",
+                        title = "Echoes of Silence",
+                        printLabel = "1080p · High bitrate",
+                        state = KeepState.DOWNLOADING,
+                        bytesDownloaded = 450_000_000L,
+                        bytesTotal = 1_000_000_000L,
+                        bytesPerSec = 12_000_000L,
+                    ),
+                    onPlay = {},
+                    onCancel = {},
+                    onRetry = {},
+                )
+            }
+        }
+        compose.onNodeWithText("45% · 450 MB / 1.0 GB · 12.0 MB/s · about 45 sec left").assertIsDisplayed()
+    }
+
+    @Test
+    fun gatedKeepRowSaysWhyItWaitsAndOffersRetry() {
+        compose.setContent {
+            RaddStreamTheme {
+                KeptItemRow(
+                    item = keep(
+                        id = "10",
+                        title = "Salaar",
+                        printLabel = "1080p · High bitrate",
+                        state = KeepState.GATED,
+                    ),
+                    onPlay = {},
+                    onCancel = {},
+                    onRetry = {},
+                )
+            }
+        }
+        compose.onNodeWithText("Locked to VIP — this quality needs a VIP plan").assertIsDisplayed()
+        compose.onNodeWithText("Retry").assertIsDisplayed()
+        compose.onNode(hasContentDescription("Play Salaar")).assertDoesNotExist()
+    }
+
+    @Test
+    fun pausedKeepRowShowsResumeAndCancel() {
+        compose.setContent {
+            RaddStreamTheme {
+                KeptItemRow(
+                    item = keep(
+                        id = "11",
+                        title = "Echoes of Silence",
+                        printLabel = "1080p · High bitrate",
+                        state = KeepState.PAUSED,
+                        bytesDownloaded = 450_000_000L,
+                        bytesTotal = 1_000_000_000L,
+                    ),
+                    onPlay = {},
+                    onCancel = {},
+                    onRetry = {},
+                )
+            }
+        }
+        compose.onNodeWithText("Paused").assertIsDisplayed()
+        compose.onNodeWithText("Resume").assertIsDisplayed()
+        compose.onNode(hasContentDescription("Cancel Echoes of Silence")).assertIsDisplayed()
+        compose.onNode(hasContentDescription("Play Echoes of Silence")).assertDoesNotExist()
+    }
+
+    @Test
+    fun noSpaceKeepRowShowsItsReasonBesideTheStalledBar() {
+        compose.setContent {
+            RaddStreamTheme {
+                KeptItemRow(
+                    item = keep(
+                        id = "12",
+                        title = "Echoes of Silence",
+                        printLabel = "1080p · High bitrate",
+                        state = KeepState.NO_SPACE,
+                        bytesDownloaded = 450_000_000L,
+                        bytesTotal = 1_000_000_000L,
+                    ),
+                    onPlay = {},
+                    onCancel = {},
+                    onRetry = {},
+                )
+            }
+        }
+        compose.onNodeWithText("Not enough space to finish — free room and retry").assertIsDisplayed()
+        compose.onNodeWithText("Retry").assertIsDisplayed()
+    }
+
+    @Test
+    fun queuedKeepRowSaysItIsWaiting() {
+        compose.setContent {
+            RaddStreamTheme {
+                KeptItemRow(
+                    item = keep(
+                        id = "13",
+                        title = "Echoes of Silence",
+                        printLabel = "1080p · High bitrate",
+                        state = KeepState.QUEUED,
+                    ),
+                    onPlay = {},
+                    onCancel = {},
+                    onRetry = {},
+                )
+            }
+        }
+        compose.onNodeWithText("Queued for download").assertIsDisplayed()
+    }
+
+    @Test
+    fun expiringKeepRowShowsTheCountdown() {
+        compose.setContent {
+            RaddStreamTheme {
+                KeptItemRow(
+                    item = keep(
+                        id = "14",
+                        title = "Severance",
+                        printLabel = "1080p · High bitrate",
+                        state = KeepState.EXPIRING,
+                        bytesDownloaded = 1_300_000_000L,
+                        bytesTotal = 1_300_000_000L,
+                        streamHandle = "handle-14",
+                        // 42 minutes plus a half-minute buffer, so the
+                        // composition-time read cannot slip to 41.
+                        expiresAtMillis = System.currentTimeMillis() + 42 * 60_000L + 30_000L,
+                    ),
+                    onPlay = {},
+                    onCancel = {},
+                    onRetry = {},
+                )
+            }
+        }
+        compose.onNodeWithText("Kept — expires in 42 min").assertIsDisplayed()
+    }
+
+    @Test
+    fun failedKeepRowShowsItsStoredReason() {
+        compose.setContent {
+            RaddStreamTheme {
+                KeptItemRow(
+                    item = keep(
+                        id = "15",
+                        title = "Fall",
+                        printLabel = "1080p · High bitrate",
+                        state = KeepState.FAILED,
+                        failureReason = "The source stopped responding.",
+                    ),
+                    onPlay = {},
+                    onCancel = {},
+                    onRetry = {},
+                )
+            }
+        }
+        compose.onNodeWithText("Download failed — retry to resume").assertIsDisplayed()
+        compose.onNodeWithText("The source stopped responding.").assertIsDisplayed()
+        compose.onNodeWithText("Retry").assertIsDisplayed()
+    }
+
+    @Test
+    fun failedDeviceRowShowsItsStoredReason() {
+        compose.setContent {
+            RaddStreamTheme {
+                DeviceDownloadRow(
+                    item = deviceFile(
+                        id = "d6",
+                        title = "Fall",
+                        printLabel = "1080p · High bitrate",
+                        state = DeviceDownloadState.FAILED,
+                        bytesDownloaded = 100_000_000L,
+                        bytesTotal = 1_000_000_000L,
+                        failureReason = "Server did not report a size, so completeness cannot be verified.",
+                    ),
+                    onPlay = {},
+                    onPause = {},
+                    onResume = {},
+                    onRemove = {},
+                )
+            }
+        }
+        compose.onNodeWithText("Download failed — resume, or cancel and try again").assertIsDisplayed()
+        compose.onNodeWithText("Server did not report a size, so completeness cannot be verified.").assertIsDisplayed()
+    }
+
+    @Test
+    fun retryButtonMeetsThe48dpFloor() {
+        compose.setContent {
+            RaddStreamTheme {
+                KeptItemRow(
+                    item = keep(
+                        id = "16",
+                        title = "Fall",
+                        printLabel = "1080p · High bitrate",
+                        state = KeepState.FAILED,
+                    ),
+                    onPlay = {},
+                    onCancel = {},
+                    onRetry = {},
+                )
+            }
+        }
+        // The My List floor pattern: measure the node, not the modifier.
+        val height = with(compose.density) {
+            compose.onNodeWithText("Retry").fetchSemanticsNode().boundsInRoot.height.toDp()
+        }
+        assertTrue("Retry measures $height, expected at least the 48dp floor", height >= 48.dp)
+    }
+
+    @Test
+    fun keepProgressLineReadsPercentBytesSpeedEta() {
+        val moving = keep(
+            id = "7",
+            title = "Echoes of Silence",
+            printLabel = "1080p · High bitrate",
+            state = KeepState.DOWNLOADING,
+            bytesDownloaded = 450_000_000L,
+            bytesTotal = 1_000_000_000L,
+            bytesPerSec = 12_000_000L,
+        )
+        assertEquals("45% · 450 MB / 1.0 GB · 12.0 MB/s · about 45 sec left", keepProgressLine(moving))
+        val calculating = keep(
+            id = "8",
+            title = "Echoes of Silence",
+            printLabel = "1080p · High bitrate",
+            state = KeepState.DOWNLOADING,
+            bytesDownloaded = 450_000_000L,
+            bytesTotal = 1_000_000_000L,
+        )
+        assertEquals("45% · 450 MB / 1.0 GB · calculating…", keepProgressLine(calculating))
+    }
+
+    @Test
+    fun remainingFormatsInHoursMinutesAndUnderAMinute() {
+        assertEquals("2 h 14 m", formatRemaining(2 * 3_600_000L + 14 * 60_000L))
+        assertEquals("42 min", formatRemaining(42 * 60_000L))
+        assertEquals("less than a minute", formatRemaining(30_000L))
+        assertEquals("soon", formatRemaining(null))
+    }
+
+    @Test
+    fun downloadsSkeletonRendersRowsWhileLoading() {
+        compose.setContent {
+            RaddStreamTheme { DownloadsSkeleton() }
+        }
+        compose.onNodeWithTag("downloadsSkeleton").assertIsDisplayed()
     }
 
     @Test

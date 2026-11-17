@@ -5,6 +5,7 @@ import com.raddstream.app.repository.KeepOutcome
 import java.io.File
 import javax.inject.Provider
 import kotlin.coroutines.CoroutineContext
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -123,6 +124,18 @@ class OfflineCacheWiringTest {
             publish()
         }
 
+        override suspend fun setNextRetryAt(id: Long, at: Long) {
+            val row = rows[id] ?: return
+            rows[id] = row.copy(nextRetryAtElapsedRealtime = at)
+            publish()
+        }
+
+        override suspend fun clearRetryGate(id: Long) {
+            val row = rows[id] ?: return
+            rows[id] = row.copy(nextRetryAtElapsedRealtime = 0, lastError = null)
+            publish()
+        }
+
         override suspend fun promoteToUserKeep(id: Long) {
             val row = rows[id] ?: return
             rows[id] = row.copy(priority = CachePriority.USER_REQUESTED.name, origin = CacheOrigin.USER_KEEP.name)
@@ -229,14 +242,16 @@ class OfflineCacheWiringTest {
     private class FakeFactory(private val baseUrl: String) : KeepSourceFactory {
         var metaMimeType: String? = null
         var metaSize: Long? = null
-        override suspend fun seedForKeep(handle: String, sizeBytes: Long?, resumable: Boolean): KeepSeed? {
+        var lastPostIdSeen: Int? = null
+        override suspend fun seedForKeep(handle: String, sizeBytes: Long?, resumable: Boolean, postId: Int): KeepSeed? {
+            lastPostIdSeen = postId
             val clean = handle.trim().takeIf { it.isNotEmpty() } ?: return null
             return KeepSeed(
                 sourceKey = KeepIdentity.sourceKeyFor(clean),
                 handle = clean,
                 redirectUrl = "$baseUrl/api/v1/stream?id=$clean",
                 linkKind = KeepIdentity.linkKindFor(metaMimeType, null),
-                releaseId = KeepIdentity.KEEP_RELEASE_ID,
+                releaseId = postId.toLong(),
                 totalSizeBytes = sizeBytes?.takeIf { it > 0 } ?: metaSize ?: 0L,
             )
         }
@@ -250,9 +265,12 @@ class OfflineCacheWiringTest {
         val seenTasks = mutableListOf<CacheTaskEntity>()
         val seenModes = mutableListOf<FetchMode>()
         var index = 0
+        /** When set, the next pass suspends on this gate instead of answering — a running download. */
+        var gate: CompletableDeferred<FetchOutcome>? = null
         override suspend fun run(task: CacheTaskEntity, mode: FetchMode, playhead: PlayheadProvider): FetchOutcome {
             seenTasks.add(task)
             seenModes.add(mode)
+            gate?.let { return it.await() }
             val outcome = outcomes.getOrElse(index) { outcomes.last() }
             index++
             return outcome
@@ -742,6 +760,120 @@ class OfflineCacheWiringTest {
         assertEquals("the park reason is the stable token, never UI text",
             CacheCoordinator.ERR_GATED, row.lastError)
         assertEquals("gated", row.lastError)
+    }
+
+    // ── Downloads review (Nov 2026): the 3-second re-drive loop ────────────────
+
+    @Test
+    fun `a gated keep is parked far out and the tick never re-drives it`() = runBlocking {
+        val handle = "HDL-20"
+        val ahead = FakeAhead(FetchOutcome.GATED)
+        val w = wiring(coroutineContext, ahead)
+        val taskId = (w.repository.keep(handle, "Work", 2000, resumable = true) as KeepOutcome.Enqueued).taskId
+
+        awaitState(w.taskDao, taskId, CacheTaskState.PAUSED)
+        val parked = w.taskDao.getById(taskId)!!
+        assertEquals("a gated keep is stamped far-future, not 0",
+            CacheCoordinator.PARKED_NEXT_RETRY_AT, parked.nextRetryAtElapsedRealtime)
+
+        val passesAfterPark = ahead.seenTasks.size
+        w.coordinator.tick()
+        pump()
+        assertEquals("a parked gated keep is not re-run on the next tick",
+            passesAfterPark, ahead.seenTasks.size)
+
+        // An explicit Resume clears the park and drives it again.
+        w.repository.resume(taskId)
+        awaitPasses(ahead, passesAfterPark + 1)
+        assertTrue("resume re-drives the parked keep", ahead.seenTasks.size > passesAfterPark)
+    }
+
+    @Test
+    fun `an exhausted failure is parked far out and only an explicit retry re-drives it`() = runBlocking {
+        val handle = "HDL-21"
+        val ahead = FakeAhead(FetchOutcome.RETRY_LATER)
+        val w = wiring(coroutineContext, ahead)
+        // One attempt short of exhaustion, so a single failing pass finishes it.
+        w.taskDao.insertIfAbsent(
+            newTask(handle, id = 610L, state = CacheTaskState.QUEUED, url = "x", downloaded = 10, total = 1000)
+                .copy(attempt = RetryPolicy.MAX_ATTEMPTS - 1),
+        )
+
+        w.coordinator.tick()
+        awaitPasses(ahead, 1)
+        pump()
+        val failed = w.taskDao.getById(610L)!!
+        assertEquals(CacheTaskState.FAILED.name, failed.state)
+        assertEquals("an exhausted failure is stamped far-future, not 0",
+            CacheCoordinator.PARKED_NEXT_RETRY_AT, failed.nextRetryAtElapsedRealtime)
+
+        w.coordinator.tick()
+        pump()
+        assertEquals("an exhausted keep is not re-run on the next tick", 1, ahead.seenTasks.size)
+
+        w.repository.resume(610L)
+        awaitPasses(ahead, 2)
+        assertEquals("an explicit retry re-drives the exhausted keep", 2, ahead.seenTasks.size)
+    }
+
+    @Test
+    fun `a user pause parks the keep and the tick leaves it alone until resume`() = runBlocking {
+        val handle = "HDL-22"
+        val ahead = FakeAhead(FetchOutcome.COMPLETED)
+        val w = wiring(coroutineContext, ahead)
+        val taskId = (w.repository.keep(handle, "Work", 2000, resumable = true) as KeepOutcome.Enqueued).taskId
+        // Pause before the drive runs: the keep must never start behind the viewer's back.
+        w.repository.pause(taskId)
+        pump()
+
+        val paused = w.taskDao.getById(taskId)!!
+        assertEquals(CacheTaskState.PAUSED.name, paused.state)
+        assertEquals(CacheCoordinator.ERR_USER_PAUSED, paused.lastError)
+        assertEquals(CacheCoordinator.PARKED_NEXT_RETRY_AT, paused.nextRetryAtElapsedRealtime)
+
+        w.coordinator.tick()
+        pump()
+        assertEquals("a user-paused keep is not started by the tick", 0, ahead.seenTasks.size)
+
+        w.repository.resume(taskId)
+        awaitState(w.taskDao, taskId, CacheTaskState.COMPLETED)
+        assertEquals("resume drives the paused keep to completion", 1, ahead.seenTasks.size)
+    }
+
+    @Test
+    fun `the tick samples a live rate from a running download`() = runBlocking {
+        val handle = "HDL-23"
+        val ahead = FakeAhead(FetchOutcome.COMPLETED)
+        val gate = CompletableDeferred<FetchOutcome>()
+        ahead.gate = gate
+        val w = wiring(coroutineContext, ahead)
+        val taskId = (w.repository.keep(handle, "Work", 2_000_000, resumable = true) as KeepOutcome.Enqueued).taskId
+
+        awaitState(w.taskDao, taskId, CacheTaskState.LOADING)
+        // First tick: nothing moved yet — calculating.
+        w.coordinator.tick()
+        assertEquals(0L, w.coordinator.liveRateBytesPerSec(taskId))
+
+        // 3 MB land over 3 seconds of clock: the next tick reads 1 MB/s.
+        w.taskDao.recordProgress(taskId, 3_000_000L, 3_000_000L, 2_000_000L, "", "x")
+        w.clock.advance(3_000L)
+        w.coordinator.tick()
+        assertEquals(1_000_000L, w.coordinator.liveRateBytesPerSec(taskId))
+
+        gate.complete(FetchOutcome.COMPLETED)
+        awaitState(w.taskDao, taskId, CacheTaskState.COMPLETED)
+    }
+
+    @Test
+    fun `keep plumbs the post id into the task row`() = runBlocking {
+        val handle = "HDL-24"
+        val w = wiring(coroutineContext, FakeAhead(FetchOutcome.COMPLETED))
+        val taskId = (w.repository.keep(handle, "Work", 2000, resumable = true, postId = 101) as KeepOutcome.Enqueued).taskId
+
+        assertEquals("the factory sees the post id", 101, w.factory.lastPostIdSeen)
+        assertEquals("the task row carries the post id",
+            101L, w.taskDao.getById(taskId)?.releaseId)
+        awaitState(w.taskDao, taskId, CacheTaskState.COMPLETED)
     }
 
     // ── Pre-resolve better (2026-11-13) ────────────────────────────────────

@@ -28,8 +28,12 @@ data class KeepSeed(
  * implementation is [RedirectorSourceResolver]; tests inject a fake that answers from memory.
  */
 interface KeepSourceFactory {
-    /** Build the first seed for a handle the user just asked to keep. Null if it cannot be ours. */
-    suspend fun seedForKeep(handle: String, sizeBytes: Long?, resumable: Boolean): KeepSeed?
+    /**
+     * Build the first seed for a handle the user just asked to keep. Null if it cannot be ours.
+     * [postId] is the catalog post id the keep belongs to (0 = unknown); it rides the seed into
+     * the task row so the Downloads auto-delete sweep can match by identity, never by title.
+     */
+    suspend fun seedForKeep(handle: String, sizeBytes: Long?, resumable: Boolean, postId: Int = 0): KeepSeed?
 
     /** Rebuild our redirector address for a handle after its bytes rotted. Null when unknown. */
     suspend fun refreshUrl(handle: String): String?
@@ -70,7 +74,7 @@ class RedirectorSourceResolver @Inject constructor(
         )
     }
 
-    override suspend fun seedForKeep(handle: String, sizeBytes: Long?, resumable: Boolean): KeepSeed? {
+    override suspend fun seedForKeep(handle: String, sizeBytes: Long?, resumable: Boolean, postId: Int): KeepSeed? {
         val clean = handle.trim().takeIf { it.isNotEmpty() } ?: return null
         val url = refreshUrl(clean) ?: return null
         // Best-effort metadata refresh; if the server gives us nothing we still have a size from
@@ -85,7 +89,12 @@ class RedirectorSourceResolver @Inject constructor(
             handle = clean,
             redirectUrl = url,
             linkKind = kind,
-            releaseId = KeepIdentity.KEEP_RELEASE_ID,
+            // The task's releaseId carries the catalog post id for a keep
+            // (0 = unknown, the old constant). The engine identity never
+            // consults it — sourceKeyFor still folds the constant — and the
+            // resolver passes it through opaquely, so storing the post id
+            // here changes no fetch behaviour, only what the sweep can match.
+            releaseId = postId.toLong(),
             totalSizeBytes = knownSize,
         )
     }

@@ -1101,3 +1101,53 @@ fun SeeAllButton(
         Text(label, style = MaterialTheme.typography.labelLarge, modifier = Modifier.clearAndSetSemantics { })
     }
 }
+
+/**
+ * The loading stand-in for the Downloads list: rows shaped like the
+ * download rows — a 56×84 thumb, a title line, a meta line and a progress
+ * bar, 12dp padding like the real row — so nothing reflows when the rows
+ * land. Downloads was the only screen that loaded into a bare storage card
+ * and a link.
+ */
+@Composable
+fun DownloadsSkeleton(
+    modifier: Modifier = Modifier,
+    rows: Int = 4,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("downloadsSkeleton"),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        repeat(rows) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SkeletonBox(
+                    Modifier.size(width = 56.dp, height = 84.dp),
+                    shape = RoundedCornerShape(8.dp),
+                )
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    SkeletonBox(
+                        Modifier.fillMaxWidth(0.7f).height(16.dp),
+                        shape = RoundedCornerShape(8.dp),
+                    )
+                    SkeletonBox(
+                        Modifier.fillMaxWidth(0.5f).height(12.dp),
+                        shape = RoundedCornerShape(8.dp),
+                    )
+                    SkeletonBox(
+                        Modifier.fillMaxWidth().height(8.dp),
+                        shape = RoundedCornerShape(8.dp),
+                    )
+                }
+            }
+        }
+    }
+}

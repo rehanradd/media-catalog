@@ -136,6 +136,19 @@ interface CacheTaskDao {
     @Query("UPDATE cache_tasks SET lastError = :reason WHERE id = :id")
     suspend fun setParkReason(id: Long, reason: String?)
 
+    /**
+     * Stamp the monotonic instant after which a parked task may run again, without moving it.
+     * A stuck keep (gated rung, exhausted retries, no room) is parked with
+     * [CacheCoordinator.PARKED_NEXT_RETRY_AT] so the 3-second tick stops re-driving work that
+     * cannot succeed; an explicit Resume clears it through [clearRetryGate].
+     */
+    @Query("UPDATE cache_tasks SET nextRetryAtElapsedRealtime = :at WHERE id = :id")
+    suspend fun setNextRetryAt(id: Long, at: Long)
+
+    /** Clear a park: the task may run on the next tick, with no stale reason attached. */
+    @Query("UPDATE cache_tasks SET nextRetryAtElapsedRealtime = 0, lastError = NULL WHERE id = :id")
+    suspend fun clearRetryGate(id: Long)
+
     /** Promote an auto-preview task to user-requested at handoff without losing its ledger. */
     @Query("UPDATE cache_tasks SET priority = 'USER_REQUESTED', origin = 'USER_KEEP' WHERE id = :id")
     suspend fun promoteToUserKeep(id: Long)

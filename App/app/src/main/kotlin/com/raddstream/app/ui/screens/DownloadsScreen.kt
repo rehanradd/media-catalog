@@ -9,7 +9,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -54,6 +54,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.raddstream.app.data.downloads.DeviceDownload
 import com.raddstream.app.data.downloads.DeviceDownloadState
 import com.raddstream.app.data.downloads.DownloadSpeed
+import com.raddstream.app.ui.components.DownloadsSkeleton
 import com.raddstream.app.ui.components.EmptyState
 import com.raddstream.app.ui.components.UserWords
 import com.raddstream.app.viewmodel.DownloadRow
@@ -105,12 +106,41 @@ fun DownloadsScreen(
             item { LocalFilesEntry(onOpenLocalFiles) }
             state.statusMessage?.let { msg ->
                 item {
-                    Text(
-                        text = msg,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    // A notice the viewer can clear — and undo, when it names
+                    // a sweep deletion. The old plain line persisted until it
+                    // was overwritten or the screen died.
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = msg,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (state.canUndoSweep) {
+                            TextButton(
+                                onClick = viewModel::undoSweep,
+                                modifier = Modifier
+                                    .heightIn(min = 48.dp)
+                                    .semantics { contentDescription = "Undo delete" },
+                            ) {
+                                Text("Undo")
+                            }
+                        }
+                        IconButton(
+                            onClick = viewModel::clearStatus,
+                            modifier = Modifier.semantics { contentDescription = "Dismiss notice" },
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = null)
+                        }
+                    }
                 }
+            }
+
+            if (state.isLoading) {
+                item { DownloadsSkeleton() }
             }
 
             if (state.hasAnything) {
@@ -156,6 +186,7 @@ fun DownloadsScreen(
                             },
                             onCancel = { viewModel.cancel(row.item) },
                             onRetry = { viewModel.retry(row.item) },
+                            onPause = { viewModel.pause(row.item) },
                         )
                     }
                 }
@@ -185,7 +216,10 @@ fun DownloadsScreen(
                             action = {
                                 // A downloads tab nobody has used yet is not a dead end: the way
                                 // to fill it is one tap away, on the title they came from.
-                                OutlinedButton(onClick = onBackClick) { Text("Find something to download") }
+                                OutlinedButton(
+                                    onClick = onBackClick,
+                                    modifier = Modifier.heightIn(min = 48.dp),
+                                ) { Text("Find something to download") }
                             },
                         )
                     }
@@ -297,7 +331,9 @@ internal fun StorageCard(
             if (storage != null) {
                 TextButton(
                     onClick = onFreeUpSpace,
-                    modifier = Modifier.semantics { contentDescription = "Free up space" },
+                    modifier = Modifier
+                        .heightIn(min = 48.dp)
+                        .semantics { contentDescription = "Free up space" },
                 ) {
                     Text("FREE UP SPACE")
                 }
@@ -382,13 +418,25 @@ internal fun DeviceDownloadRow(
                 // Restyle 2026-11-13: rounded ends + a visible track — the bar
                 // reads as a progress bar, not a hairline. Jade now, so the
                 // bar reads as progress, not a grey hairline.
-                LinearProgressIndicator(
-                    progress = { item.progress },
-                    modifier = Modifier.fillMaxWidth(),
-                    color = MaterialTheme.colorScheme.primary,
-                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                    strokeCap = StrokeCap.Round,
-                )
+                // An unknown size is an indeterminate bar, not a flat 0%: the
+                // bytes are moving, the total is what is unknown — and the
+                // completion gate still refuses to mark it READY.
+                if (item.bytesTotal > 0) {
+                    LinearProgressIndicator(
+                        progress = { item.progress },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                        strokeCap = StrokeCap.Round,
+                    )
+                } else {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                        strokeCap = StrokeCap.Round,
+                    )
+                }
                 Text(
                     deviceProgressLine(item),
                     style = MaterialTheme.typography.labelSmall,
@@ -400,6 +448,15 @@ internal fun DeviceDownloadRow(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
+                // The stored reason, under the generic line: a dead source, a
+                // wrong content type and a full disk must not all read the same.
+                item.failureReason?.let { reason ->
+                    Text(
+                        reason,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
         Row(
@@ -486,6 +543,7 @@ internal fun KeptItemRow(
     onPlay: () -> Unit,
     onCancel: () -> Unit,
     onRetry: () -> Unit,
+    onPause: () -> Unit = {},
 ) {
     val cleanTitle = cleanDownloadTitle(item.title)
     Row(
@@ -518,11 +576,24 @@ internal fun KeptItemRow(
                     trackColor = MaterialTheme.colorScheme.surfaceVariant,
                     strokeCap = StrokeCap.Round,
                 )
-                val total = if (item.bytesTotal > 0) formatMiB(item.bytesTotal) else "unknown size"
-                val percent = item.percent?.let { "$it% · " } ?: ""
-                Text("$percent${formatMiB(item.bytesDownloaded)} / $total", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(keepProgressLine(item), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                // The bar is the progress, the line is the reason: a stalled
+                // NO_SPACE row and a waiting QUEUED row must say why, not
+                // just show a frozen bar and a button.
+                if (item.state == KeepState.NO_SPACE || item.state == KeepState.QUEUED) {
+                    Text(statusLine(item), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
+                }
             } else {
                 Text(statusLine(item), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
+                // The stored reason, under the generic line — same rule as
+                // the device row.
+                item.failureReason?.let { reason ->
+                    Text(
+                        reason,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
         Row(
@@ -540,11 +611,44 @@ internal fun KeptItemRow(
                 }
             }
             when (item.state) {
-                KeepState.FAILED, KeepState.NO_SPACE -> OutlinedButton(
+                KeepState.FAILED, KeepState.NO_SPACE, KeepState.GATED -> OutlinedButton(
                     onClick = onRetry,
-                    modifier = Modifier.semantics { contentDescription = "Retry $cleanTitle" },
+                    modifier = Modifier
+                        .heightIn(min = 48.dp)
+                        .semantics { contentDescription = "Retry $cleanTitle" },
                 ) { Text("Retry") }
-                KeepState.DOWNLOADING, KeepState.QUEUED, KeepState.PAUSED,
+                KeepState.PAUSED -> {
+                    OutlinedButton(
+                        onClick = onRetry,
+                        modifier = Modifier
+                            .heightIn(min = 48.dp)
+                            .semantics { contentDescription = "Resume $cleanTitle" },
+                    ) { Text("Resume") }
+                    IconButton(
+                        onClick = onCancel,
+                        modifier = Modifier.semantics {
+                            contentDescription = "${keepActionLabel(item.state) ?: "Cancel"} $cleanTitle"
+                        },
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = null)
+                    }
+                }
+                KeepState.DOWNLOADING, KeepState.QUEUED -> {
+                    IconButton(
+                        onClick = onPause,
+                        modifier = Modifier.semantics { contentDescription = "Pause $cleanTitle" },
+                    ) {
+                        Icon(Icons.Default.Pause, contentDescription = null)
+                    }
+                    IconButton(
+                        onClick = onCancel,
+                        modifier = Modifier.semantics {
+                            contentDescription = "${keepActionLabel(item.state) ?: "Cancel"} $cleanTitle"
+                        },
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = null)
+                    }
+                }
                 KeepState.READY, KeepState.EXPIRING ->
                     IconButton(
                         onClick = onCancel,
@@ -554,7 +658,6 @@ internal fun KeptItemRow(
                     ) {
                         Icon(Icons.Default.Close, contentDescription = null)
                     }
-                else -> {}
             }
         }
     }
@@ -567,8 +670,7 @@ internal fun KeptItemRow(
 internal fun keepActionLabel(state: KeepState): String? = when (state) {
     KeepState.READY, KeepState.EXPIRING -> "Delete"
     KeepState.DOWNLOADING, KeepState.QUEUED, KeepState.PAUSED -> "Cancel"
-    KeepState.FAILED, KeepState.NO_SPACE -> "Retry"
-    else -> null
+    KeepState.FAILED, KeepState.NO_SPACE, KeepState.GATED -> "Retry"
 }
 
 /** One honest sentence per state. No provenance, no invented progress. */
@@ -579,11 +681,40 @@ private fun statusLine(item: KeptItem): String {
         KeepState.DOWNLOADING -> "Downloading$percent"
         KeepState.PAUSED -> "Paused"
         KeepState.NO_SPACE -> "Not enough space to finish — free room and retry"
+        KeepState.GATED -> "Locked to VIP — this quality needs a VIP plan"
         KeepState.READY -> "Saved on device — available offline"
-        KeepState.EXPIRING -> "Kept — expires soon and auto-deletes"
-        KeepState.EXPIRED -> "Expired — removed automatically"
+        KeepState.EXPIRING -> "Kept — expires in ${formatRemaining(item.remainingMillis(System.currentTimeMillis()))}"
         KeepState.FAILED -> "Download failed — retry to resume"
     }
+}
+
+/**
+ * The keep downloading line: real percent + real bytes + real speed + ETA, from the same rolling
+ * rate the device row reports — "calculating" until the second tick, never a guessed number.
+ */
+internal fun keepProgressLine(item: KeptItem): String {
+    val total = if (item.bytesTotal > 0) formatMiB(item.bytesTotal) else "unknown size"
+    val percent = item.percent?.let { "$it% · " } ?: ""
+    val bytes = "${formatMiB(item.bytesDownloaded)} / $total"
+    val speed = if (item.bytesPerSec > 0) {
+        DownloadSpeed.formatSpeed(item.bytesPerSec) +
+            (DownloadSpeed.formatEta(item.etaSeconds)?.let { " · $it" } ?: "")
+    } else {
+        "calculating…"
+    }
+    return "$percent$bytes · $speed"
+}
+
+/** "2 h 14 m", "42 min", "less than a minute" — the countdown an EXPIRING row speaks. */
+internal fun formatRemaining(remainingMillis: Long?): String {
+    val millis = remainingMillis ?: return "soon"
+    if (millis <= 0L) return "less than a minute"
+    val totalMinutes = millis / 60_000L
+    if (totalMinutes < 1L) return "less than a minute"
+    if (totalMinutes < 60L) return "$totalMinutes min"
+    val hours = totalMinutes / 60L
+    val minutes = totalMinutes % 60L
+    return if (minutes == 0L) "$hours h" else "$hours h $minutes m"
 }
 
 /**

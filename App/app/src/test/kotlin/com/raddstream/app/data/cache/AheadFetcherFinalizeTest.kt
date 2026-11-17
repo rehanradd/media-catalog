@@ -121,6 +121,14 @@ class AheadFetcherFinalizeTest {
             rows[id]?.let { rows[id] = it.copy(lastError = reason) }
         }
 
+        override suspend fun setNextRetryAt(id: Long, at: Long) {
+            rows[id]?.let { rows[id] = it.copy(nextRetryAtElapsedRealtime = at) }
+        }
+
+        override suspend fun clearRetryGate(id: Long) {
+            rows[id]?.let { rows[id] = it.copy(nextRetryAtElapsedRealtime = 0, lastError = null) }
+        }
+
         override suspend fun promoteToUserKeep(id: Long) {
             rows[id]?.let { rows[id] = it.copy(priority = CachePriority.USER_REQUESTED.name, origin = CacheOrigin.USER_KEEP.name) }
         }

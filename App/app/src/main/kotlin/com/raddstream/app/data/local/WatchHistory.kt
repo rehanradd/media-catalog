@@ -112,7 +112,7 @@ interface WatchHistoryDao {
      * Every row with a known duration, as a flow: the My List sort re-reads
      * it, so a title finished on another screen moves down the list while
      * this screen is still open. The finished-ness itself is judged in
-     * Kotlin ([watchedTitles]) against the rail's end-guard.
+     * Kotlin ([watchedPostIds]) against the rail's end-guard.
      */
     @Query("SELECT * FROM watch_history WHERE durationMs > 0")
     fun observeDurations(): Flow<List<WatchHistoryEntity>>

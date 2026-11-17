@@ -238,7 +238,13 @@ class DownloadService : Service() {
             closeQuietly(output)
             val now = repo.entity(id)
             if (now != null && now.state != DeviceDownloadState.PAUSED) {
-                repo.markFailed(id, downloaded, total)
+                // The real exception, not the default sentence: a disk-full
+                // failure and a network failure must not store the same words.
+                repo.markFailed(
+                    id, downloaded, total,
+                    failure.message?.takeIf { it.isNotBlank() }
+                        ?: "Download stopped before it finished.",
+                )
                 notifyFailed(now, downloaded, total)
             }
         }

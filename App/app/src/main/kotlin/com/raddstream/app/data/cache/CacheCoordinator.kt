@@ -48,6 +48,12 @@ class CacheCoordinator(
 
     private val jobs = ConcurrentHashMap<Long, Job>()
 
+    /** Rolling live rate per task, sampled by [tick] from committed bytes. */
+    private val rateTracker = TransferRateTracker()
+
+    /** Live bytes/second for one task, or 0 while calculating or stalled. */
+    fun liveRateBytesPerSec(taskId: Long): Long = rateTracker.bytesPerSec(taskId)
+
     /** Latest absolute playhead byte per task, fed by Media3 progress callbacks. */
     private val playheadBytes = ConcurrentHashMap<Long, Long>()
 
@@ -78,6 +84,15 @@ class CacheCoordinator(
     suspend fun tick() {
         val now = clock.nowElapsedRealtime()
         val schedulable = taskDao.listSchedulable(now)
+        // Sample every running task's committed bytes: the Downloads list
+        // and the player chip read the rolling rate from these samples, and
+        // a stalled task keeps sampling the same count, so its rate falls
+        // to 0 instead of freezing on an old speed.
+        schedulable.forEach {
+            if (jobs[it.id]?.isActive == true && it.stateEnum == CacheTaskState.LOADING) {
+                rateTracker.sample(it.id, it.downloadedBytes, now)
+            }
+        }
         val tasks = schedulable.map {
             SchedulableTask(
                 taskId = it.id,
@@ -132,11 +147,13 @@ class CacheCoordinator(
             when (outcome) {
                 FetchOutcome.COMPLETED -> {
                     consumeFirstSeedWindow(task.sourceKey)
+                    rateTracker.forget(taskId)
                     safeTransition(taskId, CacheTaskState.LOADING, CacheTaskState.COMPLETED)
                     return
                 }
                 FetchOutcome.ALREADY_COMPLETE -> {
                     consumeFirstSeedWindow(task.sourceKey)
+                    rateTracker.forget(taskId)
                     safeTransition(taskId, CacheTaskState.LOADING, CacheTaskState.COMPLETED)
                     return
                 }
@@ -161,6 +178,10 @@ class CacheCoordinator(
                 FetchOutcome.STORAGE_SUSPENDED -> {
                     safeTransition(taskId, CacheTaskState.LOADING, CacheTaskState.PAUSED)
                     taskDao.setParkReason(taskId, ERR_NO_SPACE)
+                    // Parked until the viewer frees room and taps Retry: without
+                    // the far-future stamp the 3-second tick would re-drive this
+                    // keep forever, paying a re-resolve for a disk that is still full.
+                    taskDao.setNextRetryAt(taskId, PARKED_NEXT_RETRY_AT)
                     return
                 }
                 FetchOutcome.NO_RANGE_FALLBACK -> {
@@ -216,6 +237,10 @@ class CacheCoordinator(
         } else {
             safeTransition(task.id, task.stateEnum, CacheTaskState.PAUSED)
             taskDao.setParkReason(task.id, ERR_GATED)
+            // Parked until the viewer upgrades or taps Resume: without the
+            // far-future stamp the 3-second tick would re-drive this keep
+            // forever, paying a re-resolve for a rung the server will refuse again.
+            taskDao.setNextRetryAt(task.id, PARKED_NEXT_RETRY_AT)
         }
     }
 
@@ -378,11 +403,39 @@ class CacheCoordinator(
      * origin, so it downloads eagerly yet still ages out through [TtlPolicy] — this method only
      * makes the engine move it. No-op when a pass is already running, and no-op for an
      * opportunistic preview the scheduler would not start on this network anyway.
+     *
+     * An explicit start clears any park: a gated, full-disk, exhausted or user-paused keep the
+     * viewer resumes must not carry its far-future stamp into the new drive, or the next
+     * scheduler pre-emption would strand it parked forever.
      */
     suspend fun startTask(sourceKey: String) {
         val task = taskDao.getBySourceKey(sourceKey) ?: return
         if (task.stateEnum == CacheTaskState.COMPLETED) return
+        taskDao.clearRetryGate(task.id)
         startIfAllowed(task)
+    }
+
+    /**
+     * Pause a keep the viewer stopped: halt its job, keep its bytes and ledger, and park it with
+     * the far-future stamp so the 3-second tick does not restart it behind the viewer's back.
+     * Only an explicit Resume ([startTask]) moves it again. A pause is not a cancel — nothing is
+     * deleted, and the bytes resume from where they stopped.
+     */
+    suspend fun pauseTask(taskId: Long) {
+        jobs[taskId]?.cancel()
+        jobs.remove(taskId)
+        val task = taskDao.getById(taskId) ?: return
+        // Only an in-flight or waiting keep can be paused: a FAILED keep
+        // keeps its failure (and its Retry), a finished one stays finished.
+        if (task.stateEnum != CacheTaskState.QUEUED &&
+            task.stateEnum != CacheTaskState.LOADING &&
+            task.stateEnum != CacheTaskState.PAUSED
+        ) {
+            return
+        }
+        safeTransition(taskId, task.stateEnum, CacheTaskState.PAUSED)
+        taskDao.setParkReason(taskId, ERR_USER_PAUSED)
+        taskDao.setNextRetryAt(taskId, PARKED_NEXT_RETRY_AT)
     }
 
     /**
@@ -429,6 +482,7 @@ class CacheCoordinator(
         jobs[taskId]?.cancel()
         jobs.remove(taskId)
         playheadBytes.remove(taskId)
+        rateTracker.forget(taskId)
         val task = taskDao.getById(taskId) ?: return
         manifestDao.deleteForTask(taskId)
         runCatching { storage.deleteOnDisk(task.sourceKey) }
@@ -452,7 +506,10 @@ class CacheCoordinator(
             if (CacheTaskStateMachine.canTransition(cur, CacheTaskState.FAILED)) {
                 taskDao.transition(id, cur.name, CacheTaskState.FAILED.name)
             }
-            taskDao.recordRetryState(id, CacheTaskState.FAILED.name, next, 0, reason)
+            // Exhausted: parked until the viewer taps Retry. The old 0 stamp
+            // left the row schedulable, so the 3-second tick re-drove a dead
+            // source forever — about 20 wasted resolves a minute per keep.
+            taskDao.recordRetryState(id, CacheTaskState.FAILED.name, next, PARKED_NEXT_RETRY_AT, reason)
         } else {
             val delay = RetryPolicy.nextRetryDelayMs(next, id)
             val cur = taskDao.getById(id)?.stateEnum ?: return
@@ -481,6 +538,18 @@ class CacheCoordinator(
 
         /** Stable park-reason token for a rung the server refused (quality gate 402). Never UI text. */
         const val ERR_GATED = "gated"
+
+        /** Stable park-reason token for a keep the viewer paused. Never UI text. */
+        const val ERR_USER_PAUSED = "user_paused"
+
+        /**
+         * The `nextRetryAtElapsedRealtime` stamp for a keep parked until a human (or a status
+         * change) re-drives it — gated rung, exhausted retries, full disk, user pause. It is
+         * far beyond any real uptime, so `listSchedulable` holds the row out; an explicit
+         * Resume clears it. Halved from Long.MAX_VALUE so no future `now + delay` arithmetic
+         * on it can overflow.
+         */
+        const val PARKED_NEXT_RETRY_AT = Long.MAX_VALUE / 2
     }
 }
 

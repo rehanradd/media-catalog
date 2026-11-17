@@ -88,6 +88,7 @@ class OfflineCacheEngine @Inject constructor(
             sizeBytes = request.expectedTotalBytes,
             resumable = request.resumable,
             printLabel = request.printLabel,
+            postId = request.postId,
         )
         when (outcome) {
             is KeepOutcome.NoSpace ->
@@ -350,7 +351,9 @@ class OfflineCacheEngine @Inject constructor(
         return CacheSnapshot(
             bytesSaved = downloadedBytes,
             totalBytes = totalSizeBytes.takeIf { it > 0 },
-            bytesPerSec = 0L,
+            // The live rolling rate the coordinator samples every tick —
+            // the player's keep chip renders it, so it was mute (0) until now.
+            bytesPerSec = coordinator.liveRateBytesPerSec(id),
             isEstimate = false,
             resumable = true,
             previewExpiresAt = expires,

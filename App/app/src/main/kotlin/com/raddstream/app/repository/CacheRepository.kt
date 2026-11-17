@@ -88,6 +88,15 @@ class CacheRepository @Inject constructor(
         sizeBytes: Long?,
         resumable: Boolean,
         printLabel: String = "",
+        /**
+         * The catalog post id this keep belongs to (0 = unknown). It rides
+         * the seed into the task row so the Downloads auto-delete sweep can
+         * match a finished movie by identity instead of by title string —
+         * two works sharing a title must never cross-delete each other.
+         * Legacy rows and player-adopted keeps without one stay 0 and are
+         * never auto-deleted: unknown means keep, never guess.
+         */
+        postId: Int = 0,
     ): KeepOutcome = enqueue(
         handle = handle,
         title = title,
@@ -98,6 +107,7 @@ class CacheRepository @Inject constructor(
         // An explicit ask may displace other work: that is what the viewer asked for, and the
         // eviction planner's own ranking decides what goes.
         mayEvictForAdmission = true,
+        postId = postId,
     )
 
     /**
@@ -151,8 +161,9 @@ class CacheRepository @Inject constructor(
         priority: CachePriority,
         mayEvictForAdmission: Boolean,
         firstSeed: Boolean = false,
+        postId: Int = 0,
     ): KeepOutcome {
-        val seed = factory.seedForKeep(handle, sizeBytes, resumable) ?: return KeepOutcome.Unavailable
+        val seed = factory.seedForKeep(handle, sizeBytes, resumable, postId) ?: return KeepOutcome.Unavailable
 
         val existing = taskDao.getBySourceKey(seed.sourceKey)
         if (existing != null && existing.stateEnum != CacheTaskState.DELETED) {
@@ -204,6 +215,12 @@ class CacheRepository @Inject constructor(
 
     /** Abandon a keep: the engine stops its job, drops its bytes, and removes it from the list. */
     suspend fun cancel(taskId: Long) = coordinator.cancelTask(taskId)
+
+    /** Pause a keep the viewer stopped: bytes stay, the tick leaves it alone until Resume. */
+    suspend fun pause(taskId: Long) = coordinator.pauseTask(taskId)
+
+    /** Live transfer rate for one keep, or 0 while calculating or stalled. */
+    fun liveRateBytesPerSec(taskId: Long): Long = coordinator.liveRateBytesPerSec(taskId)
 
     /** Re-drive a keep the engine parked (paused after a storage suspension or a retry backoff). */
     suspend fun resume(taskId: Long) {

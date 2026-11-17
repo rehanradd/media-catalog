@@ -1258,6 +1258,13 @@ class DetailViewModel @Inject constructor(
             printLabel = printLabel,
             title = title,
             sharesCacheStorage = false,
+            // The post id rides into the task row so the Downloads
+            // auto-delete sweep can match this keep by identity, never by
+            // title string. The loaded post's id first, the detail's own
+            // id as fallback; 0 means unknown, and an unknown keep is
+            // never auto-deleted.
+            postId = _uiState.value.post?.id?.takeIf { it > 0 }
+                ?: resolvedPostId.takeIf { it > 0 } ?: 0,
         )
         val result = try {
             engine.adopt(request)

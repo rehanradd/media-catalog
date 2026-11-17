@@ -124,6 +124,7 @@ object CacheAffordance {
         resumable: Boolean,
         printLabel: String,
         title: String = "",
+        postId: Int = 0,
     ): AdoptRequest {
         val authoritative = snapshot?.takeIf { !it.isEstimate }?.bytesSaved
         val estimate = estimateBytesSaved(bufferedMs, durationMs, expectedTotalBytes ?: snapshot?.totalBytes)
@@ -141,6 +142,7 @@ object CacheAffordance {
             printLabel = printLabel,
             title = title,
             sharesCacheStorage = snapshot != null,
+            postId = postId,
         )
     }
 

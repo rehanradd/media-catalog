@@ -97,6 +97,13 @@ data class AdoptRequest(
     val title: String = "",
     /** True when this URL was already downloaded through the shared cache data source. */
     val sharesCacheStorage: Boolean,
+    /**
+     * The catalog post id this keep belongs to (0 = unknown). It rides into
+     * the task row so the Downloads auto-delete sweep can match a finished
+     * movie by identity instead of by title string. A keep adopted without
+     * one stays 0 and is never auto-deleted: unknown means keep, never guess.
+     */
+    val postId: Int = 0,
 )
 
 /**
