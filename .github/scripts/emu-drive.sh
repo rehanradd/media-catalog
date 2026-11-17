@@ -35,17 +35,21 @@
 # not exist" and the app never launched at all. The old script
 # swallowed that failure (|| true) and screenshotted the launcher.
 # The package is now derived from the device after install (below).
-# Run 44043626083 (head 5f0be1c1) FAILED the same way, but the timeout
-# diagnostics proved the wait was wrong, not the app: the Disclaimer WAS
-# on screen behind a "Process system isn't responding" dialog, and
-# dumpsys said mFocusedApp = com.raddstream.app.debug/...MainActivity —
-# the app WAS foregrounded. mCurrentFocus was the ANR window, which
-# carries no package, so focused_pkg() returned '' for the whole 180s
-# and dismiss_anr() never fired once (0 hits in the log — with
-# system_server frozen, `uiautomator dump` hangs/fails, so anr_present
-# never saw the dialog). Fix: focused_pkg() falls back to mFocusedApp
-# when the focus window is an ANR dialog, and the dumps are
-# timeout-bounded (20s) so a frozen system_server can't stall the loop.
+# Run 44048613561 (head bbdfab85) got PAST the focus wait (the bbdfab85
+# fix worked — app foregrounded, Disclaimer dismissed on try 6) but died
+# on Welcome: the app's catalog probe failed ("We couldn't find the
+# catalog at that address. Check its address in Settings.") and Continue
+# is DISABLED until the probe succeeds — tap_text "Continue" "succeeds"
+# (a disabled button still carries the text) but the tap is a no-op, so
+# 03-home-top was byte-identical to 02-welcome and the frozen-screen
+# guard tripped. The default server (brand.properties
+# network.default_server_url=https://raddstream.duckdns.org) answers 200
+# from outside, so the failure is emulator-side — no/insufficient AVD
+# network/DNS, a too-short probe timeout on the slow emulator, or TLS —
+# unproven, because the script never tapped Connect and captured no
+# logcat on this path. Fix: retry the probe via Connect (up to 2x) and,
+# if it still fails, dump logcat + an in-emulator network probe into
+# $OUT and fail with a clear message instead of the frozen-screen one.
 # The workflow uploads emu-shots/ with `if: always()`, so a failed run
 # still leaves its (launcher) frames as evidence of what went wrong.
 set -euo pipefail
@@ -209,6 +213,16 @@ dismiss_anr() {
   return 0
 }
 
+# True if the current UI dump contains the given (case-insensitive)
+# text. Timeout-bounded like the other dumps — a frozen system_server
+# must not stall the caller.
+ui_has_text() {
+  rm -f /tmp/ui.xml
+  timeout 20 adb shell uiautomator dump "$UI_DUMP" >/dev/null 2>&1
+  adb pull -q "$UI_DUMP" /tmp/ui.xml 2>/dev/null || return 1
+  grep -qi "$1" /tmp/ui.xml
+}
+
 # Poll until the app is in the foreground ($1 = timeout seconds).
 # Dismisses ANR dialogs as they appear. Returns 1 on timeout or on a
 # stuck ANR — the caller fails the run.
@@ -333,6 +347,37 @@ screenshot "01-disclaimer.png"
 tap_text "I understand" || { echo "FAIL: disclaimer 'I understand' never appeared" >&2; exit 1; }
 sleep 4
 screenshot "02-welcome.png"
+# Welcome probes the default catalog on arrival: if the probe fails the
+# screen shows "We couldn't find the catalog at that address" and
+# Continue stays DISABLED — tapping it is a no-op (run 44048613561).
+# Retry the probe via Connect; if it still fails, capture diagnostics
+# (logcat + in-emulator network probe) and fail clearly instead of
+# letting the frozen-screen guard misreport a stuck Welcome as Home.
+if ui_has_text "couldn't find the catalog"; then
+  echo "Welcome: catalog unreachable — retrying via Connect" >&2
+  for attempt in 1 2; do
+    tap_text "Connect" || true
+    sleep 20
+    if ! ui_has_text "couldn't find the catalog"; then
+      echo "Welcome: catalog reachable after Connect (attempt $attempt)" >&2
+      break
+    fi
+    echo "Welcome: catalog still unreachable after Connect (attempt $attempt)" >&2
+  done
+  if ui_has_text "couldn't find the catalog"; then
+    echo "FAIL: catalog unreachable from the emulator after Connect retries" >&2
+    adb logcat -d -t 500 2>/dev/null | grep -i -E 'raddstream|UnknownHost|ConnectException|SocketTimeout|SSL|Handshake|AndroidRuntime|FATAL' > "$OUT/welcome-unreachable-logcat.txt" || true
+    {
+      echo "--- ping raddstream.duckdns.org ---"
+      adb shell ping -c 1 -W 5 raddstream.duckdns.org 2>&1 || true
+      echo "--- curl posts from the emulator ---"
+      adb shell curl -s -o /dev/null -w "posts:%{http_code}\n" --max-time 15 "https://raddstream.duckdns.org/api/v1/posts?limit=1" 2>&1 || true
+    } > "$OUT/welcome-network-probe.txt" 2>&1 || true
+    adb exec-out screencap -p > "$OUT/welcome-unreachable.png" 2>/dev/null || true
+    cp /tmp/ui.xml "$OUT/welcome-unreachable-ui.xml" 2>/dev/null || true
+    exit 1
+  fi
+fi
 tap_text "Continue" || { echo "FAIL: setup 'Continue' never appeared" >&2; exit 1; }
 sleep 10
 screenshot "03-home-top.png"
