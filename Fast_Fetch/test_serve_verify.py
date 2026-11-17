@@ -1043,6 +1043,119 @@ class WarmAllBandsTests(unittest.TestCase):
         self.assertEqual(viewer._preresolve_for_detail({}),
                          {"status": "unavailable"})
 
+    def _many_tier_dict(self, n_tiers=40):
+        groups = []
+        bands = ["480p", "720p", "1080p", "2160p"]
+        for g in range((n_tiers + 3) // 4):
+            tiers = []
+            for k in range(4):
+                idx = g * 4 + k
+                if idx >= n_tiers:
+                    break
+                tok = redact.mint_token(1000 + idx, viewer.signing_secret())
+                tiers.append({"band": bands[idx % 4],
+                              "link": {"stream_id": tok}})
+            groups.append({"auto": {"band": "720p",
+                                    "stream_id": tiers[0]["link"]["stream_id"]},
+                           "tiers": tiers})
+        return {"option_groups": groups}
+
+    def test_many_tier_detail_starts_at_most_the_cap(self):
+        # The 2026-11-17 thread storm: one thread per cold tier, 2,372
+        # tiers on One Piece, 12,617 threads from ~5 detail opens. A
+        # 40-tier detail now warms at most _PRERESOLVE_MAX_TIERS, and
+        # the auto tier warms first.
+        started = []
+
+        def _fake_start(source_id):
+            started.append(source_id)
+            return mock.Mock(name="thread")
+
+        with (mock.patch.object(viewer, "_preresolve_is_warm",
+                                return_value=False),
+              mock.patch.object(viewer, "_start_preresolve",
+                                side_effect=_fake_start)):
+            result = viewer._preresolve_for_detail(self._many_tier_dict())
+        self.assertEqual(result["status"], "warming")
+        self.assertEqual(len(started), viewer._PRERESOLVE_MAX_TIERS)
+        self.assertEqual(len(result["warming"]), viewer._PRERESOLVE_MAX_TIERS)
+        self.assertEqual(len(result["cold"]),
+                         40 - viewer._PRERESOLVE_MAX_TIERS)
+        self.assertEqual(result["warming"][0], "720p")
+
+    def test_start_preresolve_dedups_an_in_flight_warm(self):
+        calls = []
+
+        def _slow(source_id):
+            calls.append(source_id)
+            time.sleep(0.3)
+
+        with mock.patch.object(viewer, "_resolve_and_bank",
+                               side_effect=_slow):
+            first = viewer._start_preresolve(987001)
+            self.assertIsNotNone(first)
+            # Same source while the first warm is still running: no
+            # second thread.
+            self.assertIsNone(viewer._start_preresolve(987001))
+            first.join(timeout=5)
+            self.assertFalse(first.is_alive())
+            # The finished warm's entry is gone, so a later warm may start.
+            third = viewer._start_preresolve(987001)
+            self.assertIsNotNone(third)
+            third.join(timeout=5)
+        self.assertEqual(calls, [987001, 987001])
+
+    def test_warm_lookup_error_skips_the_spawn(self):
+        # A cache fault is "unknown", never "cold": no thread spawns
+        # for a tier whose warmth cannot be measured.
+        with (mock.patch.object(viewer, "_preresolve_is_warm",
+                                return_value=None),
+              mock.patch.object(viewer, "_start_preresolve") as start):
+            result = viewer._preresolve_for_detail(self._p_dict())
+        start.assert_not_called()
+        self.assertEqual(result["skipped"], ["720p", "480p"])
+        self.assertEqual(result["warming"], [])
+
+    def test_is_warm_returns_none_on_db_error(self):
+        conn = sqlite3.connect(":memory:")
+        self.addCleanup(conn.close)
+        with mock.patch.object(
+                resolved_cache, "lookup_cache",
+                side_effect=sqlite3.Error("disk I/O error")):
+            self.assertIsNone(viewer._preresolve_is_warm(111, conn=conn))
+        with mock.patch.object(
+                resolved_cache, "lookup_cache", return_value={"ok": True}):
+            self.assertTrue(viewer._preresolve_is_warm(111, conn=conn))
+        with mock.patch.object(
+                resolved_cache, "lookup_cache", return_value=None):
+            self.assertFalse(viewer._preresolve_is_warm(111, conn=conn))
+
+    def test_shared_warm_conn_body_exception_propagates(self):
+        # The 2026-11-17 generator bug: a body exception was caught by
+        # the acquisition's except and re-yielded as None, surfacing as
+        # "generator didn't stop after throw()" instead of the real error.
+        # The file must exist so the shared-connection path (not the
+        # no-file fallback) is the one exercised.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        db_path = Path(tmp.name) / "warm.db"
+        db_path.touch()
+        with mock.patch.object(viewer, "DB_PATH", db_path):
+            with self.assertRaisesRegex(RuntimeError, "boom"):
+                with viewer._shared_warm_conn():
+                    raise RuntimeError("boom")
+
+    def test_shared_warm_conn_open_failure_falls_back_to_none(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        db_path = Path(tmp.name) / "warm.db"
+        db_path.touch()
+        with (mock.patch.object(viewer, "DB_PATH", db_path),
+              mock.patch.object(viewer, "get_db",
+                                side_effect=sqlite3.Error("cannot open"))):
+            with viewer._shared_warm_conn() as conn:
+                self.assertIsNone(conn)
+
 
 class PlayVerifiedTests(unittest.TestCase):
     def setUp(self):

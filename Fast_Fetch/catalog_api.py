@@ -1799,9 +1799,21 @@ def _resolve_work(conn, *, work_id=None, work_key=None, slug=None, url=None):
     return None
 
 
+#: Detail payload cap (One Piece detail 504, 2026-11-17): a v2 work
+#: detail carries at most this many prints. A big work's answer used
+#: to ship every print twice — `prints` plus `print_groups` re-prints
+#: them with their links — 26.2 MB for One Piece. `release_rows`
+#: arrive best-first (quality_score DESC), so the kept prints are the
+#: best prints; `print_total` / `prints_truncated` say how many there
+#: really are. The route passes the cap; internal callers
+#: (`season_detail`, tests) leave it off and keep the whole answer.
+DETAIL_MAX_PRINTS = 1000
+
+
 @public_edge
 def work_detail(conn, *, work_id=None, work_key=None, slug=None, url=None,
-                include_adult=False, fields=None, include_provenance=False) -> dict:
+                include_adult=False, fields=None, include_provenance=False,
+                max_prints: int | None = None) -> dict:
     """The full nested catalog answer for one work.
 
     Shape: identity (imdb/tmdb/tvdb + aliases), seasons -> episodes
@@ -1828,10 +1840,25 @@ def work_detail(conn, *, work_id=None, work_key=None, slug=None, url=None,
     release_rows = conn.execute(
         "SELECT * FROM cat_releases WHERE work_id = ?"
         " ORDER BY quality_score DESC, official_print DESC, id ASC", (wid,)).fetchall()
+    print_total = len(release_rows)
+    prints_truncated = bool(max_prints is not None
+                            and len(release_rows) > max_prints)
+    if prints_truncated:
+        # Cap before the link fetch: `_ordered_links` reads every link
+        # of every release handed to it, so capping here is what bounds
+        # the work, not just the bytes.
+        release_rows = release_rows[:max_prints]
     release_ids = [row["id"] for row in release_rows]
     links_by_release = _ordered_links(conn, release_ids)
     prints = [_print_view(conn, row, links_by_release) for row in release_rows]
     print_index = {p["release_id"]: p for p in prints}
+    if prints_truncated:
+        link_total = conn.execute(
+            "SELECT COUNT(*) FROM cat_links WHERE release_id IN "
+            "(SELECT id FROM cat_releases WHERE work_id = ?)",
+            (wid,)).fetchone()[0]
+    else:
+        link_total = None
 
     episodes_by_season: dict[int, list[dict]] = {}
     covering_by_episode: dict[int, list[int]] = {}
@@ -1933,7 +1960,9 @@ def work_detail(conn, *, work_id=None, work_key=None, slug=None, url=None,
             "runtime_minutes": work.get("runtime_minutes"),
             "images": _images(work),
             "site_count": work.get("site_count"),
-            "print_count": len(prints),
+            # True total before the cap: a capped work still reports how
+            # many prints it really has.
+            "print_count": print_total,
             "episode_count": work.get("episode_count"),
             "season_count": len(seasons),
             "quality_max": work.get("max_resolution") or "unknown",
@@ -1958,10 +1987,14 @@ def work_detail(conn, *, work_id=None, work_key=None, slug=None, url=None,
             "download": bool(downloadable),
             "any": bool(streamable or downloadable),
             "state": "unavailable" if (dead_only or not (streamable or downloadable)) else "available",
-            "print_count": len(prints),
+            "print_count": print_total,
             "streamable_print_count": len(streamable),
             "downloadable_print_count": len(downloadable),
-            "link_total": sum(p["counts"]["links"] or 0 for p in prints),
+            # `link_total` is the true total (COUNT query on the capped
+            # path); `dead_link_total` counts dead links among the prints
+            # actually returned.
+            "link_total": (link_total if link_total is not None else
+                           sum(p["counts"]["links"] or 0 for p in prints)),
             "dead_link_total": sum(1 for p in prints for link in p["links"] if link["dead"]),
         },
         "entitlements": [_entitlement_view(row) for row in entitlements],
@@ -1984,6 +2017,9 @@ def work_detail(conn, *, work_id=None, work_key=None, slug=None, url=None,
                 and p["coverage"]["season_number"] is None)
         ],
     }
+    if max_prints is not None:
+        payload["print_total"] = print_total
+        payload["prints_truncated"] = prints_truncated
     if include_provenance:
         # Operator surface only (loopback port): which site, which page, which title
         # we scraped it from. Never reachable from a public response, because the

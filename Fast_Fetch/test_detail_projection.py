@@ -108,6 +108,9 @@ def _reference_post_detail(conn, post_id):
     p["option_groups"] = viewer._option_groups(releases, rel_list)
     p["season_artwork"] = viewer._season_artwork(conn, post_id)
     p["releases"] = rel_list
+    # The endpoint's cap keys: the fixture is small, so nothing is cut.
+    p["release_total"] = len(rel_list)
+    p["releases_truncated"] = False
     return p
 
 

@@ -1054,6 +1054,42 @@ class WorkDetailTests(CatalogApiTestCase):
         self.assertEqual(set(detail), {"ok", "meta", "work", "id"})
         self.assertEqual(detail["id"], self.work["Dune"]["id"])
 
+    def test_big_work_prints_are_capped_with_true_totals(self):
+        # One Piece detail 504, v2 side: a 26 MB work detail used to ship
+        # every print twice (prints + print_groups). With the cap the
+        # answer carries the best prints only, the counts stay true,
+        # and every episode's print references resolve inside the kept set.
+        self.add_post("site-big", "https://big.test/long-series/",
+                      clean_title="Long Series", year=2025,
+                      content_type="series",
+                      releases=[{"release_title": "Long Series S01E%04d 720p" % n,
+                                 "season": "1", "episode": str(n),
+                                 "quality": "720p",
+                                 "sources": [cdn("BIG-E%04d" % n)]}
+                                for n in range(1, 1201)])
+        self.project()
+        wid = self.work["Long Series"]["id"]
+        whole = catalog_api.work_detail(self.conn, work_id=wid)
+        self.assertTrue(whole["ok"])
+        self.assertNotIn("prints_truncated", whole)
+        total = len(whole["prints"])
+        self.assertGreater(total, catalog_api.DETAIL_MAX_PRINTS)
+        capped = catalog_api.work_detail(
+            self.conn, work_id=wid, max_prints=catalog_api.DETAIL_MAX_PRINTS)
+        self.assertTrue(capped["ok"])
+        self.assertEqual(len(capped["prints"]), catalog_api.DETAIL_MAX_PRINTS)
+        self.assertEqual(capped["print_total"], total)
+        self.assertTrue(capped["prints_truncated"])
+        self.assertEqual(capped["work"]["print_count"], total)
+        self.assertEqual(capped["availability"]["print_count"], total)
+        self.assertEqual(capped["availability"]["link_total"],
+                         whole["availability"]["link_total"])
+        kept = {p["release_id"] for p in capped["prints"]}
+        for season in capped["seasons"]:
+            for episode in season["episodes"]:
+                self.assertTrue(set(episode["print_ids"]) <= kept,
+                                "episode references a dropped print")
+
 
 # ── episode manifest ─────────────────────────────────────────────────────────
 

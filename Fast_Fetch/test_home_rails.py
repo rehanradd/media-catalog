@@ -877,7 +877,7 @@ class FetchReleasesTests(Fixture):
             "UPDATE download_sources SET status='expired', http_status=NULL,"
             " last_checked_at=NULL WHERE id = ?", (second[0],))
         self.conn.commit()
-        _releases, rel_list = viewer._fetch_releases_with_sources(
+        _releases, rel_list, _, _ = viewer._fetch_releases_with_sources(
             self.conn, [self.seed_id])
         self.assertEqual(len(rel_list), 2)
         got = [[redact.parse_token(s["stream_id"], viewer.signing_secret(),
@@ -885,6 +885,116 @@ class FetchReleasesTests(Fixture):
                 for s in r["sources"]] for r in rel_list]
         self.assertEqual(got, [[first[1], first[0]],
                                 [second[1], second[0]]])
+
+
+class DetailCapTests(Fixture):
+    """One Piece detail 504: a big title's detail carries at most
+    ``_DETAIL_MAX_RELEASES`` releases, each with at most
+    ``_DETAIL_MAX_SOURCES_PER_RELEASE`` sources, with the true totals
+    alongside — so the wire and the ladder work stay inside nginx's
+    15 s budget."""
+
+    def _big_post(self, post_id, *, n_releases, n_sources,
+                  title="Big Series"):
+        self.conn.execute(
+            "INSERT INTO posts (id, url, title, clean_title, year,"
+            " content_type, seasons, poster_url, backdrop_urls,"
+            " imdb_rating, genres, synopsis, cast_names, is_18_plus,"
+            " is_animated, imdb_id, tmdb_id, industry, country, language,"
+            " slug, source_site, canonical_key)"
+            " VALUES (?, ?, ?, ?, 2025, 'series', '1',"
+            " 'https://cdn/poster.jpg', NULL, '8.9', '[\"Action\"]',"
+            " 'Pirates.', '[\"Luffy\"]', 0, 1, 'tt0388629', 12345,"
+            " 'Japanese', 'Japan', 'Japanese', ?, 'somecdn.site', ?)",
+            (post_id, "https://somecdn.site/%d/" % post_id,
+             "%s (2025)" % title, title,
+             title.lower().replace(" ", "-"),
+             fast_fetch.generate_canonical_key(title, 2025)))
+        quals = ["720p", "1080p", "480p", "2160p"]
+        rel_rows = []
+        src_rows = []
+        for i in range(n_releases):
+            rid = 900000 + i
+            rel_rows.append((rid, post_id,
+                             "%s %s part%d" % (title, quals[i % 4], i),
+                             "", "",
+                             quals[i % 4], "x264", "350MB",
+                             '["Japanese"]', "2026-11-01 00:00:00"))
+            for j in range(n_sources):
+                src_rows.append((910000 + i * 12 + j, rid,
+                                 "pixeldrain", "direct", 0, "active",
+                                 1, "video/mp4", 200, 350000000, None,
+                                 "2026-11-17 20:00:00"))
+        self.conn.executemany(
+            "INSERT INTO releases (id, post_id, release_title, season,"
+            " episode, quality, codec, size, languages, created_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?)", rel_rows)
+        self.conn.executemany(
+            "INSERT INTO download_sources (id, release_id, service,"
+            " playback_type, is_temporary, status, is_resumable, mime_type,"
+            " http_status, file_size_bytes, expires_at, last_checked_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", src_rows)
+        self.conn.commit()
+        return post_id
+
+    def test_big_title_detail_is_capped_with_true_total(self):
+        big_id = self._big_post(900001, n_releases=1200, n_sources=2)
+        detail = viewer.api_v1_get_post_detail(big_id)
+        self.assertEqual(len(detail["releases"]),
+                         viewer._DETAIL_MAX_RELEASES)
+        self.assertEqual(detail["release_total"], 1200)
+        self.assertTrue(detail["releases_truncated"])
+        # The ladder only ever sees the kept releases.
+        tiers = sum(len(g.get("tiers") or [])
+                    for g in detail["option_groups"])
+        self.assertLessEqual(tiers, viewer._DETAIL_MAX_RELEASES)
+
+    def test_small_title_is_not_truncated(self):
+        detail = viewer.api_v1_get_post_detail(self.seed_id)
+        self.assertEqual(len(detail["releases"]), 2)
+        self.assertEqual(detail["release_total"], 2)
+        self.assertFalse(detail["releases_truncated"])
+
+    def test_sources_per_release_are_capped(self):
+        one_id = self._big_post(900002, n_releases=1, n_sources=12,
+                                title="Many Mirrors")
+        detail = viewer.api_v1_get_post_detail(one_id)
+        self.assertEqual(len(detail["releases"][0]["sources"]),
+                         viewer._DETAIL_MAX_SOURCES_PER_RELEASE)
+
+    def test_work_detail_counts_stay_true_and_guide_stays_full(self):
+        big_id = self._big_post(900003, n_releases=1200, n_sources=1,
+                                title="Long Series")
+        # Episodes 1..998 cycle over the first 1,199 releases; episode
+        # 999 exists ONLY on the last release, past the cap — so a guide
+        # built from the capped list would stop at 998. (Episodes above
+        # 999 are not episodes at all: works.parse_episode caps at 999,
+        # pre-existing, so the guide tops out there by design.)
+        with viewer.get_db() as conn:
+            ids = [r[0] for r in conn.execute(
+                "SELECT id FROM releases WHERE post_id = ? ORDER BY id",
+                (big_id,)).fetchall()]
+            for n, rid in enumerate(ids[:-1], start=1):
+                conn.execute(
+                    "UPDATE releases SET season = '1', episode = ?"
+                    " WHERE id = ?", (str((n - 1) % 998 + 1), rid))
+            conn.execute(
+                "UPDATE releases SET season = '1', episode = '999'"
+                " WHERE id = ?", (ids[-1],))
+            conn.commit()
+        work = viewer.api_v1_get_work_detail(big_id)
+        self.assertEqual(len(work["releases"]),
+                         viewer._DETAIL_MAX_RELEASES)
+        self.assertEqual(work["release_count"], 1200)
+        self.assertEqual(work["source_count"], 1200)
+        self.assertTrue(work["releases_truncated"])
+        # The episode guide is built from the FULL release set, not the
+        # capped list: every episode stays listed.
+        guide = work["episode_guide"]
+        self.assertEqual(len(guide), 1)
+        self.assertEqual(len(guide[0]["episodes"]), 999)
+        self.assertEqual(work["latest_episode_added_at"],
+                         "2026-11-01 00:00:00")
 
 
 class RailDedupeTests(Fixture):

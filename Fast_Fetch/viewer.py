@@ -5351,8 +5351,12 @@ def api_v1_get_work_detail(work_id, full: bool = False,
                 p_dict["runtime_minutes"] = int(work["runtime_minutes"])
         except sqlite3.Error:
             pass
-        release_rows, rel_list = _fetch_releases_with_sources(
-            conn, member_ids, full=full, base_url=base_url)
+        cap = {} if full else {
+            "max_releases": _DETAIL_MAX_RELEASES,
+            "max_sources_per_release": _DETAIL_MAX_SOURCES_PER_RELEASE}
+        release_rows, rel_list, total_releases, total_sources = (
+            _fetch_releases_with_sources(
+                conn, member_ids, full=full, base_url=base_url, **cap))
         if not full:
             # One format for season/episode in this response: S01/E01.
             # The option-group scopes are normalised the same way, by
@@ -5375,9 +5379,12 @@ def api_v1_get_work_detail(work_id, full: bool = False,
         p_dict["id"] = int(group["work_id"])
         p_dict["post_ids"] = member_ids
         p_dict["post_count"] = len(member_ids)
-        p_dict["release_count"] = len(release_rows)
-        p_dict["source_count"] = sum(len(r.get("sources") or [])
-                                     for r in rel_list)
+        # The counts are the true totals before the cap: a capped work
+        # still reports how many copies it really has.
+        p_dict["release_count"] = total_releases
+        p_dict["source_count"] = total_sources
+        if not full:
+            p_dict["releases_truncated"] = len(rel_list) < total_releases
         buckets: set = set()
         for row in member_rows:
             buckets |= works.language_buckets(row["language"])
@@ -5685,8 +5692,29 @@ def _source_ladder_key(s):
             _SOURCE_SERVICE_RANK.get(s["service"], 99))
 
 
+#: Detail payload cap (One Piece detail 504, 2026-11-17): a detail answer
+#: carries at most this many releases, each with at most
+#: `_DETAIL_MAX_SOURCES_PER_RELEASE` sources (ladder-best first). A big
+#: title's detail used to ship every copy — 7.2 MB / 13–34 s for One Piece
+#: post 61197, past nginx's 15 s proxy read timeout — because the wire
+#: is mostly signed link handles across thousands of releases, and the
+#: ladder verifies every one of them. The cap binds the wire AND the
+#: work (the ladder and the preresolve only ever see the kept releases),
+#: so a big title answers in ~1.5 s with a ~1.3 MB body on the bench
+#: fixture. The app renders the releases it gets (its episode tree and
+#: file lists are built from them), so a capped series shows its first
+#: releases in loader order and `releases_truncated` says so; the
+#: counts (`release_count` / `source_count` / `release_total`) stay the
+#: true totals, and the work's `episode_guide` is still built from the
+#: full release set. The operator path (`full=True`) is never capped.
+_DETAIL_MAX_RELEASES = 1000
+_DETAIL_MAX_SOURCES_PER_RELEASE = 8
+
+
 def _fetch_releases_with_sources(conn, post_ids, full: bool = False,
-                                 base_url: str = ""):
+                                 base_url: str = "",
+                                 max_releases: int | None = None,
+                                 max_sources_per_release: int | None = None):
     """The releases of one or more posts, with their sources, in the
     post detail's own shape. Shared by `/api/v1/posts/<id>` (one post)
     and `/api/v1/works/<id>` (every member post of a work): the source
@@ -5694,13 +5722,24 @@ def _fetch_releases_with_sources(conn, post_ids, full: bool = False,
     copy, then an unprobed claim, then expired, then dead last — and
     the projection is the same (`release` view + `link_view`), so a
     work's print is indistinguishable from its post's print. Returns
-    (release_rows, rel_list), ordered by post id, then release id. The
-    sources come in one query for all releases (the old code asked
-    once per release — 109 queries for a 109-release work) and are
-    grouped and ladder-sorted in Python."""
+    (release_rows, rel_list, total_releases, total_sources), ordered by
+    post id, then release id. The sources come in one query for all
+    releases (the old code asked once per release — 109 queries for a
+    109-release work) and are grouped and ladder-sorted in Python.
+
+    When `max_releases` is set, `rel_list` holds only the first that
+    many releases in loader order (each with at most
+    `max_sources_per_release` sources, ladder-best first) — but
+    `release_rows` stays the FULL row list and the totals are the full
+    counts before capping, because the work detail builds its
+    `episode_guide` and its counts from the whole set. Every ladder
+    consumer pairs rows with `rel_list` via `zip`, which takes the
+    matching prefix, so the capped list and the full rows never
+    disagree about which release a dict belongs to.
+    """
     ids = [int(pid) for pid in post_ids]
     if not ids:
-        return [], []
+        return [], [], 0, 0
     if full:
         # The operator answer is the raw ledger row: keep `*`.
         releases = conn.execute(
@@ -5726,10 +5765,15 @@ def _fetch_releases_with_sources(conn, post_ids, full: bool = False,
                      + ") ORDER BY release_id ASC, id ASC")
         for s in conn.execute(query, rel_ids).fetchall():
             sources_by_rel[int(s["release_id"])].append(s)
+    total_releases = len(releases)
+    total_sources = sum(len(v) for v in sources_by_rel.values())
+    capped = releases if max_releases is None else releases[:max_releases]
     rel_list = []
-    for rel in releases:
+    for rel in capped:
         sources = sorted(sources_by_rel[int(rel["id"])],
                          key=_source_ladder_key)
+        if max_sources_per_release is not None:
+            sources = sources[:max_sources_per_release]
         # The ordering above is our own preference between servers; it is a
         # query, not a field. Nothing that names a hoster leaves this box.
         # The first key is audit critical 10's evidence ladder — a probe-
@@ -5745,7 +5789,7 @@ def _fetch_releases_with_sources(conn, post_ids, full: bool = False,
             r_dict["label"] = redact.public_label(rel)
             r_dict["sources"] = [link_view(s, base_url) for s in sources]
         rel_list.append(r_dict)
-    return releases, rel_list
+    return releases, rel_list, total_releases, total_sources
 
 
 def api_v1_get_post_detail(post_id: int, full: bool = False,
@@ -5798,8 +5842,12 @@ def api_v1_get_post_detail(post_id: int, full: bool = False,
         except sqlite3.Error:
             pass
 
-        releases, rel_list = _fetch_releases_with_sources(
-            conn, [post_id], full=full, base_url=base_url)
+        cap = {} if full else {
+            "max_releases": _DETAIL_MAX_RELEASES,
+            "max_sources_per_release": _DETAIL_MAX_SOURCES_PER_RELEASE}
+        releases, rel_list, total_releases, _total_sources = (
+            _fetch_releases_with_sources(
+                conn, [post_id], full=full, base_url=base_url, **cap))
         if not full:
             p_dict["option_groups"] = (
                 _option_groups(releases, rel_list, vip=vip,
@@ -5808,6 +5856,12 @@ def api_v1_get_post_detail(post_id: int, full: bool = False,
                 if ladder else [])
         p_dict["season_artwork"] = _season_artwork(conn, post_id)
         p_dict["releases"] = rel_list
+        if not full:
+            # The total before the cap, and whether the list was cut:
+            # the app renders the releases it gets, so a capped series
+            # shows its first releases in loader order.
+            p_dict["release_total"] = total_releases
+            p_dict["releases_truncated"] = len(rel_list) < total_releases
         if warm and not full:
             # The detail screen opens long before Play is pressed: warming
             # the auto tier now means the press answers from the resolved
@@ -6232,13 +6286,20 @@ def _plain_stream_error(error: str) -> dict:
                 error, "That copy didn't play. Try another quality.")}
 
 
-def _preresolve_is_warm(source_id: int, conn=None) -> bool:
+def _preresolve_is_warm(source_id: int, conn=None) -> bool | None:
     """True when the resolved cache already holds a servable answer.
 
     ``conn`` is an optional shared connection: the detail preresolve pass
     checks thousands of tiers, and opening one connection per tier cost
     ~7 s of connect/pragma/close churn on a 9,480-release title (detail
     504). When no connection is passed the old per-call open is kept.
+
+    Returns None when the lookup itself failed (a DB error): the caller
+    must treat that as "unknown" and skip spawning for the tier this
+    time, never as "cold" — a cache fault that reads as cold spawns a
+    warm thread per tier and turns one fault into thousands (the
+    2026-11-17 thread storm: 12,617 threads from ~5 detail opens).
+    Any other failure keeps the old "not warm" answer.
     """
     try:
         import resolved_cache
@@ -6247,6 +6308,8 @@ def _preresolve_is_warm(source_id: int, conn=None) -> bool:
                 return _preresolve_is_warm(int(source_id), conn=own)
         return resolved_cache.lookup_cache(conn, int(source_id),
                                            want="watch") is not None
+    except sqlite3.Error:
+        return None
     except Exception:      # noqa: BLE001 — a cache fault is "not warm", never an error
         return False
 
@@ -6259,15 +6322,27 @@ def _shared_warm_conn():
     opening it would create an empty file, and the per-tier open inside
     `_preresolve_is_warm` is the safe fallback there. Any failure to open
     also falls back to None rather than failing the detail request.
+
+    The open is acquired up front and the body runs outside the
+    acquisition's try: a body exception used to be caught by the same
+    ``except`` and re-yielded as None, which surfaced as the misleading
+    "generator didn't stop after throw()" instead of the real error.
+    A body exception now propagates unchanged; only the open can fall
+    back to None.
     """
     if not os.path.exists(DB_PATH):
         yield None
         return
     try:
-        with get_db() as conn:
-            yield conn
+        db_ctx = get_db()
+        conn = db_ctx.__enter__()
     except Exception:      # noqa: BLE001 — no shared connection, fall back
         yield None
+        return
+    try:
+        yield conn
+    finally:
+        db_ctx.__exit__(*sys.exc_info())
 
 
 # Resolve coalescing (Appetize FAILED 1, 2026-11-12): one in-flight live
@@ -6372,12 +6447,64 @@ def _resolve_and_bank(source_id: int) -> None:
         pass
 
 
+# Preresolve thread budget (2026-11-17 thread storm: `_preresolve_for_detail`
+# spawned one daemon thread per cold tier, no cap, no dedup — One Piece
+# carries 2,372 tiers, so ~5 detail opens started 12,617 threads and the
+# process died with "can't start new thread"). Three bounds, all fail-closed
+# (a skipped warm only means the Play press pays the live resolve, exactly
+# as it would have without one):
+# * `_PRERESOLVE_MAX_TIERS` — cold tiers warmed per detail request, best-first.
+# * `_PRERESOLVE_MAX_THREADS` — warm threads in flight process-wide; a
+#   spawn that finds the semaphore full is skipped, never queued, so the
+#   request thread is never blocked waiting for a warm.
+# * `_PRERESOLVE_IN_FLIGHT_TTL` — seconds an in-flight entry lives: a
+#   second detail open for the same source joins the running warm instead
+#   of starting a duplicate, and a dead thread's entry self-heals.
+_PRERESOLVE_MAX_TIERS = 12
+_PRERESOLVE_MAX_THREADS = 32
+_PRERESOLVE_IN_FLIGHT_TTL = 120.0
+_PRERESOLVE_IN_FLIGHT: dict[int, float] = {}
+_PRERESOLVE_IN_FLIGHT_LOCK = threading.Lock()
+_PRERESOLVE_SEMAPHORE = threading.BoundedSemaphore(_PRERESOLVE_MAX_THREADS)
+
+
 def _start_preresolve(source_id: int):
-    """Warm one link in a daemon thread; returns the thread for tests."""
-    import threading
-    thread = threading.Thread(target=_resolve_and_bank, args=(int(source_id),),
-                              daemon=True, name="preresolve")
-    thread.start()
+    """Warm one link in a daemon thread; returns the thread for tests.
+
+    Returns None, without starting a thread, when the source is already
+    warming (a duplicate spawn inside the TTL) or the process-wide warm
+    budget is full — and when the thread itself cannot start, so the
+    "can't start new thread" condition degrades to a skipped warm
+    instead of an unhandled exception on the request path.
+    """
+    source_id = int(source_id)
+    now = time.monotonic()
+    with _PRERESOLVE_IN_FLIGHT_LOCK:
+        started_at = _PRERESOLVE_IN_FLIGHT.get(source_id)
+        if started_at is not None and now - started_at < _PRERESOLVE_IN_FLIGHT_TTL:
+            return None
+        if not _PRERESOLVE_SEMAPHORE.acquire(blocking=False):
+            return None
+        _PRERESOLVE_IN_FLIGHT[source_id] = now
+
+    def _run():
+        try:
+            _resolve_and_bank(source_id)
+        finally:
+            _PRERESOLVE_SEMAPHORE.release()
+            with _PRERESOLVE_IN_FLIGHT_LOCK:
+                if _PRERESOLVE_IN_FLIGHT.get(source_id) == now:
+                    del _PRERESOLVE_IN_FLIGHT[source_id]
+
+    try:
+        thread = threading.Thread(target=_run, daemon=True, name="preresolve")
+        thread.start()
+    except Exception:      # noqa: BLE001 — no thread budget left: skip the warm
+        _PRERESOLVE_SEMAPHORE.release()
+        with _PRERESOLVE_IN_FLIGHT_LOCK:
+            if _PRERESOLVE_IN_FLIGHT.get(source_id) == now:
+                del _PRERESOLVE_IN_FLIGHT[source_id]
+        return None
     return thread
 
 
@@ -6389,51 +6516,93 @@ def _split_audio_param(value) -> tuple:
 
 
 def _preresolve_for_detail(p_dict: dict) -> dict:
-    """Warm every band's top candidate in parallel; report warm/warming.
+    """Warm the best cold bands in parallel; report warm/warming.
 
     The detail screen opens long before the user presses Play: resolving
-    the top link of EVERY band now means the press answers from the
+    the top link of a band now means the press answers from the
     resolved cache (~0.02 s measured) instead of paying a 5–11 s live
     resolve while the player spins (audit #1). Warming only the auto
     tier left every other quality cold — the quality card's first press
-    on any other band paid the full cold resolve — so every band's winner
-    warms, each in its own daemon thread, kicked off the moment the
+    on any other band paid the full cold resolve — so the best cold
+    bands warm, each in its own daemon thread, kicked off the moment the
     detail request arrives (research fold-in §1: this warm IS the async
     re-verification of the title's bands). The `band` key stays for the
-    auto tier, for callers that read it; `bands` names every band warmed.
-    The warm checks share one connection (see `_shared_warm_conn`) so a
+    auto tier, for callers that read it; `bands` names every band seen.
+
+    The warm is BOUNDED (2026-11-17 thread storm: one thread per cold
+    tier, 2,372 tiers on One Piece, 12,617 threads from ~5 detail opens
+    and "can't start new thread"): at most `_PRERESOLVE_MAX_TIERS`
+    cold tiers per request, best-first (the auto tier, then free tiers,
+    then best band), and `_start_preresolve` dedups in-flight warms
+    and refuses when the process-wide warm budget is full. The tiers
+    past the cap stay cold — listed under `cold` — and the press
+    re-verifies them live, exactly as it would have without a warm.
+    A tier whose warm lookup itself failed is listed under `skipped`
+    and never spawns: a cache fault is unknown, not cold. The warm
+    checks share one connection (see `_shared_warm_conn`) so a
     2,372-tier title does not pay a connect per tier.
     """
     bands: list = []
     warmed: list = []
     warming: list = []
-    with _shared_warm_conn() as shared:
-        for group in p_dict.get("option_groups") or []:
-            for tier in (group or {}).get("tiers") or []:
-                link = (tier or {}).get("link") or {}
-                stream_id = link.get("stream_id")
-                if not stream_id:
-                    continue
-                try:
-                    source_id = redact.parse_token(stream_id, signing_secret(),
-                                                   signed_only=True)
-                except Exception:      # noqa: BLE001 — an unparseable handle is unavailable
-                    continue
-                if not source_id:
-                    continue
-                band = (tier or {}).get("band")
-                bands.append(band)
-                if _preresolve_is_warm(int(source_id), conn=shared):
-                    warmed.append(band)
-                else:
-                    _start_preresolve(int(source_id))
-                    warming.append(band)
+    skipped: list = []
+    cold: list = []
+    candidates: list = []
+    for group in p_dict.get("option_groups") or []:
+        auto_band = ((group or {}).get("auto") or {}).get("band")
+        for tier in (group or {}).get("tiers") or []:
+            link = (tier or {}).get("link") or {}
+            stream_id = link.get("stream_id")
+            if not stream_id:
+                continue
+            try:
+                source_id = redact.parse_token(stream_id, signing_secret(),
+                                               signed_only=True)
+            except Exception:      # noqa: BLE001 — an unparseable handle is unavailable
+                continue
+            if not source_id:
+                continue
+            band = (tier or {}).get("band")
+            bands.append(band)
+            rank = (0 if band == auto_band else 1,
+                    bool((tier or {}).get("gated")),
+                    tiers.band_rank(band))
+            candidates.append((rank, int(source_id), band))
     if not bands:
         return {"status": "unavailable"}
+    seen: set = set()
+    ranked: list = []
+    for rank, source_id, band in sorted(candidates, key=lambda c: c[0]):
+        if source_id in seen:
+            continue
+        seen.add(source_id)
+        ranked.append((source_id, band))
+    with _shared_warm_conn() as shared:
+        for source_id, band in ranked:
+            warm = _preresolve_is_warm(source_id, conn=shared)
+            if warm is None:
+                # The lookup itself failed: unknown, not cold — do not
+                # spawn a warm for a fault we cannot measure.
+                skipped.append(band)
+            elif warm:
+                warmed.append(band)
+            elif len(warming) < _PRERESOLVE_MAX_TIERS:
+                # The attempt is what counts toward the per-request cap:
+                # `_start_preresolve` may return None because the source
+                # is already warming elsewhere (that band IS warming) or
+                # because the process-wide budget is full (the press
+                # re-verifies it live). Either way no new thread is owed
+                # here, and the cap still bounds threads started by this
+                # request to _PRERESOLVE_MAX_TIERS.
+                _start_preresolve(source_id)
+                warming.append(band)
+            else:
+                cold.append(band)
     auto = ((p_dict.get("option_groups") or [{}])[0].get("auto") or {})
     return {"status": "warm" if not warming else "warming",
             "band": auto.get("band"), "bands": bands,
-            "warmed": warmed, "warming": warming}
+            "warmed": warmed, "warming": warming,
+            "skipped": skipped, "cold": cold}
 
 
 def api_v1_rules() -> dict:

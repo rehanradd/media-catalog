@@ -7,7 +7,7 @@
 
 ## ✅ Open items — index (q3, 2026-10-30; pointers only)
 
-1. **This file is a pointer, not a history** 107 session files (103 dated + 3 undated) cover
+1. **This file is a pointer, not a history** 108 session files (105 dated + 3 undated) cover
 
    every one of them verbatim: [`checkpoints/README.md`](checkpoints/README.md). Nothing was
    deleted, reworded, or summarized. The count is `ls Fast_Fetch/checkpoints/*.md` minus `README.md`,
@@ -72,12 +72,12 @@
 
 Session blocks moved verbatim to [`Fast_Fetch/checkpoints/`](checkpoints/README.md); nothing was deleted or reworded.
 The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete index.
+- [Session 2026-11-17 — One Piece detail 504 + preresolve thread storm `[DETAIL-THREADCAP]`](checkpoints/20261117-detail-threadcap.md)
 - [Session 2026-11-17 — HF full-gate backup push `[HF-BACKUP-FULLGATE]`](checkpoints/20261117-hf-backup-fullgate.md)
 - [Session 2026-11-17 — search speed: residual search cost + the `_ensure_schema` first-request 504](checkpoints/20261117-search-speed.md)
 - [Session 2026-11-16 — pre-peak fill (play-fast §2 (j))](checkpoints/20261116-pre-peak-fill.md)
 - [Session 2026-11-16 — playback telemetry beacon](checkpoints/20261116-playback-telemetry-beacon.md)
 - [Session 2026-11-12 — self-check `[LIVE-TV-503]`](checkpoints/20261112-selfcheck-live-tv-503-logos.md)
-- [Session 2026-11-08 — Muse [MUSE-SESSION107-DATA-TRUTH]: Phase D data-truth](checkpoints/20261108-muse-session107-data-truth.md)
 - [Session 2026-11-06 — crown `[CROWN-NIGHT-CHAIN]`: five trunk commits, the live-tree gap, what was rejected](checkpoints/20261106-crown-night-chain-five-trunk-commits-one-live-tree-gap.md)
 - [Session 2026-11-06 crown `[Q75-LAND]`: 3 producer chars, red-first 18 tests, the `_sN` merge loss filed](checkpoints/20261106-crown-q75-three-producer-fixes-landed-and-the-s-n-key-loss-filed.md)
 - Session 2026-11-02 — q9 supervisor lane `[Q9-PLAY-STALE]`: no stale 302 — the JIT honours all five `tiers.UNPLAYABLE_STATES` words
