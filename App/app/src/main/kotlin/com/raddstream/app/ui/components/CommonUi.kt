@@ -604,8 +604,14 @@ fun DetailSkeleton(modifier: Modifier = Modifier) {
                 shape = RoundedCornerShape(8.dp),
             )
         }
-        // Quality rungs: "Quality" + subtitle + three rung rows.
-        QualityRungsSkeleton()
+        // Quality rungs: "Quality" + subtitle + three rung rows. The
+        // section carries its own tag at the call site — the helper's
+        // inner tag reads after "similar" in a raw source scan (the
+        // helper is defined after this function in the file), so the
+        // call-site tag is what [SkeletonParityTest] pins the order on.
+        Column(Modifier.testTag("detailSkeletonQuality")) {
+            QualityRungsSkeleton()
+        }
         // Cast: "Cast" title + one row of 48dp chips.
         Column(
             Modifier.testTag("detailSkeletonCast"),

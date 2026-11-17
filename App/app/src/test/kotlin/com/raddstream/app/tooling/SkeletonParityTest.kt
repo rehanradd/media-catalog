@@ -82,7 +82,11 @@ class SkeletonParityTest {
         // synopsis, utility row, audio line, quality, cast, print
         // summary, similar), minus the lists the skeleton cannot know at
         // load time — episodes/files need movie-vs-series, which only the
-        // load itself answers.
+        // load itself answers. The quality section is the wrapped
+        // QualityRungsSkeleton() call — its tag sits at the call site,
+        // not inside the helper (the helper is defined after
+        // DetailSkeleton in the file, so its inner tag would read after
+        // "similar" in a raw scan).
         val commonUi = mainSource("com/raddstream/app/ui/components/CommonUi.kt")
         val skeleton = bodyOf(commonUi, "fun DetailSkeleton(")
         val order = listOf(
@@ -91,7 +95,7 @@ class SkeletonParityTest {
             "detailSkeletonSynopsis",
             "detailSkeletonUtilityRow",
             "detailSkeletonAudioLine",
-            "detailSkeletonRungs",
+            "detailSkeletonQuality",
             "detailSkeletonCast",
             "detailSkeletonPrintSummary",
             "detailSkeletonSimilar",

@@ -6,6 +6,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertHeightIsEqualTo
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -284,6 +285,13 @@ class DetailRedesignTest {
             ),
             ladder = LadderForScope.EMPTY,
         )
+        // The expander is the last item of the file list, below three
+        // file cards — it is not composed until the list scrolls near
+        // it. Swipe until it appears, then bring it fully into view.
+        for (i in 0 until 5) {
+            if (compose.onAllNodesWithText("Show all 8,316 files").fetchSemanticsNodes().isNotEmpty()) break
+            compose.onRoot().performTouchInput { swipeUp() }
+        }
         compose.onNodeWithText("Show all 8,316 files")
             .performScrollTo().assertIsDisplayed()
     }
@@ -295,6 +303,14 @@ class DetailRedesignTest {
         // the page does not end in a bare gap that reads as "no similar
         // titles".
         content(similarLoading = true)
+        // The skeleton is the last item in a LazyColumn, so it is not
+        // even composed until the list scrolls near it — a scroll-to on
+        // a node that does not exist yet cannot find it. Swipe until it
+        // appears, then bring it fully into view.
+        for (i in 0 until 5) {
+            if (compose.onAllNodesWithTag("posterRailSkeleton").fetchSemanticsNodes().isNotEmpty()) break
+            compose.onRoot().performTouchInput { swipeUp() }
+        }
         compose.onNodeWithTag("posterRailSkeleton").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("More Like This").assertIsDisplayed()
     }
