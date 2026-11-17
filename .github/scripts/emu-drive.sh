@@ -49,6 +49,15 @@ mkdir -p "$OUT"
 # device (debug builds carry the ".debug" suffix — see below).
 APP_PKG="com.raddstream.app"
 MAIN_ACTIVITY="com.raddstream.app/.MainActivity"
+# On-device scratch paths. Run 44030951147 proved /sdcard is NOT
+# writable by shell on this AVD: `screenrecord /sdcard/radd-demo.mp4`
+# died with "Permission denied", and every `uiautomator dump
+# /sdcard/ui.xml` in tap_text silently failed the same way — the
+# disclaimer WAS on screen (01-disclaimer.png shows the "I understand"
+# button) yet tap_text never saw it in 6 tries. /data/local/tmp is
+# world-writable on the emulator and has no FUSE/sdcard quirks.
+UI_DUMP="/data/local/tmp/ui.xml"
+VIDEO_PATH="/data/local/tmp/radd-demo.mp4"
 # Set by screenshot(): name + md5 of the previous frame, for the
 # byte-identical frozen-screen check.
 PREV_SHOT=""
@@ -58,8 +67,8 @@ PREV_MD5=""
 tap_text() {
   local want="$1" tries=0
   while [ "$tries" -lt 6 ]; do
-    adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
-    adb pull -q /sdcard/ui.xml /tmp/ui.xml 2>/dev/null || true
+    adb shell uiautomator dump "$UI_DUMP" >/dev/null 2>&1
+    adb pull -q "$UI_DUMP" /tmp/ui.xml 2>/dev/null || true
     XY=$(python3 - "$want" <<'PY'
 import sys, xml.etree.ElementTree as ET
 want = sys.argv[1]
@@ -82,10 +91,19 @@ PY
       adb shell input tap $XY
       return 0
     fi
+    # Diagnostics, not silence: if the dump is missing/empty the next
+    # failure is diagnosable from the log instead of a bare WARN.
+    if [ -f /tmp/ui.xml ]; then
+      echo "tap_text '$want' try $((tries + 1))/6: not found (ui.xml $(wc -c < /tmp/ui.xml) bytes, $(grep -o '<node' /tmp/ui.xml | wc -l) nodes)" >&2
+    else
+      echo "tap_text '$want' try $((tries + 1))/6: not found (no ui.xml pulled — dump to $UI_DUMP failed)" >&2
+    fi
     tries=$((tries + 1))
     sleep 3
   done
   echo "WARN: text '$want' not found after retries" >&2
+  # Keep the last dump as run evidence (uploaded with emu-shots/).
+  if [ -f /tmp/ui.xml ]; then cp /tmp/ui.xml "$OUT/ui-dump-$(echo "$want" | tr ' ' '_').xml" 2>/dev/null || true; fi
   return 1
 }
 
@@ -107,8 +125,8 @@ is_app_focused() {
 
 # True if an "isn't responding" / "not responding" dialog is on screen.
 anr_present() {
-  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 || return 1
-  adb pull -q /sdcard/ui.xml /tmp/ui.xml 2>/dev/null || return 1
+  adb shell uiautomator dump "$UI_DUMP" >/dev/null 2>&1 || return 1
+  adb pull -q "$UI_DUMP" /tmp/ui.xml 2>/dev/null || return 1
   grep -qi "isn't responding\|not responding" /tmp/ui.xml
 }
 
@@ -226,7 +244,7 @@ fi
 echo "Installed package: $APP_PKG"
 echo "Launcher activity: $MAIN_ACTIVITY"
 # Start video capture in the background (killed after the flow).
-adb shell screenrecord --time-limit "$SECONDS" /sdcard/radd-demo.mp4 &
+adb shell screenrecord --time-limit "$SECONDS" "$VIDEO_PATH" &
 REC_PID=$!
 adb shell am start -n "$MAIN_ACTIVITY"
 # The app must actually reach the foreground — on the software emulator
@@ -262,5 +280,5 @@ screenshot "06-home-final.png"
 sleep 2
 kill $REC_PID 2>/dev/null || true
 sleep 2
-adb pull -q /sdcard/radd-demo.mp4 "$OUT/radd-demo.mp4" 2>/dev/null || echo "no video pulled"
+adb pull -q "$VIDEO_PATH" "$OUT/radd-demo.mp4" 2>/dev/null || echo "no video pulled"
 ls -la "$OUT"
