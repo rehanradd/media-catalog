@@ -1,0 +1,158 @@
+# Emulator screenshots — on-demand, free (public repo)
+# PREPARED 2026-11-17 by the emulator hunt. NOT yet committed to the repo:
+# add as .github/workflows/emulator-screenshots.yml on a branch, let Android CI
+# pass, merge to main. Then run it from Actions > Emulator screenshots > Run workflow.
+#
+# What it does: builds the debug APK, boots a free hardware-accelerated
+# emulator (KVM on the GitHub-hosted Ubuntu runner — free and unlimited for
+# public repos), installs the APK, taps through Disclaimer -> Welcome,
+# screenshots the Home screen (top + scrolled), records a short video, and
+# uploads everything as run artifacts (7-day retention).
+#
+# Cost: $0. No card, no signup, no third party. Runs on workflow_dispatch only,
+# so it never fires on pushes.
+
+name: Emulator screenshots
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_level:
+        description: "Android API level for the emulator"
+        required: false
+        default: "34"
+      screenrecord_seconds:
+        description: "Video length in seconds (max ~150)"
+        required: false
+        default: "60"
+
+permissions:
+  contents: read
+
+jobs:
+  screenshots:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17 (temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Restore Gradle caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-java17-${{ hashFiles('App/gradle/wrapper/gradle-wrapper.properties', 'App/gradle/libs.versions.toml', 'App/**/*.gradle.kts', 'App/**/*.gradle', 'App/settings.gradle.kts') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-java17-
+            gradle-${{ runner.os }}-
+
+      - name: Install Android SDK (platform-tools, android-35, build-tools 35.0.0)
+        uses: android-actions/setup-android@v2
+        with:
+          packages: "platform-tools platforms;android-35 build-tools;35.0.0"
+
+      - name: Build debug APK
+        working-directory: App
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug --no-daemon --stacktrace --console=plain
+
+      - name: Boot emulator, drive app, capture screenshots + video
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ inputs.api_level }}
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7
+          cores: 2
+          emulator-boot-timeout: 600
+          disable-animations: true
+          script: |
+            set -e
+            APK="App/app/build/outputs/apk/debug/app-debug.apk"
+            OUT="$GITHUB_WORKSPACE/emu-shots"
+            mkdir -p "$OUT"
+            adb install -r "$APK"
+            # Start video capture in the background (killed after the flow).
+            adb shell screenrecord --time-limit ${{ inputs.screenrecord_seconds }} /sdcard/radd-demo.mp4 &
+            REC_PID=$!
+            adb shell am start -n com.raddstream.app/.MainActivity
+            sleep 12
+            adb exec-out screencap -p > "$OUT/01-disclaimer.png"
+
+            # Tap a UI node by its exact visible text (uiautomator dump -> centre tap).
+            tap_text() {
+              local want="$1" tries=0
+              while [ "$tries" -lt 6 ]; do
+                adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
+                adb pull -q /sdcard/ui.xml /tmp/ui.xml 2>/dev/null || true
+                XY=$(python3 - "$want" <<'PY'
+            import sys, xml.etree.ElementTree as ET
+            want = sys.argv[1]
+            try:
+                root = ET.parse('/tmp/ui.xml').getroot()
+            except Exception:
+                sys.exit(0)
+            for n in root.iter('node'):
+                if (n.get('text') or '') == want or (n.get('content-desc') or '') == want:
+                    b = n.get('bounds', '')
+                    nums = b.replace('[', ' ').replace(']', ' ').replace(',', ' ').split()
+                    if len(nums) == 4:
+                        x = (int(nums[0]) + int(nums[2])) // 2
+                        y = (int(nums[1]) + int(nums[3])) // 2
+                        print(f"{x} {y}")
+                        break
+            PY
+            )
+                if [ -n "$XY" ]; then
+                  adb shell input tap $XY
+                  return 0
+                fi
+                tries=$((tries + 1))
+                sleep 3
+              done
+              echo "WARN: text '$want' not found after retries" >&2
+              return 1
+            }
+
+            tap_text "I understand" || true
+            sleep 4
+            adb exec-out screencap -p > "$OUT/02-welcome.png"
+            tap_text "Continue" || true
+            sleep 10
+            adb exec-out screencap -p > "$OUT/03-home-top.png"
+            # Long-home capture: scroll down in steps, one shot per step.
+            adb shell input swipe 540 1600 540 600 400
+            sleep 3
+            adb exec-out screencap -p > "$OUT/04-home-scrolled-1.png"
+            adb shell input swipe 540 1600 540 600 400
+            sleep 3
+            adb exec-out screencap -p > "$OUT/05-home-scrolled-2.png"
+            # Back to top, settle, final home shot.
+            adb shell input keyevent 3
+            sleep 2
+            adb shell am start -n com.raddstream.app/.MainActivity
+            sleep 6
+            adb exec-out screencap -p > "$OUT/06-home-final.png"
+            sleep 2
+            kill $REC_PID 2>/dev/null || true
+            sleep 2
+            adb pull -q /sdcard/radd-demo.mp4 "$OUT/radd-demo.mp4" 2>/dev/null || echo "no video pulled"
+            ls -la "$OUT"
+
+      - name: Upload screenshots + video
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: emulator-shots-${{ github.run_number }}
+          path: emu-shots/
+          if-no-files-found: warn
+          retention-days: 14
