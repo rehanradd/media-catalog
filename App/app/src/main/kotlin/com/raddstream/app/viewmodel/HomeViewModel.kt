@@ -393,7 +393,9 @@ private const val BECAUSE_YOU_WATCH_KEY = "because_you_watch"
  * live-verified: the newest rail walks 2027, then 2026). "Most copies" is
  * `sort=trending` on the same live route — the server ranks by how many
  * prints and mirrors the catalog holds for a work, because the ledger has
- * no play-count column; the label says what the order is, and "Trending"
+ * no play-count column. The raw name stays here as the order's name; the
+ * viewer reads "Top 10 Today" ([viewerTitleForPanelSection] maps it at
+ * merge, Gemini home review Nov 2026). "Trending" stays unused because it
  * would promise popularity data that does not exist (the same naming rule
  * SearchViewModel's [SearchSort] follows).
  */
@@ -453,12 +455,21 @@ internal fun trialNoteDaysRemaining(
  * The viewer's word for a panel section's title. The operator's hero slot is
  * titled "Hero" in the panel — a slot name, not a shelf a viewer understands
  * (the Nov 2026 home review flagged the rail under the carousel reading
- * "Hero") — so that rail reads "Featured". Every other title passes through
- * untouched: the operator owns the names. Pure, so the mapping is assertable
- * without a repository.
+ * "Hero") — so that rail reads "Featured". "Most copies" reads the same way
+ * (Gemini home review, Nov 2026: an internal mirror-count metric that makes
+ * the app sound like a torrent index), so that rail reads "Top 10 Today".
+ * The order underneath is still the server's copy-count sort — the ledger
+ * has no play counts — so "Today" is editorial framing, not a measured daily
+ * chart; making the ranking real (by plays) is a server follow-up. Every
+ * other title passes through untouched: the operator owns the names. Pure,
+ * so the mapping is assertable without a repository.
  */
 internal fun viewerTitleForPanelSection(title: String): String =
-    if (title == "Hero") "Featured" else title
+    when (title) {
+        "Hero" -> "Featured"
+        "Most copies" -> "Top 10 Today"
+        else -> title
+    }
 
 /**
  * The operator's feed, merged over the built-in rails. Pure, so the test can pin
@@ -490,7 +501,14 @@ internal fun mergePanelFeed(
     val panelKeys = config.sections.map { it.key }.toSet()
     val builtIn = current
         .filter { !it.panelManaged && it.key !in panelKeys }
-        .map { it.copy(items = it.items.filter { post -> post.id !in hidden }) }
+        // The built-ins carry their raw order names ("Most copies"); the
+        // viewer reads the mapped word, same as a panel section.
+        .map {
+            it.copy(
+                title = viewerTitleForPanelSection(it.title),
+                items = it.items.filter { post -> post.id !in hidden },
+            )
+        }
     val broadcasts = config.broadcasts.filter {
         it.id !in dismissedBroadcastIds && it.title.isNotBlank() &&
             BroadcastTargeting.visible(it, regionId, isVip, appVersion)

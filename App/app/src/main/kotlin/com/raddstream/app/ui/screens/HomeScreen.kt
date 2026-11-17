@@ -323,17 +323,21 @@ internal fun HomeContent(
     // The filter chips are UI-local state: they filter the rails already on
     // screen, so no ViewModel round-trip and no reload on a tap.
     var filter by remember { mutableStateOf(HomeFilter.All) }
+    // Gemini home review (Nov 2026): the pinned header floats over the
+    // scrolling rails, so it needs the scroll offset — the state lives
+    // here (not inline in the scrollable column) so the header can read it.
+    val scrollState = rememberScrollState()
     Column(
         modifier = Modifier
             .fillMaxSize()
             .statusBarsPadding()
             .then(modifier),
     ) {
-        HomeHeader()
+        HomeHeader(scrolled = scrollState.value > 0)
         Column(
             modifier = Modifier
                 .weight(1f)
-                .verticalScroll(rememberScrollState()),
+                .verticalScroll(scrollState),
         ) {
         if (state.isRefreshing) {
             LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -620,16 +624,24 @@ internal const val HomeFilterRowTag = "homeFilterRow"
 /**
  * The Home header (2026-11-17): the centred two-line logo on its own.
  * The check-in pill and the Coin Wallet pill lived here until coins and
- * daily check-in were removed — the header takes no state any more, and it
- * is not gated on the quality gate: the logo shows whether the gate is on
- * or off. Screenshot-fix D8 (2026-11-16) had already shrunk the header so
- * the hero starts higher; with the pills gone the row is just the logo.
+ * daily check-in were removed, and it is not gated on the quality gate:
+ * the logo shows whether the gate is on or off. Screenshot-fix D8
+ * (2026-11-16) had already shrunk the header so the hero starts higher;
+ * with the pills gone the row is just the logo. Gemini home review
+ * (Nov 2026): once the feed scrolls ([scrolled]), the pinned logo gets a
+ * solid page-background plate — a transparent header lets bright poster
+ * text (NOW YOU SEE ME..., MASTERPLAN) collide behind the logo. At the
+ * top the plate is transparent: nothing scrolls behind it there.
  */
 @Composable
-internal fun HomeHeader() {
+internal fun HomeHeader(scrolled: Boolean = false) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .background(
+                if (scrolled) MaterialTheme.colorScheme.background
+                else Color.Transparent,
+            )
             .padding(horizontal = 16.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,

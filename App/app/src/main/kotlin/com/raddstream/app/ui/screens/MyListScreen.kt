@@ -375,7 +375,7 @@ internal fun PopularRow(
                     isFavorite = isFavorite(post),
                     onToggleFavorite = onToggleFavorite?.let { toggle -> { toggle(post) } },
                     // The 3-up cells are too narrow for the full
-                    // "★ 8.6 | 2024 | Series" line — it truncated to
+                    // "★ 8.6 · 2024 · Series" line — it truncated to
                     // "S..." on every card. Rating + year only.
                     compactMeta = true,
                     modifier = Modifier.weight(1f),

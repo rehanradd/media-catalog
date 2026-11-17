@@ -26,6 +26,7 @@ import com.raddstream.app.network.models.Playability
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.network.models.PostDetail
 import com.raddstream.app.network.models.ReleaseLabelParsing
+import com.raddstream.app.network.models.currentCalendarYear
 import com.raddstream.app.player.LadderForScope
 import com.raddstream.app.player.LadderRung
 import com.raddstream.app.player.PlaybackInfo
@@ -184,6 +185,32 @@ class PaparazziPreviewTest {
         }
     }
 
+    // Gemini home review (Nov 2026): max one badge per card — a ranked
+    // new-release tile shows the rank only, never a NEW pill beside it.
+    // The year reads off the clock so the fixture stays a new release
+    // whenever this runs.
+    @Test
+    fun posterCardRankedNewReleaseShowsRankOnly() {
+        paparazzi.snapshot {
+            themed {
+                PosterCard(
+                    post = fakePost(
+                        id = 5,
+                        title = "New Hit",
+                        year = currentCalendarYear(),
+                        contentType = "movie",
+                        rating = "8.0",
+                        genres = "Action",
+                        industry = "Hollywood",
+                        language = "English",
+                    ),
+                    modifier = Modifier.width(160.dp).padding(16.dp),
+                    rank = 1,
+                )
+            }
+        }
+    }
+
     @Test
     fun posterCardRailRow() {
         paparazzi.snapshot {
@@ -202,7 +229,7 @@ class PaparazziPreviewTest {
 
     // My List review (Nov 2026): the empty state — the jade heart in its
     // tinted container, the retitled starter rail, the compact
-    // "★ 7.0 • 2023" meta, and the rail pulled up under the message
+    // "★ 7.0 · 2023" meta, and the rail pulled up under the message
     // instead of floating in a void. The first card is saved, so the shot
     // also pins the filled jade heart against the two outline hearts.
     @Test
@@ -289,7 +316,7 @@ class PaparazziPreviewTest {
         sections = listOf(
             HomeSection(
                 key = "trending",
-                title = "Most copies",
+                title = "Top 10 Today",
                 type = null,
                 items = homePosts,
                 sort = "trending",
@@ -348,7 +375,7 @@ class PaparazziPreviewTest {
                 HomeContent(
                     state = HomeUiState(
                         sections = listOf(
-                            HomeSection(key = "trending", title = "Most copies", type = null, loading = true),
+                            HomeSection(key = "trending", title = "Top 10 Today", type = null, loading = true),
                             HomeSection(key = "bollywood", title = "Bollywood", type = "movie", loading = true),
                         ),
                     ),

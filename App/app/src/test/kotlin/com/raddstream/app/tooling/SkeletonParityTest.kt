@@ -15,8 +15,9 @@ import org.junit.Test
  * - Detail Play: the skeleton's hero button must be the same 48dp min the
  *   real [PrimaryActions] Play button carries (`heightIn(min = 48.dp)`).
  *   The old skeleton drew 44dp — a 4dp jump on every detail load.
- * - Hero title: the skeleton's title bar must be displaySmall's own line
- *   height (44dp), not a guessed 36dp.
+ * - Hero title: the skeleton's title bar must be the hero title's own line
+ *   height (32dp — the 28sp copy, not displaySmall's 44dp token), not a
+ *   guessed number.
  */
 class SkeletonParityTest {
 
@@ -51,19 +52,20 @@ class SkeletonParityTest {
     }
 
     @Test
-    fun `hero skeleton title bar is displaySmall line height`() {
-        val type = mainSource("com/raddstream/app/ui/theme/Type.kt")
-        val displaySmall = bodyOf(type, "displaySmall = TextStyle(")
-        val lineHeight = Regex("""lineHeight = brandSp\((\d+)\)""")
-            .find(displaySmall)?.groupValues?.get(1)
-        assertEquals("displaySmall must keep its 44sp line height", "44", lineHeight)
-
+    fun `hero skeleton title bar is the hero title line height`() {
         val hero = mainSource("com/raddstream/app/ui/components/HeroCarousel.kt")
+        // The real title is displaySmall copied to 28sp/32sp (Gemini home
+        // review, Nov 2026) — the skeleton must match the copy, not the token.
+        val slide = bodyOf(hero, "if (hasArt) {")
+        val lineHeight = Regex("""lineHeight = (\d+)\.sp""")
+            .find(slide)?.groupValues?.get(1)
+        assertEquals("the hero title must carry its 32sp line height", "32", lineHeight)
+
         val skeleton = bodyOf(hero, "fun HeroSkeleton(")
         val titleHeight = Regex("""\.height\((\d+)\.dp\)\.testTag\("heroTitleSkeleton"\)""")
             .find(skeleton)?.groupValues?.get(1)
         assertEquals(
-            "the skeleton title bar must be displaySmall's line height",
+            "the skeleton title bar must be the hero title's line height",
             lineHeight,
             titleHeight,
         )

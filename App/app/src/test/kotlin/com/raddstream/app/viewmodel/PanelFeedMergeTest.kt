@@ -167,6 +167,34 @@ class PanelFeedMergeTest {
     }
 
     @Test
+    fun `a panel section titled Most copies reads Top 10 Today to the viewer`() {
+        val (sections, _) = mergePanelFeed(
+            builtIn,
+            VipRemoteConfig(
+                sections = listOf(PanelSection(key = "most_sources", title = "Most copies", items = listOf(post(9)))),
+            ),
+            dismissedBroadcastIds = emptySet(),
+        )
+
+        assertEquals("panel:most_sources", sections[0].key)
+        assertEquals("Top 10 Today", sections[0].title)
+        assertEquals(listOf(9), sections[0].items.map { it.id })
+    }
+
+    @Test
+    fun `a built-in Most copies rail reads Top 10 Today to the viewer`() {
+        val (sections, _) = mergePanelFeed(
+            listOf(HomeSection(key = "most_sources", title = "Most copies", type = null, sort = "trending", items = listOf(post(9)))),
+            VipRemoteConfig(),
+            dismissedBroadcastIds = emptySet(),
+        )
+
+        assertEquals("most_sources", sections[0].key)
+        assertEquals("Top 10 Today", sections[0].title)
+        assertEquals(listOf(9), sections[0].items.map { it.id })
+    }
+
+    @Test
     fun `any other panel title passes through untouched`() {
         val (sections, _) = mergePanelFeed(
             builtIn,

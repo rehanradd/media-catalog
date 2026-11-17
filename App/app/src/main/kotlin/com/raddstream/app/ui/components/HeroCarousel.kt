@@ -5,6 +5,7 @@ import android.os.SystemClock
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.snap
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -47,6 +48,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -66,6 +68,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.imageLoader
 import coil.request.ImageRequest
 import com.raddstream.app.R
@@ -214,27 +217,34 @@ fun HeroCarousel(
             modifier = Modifier.fillMaxSize(),
         )
 
-        HorizontalPager(
-            state = pagerState,
-            // F28 (Batch B): the pager composes only the current page by
-            // default, so every auto-advance started a fresh image load and
-            // the hero read as empty mid-load (the Batch 0/1 empty-hero
-            // shots). One page of lookahead keeps the next slide's art
-            // warm, so an advance lands on a painted slide.
-            beyondBoundsPageCount = 1,
-            modifier = Modifier.fillMaxSize().padding(heroInset),
-        ) { page ->
-            val post = posts.getOrNull(page) ?: return@HorizontalPager
-            HeroSlide(
-                post = post,
-                backdropUrl = backdropFor(post),
-                onClick = { onPostClick(post) },
-                onWatchNow = { onWatchNow(post) },
-                onWatchNowPressChange = { watchNowPressed = it },
-                isFavorite = isFavorite(post),
-                onToggleFavorite = { onToggleFavorite(post) },
-                modifier = Modifier.clip(RoundedCornerShape(HERO_CORNER)),
-            )
+        // Gemini home review (Nov 2026): the pager is sized to the inset
+        // card area — padding on the pager itself left the next slide's
+        // art painting in the 16dp margin (a brown/red sliver at the
+        // card's right edge, and a faint strip on the left). Sized to the
+        // card and clipped, the next slide is cut exactly at the card edge.
+        Box(Modifier.fillMaxSize().padding(heroInset)) {
+            HorizontalPager(
+                state = pagerState,
+                // F28 (Batch B): the pager composes only the current page by
+                // default, so every auto-advance started a fresh image load and
+                // the hero read as empty mid-load (the Batch 0/1 empty-hero
+                // shots). One page of lookahead keeps the next slide's art
+                // warm, so an advance lands on a painted slide.
+                beyondBoundsPageCount = 1,
+                modifier = Modifier.fillMaxSize().clipToBounds(),
+            ) { page ->
+                val post = posts.getOrNull(page) ?: return@HorizontalPager
+                HeroSlide(
+                    post = post,
+                    backdropUrl = backdropFor(post),
+                    onClick = { onPostClick(post) },
+                    onWatchNow = { onWatchNow(post) },
+                    onWatchNowPressChange = { watchNowPressed = it },
+                    isFavorite = isFavorite(post),
+                    onToggleFavorite = { onToggleFavorite(post) },
+                    modifier = Modifier.clip(RoundedCornerShape(HERO_CORNER)),
+                )
+            }
         }
     }
 
@@ -425,11 +435,11 @@ fun HeroSkeleton(modifier: Modifier = Modifier) {
                 // The real slide's text column is 8dp-spaced, not 10dp.
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                // Title: displaySmall, one 44dp line. The real title allows
+                // Title: 28sp displaySmall, one 32dp line. The real title allows
                 // two lines, but a one-line title is the common case — a
                 // second bar would over-reserve every short title.
                 ShimmerBox(
-                    Modifier.fillMaxWidth(0.55f).height(44.dp).testTag("heroTitleSkeleton"),
+                    Modifier.fillMaxWidth(0.55f).height(32.dp).testTag("heroTitleSkeleton"),
                     shape = RoundedCornerShape(8.dp),
                 )
                 // Meta line: one bodyMedium line (16dp) — the real meta line
@@ -598,7 +608,10 @@ private fun HeroSlide(
         // too late and too softly, so baked-in poster text bled behind
         // the title and buttons; this one is clear through the top half
         // (nothing sits there now — the dots ride below the card) and
-        // 0.75 at 75% before landing on the background at the bottom.
+        // 0.65 at 68% before landing at 0.92 at the bottom. Gemini home
+        // review (Nov 2026): the Dragon Ball Super title sat over bright
+        // yellow/white art with only the button area scrimmed — the scrim
+        // now covers the lower 55% with 0.65 behind the title and meta.
         // Session 121 (P-20): the scrim protects the title/badges against
         // bright art and blends smoothly into the page canvas at the
         // bottom of the full-bleed hero.
@@ -608,8 +621,8 @@ private fun HeroSlide(
                 .background(
                     Brush.verticalGradient(
                         0.45f to MaterialTheme.colorScheme.background.copy(alpha = 0f),
-                        0.75f to MaterialTheme.colorScheme.background.copy(alpha = 0.75f),
-                        1f to MaterialTheme.colorScheme.background,
+                        0.68f to MaterialTheme.colorScheme.background.copy(alpha = 0.65f),
+                        1f to MaterialTheme.colorScheme.background.copy(alpha = 0.92f),
                     )
                 ),
         )
@@ -630,9 +643,19 @@ private fun HeroSlide(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (hasArt) {
+                // Gemini home review + Stitch redesign (Nov 2026): 28sp
+                // Bold, -0.3sp tracking. The title was 36sp Bold
+                // (displaySmall) — bigger than the redesign asks, and the
+                // weight was already Bold, so the legibility defect was
+                // the scrim above, not the weight. 28sp keeps two lines
+                // inside the 320dp hero with room for the meta + CTAs.
                 Text(
                     text = title,
-                    style = RaddEmphasized.displaySmall,
+                    style = RaddEmphasized.displaySmall.copy(
+                        fontSize = 28.sp,
+                        lineHeight = 32.sp,
+                        letterSpacing = (-0.3).sp,
+                    ),
                     color = MaterialTheme.colorScheme.onBackground,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
@@ -694,15 +717,18 @@ private fun HeroSlide(
                     Text(Brand.copy("hero_watch_now", "Watch Now").uppercase(), fontWeight = FontWeight.Bold)
                 }
                 // Session 121 (P-26): My List on the hero, so saving a title does not
-                // need a trip to its details page first. The filled heart says saved;
-                // the treatment matches the year/type badges above it.
+                // need a trip to its details page first. The filled heart says saved.
+                // Gemini home review (Nov 2026): a 48dp translucent pill —
+                // white 12% fill, 1dp white 22% border — matching Watch Now's
+                // height, instead of uncontained text floating over the art.
                 Button(
                     onClick = onToggleFavorite,
                     shape = RoundedCornerShape(28.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f),
+                        containerColor = Color.White.copy(alpha = 0.12f),
                         contentColor = MaterialTheme.colorScheme.onBackground,
                     ),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.22f)),
                     // Same 12dp content padding as Watch Now (see above):
                     // the two buttons share the width, so they share the
                     // padding that keeps their labels on one line.
@@ -869,13 +895,16 @@ internal fun shouldAdvanceHero(
 }
 
 /**
- * Density (2026-11-15): the hero action row was 56dp tall — M3's large button
- * on a banner that already eats 320–400dp of the first viewport. 40dp is M3's
- * small button and the size Netflix's Play button ships at; the button still
- * spans most of the hero's width, so the target stays large. The skeleton
- * placeholder reads this same constant.
+ * Density (2026-11-15), revised by the Gemini home review (2026-11-17):
+ * the hero action row was 56dp tall — M3's large button on a banner that
+ * already eats 320–400dp of the first viewport. 40dp was M3's small button
+ * and the size Netflix's Play button ships at; the review's 48dp touch
+ * floor wins for these two — Watch Now and My List are the hero's only
+ * controls, and My List had no contained 48dp target at all. Both buttons
+ * still span most of the hero's width, so the target stays large. The
+ * skeleton placeholder reads this same constant.
  */
-internal const val HERO_BUTTON_HEIGHT_DP = 40f
+internal const val HERO_BUTTON_HEIGHT_DP = 48f
 internal const val HERO_ACTION_BOTTOM_DP = 20f
 private const val DOT_TOUCH_HEIGHT_DP = 48f
 

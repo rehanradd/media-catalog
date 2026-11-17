@@ -98,17 +98,17 @@ class SkeletonPlaceholderTest {
     }
 
     /**
-     * The hero title placeholder must be displaySmall's own 44dp line
-     * height, not a guessed 36dp.
+     * The hero title placeholder must be the hero title's own 32dp line
+     * height (the 28sp copy), not displaySmall's 44dp token.
      */
     @Test
-    fun heroTitleSkeletonMatchesDisplaySmallLineHeight() {
+    fun heroTitleSkeletonMatchesHeroTitleLineHeight() {
         compose.mainClock.autoAdvance = false
         compose.setContent {
             RaddStreamTheme {
                 HeroSkeleton()
             }
         }
-        compose.onNodeWithTag("heroTitleSkeleton").assertHeightIsEqualTo(44.dp)
+        compose.onNodeWithTag("heroTitleSkeleton").assertHeightIsEqualTo(32.dp)
     }
 }

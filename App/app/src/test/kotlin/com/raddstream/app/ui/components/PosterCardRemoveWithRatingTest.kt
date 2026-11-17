@@ -26,7 +26,7 @@ import org.robolectric.RobolectricTestRunner
  * it won the tap). In My List / Continue Watching a rated title could not be
  * removed by tapping × — the tap hit the paint-only badge. The badge moved
  * to BottomStart, and then went away entirely (mockup, Nov 2026): the rating
- * lives in the meta line under the poster now ("★ 8.6 | 2010 | Movie"), so a
+ * lives in the meta line under the poster now ("★ 8.6 · 2010 · Movie"), so a
  * badge on the poster would say the same number twice. What this test pins
  * did not change with the badge: a rated tile still announces its rating
  * once, and its × stays tappable with nothing painted over it.
