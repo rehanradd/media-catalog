@@ -9,7 +9,6 @@ import com.raddstream.app.data.Telemetry
 import com.raddstream.app.data.UserRegion
 import com.raddstream.app.network.friendlyNetworkError
 import com.raddstream.app.network.models.PanelDisclaimer
-import com.raddstream.app.network.models.StatsResponse
 import com.raddstream.app.player.AudioBoost
 import com.raddstream.app.player.AudioBoostUi
 import com.raddstream.app.player.LanguageDefaults
@@ -133,8 +132,6 @@ data class SettingsUiState(
     val isTesting: Boolean = false,
     val testMessage: String? = null,
     val testIsError: Boolean = false,
-    val stats: StatsResponse? = null,
-    val isLoadingStats: Boolean = false,
     val prefs: UserPreferences = UserPreferences(),
     val statusMessage: String? = null,
     /** The persisted LAN-share opt-in — the same value [com.raddstream.app.share.LanShareRunner] obeys. */
@@ -286,7 +283,7 @@ class SettingsViewModel @Inject constructor(
     val uiState = _uiState.asStateFlow()
 
     init {
-        loadServerUrlAndStats()
+        loadServerUrl()
         loadPersistedPrefs()
         observeLanShare()
         observeAccount()
@@ -404,18 +401,19 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    private fun loadServerUrlAndStats() {
+    /**
+     * Settings review (Nov 2026, D4): the stats fetch is gone. The screen
+     * never rendered the counts — its own comment says works/releases/links
+     * are the operator's numbers, not something a viewer needs to see — so
+     * the fetch ran on every open for a state nobody read. What stays is
+     * the server URL load, which the account card's no-server guard and the
+     * server card both read. `testAndSaveServer` keeps its own fetch: its
+     * result becomes the connection notice.
+     */
+    private fun loadServerUrl() {
         viewModelScope.launch {
             val url = settingsRepository.serverUrl.first() ?: ""
-            _uiState.update { it.copy(serverUrl = url, isLoadingStats = url.isNotBlank()) }
-            if (url.isNotBlank()) {
-                try {
-                    val stats = catalogRepository.getStats()
-                    _uiState.update { it.copy(stats = stats, isLoadingStats = false) }
-                } catch (_: Exception) {
-                    _uiState.update { it.copy(isLoadingStats = false) }
-                }
-            }
+            _uiState.update { it.copy(serverUrl = url) }
         }
     }
 
@@ -615,6 +613,16 @@ class SettingsViewModel @Inject constructor(
         _uiState.update { it.copy(showServerField = true) }
     }
 
+    /**
+     * Settings review (Nov 2026, D6): the field is a door that closes.
+     * Cancel returns to the "Connected to your catalog." summary line, and
+     * a successful Test & Save closes it too — the calm default Audit #51
+     * built must survive one tap on Change.
+     */
+    fun hideServerField() {
+        _uiState.update { it.copy(showServerField = false, testMessage = null) }
+    }
+
     fun testAndSaveServer() {
         val url = _uiState.value.serverUrl.trim()
         if (url.isBlank()) return
@@ -627,7 +635,7 @@ class SettingsViewModel @Inject constructor(
                         isTesting = false,
                         testMessage = CatalogScale.connectionNotice(stats.posts),
                         testIsError = false,
-                        stats = stats,
+                        showServerField = false,
                     )
                 }
             } catch (ex: Exception) {
@@ -668,13 +676,6 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { settingsRepository.saveKeepTtlHours(value.hours) }
     }
 
-    /** [UserPreferences.SUBTITLE_DEFAULT] is stored as the word itself, like the audio row. */
-    fun setSubtitleLang(value: String) {
-        // F5a: a tap IS a stored pick, so the provenance flips at once.
-        updatePrefs { it.copy(subtitleLang = value, subtitleProvenance = "your choice") }
-        viewModelScope.launch { settingsRepository.savePreferredSubtitleLanguage(value) }
-    }
-
     fun setDynamicColor(value: Boolean) {
         updatePrefs { it.copy(dynamicColor = value) }
         viewModelScope.launch { settingsRepository.saveDynamicColorEnabled(value) }
@@ -691,18 +692,6 @@ class SettingsViewModel @Inject constructor(
         val safe = AudioBoostUi.offeredLevel(level)
         updatePrefs { it.copy(audioBoost = safe) }
         viewModelScope.launch { settingsRepository.saveAudioBoostLevel(safe) }
-    }
-
-    /**
-     * The persisted audio language, stored as the word itself — including
-     * [UserPreferences.AUDIO_LANGUAGE_DEFAULT], so an explicit "leave it to the player" is
-     * never mistaken for a viewer who never chose (only a stored null falls back to the
-     * region's default).
-     */
-    fun setAudioLanguage(value: String) {
-        // F5a: a tap IS a stored pick, so the provenance flips at once.
-        updatePrefs { it.copy(audioLanguage = value, audioProvenance = "your choice") }
-        viewModelScope.launch { settingsRepository.savePreferredAudioLanguage(value) }
     }
 
     /**

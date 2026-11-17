@@ -64,15 +64,19 @@ import com.raddstream.app.viewmodel.HelpViewModel
  * Need more help?), so tapping the first row opens them in place
  * instead of inventing new words. A problem report goes through the same
  * contact sink the Detail screen's broken-stream report uses; Contact opens
- * the Contact form in Settings, as this screen's own note always said; About
+ * the contact card in Settings, as this screen's own note always said; About
  * shows the same About text and version Settings shows.
  *
- * Every sentence is a fact the app already proves elsewhere — the free 720p cap, the
- * direct downloads, the VIP prices — so this screen never has to be
- * re-checked against the server. It is static on purpose: no network call,
- * nothing that can fail while a viewer is stuck. The one thing it cannot answer itself
- * is a person's own problem, so the last section sends them to the Contact form in
- * Settings rather than inventing an address.
+ * Most sentences are facts the app already proves elsewhere — the direct
+ * downloads — so they never have to be re-checked. The two that depend on
+ * the server — the free quality cap and the VIP prices — are read from it
+ * when the screen opens, so they stay true when the operator flips the
+ * gate or republishes prices. (Settings review, Nov 2026, D1/D8: the old
+ * KDoc declared the cap and the prices static, which is exactly what let
+ * them rot — the free 720p cap was still printed after the gate went OFF.)
+ * The one thing it cannot answer itself is a person's own problem, so the
+ * last section sends them to the contact card in Settings rather than
+ * inventing an address.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -82,6 +86,7 @@ fun HelpScreen(
     viewModel: HelpViewModel = hiltViewModel(),
 ) {
     val reportState by viewModel.reportState.collectAsState()
+    val helpState by viewModel.uiState.collectAsState()
     var faqExpanded by rememberSaveable { mutableStateOf(false) }
     var showReportDialog by rememberSaveable { mutableStateOf(false) }
     var showAboutDialog by rememberSaveable { mutableStateOf(false) }
@@ -107,6 +112,9 @@ fun HelpScreen(
             onAboutClick = { showAboutDialog = true },
             reportMessage = reportState.message,
             reportMessageIsError = reportState.messageIsError,
+            gateOn = helpState.gateOn,
+            monthlyPkr = helpState.monthlyPkr,
+            yearlyPkr = helpState.yearlyPkr,
             modifier = Modifier.padding(contentPadding),
         )
     }
@@ -143,14 +151,17 @@ fun HelpScreen(
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                     Text(
-                        "Version ${Brand.versionName} (${Brand.versionCode}) • ${Brand.schemeName}",
+                        aboutVersionLine(),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showAboutDialog = false }) {
+                TextButton(
+                    onClick = { showAboutDialog = false },
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) {
                     Text("Close")
                 }
             },
@@ -161,6 +172,11 @@ fun HelpScreen(
 /**
  * The four rows without their ViewModel, so a test can drive them with plain
  * callbacks: FAQ expands in place, the rest report back to the caller.
+ * [gateOn] is the operator's quality gate — gate ON caps free viewers at
+ * 720p, gate OFF plays everything up to 4K free. [monthlyPkr]/[yearlyPkr]
+ * are the panel's published VIP prices (0 = not published, and the FAQ
+ * drops the numbers rather than printing a zero). Defaults are the cold
+ * build that has not heard from the panel yet: gate ON, no prices.
  */
 @Composable
 internal fun HelpContent(
@@ -171,6 +187,9 @@ internal fun HelpContent(
     onAboutClick: () -> Unit,
     reportMessage: String?,
     reportMessageIsError: Boolean,
+    gateOn: Boolean = true,
+    monthlyPkr: Int = 0,
+    yearlyPkr: Int = 0,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -189,10 +208,31 @@ internal fun HelpContent(
         ) {
             // The answers are the four sections this screen always
             // carried — shown in place, under the row that asked for them.
+            // Settings review (Nov 2026, D1/D8): Watch and VIP are the two
+            // answers that depend on the server, so they are built from the
+            // state the ViewModel read at open — never hardcoded.
+            val watchBody = if (gateOn) {
+                "Tap a title, then Play. Free viewers play up to 720p. 1080p and 4K need VIP. " +
+                    "A title keeps playing where you left it — find it again under Continue watching on Home."
+            } else {
+                "Tap a title, then Play. Every title plays up to 4K, free — no VIP needed. " +
+                    "A title keeps playing where you left it — find it again under Continue watching on Home."
+            }
+            val vipBody = buildString {
+                val priceParts = listOfNotNull(
+                    monthlyPkr.takeIf { it > 0 }?.let { "PKR ${"%,d".format(it)} a month" },
+                    yearlyPkr.takeIf { it > 0 }?.let { "PKR ${"%,d".format(it)} a year" },
+                )
+                if (priceParts.isNotEmpty()) {
+                    append("VIP is ${priceParts.joinToString(" or ")}, paid by JazzCash, EasyPaisa or Raast. ")
+                } else {
+                    append("VIP is a monthly or yearly membership, paid by JazzCash, EasyPaisa or Raast. ")
+                }
+                append("See the VIP screen for the plans and how to pay.")
+            }
             HelpSection(
                 title = "Watch",
-                body = "Tap a title, then Play. Free viewers play up to 720p. 1080p and 4K need VIP. " +
-                    "A title keeps playing where you left it — find it again under Continue watching on Home.",
+                body = watchBody,
             )
             HelpSection(
                 title = "Download",
@@ -201,13 +241,15 @@ internal fun HelpContent(
             )
             HelpSection(
                 title = "VIP",
-                body = "VIP is PKR 200 a month or PKR 1,500 a year, paid by JazzCash, EasyPaisa or Raast. " +
-                    "See the VIP screen for the plans and how to pay.",
+                body = vipBody,
             )
             HelpSection(
                 title = "Need more help?",
-                body = "Use the Contact form in Settings — write to us and the team will answer. " +
-                    "To ask for a title to be taken down, use the same form.",
+                // Settings review (Nov 2026, D2): the in-app contact form
+                // is gone — Settings' Contact card opens the email dialog —
+                // so the directions name the real path, not a removed door.
+                body = "Tap Write to us in Settings — it opens your email app, addressed to the team. " +
+                    "To ask for a title to be taken down, write to us the same way.",
             )
         }
         HelpRow(

@@ -374,7 +374,7 @@ fun RaddStreamNavGraph(
             "live_tv" -> BottomNavItem("Live TV", Screen.LiveTv.route, ImageVector.vectorResource(R.drawable.ic_tab_live_tv))
             "search" -> BottomNavItem("Search", Screen.Search.route, ImageVector.vectorResource(R.drawable.ic_tab_search), navigateRoute = Screen.Search.PLAIN_ROUTE)
             "my_list" -> BottomNavItem("My List", Screen.MyList.route, ImageVector.vectorResource(R.drawable.ic_tab_my_list))
-            "settings" -> BottomNavItem("Settings", Screen.Settings.route, ImageVector.vectorResource(R.drawable.ic_tab_settings))
+            "settings" -> BottomNavItem("Settings", Screen.Settings.route, ImageVector.vectorResource(R.drawable.ic_tab_settings), navigateRoute = Screen.Settings.PLAIN_ROUTE)
             else -> BottomNavItem("Home", Screen.Home.route, ImageVector.vectorResource(R.drawable.ic_tab_home))
         }
     }
@@ -644,7 +644,20 @@ fun RaddStreamNavGraph(
                 )
             }
 
-            composable(Screen.Settings.route) {
+            composable(
+                route = Screen.Settings.route,
+                arguments = listOf(
+                    // Settings review (Nov 2026, D2): Help's Contact row
+                    // lands here with scrollTo=contact, so the contact card
+                    // is already in view. The plain tab navigates with no
+                    // argument, so the default keeps it at the top.
+                    navArgument(Screen.Settings.ARG_SCROLL_TO) {
+                        type = NavType.StringType
+                        nullable = true
+                        defaultValue = null
+                    },
+                ),
+            ) { backStackEntry ->
                 SettingsScreen(
                     features = features,
                     onOpenDownloads = { navController.navigate(Screen.Downloads.route) },
@@ -657,6 +670,7 @@ fun RaddStreamNavGraph(
                     onOpenWatchHistory = { navController.navigate(Screen.WatchHistory.route) },
                     onOpenResolveTest = { navController.navigate(Screen.ResolveTest.route) },
                     onOpenPressTest = { navController.navigate(Screen.PressTest.route) },
+                    scrollToContact = backStackEntry.arguments?.getString(Screen.Settings.ARG_SCROLL_TO) == Screen.Settings.SCROLL_TO_CONTACT,
                 )
             }
 
@@ -679,9 +693,10 @@ fun RaddStreamNavGraph(
             composable(Screen.Help.route) {
                 HelpScreen(
                     onBackClick = { navController.popBackStack() },
-                    // The Contact form lives in Settings; Help sends the
-                    // viewer there, as the screen's own note always said.
-                    onContactClick = { navController.navigate(Screen.Settings.route) },
+                    // Settings review (Nov 2026, D2): the Contact row sends
+                    // the viewer to the contact card in Settings with it
+                    // already in view — not to the top of the screen.
+                    onContactClick = { navController.navigate(Screen.Settings.createRoute(Screen.Settings.SCROLL_TO_CONTACT)) },
                 )
             }
 

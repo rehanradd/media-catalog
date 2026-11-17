@@ -22,8 +22,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Help
@@ -32,6 +35,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Translate
@@ -67,11 +71,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalUriHandler
@@ -173,6 +175,12 @@ fun SettingsScreen(
     onOpenResolveTest: () -> Unit = {},
     /** Debug-only harness entry for the press test; same DEBUG-only reachability. */
     onOpenPressTest: () -> Unit = {},
+    /**
+     * Settings review (Nov 2026, D2): Help's Contact row lands here with
+     * the contact card already in view — the viewer asked for the contact
+     * card, not for the top of Settings. False for every other entry.
+     */
+    scrollToContact: Boolean = false,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -185,6 +193,12 @@ fun SettingsScreen(
     // viewers see Sync / Sign out, and the rest waits behind a tap.
     var showSignInForm by remember { mutableStateOf(false) }
     var showAccountDetails by remember { mutableStateOf(false) }
+    // D2: the contact card's top edge inside the scrolling column, in
+    // pixels — recorded on layout so the deep link can scroll to it.
+    var contactCardOffsetY by remember { mutableStateOf<Int?>(null) }
+    // The column's own scroll state, hoisted so the deep-link effect above
+    // the Scaffold can drive it.
+    val scrollState = rememberScrollState()
 
     // A status line this screen used to print inside the About card as a button that did
     // nothing. It is a transient answer to an action, so it lives where every other screen
@@ -195,6 +209,14 @@ fun SettingsScreen(
         val message = state.statusMessage ?: return@LaunchedEffect
         snackbarHostState.showSnackbar(message)
         viewModel.clearStatus()
+    }
+    // D2: the deep link from Help's Contact row. The offset is known only
+    // after layout, so the scroll waits for it — and it runs once per
+    // entry, because the screen is recreated on each navigation.
+    LaunchedEffect(scrollToContact, contactCardOffsetY) {
+        if (scrollToContact) {
+            contactCardOffsetY?.let { scrollState.scrollTo(it) }
+        }
     }
 
     Scaffold(
@@ -218,30 +240,18 @@ fun SettingsScreen(
             )
         },
     ) { contentPadding ->
-        // Review fix: scrolled content used to shear off at the hard edge
-        // under the app bar (the Image quality chips clipped with no title
-        // above them). The column carries extra top air, and a short fade
-        // from the background colour sits over its top edge, so content
-        // dissolves under the bar instead of cutting off. Paint only — it
-        // draws no clicks and the scroll underneath still works. The
-        // colour is read here, in composition: drawWithContent is not a
-        // @Composable scope and cannot read the theme itself.
-        val fadeBackground = MaterialTheme.colorScheme.background
+        // Settings review (Nov 2026, D3): the top fade is gone. It was
+        // drawn on the scrolling column itself, so it scrolled away with
+        // the content it was meant to veil — at rest it put a veil over
+        // the top of the first heading, and while scrolling it did
+        // nothing at all. The column's 24dp top air is what keeps the
+        // sections off the app bar now.
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(contentPadding)
-                .verticalScroll(rememberScrollState())
-                .padding(start = 16.dp, end = 16.dp, top = 24.dp, bottom = 16.dp)
-                .drawWithContent {
-                    drawContent()
-                    drawRect(
-                        brush = Brush.verticalGradient(
-                            colors = listOf(fadeBackground, Color.Transparent),
-                        ),
-                        size = Size(size.width, 28.dp.toPx()),
-                    )
-                },
+                .verticalScroll(scrollState)
+                .padding(start = 16.dp, end = 16.dp, top = 24.dp, bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
             // ── Resolve test (debug-only harness, plan §8) ─────────────
@@ -256,13 +266,15 @@ fun SettingsScreen(
                     )
                     OutlinedButton(
                         onClick = onOpenResolveTest,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+
                     ) {
                         Text(stringResource(R.string.resolve_test_open))
                     }
                     OutlinedButton(
                         onClick = onOpenPressTest,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+
                     ) {
                         Text(stringResource(R.string.press_test_open))
                     }
@@ -292,8 +304,18 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                TextButton(onClick = onOpenRegionChoice) {
-                    Text("Change what you watch →")
+                TextButton(
+                    onClick = onOpenRegionChoice,
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) {
+                    // Settings review (Nov 2026, D11): a real chevron, not
+                    // the "→" text glyph — every other affordance on the
+                    // screen is a Material icon.
+                    Text("Change what you watch")
+                    Icon(
+                        Icons.Default.ChevronRight,
+                        contentDescription = null,
+                    )
                 }
             }
 
@@ -318,7 +340,8 @@ fun SettingsScreen(
                 Spacer(Modifier.height(10.dp))
                 OutlinedButton(
                     onClick = onOpenLanguages,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+
                 ) {
                     Text("Open Languages screen")
                 }
@@ -575,7 +598,8 @@ fun SettingsScreen(
                         style = settingsHelperStyle,
                     )
                     Spacer(Modifier.height(10.dp))
-                    OutlinedButton(onClick = onOpenDownloads, modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(onClick = onOpenDownloads, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                    ) {
                         Text("Open Downloads")
                     }
                 }
@@ -585,7 +609,9 @@ fun SettingsScreen(
             // Gone, not disabled, when the operator switched sharing off: the row would otherwise
             // read "on" while LanShareRunner has already closed the socket it promises to open.
             if (features.sharing) {
-                SettingsCard(title = "Share on your network") {
+                // D10: the card carries its icon at the top-right, like
+                // every other card — it had none.
+                SettingsCard(title = "Share on your network", icon = Icons.Default.Share) {
                     SwitchRow(
                         checked = state.lanShareEnabled,
                         onCheckedChange = viewModel::setLanShareEnabled,
@@ -603,7 +629,9 @@ fun SettingsScreen(
             }
 
             // ── Cache ──────────────────────────────────────────────────
-            SettingsCard(title = "Storage & cache") {
+            // D10: the card carries its icon at the top-right, like every
+            // other card — it had none.
+            SettingsCard(title = "Storage & cache", icon = Icons.Default.Storage) {
                 // The poster-image cache as a bar: what it holds now against the
                 // loader's own cap. Nothing here is a guess at the device's free
                 // space, and the kept videos are not in this number at all — they
@@ -622,7 +650,8 @@ fun SettingsScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
-                Button(onClick = viewModel::clearImageCache, modifier = Modifier.fillMaxWidth()) {
+                Button(onClick = viewModel::clearImageCache, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                ) {
                     Text("Clear poster images")
                 }
                 Text(
@@ -677,7 +706,8 @@ fun SettingsScreen(
                         "your confirmation.",
                     style = settingsHelperStyle,
                 )
-                Button(onClick = onOpenVipUpgrade, modifier = Modifier.fillMaxWidth()) {
+                Button(onClick = onOpenVipUpgrade, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                ) {
                     Text(if (state.planIsVip) "View membership" else "Upgrade to VIP")
                 }
                 }
@@ -737,7 +767,9 @@ fun SettingsScreen(
                         modifier = Modifier.fillMaxWidth(),
                         trailingIcon = {
                             val clipboard = LocalClipboardManager.current
-                            TextButton(onClick = { clipboard.setText(AnnotatedString(key)) }) {
+                            TextButton(onClick = { clipboard.setText(AnnotatedString(key)) },
+                                modifier = Modifier.heightIn(min = 48.dp),
+                            ) {
                                 Text("Copy")
                             }
                         },
@@ -751,7 +783,12 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.error,
                     )
-                    TextButton(onClick = viewModel::hideRevealedKey) { Text("Done showing this key") }
+                    TextButton(
+                        onClick = viewModel::hideRevealedKey,
+                        modifier = Modifier.heightIn(min = 48.dp),
+                    ) {
+                        Text("Done showing this key") 
+                    }
                 }
 
                 // UI-fix P1-T1: progressive disclosure. A guest sees "Sign in"
@@ -768,14 +805,16 @@ fun SettingsScreen(
                             Button(
                                 onClick = { showSignInForm = true },
                                 enabled = !account.isBusy,
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+
                             ) {
                                 Text("Sign in")
                             }
                             OutlinedButton(
                                 onClick = viewModel::createAccount,
                                 enabled = !account.isBusy,
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+
                             ) {
                                 Text("Create account")
                             }
@@ -820,19 +859,26 @@ fun SettingsScreen(
                                         alpha = DisabledButtonContentAlpha,
                                     ),
                                 ),
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+
                             ) {
                                 BusyLabel(account.isBusy, "Sign in")
                             }
                             OutlinedButton(
                                 onClick = viewModel::createAccount,
                                 enabled = !account.isBusy,
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+
                             ) {
                                 Text("Create a random key")
                             }
                         }
-                        TextButton(onClick = { showSignInForm = false }) { Text("Cancel") }
+                        TextButton(
+                            onClick = { showSignInForm = false },
+                            modifier = Modifier.heightIn(min = 48.dp),
+                        ) {
+                            Text("Cancel") 
+                        }
                     }
                 } else {
                     Row(
@@ -842,19 +888,23 @@ fun SettingsScreen(
                         Button(
                             onClick = viewModel::syncNow,
                             enabled = !account.isBusy,
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+
                         ) {
                             BusyLabel(account.isBusy, "Sync now")
                         }
                         OutlinedButton(
                             onClick = viewModel::signOut,
                             enabled = !account.isBusy,
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+
                         ) {
                             Text("Sign out")
                         }
                     }
-                    TextButton(onClick = { showAccountDetails = !showAccountDetails }) {
+                    TextButton(onClick = { showAccountDetails = !showAccountDetails },
+                        modifier = Modifier.heightIn(min = 48.dp),
+                    ) {
                         Text(if (showAccountDetails) "Hide account details" else "Account details")
                     }
                     if (showAccountDetails) {
@@ -892,7 +942,8 @@ fun SettingsScreen(
                         OutlinedButton(
                             onClick = viewModel::openLinkForm,
                             enabled = !account.isLinking,
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+
                         ) {
                             Text(if (account.showLinkForm) "Close" else AccountCardCopy.LINK_BUTTON)
                         }
@@ -932,7 +983,8 @@ fun SettingsScreen(
                 )
                 OutlinedButton(
                     onClick = onOpenWatchHistory,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+
                 ) {
                     Text("Open watch history")
                 }
@@ -944,26 +996,41 @@ fun SettingsScreen(
             // the Help screen, and the Contact form is for a person's own problem.
             SettingsCard(title = "Help", icon = Icons.Default.Help) {
                 Text(
-                    "How to watch, download, and use VIP.",
+                    // Settings review (Nov 2026, D1): the helper names VIP
+                    // only while the gate is ON — during the free launch the
+                    // VIP card is hidden everywhere else, so naming it here
+                    // would sell a door that is not on this screen.
+                    if (state.paywallVisible) "How to watch, download, and use VIP."
+                    else "How to watch and download.",
                     style = settingsHelperStyle,
                 )
                 OutlinedButton(
                     onClick = onOpenHelp,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+
                 ) {
                     Text("Read help")
                 }
             }
 
             // ── Contact us ───────────────────────────────────────────────────
-            SettingsCard(title = "Contact us", icon = Icons.Default.Email) {
+            // D2: the deep-link target from Help's Contact row — the card
+            // reports its top edge so the screen can scroll straight to it.
+            SettingsCard(
+                title = "Contact us",
+                icon = Icons.Default.Email,
+                modifier = Modifier.onGloballyPositioned {
+                    contactCardOffsetY = it.positionInParent().y.roundToInt()
+                },
+            ) {
                 Text(
                     "Report a problem, ask about a payment, or ask for a title to be taken down. No account needed.",
                     style = settingsHelperStyle,
                 )
                 OutlinedButton(
                     onClick = viewModel::openContactForm,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+
                 ) {
                     Text("Write to us")
                 }
@@ -991,7 +1058,10 @@ fun SettingsScreen(
             // the operator wrote one, else the shipped default — so there is
             // always one to read, and "No disclaimer published yet" can no
             // longer happen.
-            SettingsCard(title = "Disclaimer", icon = Icons.Default.Info) {
+            // Settings review (Nov 2026, D10): each of the three Info
+            // cards gets an icon that says what it is — the disclaimer is
+            // a document, the totals are analytics, About keeps the "i".
+            SettingsCard(title = "Disclaimer", icon = Icons.Default.Description) {
                 val disclaimer = state.disclaimer.effective()
                 Text(
                     "Version ${disclaimer.version} — what this app is, and what it is not.",
@@ -999,7 +1069,8 @@ fun SettingsScreen(
                 )
                 OutlinedButton(
                     onClick = viewModel::openDisclaimer,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+
                 ) {
                     Text("Read the disclaimer")
                 }
@@ -1018,7 +1089,7 @@ fun SettingsScreen(
             // often the app crashes. No name, number, location, title, or
             // search — and the switch is the same answer the first-run
             // dialog asked, changeable here at any time.
-            SettingsCard(title = "Anonymous usage totals", icon = Icons.Default.Info) {
+            SettingsCard(title = "Anonymous usage totals", icon = Icons.Default.Analytics) {
                 Text(
                     "Share anonymous totals with ${Brand.name}: plays, " +
                         "playback failures, and crashes. Nothing that can " +
@@ -1045,7 +1116,7 @@ fun SettingsScreen(
                     style = settingsHelperStyle,
                 )
                 Text(
-                    "Version ${Brand.versionName}",
+                    aboutVersionLine(),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1057,7 +1128,8 @@ fun SettingsScreen(
             SettingsSectionHeading("Advanced")
             TextButton(
                 onClick = { showAdvanced = !showAdvanced },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+
             ) {
                 Text(if (showAdvanced) "Hide advanced settings" else "Show advanced settings")
             }
@@ -1075,7 +1147,8 @@ fun SettingsScreen(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                     Spacer(Modifier.height(10.dp))
-                                    OutlinedButton(onClick = viewModel::revealServerField, modifier = Modifier.fillMaxWidth()) {
+                                    OutlinedButton(onClick = viewModel::revealServerField, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                                    ) {
                                         Text("Change")
                                     }
                                 } else {
@@ -1104,7 +1177,8 @@ fun SettingsScreen(
                                                 alpha = DisabledButtonContentAlpha,
                                             ),
                                         ),
-                                        modifier = Modifier.fillMaxWidth(),
+                                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+
                                     ) {
                                         if (state.isTesting) {
                                             CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
@@ -1113,6 +1187,18 @@ fun SettingsScreen(
                                             Spacer(Modifier.width(8.dp))
                                             Text("Test & Save Connection")
                                         }
+                                    }
+                                    // Settings review (Nov 2026, D6): the
+                                    // field is a door that closes — Cancel
+                                    // returns to the calm summary line, and
+                                    // a successful Test & Save closes it
+                                    // too (see hideServerField).
+                                    TextButton(
+                                        onClick = viewModel::hideServerField,
+                                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+
+                                    ) {
+                                        Text("Cancel")
                                     }
                                 }
 
@@ -1152,10 +1238,11 @@ private fun SettingsSectionHeading(text: String) {
 private fun SettingsCard(
     title: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(RaddTokens.Radius.Card))
             // Review fix: flat #1A1A1A grouped section card, no nested inner
@@ -1232,7 +1319,12 @@ internal fun AccountLabelField(
         style = settingsHelperStyle,
     )
     if (onSave != null) {
-        TextButton(onClick = onSave) { Text("Save label") }
+        TextButton(
+            onClick = onSave,
+            modifier = Modifier.heightIn(min = 48.dp),
+        ) {
+            Text("Save label") 
+        }
     }
 }
 
@@ -1250,6 +1342,14 @@ private fun PreferenceRowTitle(text: String) {
  */
 internal fun audioLevelPercent(level: Float): String =
     "${(AudioBoost.clampLevel(level) * 100f).roundToInt()}%"
+
+/**
+ * Settings review (Nov 2026, D9): the one version line both About
+ * surfaces print — name, code and scheme — so a screenshot from either
+ * answers the same question. Help's About dialog uses this too.
+ */
+internal fun aboutVersionLine(): String =
+    "Version ${Brand.versionName} (${Brand.versionCode}) • ${Brand.schemeName}"
 
 @Composable
 internal fun SwitchRow(checked: Boolean, onCheckedChange: (Boolean) -> Unit, label: String) {
@@ -1313,10 +1413,14 @@ internal fun AccountNavRow(
     // Session 123: the account screens live here — the dashboard that
     // answers "where do I stand?", and the profile.
     Row {
-        TextButton(onClick = onOpenDashboard) {
+        TextButton(onClick = onOpenDashboard,
+            modifier = Modifier.heightIn(min = 48.dp),
+        ) {
             Text("Dashboard")
         }
-        TextButton(onClick = onOpenProfile) {
+        TextButton(onClick = onOpenProfile,
+            modifier = Modifier.heightIn(min = 48.dp),
+        ) {
             Text("Profile")
         }
     }
@@ -1371,8 +1475,7 @@ internal fun ChipRow(options: List<String>, selectedIndex: Int, onSelect: (Int) 
                 ),
                 selected = idx == selectedIndex,
                 onClick = { onSelect(idx) },
-                label = { Text(label, maxLines = 1, modifier = Modifier.padding(vertical = 12.dp)) },
-                modifier = Modifier.heightIn(min = 48.dp),
+                label = { Text(label, maxLines = 1, modifier = Modifier.padding(vertical = 12.dp)) }.heightIn(min = 48.dp),
             )
         }
     }
@@ -1471,6 +1574,7 @@ internal fun ProfileLinkDialog(account: AccountUiState, viewModel: SettingsViewM
         },
         confirmButton = {
             Button(
+                modifier = Modifier.heightIn(min = 48.dp),
                 onClick = viewModel::linkProfile,
                 enabled = !account.isLinking &&
                     account.linkName.isNotBlank() &&
@@ -1481,7 +1585,9 @@ internal fun ProfileLinkDialog(account: AccountUiState, viewModel: SettingsViewM
             }
         },
         dismissButton = {
-            TextButton(onClick = viewModel::closeLinkForm, enabled = !account.isLinking) {
+            TextButton(onClick = viewModel::closeLinkForm, enabled = !account.isLinking,
+                modifier = Modifier.heightIn(min = 48.dp),
+            ) {
                 Text("Cancel")
             }
         },
@@ -1506,7 +1612,9 @@ internal fun ProfileLinkDialog(account: AccountUiState, viewModel: SettingsViewM
  * address the disclaimer already names. The form state
  * (ContactUiState, submitContact) and the endpoint stay in the
  * ViewModel/API, unused — so the form can come back if the owner
- * wants it, and this slice deletes no machinery.
+ * wants it, and this slice deletes no machinery. (Settings review, Nov
+ * 2026, D7: the state is kept deliberately — only the dead language
+ * setters went. The form is the return path, not dead weight.)
  */
 @Composable
 internal fun ContactDialog(

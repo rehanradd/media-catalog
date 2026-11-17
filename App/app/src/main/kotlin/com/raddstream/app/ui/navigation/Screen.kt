@@ -56,7 +56,24 @@ sealed class Screen(val route: String) {
     }
     object LiveTv : Screen("live_tv")
     object MyList : Screen("my_list")
-    object Settings : Screen("settings")
+    /**
+     * Settings — same shape as [Search]: [route] is the NavGraph pattern
+     * with the optional `scrollTo` argument, [PLAIN_ROUTE] is the bare
+     * destination the bottom nav navigates to. The deep link
+     * `?scrollTo=contact` (Help's Contact row, Settings review Nov 2026
+     * D2) lands on the contact card instead of the top of the screen.
+     */
+    object Settings : Screen("settings?$ARG_SCROLL_TO={$ARG_SCROLL_TO}") {
+        const val ARG_SCROLL_TO = "scrollTo"
+        const val PLAIN_ROUTE = "settings"
+
+        /** Build the route, optionally deep-linking straight to the contact card. */
+        fun createRoute(scrollTo: String? = null): String =
+            if (scrollTo == null) PLAIN_ROUTE else "$PLAIN_ROUTE?$ARG_SCROLL_TO=$scrollTo"
+
+        /** [ARG_SCROLL_TO] value that lands on the contact card. */
+        const val SCROLL_TO_CONTACT = "contact"
+    }
     /**
      * The debug-only field-test harness (plan §8). It exists in every build
      * as a route, but no NavGraph entry and no Settings row exist unless
