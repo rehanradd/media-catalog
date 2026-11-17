@@ -284,7 +284,10 @@ class MyListMockupScreenTest {
             compose.onAllNodesWithTag(MyListBrowseButtonTag)
                 .fetchSemanticsNodes().single().boundsInRoot.height.toDp()
         }
-        assertEquals("Browse button is not 48dp tall", 48.dp, height)
+        // The floor is a minimum: the button's own M3 content padding
+        // makes it taller than 48dp, and that is fine — what the review
+        // forbids is a button UNDER the floor, like the old 40dp one.
+        assertTrue("Browse button is $height tall, expected at least 48dp", height >= 48.dp)
     }
 
     @Test
