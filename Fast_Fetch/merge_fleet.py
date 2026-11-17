@@ -23,14 +23,23 @@ SITES = [
     "rareanimes", "toonworld4all", "desicinemas", "hdtvb", "moviezguru",
     "hindilinks4u", "hdhub4u", "7starhd", "katmoviehd", "vegamovies",
     "multimovies", "rogmovies", "ssrmovies", "10xflix", "bolly4u",
-    "filmyzilla", "9xmovies", "world4ufree",
+    "filmyzilla", "9xmovies", "world4ufree", "mp4moviez", "humtv",
 ]
 
 #: A site whose staging database was re-derived after it was first scraped. Merging
 #: the stale `katmoviehd.db` would put 2,118 known media-type collisions back into
 #: the catalog, so the fleet reads the output of `rederive_katmoviehd.py` instead.
+#:
+#: mp4moviez and humtv stage under `*_staging.db` names, not the `<site>.db`
+#: default: `mp4moviez.db` carries posts+releases but NO sources table (the
+#: merge would raise "neither download_sources nor sources"), and `humtv.db`
+#: does not exist at all. `mp4moviez_staging2.db` is a byte-identical-content
+#: duplicate of `mp4moviez_staging.db` (same 11,404 canonical keys both ways,
+#: verified 2026-11-17) — the fleet reads the first, never both.
 SOURCES = {
     "katmoviehd": DATA_DIR / "katmoviehd_refreshed.db",
+    "mp4moviez": DATA_DIR / "mp4moviez_staging.db",
+    "humtv": DATA_DIR / "humtv_staging.db",
 }
 
 #: Tables the merge reads from a staging database. Which of them exist depends on

@@ -133,6 +133,28 @@ class NeedsMergeTests(unittest.TestCase):
             {"posts_merged": 5, "staging_fingerprint": self.FP}, None))
 
 
+class FleetSiteListTests(unittest.TestCase):
+    """mp4moviez + humtv joined the fleet 2026-11-17: their staging lives under
+    `*_staging.db`, never the `<site>.db` default — `mp4moviez.db` has no
+    sources table (the merge would raise) and `humtv.db` does not exist.
+    A silent drop of either entry would skip the site forever with only a
+    "[!] missing" line in the fleet log, so the wiring is pinned here."""
+
+    def test_mp4moviez_and_humtv_are_fleet_sites(self):
+        self.assertIn("mp4moviez", merge_fleet.SITES)
+        self.assertIn("humtv", merge_fleet.SITES)
+
+    def test_staging_sources_point_at_the_staging_dbs(self):
+        self.assertEqual(merge_fleet.SOURCES["mp4moviez"].name,
+                         "mp4moviez_staging.db")
+        self.assertEqual(merge_fleet.SOURCES["humtv"].name,
+                         "humtv_staging.db")
+
+    def test_every_source_entry_names_an_existing_site(self):
+        for site in merge_fleet.SOURCES:
+            self.assertIn(site, merge_fleet.SITES)
+
+
 class MainLoopTests(unittest.TestCase):
     """End-to-end through main() with a stubbed merge: skip / re-merge / retry."""
 
