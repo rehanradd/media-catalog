@@ -7,7 +7,7 @@
 
 ## ✅ Open items — index (q3, 2026-10-30; pointers only)
 
-1. **This file is a pointer, not a history** 108 session files (105 dated + 3 undated) cover
+1. **This file is a pointer, not a history** 109 session files (106 dated + 3 undated) cover
 
    every one of them verbatim: [`checkpoints/README.md`](checkpoints/README.md). Nothing was
    deleted, reworded, or summarized. The count is `ls Fast_Fetch/checkpoints/*.md` minus `README.md`,
@@ -77,14 +77,14 @@ The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete i
 - [Session 2026-11-17 — search speed: residual search cost + the `_ensure_schema` first-request 504](checkpoints/20261117-search-speed.md)
 - [Session 2026-11-16 — pre-peak fill (play-fast §2 (j))](checkpoints/20261116-pre-peak-fill.md)
 - [Session 2026-11-16 — playback telemetry beacon](checkpoints/20261116-playback-telemetry-beacon.md)
-- [Session 2026-11-18 — B4 trending warm-failure loudness](checkpoints/20261118-trending-warm-loud-b4.md)
+- [2026-11-18 — B4 trending warm-failure loudness](checkpoints/20261118-trending-warm-loud-b4.md)
 - [Session 2026-11-12 — self-check `[LIVE-TV-503]`](checkpoints/20261112-selfcheck-live-tv-503-logos.md)
 - [Session 2026-11-06 — crown `[CROWN-NIGHT-CHAIN]`: five trunk commits, the live-tree gap, what was rejected](checkpoints/20261106-crown-night-chain-five-trunk-commits-one-live-tree-gap.md)
 - [Session 2026-11-06 crown `[Q75-LAND]`: 3 producer chars, red-first 18 tests, the `_sN` merge loss filed](checkpoints/20261106-crown-q75-three-producer-fixes-landed-and-the-s-n-key-loss-filed.md)
-- Session 2026-11-02 — q9 supervisor lane `[Q9-PLAY-STALE]`: no stale 302 — the JIT honours all five `tiers.UNPLAYABLE_STATES` words
+- 2026-11-02 q9 `[Q9-PLAY-STALE]`: no stale 302 — JIT honours all five `tiers.UNPLAYABLE_STATES` words
 - Session 2026-11-02 — q9 supervisor lane `[Q9-AUDIT-SIGNING-SECRET]`: audit critical 4 — `stream_secret`/`signing_secret` fail closed; the constant dev fallback is retired, first install generates and persists a random key, no secret ever logged
-- Session 2026-11-02 — q6 supervisor lane `[Q6-AUDIT-HLS]`: audit critical 1 — a manifest is never a file; protocol recorded from the probe, dash branch added, client checks content-type
-- Session 2026-11-02 — q8 supervisor lane `[Q8-AUDIT-DEADLINKS]`: audit critical 10 — dead and expired links can no longer win a band or play
+- 2026-11-02 q6 `[Q6-AUDIT-HLS]`: audit critical 1 — a manifest is never a file; protocol recorded from probe, dash branch added, client checks content-type
+- 2026-11-02 q8 `[Q8-AUDIT-DEADLINKS]`: audit critical 10 — dead/expired links can no longer win a band or play
 
 - [Session 2026-11-05 q1 `[Q1-CROWN-VERIFY-AND-DOCS-GATE]`: trunk is `main`@`37ae67b`; 8 guide claims fixed, 66 GB staging freed, hubcdn trust gate re-derived — see `docs/checkpoints/20261105-q1-crown-verify-and-docs-gate.md`
 

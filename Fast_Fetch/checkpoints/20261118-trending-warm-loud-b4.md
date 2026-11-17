@@ -1,6 +1,7 @@
 # Session 2026-11-18 — B4 trending warm-failure loudness `[TRENDING-WARM-LOUD]`
 
-- Branch: `muse/trending-warm-loud-20261118` (from main `7eec5a00`).
+- Branch: `muse/trending-warm-loud-20261118` (from main `7eec5a00`, rebased onto `7dacfe1c` 04:5x PKT 18 Nov after the Settings merge).
+- Fixup 04:5x PKT 18 Nov: backend CI run 44199678272 FAILED on `test_docs_invariants` only — CONTINUITY claimed 108 session files, checkpoints held 109, and CONTINUITY was 12,061 B over the 12,000 B ceiling. Count fixed to 109 (106 dated + 3 undated); index trimmed to 11,957 B (99 lines) by compressing the B4 bullet and the three 2026-11-02 lane lines (none of them trunk-added lines, verified against the `dc73ac7`→`4fe6f65` set). Local re-check: `test_docs_invariants` OK, `test_home_rails` 61/61.
 - Item: 15h-plan B4 — "Trending warm-failure loudness — the residual silent failure; make it loud."
 - Finding: `_trending_warm()` (2026-11-15) was best-effort with one stderr line per failed shape, and a total failure (all three shapes) printed nothing at all — no status, no retry, no surface the operator or the self-check loop could see. The first trending hit for an unwarmed shape then cold-builds under the 10 s deadline and may 503, exactly the failure the warm exists to prevent.
 - Fix (`Fast_Fetch/viewer.py`):
