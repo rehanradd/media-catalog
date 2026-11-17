@@ -4,13 +4,14 @@ Update this file after each independently verified milestone so work can resume 
 
 ## ✅ Open items — index (q3, 2026-10-30; pointers only)
 
-1. **This file is a pointer, not a history.** 62 files cover 2026-10-20 → 2026-11-05: 60 dated
-   session blocks, one undated block, the entry template — every one verbatim. Newest first in
+1. **This file is a pointer, not a history.** 4 files cover the archive now: 2 absorbed 2026-10-30
+   session files, one undated block, the entry template — every one verbatim. Newest first in
    [`checkpoints/README.md`](checkpoints/README.md). The count is `ls docs/checkpoints/*.md` minus
    `README.md`, and `Fast_Fetch/test_docs_invariants.py` checks the number written here against that
    listing — a stale count in an index is its own defect, so it is now a tested claim, not prose.
+   (The 2026-10-20 → 2026-11-05 bulk, 128 files, was moved to the trash bin 2026-11-17.)
 2. Start at `checkpoints/README.md`; it names every window and the file that holds it.
-3. Root `AGENTS.md` + `docs/PROJECT_MAP.md` remain the law and the location map; this file is only
+3. Root `AGENTS.md` remains the law; this file is only
    the running log, and after this diet it no longer carries ~250 KB of it in every agent's context.
 4. Append new sessions to `checkpoints/` as one dated file per session — **do not append here**.
    The old append-here behaviour is what made every lane re-read 249 KB before doing any work.
@@ -30,7 +31,7 @@ Update this file after each independently verified milestone so work can resume 
 8. **`[Q3-ONBOARD-PAY]` backend, branch `q3-backend-auth-payments` @ `9df2f62`** — the device-gated
    3-day trial, the PBKDF2 phone+PIN link, and the merchant relay that can credit a claim (83 offline
    tests, CI step 33): pointer, not a copy —
-   [`../Fast_Fetch/checkpoints/20261031-q3-lane-zero-friction-onboarding-and-the-merchant-relay.md`](../Fast_Fetch/checkpoints/20261031-q3-lane-zero-friction-onboarding-and-the-merchant-relay.md).
+   `../Fast_Fetch/checkpoints/20261031-q3-lane-zero-friction-onboarding-and-the-merchant-relay.md`.
    Two findings outrank the feature itself: **the review that governs this exact task —
    `docs/RADD_RELAY_AND_AUTH_ARCHITECTURE.md`, R1-R9 — was already in trunk when the brief landed,
    and the brief did not name it**, so a lane re-derives from scratch what another lane already
@@ -42,7 +43,7 @@ Update this file after each independently verified milestone so work can resume 
    not silently widen everyone's gate.
 9. **`[Q3-PREMERGE-P]` — the pre-merge catalog copy and five-site merge are GATED, NOT OPEN.** qoder1
    approved the plan at `ef91096` with four corrections, landed into
-   [`../Fast_Fetch/checkpoints/20261101-01xx-q3-lane-premerge-copy-plan-queued-not-run.md`](../Fast_Fetch/checkpoints/20261101-01xx-q3-lane-premerge-copy-plan-queued-not-run.md):
+   `../Fast_Fetch/checkpoints/20261101-01xx-q3-lane-premerge-copy-plan-queued-not-run.md`:
    **C1** the source-side `wal_checkpoint(TRUNCATE)` is withdrawn — a read-write open checkpoints and
    rewrites the file it touches, so the instruction would have written into five databases that are not the
    lane's, and `.backup` from `-readonly` folds the WAL by construction; **C2** `fuser` is informational only
@@ -88,22 +89,22 @@ Update this file after each independently verified milestone so work can resume 
 Session blocks moved verbatim to [`docs/checkpoints/`](checkpoints/README.md); nothing was deleted or reworded.
 The list below is the rotation window (2026-10-29 → 2026-10-31), not the newest work; the full newest-first index is in `checkpoints/README.md`.
 
-- [2026-10-31 09:05 — q4 App lane `[Q4-ONBOARD-GREEN]`: onboarding went hosted-green at `03e926b`, the favourites rescue is provably not self-contained, and both lines own Room version 7](checkpoints/20261031-0905-q4-onboarding-hosted-green-and-the-favourites-version-collision.md) — three run ids measured, one destructive-migration trap found by reading
-- [2026-10-30 22:55 — Release signing secrets active on GitHub, tag v1.0.0 triggered `[RELEASE-SIGNING-ACTIVE]`](checkpoints/20261030-2255-signing-keys-active-release-triggered.md) — release pipeline live
-- [2026-10-30 10:xx — q6 lane `[Q6-DOC-TRUTH]`: eleven false API-security statements corrected against code, the never-discovered `App/.github/workflows` copies deleted, and two findings that contradict the docs (reported, unfixed)](checkpoints/20261030-10xx-q6-lane-doc-truth-the-api-security-paragraph.md) — written straight into the archive per rule 4
+- 2026-10-31 09:05 — q4 App lane `[Q4-ONBOARD-GREEN]`: onboarding went hosted-green at `03e926b`, the favourites rescue is provably not self-contained, and both lines own Room version 7 — three run ids measured, one destructive-migration trap found by reading
+- 2026-10-30 22:55 — Release signing secrets active on GitHub, tag v1.0.0 triggered `[RELEASE-SIGNING-ACTIVE]` — release pipeline live
+- 2026-10-30 10:xx — q6 lane `[Q6-DOC-TRUTH]`: eleven false API-security statements corrected against code, the never-discovered `App/.github/workflows` copies deleted, and two findings that contradict the docs (reported, unfixed) — written straight into the archive per rule 4
 
 - [2026-10-30 (cont.) — MovieBox: detail-API parser, credits/backdrop/languages fixed, crawl gate refused `[Q2-MOVIEBOX-CRAWL]`](checkpoints/20261030-2026-10-30-cont-moviedbox-detail-api-parser-credits-backdrop.md) — 26 lines (absorbed from trunk `4fe6f65` during the q3 diet rebase)
 - [2026-10-30 04:15 — qoder4 master: the box entered the halt band, and what was actually consuming it `[Q4-SAFETY]`](checkpoints/20261030-2026-10-30-04-15-qoder4-master-the-box-entered-the-halt-band.md) — 52 lines (absorbed from trunk `4fe6f65` during the q3 diet rebase)
-- [2026-10-30 02:20 — qoder4 master: the admin-panel gate verdict, and the measurement that flipped](checkpoints/20261030-2026-10-30-02-20-qoder4-master-the-admin-panel-gate-verdic.md) — 37 lines
-- [2026-10-30 01:10 — qoder4 master orchestrator: four false production claims retired, CI measured](checkpoints/20261030-2026-10-30-01-10-qoder4-master-orchestrator-four-false-pro.md) — 66 lines
-- [q5 lane, 2026-10-30 — the engagement pillars are now admin-controllable, and one shadowed name c](checkpoints/20261030-q5-lane-2026-10-30-the-engagement-pillars-are-now-admin-co.md) — 64 lines
-- [2026-10-29 01:50 — App docs honesty pass: four stale 2026-10-22 claims corrected, no build run](checkpoints/20261029-2026-10-29-01-50-app-docs-honesty-pass-four-stale-2026-10.md) — 125 lines
-- [2026-10-29 01:40 — master (qoder4): the merges happened, and 10 vaults joined the live catalog](checkpoints/20261029-2026-10-29-01-40-master-qoder4-the-merges-happened-and-10.md) — 197 lines
-- [2026-10-29 05:20 — master (account4): batch 3 landed (31 sites), a real 18+ leak found and quant](checkpoints/20261029-2026-10-29-05-20-master-account4-batch-3-landed-31-sites-a.md) — 92 lines
-- [2026-10-29 05:5x — qoder5 (PRIORITY 1 `[Q5-P1-ADULTKEY]`): the adult flag moved from the row to ](checkpoints/20261029-2026-10-29-05-5x-qoder5-priority-1-q5-p1-adultkey-the-adul.md) — 38 lines
-- [qoder4 (Master Orchestrator) — 2026-10-29 10:45-11:00, the backfill ran and was partly rolled ba](checkpoints/20261029-qoder4-master-orchestrator-2026-10-29-10-45-11-00-the-back.md) — 102 lines
-- [2026-10-29 — `uncut`/`unrated` were never adult markers; the pattern is fixed, the 7,663 are sti](checkpoints/20261029-2026-10-29-uncut-unrated-were-never-adult-markers-the-patt.md) — 61 lines
-- [q3 lane, 2026-10-29 ~17:05 host time — the audit blessed the leak, and here is the counterfactua](checkpoints/20261029-q3-lane-2026-10-29-17-05-host-time-the-audit-blessed-the-l.md) — 80 lines
+- 2026-10-30 02:20 — qoder4 master: the admin-panel gate verdict, and the measurement that flipped — 37 lines
+- 2026-10-30 01:10 — qoder4 master orchestrator: four false production claims retired, CI measured — 66 lines
+- q5 lane, 2026-10-30 — the engagement pillars are now admin-controllable, and one shadowed name c — 64 lines
+- 2026-10-29 01:50 — App docs honesty pass: four stale 2026-10-22 claims corrected, no build run — 125 lines
+- 2026-10-29 01:40 — master (qoder4): the merges happened, and 10 vaults joined the live catalog — 197 lines
+- 2026-10-29 05:20 — master (account4): batch 3 landed (31 sites), a real 18+ leak found and quant — 92 lines
+- 2026-10-29 05:5x — qoder5 (PRIORITY 1 `[Q5-P1-ADULTKEY]`): the adult flag moved from the row to — 38 lines
+- qoder4 (Master Orchestrator) — 2026-10-29 10:45-11:00, the backfill ran and was partly rolled ba — 102 lines
+- 2026-10-29 — `uncut`/`unrated` were never adult markers; the pattern is fixed, the 7,663 are sti — 61 lines
+- q3 lane, 2026-10-29 ~17:05 host time — the audit blessed the leak, and here is the counterfactua — 80 lines
 
 ## Moved out (reference prose, verbatim)
 

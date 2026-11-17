@@ -3,6 +3,13 @@
 > Git commit history is authoritative. The table below is a historical summary.
 > Do not use legacy API uploader scripts to write changes; use reviewed Git commits on a task branch.
 > The "Known Mistakes" section records historical failures and current guidance.
+>
+> **Frozen record (2026-11-17):** this table covers 2026-10-13 → 2026-10-15 only and
+> is **not extended** — the live log is `Fast_Fetch/CONTINUITY.md`. The SHAs
+> `beca84a` (cited twice, for two different sessions), `7850c28`, `7dd7182`,
+> `877e9e4`, `96778f4`, `c71d4d8`, `a65d528`, and `49aad24` do **not exist** in the
+> full repo history (verified 2026-11-17 against all 1,903 commits); they reference
+> pruned, rewritten, or never-pushed history. Do not quote them as commits.
 
 ---
 

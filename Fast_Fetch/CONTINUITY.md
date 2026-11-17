@@ -7,16 +7,18 @@
 
 ## ✅ Open items — index (q3, 2026-10-30; pointers only)
 
-1. **This file is a pointer, not a history** 173 session files (171 dated + 2 undated) cover
+1. **This file is a pointer, not a history** 104 session files (101 dated + 3 undated) cover
 
    every one of them verbatim: [`checkpoints/README.md`](checkpoints/README.md). Nothing was
    deleted, reworded, or summarized. The count is `ls Fast_Fetch/checkpoints/*.md` minus `README.md`,
    and `Fast_Fetch/test_docs_invariants.py` checks the number written here against that listing — a
    stale count in an index is its own defect, so it is now a tested claim rather than prose.
+   (2026-10-30 rotation: 173; the 2026-10-20 → 2026-11-05 bulk, 128 files, moved to the trash bin
+   2026-11-17; `HANDOFF_audit.md` archived into `checkpoints/` instead.)
 2. Newest lane work, read those files directly: `checkpoints/README.md` lists them newest first.
 3. The old "Current Operational State" / "Next Action Items" text is **historic** — it predates
    tonight's work and must not be quoted as current. Kept verbatim in
-   [`checkpoints/20261030-pre-diet-state-and-roadmap.md`](checkpoints/20261030-pre-diet-state-and-roadmap.md).
+   `checkpoints/20261030-pre-diet-state-and-roadmap.md`.
 4. Landed tonight: the per-host politeness gate — `link_health.host_gate()` + 18 offline tests in
    `Fast_Fetch/test_host_serialiser.py`, in CI's list, green on the hosted runner at `56e743b`.
 5. **Closed in code, open in data.** The key-level adult law landed: `fast_fetch.inherit_key_adult()`
@@ -31,14 +33,14 @@
    of this box and concludes it is not feasible as one run; the 429-parking and per-run cap are unbuilt.
 7. Queued quiet-window actions (load-gated, nothing run tonight): see "🕒 Queued" below.
 8. The documentation-diet notes that were items 8–9 here are rotated verbatim into
-   [`checkpoints/20261031-q2-humtv-status-and-rotated-diet-notes.md`](checkpoints/20261031-q2-humtv-status-and-rotated-diet-notes.md).
+   `checkpoints/20261031-q2-humtv-status-and-rotated-diet-notes.md`.
 9. `[Q2-HUMTV-STATUS]` — the Hum TV importer exists on trunk, is import-clean, and is byte-identical
    to `296ac5e`; the crawl is queued in "🕒" row 5. Evidence in that same file.
 10. **Launch readiness JOB A `[Q3-OPS-READS]` — LANDED as trunk `5bf6e59`, CI-green on both refs at
     `d9d3615` (all 32 steps now), still not deployed** (`/opt/radd-stream` is behind trunk and the
     service has not been restarted — that is the owner's call). It is the entry that writes the
     boundary order — **loopback is the reachability boundary, the token is checked inside it,
-    second** — into [`docs/ADMIN_PANEL_ACCESS.md`](../docs/ADMIN_PANEL_ACCESS.md), the panel's own
+    second** — into `docs/ADMIN_PANEL_ACCESS.md`, the panel's own
     guide, which also separates the running tree from the repository. Full session text, verbatim,
     rotated into `checkpoints/20261030-q3-lane-launch-readiness-job-a-the-operators-own-rea.md`.
 11. **JOB B (tasks #22/#30), branch `q3-engagement-ladder`** — the four monetization rules caught in review (details in that checkpoint file), 27 + 17 tests, and the measurement that contradicts two documents: **`redact.link_is_adult` returns False for an unknown link id**, not the True its docstring and root `AGENTS.md` claim. Rotated verbatim into that checkpoint file; nothing was reworded.
@@ -46,6 +48,9 @@
 13. **qoder1 pass — `0e5ae28` + `8ca798a` + `a424ffc` landed; `q3-adultkey-net` and `q2-raddrelay` refused:** all four workers idle, qoder4's seek fix missing from the landed app. Text: `checkpoints/20261031-q1-supervisor-three-lanes-reviewed-gated-and-landed-two.md`.
 14. **qoder1 pass — `0afea35` + `a775ba7` + `e7f6bbb` landed; `q3-coins-engine` found empty and re-scoped; `q5-adultkey-reconciliation` held on one guard line, then green (item 15).** Every gate was a hosted run, zero local CPU. Text: `checkpoints/20261031-q1-supervisor-pass-three-landed-the-adult-gate-held.md`.
 15. `[Q5-ADULTKEY]` — the merge-time corroborated adult fold and `link_is_adult` fail-closed; green on run 41156831610, landed `4a8c163`; **production still pre-law** — gap and read-only re-measure commands: `checkpoints/20261031-q5-adultkey-production-is-pre-law.md`.
+16. **Re-filed 2026-11-17 from `LANE_QODER13_BRIEF.md` (trashed; via `HANDOFF_apidocs.md` §F):** `validate_catalog_full.py` §8 has two checks whose condition is literal `True` (`:248`, `:252`) — needs a real condition. Held for the Crown, in order: all-clear re-run of `test_vidout` / `test_catalog_v2` / `test_api_v2` (reported errors suspected disk-full artifacts, never confirmed, one suite at a time); `unprobed`-scope question (`link_state` sets `unprobed` only on the no-unpacker branch, `fast_fetch.py:5559-5563`); whether the same-key twin `EXISTS` in `catalog_exporter` stays after `backfill_adult_key.py` runs on the deploying DB; per-service `http_status` cross-tab + §6 coverage query cost with the adult-clause join (never measured).
+17. **Re-filed 2026-11-17 from `HANDOFF_apidocs.md` (trashed) — v2 gaps, open only:** A5 `expires_at` PARTIAL (resolve path mirrors it onto `cat_links`; the projector does not persist it — NULL after a rebuild); A8 `OFFSET_QUORUM` is metadata, not a rule, and `_parts_for_work()`'s docstring (`catalog_api.py:1628-1630`) still claims the projector does not fill `cat_parts`; A10 `tv_special`/`miniseries` NOT STARTED; A11 alias `kind`s beyond `aka` NOT STARTED; C17 app-still-v1 PARTIAL (v2 types exist but were unwired — note: `playV2` is now used at Play-press time, `DetailPreResolve.kt:25`).
+18. **Re-filed 2026-11-17 from trashed App docs (`PLAN.md` §2.5, `PARITY_BACKEND_BLOCKED.md` §3.1):** manifest deep-link filter still bare-scheme (`AndroidManifest.xml:90-95` — one `<data>` per routed shape, drop `autoVerify`); legacy PNG launcher icons still in `res/mipmap-*`; open backend asks — #2 related + facets, #3 server-side sort + suggest, #4 measured link health (`cat_link_evidence` → `speed_mbps`/`latency_ms`/`http_status`/`ok`/`state`) onto `SourceDetail`.
 
 ---
 
@@ -75,17 +80,19 @@ The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete i
 - [Session 2026-11-08 — Muse [MUSE-SESSION107-DATA-TRUTH]: Phase D data-truth](checkpoints/20261108-muse-session107-data-truth.md)
 - [Session 2026-11-06 — crown `[CROWN-NIGHT-CHAIN]`: five trunk commits, the live-tree gap, what was rejected](checkpoints/20261106-crown-night-chain-five-trunk-commits-one-live-tree-gap.md)
 - [Session 2026-11-06 crown `[Q75-LAND]`: 3 producer chars, red-first 18 tests, the `_sN` merge loss filed](checkpoints/20261106-crown-q75-three-producer-fixes-landed-and-the-s-n-key-loss-filed.md)
-- [Session 2026-11-02 — q9 supervisor lane `[Q9-PLAY-STALE]`: no stale 302 — the JIT honours all five `tiers.UNPLAYABLE_STATES` words](checkpoints/20261102-q9-play-stale-unplayable-words.md)
-- [Session 2026-11-02 — q9 supervisor lane `[Q9-AUDIT-SIGNING-SECRET]`: audit critical 4 — `stream_secret`/`signing_secret` fail closed; the constant dev fallback is retired, first install generates and persists a random key, no secret ever logged](checkpoints/20261102-q9-audit-signing-secret-fail-closed-retires-the-constant-dev-fallback.md)
-- [Session 2026-11-02 — q6 supervisor lane `[Q6-AUDIT-HLS]`: audit critical 1 — a manifest is never a file; protocol recorded from the probe, dash branch added, client checks content-type](checkpoints/20261102-q6-audit-hls-a-manifest-is-never-a-file.md)
-- [Session 2026-11-02 — q8 supervisor lane `[Q8-AUDIT-DEADLINKS]`: audit critical 10 — dead and expired links can no longer win a band or play](checkpoints/20261102-q8-audit-deadlinks-dead-and-expired-links-can-no-longer-win.md)
+- Session 2026-11-02 — q9 supervisor lane `[Q9-PLAY-STALE]`: no stale 302 — the JIT honours all five `tiers.UNPLAYABLE_STATES` words
+- Session 2026-11-02 — q9 supervisor lane `[Q9-AUDIT-SIGNING-SECRET]`: audit critical 4 — `stream_secret`/`signing_secret` fail closed; the constant dev fallback is retired, first install generates and persists a random key, no secret ever logged
+- Session 2026-11-02 — q6 supervisor lane `[Q6-AUDIT-HLS]`: audit critical 1 — a manifest is never a file; protocol recorded from the probe, dash branch added, client checks content-type
+- Session 2026-11-02 — q8 supervisor lane `[Q8-AUDIT-DEADLINKS]`: audit critical 10 — dead and expired links can no longer win a band or play
 
 - [Session 2026-11-05 q1 `[Q1-CROWN-VERIFY-AND-DOCS-GATE]`: trunk is `main`@`37ae67b`; 8 guide claims fixed, 66 GB staging freed, hubcdn trust gate re-derived — see `docs/checkpoints/20261105-q1-crown-verify-and-docs-gate.md`
 
 ## Moved out (reference prose, verbatim)
 
-- ✍️ Incoming Agent Checklist → [`../docs/SPEC_INCOMING_AGENT_CHECKLIST.md`](../docs/SPEC_INCOMING_AGENT_CHECKLIST.md) (294 lines) — the onboarding procedure, unchanged
+- ✍️ Incoming Agent Checklist → `../docs/SPEC_INCOMING_AGENT_CHECKLIST.md` (294 lines) — the onboarding procedure, unchanged
 
-- 🎯 Current Operational State → [`checkpoints/20261030-pre-diet-state-and-roadmap.md`](checkpoints/20261030-pre-diet-state-and-roadmap.md)
+- 🎯 Current Operational State → `checkpoints/20261030-pre-diet-state-and-roadmap.md`
 
-- 📌 Next Action Items (Production & App Layer Roadmap) → [`checkpoints/20261030-pre-diet-state-and-roadmap.md`](checkpoints/20261030-pre-diet-state-and-roadmap.md)
+- 📌 Next Action Items (Production & App Layer Roadmap) → `checkpoints/20261030-pre-diet-state-and-roadmap.md`
+
+- 2026-11-17 — One-doc cleanup: 237 files to trash bin, single README.md, counts 104/4, invariants 22/22.

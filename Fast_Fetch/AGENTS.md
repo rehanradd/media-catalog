@@ -37,8 +37,8 @@ rules of the platform where you are working; do not conceal actual behavior.
 |---------|-------|
 | Project Name | `radd-stream` (configurable in `config.py`) |
 | Version | 3.1.0 |
-| GitHub | https://github.com/radddao/radd-stream |
-| Main Engine | `Fast_Fetch/fast_fetch.py` (3,907 lines) |
+| GitHub | https://github.com/rehanradd/radd-stream |
+| Main Engine | `Fast_Fetch/fast_fetch.py` (9,331 lines) |
 | Database | `Fast_Fetch/fast_fetch.db` (SQLite, gitignored) |
 | Config File | `Fast_Fetch/config.py` |
 | Python Min | 3.11+ |
@@ -53,7 +53,7 @@ rules of the platform where you are working; do not conceal actual behavior.
 ## 2. Architecture Overview
 
 The module map (which line range of `fast_fetch.py` does what, per layer) is reference prose, not
-law: [`../docs/SPEC_FAST_FETCH_ARCHITECTURE.md`](../docs/SPEC_FAST_FETCH_ARCHITECTURE.md). The law
+law: `../docs/SPEC_FAST_FETCH_ARCHITECTURE.md`. The law
 that lives here is §6 — you may not add a layer that breaks it.
 
 ---
@@ -129,7 +129,7 @@ is what split the four, and it is the only admissible test:
 
 The 12-row sample table and the list of mainstream titles the removed tokens were hiding are
 evidence, not law:
-[`../docs/SPEC_ADULT_TOKEN_SAMPLING.md`](../docs/SPEC_ADULT_TOKEN_SAMPLING.md).
+`../docs/SPEC_ADULT_TOKEN_SAMPLING.md`.
 
 
 **Word-boundary anchors do real work — do not loosen them.** `\bhunters\b` cannot fire
@@ -165,7 +165,7 @@ an agent runs.
 ## 10. Current Status & Stats
 
 Row counts, merge batches and crawl state are a **snapshot**, and snapshots rot: they now live in
-[`../docs/SPEC_FAST_FETCH_CATALOG_STATE.md`](../docs/SPEC_FAST_FETCH_CATALOG_STATE.md).
+`../docs/SPEC_FAST_FETCH_CATALOG_STATE.md`.
 **Re-measure before quoting any number**; the open-item index is
 [`CONTINUITY.md`](CONTINUITY.md).
 
@@ -173,7 +173,7 @@ Row counts, merge batches and crawl state are a **snapshot**, and snapshots rot:
 
 ## 12. TODO — Next Steps
 
-The per-site backlog moved to [`../docs/SPEC_FAST_FETCH_TODO.md`](../docs/SPEC_FAST_FETCH_TODO.md).
+The per-site backlog moved to `../docs/SPEC_FAST_FETCH_TODO.md`.
 Open items that gate a release are indexed at the top of [`CONTINUITY.md`](CONTINUITY.md); do not
 track work in this file.
 
@@ -182,9 +182,9 @@ track work in this file.
 ## 13. Platform-Specific Notes
 
 Windows / Replit / Codespace / VPS specifics are reference prose:
-[`../docs/SPEC_PLATFORM_NOTES.md`](../docs/SPEC_PLATFORM_NOTES.md). The Oracle measurements behind
+`../docs/SPEC_PLATFORM_NOTES.md`. The Oracle measurements behind
 the fleet guardrail are in [`../AGENTS.md`](../AGENTS.md) and
-[`../docs/CAPACITY_MEASURED.md`](../docs/CAPACITY_MEASURED.md).
+`../docs/CAPACITY_MEASURED.md`.
 
 ---
 
@@ -197,9 +197,11 @@ the fleet guardrail are in [`../AGENTS.md`](../AGENTS.md) and
 5. **Never `import requests`** — use `urllib.request` only
 6. **Line numbers shift** — the architecture comments in this file show approximate line numbers that drift as code grows. Use `grep` or search to find actual locations.
 7. **Unicode in print()** — always use `sys.stdout.write()` or ensure UTF-8 reconfigure when printing emojis on Windows
-8. **Oracle/GitHub access** — use the secret-safe procedures in `../ORACLE_DEPLOYMENT.md`; never print, commit, or copy `GITHUB_TOKEN` or `ORACLE_SSH_KEY`
+8. **Oracle/GitHub access** — use the secret-safe procedures in `../README.md`; never print, commit, or copy `GITHUB_TOKEN` or `ORACLE_SSH_KEY`
 9. **Public API exposure** — the public catalog routes are anonymous (no API key, no session), and
-   the deployment is plain HTTP with no TLS: that is the real risk, and it is unclosed. What is *not*
+   the backend process itself serves plain HTTP on loopback: TLS is terminated at the edge by
+   Cloudflare on the production domain `https://radd-stream.ccwu.cc`, while the direct-IP path
+   (`http://92.4.95.252/`) remains plain HTTP. What is *not*
    true any more: this API is not un-gated. `_public_gate()` (`viewer.py`) denies operator-only routes,
    runs a token bucket per client, returns 429 with `Retry-After`, and stamps `RateLimit-*` on every
    answer; `CORS_ALLOW_ORIGINS` (`redact.py`) is an **empty** allow-list so no response carries
@@ -211,16 +213,6 @@ the fleet guardrail are in [`../AGENTS.md`](../AGENTS.md) and
 
 ## Moved out (reference prose, verbatim)
 
-- 3. All 10 Sites — Complete Reference → [`../docs/SPEC_FAST_FETCH_SITES.md`](../docs/SPEC_FAST_FETCH_SITES.md) (221 lines) — per-site scraping reference
-- 4. Bridge & CDN Reference (All Known Services) → [`../docs/SPEC_BRIDGE_CDN.md`](../docs/SPEC_BRIDGE_CDN.md) (79 lines) — bridge and CDN service table
-- 5. Cinemeta API (Free Metadata Enrichment) → [`../docs/SPEC_CINEMETA.md`](../docs/SPEC_CINEMETA.md) (19 lines) — free metadata enrichment API
-- 7. How to Add a New Site (8-Step Pattern) → [`../docs/SPEC_ADD_A_SITE.md`](../docs/SPEC_ADD_A_SITE.md) (95 lines) — the 8-step importer pattern
-- 8. Domain Self-Healing Mechanism → [`../docs/SPEC_DOMAIN_SELF_HEALING.md`](../docs/SPEC_DOMAIN_SELF_HEALING.md) (19 lines) — domain rotation and healing mechanism
-- 9. Database Tables (Implemented Schema) → [`../docs/SPEC_FAST_FETCH_SCHEMA.md`](../docs/SPEC_FAST_FETCH_SCHEMA.md) (37 lines) — implemented schema
+Retired 2026-11-17 under the one-doc rule: the reference prose listed here moved to the trash archive (git history keeps it); the single reference doc is `../README.md`.
+
 - 11. Session History (Append Here) → [`checkpoints/app-agents-session-history.md`](checkpoints/app-agents-session-history.md) (25 lines) — session log
-- 2. Architecture Overview → [`../docs/SPEC_FAST_FETCH_ARCHITECTURE.md`](../docs/SPEC_FAST_FETCH_ARCHITECTURE.md) — the module map
-- 6b. Adult-token sample table → [`../docs/SPEC_ADULT_TOKEN_SAMPLING.md`](../docs/SPEC_ADULT_TOKEN_SAMPLING.md) — the 12-row samples behind the token verdicts
-- 10. Current Status & Stats → [`../docs/SPEC_FAST_FETCH_CATALOG_STATE.md`](../docs/SPEC_FAST_FETCH_CATALOG_STATE.md) — row counts and crawl state, re-measure before quoting
-- 12. TODO — Next Steps → [`../docs/SPEC_FAST_FETCH_TODO.md`](../docs/SPEC_FAST_FETCH_TODO.md) — per-site backlog
-- 13. Platform-Specific Notes → [`../docs/SPEC_PLATFORM_NOTES.md`](../docs/SPEC_PLATFORM_NOTES.md) — Windows / Replit / Codespace / VPS
-- Module index (generated, not prose) → [`../docs/SPEC_FAST_FETCH_MODULE_INDEX.md`](../docs/SPEC_FAST_FETCH_MODULE_INDEX.md) — one line per non-test module, taken from each file's own header, and the list of the 37 that describe themselves nowhere

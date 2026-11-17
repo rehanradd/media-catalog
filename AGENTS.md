@@ -3,7 +3,7 @@
 > **READ THIS ENTIRE FILE FIRST** before touching anything.
 > This is the single top-level source of truth for the `radd-stream` monorepo.
 > Every AI agent (Antigravity, Replit Agent, Copilot, Cursor, Claude, GPT, Gemini — all of you) must follow this.
-> For current cross-account state, also read `docs/PROJECT_MAP.md` and `docs/SESSION_CHECKPOINT.md`.
+> For current state, also read `docs/SESSION_CHECKPOINT.md`.
 
 ---
 
@@ -11,15 +11,15 @@
 
 ```
 AGENTS.md          ← THIS FILE: the law. Fast_Fetch/ ← 🐍 Python backend. App/ ← 📱 Android (Kotlin/Compose).
-docs/              ← SPEC + rotated LOG (SPEC_*.md, checkpoints/). Fast_Fetch/CONTINUITY.md and
+docs/              ← rotated LOG (checkpoints/) + SESSION_CHECKPOINT.md. Fast_Fetch/CONTINUITY.md and
                      docs/SESSION_CHECKPOINT.md are open-items indexes, not logs. The guard enforces
                      ≤120 lines / ≤12 KB each; measure with `wc -l` and never quote a line count from
                      here (this block read "119 and 54" while they were 91 and 112). Grow them
                      deliberately, never by accretion.
 ```
 
-The annotated inventory (every file, every doc, with what it holds) moved to
-[`docs/SPEC_REPO_MAP.md`](docs/SPEC_REPO_MAP.md). Read it when you need to know *where* something lives.
+The single reference doc is `README.md` — overview, domains, how it runs,
+build/push/deploy. Read it when you need to know *where* something lives.
 
 ---
 
@@ -114,7 +114,7 @@ Describe the code's behavior accurately to users and tools. Do not disguise its 
   route, or a flagged link through stream or download on either port, is P0.
   The *evidence* behind this law — the live-host proof rows, `backfill_adult_key.py`'s apply procedure,
   the wide-vs-ledger flag measures and the four contested tokens — moved to
-  [`docs/SPEC_ADULT_FLAG_EVIDENCE.md`](docs/SPEC_ADULT_FLAG_EVIDENCE.md). The law is above; the receipts are there.
+  `docs/SPEC_ADULT_FLAG_EVIDENCE.md`. The law is above; the receipts are there.
 
 ---
 
@@ -122,7 +122,7 @@ Describe the code's behavior accurately to users and tools. Do not disguise its 
 
 | Credential variable | Where to find it | What it does |
 |---|---|---|
-| `GITHUB_TOKEN` | Replit Configurations (environment variable; user says not Secrets) | GitHub access from Replit; use the temporary Git askpass flow in `ORACLE_DEPLOYMENT.md` |
+| `GITHUB_TOKEN` | Replit Configurations (environment variable; user says not Secrets) | GitHub access from Replit; use the temporary Git askpass flow in `README.md` |
 | `ORACLE_SSH_KEY` | Replit Configurations (environment variable; user says not Secrets) | SSH private key for `ubuntu@92.4.95.252`; use only via a temporary 0600 file |
 | `KEYSTORE_BASE64` | ✅ **CONFIGURED and exercised** — `v1.0.4` is signed (run `41323174024`) | Android signing keystore (base64 encoded) |
 | `KEY_STORE_PASSWORD` | ✅ **CONFIGURED and exercised** | Keystore file password |
@@ -148,17 +148,17 @@ and there is no installed base to protect yet, so the owner's key is the only co
 above it:**
 signing **works**. `GET /releases` returns exactly one release — `v1.0.4` with
 `radd-stream-1.0.4.apk`, `radd-stream-1.0.4.aab`, `radd-stream-1.0.4-SHA256SUMS.txt` — published by
-release run `41323174024` (`push` on tag `v1.0.4`, `completed success`, 2026-11-01T15:49:38Z); five
-tags exist (`v1.0.0`…`v1.0.4`), runs 1–7 of that workflow's eight are `failure`. So "nothing has ever
+release run `41323174024` (`push` on tag `v1.0.4`, `completed success`, 2026-11-01T15:49:38Z); eleven
+tags exist (`v1.0.0`…`v1.1.5`, re-measured 2026-11-17), runs 1–7 of that workflow's eight are `failure`. So "nothing has ever
 been signed" and "`GET /releases` is `[]`" were true when measured and are false now; the base64
 padding failure was fixed by owner-side secret re-entry, **not** by a build-script edit, and the
-re-entry procedure is [`docs/SPEC_APP_SIGNING_RUNBOOK.md`](docs/SPEC_APP_SIGNING_RUNBOOK.md). The
+re-entry procedure is `docs/SPEC_APP_SIGNING_RUNBOOK.md`. The
 retired measurement chain (every run id, the strict-decoder diagnosis, the keystore re-encode
 figures) is preserved verbatim in
-[`docs/SPEC_AGENTS_MEASURED_NOTES.md`](docs/SPEC_AGENTS_MEASURED_NOTES.md). **Moving or re-cutting a
+`docs/SPEC_AGENTS_MEASURED_NOTES.md`. **Moving or re-cutting a
 tag is an owner action: no agent may create, move or delete a tag.**
 
-**Backend agents**: use `GITHUB_TOKEN` for GitHub operations and `ORACLE_SSH_KEY` only when connecting to Oracle. Read [`ORACLE_DEPLOYMENT.md`](ORACLE_DEPLOYMENT.md) first.
+**Backend agents**: use `GITHUB_TOKEN` for GitHub operations and `ORACLE_SSH_KEY` only when connecting to Oracle. Read `README.md` first.
 **App agents**: the debug build needs no secrets; the *signed release* needs the 4 keystore secrets above **and** a release workflow that builds — which it now has (`v1.0.4`, run `41323174024`). A task that needs an installable build takes the signed `v1.0.4` APK, or the **debug APK** from `🔨 CI — Android Build & Test` for whatever trunk has since.
 Verify only whether the two configured variable names are present; never read or print their values, put them in Git URLs or command arguments, commit them, or copy them to Oracle. Do not ask the user to move them to Replit Secrets.
 
@@ -166,7 +166,7 @@ Verify only whether the two configured variable names are present; never read or
 
 ## 🔁 Cross-Agent Checkpoints and Safe Git Pushes
 
-- Read `docs/PROJECT_MAP.md` and `docs/SESSION_CHECKPOINT.md` at the start of every session; update the checkpoint after every independently useful milestone.
+- Read `docs/SESSION_CHECKPOINT.md` at the start of every session; update the checkpoint after every independently useful milestone.
 - **`/opt/radd-stream` is the live deployment tree, not a workspace.** The unit runs
   `WorkingDirectory=/opt/radd-stream` + `ExecStart=/usr/bin/python3 -S /opt/radd-stream/Fast_Fetch/fast_fetch.py
   serve`, so whatever is checked out there is what the service loads on its next start, and several
@@ -177,8 +177,8 @@ Verify only whether the two configured variable names are present; never read or
   what this rule exists to prevent.
 - Do not wait for a quota warning. Test, commit, and push each completed milestone to the task/agent branch promptly. If a session may end before tests finish, save a clearly labeled WIP commit to that branch, record unrun checks, and do not merge or deploy it.
 - Stage only reviewed paths (`git add <paths>`), inspect the staged names/diff, and keep secrets, databases, APKs, build outputs, and uploaded chat files out of commits. Never use `git add -A` or force-push. Per owner authorization, agents may push verified, tested milestones directly to `main` so automated CI triggers and autonomous progress is seamless.
-- Treat `.replit` as local-only sensitive configuration: do not inspect its values or stage, commit, or push it. It is ignored and untracked. The user chose to leave historical copies intact; do not rewrite history unless they explicitly change that decision.
-- Use Git over HTTPS with the temporary askpass procedure in `ORACLE_DEPLOYMENT.md`. Never put credentials in URLs, command arguments, files, or logs.
+- Treat `.replit` as local-only sensitive configuration: do not inspect its values or stage, commit, or push it. It is tracked in git, not ignored (`git ls-files` lists it). The user chose to leave historical copies intact; do not rewrite history unless they explicitly change that decision.
+- Use Git over HTTPS with the temporary askpass procedure in `README.md`. Never put credentials in URLs, command arguments, files, or logs.
 - Do **not** recreate or restore `push.py`, `github_push.py`, `emergency_push.py`, `push_github.py`, or `safe_push.sh`. They were GitHub Contents API uploaders that could write broad file sets directly to `main`; `safe_push.sh` additionally staged every path it found (`git add -u` plus all untracked files), committed without a test gate, and pushed through the `origin` remote whose URL still carries the owner's unrevoked token **(measured 2026-10-30: that clause is now stale as a description of this box — `remote.origin.url` is a clean `https://github.com/rehanradd/radd-stream.git` with no userinfo, and neither `/opt/radd-stream/.git/config` nor `/home/ubuntu/.gitconfig` matches a token pattern. The token itself is still live: it reads `/user` as the owner's own login. So the credential is unrevoked while being un-stored here — revoke it, and keep using the askpass flow rather than relying on the remote's URL to be clean).** All five were reduced to no-op warning stubs and have now been deleted from the tree — their history stays in Git, their danger stays retired. A local commit remains recoverable if a normal push fails—record the failure and next step in the checkpoint rather than claiming it synced.
 - Oracle deployment is separate from a GitHub branch push. Only deploy through a verified, tested release path after CI passes; do not copy untested or WIP code to the live host.
 
@@ -188,8 +188,8 @@ Verify only whether the two configured variable names are present; never read or
 
 **This host has ONE vCPU** (`nproc` = 1) and the agent lanes are the load, not production. The 01:30
 measurement behind that sentence (load 10.2, 167.7 % of the machine attributed to five `qodercli` lanes
-while `radd-stream` used 0.4 % of a core) moved to [`docs/SPEC_AGENTS_MEASURED_NOTES.md`](docs/SPEC_AGENTS_MEASURED_NOTES.md).
-Full per-route costs are in [`docs/CAPACITY_MEASURED.md`](docs/CAPACITY_MEASURED.md).
+while `radd-stream` used 0.4 % of a core) moved to `docs/SPEC_AGENTS_MEASURED_NOTES.md`.
+Full per-route costs are in `docs/CAPACITY_MEASURED.md`.
 
 CPU saturation only adds latency. **Memory saturation is what kills this host** — it already has
 one recorded OOM-kill of `radd-stream` (19:14:31, auto-restarted onto an uncommitted tree). So the
@@ -237,26 +237,32 @@ Every agent — no matter how short the session — MUST do this before ending:
    Count the suites with `grep -c 'name: 🧪' .github/workflows/backend-ci.yml`, **never** with
    `grep 'run: python3 -S'`: the latter silently undercounts, because a step written
    `run: time python3 -S …` is still a suite (measured 2026-10-30 at `56e743b`: 26 `🧪` steps, 25
-   `python3 -S` matches — the missing one is `test_admin_panel.py`). The list itself is a snapshot
+   `python3 -S` matches — the missing one is `test_admin_panel.py`; 2026-11-17 at
+   `1d236f07`: 108 `🧪` steps, 91 `python3 -S` invocations). The list itself is a snapshot
    that grows; the workflow file is the only source of truth, so read it instead of quoting a number
    from this file. The historical per-run module lists and test counts moved to
-   [`docs/SPEC_AGENTS_MEASURED_NOTES.md`](docs/SPEC_AGENTS_MEASURED_NOTES.md).
-2. **Quote a test count from the log that executed it, or from `git show <sha>:Fast_Fetch/<module> | grep -cE '^\s+def test_'` — never from prose here** (this line read 76, then 124, then 133 in a week — `docs/SPEC_AGENTS_MEASURED_NOTES.md`). Method's example, verified at `ee5100f` and `11c1008`: `test_database.py` **133** (`Ran 133 tests in 6.609s`, run `41245756423`), `test_vidout.py` **6**. Naming those two is a quick gate, not item 1.
+   `docs/SPEC_AGENTS_MEASURED_NOTES.md`.
+2. **Quote a test count from the log that executed it, or from `git show <sha>:Fast_Fetch/<module> | grep -cE '^\s+def test_'` — never from prose here** (this line read 76, then 124, then 133, then 237 in a week — `docs/SPEC_AGENTS_MEASURED_NOTES.md`). Method's example, verified at `ee5100f` and `11c1008`: `test_database.py` **237** (`def test_` count at `1d236f07`; the old `Ran 133 tests` figure is stale), `test_vidout.py` **6**. Naming those two is a quick gate, not item 1.
 3. Append a session log to `Fast_Fetch/CONTINUITY.md`
-4. Push with Git over HTTPS using the temporary askpass helper in [`ORACLE_DEPLOYMENT.md`](ORACLE_DEPLOYMENT.md); do not use the legacy per-file API push scripts
+4. Push with Git over HTTPS using the temporary askpass helper in `README.md`; do not use the legacy per-file API push scripts
 
 **Run the gate in a worktree at the tip, never in `/opt/radd-stream`** — the live tree is a diverged
 older draft and a "green" from it is a weaker claim than CI's. The measurement that proved it is in
-[`docs/SPEC_AGENTS_MEASURED_NOTES.md`](docs/SPEC_AGENTS_MEASURED_NOTES.md).
+`docs/SPEC_AGENTS_MEASURED_NOTES.md`.
 
 ### For App Sessions:
 1. Ensure Gradle builds pass locally OR wait for GitHub Actions green check
 2. Append a session log to [`App/docs/SESSION_HISTORY.md`](App/docs/SESSION_HISTORY.md) — **never**
    to `App/AGENTS.md`, which is auto-loaded into every agent's context and must stay instructions-only
-3. Push with Git over HTTPS using the temporary askpass helper in [`ORACLE_DEPLOYMENT.md`](ORACLE_DEPLOYMENT.md)
+3. Push with Git over HTTPS using the temporary askpass helper in `README.md`
 4. Tag a release with `git tag vX.Y.Z && ...` if a milestone is complete
    — **superseded by the Fleet Resource Guardrail rule 5: this is the owner's call alone, no agent
    may create, move or push a tag.**
+
+### Session blocks (from `SESSION.md`, trashed 2026-11-17)
+
+START — Date (UTC), Agent, Branch (never main), Working on, Task, Last SHA, Tests start (from the test log)
+END — Built, Files changed, Tests end, Branch-SHA, GitHub push (success/failed + reason), Checks, Next agent (one sentence)
 
 ---
 
@@ -267,11 +273,11 @@ older draft and a "green" from it is a weaker claim than CI's. The measurement t
 | Backend: ingestion, SQLite catalog, resolver, REST API | ✅ **Deployed and running on this host** — `systemctl is-active radd-stream` → `active`, `fast_fetch.py serve --host 127.0.0.1:8080` behind Nginx | Complete |
 | Android App: server setup, metadata catalog, search | ✅ Implemented; device verification pending | Phase 1 |
 | Android App: details and playback | ✅ Implemented (Media3 playback, favorites, keeps, VIP screen); device verification pending | Phase 2 |
-| GitHub Actions | ✅ **Enabled and running** — `/actions/permissions` → `{"enabled": true, "allowed_actions": "all"}`; all four repo-root workflows are `state=active` (`backend-ci.yml`, `ci.yml`, `raddrelay-ci.yml`, `release.yml`), and the never-discovered duplicates under `App/.github/workflows` have been deleted (a PR gate exists: `ci.yml:57`, `backend-ci.yml:113`, `raddrelay-ci.yml:37` all carry `pull_request`). The retired "disabled at the account level" claim and the full CI-health measurement history (per-sha run verdicts on both trunk refs, the Android `unfed-not-red` misdiagnosis, the Robolectric #9166 trap) are in [`docs/SPEC_AGENTS_MEASURED_NOTES.md`](docs/SPEC_AGENTS_MEASURED_NOTES.md). | Gate is live |
-| Release signing | ✅ **Signed and published** — `GET /releases` is one release, `v1.0.4`, carrying `radd-stream-1.0.4.apk` + `.aab` + `-SHA256SUMS.txt`, published by run `41323174024` (`completed success`); five tags exist and runs 1–7 of that workflow's eight are `failure`. Trunk-only bytes = the CI debug APK. Receipts: `docs/SPEC_AGENTS_MEASURED_NOTES.md`; re-entry procedure: `docs/SPEC_APP_SIGNING_RUNBOOK.md`. | Owner (tagging) |
+| GitHub Actions | ✅ **Enabled and running** — `/actions/permissions` → `{"enabled": true, "allowed_actions": "all"}`; all six repo-root workflows are `state=active` (`backend-ci.yml`, `ci.yml`, `raddrelay-ci.yml`, `release.yml`, `emulator-screenshots.yml`, `paparazzi.yml`), and the never-discovered duplicates under `App/.github/workflows` have been deleted (a PR gate exists: `ci.yml:57`, `backend-ci.yml:113`, `raddrelay-ci.yml:37` all carry `pull_request`). The retired "disabled at the account level" claim and the full CI-health measurement history (per-sha run verdicts on both trunk refs, the Android `unfed-not-red` misdiagnosis, the Robolectric #9166 trap) are in `docs/SPEC_AGENTS_MEASURED_NOTES.md`. | Gate is live |
+| Release signing | ✅ **Signed and published** — `GET /releases` is one release, `v1.0.4`, carrying `radd-stream-1.0.4.apk` + `.aab` + `-SHA256SUMS.txt`, published by run `41323174024` (`completed success`); eleven tags exist (through `v1.1.5`) and runs 1–7 of that workflow's eight are `failure`. Trunk-only bytes = the CI debug APK. Receipts: `docs/SPEC_AGENTS_MEASURED_NOTES.md`; re-entry procedure: `docs/SPEC_APP_SIGNING_RUNBOOK.md`. | Owner (tagging) |
 
-The current Oracle host and its HTTP-only limitations are documented in
-[`ORACLE_DEPLOYMENT.md`](ORACLE_DEPLOYMENT.md). The backend is **already deployed there and is the
+The current Oracle host is documented in
+`README.md`. The backend is **already deployed there and is the
 running system** — do not treat it as hypothetical, and never copy untested or WIP code onto it.
 
 **Do not misread an empty CI run list.** `backend-ci.yml` triggers on `push: branches: ["**"]` with
@@ -327,7 +333,7 @@ python Fast_Fetch/fast_fetch.py sync --site all
 # Search the catalog
 python Fast_Fetch/fast_fetch.py search "Inception"
 
-# Push to GitHub with the temporary askpass helper in ORACLE_DEPLOYMENT.md
+# Push to GitHub with the temporary askpass helper in README.md
 ```
 
 ### App (no local Android Studio needed)
@@ -354,7 +360,7 @@ python Fast_Fetch/fast_fetch.py search "Inception"
 | GitHub Releases | https://github.com/rehanradd/radd-stream/releases |
 | Oracle HTTP host (measured 2026-10-29) | `http://92.4.95.252/` — plain HTTP, and `location /` proxies **code-server** (the web IDE), not the app |
 | Backend REST API (publicly reachable) | `http://92.4.95.252/api/v1/posts` — nginx allow-lists only `/api/v1/posts`, `/api/v1/stream`, `/api/v1/stats`, `/api/v1/download`, `/api/v1/search/by-media`, `/api/v1/app/remote-config`, `/api/v1/art`, `/api/v2/account*`, and `/download/`; `^~ /api/` 403s everything else, including all v2 catalog routes and `/api/data` |
-| Operator panel — **measured 2026-10-29 05:47 on this host** | One process (pid of `fast_fetch.py serve`) listens on BOTH `127.0.0.1:8080` and `127.0.0.1:8081`; neither is bound beyond loopback and nginx forwards neither. Public `/admin` falls through to code-server and answers 401. On `8081`: `/admin` → **401 without `RADD_ADMIN_TOKEN`** (the gate is `admin_panel.route_get` → `_gate(peer, token)`), but `/` → **200 serving the 46,476-byte dashboard with no token at all**, and `/api/v1/stats` and `/api/v1/rules` also answer **200 on 8081 with a bogus bearer token**. So the trust boundary on the operator port is *the loopback interface*, not the token: the token guards `/admin` only. On `8080` the same paths differ — `/` is a 1,355-byte page, `/client` is the 20,510-byte PWA, `/api/v1/rules` is **404**. Do not describe the dashboard as token-gated; describe it as loopback-only, which is what is true. |
+| Operator panel — **AdminV2, live** | AdminV2 `run.py`, port `18080`, outside systemd, from `/home/ubuntu/admin-v2-workspace-20261105` (six env vars). Retired 2026-10-29 `viewer.py` `127.0.0.1:8081` reading (`/admin` 401 without token, `/` 200 without): for that retired dashboard — Do not describe the dashboard as token-gated; describe it as loopback-only, which is what is true. |
 | Mobile PWA `/client` | **not public** — measured 401 through nginx (same code-server fallthrough). It serves 200 only from `127.0.0.1:8080` |
 
 ---
@@ -372,3 +378,4 @@ python Fast_Fetch/fast_fetch.py search "Inception"
 9. **Per-Site Dedicated Staging Database Rule** — Scrape each streaming site into its own isolated staging database (e.g. `multimovies.db`, `vegamovies.db`). Never run mass scraper ingestion directly into the production catalog (`fast_fetch.db`). Once fully scraped and verified, merge into the unified catalog using `Fast_Fetch/merge_catalogs.py`.
 10. **Zero Data Loss & Clone-Ready Fidelity Rule** — Extract 100% of available metadata (clean titles, TMDB posters & backdrops, year, synopsis, genres, ratings, audio languages, all seasons/episodes). Capture both embed/HLS watch servers and all download mirrors across all quality tiers. Never discard dead or failing links; record their status (`active`, `dead`, etc.) so link health is fully auditable and can be healed via JIT.
 11. **Master-Disciple Local AI Law (Celestial Qi / Token Conservation)** — All agents have accepted the local Inner Disciple (`qwen2.5-coder:1.5b` running free on Oracle VM CPU via `/usr/local/bin/disciple` and `Fast_Fetch/disciple.py`). Whenever drafting code, generating regex patterns, writing unit test stubs, or building repetitive scraper helpers, always delegate the initial generation to local Qwen (0 cloud tokens), review the output for 100% Python stdlib compliance and security, and test it before committing. Never waste expensive cloud tokens on boilerplate.
+12. **Fast_Fetch/DAO.md stays as-is** — do not edit its content or formatting unless the user explicitly asks (re-filed 2026-11-17; source trashed).

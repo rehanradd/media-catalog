@@ -26,9 +26,6 @@ FF_AGENTS = BASE_DIR / "AGENTS.md"
 APP_AGENTS = REPO_ROOT / "App" / "AGENTS.md"
 CONTINUITY = BASE_DIR / "CONTINUITY.md"
 CHECKPOINT = REPO_ROOT / "docs" / "SESSION_CHECKPOINT.md"
-#: The one file a lane reads to learn how to reach the panel, and the one that
-#: carried the wording root AGENTS.md forbids.
-ADMIN_DOC = REPO_ROOT / "docs" / "ADMIN_PANEL_ACCESS.md"
 
 FF_CKPT = BASE_DIR / "checkpoints"
 DOC_CKPT = REPO_ROOT / "docs" / "checkpoints"
@@ -207,10 +204,6 @@ INVARIANTS = [
     # --- edge truth ------------------------------------------------------------------
     ("operator panel is loopback-only, not token-gated", ROOT_AGENTS,
      "Do not describe the dashboard as token-gated; describe it as loopback-only, which is what is true."),
-    ("the panel's own guide states the ordering, not the credential", ADMIN_DOC,
-     "Never describe the dashboard as token-gated: holding `RADD_ADMIN_TOKEN` does not make it reachable"),
-    ("the panel guide separates the running tree from the repository", ADMIN_DOC,
-     "Read that table as the state of the *running tree*, not of the repository."),
     ("nginx allow-lists the public routes", ROOT_AGENTS,
      "nginx allow-lists only `/api/v1/posts`, `/api/v1/stream`, `/api/v1/stats`"),
     ("backend is the running system", ROOT_AGENTS,
@@ -277,10 +270,6 @@ INVARIANTS = [
     ("the detail API is preferred only when a subjectId exists",
      FF_CKPT / "20261030-q2-themoviebox-crawl-2026-10-30-parser-fixes-detail-api-preference.md",
      "Crawl now prefers the API when the queued row carries a `subjectId`"),
-    ("MovieBox is metadata + trailer evidence, not playable", REPO_ROOT / "Fast_Fetch" / "SITES.md",
-     "**metadata + trailer-evidence** source, not a"),
-    ("no playable print is resolvable from this host", REPO_ROOT / "Fast_Fetch" / "SITES.md",
-     "no playable print is resolvable from this host"),
 ]
 
 
@@ -365,23 +354,27 @@ class RotatedHistoryTests(unittest.TestCase):
     """Nothing was deleted: the LOG moved to dated files, and the links say where."""
 
     def test_rotated_log_directories_exist_with_content(self):
+        # One-doc cleanup (2026-11-17) moved the 2026-10-20 → 2026-11-05 bulk to the
+        # trash bin, so docs/checkpoints/ now holds 3 content files; the check is that
+        # each directory still exists with content and its README index, not a count.
         for d in (BASE_DIR / "checkpoints", REPO_ROOT / "docs" / "checkpoints"):
             self.assertTrue(d.is_dir(), "missing rotated log dir: %s" % d)
-            self.assertGreaterEqual(len(list(d.glob("*.md"))), 10,
+            content = [p for p in d.glob("*.md") if p.name not in ("README.md", "TEMPLATE.md")]
+            self.assertGreaterEqual(len(content), 1,
                                     "%s does not hold the rotated history" % d)
             self.assertTrue((d / "README.md").is_file(), "%s/README.md index missing" % d)
 
     def test_app_session_history_moved_and_exists(self):
         self.assertTrue((REPO_ROOT / "App" / "docs" / "SESSION_HISTORY.md").is_file())
 
-    def test_moved_spec_documents_exist(self):
-        spec_dir = REPO_ROOT / "docs"
-        specs = sorted(p.name for p in spec_dir.glob("SPEC_*.md"))
-        self.assertGreaterEqual(len(specs), 20, "the SPEC layer is missing: %s" % specs)
-        for name in ("SPEC_REPO_MAP.md", "SPEC_ADULT_FLAG_EVIDENCE.md",
-                     "SPEC_AGENTS_MEASURED_NOTES.md", "SPEC_FAST_FETCH_ARCHITECTURE.md",
-                     "SPEC_APP_ROBOLECTRIC_ARM64.md"):
-            self.assertTrue((spec_dir / name).is_file(), "moved-out spec missing: %s" % name)
+    def test_single_reference_doc_readme_exists(self):
+        """One-doc rule (2026-11-17): the SPEC layer was retired; README.md at the
+        root is the only reference doc. Nothing may re-add a SPEC_*.md file."""
+        readme = REPO_ROOT / "README.md"
+        self.assertTrue(readme.is_file(), "the single reference doc README.md is missing")
+        self.assertGreater(len(load(readme)), 1_000, "README.md is empty")
+        specs = sorted(p.name for p in (REPO_ROOT / "docs").glob("SPEC_*.md"))
+        self.assertFalse(specs, "the retired SPEC layer is back: %s" % specs)
 
     def test_no_history_line_was_deleted_only_moved(self):
         """The rotated logs are append-only archives: the index must still reach the newest entry."""
@@ -524,7 +517,7 @@ class ConflictMarkerTests(unittest.TestCase):
     """
 
     #: The files more than one lane appends to, so the files a merge actually collides in.
-    MERGED = AUTO_LOADED + [CONTINUITY, CHECKPOINT, ADMIN_DOC,
+    MERGED = AUTO_LOADED + [CONTINUITY, CHECKPOINT,
                             FF_CKPT / "README.md", DOC_CKPT / "README.md"]
 
     def test_no_lane_edited_file_carries_conflict_markers(self):

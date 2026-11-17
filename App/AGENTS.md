@@ -9,8 +9,8 @@
 
 > A native Kotlin/Compose Android client for a `radd-stream` server. Verified in `App/app/src`, the
 > surface covers server setup, catalog browsing, search, favorites, a detail screen, and Media3
-> playback via the stream resolver. Device verification is pending; CI is green on the panel
-> branch (run ids in `App/docs/SESSION_HISTORY.md`) — §5 and §6 give the exact API contract and
+> playback via the stream resolver. Device verification has happened (Sauce Labs Pixel 5,
+> 2026-11-08, `App/docs/SESSION_HISTORY.md` Session 115); CI status is in `App/docs/SESSION_HISTORY.md` — §5 and §6 give the exact API contract and
 > the known broken spots.---
 
 ## 1. Critical Constraint — No Local Android Studio
@@ -24,10 +24,14 @@ The user has no powerful PC and cannot run Android Studio; the **entire build pi
 ### 1a. Correction: builds DO happen on this VM, one at a time
 
 The rule above is stale in both directions since 2026-10-29: GitHub Actions is **enabled and
-running** (API-measured: three root workflows active, 42 runs, `backend-ci.yml`
-**green at `64c0b1b`** on both refs). Android `ci.yml` is red, so a **local** offline Gradle run is
-still the fast verification loop on the Oracle host and how every milestone since was proven — CI
-is now a second opinion, not an unavailable gate. Local builds are also how agents break each
+running** (API-measured then: six root workflows exist now — `backend-ci.yml`, `ci.yml`,
+`emulator-screenshots.yml`, `paparazzi.yml`, `raddrelay-ci.yml`, `release.yml`; the "three
+workflows, 42 runs, `backend-ci.yml` green at `64c0b1b`" figures are an Oct-29 snapshot, do not
+quote them as current). The gating-lane note at the bottom of this file wins over this section:
+owner order 2026-11-01 is **every APK build happens on GitHub Actions — no agent on this VM runs
+`./gradlew`** — so a **local** offline Gradle run is NOT the verification loop any more; CI
+is the gate. The `/tmp/qbuild.sh` queue below is suspended while that owner order stands.
+Local builds are also how agents break each
 other's work: this VM has **one vCPU**, and two concurrent Gradle invocations into the same
 `App/app/build` tree fail BOTH (`kaptDebugKotlin` aborts with `Unable to delete directory
 .../generated/source/kapt` — a lock race, not a code error).
@@ -43,16 +47,19 @@ On this host:
 - One build at a time, and no build while another agent is mid-verification. Fan-out workers:
   edit freely, build rarely — each build is minutes of this VM's entire CPU.
 
-> The nine arm64-excluded Robolectric tests — why excluded here, what the hosted runner proved —
-> moved to [`../docs/SPEC_APP_ROBOLECTRIC_ARM64.md`](../docs/SPEC_APP_ROBOLECTRIC_ARM64.md). The
-> exclusion stays: no number printed on this host includes those two suites.
+> The six arm64-excluded Robolectric test classes — why excluded here, what the hosted runner proved —
+> moved to `../docs/SPEC_APP_ROBOLECTRIC_ARM64.md`. The
+> exclusion stays: no number printed on this host includes those two suites. (The classes are
+> `PosterCardProvenanceTest`, `ScreenSnapshotTest`, `AppDatabaseMigrationTest`,
+> `AheadFetcherFinalizeTest`, `CacheSweepWorkerTest`, `CrashReportingTest` —
+> `App/app/build.gradle.kts:342-347`.)
 
 ---
 
 ## 2. Build System Architecture
 
 The CI pipeline diagram moved to
-[`../docs/SPEC_APP_BUILD_ARCHITECTURE.md`](../docs/SPEC_APP_BUILD_ARCHITECTURE.md). What stays law is §1a (one build at
+`../docs/SPEC_APP_BUILD_ARCHITECTURE.md`. What stays law is §1a (one build at
 a time, through this host's queue) and §13.
 
 ---
@@ -63,7 +70,7 @@ a time, through this host's queue) and §13.
 |---|---|---|
 | Language | **Kotlin** | Coroutines, type safety, Google's #1 language |
 | UI | **Jetpack Compose** | Declarative, Material 3, hot-reload in Codespaces |
-| Media playback | **ExoPlayer / Media3** | `PlayerScreen.kt` + `PlaybackService.kt`, wired into `NavGraph.kt`; never run on a device |
+| Media playback | **ExoPlayer / Media3** | `PlayerScreen.kt` + `PlaybackService.kt`, wired into `NavGraph.kt`; run on a real device (Sauce Labs Pixel 5, 2026-11-08, Session 115) |
 | Architecture | **MVVM + Repository + Hilt** | Testable, industry standard |
 | Networking | **Retrofit 2 + OkHttp** | Type-safe calls to the radd-stream backend |
 | Local DB | **Room** | Watchlist, continue watching, cached catalog |
@@ -81,23 +88,23 @@ a time, through this host's queue) and §13.
 
 ## 4. Current Source Folder Structure
 
-The tree inventory moved to [`../docs/SPEC_APP_SOURCE_LAYOUT.md`](../docs/SPEC_APP_SOURCE_LAYOUT.md).
+The tree inventory moved to `../docs/SPEC_APP_SOURCE_LAYOUT.md`.
 `find App/app/src -name '*.kt' | wc -l` is the only honest count of what exists.
 
 ---
 
 ## 6. Screens Reference
 
-The per-screen inventory moved to [`../docs/SPEC_APP_SCREENS.md`](../docs/SPEC_APP_SCREENS.md); the
-wireframes stay in [`design/SCREENS.md`](design/SCREENS.md), and
+The per-screen inventory moved to `../docs/SPEC_APP_SCREENS.md`; the
+wireframes stay in `design/SCREENS.md`, and
 `app/src/main/kotlin/com/raddstream/app/ui/` is the source of truth over both.
 
 ---
 
 ## 7. Design System Quick Reference
 
-The token dump moved to [`../docs/SPEC_APP_DESIGN_QUICKREF.md`](../docs/SPEC_APP_DESIGN_QUICKREF.md).
-[`design/DESIGN_SYSTEM.md`](design/DESIGN_SYSTEM.md) is the spec — read it, not a summary.
+The token dump moved to `../docs/SPEC_APP_DESIGN_QUICKREF.md`.
+`design/DESIGN_SYSTEM.md` is the spec — read it, not a summary.
 
 ---
 
@@ -105,14 +112,15 @@ The token dump moved to [`../docs/SPEC_APP_DESIGN_QUICKREF.md`](../docs/SPEC_APP
 
 ⚠️ **Reality (`App/app/src`, 2026-10-22):** the "Deferred" labels on Phase 2
 detail/playback/watchlist/settings no longer match the source — those screens, the Room favorites
-DB, and `PlaybackService` all exist and are wired into `NavGraph.kt`. What is missing is
-verification, not implementation.
+DB, and `PlaybackService` all exist and are wired into `NavGraph.kt`. What was missing is
+verification, not implementation; device verification has since happened (Sauce Labs Pixel 5,
+2026-11-08, Session 115).
 
 | Phase | What to build | Status |
 |---|---|---|
 | **Phase 0** | Gradle project skeleton + CI | ✅ Complete |
-| **Phase 1** | Server setup → metadata catalog → search | 🚧 Implemented; CI/device verification pending |
-| **Phase 2** | Detail pages, playback, watchlist, settings | 🚧 Code implemented; device verification pending (the old season/episode + `is_temporary` model mismatch that used to block series playback was fixed in code — series play through the player now) |
+| **Phase 1** | Server setup → metadata catalog → search | 🚧 Implemented; device-verified (Sauce Labs Pixel 5, 2026-11-08) |
+| **Phase 2** | Detail pages, playback, watchlist, settings | 🚧 Code implemented; device-verified (Sauce Labs Pixel 5, 2026-11-08; the old season/episode + `is_temporary` model mismatch that used to block series playback was fixed in code — series play through the player now) |
 | **Phase 3** | Chromecast, multi-server, Android TV | ⏳ Future |
 
 ---
@@ -120,7 +128,7 @@ verification, not implementation.
 ## 10. Signing Configuration
 
 The sample `signingConfigs` block, the one-time keystore generation, and the retired failure history
-rotated out 2026-11-05 to [`../docs/SPEC_APP_SIGNING_RUNBOOK.md`](../docs/SPEC_APP_SIGNING_RUNBOOK.md)
+rotated out 2026-11-05 to `../docs/SPEC_APP_SIGNING_RUNBOOK.md`
 under this file's byte ceiling. The law stays here:
 
 - Release signing reads `KEYSTORE_BASE64`, `KEY_STORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`, is
@@ -131,7 +139,7 @@ under this file's byte ceiling. The law stays here:
   a truncated keystore. **Fix a decode failure by re-entering the secret, never by editing the block.**
 - **Measured 2026-11-05, unauthenticated public API: signing works.** Release `v1.0.4` is public with
   `radd-stream-1.0.4.apk`, `radd-stream-1.0.4.aab`, `radd-stream-1.0.4-SHA256SUMS.txt`; tags
-  `v1.0.0`–`v1.0.4` exist; the publishing run is `41323174024` (`completed success`). Runs 1–7 of
+  `v1.0.0`–`v1.1.5` exist (11 tags); the publishing run is `41323174024` (`completed success`). Runs 1–7 of
   `release.yml` failed on the malformed secret — the state every older sentence in the guides
   describes. Those sentences are retired in place, not rewritten.
 - **No agent may create, move, or delete a tag.** A `v*.*.*` tag triggers `release.yml`; cutting one
@@ -146,17 +154,19 @@ never persist the token in the repository.
 
 ### Oracle backend connection
 
-- The configured backend host is `http://92.4.95.252/` over plain HTTP; the SSH account is
+- The configured backend host is `https://raddstream.duckdns.org` by default
+  (`brand.properties:194`); `http://92.4.95.252/` is only the fallback
+  (`brand.properties:213`). The SSH account is
   `ubuntu@92.4.95.252` on port 22. Use the secret-safe process in
-  [`../ORACLE_DEPLOYMENT.md`](../ORACLE_DEPLOYMENT.md).
+  `../README.md`.
 - The app calls `/api/v1/stats`, `/api/v1/posts`, `/api/v1/posts/{id}`, `/api/v1/stream` (§5);
   not `/api/v1/rules`.
 - Cleartext HTTP is debug-build only; the release build must use HTTPS — do not relax Android
   network security globally to make a release work over HTTP.
-  ⚠️ **Reality (re-verified against `viewer.py`/`redact.py` 2026-10-30):** the backend has no TLS
-  at all and the host is plain HTTP, so a release build cannot legally point at
-  `http://92.4.95.252/` — a deployment gap, not something to paper over by loosening network
-  security. The catalog routes take no API key or session; nothing behind them is private. Two
+  ⚠️ **Reality (re-verified 2026-11-16):** the default host now has TLS
+  (`https://raddstream.duckdns.org`), so a release build points at the HTTPS default; the
+  owner allowed one named-host cleartext exception (2026-11-16) for the fallback IP
+  `92.4.95.252` only. The catalog routes take no API key or session; nothing behind them is private. Two
   claims this bullet used to make are now false of the code and must not be repeated: no wildcard
   CORS (`CORS_ALLOW_ORIGINS` is an empty `frozenset`; a refused origin gets no header) and no
   un-throttled API (`_public_gate()` returns 429 with `Retry-After` and the `RateLimit-*` triple —
@@ -178,7 +188,10 @@ never persist the token in the repository.
 5. **All API calls via Retrofit + coroutines** — no raw `HttpURLConnection` in UI
 6. **All state via StateFlow/ViewModel** — no mutable state in Composables directly
 7. **Test every network model** — a JSON deserialization test per new data class
-8. **Keep APK under 15 MB** — no bundled video assets; lazy-load everything
+8. **Keep APK under 15 MB** — no bundled video assets; lazy-load everything. ⚠️ **Breached, not
+    enforced:** latest debug APKs are ~23.3 MB (`app-debug-256`, 23,374,190 B,
+    `App/docs/SESSION_HISTORY.md`). Do not quote 15 MB as a met budget until the size is back
+    under it or the rule is re-decided by the owner.
 9. **Minimum SDK 21** — guard anything below API 21 with Build.VERSION_CODES
 10. **Session logs go in `App/docs/SESSION_HISTORY.md`, never in this file** — this file is
     instructions-only and is auto-loaded into every agent's context. (An older line here said
@@ -191,17 +204,10 @@ never persist the token in the repository.
 
 ## Moved out (reference prose, verbatim)
 
-- 5. REST API Contract (Verified Against viewer.py) → [`../docs/SPEC_APP_API_CONTRACT.md`](../docs/SPEC_APP_API_CONTRACT.md) (214 lines) — endpoint contract
-- 9. Phase 0 Implementation Notes (Historical) → [`../docs/SPEC_APP_PHASE0_NOTES.md`](../docs/SPEC_APP_PHASE0_NOTES.md) (74 lines)
-- 10. Signing Configuration (the sample block, the decode diagnosis, the failed runs) → [`../docs/SPEC_APP_SIGNING_RUNBOOK.md`](../docs/SPEC_APP_SIGNING_RUNBOOK.md) (80 lines) — signing runbook
+Retired 2026-11-17 under the one-doc rule: the reference prose listed here moved to the trash archive (git history keeps it); the single reference doc is `../README.md`.
+
 - 12. Session Log — Append Here → [`docs/SESSION_HISTORY.md`](docs/SESSION_HISTORY.md) (19 lines) — session log
 - 14. Session Log → [`docs/SESSION_HISTORY.md`](docs/SESSION_HISTORY.md) (235 lines) — session log (cont.)
-- 15. Re-Skinning From ONE File (`/brand.properties`) → [`../docs/SPEC_APP_RESKIN_BRAND_PROPERTIES.md`](../docs/SPEC_APP_RESKIN_BRAND_PROPERTIES.md) (1686 lines) — re-skin reference
-- 1a. The nine arm64-excluded Robolectric tests → [`../docs/SPEC_APP_ROBOLECTRIC_ARM64.md`](../docs/SPEC_APP_ROBOLECTRIC_ARM64.md)
-- 2. Build System Architecture → [`../docs/SPEC_APP_BUILD_ARCHITECTURE.md`](../docs/SPEC_APP_BUILD_ARCHITECTURE.md)
-- 4. Current Source Folder Structure → [`../docs/SPEC_APP_SOURCE_LAYOUT.md`](../docs/SPEC_APP_SOURCE_LAYOUT.md)
-- 6. Screens Reference → [`../docs/SPEC_APP_SCREENS.md`](../docs/SPEC_APP_SCREENS.md)
-- 7. Design System Quick Reference → [`../docs/SPEC_APP_DESIGN_QUICKREF.md`](../docs/SPEC_APP_DESIGN_QUICKREF.md)
 
 ### Gating-lane note — APK builds moved to GitHub Actions, permanently (2026-11-01)
 
