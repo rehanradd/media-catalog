@@ -56,7 +56,7 @@ resolver — the live `resolved_cache` proves it: 1 JIT row, 0 pool rows.
 
 PRE-PEAK FILL (play-fast §2 (j), 2026-11-16): the same machinery, timed to
 the evening instead of the clock. `radd-prefetch-fill.timer` fires a
-`--fill` run at 18:00 PKT and `radd-prefetch-topup.timer` a top-50 top-up
+`--fill` run at 18:00 PKT and `radd-prefetch-topup.timer` a top-100 top-up
 at 21:00 — so the titles pressed in the 19:00–23:00 peak were re-resolved
 an hour or two earlier instead of paying the 8–14 s cold resolve live.
 A fill warms, per title, the START rung the player presses first (480p
@@ -84,7 +84,7 @@ Usage:
     python3 -S Fast_Fetch/prefetch_worker.py                 # daemon, forever
     python3 -S Fast_Fetch/prefetch_worker.py --once          # single pass
     python3 -S Fast_Fetch/prefetch_worker.py --once --fill   # pre-peak fill, top 200
-    python3 -S Fast_Fetch/prefetch_worker.py --once --topup  # evening top-up, top 50
+    python3 -S Fast_Fetch/prefetch_worker.py --once --topup  # evening top-up, top 100
     python3 -S Fast_Fetch/prefetch_worker.py --dry-run       # show plan only
     python3 -S Fast_Fetch/prefetch_worker.py --limit 3 --db /tmp/scratch.db
 """
@@ -170,7 +170,17 @@ FAILURE_BACKOFF_SECONDS = 15 * 60.0  # in-process retry delay for cold links
 #: and warming them would triple the fill.
 FILL_LINKS_PER_TITLE = 2
 FILL_START_BAND = "480p"
-FILL_TOPUP_LIMIT = 50
+#: Evening top-up size (2026-11-17, measured live): 100 titles, up from
+#: 50. At 20:25 PKT — 2.4 h after the 18:00 fill, mid-peak — only 66 of
+#: the top 200 titles were still warm and 223 of 308 pool rows had already
+#: passed reverify_after, so the 18:00 rows for ranks 51–100 are largely
+#: cold by 21:00 and the old top-50 top-up left them to rot until the
+#: 00:30 sweep. The top-up only resolves cold rows, so the added cost is
+#: bounded by its warmup cap (2 links x 100 titles = 200) under the run's
+#: own load gate; ranks 201+ stay cold — the next step after this one is
+#: measured, not this one. The top-up service passes no --limit, so this
+#: constant is what the live 21:00 run actually warms.
+FILL_TOPUP_LIMIT = 100
 #: Services whose unwrap can mint the short-lived hubcloud-family URLs
 #: (FSL ~8 h, FSLv2 ~5 h — the shortest banked lives in the catalog). The
 #: fill resolves these LAST so their clock starts as late as possible.
@@ -797,7 +807,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="pre-peak fill: start rung + auto rung per title, "
                              "pins first, hubcloud-family links last")
     parser.add_argument("--topup", action="store_true",
-                        help="evening top-up: a --fill of the top 50 titles")
+                        help="evening top-up: a --fill of the top 100 titles")
     parser.add_argument("--pins", default=None,
                         help="comma-separated post ids warmed first in a fill "
                              "(at most 20; a flagged or missing pin is dropped)")

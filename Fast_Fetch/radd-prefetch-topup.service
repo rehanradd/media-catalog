@@ -1,5 +1,5 @@
 [Unit]
-Description=Evening top-up: re-warm the top-50 titles at 21:00 PKT (play-fast §2 (j))
+Description=Evening top-up: re-warm the top-100 titles at 21:00 PKT (play-fast §2 (j))
 After=network-online.target
 Wants=network-online.target
 
@@ -14,7 +14,7 @@ WorkingDirectory=/opt/radd-stream
 Environment=RADD_DB_PATH=/home/ubuntu/radd-stream-data/merged_catalog_20261025.db
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
-# One --topup run of the top 50 titles at 21:00 PKT: the same fill, smaller.
+# One --topup run of the top 100 titles at 21:00 PKT: the same fill, smaller.
 # --max-autocrawl-wait-seconds 2700: the 20:01 autocrawl merge runs until
 # ~21:30, so the top-up waits up to 45 min for its lock instead of yielding
 # every night. The load wait stays 300 s, and the shared flock still yields

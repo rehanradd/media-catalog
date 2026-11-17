@@ -2,7 +2,7 @@
 Description=Evening top-up every night at 21:00 PKT (play-fast §2 (j))
 
 [Timer]
-# 21:00, mid-peak: re-warms the top 50 titles whose banked rows are nearest
+# 21:00, mid-peak: re-warms the top 100 titles whose banked rows are nearest
 # their horizon, so the peak's second half presses from fresh rows. The
 # 20:01 autocrawl merge usually still runs then — the top-up service waits
 # up to 45 min for the merge's lock rather than firing into it.

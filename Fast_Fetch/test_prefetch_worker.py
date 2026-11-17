@@ -553,7 +553,7 @@ class TestRunModeUnits(unittest.TestCase):
                              "must not collide with the autocrawl slots")
 
     def test_fill_units(self):
-        """Fill at 18:00 (top 200, workers 2) and top-up at 21:00 (top 50,
+        """Fill at 18:00 (top 200, workers 2) and top-up at 21:00 (top 100,
         waits up to 45 min for the autocrawl merge). The sweep units stay
         untouched — the fill and the sweep serialise through the shared
         flock, they never merge into one unit."""
@@ -620,6 +620,32 @@ class TestCliDryRun(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
             self.assertIn("would resolve source #500", proc.stdout)
             self.assertIn("would resolve source #501", proc.stdout)
+            conn = sqlite3.connect(db)
+            n = conn.execute("SELECT COUNT(*) FROM resolved_cache").fetchone()[0]
+            conn.close()
+            self.assertEqual(n, 0, "a dry run must bank nothing")
+
+    def test_topup_dry_run_covers_top_100(self):
+        """--topup --dry-run plans the top 100 titles (FILL_TOPUP_LIMIT),
+        not the old top 50: measured 2026-11-17, ranks 51-100 go cold by
+        21:00 and the top-up is their only re-warm before the peak tail."""
+        self.assertEqual(prefetch_worker.FILL_TOPUP_LIMIT, 100)
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "scratch.db"
+            conn = sqlite3.connect(db)
+            conn.executescript(_SCHEMA)
+            conn.commit()
+            for i in range(1, 121):
+                _add_post(conn, i, "Film %d" % i)
+                _add_release(conn, i, 1000 + i, 2000 + i, "1080p")
+            conn.close()
+            script = Path(__file__).resolve().parent / "prefetch_worker.py"
+            proc = subprocess.run(
+                [sys.executable, "-S", str(script), "--once", "--topup",
+                 "--dry-run", "--db", str(db)],
+                capture_output=True, text=True, timeout=120)
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertIn("selected 100 priority titles", proc.stdout)
             conn = sqlite3.connect(db)
             n = conn.execute("SELECT COUNT(*) FROM resolved_cache").fetchone()[0]
             conn.close()
