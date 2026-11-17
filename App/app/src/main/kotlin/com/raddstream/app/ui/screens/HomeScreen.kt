@@ -23,8 +23,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -202,8 +202,15 @@ fun HomeScreen(
     // pinned above the scroll, so the Scaffold keeps only the snackbar. The refresh icon went
     // with the bar: it read as operator chrome, and a refresh control with
     // no label next to it is not a viewer control.
+    // Home review (Nov 2026): the Scaffold adds NO window insets of its
+    // own — its default contentWindowInsets would add the status bar to
+    // contentPadding.top, and HomeContent already carries its own
+    // statusBarsPadding(), so the bar was applied twice (measured on a
+    // Pixel 5: logo top 106dp against ~30dp for one inset). The outer
+    // NavGraph Scaffold already owns the bottom inset (nav bar).
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { contentPadding ->
         HomeContent(
@@ -658,10 +665,16 @@ internal fun HomeHeader() {
  */
 @Composable
 internal fun RowEndFade(modifier: Modifier = Modifier) {
+    // The fade needs an explicit height: fillMaxHeight() collapses to 0
+    // here — the parent Box is wrap-content inside a scrollable column,
+    // so there is no definite height to fill, and the 24dp-wide strip
+    // painted nothing (Pixel 5 shots and the homeLoaded golden both show
+    // "KPO" at full brightness to the edge). 48dp is the height of all
+    // three rows that use it (filter chips, Browse pills, Live TV chips).
     Box(
         modifier = modifier
             .width(24.dp)
-            .fillMaxHeight()
+            .height(48.dp)
             .background(
                 Brush.horizontalGradient(
                     0f to Color.Transparent,
