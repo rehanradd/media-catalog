@@ -2632,6 +2632,13 @@ class PlayerViewModel @Inject constructor(
     fun refreshKeepState() {
         keepJob?.cancel()
         latestSnapshot = null
+        // Player review D3: keepRequested is the user-tap flag KeepChip gates
+        // on. A new title, episode or rendition has had no tap yet — a stale
+        // true from the previous title would un-silence its automatic
+        // ahead-window keep. (A rendition Auto switches to mid-keep returns
+        // to today's behaviour for that rendition: the adopt continues
+        // engine-side and Downloads shows it.)
+        _ui.update { it.copy(keepRequested = false) }
         val engine = CacheEngineHolder.engine
         val key = store.cacheKey()
         if (engine == null || key == null || !downloadsAllowed ||

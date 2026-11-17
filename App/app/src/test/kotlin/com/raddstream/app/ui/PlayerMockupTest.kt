@@ -13,6 +13,7 @@ import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
 import com.raddstream.app.R
 import com.raddstream.app.player.GestureMapper
+import com.raddstream.app.player.KeepUiState
 import com.raddstream.app.player.LadderRung
 import com.raddstream.app.player.PlaybackInfo
 import com.raddstream.app.player.PlaybackRendition
@@ -22,10 +23,12 @@ import com.raddstream.app.player.QualityOption
 import com.raddstream.app.player.SleepTimerState
 import com.raddstream.app.ui.screens.BottomControls
 import com.raddstream.app.ui.screens.CenterPlayPause
+import com.raddstream.app.ui.screens.KeepChip
 import com.raddstream.app.ui.screens.SwitchSourceRow
 import com.raddstream.app.ui.screens.TopBar
 import com.raddstream.app.ui.screens.subtitleStatusLabel
 import com.raddstream.app.ui.theme.RaddStreamTheme
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -133,6 +136,7 @@ class PlayerMockupTest {
                     onBack = {},
                     onLock = {},
                     onShowPrintSheet = {},
+                    onShowSpeedSheet = {},
                 )
             }
         }
@@ -150,11 +154,73 @@ class PlayerMockupTest {
                     onBack = {},
                     onLock = {},
                     onShowPrintSheet = {},
+                    onShowSpeedSheet = {},
                 )
             }
         }
         compose.onNodeWithText("LIVE").assertDoesNotExist()
         compose.onNodeWithText("Jawan").assertIsDisplayed()
+    }
+
+    @Test
+    fun `the speed pill opens the speed sheet`() {
+        // Player review D5: the pill that says the speed IS the way to
+        // change it — a 1.5× viewer otherwise opens More, then Speed,
+        // every title.
+        var opened = false
+        compose.setContent {
+            RaddStreamTheme {
+                TopBar(
+                    state = vodBase().copy(speed = 1.5f),
+                    onBack = {},
+                    onLock = {},
+                    onShowPrintSheet = {},
+                    onShowSpeedSheet = { opened = true },
+                )
+            }
+        }
+        compose.onNodeWithText("1.5×").assertIsDisplayed().performClick()
+        assertTrue("tapping the speed pill must open the speed sheet", opened)
+    }
+
+    @Test
+    fun `a user-tapped keep shows its live progress in the player`() {
+        // Player review D3: the ring and the live rate were already built —
+        // only the early return hid them. A viewer who tapped Keep sees the
+        // copy running; the Downloads screen is not the only witness.
+        compose.setContent {
+            RaddStreamTheme {
+                KeepChip(
+                    state = vodBase().copy(
+                        keep = KeepUiState.Keeping(40_000_000L, 3_050_000_000L, 1_200_000L),
+                        keepRequested = true,
+                    ),
+                    onKeepCurrent = {},
+                )
+            }
+        }
+        compose.onNodeWithText("Saving a copy in the background · 1.2 MB/s").assertIsDisplayed()
+    }
+
+    @Test
+    fun `an automatic keep stays silent in the player`() {
+        // App-design audit #7, kept: the automatic ahead-window copy never
+        // announces itself when the viewer just pressed Play — its progress
+        // lives in Downloads. keepRequested is false here because no tap
+        // happened; refreshKeepState also resets it on every switch, so a
+        // stale request from a previous title cannot un-silence this one.
+        compose.setContent {
+            RaddStreamTheme {
+                KeepChip(
+                    state = vodBase().copy(
+                        keep = KeepUiState.Keeping(40_000_000L, 3_050_000_000L, 1_200_000L),
+                        keepRequested = false,
+                    ),
+                    onKeepCurrent = {},
+                )
+            }
+        }
+        compose.onNodeWithText("Saving a copy in the background", substring = true).assertDoesNotExist()
     }
 
     @Test

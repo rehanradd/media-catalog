@@ -920,6 +920,7 @@ class PaparazziPreviewTest {
                     onBack = {},
                     onLock = {},
                     onShowPrintSheet = {},
+                    onShowSpeedSheet = {},
                 )
             }
         }
@@ -942,6 +943,7 @@ class PaparazziPreviewTest {
                     onBack = {},
                     onLock = {},
                     onShowPrintSheet = {},
+                    onShowSpeedSheet = {},
                 )
             }
         }

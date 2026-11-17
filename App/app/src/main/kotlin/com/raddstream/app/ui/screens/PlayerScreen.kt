@@ -607,11 +607,17 @@ private fun PlayerScreenContent(
                 }
                 brightness = (brightness + frac).coerceIn(0f, 1f)
                 hud = Hud.Brightness(brightness)
+                // Player review D6: a brightness drag is activity — the chrome
+                // must not hide mid-gesture, exactly like a scrub or a tap does.
+                interactTick = System.nanoTime()
             },
             onVolume = { frac ->
                 val v = (state.userVolume + frac).coerceIn(0f, 1f)
                 vm.setUserVolume(v)
                 hud = Hud.Volume(v)
+                // Player review D6: same as brightness — a volume drag is
+                // activity, so it resets the 3-second auto-hide timer.
+                interactTick = System.nanoTime()
             },
             onScrubPreview = { scrubPreviewMs = it; interactTick = System.nanoTime() },
             onScrubCommit = {
@@ -653,13 +659,34 @@ private fun PlayerScreenContent(
         // in Ghost mode) stays up until the start phase ends, even if the viewer
         // tapped the chrome away. The bottom bar still obeys the tap; only the
         // way out is forced visible.
+        // Player review D1: the chrome fades, never cuts. The AnimatedVisibility
+        // below IS the gate now — a plain `if` would remove the bars in one
+        // frame before the exit fade could play. Same fade the double-tap
+        // ripple uses (RaddMotion springs; 30 ms crossfade under reduced
+        // motion). The lock still cuts: locking is a mode change, not an
+        // auto-hide, and the UnlockFab replaces the chrome at once.
         val chromeVisible = controlsVisible || state.startPhase != StartPhase.NONE
-        if (chromeVisible && !state.locked) {
+        val reduceMotion = rememberReduceMotion()
+        val chromeEnter = fadeIn(if (reduceMotion) tween(RaddMotion.FadeWhenReduced) else RaddMotion.fastEffects())
+        val chromeExit = fadeOut(if (reduceMotion) tween(RaddMotion.FadeWhenReduced) else RaddMotion.defaultEffects())
+        if (!state.locked) {
             if (state.pureCinema) {
-                EdgeHud(state = state, onBack = onBackClick, onPlayFromStart = { vm.playFrom(0) }, onTogglePlayPause = { vm.togglePlayPause() }, onToggleViewMode = { vm.toggleViewMode() }, onLock = { vm.setLocked(true) })
+                if (chromeVisible) {
+                    EdgeHud(state = state, onBack = onBackClick, onPlayFromStart = { vm.playFrom(0) }, onTogglePlayPause = { vm.togglePlayPause() }, onToggleViewMode = { vm.toggleViewMode() }, onLock = { vm.setLocked(true) })
+                }
             } else {
-                TopBar(state = state, onBack = onBackClick, onLock = { vm.setLocked(true) }, onShowPrintSheet = { vm.showPrintSheet() })
-                if (controlsVisible) {
+                AnimatedVisibility(
+                    visible = chromeVisible,
+                    enter = chromeEnter,
+                    exit = chromeExit,
+                ) {
+                    TopBar(state = state, onBack = onBackClick, onLock = { vm.setLocked(true) }, onShowPrintSheet = { vm.showPrintSheet() }, onShowSpeedSheet = { vm.showSpeedSheet() })
+                }
+                AnimatedVisibility(
+                    visible = controlsVisible,
+                    enter = chromeEnter,
+                    exit = chromeExit,
+                ) {
                     CenterSpinner(state)
                     CenterPlayPause(
                         state,
@@ -1540,7 +1567,7 @@ private fun playerChromeRail(): Dp {
 }
 
 @Composable
-internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit, onShowPrintSheet: () -> Unit) {
+internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit, onShowPrintSheet: () -> Unit, onShowSpeedSheet: () -> Unit) {
     val print = state.activeRendition
     val rail = playerChromeRail()
     val topGradient = Brush.verticalGradient(
@@ -1645,12 +1672,22 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
             )
         }
         if (state.speed != 1f && !state.boosting) {
+            // Player review D5: the pill that says the speed IS the way to
+            // change it — a 1.5× viewer otherwise opens More, then Speed,
+            // every title. The pill opens the same speed sheet the More row
+            // does; the bottom row keeps its six primaries.
             Text(
                 stringResource(R.string.player_speed_short, state.speed),
                 color = RaddCurrent500,
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(end = 6.dp),
+                modifier = Modifier
+                    .clickable(
+                        onClick = onShowSpeedSheet,
+                        role = Role.Button,
+                        onClickLabel = stringResource(R.string.player_speed_title),
+                    )
+                    .padding(horizontal = 8.dp, vertical = 12.dp),
             )
         }
         // Session 121 (P-35): the keep chip lived here and squeezed the title to a
@@ -2265,13 +2302,16 @@ internal fun BottomControls(
                             valueRange = 0f..1f,
                             modifier = Modifier.fillMaxWidth(),
                         )
-                        // Volume boost, honest UI only (Session 126): the slider lets
-                        // the viewer request up to 200%, but this build has no software
-                        // gain stage, so the setter clamps at the 100% player ceiling
-                        // and the summary below says what was requested and what was
-                        // actually applied. The requested level lives in this dialog
-                        // only — the stored level is the clamped one, and a request
-                        // that was never applied is not a setting to persist.
+                        // Volume boost, honest UI only (Session 126, player review
+                        // D2): the slider stops at the 100% player ceiling
+                        // (AudioBoostUi.MAX_OFFERED_LEVEL) — this build has no
+                        // software gain stage, so a thumb the viewer could drag
+                        // to 200% would be a promise the build breaks on every
+                        // drag. The summary below says what was requested and
+                        // what was actually applied. The requested level lives
+                        // in this dialog only — the stored level is the
+                        // clamped one, and a request that was never applied is
+                        // not a setting to persist.
                         var requestedBoost by remember { mutableStateOf(state.audioBoostLevel) }
                         Spacer(Modifier.height(12.dp))
                         Text(stringResource(R.string.player_volume_boost))
@@ -2281,7 +2321,7 @@ internal fun BottomControls(
                                 requestedBoost = it
                                 onSetAudioBoostLevel(it)
                             },
-                            valueRange = 0f..AudioBoost.MAX,
+                            valueRange = 0f..AudioBoostUi.MAX_OFFERED_LEVEL,
                             modifier = Modifier.fillMaxWidth(),
                         )
                         Text(
@@ -3457,7 +3497,12 @@ internal fun KeepChip(state: PlayerUiState, onKeepCurrent: () -> Unit) {
     // copy, not something the viewer asked for — it shows no chip here at
     // all (its progress lives in Downloads). A finished keep (Stored) or a
     // blocked one still says so, because those are facts about the title.
-    if (keep is KeepUiState.Keeping) return
+    // Player review D3: a keep the viewer TAPPED is theirs to watch — the
+    // ring and the live rate are already built below, they were only ever
+    // hidden by this return. Gate on keepRequested, which refreshKeepState
+    // resets on every switch, so a stale request from a previous title
+    // cannot un-silence the next title's automatic copy.
+    if (keep is KeepUiState.Keeping && !state.keepRequested) return
     val chrome = PlayerChromeTheme.forId(state.playerTheme)
     // E-C4: the chip sat on a 40%-alpha tint with no bar behind it — white
     // text on the Stored tint over a bright frame was 1.23:1. The surface is

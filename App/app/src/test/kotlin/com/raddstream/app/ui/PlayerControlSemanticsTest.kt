@@ -39,6 +39,20 @@ class PlayerControlSemanticsTest {
         error("brand.properties not found above ${File("").absolutePath}")
     }
 
+    private val playerViewModel: File by lazy {
+        var dir: File? = File("").absoluteFile
+        while (dir != null) {
+            if (File(dir, "brand.properties").isFile) {
+                return@lazy File(
+                    dir,
+                    "App/app/src/main/kotlin/com/raddstream/app/viewmodel/PlayerViewModel.kt",
+                )
+            }
+            dir = dir.parentFile
+        }
+        error("brand.properties not found above ${File("").absolutePath}")
+    }
+
     /**
      * Hate-audit fixes, pinned so a later mockup pass cannot silently undo
      * them: live stays the mark only, no HLS jargon, the sheet switches
@@ -597,5 +611,88 @@ class PlayerControlSemanticsTest {
         assertTrue("the centre play/pause button is missing", source.contains("CenterPlayPause("))
         assertFalse("TopBar still says Live — the mark lives in the bottom row", topBar.contains("R.string.player_live"))
         assertFalse("TopBar still prints a broadcast subtitle", topBar.contains("player_live_broadcast"))
+    }
+
+    @Test
+    fun `player review fixes stay in the player`() {
+        // Player review (Nov 2026), items 1–3 + 5: the boost slider must not
+        // offer the dead zone, volume/brightness drags must reset the
+        // auto-hide timer, the chrome must fade instead of cutting, and the
+        // speed pill must open the speed sheet.
+        // D2: both boost sliders stop at the offered ceiling — the volume
+        // dialog's and the TracksSheet's. AudioBoost.MAX (200%) must not
+        // appear as any slider's range: a thumb the viewer can drag into a
+        // range nothing can act on is a promise broken on every drag.
+        assertEquals(
+            "both boost sliders must stop at the offered ceiling",
+            2,
+            source.split("valueRange = 0f..AudioBoostUi.MAX_OFFERED_LEVEL").size - 1,
+        )
+        assertFalse(
+            "a boost slider still offers the dead zone past the ceiling",
+            source.contains("valueRange = 0f..AudioBoost.MAX"),
+        )
+        // D6: the volume and brightness drags bump interactTick, exactly like
+        // the tap and the scrub callbacks do — otherwise the chrome hides
+        // mid-gesture.
+        val brightnessStart = source.indexOf("onBrightness = { frac ->")
+        val volumeStart = source.indexOf("onVolume = { frac ->", brightnessStart)
+        val scrubStart = source.indexOf("onScrubPreview", volumeStart)
+        assertTrue(
+            "GestureOverlay callbacks missing",
+            brightnessStart >= 0 && volumeStart > brightnessStart && scrubStart > volumeStart,
+        )
+        val brightness = source.substring(brightnessStart, volumeStart)
+        val volume = source.substring(volumeStart, scrubStart)
+        assertTrue(
+            "a brightness drag must reset the auto-hide timer",
+            brightness.contains("interactTick = System.nanoTime()"),
+        )
+        assertTrue(
+            "a volume drag must reset the auto-hide timer",
+            volume.contains("interactTick = System.nanoTime()"),
+        )
+        // D1: the chrome fades. The section between the chrome comment and
+        // the narration cards must wrap the top bar and the bottom group in
+        // AnimatedVisibility with the ripple's fades — and must not keep the
+        // old plain-conditional gate that removed the bars in one frame.
+        val chromeStart = source.indexOf("// 5 — chrome.")
+        val narrationStart = source.indexOf("// 6 — narration cards", chromeStart)
+        assertTrue("chrome section bounds missing", chromeStart >= 0 && narrationStart > chromeStart)
+        val chrome = source.substring(chromeStart, narrationStart)
+        assertTrue("the top bar must fade in and out", chrome.contains("AnimatedVisibility("))
+        assertTrue("the top bar must fade on chromeVisible", chrome.contains("visible = chromeVisible"))
+        assertTrue("the bottom group must fade on controlsVisible", chrome.contains("visible = controlsVisible"))
+        assertTrue("the chrome fade must use fadeIn", chrome.contains("fadeIn("))
+        assertTrue("the chrome fade must use fadeOut", chrome.contains("fadeOut("))
+        assertFalse(
+            "the chrome still cuts on a plain conditional",
+            chrome.contains("if (chromeVisible && !state.locked)"),
+        )
+        // D5: the speed pill opens the speed sheet.
+        val topBarStart = source.indexOf("internal fun TopBar(")
+        val topBarEnd = source.indexOf("\n@Composable\ninternal fun CenterSpinner(", topBarStart)
+        assertTrue("TopBar bounds missing", topBarStart >= 0 && topBarEnd > topBarStart)
+        val topBar = source.substring(topBarStart, topBarEnd)
+        assertTrue("TopBar must take the speed-sheet callback", topBar.contains("onShowSpeedSheet: () -> Unit"))
+        assertTrue("the speed pill must open the speed sheet", topBar.contains("onClick = onShowSpeedSheet"))
+    }
+
+    @Test
+    fun `a switch resets the keep request so the next title stays silent`() {
+        // Player review D3: KeepChip gates the Keeping chip on keepRequested,
+        // and refreshKeepState is what keeps that flag honest — a new title,
+        // episode or rendition has had no tap yet, so a stale true from the
+        // previous title must not un-silence its automatic ahead-window keep.
+        val vmSource = playerViewModel.readText()
+        val refreshStart = vmSource.indexOf("fun refreshKeepState()")
+        assertTrue("refreshKeepState is missing", refreshStart >= 0)
+        val keepCurrentStart = vmSource.indexOf("fun keepCurrent()", refreshStart)
+        assertTrue("keepCurrent must follow refreshKeepState", keepCurrentStart > refreshStart)
+        val refresh = vmSource.substring(refreshStart, keepCurrentStart)
+        assertTrue(
+            "refreshKeepState must reset keepRequested before re-attaching",
+            refresh.contains("it.copy(keepRequested = false)"),
+        )
     }
 }
