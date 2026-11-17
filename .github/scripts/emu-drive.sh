@@ -182,7 +182,19 @@ screenshot() {
   PREV_MD5="$md5"
 }
 
-adb install -r "$APK"
+# Run 44023968113 failed HERE, before any launch: the streamed install
+# died with INSTALL_FAILED_VERIFICATION_FAILURE ("Integrity verification
+# timed out") on the slow software emulator (boot alone took 634s).
+# Disable the on-device package verifier for adb installs, then install
+# non-streaming (push the APK file first, then install — avoids the
+# streamed-verification timeout); fall back to a plain install if the
+# adb on the runner predates --no-streaming, and retry plain once.
+adb shell settings put global verifier_verify_adb_installs 0 >/dev/null 2>&1 || true
+adb shell settings put global package_verifier_enable 0 >/dev/null 2>&1 || true
+if ! adb install -r --no-streaming "$APK"; then
+  echo "WARN: --no-streaming install failed, retrying plain install" >&2
+  adb install -r "$APK"
+fi
 # The debug build carries applicationIdSuffix ".debug"
 # (brand.properties identity.application.id.debug.suffix), so the
 # installed package is com.raddstream.app.debug — NOT com.raddstream.app.
