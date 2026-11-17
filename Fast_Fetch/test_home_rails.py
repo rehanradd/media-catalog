@@ -23,6 +23,8 @@ What had to be proven, in this order:
 
     python3 -S Fast_Fetch/test_home_rails.py
 """
+import contextlib
+import io
 import json
 import os
 import sqlite3
@@ -226,6 +228,95 @@ class TrendingTests(Fixture):
             self.part_two_id, self.squid_id, self.seed_id,
             self.wonka_id, self.humsafar_id, self.interstellar_id])
         self.assertNotIn(self.adult_id, self.ids(resp))
+
+    def _reset_warm_status(self):
+        saved = dict(viewer._TRENDING_WARM_STATUS)
+        saved["failed"] = dict(saved["failed"])
+        saved["warmed"] = list(saved["warmed"])
+        self.addCleanup(viewer._TRENDING_WARM_STATUS.update, saved)
+
+    def test_warm_failure_is_recorded_and_loud(self):
+        # B4: a shape whose rebuild raises must not vanish into one
+        # stderr line — the warm records it in _TRENDING_WARM_STATUS
+        # and logs the TRENDING-WARM-FAILED marker, while the other
+        # shapes still warm.
+        viewer._TRENDING_ORDER_CACHE.clear()
+        self.addCleanup(viewer._TRENDING_ORDER_CACHE.clear)
+        self._reset_warm_status()
+        real_rebuild = viewer._trending_rebuild
+
+        def flaky(key, where_sql, params, content_type):
+            if content_type == "movie":
+                raise RuntimeError("boom")
+            return real_rebuild(key, where_sql, params, content_type)
+
+        with mock.patch.object(viewer, "_trending_rebuild",
+                               side_effect=flaky):
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                warmed = viewer._trending_warm()
+        self.assertEqual(warmed, ["", "series"])
+        status = viewer._TRENDING_WARM_STATUS
+        self.assertEqual(status["warmed"], ["", "series"])
+        self.assertEqual(set(status["failed"]), {"movie"})
+        self.assertIn("boom", status["failed"]["movie"])
+        self.assertGreaterEqual(status["attempts"], 1)
+        self.assertIsNotNone(status["at"])
+        self.assertIn("TRENDING-WARM-FAILED", err.getvalue())
+        self.assertIn("movie", err.getvalue())
+
+    def test_warm_total_failure_returns_empty_and_stays_loud(self):
+        viewer._TRENDING_ORDER_CACHE.clear()
+        self.addCleanup(viewer._TRENDING_ORDER_CACHE.clear)
+        self._reset_warm_status()
+        with mock.patch.object(
+                viewer, "_trending_rebuild",
+                side_effect=RuntimeError("db down")):
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                warmed = viewer._trending_warm()
+        self.assertEqual(warmed, [])
+        self.assertEqual(set(viewer._TRENDING_WARM_STATUS["failed"]),
+                         {"", "movie", "series"})
+        # The old code printed nothing at all on a total failure.
+        self.assertIn("TRENDING-WARM-FAILED", err.getvalue())
+
+    def test_warm_retry_recovers_failed_shapes(self):
+        viewer._TRENDING_ORDER_CACHE.clear()
+        self.addCleanup(viewer._TRENDING_ORDER_CACHE.clear)
+        self._reset_warm_status()
+        real_rebuild = viewer._trending_rebuild
+        calls = []
+
+        def once_broken(key, where_sql, params, content_type):
+            calls.append(content_type)
+            if content_type == "series" and calls.count("series") == 1:
+                raise RuntimeError("transient")
+            return real_rebuild(key, where_sql, params, content_type)
+
+        with mock.patch.object(viewer, "_trending_rebuild",
+                               side_effect=once_broken):
+            warmed = viewer._trending_warm()
+            self.assertEqual(warmed, ["", "movie"])
+            self.assertEqual(set(viewer._TRENDING_WARM_STATUS["failed"]),
+                             {"series"})
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                viewer._trending_warm_retry(delay_s=0)
+        self.assertIn("TRENDING-WARM-RETRY-OK", err.getvalue())
+        self.assertEqual(viewer._TRENDING_WARM_STATUS["failed"], {})
+        types = {key[0] for key in viewer._TRENDING_ORDER_CACHE}
+        self.assertEqual(types, {"", "movie", "series"})
+
+    def test_warm_retry_is_a_noop_when_nothing_failed(self):
+        viewer._TRENDING_ORDER_CACHE.clear()
+        self.addCleanup(viewer._TRENDING_ORDER_CACHE.clear)
+        self._reset_warm_status()
+        viewer._trending_warm()
+        self.assertEqual(viewer._TRENDING_WARM_STATUS["failed"], {})
+        with mock.patch.object(viewer, "_trending_rebuild") as rebuild:
+            viewer._trending_warm_retry(delay_s=0)
+        # Nothing failed, so the retry must not rebuild anything. (It
+        # retries all three only when no warm ever recorded — attempts
+        # == 0, the wholesale-failure case — which is not this one.)
+        rebuild.assert_not_called()
 
     def test_second_hit_serves_the_cached_order(self):
         first = viewer.api_v1_get_trending(limit=20)

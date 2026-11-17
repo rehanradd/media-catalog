@@ -3746,6 +3746,23 @@ _TRENDING_ORDER_TOP_N = POSTS_MAX_OFFSET + 100
 _TRENDING_PAGE_SLACK = 32
 _TRENDING_ORDER_CACHE: dict = {}
 
+#: The last startup warm's outcome, so a failed warm is visible to
+#: anything that can import this module instead of living only in one
+#: stderr line nobody watches (B4, 2026-11-18). `_trending_warm`
+#: rewrites it on every run: `warmed` is the content types whose order
+#: is now cached, `failed` maps each unwarmed type to the error that
+#: stopped it, `attempts` counts warm runs in this process, `at` is
+#: the wall-clock time of the latest run. A non-empty `failed` means
+#: the first trending hit for that shape cold-builds on the request
+#: thread under the 10 s deadline and may 503 — exactly the failure
+#: the warm exists to prevent.
+_TRENDING_WARM_STATUS: dict = {
+    "warmed": [],
+    "failed": {},
+    "attempts": 0,
+    "at": None,
+}
+
 
 def _trending_db_fingerprint():
     """(path, mtime_ns, size) for the catalog file, or (path,) when the
@@ -3864,7 +3881,7 @@ def _trending_rebuild_async(key, where_sql, params, content_type):
     return True
 
 
-def _trending_warm():
+def _trending_warm(content_types=("", "movie", "series")):
     """Build the trending orders at service startup, so the first request
     after a restart never pays the cold grouping on its own thread. The
     grouping is a full-catalog GROUP BY (~10 s cold on the live catalog)
@@ -3877,15 +3894,23 @@ def _trending_warm():
     the request deadline, and the same where-clause construction the
     request path uses (adult clause + type facet + operator hides).
     Warms the three shapes the app actually requests: unfiltered (the
-    "Most copies" rail), movie, series. Best-effort: a failure to warm
-    one shape only logs — the request path still cold-builds on demand,
-    exactly as before. Returns the content types warmed."""
+    "Most copies" rail), movie, series. `content_types` narrows the
+    run to a subset — the background retry uses it for the shapes that
+    failed. Best-effort: a failure to warm one shape never stops
+    serving — the request path still cold-builds on demand, exactly as
+    before — but it is LOUD now (B4, 2026-11-18): the failure is
+    recorded in `_TRENDING_WARM_STATUS`, logged with the
+    TRENDING-WARM-FAILED marker the journal grep can find, and
+    `start_server` retries it once in the background. Before B4 the
+    only trace was one stderr line per shape and a total failure
+    printed nothing at all. Returns the content types warmed."""
     warmed = []
+    failed = {}
     try:
         hidden = panel_feed.hidden_work_ids()
     except Exception:  # noqa: BLE001 — unwired panel means no hides
         hidden = set()
-    for content_type in ("", "movie", "series"):
+    for content_type in content_types:
         try:
             where_clauses = [redact.adult_clause("p")]
             facet_clauses, facet_params = _facet_filter_clauses(
@@ -3902,9 +3927,60 @@ def _trending_warm():
             _trending_rebuild(key, where_sql, params, content_type)
             warmed.append(content_type)
         except Exception as exc:  # noqa: BLE001 — warm is best-effort
-            sys.stderr.write("trending warm failed for %r: %s\n"
+            failed[content_type] = str(exc)
+            sys.stderr.write("TRENDING-WARM-FAILED shape=%r error=%s\n"
                              % (content_type, exc))
+    _TRENDING_WARM_STATUS["warmed"] = warmed
+    _TRENDING_WARM_STATUS["failed"] = failed
+    _TRENDING_WARM_STATUS["attempts"] += 1
+    _TRENDING_WARM_STATUS["at"] = time.time()
+    if failed:
+        sys.stderr.write(
+            "TRENDING-WARM-FAILED %d/%d shapes unwarmed: %s —"
+            " first trending hit for %s cold-builds on the request"
+            " thread and may 503\n"
+            % (len(failed), len(content_types),
+               ", ".join(repr(s) for s in sorted(failed)),
+               " / ".join(repr(s) for s in sorted(failed))))
     return warmed
+
+
+def _trending_warm_retry(delay_s=60, content_types=None):
+    """One background retry of the shapes the startup warm failed.
+    Sleeps `delay_s` first — a warm usually fails on something
+    transient (a DB lock held by a merge, the panel feed slow at
+    boot) — then re-runs `_trending_warm` for exactly the failed
+    shapes, or all three when no failure was recorded (a wholesale
+    warm failure, where `_trending_warm` never got to record one).
+    Logs the outcome with the same TRENDING-WARM marker either way,
+    so a retry that still fails is as visible as the first failure.
+    Best-effort throughout: never raises, never blocks serving. The
+    caller (`start_server`) runs this on a daemon thread."""
+    time.sleep(delay_s)
+    try:
+        failed = list(content_types) if content_types is not None else \
+            sorted(_TRENDING_WARM_STATUS["failed"])
+        if not failed and _TRENDING_WARM_STATUS["attempts"] == 0:
+            # No warm ever recorded — a wholesale failure before
+            # _trending_warm could record one — so retry all three.
+            failed = ["", "movie", "series"]
+        if not failed:
+            # The warm already succeeded: nothing to retry.
+            return
+        warmed = _trending_warm(content_types=tuple(failed))
+        still = sorted(_TRENDING_WARM_STATUS["failed"])
+        if still:
+            sys.stderr.write(
+                "TRENDING-WARM-RETRY-FAILED still unwarmed: %s —"
+                " first trending hit for %s cold-builds and may 503\n"
+                % (", ".join(repr(s) for s in still),
+                   " / ".join(repr(s) for s in still)))
+        else:
+            sys.stderr.write(
+                "TRENDING-WARM-RETRY-OK warmed after retry: %s\n"
+                % ", ".join(repr(s) for s in warmed))
+    except Exception as exc:  # noqa: BLE001 — the retry must never raise
+        sys.stderr.write("TRENDING-WARM-RETRY-FAILED error=%s\n" % exc)
 
 
 #: The probe term the startup search warm runs through the trigram path.
@@ -8421,14 +8497,28 @@ def start_server(port: int = 8080, host: str = "127.0.0.1",
     # (2026-11-15): a cold start pays the full-catalog grouping on the
     # request thread under the 10 s deadline and 503s exactly once per
     # restart. The warm builds the three shapes the app requests on
-    # deadline-free connections; a failure only logs — serving starts
-    # either way and the request path cold-builds on demand as before.
+    # deadline-free connections; a failure is LOUD now (B4, 2026-11-18)
+    # — recorded in _TRENDING_WARM_STATUS, logged with the
+    # TRENDING-WARM-FAILED marker, and retried once in the background
+    # below — but serving starts either way and the request path
+    # cold-builds on demand as before.
     try:
         warmed = _trending_warm()
         if warmed:
             print(f"[i] trending orders warmed: {', '.join(warmed)}")
+        if _TRENDING_WARM_STATUS["failed"]:
+            failed = sorted(_TRENDING_WARM_STATUS["failed"])
+            print(f"[!] TRENDING WARM FAILED: "
+                  f"{', '.join(repr(s) for s in failed)} unwarmed —"
+                  f" first trending hit for those shapes cold-builds"
+                  f" and may 503; retrying in the background in 60s",
+                  flush=True)
+            threading.Thread(target=_trending_warm_retry,
+                             daemon=True).start()
     except Exception as ex:      # noqa: BLE001 — serving matters more than the warm
         print(f"[i] trending warm unavailable: {ex}")
+        threading.Thread(target=_trending_warm_retry,
+                         daemon=True).start()
 
     # Warm the search path the same way (2026-11-17): the default first
     # page and one trigram search, so the first browse and the first

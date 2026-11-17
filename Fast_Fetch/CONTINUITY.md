@@ -77,6 +77,7 @@ The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete i
 - [Session 2026-11-17 — search speed: residual search cost + the `_ensure_schema` first-request 504](checkpoints/20261117-search-speed.md)
 - [Session 2026-11-16 — pre-peak fill (play-fast §2 (j))](checkpoints/20261116-pre-peak-fill.md)
 - [Session 2026-11-16 — playback telemetry beacon](checkpoints/20261116-playback-telemetry-beacon.md)
+- [Session 2026-11-18 — B4 trending warm-failure loudness](checkpoints/20261118-trending-warm-loud-b4.md)
 - [Session 2026-11-12 — self-check `[LIVE-TV-503]`](checkpoints/20261112-selfcheck-live-tv-503-logos.md)
 - [Session 2026-11-06 — crown `[CROWN-NIGHT-CHAIN]`: five trunk commits, the live-tree gap, what was rejected](checkpoints/20261106-crown-night-chain-five-trunk-commits-one-live-tree-gap.md)
 - [Session 2026-11-06 crown `[Q75-LAND]`: 3 producer chars, red-first 18 tests, the `_sN` merge loss filed](checkpoints/20261106-crown-q75-three-producer-fixes-landed-and-the-s-n-key-loss-filed.md)
