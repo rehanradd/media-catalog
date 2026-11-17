@@ -381,6 +381,20 @@ class FullGateTests(unittest.TestCase):
         conn.close()
         return db
 
+    def _make_wal_catalog(self, name="gate-backup-20261117-f3ad1e46.db"):
+        db = self._make_catalog(name)
+        conn = sqlite3.connect(db)
+        self.assertEqual(
+            conn.execute("PRAGMA journal_mode=WAL").fetchone()[0], "wal"
+        )
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        conn.close()
+        for suffix in ("-shm", "-wal"):
+            sidecar = Path(str(db) + suffix)
+            if sidecar.exists():
+                sidecar.unlink()
+        return db
+
     @staticmethod
     def _fake_compress(source, dest, level=3):
         shutil.copy2(source, dest)
@@ -399,6 +413,29 @@ class FullGateTests(unittest.TestCase):
         self.assertEqual(info["counts"]["releases"], 3)
         self.assertEqual(info["counts"]["download_sources"], 2)
         self.assertEqual(info["counts"]["cat_links"], 4)
+
+    def test_db_info_skip_integrity_records_skipped_and_keeps_counts(self):
+        from backup_manager import _fullgate_db_info
+
+        db = self._make_catalog()
+        info = _fullgate_db_info(db, skip_integrity=True)
+        self.assertEqual(info["integrity_check"], "skipped")
+        self.assertGreater(info["page_count"], 0)
+        self.assertEqual(info["counts"]["posts"], 2)
+        self.assertEqual(info["counts"]["cat_links"], 4)
+
+    def test_db_info_leaves_no_sidecar_on_wal_db(self):
+        from backup_manager import _fullgate_db_info
+
+        db = self._make_wal_catalog()
+        info = _fullgate_db_info(db)
+        self.assertEqual(info["integrity_check"], "ok")
+        self.assertEqual(info["counts"]["posts"], 2)
+        # Only the db itself: a plain mode=ro open builds a WAL-index beside
+        # the file (and cannot clean it up); immutable=1 leaves nothing.
+        self.assertEqual(
+            sorted(p.name for p in self.root.glob(db.name + "*")), [db.name]
+        )
 
     def test_gate_commit_parsed_from_filename(self):
         from backup_manager import _fullgate_gate_commit
@@ -430,6 +467,20 @@ class FullGateTests(unittest.TestCase):
         self.assertEqual(manifest["archive"]["sha256"], calculate_sha256(zst))
         self.assertEqual(manifest["archive"]["compressor"], "zstd -3")
         self.assertEqual(manifest["database"]["integrity_check"], "ok")
+        self.assertEqual(manifest["database"]["counts"]["cat_links"], 4)
+
+    def test_manifest_records_skipped_integrity_with_flag(self):
+        from backup_manager import create_fullgate_archive
+
+        db = self._make_catalog()
+        with (
+            patch("backup_manager._compress_zstd", side_effect=self._fake_compress),
+            patch("backup_manager.free_bytes", return_value=100 * 2**30),
+        ):
+            _zst, _mp, manifest = create_fullgate_archive(
+                db, self.out, skip_source_integrity=True
+            )
+        self.assertEqual(manifest["database"]["integrity_check"], "skipped")
         self.assertEqual(manifest["database"]["counts"]["cat_links"], 4)
 
     def test_space_guard_refuses_before_writing_anything(self):
@@ -556,6 +607,25 @@ class FullGateTests(unittest.TestCase):
                   return_value=(db, db, {"archive": {}}, False)),
         ):
             self.assertEqual(main(["--full-gate", str(db)]), 1)
+
+    def test_main_fullgate_passes_skip_flag(self):
+        from backup_manager import main
+
+        db = self._make_catalog()
+        with patch(
+            "backup_manager.run_fullgate",
+            return_value=(db, db, {"archive": {}}, True),
+        ) as mock:
+            self.assertEqual(
+                main(["--full-gate", str(db), "--skip-source-integrity"]), 0
+            )
+        self.assertTrue(mock.call_args.kwargs["skip_source_integrity"])
+        with patch(
+            "backup_manager.run_fullgate",
+            return_value=(db, db, {"archive": {}}, True),
+        ) as mock:
+            self.assertEqual(main(["--full-gate", str(db)]), 0)
+        self.assertFalse(mock.call_args.kwargs["skip_source_integrity"])
 
     def test_main_verify_fullgate_needs_manifest(self):
         from backup_manager import main

@@ -45,11 +45,19 @@ def calculate_sha256(filepath: str | Path) -> str:
     return h.hexdigest()
 
 
-def _db_row_counts(db_path: Path) -> dict:
-    """Row counts for a catalog database, tolerant of the per-site schema families."""
+def _db_row_counts(db_path: Path, conn=None) -> dict:
+    """Row counts for a catalog database, tolerant of the per-site schema families.
+
+    Pass an open connection to count on it instead of opening a second one:
+    _fullgate_db_info lends its read-only, immutable connection so no extra
+    open touches the file at all. A passed connection is borrowed, never
+    closed here.
+    """
     counts: dict[str, int] = {}
+    own_conn = conn is None
     try:
-        conn = sqlite3.connect(str(db_path))
+        if own_conn:
+            conn = sqlite3.connect(str(db_path))
     except sqlite3.Error:
         return counts
     try:
@@ -73,7 +81,8 @@ def _db_row_counts(db_path: Path) -> dict:
     except sqlite3.Error:
         pass
     finally:
-        conn.close()
+        if own_conn:
+            conn.close()
     return counts
 
 
@@ -632,15 +641,25 @@ def _fullgate_gate_commit(db_name: str) -> str:
     return match.group(1) if match else ""
 
 
-def _fullgate_db_info(db_path: Path) -> dict:
+def _fullgate_db_info(db_path: Path, skip_integrity: bool = False) -> dict:
     """Page geometry, integrity_check and row counts for a static backup file.
 
-    Read-only open: a gate backup is a finished file, never a live WAL db.
+    Read-only open: a gate backup is a finished file, never a live WAL db, and
+    the counts run on the same read-only connection so no -shm/-wal sidecar
+    is created beside the source. immutable=1 is what actually does that: a
+    plain mode=ro open still builds a WAL-index beside the file (and, being
+    read-only, cannot clean it up on close), while immutable skips WAL
+    recovery entirely. Safe here because the file is a finished .backup
+    snapshot with no -wal sibling — and the .zst archives the main file only,
+    so manifest, archive and restore all see exactly the same bytes.
     integrity_check on a 10 GB file takes minutes on one vCPU; callers run
-    this detached.
+    this detached. skip_integrity records "skipped" instead of running it —
+    safe only because the source was integrity-checked at gate time AND the
+    restore side re-checks it in verify_fullgate. Never use it for the verify
+    path: verify_fullgate always calls this with the default.
     """
     info: dict = {"integrity_check": "unknown", "counts": {}}
-    uri = "file:" + urllib.parse.quote(str(db_path), safe="/") + "?mode=ro"
+    uri = "file:" + urllib.parse.quote(str(db_path), safe="/") + "?mode=ro&immutable=1"
     conn = sqlite3.connect(uri, uri=True)
     try:
         row = conn.execute(
@@ -650,11 +669,14 @@ def _fullgate_db_info(db_path: Path) -> dict:
         info["page_count"], info["freelist_count"], info["page_size"] = (
             int(v) for v in row
         )
-        texts = [str(r[0]) for r in conn.execute("PRAGMA integrity_check").fetchall()]
-        info["integrity_check"] = "ok" if texts == ["ok"] else "; ".join(texts)[:500]
+        if skip_integrity:
+            info["integrity_check"] = "skipped"
+        else:
+            texts = [str(r[0]) for r in conn.execute("PRAGMA integrity_check").fetchall()]
+            info["integrity_check"] = "ok" if texts == ["ok"] else "; ".join(texts)[:500]
+        info["counts"] = _db_row_counts(db_path, conn=conn)
     finally:
         conn.close()
-    info["counts"] = _db_row_counts(db_path)
     return info
 
 
@@ -677,7 +699,8 @@ def _compress_zstd(source: Path, dest: Path, level: int = 3) -> float:
 
 
 def create_fullgate_archive(
-    db_path: Path, out_dir: Path, zstd_level: int = 3
+    db_path: Path, out_dir: Path, zstd_level: int = 3,
+    skip_source_integrity: bool = False,
 ) -> tuple[Path, Path, dict]:
     """Compress one gate-backup .db to .zst + manifest JSON. No second 10 GB copy."""
     db_path = Path(db_path)
@@ -694,8 +717,12 @@ def create_fullgate_archive(
     manifest_path = out_dir / (db_path.stem + ".manifest.json")
     print(f"[*] Compressing {db_path.name} with zstd -{zstd_level} ...", flush=True)
     seconds = _compress_zstd(db_path, zst_path, zstd_level)
-    print("[*] Reading source geometry + integrity (read-only) ...", flush=True)
-    info = _fullgate_db_info(db_path)
+    if skip_source_integrity:
+        print("[*] Reading source geometry + counts (read-only; source "
+              "integrity skipped — gate-time + restore-side checks apply) ...", flush=True)
+    else:
+        print("[*] Reading source geometry + integrity (read-only) ...", flush=True)
+    info = _fullgate_db_info(db_path, skip_integrity=skip_source_integrity)
     manifest = {
         "mode": "full-gate",
         "created_utc": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
@@ -726,10 +753,13 @@ def create_fullgate_archive(
 
 
 def run_fullgate(
-    db_path: Path, out_dir: Path, repo_id: str
+    db_path: Path, out_dir: Path, repo_id: str,
+    skip_source_integrity: bool = False,
 ) -> tuple[Path, Path, dict, bool]:
     """Compress + manifest + upload one gate backup. The bool is the upload verdict."""
-    zst_path, manifest_path, manifest = create_fullgate_archive(db_path, out_dir)
+    zst_path, manifest_path, manifest = create_fullgate_archive(
+        db_path, out_dir, skip_source_integrity=skip_source_integrity
+    )
     uploaded = upload_to_huggingface(
         zst_path, manifest=manifest, repo_id=repo_id, extra_files=[manifest_path]
     )
@@ -938,13 +968,17 @@ def main(argv=None) -> int:
     parser.add_argument("--manifest", metavar="PATH", help="Manifest JSON for --verify-full-gate")
     parser.add_argument("--repo", metavar="ID", help="Hugging Face dataset repo id (default: HF_FULLGATE_REPO env or radddao/radd-stream-gate-backups)")
     parser.add_argument("--fullgate-out", metavar="DIR", help="Directory for the .zst + manifest, or the verify scratch dir (default: the source file's directory)")
+    parser.add_argument("--skip-source-integrity", action="store_true", help="With --full-gate only: skip the source PRAGMA integrity_check (minutes on one vCPU). The source was checked at gate time and the restore side re-checks it in --verify-full-gate; the manifest records integrity_check as 'skipped'.")
     args = parser.parse_args(argv)
 
     if args.full_gate:
         repo_id = args.repo or os.environ.get("HF_FULLGATE_REPO", "") or FULLGATE_REPO_DEFAULT
         out_dir = Path(args.fullgate_out) if args.fullgate_out else Path(args.full_gate).parent
         try:
-            _zst, _mp, _man, uploaded = run_fullgate(Path(args.full_gate), out_dir, repo_id)
+            _zst, _mp, _man, uploaded = run_fullgate(
+                Path(args.full_gate), out_dir, repo_id,
+                skip_source_integrity=args.skip_source_integrity,
+            )
         except (BackupSpaceError, FileNotFoundError, RuntimeError) as e:
             print(f"[!] full-gate failed: {e}", file=sys.stderr)
             return 1
