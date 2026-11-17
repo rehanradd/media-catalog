@@ -28,8 +28,8 @@ class SkeletonParityTest {
         val start = source.indexOf(signature)
         assertTrue("must find $signature", start >= 0)
         // The next top-level composable starts the following block; the
-        // skeleton bodies here are short, so 4_000 chars is ample.
-        return source.substring(start, minOf(source.length, start + 4_000))
+        // skeleton bodies here are short, so 8_000 chars is ample.
+        return source.substring(start, minOf(source.length, start + 8_000))
     }
 
     @Test
@@ -69,6 +69,42 @@ class SkeletonParityTest {
             "the skeleton title bar must be the hero title's line height",
             lineHeight,
             titleHeight,
+        )
+    }
+
+    @Test
+    fun `detail skeleton sections follow the real page order`() {
+        // Detail review (Nov 2026, P1): the skeleton reordered to the
+        // redesigned page — synopsis before rungs, the utility row's
+        // shape instead of the removed three-button row, the audio line
+        // between them. The section tags below are the skeleton's own
+        // testTags; the order is DetailContent's item order (hero, Play,
+        // synopsis, utility row, audio line, quality, cast, print
+        // summary, similar), minus the lists the skeleton cannot know at
+        // load time — episodes/files need movie-vs-series, which only the
+        // load itself answers.
+        val commonUi = mainSource("com/raddstream/app/ui/components/CommonUi.kt")
+        val skeleton = bodyOf(commonUi, "fun DetailSkeleton(")
+        val order = listOf(
+            "detailSkeletonHero",
+            "detailPlaySkeleton",
+            "detailSkeletonSynopsis",
+            "detailSkeletonUtilityRow",
+            "detailSkeletonAudioLine",
+            "detailSkeletonRungs",
+            "detailSkeletonCast",
+            "detailSkeletonPrintSummary",
+            "detailSkeletonSimilar",
+        )
+        val positions = order.map { tag ->
+            val index = skeleton.indexOf("\"$tag\"")
+            assertTrue("DetailSkeleton must carry the $tag section", index >= 0)
+            index
+        }
+        assertEquals(
+            "DetailSkeleton sections must read in page order",
+            positions.sorted(),
+            positions,
         )
     }
 }

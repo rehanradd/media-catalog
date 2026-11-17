@@ -200,6 +200,50 @@ class ModelsTest {
     }
 
     @Test
+    fun `post detail carries the server truncation signal`() {
+        // Detail review (Nov 2026, P1): the server caps the detail at
+        // 1,000 releases — One Piece answers release_total 8316 with
+        // releases_truncated true while releases holds only the first
+        // 1,000. The screen's honest line and true counts read these
+        // fields, never the capped list's length.
+        val json = """
+            {
+              "success": true,
+              "data": {
+                "id": 101,
+                "title": "One Piece",
+                "clean_title": "One Piece",
+                "year": "1999",
+                "content_type": "series",
+                "releases": [
+                  { "id": 1, "post_id": 101, "quality": "1080p WEB-DL", "sources": [] },
+                  { "id": 2, "post_id": 101, "quality": "720p WEB-DL", "sources": [] }
+                ],
+                "release_total": 8316,
+                "releases_truncated": true
+              }
+            }
+        """.trimIndent()
+
+        val data = gson.fromJson(json, PostDetailResponse::class.java).data!!
+
+        assertEquals(2, data.releases.size)
+        assertEquals(8316, data.releaseTotal)
+        assertEquals(true, data.releasesTruncated)
+        assertTrue(data.isTruncated)
+        assertEquals(8316, data.totalReleases)
+    }
+
+    @Test
+    fun `post detail without a truncation signal reads its list length as the total`() {
+        // A missing key decodes null under Gson (no Kotlin default runs),
+        // so the total falls back to the list the server actually sent.
+        val data = PostDetail(id = 1, title = "Jawan")
+        assertFalse(data.isTruncated)
+        assertEquals(0, data.totalReleases)
+    }
+
+    @Test
     fun `detail cast names decode from the post row and default to null`() {
         // The server publishes posts.cast_names on the detail only. A missing
         // key decodes to null — no cast section, never an invented name.

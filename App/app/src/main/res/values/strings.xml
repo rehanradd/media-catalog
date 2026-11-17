@@ -118,6 +118,9 @@
     <string name="detail_not_available_stream">Not available to stream yet — download it instead.</string>
     <string name="detail_quality_auto_plays">Auto plays the best picture your plan can hold.</string>
     <string name="detail_quality_select_download">Select download quality</string>
+    <!-- Detail review (Nov 2026): the server caps the detail at 1,000 releases —
+         the list is the first of many, not the whole work. -->
+    <string name="detail_truncated_releases">Showing the first %1$s of %2$s releases</string>
     <string name="player_start_slow">Taking longer than usual</string>
     <string name="player_start_try_another">Try another version</string>
     <string name="player_attempt_counter">Trying copy %1$d of %2$d</string>

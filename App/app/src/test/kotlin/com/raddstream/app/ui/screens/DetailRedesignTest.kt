@@ -2,8 +2,12 @@ package com.raddstream.app.ui.screens
 
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertHeightIsEqualTo
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
@@ -11,13 +15,21 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.unit.dp
+import com.raddstream.app.network.models.CoverageType
+import com.raddstream.app.network.models.LinkState
+import com.raddstream.app.network.models.Playability
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.network.models.PostDetail
+import com.raddstream.app.network.models.ReleaseDetail
+import com.raddstream.app.network.models.ReleaseLabelParsing
 import com.raddstream.app.player.LadderForScope
 import com.raddstream.app.player.QualityOption
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.EpisodeGroup
+import com.raddstream.app.viewmodel.RankedLink
+import com.raddstream.app.viewmodel.RankedPrint
 import com.raddstream.app.viewmodel.SeasonGroup
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -73,19 +85,59 @@ class DetailRedesignTest {
         audioLanguages = emptyList(),
     )
 
+    private fun fakePrint(
+        releaseId: Int,
+        quality: String,
+        playability: Playability = Playability.STREAM,
+    ) = RankedPrint(
+        releaseId = releaseId,
+        rawTitle = "$quality copy",
+        descriptor = ReleaseLabelParsing.describe(
+            releaseTitle = "Jawan (2023) Hindi $quality WEB-DL",
+            quality = quality,
+        ),
+        languages = listOf("Hindi"),
+        sizeBytes = 1_400_000_000L,
+        coverage = CoverageType.WHOLE_WORK,
+        season = null,
+        episodeFrom = null,
+        episodeTo = null,
+        links = listOf(
+            RankedLink(
+                streamId = "h-$releaseId",
+                linkId = releaseId,
+                health = LinkState.ACTIVE,
+                ephemeral = false,
+                resumable = true,
+                playUrl = "http://example.invalid/play/$releaseId",
+                label = "Fast direct",
+                kind = "direct",
+                playability = playability,
+                score = 100,
+            ),
+        ),
+    )
+
     private fun content(
         isSeries: Boolean = false,
         seasons: List<SeasonGroup> = emptyList(),
         selectedSeason: Int? = null,
         similarTitles: List<Post> = emptyList(),
         deadEndReason: String? = null,
+        postDetail: PostDetail = post,
+        workPrints: List<RankedPrint> = emptyList(),
+        ladder: LadderForScope? = null,
+        similarLoading: Boolean = false,
+        downloadingHandles: Set<String> = emptySet(),
+        deadEndKeepPrint: RankedPrint? = null,
+        onKeep: (RankedPrint) -> Unit = {},
     ) {
         compose.setContent {
             RaddStreamTheme {
                 DetailContent(
-                    post = post,
+                    post = postDetail,
                     seasons = seasons,
-                    workPrints = emptyList(),
+                    workPrints = workPrints,
                     capabilities = emptyList(),
                     isSeries = isSeries,
                     resume = null,
@@ -93,13 +145,15 @@ class DetailRedesignTest {
                     episodeProgress = emptyMap(),
                     includedPill = null,
                     deadEndReason = deadEndReason,
+                    deadEndKeepPrint = deadEndKeepPrint,
+                    downloadingHandles = downloadingHandles,
                     selectedSeason = selectedSeason,
                     onSelectSeason = {},
                     onPlayPrint = {},
                     onOpenExternal = {},
-                    onKeep = {},
+                    onKeep = onKeep,
                     rungs = RungActions(
-                        ladder = LadderForScope(
+                        ladder = ladder ?: LadderForScope(
                             options = listOf(option("720p", "HD - X264")),
                             autoBand = "720p",
                             downloadOnlyBands = emptyList(),
@@ -114,6 +168,7 @@ class DetailRedesignTest {
                     hasRungs = { _, _ -> false },
                     onActorClick = {},
                     similarTitles = similarTitles,
+                    similarLoading = similarLoading,
                     onPostClick = {},
                     reloadError = null,
                     onRetryReload = {},
@@ -181,6 +236,136 @@ class DetailRedesignTest {
         // The chip strip would paint a bare "Season 2" chip; the dropdown
         // keeps the other seasons behind its closed menu.
         compose.onNodeWithText("Season 2").assertDoesNotExist()
+        // Detail review (Nov 2026, P1): the dropdown's chevron is a real
+        // ArrowDropDown icon, not the "▾" text glyph.
+        compose.onNodeWithText("▾").assertDoesNotExist()
+    }
+
+    @Test
+    fun genreChipsFadeIsTwentyTwoDp() {
+        // Detail review (Nov 2026, P1): the genre row shares Home's
+        // RowEndFade at the chips' own height — 22dp for a Pill, not
+        // the shared 48dp, and not the invisible local fade it replaces.
+        content()
+        compose.onNodeWithTag(GenreChipsFadeTag).assertHeightIsEqualTo(22.dp)
+    }
+
+    @Test
+    fun truncatedDetailNamesTheTrueTotal() {
+        // Detail review (Nov 2026, P1): the server caps the detail at
+        // 1,000 releases — the page says so in plain words before the
+        // viewer assumes the list is complete.
+        val truncated = post.copy(
+            releases = listOf(ReleaseDetail(id = 1), ReleaseDetail(id = 2)),
+            releaseTotal = 8316,
+            releasesTruncated = true,
+        )
+        content(postDetail = truncated)
+        compose.onNodeWithText("Showing the first 2 of 8,316 releases")
+            .performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun truncatedFileExpanderShowsTheTrueTotal() {
+        // Detail review (Nov 2026, P1): the file count reads the work's
+        // true total, not the capped list's length.
+        val truncated = post.copy(
+            releases = listOf(ReleaseDetail(id = 1), ReleaseDetail(id = 2)),
+            releaseTotal = 8316,
+            releasesTruncated = true,
+        )
+        content(
+            postDetail = truncated,
+            workPrints = listOf(
+                fakePrint(101, "2160p"),
+                fakePrint(102, "1080p"),
+                fakePrint(103, "720p"),
+                fakePrint(104, "480p"),
+            ),
+            ladder = LadderForScope.EMPTY,
+        )
+        compose.onNodeWithText("Show all 8,316 files")
+            .performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun similarSkeletonStandsInWhileTheRailLoads() {
+        // Detail review (Nov 2026, P1): the similar rail loads after the
+        // page — while it does, a rail skeleton stands in its place, so
+        // the page does not end in a bare gap that reads as "no similar
+        // titles".
+        content(similarLoading = true)
+        compose.onNodeWithTag("posterRailSkeleton").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("More Like This").assertIsDisplayed()
+    }
+
+    @Test
+    fun episodeRowSaysDownloadingWhileItsKeepRuns() {
+        // Detail review (Nov 2026, P1): an episode whose keep is still
+        // moving says "Downloading" on the row, so the viewer does not
+        // tap Download again on a copy already coming.
+        val seasons = listOf(
+            SeasonGroup(
+                number = 1,
+                episodes = listOf(
+                    EpisodeGroup(
+                        season = 1,
+                        numberWithinSeason = 1,
+                        absoluteNumber = 1,
+                        title = "Pilot",
+                        prints = listOf(fakePrint(201, "1080p")),
+                    ),
+                ),
+                packedPrints = emptyList(),
+            ),
+        )
+        content(
+            isSeries = true,
+            seasons = seasons,
+            selectedSeason = 1,
+            downloadingHandles = setOf("h-201"),
+        )
+        for (i in 0 until 5) {
+            if (compose.onAllNodesWithText("Downloading").fetchSemanticsNodes().isNotEmpty()) break
+            compose.onRoot().performTouchInput { swipeUp() }
+        }
+        compose.onNodeWithText("Downloading").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Downloaded").assertDoesNotExist()
+    }
+
+    @Test
+    fun deadEndDownloadTargetsTheBestKeepablePrint() {
+        // Detail review (Nov 2026, P1): the dead end's Download targets
+        // the 720p copy this viewer may keep, not the best-ranked 4K
+        // copy — and it stays enabled while any copy is keepable.
+        var kept: RankedPrint? = null
+        val prints = listOf(
+            fakePrint(1, "2160p", Playability.DOWNLOAD),
+            fakePrint(2, "720p", Playability.DOWNLOAD),
+        )
+        content(
+            deadEndReason = "No working sources right now — download is available.",
+            workPrints = prints,
+            ladder = LadderForScope.EMPTY,
+            deadEndKeepPrint = prints[1],
+            onKeep = { kept = it },
+        )
+        compose.onNodeWithText("Download").performScrollTo().assertIsEnabled().performClick()
+        assertEquals(2, kept?.releaseId)
+    }
+
+    @Test
+    fun deadEndDownloadDisablesWhenNothingIsKeepable() {
+        // Detail review (Nov 2026, P1): a title with only a linkless
+        // print has no Download target — the button disables instead of
+        // offering a download the tap would refuse.
+        val noLinkPrint = fakePrint(1, "720p", Playability.DOWNLOAD).copy(links = emptyList())
+        content(
+            deadEndReason = "No working sources right now.",
+            workPrints = listOf(noLinkPrint),
+            ladder = LadderForScope.EMPTY,
+        )
+        compose.onNodeWithText("Download").performScrollTo().assertIsNotEnabled()
     }
 
     @Test

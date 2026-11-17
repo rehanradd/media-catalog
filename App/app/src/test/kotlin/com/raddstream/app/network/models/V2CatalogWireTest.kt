@@ -131,7 +131,8 @@ class V2CatalogWireTest {
                                     "latency_ms": 300, "speed_mbps": 5.0, "measured": true,
                                     "score_scale": "v2", "last_evidence_at": "2026-11-09T09:00:00"}]}],
              "availability": {"stream": true, "download": true, "any": true, "state": "available"},
-             "entitlements": [], "flags": [], "identity_suspect": false}
+             "entitlements": [], "flags": [], "identity_suspect": false,
+             "print_total": 8316, "prints_truncated": true}
         """.trimIndent()
         val resp = gson.fromJson(json, WireWorkDetailResponse::class.java)
         assertTrue(resp.ok)
@@ -146,6 +147,13 @@ class V2CatalogWireTest {
         assertEquals("tt15398776", detail.imdbId)
         assertEquals("https://image.tmdb.org/t/p/w500/abc.jpg", detail.posterUrl)
         assertEquals(1, detail.releases.size)
+        // Detail review (Nov 2026, P1): the v2 truncation signal rides
+        // through to the v1-shaped detail, so the screen can say how
+        // many releases the work really has.
+        assertEquals(8316, detail.releaseTotal)
+        assertEquals(true, detail.releasesTruncated)
+        assertTrue(detail.isTruncated)
+        assertEquals(8316, detail.totalReleases)
         val release = detail.releases[0]
         assertEquals(9001, release.id)
         assertEquals("1080p", release.quality)

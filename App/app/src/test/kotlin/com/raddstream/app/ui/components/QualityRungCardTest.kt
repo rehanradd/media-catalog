@@ -1,9 +1,12 @@
 package com.raddstream.app.ui.components
 
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import com.raddstream.app.player.LadderForScope
 import com.raddstream.app.player.QualityOption
 import com.raddstream.app.ui.theme.RaddStreamTheme
@@ -166,5 +169,32 @@ class QualityRungCardTest {
             }
         }
         compose.onAllNodesWithText("Auto").assertCountEquals(1)
+    }
+
+    @Test
+    fun lockedRungDownloadIsDisabled() {
+        // Detail review (Nov 2026, P1): a rung this viewer may not take
+        // must not offer a Download the tap would refuse (keepRung
+        // answers with the lock message) — its pad disables, veiled,
+        // while the rung the viewer may take keeps a working Download.
+        val scope = LadderForScope(
+            options = listOf(option("720p", "HD - X264"), option("1080p", "Full HD · X264")),
+            autoBand = "720p",
+            downloadOnlyBands = emptyList(),
+        )
+        compose.setContent {
+            RaddStreamTheme {
+                QualityRungCard(
+                    ladder = scope,
+                    selectedBand = null,
+                    onPlayRung = {},
+                    onKeepRung = {},
+                    tierLabel = { if (it.band == "1080p") "VIP" else "Standard" },
+                    isLocked = { it.band == "1080p" },
+                )
+            }
+        }
+        compose.onNodeWithContentDescription("Download Full HD · X264").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Download HD - X264").assertIsEnabled()
     }
 }

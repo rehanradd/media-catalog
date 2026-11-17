@@ -497,6 +497,18 @@ data class WireWorkDetailResponse(
     val flags: List<String?> = emptyList(),
     @SerializedName("identity_suspect")
     val identitySuspect: Boolean? = null,
+    /**
+     * Detail review (Nov 2026, P1): the v2 detail caps prints the same
+     * way v1 caps releases (`catalog_api.py`: `print_total` /
+     * `prints_truncated` on the work-detail payload) — the `prints` list
+     * is not the work's whole print set. Mapped through to
+     * [PostDetail.releaseTotal] / [PostDetail.releasesTruncated], the
+     * one truncation signal the detail screen reads.
+     */
+    @SerializedName("print_total")
+    val printTotal: Int? = null,
+    @SerializedName("prints_truncated")
+    val printsTruncated: Boolean? = null,
 ) {
     /**
      * A v1-shaped [PostDetail]: the detail screen, the player and the download
@@ -552,6 +564,8 @@ data class WireWorkDetailResponse(
             country = detailWork.country,
             language = detailWork.languages.filterNotNull().firstOrNull(),
             releases = releases,
+            releaseTotal = printTotal,
+            releasesTruncated = printsTruncated,
             optionGroups = buildOptionGroups(prints, baseUrl),
             workRef = detailWork.workRef,
             seasonArtworkRows = seasonArtwork.ifEmpty { null },

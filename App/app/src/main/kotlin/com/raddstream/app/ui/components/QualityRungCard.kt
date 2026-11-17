@@ -58,6 +58,12 @@ fun QualityRungCard(
     /** The tier each rung requires ("VIP" / "Standard"), from the ViewModel. */
     tierLabel: (QualityOption) -> String = { "Standard" },
     /**
+     * Detail review (Nov 2026, P1): true when this viewer may not take
+     * the rung — its Download disables (see [RungRow]). Defaults to
+     * unlocked, so a caller without a gate keeps the old behaviour.
+     */
+    isLocked: (QualityOption) -> Boolean = { false },
+    /**
      * The viewer's preferred audio languages (audit #32). The card leads
      * with rows carrying them, and the first such row is labelled
      * "your pick". Empty orders nothing.
@@ -112,6 +118,7 @@ fun QualityRungCard(
                     (selectedBand == LadderForScope.AUTO && option.band == effectiveAutoBand),
                 tier = tierLabel(option),
                 isPick = isPick,
+                isLocked = isLocked(option),
                 onPlay = { onPlayRung(option) },
                 onKeep = { onKeepRung(option) },
             )
@@ -128,6 +135,14 @@ private fun RungRow(
     tier: String,
     /** Audit #32: the lead preferred-audio row — its facts line says "your pick". */
     isPick: Boolean = false,
+    /**
+     * Detail review (Nov 2026, P1): this viewer may not take the rung —
+     * its Download disables, veiled, instead of offering a download the
+     * tap would refuse (keepRung answers with the lock message). Play is
+     * untouched: a locked rung has no Play button at all, because
+     * [QualityOption.playsHere] is false for it.
+     */
+    isLocked: Boolean = false,
     onPlay: () -> Unit,
     onKeep: () -> Unit,
 ) {
@@ -237,11 +252,15 @@ private fun RungRow(
                     )
                 }
             }
-            RungIconButton(onClick = onKeep) {
+            RungIconButton(onClick = onKeep, enabled = !isLocked) {
                 Icon(
                     imageVector = Icons.Default.Download,
                     contentDescription = "Download ${option.title}",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = if (isLocked) {
+                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
                 )
             }
         }
@@ -252,14 +271,17 @@ private fun RungRow(
  * One rung action: a 48dp tonal pad with the glyph centred. The pad is the
  * button — the same surfaceVariant the rung's quiet pills use, so the row
  * has one action language instead of bare glyphs beside filled buttons.
+ * A disabled pad is not clickable and its glyph is veiled by the caller.
  */
 @Composable
 private fun RungIconButton(
     onClick: () -> Unit,
+    enabled: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     Surface(
         onClick = onClick,
+        enabled = enabled,
         shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surfaceVariant,
         modifier = Modifier.size(48.dp),

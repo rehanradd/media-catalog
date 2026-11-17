@@ -88,6 +88,7 @@ import androidx.compose.ui.text.font.FontWeight
 import com.raddstream.app.brand.Brand
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.raddstream.app.network.models.FacetsResponse
@@ -673,20 +674,23 @@ internal fun HomeHeader(scrolled: Boolean = false) {
  * mid-word ("Complete s..."). A paint-only overlay: it has no click
  * handling, so taps pass straight through to the row beneath it. Shared
  * by the filter row and the Browse facets row, which both scroll — and by
- * Live TV's category row (Nov 2026 review).
+ * Live TV's category row (Nov 2026 review) and Detail's genre chips
+ * (Nov 2026 review), which pass their own height: 48dp is the height of
+ * the filter, Browse and Live TV rows; the genre chips are 22dp Pills.
  */
 @Composable
-internal fun RowEndFade(modifier: Modifier = Modifier) {
+internal fun RowEndFade(modifier: Modifier = Modifier, height: Dp = 48.dp) {
     // The fade needs an explicit height: fillMaxHeight() collapses to 0
     // here — the parent Box is wrap-content inside a scrollable column,
     // so there is no definite height to fill, and the 24dp-wide strip
     // painted nothing (Pixel 5 shots and the homeLoaded golden both show
-    // "KPO" at full brightness to the edge). 48dp is the height of all
-    // three rows that use it (filter chips, Browse pills, Live TV chips).
+    // "KPO" at full brightness to the edge). The default 48dp is the
+    // height of the filter, Browse and Live TV rows; callers with
+    // shorter rows pass their own height.
     Box(
         modifier = modifier
             .width(24.dp)
-            .height(48.dp)
+            .height(height)
             .background(
                 Brush.horizontalGradient(
                     0f to Color.Transparent,

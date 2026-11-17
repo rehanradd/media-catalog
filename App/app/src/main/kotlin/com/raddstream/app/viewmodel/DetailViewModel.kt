@@ -103,12 +103,29 @@ data class DetailUiState(
      */
     val deadEndReason: String? = null,
     /**
+     * Detail review (Nov 2026, P1): the dead end's Download target — the
+     * best-ranked print this viewer may actually keep (see
+     * [deadEndKeepPrint]). Null when no print qualifies, so the button
+     * disables instead of offering a download that cannot start.
+     * Computed in [DetailViewModel.publishViewerContent] beside
+     * [deadEndReason], so the two can never disagree.
+     */
+    val deadEndKeepPrint: RankedPrint? = null,
+    /**
      * Handles of downloads already on this device (READY rows only),
      * so an episode row can say it is downloaded without asking the
      * store on every frame. A handle is the stream id a print or rung
      * keeps by — the same string [DeviceDownload.handle] carries.
      */
     val downloadedHandles: Set<String> = emptySet(),
+    /**
+     * Detail review (Nov 2026, P1): handles of downloads moving on this
+     * device right now (QUEUED or DOWNLOADING rows), so an episode row
+     * can say "Downloading" while its keep runs — a PAUSED row is not
+     * moving, so it stays unmarked. Same handle shape as
+     * [downloadedHandles], collected in the same pass.
+     */
+    val downloadingHandles: Set<String> = emptySet(),
     /** The latest scope this device stopped in, if any — the Resume button. */
     val resume: ResumePoint? = null,
     /** True when the Resume button has a print to play; false shows plain Play. */
@@ -222,6 +239,26 @@ internal fun deadEndReasonFor(
     !gatedPlayable -> "No working sources right now."
     else -> null
 }
+
+/**
+ * Detail review (Nov 2026, P1): the dead end's Download target — the
+ * best-ranked print this viewer may actually keep. The gate must allow
+ * its resolution (the same 3-arg check [seasonKeepPlan] applies) and it
+ * must carry a keepable link (a real file, not a provider page — the
+ * same [RankedLink.keepable] the dead-end reason counts). The
+ * best-ranked print is not the answer: on a gated title it can be a 4K
+ * copy this viewer may not keep, while a 720p copy below it keeps fine.
+ * Null when no print qualifies, so the button disables. Pure so
+ * DetailDeadEndReasonTest pins it.
+ */
+internal fun deadEndKeepPrint(
+    prints: List<RankedPrint>,
+    premiumAccess: Boolean,
+    freeQualityCap: String,
+): RankedPrint? = prints
+    .filter { VipQualityGate.allowsResolution(it.resolution, premiumAccess, freeQualityCap) }
+    .filter { print -> print.links.any { it.keepable } }
+    .maxByOrNull { it.rankKey }
 
 /** The season-download plan: what a season keep would take, before Confirm. */
 data class SeasonKeepPlan(
@@ -386,6 +423,9 @@ class DetailViewModel @Inject constructor(
      * Which episodes are already on this device: READY downloads only,
      * by their handle. A row still downloading is not downloaded yet —
      * the check appears the moment the bytes land, not while they move.
+     * The moving ones ride along as [DetailUiState.downloadingHandles],
+     * so the row can say "Downloading" while the keep runs (Detail
+     * review, Nov 2026, P1).
      */
     private fun observeDownloads() {
         viewModelScope.launch {
@@ -394,6 +434,14 @@ class DetailViewModel @Inject constructor(
                     it.copy(
                         downloadedHandles = rows
                             .filter { row -> row.state == DeviceDownloadState.READY && row.handle.isNotBlank() }
+                            .map { it.handle }
+                            .toSet(),
+                        downloadingHandles = rows
+                            .filter { row ->
+                                (row.state == DeviceDownloadState.QUEUED ||
+                                    row.state == DeviceDownloadState.DOWNLOADING) &&
+                                    row.handle.isNotBlank()
+                            }
                             .map { it.handle }
                             .toSet(),
                     )
@@ -569,6 +617,7 @@ class DetailViewModel @Inject constructor(
                 premiumSourcesLocked = premiumLocked,
                 includedPill = includedPill,
                 deadEndReason = deadEndReason,
+                deadEndKeepPrint = deadEndKeepPrint(gatedPrints, premiumAccess, freeQualityCap),
             )
         }
         loadResume()
@@ -970,7 +1019,7 @@ class DetailViewModel @Inject constructor(
         ) "VIP" else "Standard"
 
     /** A premium rung the current viewer may not take, decided from the same gate the UI uses. */
-    private fun isLocked(option: QualityOption): Boolean =
+    internal fun isLocked(option: QualityOption): Boolean =
         !VipQualityGate.allowsBand(option.band, premiumAccess, freeQualityCap) ||
             (!premiumAccess && VipQualityGate.isPremiumLabel(option.title, freeQualityCap))
 

@@ -510,10 +510,12 @@ fun PosterRailSkeleton(
 
 /**
  * The loading stand-in for the detail page, mirroring [DetailContent]'s item
- * order block for block — hero, Play, secondary row, quality rungs, synopsis,
- * cast, print summary, similar titles — with each block the same height as
- * the real one, so nothing below the fold reflows when the data lands.
- * Blocks are 16dp apart, the LazyColumn's own spacing.
+ * order block for block — hero, Play, synopsis, utility row, audio line,
+ * quality rungs, cast, print summary, similar titles — with each block the
+ * same height as the real one, so nothing below the fold reflows when the
+ * data lands. Blocks are 16dp apart, the LazyColumn's own spacing.
+ * ([SkeletonParityTest] pins the section order, so a redesign that moves
+ * a section moves the skeleton with it.)
  *
  * No own padding: the caller applies `detailPadding` (16dp sides, the
  * scaffold top, 40dp bottom breathing) — the same padding the real list
@@ -524,12 +526,16 @@ fun PosterRailSkeleton(
  * header) — the common case, since most titles carry a TMDB backdrop. A
  * title without one renders 92dp shorter; that jump is the price of not
  * knowing at load time, and it is smaller than the old whole-page reflow.
+ *
+ * No episode placeholder: the screen does not know movie-vs-series until
+ * the load lands, so a series episode block here would be a guess, not a
+ * stand-in (Detail review, Nov 2026 — recorded follow-up).
  */
 @Composable
 fun DetailSkeleton(modifier: Modifier = Modifier) {
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         // Hero: backdrop band behind, poster header overlapping it.
-        Box(Modifier.fillMaxWidth()) {
+        Box(Modifier.fillMaxWidth().testTag("detailSkeletonHero")) {
             SkeletonBox(
                 Modifier.fillMaxWidth().height(176.dp),
                 shape = RoundedCornerShape(16.dp),
@@ -545,22 +551,12 @@ fun DetailSkeleton(modifier: Modifier = Modifier) {
             Modifier.fillMaxWidth().height(48.dp).testTag("detailPlaySkeleton"),
             shape = RoundedCornerShape(24.dp),
         )
-        // Secondary row: Save / Download / Share, each 48dp min, 8dp apart.
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        // Synopsis: four bodyMedium lines — the story comes first on the
+        // redesigned page, directly under the actions.
+        Column(
+            Modifier.testTag("detailSkeletonSynopsis"),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            repeat(3) {
-                SkeletonBox(
-                    Modifier.weight(1f).height(48.dp),
-                    shape = RoundedCornerShape(24.dp),
-                )
-            }
-        }
-        // Quality rungs: "Quality" + subtitle + three rung rows.
-        QualityRungsSkeleton()
-        // Synopsis: four bodyMedium lines.
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             repeat(3) {
                 SkeletonBox(
                     Modifier.fillMaxWidth().height(20.dp),
@@ -572,8 +568,49 @@ fun DetailSkeleton(modifier: Modifier = Modifier) {
                 shape = RoundedCornerShape(8.dp),
             )
         }
+        // Utility row: Save / Share / Similar / Report — four borderless
+        // icon + label actions, each 48dp min. The skeleton mirrors the
+        // real row's shape (24dp icon over a short label), not the old
+        // three outlined buttons the redesign removed.
+        Row(
+            Modifier.fillMaxWidth().testTag("detailSkeletonUtilityRow"),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            repeat(4) {
+                Column(
+                    Modifier.weight(1f).height(48.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    SkeletonBox(
+                        Modifier.size(24.dp),
+                        shape = RoundedCornerShape(4.dp),
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    SkeletonBox(
+                        Modifier.width(48.dp).height(12.dp),
+                        shape = RoundedCornerShape(8.dp),
+                    )
+                }
+            }
+        }
+        // Audio line: one 48dp tappable row, text + chevron.
+        Box(
+            Modifier.fillMaxWidth().height(48.dp).testTag("detailSkeletonAudioLine"),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            SkeletonBox(
+                Modifier.fillMaxWidth(0.55f).height(16.dp),
+                shape = RoundedCornerShape(8.dp),
+            )
+        }
+        // Quality rungs: "Quality" + subtitle + three rung rows.
+        QualityRungsSkeleton()
         // Cast: "Cast" title + one row of 48dp chips.
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(
+            Modifier.testTag("detailSkeletonCast"),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             SkeletonBox(
                 Modifier.width(64.dp).height(24.dp),
                 shape = RoundedCornerShape(8.dp),
@@ -594,7 +631,7 @@ fun DetailSkeleton(modifier: Modifier = Modifier) {
             }
         }
         // Print summary: titleMedium line + bodySmall line.
-        Column {
+        Column(Modifier.testTag("detailSkeletonPrintSummary")) {
             SkeletonBox(
                 Modifier.fillMaxWidth(0.5f).height(24.dp),
                 shape = RoundedCornerShape(8.dp),
@@ -605,7 +642,7 @@ fun DetailSkeleton(modifier: Modifier = Modifier) {
             )
         }
         // Similar titles: section header + rail.
-        Column {
+        Column(Modifier.testTag("detailSkeletonSimilar")) {
             Spacer(Modifier.height(8.dp))
             SkeletonBox(
                 Modifier.fillMaxWidth(0.4f).height(24.dp),
@@ -684,7 +721,10 @@ private fun DetailHeaderSkeleton() {
  */
 @Composable
 private fun QualityRungsSkeleton() {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(
+        Modifier.testTag("detailSkeletonRungs"),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
         SkeletonBox(
             Modifier.fillMaxWidth(0.35f).height(24.dp),
             shape = RoundedCornerShape(8.dp),

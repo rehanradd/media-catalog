@@ -286,6 +286,18 @@ data class PostDetail(
     val language: String? = null,
     val releases: List<ReleaseDetail> = emptyList(),
     /**
+     * Detail review (Nov 2026, P1): the server caps the detail at 1,000
+     * releases (`viewer.py`: `release_total` / `releases_truncated` on
+     * the post dict) — the rendered list is not the work's whole release
+     * set. Nullable because Gson does not run Kotlin default initialisers
+     * for a missing key; [totalReleases] / [isTruncated] are the only
+     * forms callers should read.
+     */
+    @SerializedName("release_total")
+    val releaseTotal: Int? = null,
+    @SerializedName("releases_truncated")
+    val releasesTruncated: Boolean? = null,
+    /**
      * The server's collapsed quality ladder, one group per season/episode scope
      * (see [OptionGroup]). The quality switch and the download card read THIS, not
      * the raw `releases[].sources[]`, so one rung means one row to the viewer.
@@ -313,6 +325,10 @@ data class PostDetail(
     val genreList: List<String> get() = WireText.listOf(genres)
     val backdropList: List<String> get() = WireText.listOf(backdropUrls)
     val seasonArtwork: List<SeasonArtwork> get() = seasonArtworkRows.orEmpty()
+    /** True when the server cut this detail's release list at its cap. */
+    val isTruncated: Boolean get() = releasesTruncated == true
+    /** The work's true release count — the capped list's size when untruncated. */
+    val totalReleases: Int get() = releaseTotal ?: releases.size
     val displayTitle: String get() = cleanTitle?.takeIf { it.isNotBlank() } ?: title
 }
 

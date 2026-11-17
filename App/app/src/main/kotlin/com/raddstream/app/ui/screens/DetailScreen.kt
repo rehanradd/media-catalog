@@ -133,6 +133,7 @@ import com.raddstream.app.ui.components.ErrorState
 import com.raddstream.app.ui.components.HdrBadge
 import com.raddstream.app.ui.components.ImageFallbackCard
 import com.raddstream.app.ui.components.InlineLoadFailure
+import com.raddstream.app.ui.components.PosterRailSkeleton
 import com.raddstream.app.ui.components.isKnownLanguage
 import com.raddstream.app.ui.components.MediaRail
 import com.raddstream.app.ui.components.Pill
@@ -467,7 +468,9 @@ fun DetailScreen(
                 episodeProgress = state.episodeProgress,
                 includedPill = state.includedPill,
                 deadEndReason = state.deadEndReason,
+                deadEndKeepPrint = state.deadEndKeepPrint,
                 downloadedHandles = state.downloadedHandles,
+                downloadingHandles = state.downloadingHandles,
                 selectedSeason = state.selectedSeason,
                 onSelectSeason = viewModel::selectSeason,
                 onPlayPrint = { print -> viewModel.playPrint(print, external = false) },
@@ -480,6 +483,7 @@ fun DetailScreen(
                     onPlay = viewModel::playLadder,
                     onKeep = { option -> downloadWithStoragePermission { viewModel.keepRung(option) } },
                     tierLabel = viewModel::tierLabelFor,
+                    isLocked = viewModel::isLocked,
                     // Audit #32: the card leads with the viewer's own audio.
                     preferredAudio = preferredAudioLanguages(state.region),
                 ),
@@ -488,6 +492,7 @@ fun DetailScreen(
                 hasRungs = { season, episode -> !viewModel.ladderFor(season, episode).isEmpty },
                 onActorClick = onActorClick,
                 similarTitles = state.similarTitles,
+                similarLoading = state.similarLoading,
                 onPostClick = onPostClick,
                 reloadError = state.error,
                 onRetryReload = viewModel::loadDetail,
@@ -736,6 +741,13 @@ internal data class RungActions(
     val onKeep: (QualityOption) -> Unit,
     /** The tier each rung requires ("VIP" / "Standard"), from the ViewModel. */
     val tierLabel: (QualityOption) -> String,
+    /**
+     * Detail review (Nov 2026, P1): true when this viewer may not take
+     * the rung — the gate reserves its band or label — so the rung's
+     * Download disables instead of offering a download the tap would
+     * refuse. From the ViewModel's [DetailViewModel.isLocked].
+     */
+    val isLocked: (QualityOption) -> Boolean = { false },
     /** The viewer's preferred audio languages (audit #32) — empty orders nothing. */
     val preferredAudio: Set<String> = emptySet(),
 )
@@ -905,8 +917,23 @@ internal fun DetailContent(
     includedPill: String?,
     /** Why this title cannot be played, in the viewer's words — null when it can. */
     deadEndReason: String? = null,
+    /**
+     * Detail review (Nov 2026, P1): the dead end's Download target — the
+     * best keepable print for this viewer, from the ViewModel. Null when
+     * none is keepable, so the dead-end Download disables; test fixtures
+     * that want an enabled Download must pass the print they expect it
+     * to target — a null here never falls back to the best-ranked print.
+     */
+    deadEndKeepPrint: RankedPrint? = null,
     /** Handles of downloads already on this device (READY rows only). */
     downloadedHandles: Set<String> = emptySet(),
+    /**
+     * Detail review (Nov 2026, P1): handles of downloads moving on this
+     * device right now — an episode row says "Downloading" while its
+     * keep runs, so the viewer does not tap Download again on a copy
+     * already coming.
+     */
+    downloadingHandles: Set<String> = emptySet(),
     selectedSeason: Int?,
     onSelectSeason: (Int) -> Unit,
     onPlayPrint: (RankedPrint) -> Unit,
@@ -923,6 +950,13 @@ internal fun DetailContent(
     /** An actor chip in the cast row: open that actor's titles in Search. */
     onActorClick: (String) -> Unit = {},
     similarTitles: List<Post> = emptyList(),
+    /**
+     * Detail review (Nov 2026, P1): the similar rail loads after the
+     * page — while it does, a rail skeleton stands in its place (below),
+     * so the page does not end in a bare gap that reads as "no similar
+     * titles". False once the rail answers, titles or none.
+     */
+    similarLoading: Boolean = false,
     onPostClick: (Post) -> Unit = {},
     /**
      * A reload of a title that is already on screen. Null in the normal case. It arrives here
@@ -1016,9 +1050,10 @@ internal fun DetailContent(
                 resume = resume,
                 onPlayResume = onPlayResume,
                 onPlay = { heroPrint?.let(onPlayPrint) },
-                onKeep = { bestPrint?.let(onKeep) },
+                onKeep = { deadEndKeepPrint?.let(onKeep) },
                 onStartOver = onStartOver,
                 deadEndReason = deadEndReason,
+                deadEndKeepPrint = deadEndKeepPrint,
             )
         }
 
@@ -1084,6 +1119,29 @@ internal fun DetailContent(
             }
         }
 
+        // Detail review (Nov 2026, P1): the server caps the detail at
+        // 1,000 releases — the list below is the first of many, not the
+        // whole work. One honest line, before the viewer assumes the
+        // episode/file list is complete. The per-season episode counts
+        // cannot be corrected from this signal (releases are not
+        // episodes, and the v1 payload carries no per-season total), so
+        // the line is the disclosure; plumbing the v2 season
+        // episode_count through is a follow-up.
+        if (post.isTruncated) {
+            item(contentType = "truncation-note") {
+                Text(
+                    text = stringResource(
+                        R.string.detail_truncated_releases,
+                        "%,d".format(post.releases.size),
+                        "%,d".format(post.totalReleases),
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = pageSides,
+                )
+            }
+        }
+
         // Detail review (Nov 2026, P2): seasons and episodes come
         // before the quality choice — the viewer picks what to watch
         // first, then the picture it plays in. The work-level ladder
@@ -1120,6 +1178,11 @@ internal fun DetailContent(
                             isDownloaded = episode.prints.any { print ->
                                 print.links.any { link ->
                                     link.streamId.isNotBlank() && link.streamId in downloadedHandles
+                                }
+                            },
+                            isDownloading = episode.prints.any { print ->
+                                print.links.any { link ->
+                                    link.streamId.isNotBlank() && link.streamId in downloadingHandles
                                 }
                             },
                             onPlayPrint = onPlayPrint,
@@ -1166,6 +1229,7 @@ internal fun DetailContent(
                         onPlayRung = rungs.onPlay,
                         onKeepRung = rungs.onKeep,
                         tierLabel = rungs.tierLabel,
+                        isLocked = rungs.isLocked,
                         preferredAudio = rungs.preferredAudio,
                     )
                 }
@@ -1219,11 +1283,23 @@ internal fun DetailContent(
                         )
                     }
                 }
+                // Detail review (Nov 2026, P1): the count is the work's
+                // true total, not the capped list's length — the
+                // truncation note above already says only the first
+                // 1,000 are listed.
+                val fileCount = if (post.isTruncated) post.totalReleases else workPrints.size
                 if (workPrints.size > 3) {
                     item {
                         Box(pageSides) {
                             TextButton(
                                 onClick = { showAllFiles = !showAllFiles },
+                                // Detail review (Nov 2026, P1): the 48dp
+                                // touch-target floor — the same floor the
+                                // synopsis, cast and episode expanders
+                                // carry. The zero side padding stays: it
+                                // keeps the label aligned with the body
+                                // text above it.
+                                modifier = Modifier.heightIn(min = 48.dp),
                                 // Detail review (Nov 2026, P1): a TextButton's
                                 // default 12dp side padding indents the label
                                 // ~28dp from the body text above it — the
@@ -1234,11 +1310,28 @@ internal fun DetailContent(
                             ) {
                                 Text(
                                     if (showAllFiles) "Show fewer files"
-                                    else "Show all ${workPrints.size} files",
+                                    else "Show all ${"%,d".format(fileCount)} files",
                                 )
                             }
                         }
                     }
+                }
+            }
+        }
+
+        // Detail review (Nov 2026, P1): the similar rail loads after the
+        // page — while it does, a rail skeleton stands in its place, so
+        // the page does not end in a bare gap that reads as "no similar
+        // titles". The header is the real one (a section name, not data);
+        // the rail is PosterRailSkeleton, the same shape the real rail
+        // fills in with — it carries its own 16dp sides, so it needs no
+        // pageSides of its own. Only while the rail is empty: once
+        // titles land the skeleton is gone.
+        if (similarLoading && similarTitles.isEmpty()) {
+            item(contentType = "similar-loading") {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SectionHeader(title = "More Like This", modifier = pageSides)
+                    PosterRailSkeleton()
                 }
             }
         }
@@ -1289,6 +1382,7 @@ internal fun DetailContent(
                     onPlayRung = rungs.onPlay,
                     onKeepRung = rungs.onKeep,
                     tierLabel = rungs.tierLabel,
+                    isLocked = rungs.isLocked,
                     preferredAudio = rungs.preferredAudio,
                 )
             }
@@ -1498,10 +1592,15 @@ private fun GenreChipsRow(
     // pill rows under the title. One row now; capabilities ride with
     // the genres.
     // Detail review (Nov 2026, P1): the last chip hard-clipped at the
-    // right edge reads as broken — a 32dp fade mask, the same treatment
-    // Search's filter rail gets, so the row reads as scrollable. Local
-    // to this file: no shared fade component (the Home fix owns the
-    // shared files right now).
+    // right edge reads as broken — Home's shared RowEndFade, the same
+    // treatment Search's filter rail gets, so the row reads as
+    // scrollable. 22dp, not the shared 48dp: a CapabilityChip is a Pill
+    // (labelSmall 11sp/16sp line height + 3dp vertical padding × 2), so
+    // the fade is exactly as tall as the row it covers. The local 32dp
+    // fade it replaces painted nothing: fillMaxHeight() in a
+    // wrap-content Box inside a scrolling column collapses to 0px
+    // (Home §3.4), and the detailMovie golden shows the last chip as
+    // "E…" hard-clipped with no fade at all.
     if (chips.isEmpty()) return
     Box(modifier = modifier.fillMaxWidth()) {
         Row(
@@ -1512,20 +1611,9 @@ private fun GenreChipsRow(
         }
         // The overlay carries no click handling, so taps pass through to
         // the chips beneath it.
-        Box(
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .width(32.dp)
-                .fillMaxHeight()
-                .background(
-                    Brush.horizontalGradient(
-                        colors = listOf(
-                            Color.Transparent,
-                            MaterialTheme.colorScheme.background,
-                        ),
-                    ),
-                )
-                .testTag(GenreChipsFadeTag),
+        RowEndFade(
+            Modifier.align(Alignment.CenterEnd).testTag(GenreChipsFadeTag),
+            height = 22.dp,
         )
     }
 }
@@ -1606,14 +1694,18 @@ private fun DetailTopBarTarget(
     onClick: () -> Unit,
     content: @Composable () -> Unit,
 ) {
+    // Detail review (Nov 2026, P1): the 48dp touch-target floor — the
+    // back and More targets were 40dp circles. The floating bar over
+    // the hero has room for the full floor, so there is no exception
+    // to record here.
     Box(
         modifier = Modifier
-            .size(40.dp)
+            .size(48.dp)
             .clip(CircleShape)
             .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.6f)),
         contentAlignment = Alignment.Center,
     ) {
-        IconButton(onClick = onClick, modifier = Modifier.size(40.dp)) {
+        IconButton(onClick = onClick, modifier = Modifier.size(48.dp)) {
             content()
         }
     }
@@ -1662,6 +1754,13 @@ private fun PrimaryActions(
     onStartOver: () -> Unit,
     /** Why this title cannot be played, in the viewer's words — null when it can. */
     deadEndReason: String? = null,
+    /**
+     * Detail review (Nov 2026, P1): the dead end's Download target — the
+     * best keepable print for this viewer. Null disables the button: the
+     * best-ranked print is not a fallback, because on a gated title it
+     * can be a locked copy or a provider page.
+     */
+    deadEndKeepPrint: RankedPrint? = null,
 ) {
     Column(
         modifier = modifier.fillMaxWidth(),
@@ -1732,6 +1831,11 @@ private fun PrimaryActions(
             // the reason the ViewModel worked out — no sources, only VIP
             // copies, or no working source — plus a way out: the similar
             // rail below, instead of a dead end.
+            // Detail review (Nov 2026, P1): the button targets the best
+            // KEEPABLE print for this viewer — not the best-ranked one,
+            // which may be a locked copy or a provider page — and it
+            // disables when none is keepable, instead of offering a
+            // download the tap would refuse.
             if (deadEndReason != null) {
                 Text(
                     text = deadEndReason,
@@ -1747,7 +1851,7 @@ private fun PrimaryActions(
             }
             Button(
                 onClick = onKeep,
-                enabled = hasAnyPrint,
+                enabled = deadEndKeepPrint != null,
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 48.dp),
@@ -1770,7 +1874,11 @@ private fun PrimaryActions(
         // Phase 7 (D1): only while a resume exists — after "Start over" the
         // button above reads plain Play again, so this row must not linger.
         if (resume != null) {
-            TextButton(onClick = onStartOver) {
+            // Detail review (Nov 2026, P1): the 48dp touch-target floor.
+            TextButton(
+                onClick = onStartOver,
+                modifier = Modifier.heightIn(min = 48.dp),
+            ) {
                 Text("Start over")
             }
         }
@@ -1906,6 +2014,8 @@ private fun ExpandableSynopsis(text: String) {
         if (expanded || hasOverflow) {
             TextButton(
                 onClick = { expanded = !expanded },
+                // Detail review (Nov 2026, P1): the 48dp touch-target floor.
+                modifier = Modifier.heightIn(min = 48.dp),
                 contentPadding = PaddingValues(0.dp),
             ) {
                 Text(if (expanded) "Show less" else "Read more")
@@ -1953,6 +2063,8 @@ private fun CastSection(cast: List<String>, onActorClick: (String) -> Unit) {
         if (cast.size > 6) {
             TextButton(
                 onClick = { expanded = !expanded },
+                // Detail review (Nov 2026, P1): the 48dp touch-target floor.
+                modifier = Modifier.heightIn(min = 48.dp),
                 contentPadding = PaddingValues(0.dp),
             ) {
                 Text(
@@ -2039,7 +2151,10 @@ private fun SeasonDropdown(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(Modifier.width(8.dp))
-                Text("▾", style = MaterialTheme.typography.bodyLarge)
+                // Detail review (Nov 2026, P1): a real chevron icon, not
+                // the "▾" text glyph — the glyph renders inconsistently
+                // across fonts and reads as a stray character.
+                Icon(Icons.Default.ArrowDropDown, contentDescription = null)
             }
             DropdownMenu(
                 expanded = expanded,
@@ -2157,12 +2272,20 @@ private fun PackedSeasonBanner(season: SeasonGroup, onPlay: (RankedPrint) -> Uni
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { onPlay(pack) }) {
+            // Detail review (Nov 2026, P1): the 48dp touch-target floor —
+            // a Material 3 button's own min height is 40dp.
+            Button(
+                onClick = { onPlay(pack) },
+                modifier = Modifier.heightIn(min = 48.dp),
+            ) {
                 Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
                 Text("Play season")
             }
-            OutlinedButton(onClick = { onKeep(pack) }) {
+            OutlinedButton(
+                onClick = { onKeep(pack) },
+                modifier = Modifier.heightIn(min = 48.dp),
+            ) {
                 Icon(Icons.Default.Download, contentDescription = "Download season")
             }
         }
@@ -2177,6 +2300,12 @@ internal fun EpisodeRow(
     progress: EpisodeProgress?,
     /** True when a READY download on this device covers one of this episode's prints. */
     isDownloaded: Boolean = false,
+    /**
+     * Detail review (Nov 2026, P1): true when a download on this device
+     * is still moving for one of this episode's prints — the row says
+     * "Downloading" while its keep runs.
+     */
+    isDownloading: Boolean = false,
     onPlayPrint: (RankedPrint) -> Unit,
     onOpenExternal: (RankedPrint) -> Unit,
     onKeep: (RankedPrint) -> Unit,
@@ -2308,6 +2437,27 @@ internal fun EpisodeRow(
                         )
                     }
                 }
+                // A download in flight is worth the same honesty as a
+                // finished one: the row says it is moving, so the viewer
+                // does not tap Download again on a copy already coming.
+                if (isDownloading && !isDownloaded) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Download,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(14.dp),
+                        )
+                        Text(
+                            text = "Downloading",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
             }
             // The row's badge facts, spoken once on the Play button (the badge
             // row above is paint-only while this button exists): quality, HDR,
@@ -2388,6 +2538,8 @@ internal fun EpisodeRow(
         if (episode.prints.size > 1 && !canChooseQuality) {
             TextButton(
                 onClick = { expanded = !expanded },
+                // Detail review (Nov 2026, P1): the 48dp touch-target floor.
+                modifier = Modifier.heightIn(min = 48.dp),
                 contentPadding = PaddingValues(0.dp),
             ) {
                 Text(if (expanded) "Hide files" else "Show all ${episode.prints.size} files")
@@ -2414,6 +2566,7 @@ internal fun EpisodeRow(
                 onKeepRung = rungs.onKeep,
                 scopeTitle = scopeLabel,
                 tierLabel = rungs.tierLabel,
+                isLocked = rungs.isLocked,
                 preferredAudio = rungs.preferredAudio,
             )
         }
