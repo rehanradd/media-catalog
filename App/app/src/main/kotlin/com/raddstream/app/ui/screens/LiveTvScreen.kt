@@ -10,22 +10,28 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -33,7 +39,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
@@ -55,6 +64,8 @@ import com.raddstream.app.ui.components.isKnownLanguage
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.layout.CardGeometry
 import com.raddstream.app.viewmodel.LiveTvViewModel
+import com.raddstream.app.viewmodel.formatCacheAge
+import kotlinx.coroutines.launch
 
 /**
  * The Live TV tab: a category-first channel grid, in the same shape as the
@@ -99,6 +110,29 @@ fun LiveTvScreen(
                         modifier = Modifier.clearAndSetSemantics { },
                     )
                 },
+                actions = {
+                    // Live TV review D3: a channel that dies mid-session
+                    // needs a re-fetch without killing the app — the same
+                    // pattern as Downloads. While a fetch runs the action
+                    // is a spinner, not a dead tap: that is also the
+                    // "refreshing…" affordance for the cache-first paint
+                    // (D1), which puts yesterday's list on screen while
+                    // the fresh one loads behind it.
+                    IconButton(
+                        onClick = { viewModel.refresh() },
+                        enabled = !state.isLoading,
+                        modifier = Modifier.semantics { contentDescription = "Refresh channels" },
+                    ) {
+                        if (state.isLoading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp,
+                            )
+                        } else {
+                            Icon(Icons.Default.Refresh, contentDescription = null)
+                        }
+                    }
+                },
             )
         },
     ) { contentPadding ->
@@ -131,7 +165,12 @@ fun LiveTvScreen(
                     )
                 },
                 action = {
-                    Button(onClick = { viewModel.refresh() }) { Text("Retry") }
+                    // Live TV review D6: the empty state's only way out
+                    // sits on the 48dp floor with every other control.
+                    Button(
+                        onClick = { viewModel.refresh() },
+                        modifier = Modifier.heightIn(min = 48.dp),
+                    ) { Text("Retry") }
                 },
                 modifier = Modifier.fillMaxSize().padding(contentPadding),
             )
@@ -146,7 +185,20 @@ fun LiveTvScreen(
                     ) {
                         Text(
                             text = if (state.showingCached) {
-                                "Showing the last channel list — it may be out of date. ${state.error}"
+                                // Live TV review D5: the notice says how
+                                // old the saved list is — "Saved 3 hours
+                                // ago" — instead of warning without
+                                // informing. A cache written before the
+                                // timestamp existed falls back to the
+                                // wording it always had.
+                                val age = state.cachedAtMillis?.let {
+                                    formatCacheAge(it, System.currentTimeMillis())
+                                }
+                                if (age != null) {
+                                    "Saved $age — it may be out of date. ${state.error}"
+                                } else {
+                                    "Showing the last channel list — it may be out of date. ${state.error}"
+                                }
                             } else {
                                 state.error ?: "Could not load live channels."
                             },
@@ -154,7 +206,12 @@ fun LiveTvScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.weight(1f),
                         )
-                        TextButton(onClick = { viewModel.refresh() }) { Text("Retry") }
+                        // Live TV review D6: the cached-notice Retry sits
+                        // on the 48dp floor with every other control.
+                        TextButton(
+                            onClick = { viewModel.refresh() },
+                            modifier = Modifier.heightIn(min = 48.dp),
+                        ) { Text("Retry") }
                     }
                 }
                 // The search field is the app's shared filled pill (SearchScreen):
@@ -175,44 +232,128 @@ fun LiveTvScreen(
                     selectedCategory = state.selectedCategory,
                     onCategorySelected = viewModel::onCategorySelected,
                 )
+                // Live TV review D7: the biggest list in the app says how
+                // big it is — "759 channels" unfiltered, "12 of 759
+                // channels" once a filter cuts it.
+                if (state.visibleChannels.isNotEmpty()) {
+                    Text(
+                        text = liveTvChannelCountText(
+                            visible = state.visibleChannels.size,
+                            total = state.channels.size,
+                            filtered = state.query.isNotBlank() || state.selectedCategory != null,
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                            .testTag("liveTv_channelCount"),
+                    )
+                }
                 if (state.visibleChannels.isEmpty()) {
                     EmptyState(
                         title = "No channels match",
                         message = if (state.query.isNotBlank()) {
-                            "Nothing named \"${state.query}\" is on live TV right now."
+                            "Nothing matching \"${state.query}\" is on live TV right now."
                         } else {
                             "Nothing in this category is on live TV right now."
+                        },
+                        // Live TV review D4: a dead end one tap away from
+                        // the full list gets the tap — "Clear search" when
+                        // a query is set, "Show all channels" when a
+                        // category is set.
+                        action = {
+                            if (state.query.isNotBlank()) {
+                                Button(
+                                    onClick = { viewModel.onQueryChanged("") },
+                                    modifier = Modifier.heightIn(min = 48.dp),
+                                ) { Text("Clear search") }
+                            } else if (state.selectedCategory != null) {
+                                Button(
+                                    onClick = { viewModel.onCategorySelected(null) },
+                                    modifier = Modifier.heightIn(min = 48.dp),
+                                ) { Text("Show all channels") }
+                            }
                         },
                         modifier = Modifier.fillMaxWidth(),
                     )
                 } else {
-                    LazyVerticalGrid(
-                        columns = CatalogGridColumns,
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp, start = 16.dp, end = 16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(14.dp),
-                    ) {
-                        items(state.visibleChannels, key = { it.id }) { channel ->
-                            LiveTvChannelCard(
-                                channel = channel,
-                                // Batch C: warm the channel's link in parallel
-                                // with the navigation, so the player 302s from
-                                // the banked answer instead of paying the live
-                                // resolve inside "Finding your video".
-                                onClick = {
-                                    viewModel.warmChannel(channel.streamId)
-                                    // A channel is always HLS: stage the manifest MIME
-                                    // so the player declares it before the first frame
-                                    // instead of opening the playlist with the
-                                    // progressive reader (Robo #4).
-                                    viewModel.stageLiveChannel(channel.streamId)
-                                    onPlayChannel(channel.streamId, channel.name)
-                                },
-                            )
-                        }
-                    }
+                    LiveTvChannelGrid(
+                        channels = state.visibleChannels,
+                        onChannelClick = { channel ->
+                            // Batch C: warm the channel's link in parallel
+                            // with the navigation, so the player 302s from
+                            // the banked answer instead of paying the live
+                            // resolve inside "Finding your video".
+                            viewModel.warmChannel(channel.streamId)
+                            // A channel is always HLS: stage the manifest MIME
+                            // so the player declares it before the first frame
+                            // instead of opening the playlist with the
+                            // progressive reader (Robo #4).
+                            viewModel.stageLiveChannel(channel.streamId)
+                            onPlayChannel(channel.streamId, channel.name)
+                        },
+                    )
                 }
+            }
+        }
+    }
+}
+
+/** "759 channels" unfiltered, "12 of 759 channels" once a filter cuts the list. */
+internal fun liveTvChannelCountText(visible: Int, total: Int, filtered: Boolean): String {
+    val totalText = if (total == 1) "1 channel" else "$total channels"
+    if (!filtered) return totalText
+    return "${if (visible == 1) "1" else "$visible"} of $totalText"
+}
+
+/**
+ * The channel grid with its back-to-top affordance, extracted so the
+ * scroll behaviour is unit-testable without the Hilt screen around it
+ * (see LiveTvMockupTest). Live TV review D8: once the first row has
+ * scrolled off, a "Back to top" button appears bottom-end; tapping it
+ * animates back to the first row. The grid itself is lazy with stable
+ * keys — 759 rows do not all compose — the button only shortens the
+ * drag home.
+ */
+@Composable
+internal fun LiveTvChannelGrid(
+    channels: List<LiveTvChannel>,
+    onChannelClick: (LiveTvChannel) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val gridState = rememberLazyGridState()
+    val scope = rememberCoroutineScope()
+    val showBackToTop by remember {
+        derivedStateOf {
+            gridState.firstVisibleItemIndex > 0 || gridState.firstVisibleItemScrollOffset > 0
+        }
+    }
+    Box(modifier = modifier.fillMaxSize()) {
+        LazyVerticalGrid(
+            columns = CatalogGridColumns,
+            state = gridState,
+            modifier = Modifier.fillMaxSize().testTag("liveTv_grid"),
+            contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp, start = 16.dp, end = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            items(channels, key = { it.id }) { channel ->
+                LiveTvChannelCard(
+                    channel = channel,
+                    onClick = { onChannelClick(channel) },
+                )
+            }
+        }
+        if (showBackToTop) {
+            IconButton(
+                onClick = { scope.launch { gridState.animateScrollToItem(0) } },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(16.dp)
+                    .background(MaterialTheme.colorScheme.surfaceVariant, CircleShape)
+                    .testTag("liveTv_backToTop")
+                    .semantics { contentDescription = "Back to top" },
+            ) {
+                Icon(Icons.Default.KeyboardArrowUp, contentDescription = null)
             }
         }
     }
@@ -276,7 +417,7 @@ internal fun LiveTvCategoryRow(
 }
 
 /** The server's category id ("news") as a chip label ("News"). */
-private fun categoryLabel(category: String): String =
+internal fun categoryLabel(category: String): String =
     category.replaceFirstChar { it.uppercase() }
 
 /**

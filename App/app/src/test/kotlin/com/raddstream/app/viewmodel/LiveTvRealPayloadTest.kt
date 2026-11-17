@@ -81,7 +81,7 @@ class LiveTvRealPayloadTest {
         val response = loadPayload()
         val json = LiveTvCache.encode(response.channels, response.categories)
         val decoded = LiveTvCache.decode(json)
-        assertEquals(759, decoded?.first?.size)
-        assertEquals(response.categories, decoded?.second)
+        assertEquals(759, decoded?.channels?.size)
+        assertEquals(response.categories, decoded?.categories)
     }
 }

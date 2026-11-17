@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
@@ -22,9 +23,11 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.network.models.LiveTvChannel
+import com.raddstream.app.ui.components.ErrorState
 import com.raddstream.app.ui.navigation.BottomNavTab
 import com.raddstream.app.ui.navigation.RaddBottomBar
 import com.raddstream.app.ui.theme.RaddStreamTheme
@@ -217,5 +220,61 @@ class LiveTvMockupTest {
             compose.onNode(hasContentDescription(label)).assertExists()
             compose.onNode(hasContentDescription(label.uppercase())).assertDoesNotExist()
         }
+    }
+
+    @Test
+    fun channelCountTextNamesTheTotalAndTheFilter() {
+        // Live TV review D7: the biggest list in the app says how big it
+        // is — "759 channels" unfiltered, "12 of 759 channels" filtered.
+        assertEquals("759 channels", liveTvChannelCountText(759, 759, filtered = false))
+        assertEquals("12 of 759 channels", liveTvChannelCountText(12, 759, filtered = true))
+        assertEquals("1 channel", liveTvChannelCountText(1, 1, filtered = false))
+        assertEquals("1 of 759 channels", liveTvChannelCountText(1, 759, filtered = true))
+    }
+
+    @Test
+    fun errorStateRetrySitsOnThe48dpFloor() {
+        // Live TV review D6: ErrorState is shared (Home, Search, Detail,
+        // Browse, Live TV) — its Retry is the one control a viewer with a
+        // dead screen taps most, so the floor is pinned here, once, for
+        // all callers.
+        compose.setContent {
+            RaddStreamTheme {
+                ErrorState(
+                    title = "Live TV isn't available",
+                    message = "Live TV is having trouble right now.",
+                    onRetry = {},
+                )
+            }
+        }
+        val expectedPx = with(compose.density) { 48.dp.toPx() }
+        val retryHeight = compose.onNodeWithText("Retry")
+            .fetchSemanticsNode().boundsInRoot.height
+        assertTrue("Retry is $retryHeight px, below the 48dp floor", retryHeight >= expectedPx - 1f)
+    }
+
+    @Test
+    fun backToTopAppearsAfterScrollingAndReturnsToTheFirstRow() {
+        // Live TV review D8: a 759-item grid needs a way home that is not
+        // the thumb. The grid is extracted (LiveTvChannelGrid) so the
+        // behaviour pins here without the Hilt screen around it.
+        val channels = (1..60).map {
+            channel(name = "Channel $it").copy(id = it, streamId = "stream-$it")
+        }
+        compose.setContent {
+            RaddStreamTheme {
+                LiveTvChannelGrid(channels = channels, onChannelClick = {})
+            }
+        }
+        compose.onNodeWithContentDescription("Back to top").assertDoesNotExist()
+        compose.onNodeWithTag("liveTv_grid").performScrollToIndex(40)
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Back to top").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Back to top").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Back to top").assertDoesNotExist()
+        compose.onNode(
+            hasContentDescription("Channel 1, live · News · Pakistan · Urdu"),
+        ).assertIsDisplayed()
     }
 }

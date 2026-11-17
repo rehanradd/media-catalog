@@ -21,6 +21,7 @@ import com.raddstream.app.network.models.CoverageType
 import com.raddstream.app.network.models.FacetEntry
 import com.raddstream.app.network.models.FacetsResponse
 import com.raddstream.app.network.models.LinkState
+import com.raddstream.app.network.models.LiveTvChannel
 import com.raddstream.app.network.models.PanelBroadcast
 import com.raddstream.app.network.models.Playability
 import com.raddstream.app.network.models.Post
@@ -47,6 +48,7 @@ import com.raddstream.app.ui.screens.EdgeFeedbackLine
 import com.raddstream.app.ui.screens.EdgeHud
 import com.raddstream.app.ui.screens.HomeContent
 import com.raddstream.app.ui.screens.Hud
+import com.raddstream.app.ui.screens.LiveTvChannelGrid
 import com.raddstream.app.ui.screens.MyListEmptyContent
 import com.raddstream.app.ui.screens.TopBar
 import com.raddstream.app.ui.screens.SearchContent
@@ -1012,6 +1014,28 @@ class PaparazziPreviewTest {
                     onToggleViewMode = {},
                     onLock = {},
                 )
+            }
+        }
+    }
+
+    // Live TV review (Nov 2026): the first Live TV golden — the channel
+    // grid itself, extracted from the Hilt screen so it renders here.
+    // Logo URLs are empty on purpose (Coil cannot load network images
+    // under Layoutlib), so the branded fallback shows — the layout, the
+    // 16:9 plates and the meta lines are what this shot judges.
+    @Test
+    fun liveTvChannelGrid() {
+        val channels = listOf(
+            LiveTvChannel(1, "Dunya News", "news", "PK", "ur", "", "stream-1"),
+            LiveTvChannel(2, "DD Sports", "sports", "IN", "en", "", "stream-2"),
+            LiveTvChannel(3, "Madani Channel Urdu", "religious", "PK", "ur", "", "stream-3"),
+            LiveTvChannel(4, "Aaj Tak HD", "news", "IN", "hi", "", "stream-4"),
+            LiveTvChannel(5, "8XM HD", "music", "PK", "ur", "", "stream-5"),
+            LiveTvChannel(6, "Eurosport India", "sports", "IN", "en", "", "stream-6"),
+        )
+        paparazzi.snapshot {
+            themed {
+                LiveTvChannelGrid(channels = channels, onChannelClick = {})
             }
         }
     }

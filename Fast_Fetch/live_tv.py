@@ -8,12 +8,13 @@ like a movie. The registry file lives next to this module
 
 Every seeded channel was probed live from the Oracle VM with curl +
 ffprobe (real video + audio in the playlist, 2026-11-09 ~00:25 PKT).
-``enabled`` is the operator's switch: only broadcaster-published streams
-(official / public-broadcaster / official playout / FAST / official CDN)
-ship enabled. Verified-playing third-party restreams are seeded disabled
-with the reason, so the endpoint hides them until an operator enables them
-with one registry edit. A disabled channel never plays: the stream route
-404s it, and the list endpoint never names it.
+``enabled`` is the operator's switch: a channel ships enabled when it was
+verified alive by a real probe (the iptv-org importer re-probes every
+stored URL on each run) or is operator-curated. Verified-playing
+third-party restreams are seeded disabled with the reason, so the endpoint
+hides them until an operator enables them with one registry edit. A
+disabled channel never plays: the stream route 404s it, and the list
+endpoint never names it.
 
 Stdlib only.
 """

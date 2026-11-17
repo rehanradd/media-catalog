@@ -8,6 +8,9 @@ import com.raddstream.app.network.models.LiveTvChannel
 import com.raddstream.app.network.models.LiveTvChannelsResponse
 import com.raddstream.app.player.PlayerSessionStore
 import com.raddstream.app.repository.CatalogRepository
+import com.raddstream.app.ui.screens.categoryLabel
+import com.raddstream.app.ui.screens.countryLabel
+import com.raddstream.app.ui.screens.languageLabel
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.IOException
@@ -54,8 +57,10 @@ class LiveTvViewModel @Inject constructor(
         val error: String? = null,
         /** True when [channels] are the saved list, not a fresh fetch. */
         val showingCached: Boolean = false,
+        /** When the saved list in [channels] was stored (epoch millis), or null when fresh or unknown. */
+        val cachedAtMillis: Long? = null,
     ) {
-        /** What the grid shows: the chosen category, then the name search. */
+        /** What the grid shows: the chosen category, then the search across name + language + country + category. */
         val visibleChannels: List<LiveTvChannel>
             get() {
                 val byCategory = if (selectedCategory == null) {
@@ -67,7 +72,7 @@ class LiveTvViewModel @Inject constructor(
                 return if (needle.isEmpty()) {
                     byCategory
                 } else {
-                    byCategory.filter { it.name.lowercase().contains(needle) }
+                    byCategory.filter { liveTvChannelMatches(it, needle) }
                 }
             }
     }
@@ -76,11 +81,31 @@ class LiveTvViewModel @Inject constructor(
     val uiState = _uiState.asStateFlow()
 
     init {
+        // Live TV review D1: stale-while-revalidate — paint the saved list
+        // at once, then refresh behind it. The skeleton only runs when
+        // there is nothing at all to show; the 45 s budget and the one
+        // silent retry stay untouched.
+        loadCache()?.let { cached ->
+            _uiState.update {
+                it.copy(
+                    channels = cached.channels,
+                    categories = cached.categories,
+                    showingCached = true,
+                    cachedAtMillis = cached.savedAtMillis,
+                )
+            }
+        }
         refresh()
     }
 
+    private var refreshJob: Job? = null
+
     fun refresh() {
-        viewModelScope.launch {
+        // Live TV review D9: one fetch at a time — a double-tap Retry must
+        // not spawn a second fetch whose late failure could overwrite
+        // fresh channels with the cached list + error.
+        if (refreshJob?.isActive == true) return
+        refreshJob = viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
             try {
                 val response = fetchChannelsWithRetry()
@@ -92,6 +117,7 @@ class LiveTvViewModel @Inject constructor(
                         categories = response.categories,
                         error = null,
                         showingCached = false,
+                        cachedAtMillis = null,
                     )
                 }
             } catch (cancelled: CancellationException) {
@@ -104,10 +130,11 @@ class LiveTvViewModel @Inject constructor(
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            channels = cached.first,
-                            categories = cached.second,
+                            channels = cached.channels,
+                            categories = cached.categories,
                             error = LIVE_TV_TROUBLE,
                             showingCached = true,
+                            cachedAtMillis = cached.savedAtMillis,
                         )
                     }
                 } else {
@@ -152,7 +179,7 @@ class LiveTvViewModel @Inject constructor(
         }
     }
 
-    private fun loadCache(): Pair<List<LiveTvChannel>, List<String>>? = runCatching {
+    private fun loadCache(): LiveTvCache.DecodedCache? = runCatching {
         val json = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getString(KEY_CACHED_LIST, null)
         LiveTvCache.decode(json)
@@ -226,4 +253,43 @@ class LiveTvViewModel @Inject constructor(
         // it with `isCurrentMediaItemLive`.
         PlayerSessionStore.Instance.stageLiveChannel(streamId)
     }
+}
+
+/**
+ * Live TV review D2: the search matches the name, the language (code and
+ * label — "ur" and "Urdu" both answer "urdu"), the country (code and
+ * label — "PK" and "Pakistan" both answer "pakistan"), and the category
+ * ("sports" answers the Sports chip's channels). Pure, so the 759-row
+ * fixture pins it in a unit test.
+ */
+internal fun liveTvChannelMatches(channel: LiveTvChannel, needle: String): Boolean {
+    if (needle.isEmpty()) return true
+    val haystacks = listOfNotNull(
+        channel.name,
+        channel.language,
+        languageLabel(channel.language),
+        channel.country,
+        countryLabel(channel.country),
+        channel.category,
+        categoryLabel(channel.category),
+    )
+    return haystacks.any { it.lowercase().contains(needle) }
+}
+
+/**
+ * Live TV review D5: the cached list's age in viewer words — "just now",
+ * "5 minutes ago", "3 hours ago", "2 days ago". A future timestamp (clock
+ * skew) reads as "just now"; anything older than a week reads as "more
+ * than a week ago". Pure, so the boundaries are pinned in a unit test.
+ */
+internal fun formatCacheAge(savedAtMillis: Long, nowMillis: Long): String {
+    val diff = nowMillis - savedAtMillis
+    if (diff < 60_000L) return "just now"
+    val minutes = diff / 60_000L
+    if (minutes < 60) return if (minutes == 1L) "1 minute ago" else "$minutes minutes ago"
+    val hours = minutes / 60
+    if (hours < 24) return if (hours == 1L) "1 hour ago" else "$hours hours ago"
+    val days = hours / 24
+    if (days < 7) return if (days == 1L) "1 day ago" else "$days days ago"
+    return "more than a week ago"
 }

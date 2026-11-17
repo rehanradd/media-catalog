@@ -2,7 +2,7 @@
   "version": "1.0",
   "updated_at": "2026-11-14T01:15:21Z",
   "source": "iptv-org public playlists (countries/pk.m3u, countries/in.m3u, categories/news.m3u, categories/sports.m3u), probed live from the Oracle VM with curl + ffprobe",
-  "note": "Only streams verified playing are listed. enabled=true means the stream host is the broadcaster's own (or its official playout / FAST / public-broadcaster) outlet. enabled=false means the stream plays but is a third-party restream \u2014 the endpoint hides it until an operator enables it. Probes ran from the Mumbai VM; Pakistan-side geo-blocking is unproven for any channel. | Test channels 36-41 added 2026-11-11 from public Free-TV list (broadcaster-published, stream probed OK). | Maintained by Fast_Fetch/importers/import_iptv_org.py (daily sync; see hidden_files/livetv-iptv-importer-20261113.md).",
+  "note": "Only streams verified playing are listed. enabled=true means the stream was verified alive by a real probe, or is operator-curated. enabled=false means the stream plays but is a third-party restream \u2014 the endpoint hides it until an operator enables it. Probes ran from the Mumbai VM; Pakistan-side geo-blocking is unproven for any channel. | Test channels 36-41 added 2026-11-11 from public Free-TV list (broadcaster-published, stream probed OK). | Maintained by Fast_Fetch/importers/import_iptv_org.py (daily sync; see hidden_files/livetv-iptv-importer-20261113.md).",
   "channels": [
     {
       "id": 1,

@@ -813,7 +813,7 @@ fun SearchResultsSkeleton(modifier: Modifier = Modifier) {
 
 /**
  * The Live TV loading state as the screen draws it: the channel search
- * field (56dp, 4dp corner), the category chips row, then the channel grid.
+ * field (52dp, 4dp corner), the category chips row, then the channel grid.
  * The old skeleton was the bare poster grid — the field and the chips
  * appeared late and pushed the grid down, and the cells themselves were
  * poster-shaped (2:3) while a channel card is a 16:9 logo plate.
@@ -827,7 +827,9 @@ fun LiveTvLoadingSkeleton(modifier: Modifier = Modifier) {
                 .padding(horizontal = 16.dp, vertical = 4.dp),
         ) {
             SkeletonBox(
-                Modifier.fillMaxWidth().height(56.dp),
+                // Live TV review D11: 52dp, the real field's height — the
+                // old 56dp pill shifted the layout 4dp when the list landed.
+                Modifier.fillMaxWidth().height(52.dp),
                 shape = RoundedCornerShape(4.dp),
             )
         }
@@ -956,7 +958,14 @@ fun ErrorState(
         },
         action = {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                OutlinedButton(onClick = onRetry) {
+                // Live TV review D6: the Retry is the one control a viewer
+                // with a dead screen taps most, so it sits on the 48dp
+                // floor. ErrorState is shared (Home, Search, Detail,
+                // Browse, Live TV) — one fix for all callers.
+                OutlinedButton(
+                    onClick = onRetry,
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) {
                     Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
                     Text("Retry")
