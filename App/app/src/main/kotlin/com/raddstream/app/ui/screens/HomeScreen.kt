@@ -968,6 +968,9 @@ internal fun PickThreeCard(
  * UI-fix P0-3: the trial note as one dismissible line, not a card. The free
  * trial is granted silently; without this line the viewer loses VIP features
  * after 3 days with no prior explanation. A dismissed note never returns.
+ * The line names no quality: with the quality gate off, free playback is
+ * uncapped (4K proven free 2026-11-17), so a 720p claim would be false —
+ * the Settings account card follows the same rule (AccountCardCopy).
  */
 @Composable
 private fun TrialNoteLine(daysRemaining: Int, onDismiss: () -> Unit) {
@@ -977,9 +980,9 @@ private fun TrialNoteLine(daysRemaining: Int, onDismiss: () -> Unit) {
     ) {
         Text(
             text = if (daysRemaining == 1) {
-                "Free VIP: 1 day left — after that, free playback stays at 720p."
+                "Free VIP: 1 day left."
             } else {
-                "Free VIP: $daysRemaining days left — after that, free playback stays at 720p."
+                "Free VIP: $daysRemaining days left."
             },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,

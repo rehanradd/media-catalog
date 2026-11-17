@@ -450,6 +450,17 @@ internal fun trialNoteDaysRemaining(
 }
 
 /**
+ * The viewer's word for a panel section's title. The operator's hero slot is
+ * titled "Hero" in the panel — a slot name, not a shelf a viewer understands
+ * (the Nov 2026 home review flagged the rail under the carousel reading
+ * "Hero") — so that rail reads "Featured". Every other title passes through
+ * untouched: the operator owns the names. Pure, so the mapping is assertable
+ * without a repository.
+ */
+internal fun viewerTitleForPanelSection(title: String): String =
+    if (title == "Hero") "Featured" else title
+
+/**
  * The operator's feed, merged over the built-in rails. Pure, so the test can pin
  * the questions that matter without a repository: panel sections first, in the
  * panel's order, then the built-in rails that no panel section owns by key; every
@@ -470,7 +481,7 @@ internal fun mergePanelFeed(
     val panelSections = config.sections.map { panel ->
         HomeSection(
             key = "panel:${panel.key}",
-            title = panel.title,
+            title = viewerTitleForPanelSection(panel.title),
             type = null,
             items = panel.items.filter { it.id !in hidden },
             panelManaged = true,

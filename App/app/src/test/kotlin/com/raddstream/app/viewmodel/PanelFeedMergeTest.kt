@@ -151,6 +151,34 @@ class PanelFeedMergeTest {
         assertTrue(broadcasts.isEmpty())
     }
 
+    @Test
+    fun `a panel section titled Hero reads Featured to the viewer`() {
+        val (sections, _) = mergePanelFeed(
+            builtIn,
+            VipRemoteConfig(
+                sections = listOf(PanelSection(key = "hero", title = "Hero", items = listOf(post(9)))),
+            ),
+            dismissedBroadcastIds = emptySet(),
+        )
+
+        assertEquals("panel:hero", sections[0].key)
+        assertEquals("Featured", sections[0].title)
+        assertEquals(listOf(9), sections[0].items.map { it.id })
+    }
+
+    @Test
+    fun `any other panel title passes through untouched`() {
+        val (sections, _) = mergePanelFeed(
+            builtIn,
+            VipRemoteConfig(
+                sections = listOf(PanelSection(key = "picks", title = "Staff Picks", items = listOf(post(9)))),
+            ),
+            dismissedBroadcastIds = emptySet(),
+        )
+
+        assertEquals("Staff Picks", sections[0].title)
+    }
+
     private fun configWithPicks() = VipRemoteConfig(
         sections = listOf(PanelSection(key = "picks", title = "Picks", items = listOf(post(9)))),
     )
