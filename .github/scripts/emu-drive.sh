@@ -35,11 +35,17 @@
 # not exist" and the app never launched at all. The old script
 # swallowed that failure (|| true) and screenshotted the launcher.
 # The package is now derived from the device after install (below).
-# Run 44040083866 (head 91ddbe80) FAILED EARLIER STILL: the app launched
-# but never came to the foreground within 120s (focus: '') — no crash
-# evidence, no screenshot, empty artifact. The timeout path in
-# wait_for_app_focus now dumps a frame + dumpsys window + crash logcat
-# into $OUT, and the first wait is 180s for the slow software emulator.
+# Run 44043626083 (head 5f0be1c1) FAILED the same way, but the timeout
+# diagnostics proved the wait was wrong, not the app: the Disclaimer WAS
+# on screen behind a "Process system isn't responding" dialog, and
+# dumpsys said mFocusedApp = com.raddstream.app.debug/...MainActivity —
+# the app WAS foregrounded. mCurrentFocus was the ANR window, which
+# carries no package, so focused_pkg() returned '' for the whole 180s
+# and dismiss_anr() never fired once (0 hits in the log — with
+# system_server frozen, `uiautomator dump` hangs/fails, so anr_present
+# never saw the dialog). Fix: focused_pkg() falls back to mFocusedApp
+# when the focus window is an ANR dialog, and the dumps are
+# timeout-bounded (20s) so a frozen system_server can't stall the loop.
 # The workflow uploads emu-shots/ with `if: always()`, so a failed run
 # still leaves its (launcher) frames as evidence of what went wrong.
 set -euo pipefail
@@ -76,7 +82,10 @@ tap_text() {
     # ui.xml pulled" for THIS try, not silently match the previous
     # screen's nodes.
     rm -f /tmp/ui.xml
-    adb shell uiautomator dump "$UI_DUMP" >/dev/null 2>&1
+    # timeout 20: with system_server frozen (run 44043626083) the dump
+    # hangs and the wait loop stalls for the whole budget; a killed dump
+    # reads as "no ui.xml pulled", same as a failed one.
+    timeout 20 adb shell uiautomator dump "$UI_DUMP" >/dev/null 2>&1
     adb pull -q "$UI_DUMP" /tmp/ui.xml 2>/dev/null || true
     XY=$(python3 - "$want" <<'PY'
 import sys, xml.etree.ElementTree as ET
@@ -149,8 +158,16 @@ PY
 
 # Package currently in the foreground, or empty if it cannot be read.
 focused_pkg() {
-  local focus
-  focus=$(adb shell dumpsys window 2>/dev/null | grep -i -m1 -E 'mCurrentFocus|mFocusedApp' || true)
+  local focus app
+  focus=$(adb shell dumpsys window 2>/dev/null | grep -i -m1 'mCurrentFocus' || true)
+  # Run 44043626083: mCurrentFocus was "Application Not Responding:
+  # system" (no package in it) while mFocusedApp was the app — the
+  # guard's job is "don't screenshot the launcher", and the app being
+  # the focused app satisfies it, so the ANR window must not mask it.
+  if echo "$focus" | grep -qi 'Not Responding'; then
+    app=$(adb shell dumpsys window 2>/dev/null | grep -i -m1 'mFocusedApp' || true)
+    [ -n "$app" ] && focus="$app"
+  fi
   if [ -z "$focus" ]; then
     focus=$(adb shell dumpsys activity activities 2>/dev/null | grep -m1 -E 'topResumedActivity|ResumedActivity' || true)
   fi
@@ -165,7 +182,9 @@ is_app_focused() {
 
 # True if an "isn't responding" / "not responding" dialog is on screen.
 anr_present() {
-  adb shell uiautomator dump "$UI_DUMP" >/dev/null 2>&1 || return 1
+  # timeout 20: with system_server frozen the dump hangs; a killed dump
+  # reads as "no dialog seen", same as a failed one — the caller retries.
+  timeout 20 adb shell uiautomator dump "$UI_DUMP" >/dev/null 2>&1 || return 1
   adb pull -q "$UI_DUMP" /tmp/ui.xml 2>/dev/null || return 1
   grep -qi "isn't responding\|not responding" /tmp/ui.xml
 }
