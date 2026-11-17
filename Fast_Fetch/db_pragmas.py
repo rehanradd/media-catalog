@@ -6,6 +6,10 @@ per-connection in SQLite (except ``journal_mode``), so a helper nobody calls
 is the same as no helper at all; the call sites are:
 
 * ``fast_fetch.get_db`` (catalog; scrapers, CLI and maintenance share it),
+* ``link_state_runner.open_conn`` (catalog; the sweep's long-lived
+  connection — its explicit-path branch used to open a raw
+  ``sqlite3.connect`` and silently skip every pragma above, so the
+  production sweep ran on sqlite's 2 MiB default cache),
 * ``viewer.get_db`` (catalog; one connection per v1 request),
 * ``api_v2.session`` (catalog; one connection per v2 request),
 * ``admin_panel._session`` (catalog; remote-config reads in-process),
@@ -42,6 +46,11 @@ Values (Session 125):
   The user-state helpers keep their own existing 5000 ms default.
 * WAL + ``synchronous = NORMAL`` + ``wal_autocheckpoint = 1000``,
   unchanged from the live setup.
+* ``journal_size_limit = 268435456`` — 256 MiB cap on the WAL file, the
+  one gap the Session 125 values left open (the live WAL sits at ~4 MB,
+  but a long read transaction pinning the WAL during a merge could grow
+  it without bound). A backstop, not a target: the checkpoint above
+  keeps the file small in the normal case.
 
 Stdlib only (``sqlite3``); this module imports nothing from the project,
 so no import cycle is possible no matter who calls it.
@@ -67,6 +76,13 @@ SYNCHRONOUS = "NORMAL"
 #: WAL checkpoint after this many pages (~4 MiB at the 4 KiB page size).
 WAL_AUTOCHECKPOINT_PAGES = 1000
 
+#: Cap on the WAL file, in bytes: 256 MiB. The checkpoint above keeps the
+#: live file near ~4 MB; this is the backstop against unbounded growth
+#: while a long read pins the WAL. Per-connection like the other values
+#: here — a read-only handle sets and reads it back (measured in
+#: test_scale_pragmas), so every call site reports the same cap.
+JOURNAL_SIZE_LIMIT_BYTES = 268435456
+
 
 def apply_serve_pragmas(conn: sqlite3.Connection, *,
                         busy_timeout_ms: int = BUSY_TIMEOUT_MS) -> None:
@@ -88,12 +104,17 @@ def apply_serve_pragmas(conn: sqlite3.Connection, *,
     conn.execute("PRAGMA temp_store = %s" % TEMP_STORE)
     conn.execute("PRAGMA synchronous = %s" % SYNCHRONOUS)
     conn.execute("PRAGMA wal_autocheckpoint = %d" % WAL_AUTOCHECKPOINT_PAGES)
+    try:
+        conn.execute("PRAGMA journal_size_limit = %d" % JOURNAL_SIZE_LIMIT_BYTES)
+    except sqlite3.Error:
+        pass  # read-only handle: the persistent cap is the file's, not ours
 
 
 def read_pragmas(conn: sqlite3.Connection) -> dict:
     """The serve values back off a live connection, for tests and probes."""
     names = ("journal_mode", "busy_timeout", "foreign_keys", "cache_size",
-             "mmap_size", "temp_store", "synchronous", "wal_autocheckpoint")
+             "mmap_size", "temp_store", "synchronous", "wal_autocheckpoint",
+             "journal_size_limit")
     out = {}
     for name in names:
         # `mmap_size` answers no row on a :memory: database (there is

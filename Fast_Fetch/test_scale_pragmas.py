@@ -46,18 +46,21 @@ EXPECTED = {
     "temp_store": 2,
     "synchronous": 1,
     "wal_autocheckpoint": 1000,
+    "journal_size_limit": 268435456,
 }
 
 _BASELINE_NEEDLES = redact.needles()
 _BASELINE_TEXT_NEEDLES = redact.text_needles()
 
 
-def _check_pragmas(test, conn, *, busy_timeout=30000, journal_mode="wal"):
-    """`read_pragmas` on `conn` is EXPECTED, with the two named overrides."""
+def _check_pragmas(test, conn, *, busy_timeout=30000, journal_mode="wal",
+                   journal_size_limit=268435456):
+    """`read_pragmas` on `conn` is EXPECTED, with the named overrides."""
     got = db_pragmas.read_pragmas(conn)
     want = dict(EXPECTED)
     want["busy_timeout"] = busy_timeout
     want["journal_mode"] = journal_mode
+    want["journal_size_limit"] = journal_size_limit
     test.assertEqual(got, want)
 
 
@@ -67,7 +70,7 @@ class HelperValuesTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.db_path = Path(self.tmp.name) / "helper.db"
 
-    def test_apply_sets_all_eight_pragmas_on_a_file_db(self):
+    def test_apply_sets_all_nine_pragmas_on_a_file_db(self):
         conn = sqlite3.connect(self.db_path)
         try:
             db_pragmas.apply_serve_pragmas(conn)
@@ -82,6 +85,9 @@ class HelperValuesTests(unittest.TestCase):
         self.assertEqual(db_pragmas.CACHE_SIZE_PAGES, -65536)
         self.assertEqual(db_pragmas.MMAP_SIZE_BYTES, 268435456)
         self.assertEqual(db_pragmas.BUSY_TIMEOUT_MS, 30000)
+        # 256 MiB WAL cap: the live file sits near ~4 MB (checkpointed),
+        # so this is a backstop against unbounded growth, not a target.
+        self.assertEqual(db_pragmas.JOURNAL_SIZE_LIMIT_BYTES, 268435456)
 
     def test_read_pragmas_is_none_safe_on_a_memory_db(self):
         # `mmap_size` answers no row on a :memory: database (there is
@@ -143,7 +149,9 @@ class ServePathPragmaTests(unittest.TestCase):
         # A catalog connection, so the 30000 ms catalog value — even
         # though the oracle lives in accounts.py next to the 5000 ms
         # user-state helpers. The file's journal mode stays "delete": a
-        # read-only handle must not flip it.
+        # read-only handle must not flip it. The WAL cap, unlike the
+        # journal mode, is per-connection: the read-only handle sets and
+        # reads back the same 256 MiB (measured), so no override here.
         conn = accounts._open_catalog_read_only(self.db_path)
         try:
             _check_pragmas(self, conn, busy_timeout=30000,

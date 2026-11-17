@@ -340,6 +340,37 @@ class TrendingTests(Fixture):
         self.addCleanup(viewer._TRENDING_ORDER_CACHE.clear)
 
 
+class SearchWarmTests(Fixture):
+    """Startup search warm (2026-11-17): the default first page and one
+    trigram search, so the first browse and the first search after a
+    restart never pay the cold page-ins on their own threads."""
+
+    def test_warm_warms_browse_and_search(self):
+        # "dune" matches the fixture's Dune rows; the warmed search
+        # answers the same rows the cold path does.
+        warmed = viewer._search_warm(probe="dune")
+        self.assertEqual(warmed, ["browse", "search"])
+        resp = viewer.api_v1_get_posts(query="dune", limit=20)
+        self.assertEqual(resp["total"], 2)
+        self.assertEqual(set(self.ids(resp)),
+                         {self.part_two_id, self.seed_id})
+        browse = viewer.api_v1_get_posts(limit=20)
+        self.assertEqual(browse["total"], 6)
+
+    def test_default_probe_tolerates_no_match(self):
+        # The production probe is "love" — a mood word, so on this
+        # fixture it answers the mood-genre rows (Humsafar's Romance,
+        # Interstellar's and Squid Game's Drama), not an empty page.
+        # The warm still reports both shapes warmed and never raises.
+        warmed = viewer._search_warm()
+        self.assertEqual(warmed, ["browse", "search"])
+        resp = viewer.api_v1_get_posts(query="love")
+        self.assertEqual(resp["total"], 3)
+        self.assertEqual(set(self.ids(resp)),
+                         {self.humsafar_id, self.interstellar_id,
+                          self.squid_id})
+
+
 class RelatedTests(Fixture):
     def test_scores_order_and_tiebreak(self):
         resp = viewer.api_v1_get_related(self.seed_id, limit=20)

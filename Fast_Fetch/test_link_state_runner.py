@@ -24,6 +24,7 @@ from pathlib import Path
 os.environ.setdefault("RADD_SKIP_LIVE_ENRICH", "1")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import db_pragmas           # noqa: E402
 import fast_fetch            # noqa: E402
 import link_health           # noqa: E402
 import link_state            # noqa: E402
@@ -244,6 +245,34 @@ class RunOnceTests(RunnerTestCase):
         self.assertEqual(calls[0]["scope"], link_state_runner.DEFAULT_SCOPE)
         self.assertEqual(summary["demand"]["state"], "complete")
         self.assertEqual(summary["demand"]["rows_checked"], 0)
+
+    def test_sweep_connections_carry_the_serve_pragmas(self):
+        # Search-speed (2026-11-17): the sweep's explicit-path branch
+        # used to open a raw sqlite3.connect and silently skip every
+        # serve pragma, so the production sweep ran on sqlite's 2 MiB
+        # default cache. The connections propagate() receives must read
+        # back the helper's values — read inside the fake, because the
+        # runner closes its connections before the test can see them.
+        seen = []
+
+        def recording(conn, **kwargs):
+            seen.append(db_pragmas.read_pragmas(conn))
+            return {"rows_checked": 1, "rows_updated": 1, "by_status": {},
+                    "last_id": 0, "state": "complete"}
+
+        with unittest.mock.patch.object(link_state, "propagate",
+                                        side_effect=recording):
+            link_state_runner.run_once(
+                db_path=self.db_path, max_rows=5,
+                wait_quiet=self._quiet, check_service=self._no_neighbour,
+                mem_mb=9000.0)
+        self.assertTrue(seen, "propagate must run at least once")
+        for got in seen:
+            self.assertEqual(got["cache_size"], -65536)
+            self.assertEqual(got["mmap_size"], 268435456)
+            self.assertEqual(got["journal_size_limit"], 268435456)
+            self.assertEqual(got["busy_timeout"], 30000)
+            self.assertEqual(got["journal_mode"], "wal")
 
     def test_yields_when_the_prefetch_sweep_is_running(self):
         calls = []

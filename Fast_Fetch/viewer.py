@@ -3907,6 +3907,42 @@ def _trending_warm():
     return warmed
 
 
+#: The probe term the startup search warm runs through the trigram path.
+#: "love" is the search-speed benchmark term (measured 8.67 s -> 0.65 s
+#: on the live catalog): a common word whose MATCH pages in the trigram
+#: FTS index and whose LIKE verifier touches the posts rows the first
+#: real search will read.
+_SEARCH_WARM_PROBE = "love"
+
+
+def _search_warm(probe: str = _SEARCH_WARM_PROBE):
+    """Warm the search path at service startup, so the first browse and
+    the first search after a restart never pay the cold page-ins on their
+    own threads. The trending warm (above) covers the grouped order; this
+    covers the other two shapes the app requests on launch: the default
+    first page (newest-first) and one trigram search.
+
+    Both probes run through the exact public function the request path
+    calls (`api_v1_get_posts`), so the warm stays faithful if the search
+    path changes — and both are bounded to one page each. The win is the
+    OS page cache, not SQLite's: the per-connection cache dies with this
+    warm's connection, but the hot index and table pages it reads stay
+    in the kernel cache, so the first request's reads — and its mmap
+    faults — land on RAM instead of disk. Best-effort: a probe that
+    fails only logs — serving starts either way and the request path
+    answers on demand as before. Returns the shapes warmed.
+    """
+    warmed = []
+    for shape, kwargs in (("browse", {}), ("search", {"query": probe})):
+        try:
+            api_v1_get_posts(limit=20, **kwargs)
+            warmed.append(shape)
+        except Exception as exc:  # noqa: BLE001 — warm is best-effort
+            sys.stderr.write("search warm failed for %r: %s\n"
+                             % (shape, exc))
+    return warmed
+
+
 def _trending_cached_page(conn, where_sql, params, content_type,
                           limit, offset, hidden):
     """(page_ids, total) for a plain trending page from the cached
@@ -8163,6 +8199,17 @@ def start_server(port: int = 8080, host: str = "127.0.0.1",
             print(f"[i] trending orders warmed: {', '.join(warmed)}")
     except Exception as ex:      # noqa: BLE001 — serving matters more than the warm
         print(f"[i] trending warm unavailable: {ex}")
+
+    # Warm the search path the same way (2026-11-17): the default first
+    # page and one trigram search, so the first browse and the first
+    # search after a restart never pay the cold page-ins on their own
+    # threads. Same best-effort contract as the trending warm above.
+    try:
+        warmed = _search_warm()
+        if warmed:
+            print(f"[i] search paths warmed: {', '.join(warmed)}")
+    except Exception as ex:      # noqa: BLE001 — serving matters more than the warm
+        print(f"[i] search warm unavailable: {ex}")
 
     try:
         server.serve_forever()

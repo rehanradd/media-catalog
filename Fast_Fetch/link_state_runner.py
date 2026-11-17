@@ -192,8 +192,12 @@ def run_once(*, db_path=None, max_rows: int = DEFAULT_MAX_ROWS,
     import fast_fetch
 
     def open_conn():
-        return fast_fetch.get_db() if db_path is None else sqlite3.connect(
-            str(db_path))
+        # One helper for every catalog connection: the explicit-path
+        # branch used to open a raw sqlite3.connect and silently skip
+        # the serve pragmas (64 MiB cache, mmap, WAL checkpoint), so
+        # the production sweep ran on sqlite's defaults. get_db(None)
+        # falls back to the live catalog path, exactly as before.
+        return fast_fetch.get_db(db_path)
 
     # Phase 1 — demand-first: the pressed rows.
     with open_conn() as conn:
