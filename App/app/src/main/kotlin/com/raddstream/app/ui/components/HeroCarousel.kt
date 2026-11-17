@@ -68,7 +68,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import coil.imageLoader
 import coil.request.ImageRequest
 import com.raddstream.app.R
@@ -83,6 +82,7 @@ import com.raddstream.app.ui.theme.RaddEmphasized
 import com.raddstream.app.ui.theme.RaddMotion
 import com.raddstream.app.ui.theme.RaddStreamMark
 import com.raddstream.app.ui.theme.RaddTokens
+import com.raddstream.app.ui.theme.brandSp
 import com.raddstream.app.ui.theme.pressScale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -608,10 +608,13 @@ private fun HeroSlide(
         // too late and too softly, so baked-in poster text bled behind
         // the title and buttons; this one is clear through the top half
         // (nothing sits there now — the dots ride below the card) and
-        // 0.65 at 68% before landing at 0.92 at the bottom. Gemini home
+        // 0.65 at 67% before landing at 0.92 at the bottom. Gemini home
         // review (Nov 2026): the Dragon Ball Super title sat over bright
         // yellow/white art with only the button area scrimmed — the scrim
         // now covers the lower 55% with 0.65 behind the title and meta.
+        // The mid stop is 0.67f, not 0.68f: 0.68f is the poster-ratio
+        // literal owned by CardGeometry (CardGeometryTest bans it in
+        // every other UI source), and 1% of hero height is invisible.
         // Session 121 (P-20): the scrim protects the title/badges against
         // bright art and blends smoothly into the page canvas at the
         // bottom of the full-bleed hero.
@@ -621,7 +624,7 @@ private fun HeroSlide(
                 .background(
                     Brush.verticalGradient(
                         0.45f to MaterialTheme.colorScheme.background.copy(alpha = 0f),
-                        0.68f to MaterialTheme.colorScheme.background.copy(alpha = 0.65f),
+                        0.67f to MaterialTheme.colorScheme.background.copy(alpha = 0.65f),
                         1f to MaterialTheme.colorScheme.background.copy(alpha = 0.92f),
                     )
                 ),
@@ -649,12 +652,14 @@ private fun HeroSlide(
                 // weight was already Bold, so the legibility defect was
                 // the scrim above, not the weight. 28sp keeps two lines
                 // inside the 320dp hero with room for the meta + CTAs.
+                // The sizes ride brandSp, not raw .sp literals — the
+                // brand ramp owns every sp (BrandDriftTest).
                 Text(
                     text = title,
                     style = RaddEmphasized.displaySmall.copy(
-                        fontSize = 28.sp,
-                        lineHeight = 32.sp,
-                        letterSpacing = (-0.3).sp,
+                        fontSize = brandSp(28),
+                        lineHeight = brandSp(32),
+                        letterSpacing = brandSp(-0.3),
                     ),
                     color = MaterialTheme.colorScheme.onBackground,
                     maxLines = 2,

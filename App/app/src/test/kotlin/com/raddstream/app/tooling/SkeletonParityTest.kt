@@ -56,8 +56,9 @@ class SkeletonParityTest {
         val hero = mainSource("com/raddstream/app/ui/components/HeroCarousel.kt")
         // The real title is displaySmall copied to 28sp/32sp (Gemini home
         // review, Nov 2026) — the skeleton must match the copy, not the token.
+        // The sizes ride brandSp (BrandDriftTest bans raw .sp literals).
         val slide = bodyOf(hero, "if (hasArt) {")
-        val lineHeight = Regex("""lineHeight = (\d+)\.sp""")
+        val lineHeight = Regex("""lineHeight = brandSp\((\d+)\)""")
             .find(slide)?.groupValues?.get(1)
         assertEquals("the hero title must carry its 32sp line height", "32", lineHeight)
 
