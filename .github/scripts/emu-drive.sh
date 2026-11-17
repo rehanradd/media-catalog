@@ -19,13 +19,22 @@
 # screenshotted the launcher. This file now FAILS (non-zero exit) instead
 # of screenshotting the launcher:
 #   * wait_for_app_focus: after every `am start`, poll dumpsys until
-#     com.raddstream.app is the focused package, dismissing ANR dialogs
+#     the installed package is the focused package, dismissing ANR dialogs
 #     ("Wait") as they appear; bounded wait, then fail loudly.
 #   * screenshot(): refuses to capture unless the app is focused (one
 #     ANR-dismiss + relaunch retry first), and fails if the new frame is
 #     byte-identical to the previous one — every step between shots is a
 #     tap/swipe/relaunch that must change the screen, so identical frames
 #     mean a frozen launcher/ANR, not the app.
+# Run 44020506293 (first run with the guards) FAILED HONESTLY — and
+# proved the guards work AND found the real cause of the earlier
+# false-greens: the debug build carries applicationIdSuffix ".debug"
+# (brand.properties), so the installed package is
+# com.raddstream.app.debug, but this script hardcoded
+# com.raddstream.app — `am start` failed with "Error type 3 ... does
+# not exist" and the app never launched at all. The old script
+# swallowed that failure (|| true) and screenshotted the launcher.
+# The package is now derived from the device after install (below).
 # The workflow uploads emu-shots/ with `if: always()`, so a failed run
 # still leaves its (launcher) frames as evidence of what went wrong.
 set -euo pipefail
@@ -36,6 +45,8 @@ APK="App/app/build/outputs/apk/debug/app-debug.apk"
 # 44002960788); $PWD is the checkout when this file runs.
 OUT="${GITHUB_WORKSPACE:-$PWD}/emu-shots"
 mkdir -p "$OUT"
+# Defaults; overwritten after install from the real package on the
+# device (debug builds carry the ".debug" suffix — see below).
 APP_PKG="com.raddstream.app"
 MAIN_ACTIVITY="com.raddstream.app/.MainActivity"
 # Set by screenshot(): name + md5 of the previous frame, for the
@@ -172,6 +183,20 @@ screenshot() {
 }
 
 adb install -r "$APK"
+# The debug build carries applicationIdSuffix ".debug"
+# (brand.properties identity.application.id.debug.suffix), so the
+# installed package is com.raddstream.app.debug — NOT com.raddstream.app.
+# Run 44020506293 proved it: `am start -n com.raddstream.app/.MainActivity`
+# failed with "Error type 3 ... does not exist" and the app never
+# launched. Derive the real package from the device (adb output is
+# CRLF, so strip \r before comparing), and fail if it is not there.
+APP_PKG=$(adb shell pm list packages 2>/dev/null | tr -d '\r' | grep -o 'com\.raddstream\.app[^ ]*' | head -n 1 || true)
+if [ -z "$APP_PKG" ]; then
+  echo "FAIL: no com.raddstream.app* package found after install" >&2
+  exit 1
+fi
+MAIN_ACTIVITY="$APP_PKG/.MainActivity"
+echo "Installed package: $APP_PKG"
 # Start video capture in the background (killed after the flow).
 adb shell screenrecord --time-limit "$SECONDS" /sdcard/radd-demo.mp4 &
 REC_PID=$!
