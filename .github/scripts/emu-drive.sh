@@ -67,6 +67,10 @@ PREV_MD5=""
 tap_text() {
   local want="$1" tries=0
   while [ "$tries" -lt 6 ]; do
+    # Never reuse a stale dump: a failed dump/pull must read as "no
+    # ui.xml pulled" for THIS try, not silently match the previous
+    # screen's nodes.
+    rm -f /tmp/ui.xml
     adb shell uiautomator dump "$UI_DUMP" >/dev/null 2>&1
     adb pull -q "$UI_DUMP" /tmp/ui.xml 2>/dev/null || true
     XY=$(python3 - "$want" <<'PY'
@@ -93,6 +97,37 @@ PY
     fi
     # Diagnostics, not silence: if the dump is missing/empty the next
     # failure is diagnosable from the log instead of a bare WARN.
+    # Run 44034109759: the app reached Welcome, then the app/System UI
+    # ANR'd ("RADD Stream isn't responding" / "System UI isn't
+    # responding") and the dialog covered the screen for all 6
+    # 'Continue' tries — tap_text never saw 'Continue' because the
+    # dialog was on top. Dismiss it inline (non-recursive: parse the
+    # already-pulled dump for the "Wait" button) and retry, instead of
+    # burning all 6 tries against a covered screen.
+    if [ -f /tmp/ui.xml ] && grep -qi "isn't responding\|not responding" /tmp/ui.xml; then
+      WXY=$(python3 - <<'PY'
+import sys, xml.etree.ElementTree as ET
+try:
+    root = ET.parse('/tmp/ui.xml').getroot()
+except Exception:
+    sys.exit(0)
+for n in root.iter('node'):
+    if (n.get('text') or '') == 'Wait':
+        b = n.get('bounds', '')
+        nums = b.replace('[', ' ').replace(']', ' ').replace(',', ' ').split()
+        if len(nums) == 4:
+            x = (int(nums[0]) + int(nums[2])) // 2
+            y = (int(nums[1]) + int(nums[3])) // 2
+            print(f"{x} {y}")
+            break
+PY
+)
+      if [ -n "$WXY" ]; then
+        echo "tap_text '$want': ANR dialog present — tapping Wait ($WXY)" >&2
+        adb shell input tap $WXY
+        sleep 5
+      fi
+    fi
     if [ -f /tmp/ui.xml ]; then
       echo "tap_text '$want' try $((tries + 1))/6: not found (ui.xml $(wc -c < /tmp/ui.xml) bytes, $(grep -o '<node' /tmp/ui.xml | wc -l) nodes)" >&2
     else
