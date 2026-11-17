@@ -45,6 +45,10 @@ class SearchDiscoveryTest {
         recents: List<String> = listOf("Classic Cinema"),
         trending: List<Post> = listOf(samplePost(1, "Dune"), samplePost(2, "Inception")),
         recommended: List<Post> = listOf(samplePost(3, "Oppenheimer")),
+        // Search review (Nov 2026), fix 4: the settled state is the
+        // default here, so the existing tests keep pinning the settled
+        // page; the loading tests pass true.
+        discoveryLoading: Boolean = false,
         onRunQuery: (String) -> Unit = {},
         onRemoveRecent: (String) -> Unit = {},
         onPostClick: (Post) -> Unit = {},
@@ -58,6 +62,7 @@ class SearchDiscoveryTest {
                         recents = recents,
                         trending = trending,
                         recommended = recommended,
+                        discoveryLoading = discoveryLoading,
                     ),
                     onRunQuery = onRunQuery,
                     onRemoveRecent = onRemoveRecent,
@@ -162,12 +167,48 @@ class SearchDiscoveryTest {
 
     @Test
     fun emptyDiscoveryShowsHintOnly() {
+        // The settled empty state: both discovery loads answered and the
+        // catalog has nothing to show, so the hint — and only the hint —
+        // is the page.
         setDiscovery(recents = emptyList(), trending = emptyList(), recommended = emptyList())
 
         compose.onNodeWithText("Search your catalog").assertIsDisplayed()
         compose.onNodeWithText("Trending now").assertDoesNotExist()
         compose.onNodeWithText("Recent searches").assertDoesNotExist()
         compose.onNodeWithText("Recommended for you").assertDoesNotExist()
+        compose.onNodeWithTag(SearchDiscoverySkeletonTag).assertDoesNotExist()
+    }
+
+    @Test
+    fun loadingDiscoveryShowsSkeletonNotHint() {
+        // Search review (Nov 2026), fix 4: while the first trending +
+        // recommended loads are still in flight and no section has data,
+        // the page shows section skeletons — the hint waits for the
+        // settle, so it never reads as "the catalog is empty" on a slow
+        // first load.
+        setDiscovery(
+            recents = emptyList(),
+            trending = emptyList(),
+            recommended = emptyList(),
+            discoveryLoading = true,
+        )
+
+        compose.onNodeWithTag(SearchDiscoverySkeletonTag).assertIsDisplayed()
+        compose.onNodeWithText("Search your catalog").assertDoesNotExist()
+        compose.onNodeWithText("Trending now").assertDoesNotExist()
+        compose.onNodeWithText("Recent searches").assertDoesNotExist()
+        compose.onNodeWithText("Recommended for you").assertDoesNotExist()
+    }
+
+    @Test
+    fun loadingDiscoveryWithDataShowsSectionsNotSkeleton() {
+        // A section that already has data (recents are local and land
+        // first) shows its data while the rest still loads — the skeleton
+        // is only the all-empty loading state, never a cover over data.
+        setDiscovery(discoveryLoading = true)
+
+        compose.onNodeWithText("Trending now").assertIsDisplayed()
+        compose.onNodeWithTag(SearchDiscoverySkeletonTag).assertDoesNotExist()
     }
 
     @Test

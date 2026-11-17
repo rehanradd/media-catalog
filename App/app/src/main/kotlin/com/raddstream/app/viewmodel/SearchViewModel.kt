@@ -280,11 +280,13 @@ data class SearchUiState(
      */
     val recommended: List<Post> = emptyList(),
     /**
-     * True when the suggest call itself failed (blocked route, old server,
-     * dead socket) — distinct from "the server answered and has no matches".
-     * The screen says so instead of silently showing no chips.
+     * Search review (Nov 2026), fix 4: true until the first trending +
+     * recommended loads settle (success or failure). The discovery page
+     * shows section skeletons while this is true and no section has data
+     * yet; the empty-state hint waits for it, so the hint only ever means
+     * "the catalog really has nothing to show".
      */
-    val suggestionsUnavailable: Boolean = false,
+    val discoveryLoading: Boolean = true,
     /** True when this page is the server's one-edit-away fallback, not an exact match. */
     val isFuzzy: Boolean = false,
     /**
@@ -333,6 +335,20 @@ class SearchViewModel @Inject constructor(
     /** Mockup (Nov 2026): the recommended load runs once per ViewModel, like trending. */
     private var recommendedRequested = false
 
+    /** Search review (Nov 2026), fix 4: the two discovery loads, settled or not. */
+    private var trendingSettled = false
+    private var recommendedSettled = false
+
+    /**
+     * Search review (Nov 2026), fix 4: one discovery section has answered
+     * (success or failure — a dead route settles too). The page stops
+     * loading when both have answered.
+     */
+    private fun markDiscoverySettled(trending: Boolean) {
+        if (trending) trendingSettled = true else recommendedSettled = true
+        _uiState.update { it.copy(discoveryLoading = discoveryLoading(trendingSettled, recommendedSettled)) }
+    }
+
     init {
         // The rail is a history, not a session scratch pad: hydrate from the persisted list
         // and keep following it, so a second device state (e.g. a reset) cannot leave the
@@ -359,6 +375,7 @@ class SearchViewModel @Inject constructor(
             trendingRequested = true
             runCatching { catalogRepository.getTrending(limit = 10) }
                 .onSuccess { page -> _uiState.update { it.copy(trending = page.results) } }
+            markDiscoverySettled(trending = true)
         }
         // Mockup (Nov 2026): the "Recommended for you" grid, loaded once.
         // The freshest titles, newest first — the same feed as Home's
@@ -371,6 +388,7 @@ class SearchViewModel @Inject constructor(
             runCatching {
                 catalogRepository.getPosts(sort = SearchSort.NEWEST.wireValue, page = 1, limit = 18)
             }.onSuccess { page -> _uiState.update { it.copy(recommended = page.results) } }
+            markDiscoverySettled(trending = false)
         }
     }
 
@@ -392,7 +410,7 @@ class SearchViewModel @Inject constructor(
 
     /** Records the current query and forces an immediate search (IME "Search" key). */
     fun submitCurrentQuery() {
-        _uiState.update { it.copy(suggestions = emptyList(), suggestionsUnavailable = false) }
+        _uiState.update { it.copy(suggestions = emptyList()) }
         // A pasted address is not a title: it never joins the recents rail.
         if (classifyPastedText(_uiState.value.query) == PastedText.NotAUrl) {
             recordRecent(_uiState.value.query)
@@ -401,14 +419,14 @@ class SearchViewModel @Inject constructor(
     }
 
     fun runRecent(query: String) {
-        _uiState.update { it.copy(query = query, suggestions = emptyList(), suggestionsUnavailable = false) }
+        _uiState.update { it.copy(query = query, suggestions = emptyList()) }
         recordRecent(query)
         scheduleSearch(reset = true, immediate = true)
     }
 
     /** A suggestion is a title to search for, not a page to open: the id it carries is a work id. */
     fun runSuggestion(title: String) {
-        _uiState.update { it.copy(query = title, suggestions = emptyList(), suggestionsUnavailable = false) }
+        _uiState.update { it.copy(query = title, suggestions = emptyList()) }
         recordRecent(title)
         scheduleSearch(reset = true, immediate = true)
     }
@@ -669,7 +687,7 @@ class SearchViewModel @Inject constructor(
                     isLoading = false, error = null, groups = emptyList(), resultCount = 0,
                     serverTotal = 0, totalCapped = false, hasSearched = false, hasMore = false, page = 1,
                     isFuzzy = false, showExactOnly = false, suggestions = emptyList(),
-                    suggestionsUnavailable = false, didYouMean = null,
+                    didYouMean = null,
                 )
             }
             return
@@ -807,18 +825,21 @@ class SearchViewModel @Inject constructor(
         suggestJob?.cancel()
         val query = _uiState.value.query.trim()
         if (query.length < 2) {
-            _uiState.update { it.copy(suggestions = emptyList(), suggestionsUnavailable = false) }
+            _uiState.update { it.copy(suggestions = emptyList()) }
             return
         }
         if (classifyPastedText(query) != PastedText.NotAUrl) {
-            _uiState.update { it.copy(suggestions = emptyList(), suggestionsUnavailable = false) }
+            _uiState.update { it.copy(suggestions = emptyList()) }
             return
         }
         suggestJob = viewModelScope.launch {
             delay(DEBOUNCE_MS)
             // Null is "the suggest call itself failed" (blocked route, old
-            // server, dead socket) — the screen says so, instead of
-            // silently showing no chips as if nothing matched.
+            // server, dead socket) — and the chips simply stay empty, per
+            // Audit #34: the screen never apologises for a missing feature
+            // inside the feature. The old `suggestionsUnavailable` flag
+            // claimed the screen said so; nothing ever read it, so it is
+            // gone and this comment says what the screen actually does.
             val items = catalogRepository.suggest(query)
             // Same stale-write class as the search job (Issue 6): a
             // cancelled suggest whose call already returned must not paint
@@ -827,7 +848,6 @@ class SearchViewModel @Inject constructor(
             _uiState.update {
                 it.copy(
                     suggestions = items ?: emptyList(),
-                    suggestionsUnavailable = items == null,
                 )
             }
         }
@@ -885,6 +905,14 @@ internal data class CompletedSearchKey(
     val filters: SearchFilters,
     val sort: SearchSort,
 )
+
+/**
+ * Search review (Nov 2026), fix 4: the discovery page is loading until
+ * BOTH first loads have settled — a success and a failure both settle, so
+ * a dead route shows the hint instead of spinning forever.
+ */
+internal fun discoveryLoading(trendingSettled: Boolean, recommendedSettled: Boolean): Boolean =
+    !(trendingSettled && recommendedSettled)
 
 /**
  * Session 158 (S5): may this search be skipped because its answer is

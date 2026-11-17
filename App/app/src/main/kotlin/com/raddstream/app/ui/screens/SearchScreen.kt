@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -74,7 +73,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalFocusManager
@@ -95,6 +93,7 @@ import com.raddstream.app.R
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.player.PastedText
 import com.raddstream.app.player.classifyPastedText
+import com.raddstream.app.ui.components.CardGeometry
 import com.raddstream.app.ui.components.EmptyState
 import com.raddstream.app.ui.components.InlineLoadFailure
 import com.raddstream.app.ui.components.ErrorState
@@ -102,6 +101,7 @@ import com.raddstream.app.ui.components.MediaRail
 import com.raddstream.app.ui.components.PosterCard
 import com.raddstream.app.ui.components.SearchResultsSkeleton
 import com.raddstream.app.ui.components.SectionHeader
+import com.raddstream.app.ui.components.SkeletonBox
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.viewmodel.GenreFilter
 import com.raddstream.app.viewmodel.LanguageFilter
@@ -123,18 +123,19 @@ private val typeChips = listOf(
 )
 
 /**
- * Mockup (Nov 2026): the rail's own chips — ALL / MOVIES / SERIES / ANIME /
- * KPOP, uppercase like Home's rail. "Complete series" lives in the sheet's
- * Type group, not here: the rail is the five most-reached-for choices, and
- * the sheet owns the rest. KPOP is a query preset, not a content_type — see
- * [SearchViewModel.selectType].
+ * Mockup (Nov 2026): the rail's own chips — All / Movies / Series / Anime /
+ * K-Pop, Title Case like the sheet's Type group (the old ALL-CAPS read as
+ * shouting next to the pill search bar — Gemini review, Nov 2026). "Complete
+ * series" lives in the sheet's Type group, not here: the rail is the five
+ * most-reached-for choices, and the sheet owns the rest. KPOP is a query
+ * preset, not a content_type — see [SearchViewModel.selectType].
  */
 private val railTypeChips = listOf(
-    "ALL" to null,
-    "MOVIES" to "movie",
-    "SERIES" to "series",
-    "ANIME" to "anime",
-    "KPOP" to "kpop",
+    "All" to null,
+    "Movies" to "movie",
+    "Series" to "series",
+    "Anime" to "anime",
+    "K-Pop" to "kpop",
 )
 
 /** Test tags on the discovery "See all" actions, so a test taps the button itself. */
@@ -227,11 +228,13 @@ fun SearchScreen(
             // Mockup (Nov 2026): the title is a heading in the content, not
             // a top bar. The bar's Tune icon and "Filtered" pill are gone
             // with it — the rail's Filters chip is the one entry to the
-            // sheet, and it already shows the active count.
+            // sheet, and it already shows the active count. Bold, not
+            // SemiBold: the Gemini review (Nov 2026) read the SemiBold
+            // title as thin against the field below it.
             Text(
                 text = "Search",
                 style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.SemiBold,
+                fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onBackground,
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
             )
@@ -476,15 +479,22 @@ private fun DirectVideoRow(url: String, title: String, onPlay: () -> Unit) {
 }
 
 /**
- * The rail in one scrolled line: the Type chips the viewer reaches for
- * most, then the Filters button for everything else (industry, genre,
- * quality, plan, sort, years). One ungrouped ~30-chip scroll buried the
- * type choice behind captions; the sheet owns the rest.
- * Mockup (Nov 2026): ALL / MOVIES / SERIES / ANIME / KPOP — 48dp tall,
- * active chip jade-filled with black text, inactive chips dark-filled
- * with a thin border and white text. The selected-chip scroll (merged
- * 3bcd64de) stays: the rail scrolls just enough to bring its own
- * selection fully into view.
+ * The rail in one line: the Filters button first, then the Type chips the
+ * viewer reaches for most (industry, genre, quality, plan, sort, years
+ * live in the sheet the Filters button opens). One ungrouped ~30-chip
+ * scroll buried the type choice behind captions; the sheet owns the rest.
+ * Mockup (Nov 2026): All / Movies / Series / Anime / K-Pop — 48dp tall,
+ * pill-shaped, Title Case like the sheet's Type group. The selected chip
+ * wears the nav pill's tokens (bright-teal text on a dark-teal pill)
+ * instead of the old jade fill with black text, so the active state
+ * reads the same as the selected tab below it (Gemini review, Nov 2026).
+ * The selected-chip scroll (merged 3bcd64de) stays: the rail scrolls just
+ * enough to bring its own selection fully into view.
+ * Search review (Nov 2026): the Filters button used to be the 6th item
+ * in the scrolling row — fully off-screen on a 360dp phone, so the sheet
+ * was undiscoverable without a swipe. It is fixed at the row's left edge
+ * now, so it can never clip; the type chips scroll in the space that is
+ * left, under Home's shared RowEndFade.
  */
 @Composable
 internal fun FilterRail(state: SearchUiState, onSelectType: (String?) -> Unit, onOpenFilters: () -> Unit) {
@@ -519,108 +529,99 @@ internal fun FilterRail(state: SearchUiState, onSelectType: (String?) -> Unit, o
             itemEnd > end -> listState.animateScrollBy((itemEnd - end).toFloat())
         }
     }
-    // Search review (Nov 2026): the last chip hard-clipped at the right
-    // edge ("KPO") — a fade mask, the same treatment Home's BrowseSection
-    // gets, so the row reads as scrollable instead of broken. Local to
-    // this file: no shared fade component (the Home fix owns the shared
-    // files right now).
-    Box(Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-        LazyRow(
-            state = listState,
-            modifier = Modifier.fillMaxSize(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            // Session 121 (P-29): the last chip ("Anime") was clipped at the right edge —
-            // the row needs end padding; start stays 0 because the outer column already
-            // pads 16 dp.
-            contentPadding = PaddingValues(start = 0.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
-        ) {
-            items(railTypeChips) { (label, value) ->
-                val selected = state.filters.type == value
-                FilterChip(
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = MaterialTheme.colorScheme.primary,
-                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                        labelColor = MaterialTheme.colorScheme.onSurface,
-                    ),
-                    selected = selected,
-                    onClick = { onSelectType(value) },
-                    label = {
-                        Text(
-                            label,
-                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                        )
-                    },
-                    // CL-3, same as the sheet: the rail's "ALL" chip is the Type
-                    // group's "All", and it must say so — bare "ALL" is the bug.
-                    // Audit #54: a FilterChip is 32 dp tall — the touch-target floor is 48 dp, so the chip itself carries it.
-                    modifier = if (label == "ALL") {
-                        Modifier.heightIn(min = 48.dp).semantics { contentDescription = "All types" }
-                    } else {
-                        Modifier.heightIn(min = 48.dp)
-                    },
-                )
+    val activeFilterCount = listOf(
+        state.filters.industry != IndustryFilter.ALL,
+        state.filters.genre != GenreFilter.ALL,
+        state.filters.quality != QualityFilter.ALL,
+        state.filters.language != LanguageFilter.ALL,
+        state.filters.yearFrom != null || state.filters.yearTo != null,
+        state.filters.includedOnly,
+        state.sort != SearchSort.DEFAULT,
+    ).count { it }
+    val filtersLabel = if (activeFilterCount > 0) "Filters ($activeFilterCount)" else "Filters"
+    val filtersA11y = if (activeFilterCount > 0) "Filters, $activeFilterCount active" else "Filters"
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        FilterChip(
+            colors = FilterChipDefaults.filterChipColors(
+                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                selectedLabelColor = MaterialTheme.colorScheme.primary,
+                selectedLeadingIconColor = MaterialTheme.colorScheme.primary,
+                containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                labelColor = MaterialTheme.colorScheme.onSurface,
+                // This Compose version names the unselected icon colour
+                // `iconColor`, not `leadingIconColor` — the latter does
+                // not exist and fails compileDebugKotlin (CI 43738577241).
+                iconColor = MaterialTheme.colorScheme.onSurface,
+            ),
+            selected = activeFilterCount > 0,
+            onClick = onOpenFilters,
+            label = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Text(filtersLabel)
+                }
+            },
+            shape = RoundedCornerShape(24.dp),
+            // Audit #54: a FilterChip is 32 dp tall — the touch-target floor is 48 dp, so the chip itself carries it.
+            modifier = Modifier
+                .heightIn(min = 48.dp)
+                .semantics { contentDescription = filtersA11y },
+        )
+        // Home's pattern (HomeFilterRow): the scrolling row is fillMaxWidth
+        // inside the Box and the fade is an overlay aligned to its end —
+        // the LazyRow's own height is its content, so the Box stays 48dp.
+        Box(Modifier.weight(1f)) {
+            LazyRow(
+                state = listState,
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                // Session 121 (P-29): the last chip ("Anime") was clipped at the right edge —
+                // the row needs end padding; start stays 0 because the outer column already
+                // pads 16 dp.
+                contentPadding = PaddingValues(start = 0.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
+            ) {
+                items(railTypeChips) { (label, value) ->
+                    val selected = state.filters.type == value
+                    FilterChip(
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                            selectedLabelColor = MaterialTheme.colorScheme.primary,
+                            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                            labelColor = MaterialTheme.colorScheme.onSurface,
+                        ),
+                        selected = selected,
+                        onClick = { onSelectType(value) },
+                        label = {
+                            Text(
+                                label,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                            )
+                        },
+                        shape = RoundedCornerShape(24.dp),
+                        // CL-3, same as the sheet: the rail's "All" chip is the Type
+                        // group's "All", and it must SAY so — the spoken name is
+                        // "All types", not the bare label.
+                        // Audit #54: a FilterChip is 32 dp tall — the touch-target floor is 48 dp, so the chip itself carries it.
+                        modifier = if (label == "All") {
+                            Modifier.heightIn(min = 48.dp).semantics { contentDescription = "All types" }
+                        } else {
+                            Modifier.heightIn(min = 48.dp)
+                        },
+                    )
+                }
             }
-            item {
-                val activeFilterCount = listOf(
-                    state.filters.industry != IndustryFilter.ALL,
-                    state.filters.genre != GenreFilter.ALL,
-                    state.filters.quality != QualityFilter.ALL,
-                    state.filters.language != LanguageFilter.ALL,
-                    state.filters.yearFrom != null || state.filters.yearTo != null,
-                    state.filters.includedOnly,
-                    state.sort != SearchSort.DEFAULT,
-                ).count { it }
-                val filtersLabel = if (activeFilterCount > 0) "Filters ($activeFilterCount)" else "Filters"
-                val filtersA11y = if (activeFilterCount > 0) "Filters, $activeFilterCount active" else "Filters"
-                FilterChip(
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = MaterialTheme.colorScheme.primary,
-                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-                        selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimary,
-                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                        labelColor = MaterialTheme.colorScheme.onSurface,
-                        // This Compose version names the unselected icon colour
-                        // `iconColor`, not `leadingIconColor` — the latter does
-                        // not exist and fails compileDebugKotlin (CI 43738577241).
-                        iconColor = MaterialTheme.colorScheme.onSurface,
-                    ),
-                    selected = activeFilterCount > 0,
-                    onClick = onOpenFilters,
-                    label = {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Text(filtersLabel)
-                        }
-                    },
-                    // Audit #54: a FilterChip is 32 dp tall — the touch-target floor is 48 dp, so the chip itself carries it.
-                    modifier = Modifier
-                        .heightIn(min = 48.dp)
-                        .semantics { contentDescription = filtersA11y },
-                )
-            }
+            // The overlay carries no click handling, so taps pass through to
+            // the chips beneath it.
+            RowEndFade(Modifier.align(Alignment.CenterEnd).testTag(FilterRailFadeTag))
         }
-    // The overlay carries no click handling, so taps pass through to
-    // the chips beneath it.
-    Box(
-        modifier = Modifier
-            .align(Alignment.CenterEnd)
-            .width(32.dp)
-            .fillMaxHeight()
-            .background(
-                Brush.horizontalGradient(
-                    colors = listOf(
-                        Color.Transparent,
-                        MaterialTheme.colorScheme.background,
-                    ),
-                ),
-            )
-            .testTag(FilterRailFadeTag),
-    )
     }
 }
 
@@ -692,6 +693,84 @@ internal fun RecentsList(
     }
 }
 
+/** Test tag on the discovery page's loading skeleton, so a test can tell loading from the settled hint. */
+internal const val SearchDiscoverySkeletonTag = "search-discovery-skeleton"
+
+/**
+ * Search review (Nov 2026), fix 4: the discovery page's loading stand-in —
+ * a "Trending now" rail skeleton and a "Recommended for you" grid skeleton
+ * in the same slots the real sections take, so nothing reflows when the
+ * data lands. Hand-built rows, not PosterRailSkeleton/PosterGridSkeleton:
+ * those are lazy layouts and this column scrolls — a lazy child inside it
+ * measures with infinite height (Robo #6, the same crash the sheet's
+ * heightIn(max = 1200.dp) cap fixed).
+ */
+@Composable
+internal fun SearchDiscoverySkeleton(modifier: Modifier = Modifier) {
+    Column(
+        modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .testTag(SearchDiscoverySkeletonTag),
+    ) {
+        Spacer(Modifier.height(16.dp))
+        // Header slots: shimmer bars where "Trending now" and
+        // "Recommended for you" will sit.
+        SkeletonBox(
+            Modifier.width(120.dp).height(20.dp),
+            shape = RoundedCornerShape(4.dp),
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            repeat(4) {
+                Column(
+                    Modifier.width(CardGeometry.RAIL_CARD_WIDTH_DP.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    SkeletonBox(
+                        Modifier.fillMaxWidth(),
+                        aspectRatioValue = CardGeometry.POSTER_ASPECT,
+                    )
+                    SkeletonBox(
+                        Modifier.fillMaxWidth().height(12.dp),
+                        shape = RoundedCornerShape(6.dp),
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(20.dp))
+        SkeletonBox(
+            Modifier.width(170.dp).height(20.dp),
+            shape = RoundedCornerShape(4.dp),
+        )
+        Spacer(Modifier.height(8.dp))
+        repeat(2) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                repeat(3) {
+                    Column(
+                        Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        SkeletonBox(
+                            Modifier.fillMaxWidth(),
+                            aspectRatioValue = CardGeometry.POSTER_ASPECT,
+                        )
+                        SkeletonBox(
+                            Modifier.fillMaxWidth().height(12.dp),
+                            shape = RoundedCornerShape(6.dp),
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun SearchDiscoveryContent(
@@ -703,6 +782,17 @@ internal fun SearchDiscoveryContent(
     onSeeAllRecommended: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    // Search review (Nov 2026), fix 4: trending + recommended load once in
+    // init and fail silent — on a slow or failed load the page used to show
+    // the bare hint at once, as if the catalog were empty. Until the first
+    // load settles (success or failure) the page shows section skeletons
+    // instead; the hint waits for the settle, so it only ever means "the
+    // catalog really has nothing to show". A section that already has data
+    // (recents are local and land first) shows its data, never the skeleton.
+    if (state.discoveryLoading && state.trending.isEmpty() && state.recents.isEmpty() && state.recommended.isEmpty()) {
+        SearchDiscoverySkeleton(modifier)
+        return
+    }
     Column(
         modifier.fillMaxSize().verticalScroll(rememberScrollState()),
     ) {

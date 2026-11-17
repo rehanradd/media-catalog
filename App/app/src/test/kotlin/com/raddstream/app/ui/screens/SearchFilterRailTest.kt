@@ -8,6 +8,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollTo
@@ -27,8 +28,12 @@ import org.robolectric.RobolectricTestRunner
  * scrolled the rail to it. The rail already scrolls (LazyRow) with end padding (Session 121
  * P-29); what it never did was reveal its own selection. These tests pin both halves: the
  * last chip is reachable by scrolling, and selecting a chip scrolls it fully into view.
- * Mockup (Nov 2026): the rail is ALL / MOVIES / SERIES / ANIME / KPOP — "Complete series"
- * lives in the sheet's Type group, not the rail, so the last chip is KPOP now.
+ * Mockup (Nov 2026): the rail is All / Movies / Series / Anime / K-Pop — "Complete series"
+ * lives in the sheet's Type group, not the rail, so the last chip is K-Pop now.
+ * Search review (Nov 2026): the Filters button used to be the 6th item in the scrolling
+ * row — fully off-screen on a 360dp phone, so the sheet was undiscoverable without a
+ * swipe. It is fixed at the row's left edge now, so it can never clip; these tests pin
+ * that it is displayed at rest, without scrolling, while the type chips still scroll.
  *
  * NOTE: `assertIsDisplayed` alone cannot catch a partial clip — a half-visible node still
  * counts as displayed — so the reveal tests assert the chip's bounds sit fully inside the
@@ -41,7 +46,7 @@ class SearchFilterRailTest {
     val compose = createComposeRule()
 
     @Test
-    fun lastChipAndFiltersButtonRevealByScrolling() {
+    fun lastChipRevealsByScrolling() {
         compose.setContent {
             RaddStreamTheme {
                 Box(Modifier.size(width = 480.dp, height = 120.dp)) {
@@ -49,29 +54,49 @@ class SearchFilterRailTest {
                 }
             }
         }
-        // Mockup (Nov 2026): KPOP is the last rail chip — "Complete series"
+        // Mockup (Nov 2026): K-Pop is the last rail chip — "Complete series"
         // lives in the sheet now, so the rail must not carry it at all.
         compose.onNodeWithText("Complete series").assertDoesNotExist()
-        // "KPOP" is only a peek at the right edge at rest (Robo #7) — scroll it whole.
-        val chip = compose.onNodeWithText("KPOP")
+        // "K-Pop" is only a peek at the right edge at rest (Robo #7) — scroll it whole.
+        val chip = compose.onNodeWithText("K-Pop")
         chip.performScrollTo()
         chip.assertIsDisplayed()
         val chipBounds = chip.fetchSemanticsNode().boundsInRoot
         with(compose.density) {
             assertTrue(
-                "KPOP still past the right edge after scrolling",
+                "K-Pop still past the right edge after scrolling",
                 chipBounds.right.toDp() <= 480.dp,
             )
         }
-        // The Filters button after it is reachable the same way.
-        val filters = compose.onNodeWithText("Filters")
-        filters.performScrollTo()
+    }
+
+    @Test
+    fun filtersButtonIsFixedAtRest() {
+        // Search review (Nov 2026): the Filters button is the sheet's only
+        // entry — it used to be the 6th item in the scrolling row and sat
+        // fully off-screen on a 360dp phone. Fixed at the row's left edge,
+        // it is displayed at rest with no scroll, and its left edge is the
+        // row's left edge. The chip itself carries the "Filters"
+        // contentDescription; the Text inside it is inset by the icon and
+        // the chip padding, so the bounds are read off the chip node.
+        compose.setContent {
+            RaddStreamTheme {
+                Box(Modifier.size(width = 360.dp, height = 120.dp)) {
+                    FilterRail(state = SearchUiState(), onSelectType = {}, onOpenFilters = {})
+                }
+            }
+        }
+        val filters = compose.onNodeWithContentDescription("Filters")
         filters.assertIsDisplayed()
         val filtersBounds = filters.fetchSemanticsNode().boundsInRoot
         with(compose.density) {
             assertTrue(
-                "Filters button still past the right edge after scrolling",
-                filtersBounds.right.toDp() <= 480.dp,
+                "Filters button not at the row's left edge",
+                filtersBounds.left.toDp() == 0.dp,
+            )
+            assertTrue(
+                "Filters button past the right edge at rest",
+                filtersBounds.right.toDp() <= 360.dp,
             )
         }
     }
@@ -80,7 +105,7 @@ class SearchFilterRailTest {
     fun selectedChipScrollsFullyIntoView() {
         // Robo #7, shot 34: "Complete series" selected, yet only "Comp" showed — the rail
         // never scrolled to its own selection. Selecting it must bring it fully into view.
-        // Mockup (Nov 2026): the last chip is KPOP now — same mechanism, new last chip.
+        // Mockup (Nov 2026): the last chip is K-Pop now — same mechanism, new last chip.
         compose.setContent {
             RaddStreamTheme {
                 Box(Modifier.size(width = 360.dp, height = 120.dp)) {
@@ -93,12 +118,12 @@ class SearchFilterRailTest {
             }
         }
         compose.waitForIdle()
-        val chip = compose.onNodeWithText("KPOP")
+        val chip = compose.onNodeWithText("K-Pop")
         chip.assertIsDisplayed()
         val bounds = chip.fetchSemanticsNode().boundsInRoot
         with(compose.density) {
-            assertTrue("KPOP clipped at the left edge", bounds.left.toDp() >= 0.dp)
-            assertTrue("KPOP clipped at the right edge", bounds.right.toDp() <= 360.dp)
+            assertTrue("K-Pop clipped at the left edge", bounds.left.toDp() >= 0.dp)
+            assertTrue("K-Pop clipped at the right edge", bounds.right.toDp() <= 360.dp)
         }
     }
 
@@ -120,17 +145,19 @@ class SearchFilterRailTest {
         }
         type = "movie"
         compose.waitForIdle()
-        compose.onNodeWithText("ALL").assertIsDisplayed()
-        compose.onNodeWithText("MOVIES").assertIsDisplayed()
+        compose.onNodeWithText("All").assertIsDisplayed()
+        compose.onNodeWithText("Movies").assertIsDisplayed()
     }
 
     @Test
     fun rightEdgeFadeMaskExists() {
         // Search review (Nov 2026): the last chip hard-clipped at the right
         // edge ("KPO") — a fade mask over the row's right edge replaces the
-        // hard clip. The mask is a plain overlay (no click handling), so
-        // the test only pins its presence; the chips beneath stay tappable
-        // through it.
+        // hard clip. The mask is Home's shared RowEndFade now (the local
+        // 32dp fade painted, but chip fill → background is ~10 RGB steps
+        // on this palette, so it advertised nothing); it is still a plain
+        // overlay with no click handling, so the test only pins its
+        // presence — the chips beneath stay tappable through it.
         compose.setContent {
             RaddStreamTheme {
                 Box(Modifier.size(width = 360.dp, height = 120.dp)) {
