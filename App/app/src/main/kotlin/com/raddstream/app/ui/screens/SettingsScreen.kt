@@ -193,9 +193,15 @@ fun SettingsScreen(
     // viewers see Sync / Sign out, and the rest waits behind a tap.
     var showSignInForm by remember { mutableStateOf(false) }
     var showAccountDetails by remember { mutableStateOf(false) }
-    // D2: the contact card's top edge inside the scrolling column, in
-    // pixels — recorded on layout so the deep link can scroll to it.
-    var contactCardOffsetY by remember { mutableStateOf<Int?>(null) }
+    // D2: the contact card's and the column's top edges in window
+    // coordinates, in pixels — recorded on layout so the deep link can
+    // scroll to the card. (LayoutCoordinates has no position-in-parent
+    // on this Compose version — the compiler rejects positionInParent —
+    // so the offset is derived from the two window bounds instead, the
+    // same boundsInWindow the player already uses for its own bounds.)
+    var contactCardTopInWindow by remember { mutableStateOf<Float?>(null) }
+    var columnTopInWindow by remember { mutableStateOf<Float?>(null) }
+    var deepLinkScrolled by remember { mutableStateOf(false) }
     // The column's own scroll state, hoisted so the deep-link effect above
     // the Scaffold can drive it.
     val scrollState = rememberScrollState()
@@ -210,13 +216,22 @@ fun SettingsScreen(
         snackbarHostState.showSnackbar(message)
         viewModel.clearStatus()
     }
-    // D2: the deep link from Help's Contact row. The offset is known only
-    // after layout, so the scroll waits for it — and it runs once per
-    // entry, because the screen is recreated on each navigation.
-    LaunchedEffect(scrollToContact, contactCardOffsetY) {
-        if (scrollToContact) {
-            contactCardOffsetY?.let { scrollState.scrollTo(it) }
-        }
+    // D2: the deep link from Help's Contact row. The bounds are known
+    // only after layout, so the scroll waits for them — and it runs once
+    // per entry, because the screen is recreated on each navigation.
+    LaunchedEffect(scrollToContact, contactCardTopInWindow, columnTopInWindow) {
+        if (!scrollToContact || deepLinkScrolled) return@LaunchedEffect
+        val cardTop = contactCardTopInWindow ?: return@LaunchedEffect
+        val columnTop = columnTopInWindow ?: return@LaunchedEffect
+        // The card's offset inside the column's content is its window
+        // offset from the column's top plus however far the column has
+        // already scrolled; scrolling there puts the card at the top of
+        // the viewport. The second layout pass reports the card already
+        // at the top, which recomputes the same target — the once-flag
+        // is what stops the effect from re-running on its own echo.
+        val target = (cardTop - columnTop + scrollState.value).roundToInt().coerceAtLeast(0)
+        scrollState.scrollTo(target)
+        deepLinkScrolled = true
     }
 
     Scaffold(
@@ -251,7 +266,8 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .padding(contentPadding)
                 .verticalScroll(scrollState)
-                .padding(start = 16.dp, end = 16.dp, top = 24.dp, bottom = 16.dp),
+                .padding(start = 16.dp, end = 16.dp, top = 24.dp, bottom = 16.dp)
+                .onGloballyPositioned { columnTopInWindow = it.boundsInWindow().top },
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
             // ── Resolve test (debug-only harness, plan §8) ─────────────
@@ -1015,12 +1031,12 @@ fun SettingsScreen(
 
             // ── Contact us ───────────────────────────────────────────────────
             // D2: the deep-link target from Help's Contact row — the card
-            // reports its top edge so the screen can scroll straight to it.
+            // reports its window position so the screen can scroll to it.
             SettingsCard(
                 title = "Contact us",
                 icon = Icons.Default.Email,
                 modifier = Modifier.onGloballyPositioned {
-                    contactCardOffsetY = it.positionInParent().y.roundToInt()
+                    contactCardTopInWindow = it.boundsInWindow().top
                 },
             ) {
                 Text(
@@ -1475,7 +1491,8 @@ internal fun ChipRow(options: List<String>, selectedIndex: Int, onSelect: (Int) 
                 ),
                 selected = idx == selectedIndex,
                 onClick = { onSelect(idx) },
-                label = { Text(label, maxLines = 1, modifier = Modifier.padding(vertical = 12.dp)) }.heightIn(min = 48.dp),
+                label = { Text(label, maxLines = 1, modifier = Modifier.padding(vertical = 12.dp)) },
+                modifier = Modifier.heightIn(min = 48.dp),
             )
         }
     }

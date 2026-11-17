@@ -63,7 +63,7 @@ sealed class Screen(val route: String) {
      * `?scrollTo=contact` (Help's Contact row, Settings review Nov 2026
      * D2) lands on the contact card instead of the top of the screen.
      */
-    object Settings : Screen("settings?$ARG_SCROLL_TO={$ARG_SCROLL_TO}") {
+    object Settings : Screen("settings?scrollTo={scrollTo}") {
         const val ARG_SCROLL_TO = "scrollTo"
         const val PLAIN_ROUTE = "settings"
 
