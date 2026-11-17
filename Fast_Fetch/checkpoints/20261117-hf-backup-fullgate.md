@@ -42,6 +42,15 @@ verification. Research: `~/workspace/hf-backup-step3-20261117.md`.
   HF listing size, fresh-download SHA-256, `zstd -t`, decompress to scratch +
   integrity ok, page_count + four counts equal the manifest — returns
   `(ok, report)`; deletes its own scratch on the success path only.
+- **Revision (same branch, before first push): streaming verify.** The literal
+  download-then-`zstd -t`-then-decompress sequence does NOT fit this disk:
+  free 11.25 GiB vs download 2.5 + scratch 9.07 GiB — short by ~339 MB even at
+  zero margin. `_stream_restore` now streams the HF download straight through
+  `zstd -d` into the scratch db, hashing the compressed bytes on the way; the
+  frame check is the decompressor's own validation (what `zstd -t` does, by
+  decompressing to /dev/null). Same six properties checked, peak disk = the
+  restored db only (9.07 GiB). Space guard now needs source bytes + 256 MiB.
+  Tests updated to patch `_stream_restore`; local still 32/32.
 - CLI: `--full-gate DB`, `--verify-full-gate NAME --manifest PATH`,
   `--repo ID`, `--fullgate-out DIR`. The normal slim path is untouched.
 - Tests: 9 new in `Fast_Fetch/test_backup_manager.py` (already in the CI gate —

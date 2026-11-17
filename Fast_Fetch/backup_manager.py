@@ -676,31 +676,6 @@ def _compress_zstd(source: Path, dest: Path, level: int = 3) -> float:
     return time.time() - started
 
 
-def _zstd_test(path: Path) -> bool:
-    """`zstd -t`: validates the frame, whose checksum covers the decompressed bytes."""
-    zstd = shutil.which("zstd")
-    if not zstd:
-        return False
-    res = subprocess.run(
-        [zstd, "-t", "-q", str(path)], capture_output=True, text=True
-    )
-    return res.returncode == 0
-
-
-def _decompress_zstd(source: Path, dest: Path) -> None:
-    zstd = shutil.which("zstd")
-    if not zstd:
-        raise RuntimeError("zstd binary not found on PATH")
-    res = subprocess.run(
-        [zstd, "-d", "-q", "-f", str(source), "-o", str(dest)],
-        capture_output=True, text=True,
-    )
-    if res.returncode != 0:
-        raise RuntimeError(
-            f"zstd -d failed (rc={res.returncode}): {res.stderr.strip()[:300]}"
-        )
-
-
 def create_fullgate_archive(
     db_path: Path, out_dir: Path, zstd_level: int = 3
 ) -> tuple[Path, Path, dict]:
@@ -770,22 +745,56 @@ def run_fullgate(
     return zst_path, manifest_path, manifest, uploaded
 
 
-def download_fullgate_file(repo_id: str, filename: str, dest_path: Path) -> int:
-    """Stream one file out of the HF dataset (resolve URL, bearer auth)."""
+def _stream_restore(
+    repo_id: str, zst_name: str, dest_db: Path
+) -> tuple[int, str, bool, str]:
+    """Stream the .zst out of HF straight through `zstd -d` into dest_db.
+
+    One pass does three checks at once: the SHA-256 is computed over the bytes
+    as they arrive, and the decompressor validates the zstd frame (its checksum
+    covers the decompressed bytes — exactly what `zstd -t` does, by
+    decompressing to /dev/null). The .zst is never stored on disk: on this box
+    the download + a scratch decompress together do NOT fit (short by ~339 MB
+    even at zero margin), while the streaming pass needs only the restored db.
+
+    Returns (bytes downloaded, sha256 hex, frame valid, zstd stderr snippet).
+    """
     token = os.environ.get("HF_TOKEN", "")
     if not token:
         raise RuntimeError("HF_TOKEN not set; cannot download from a private dataset")
+    zstd = shutil.which("zstd")
+    if not zstd:
+        raise RuntimeError("zstd binary not found on PATH")
     url = (
         f"https://huggingface.co/datasets/{repo_id}/resolve/main/"
-        f"{urllib.parse.quote(filename)}"
+        f"{urllib.parse.quote(zst_name)}"
     )
     request = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
-    written = 0
-    with urllib.request.urlopen(request, timeout=120) as resp, open(dest_path, "wb") as fout:
-        while chunk := resp.read(1024 * 1024):
-            fout.write(chunk)
-            written += len(chunk)
-    return written
+    hasher = hashlib.sha256()
+    downloaded = 0
+    err_path = Path(str(dest_db) + ".zstd.err")
+    with open(dest_db, "wb") as fout, open(err_path, "wb") as ferr:
+        proc = subprocess.Popen(
+            [zstd, "-d", "-q", "--stdout"],
+            stdin=subprocess.PIPE, stdout=fout, stderr=ferr,
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=120) as resp:
+                while chunk := resp.read(1024 * 1024):
+                    hasher.update(chunk)
+                    downloaded += len(chunk)
+                    try:
+                        proc.stdin.write(chunk)
+                    except BrokenPipeError:
+                        break
+            proc.stdin.close()
+        except Exception:
+            proc.kill()
+            raise
+        proc.wait()
+    err_text = err_path.read_text(errors="replace").strip()[:300] if err_path.exists() else ""
+    err_path.unlink(missing_ok=True)
+    return downloaded, hasher.hexdigest(), proc.returncode == 0, err_text
 
 
 def verify_fullgate(
@@ -795,9 +804,11 @@ def verify_fullgate(
     except its own scratch on the success path.
 
     1. HF listing shows the file at the manifest size.
-    2. Fresh download SHA-256 matches the manifest.
-    3. `zstd -t` passes.
-    4. Decompress to scratch; PRAGMA integrity_check is ok.
+    2. Fresh download SHA-256 matches the manifest (hashed over the stream).
+    3. The zstd frame validates (checked by the streaming decompressor —
+       `zstd -t` is the same check run against a stored file, which this disk
+       cannot hold alongside the restored db; see _stream_restore).
+    4. The streamed restore lands in scratch; PRAGMA integrity_check is ok.
     5. page_count + posts/releases/download_sources/cat_links equal the manifest.
     6. (Logging by the caller.) Returns (ok, report).
     """
@@ -806,10 +817,12 @@ def verify_fullgate(
     report: dict = {"file": zst_name, "repo": repo_id, "steps": {}}
     archive = manifest["archive"]
     database = manifest["database"]
-    need = int(manifest["source"]["bytes"]) + int(archive["bytes"]) + 2**30
+    # Only the restored db is stored (streaming verify); the source byte count
+    # is exact, so a 256 MiB margin is ample.
+    need = int(manifest["source"]["bytes"]) + 256 * 2**20
     if free_bytes(work_dir) < need:
         report["steps"]["space"] = (
-            f"FAIL need {need / 2**30:.1f} GiB free in {work_dir}, "
+            f"FAIL need {need / 2**30:.2f} GiB free in {work_dir}, "
             f"have {free_bytes(work_dir) / 2**30:.2f} GiB"
         )
         return False, report
@@ -827,40 +840,35 @@ def verify_fullgate(
         return False, report
     report["steps"]["listing"] = f"ok {archive['bytes']} bytes on HF"
 
-    # 2. Fresh download; SHA-256 must match the manifest.
-    dl_path = work_dir / zst_name
-    print(f"[*] Downloading {zst_name} from HF for verification ...", flush=True)
-    try:
-        downloaded = download_fullgate_file(repo_id, zst_name, dl_path)
-    except Exception as e:  # noqa: BLE001 - a failed download is a failed verify
-        report["steps"]["download"] = f"FAIL {e}"
-        return False, report
-    sha = calculate_sha256(dl_path)
-    if sha != archive["sha256"]:
-        report["steps"]["sha256"] = (
-            f"FAIL downloaded sha {sha} != manifest {archive['sha256']}"
-        )
-        return False, report
-    report["steps"]["download"] = f"ok {downloaded} bytes"
-    report["steps"]["sha256"] = "ok matches manifest"
-
-    # 3. zstd -t validates the frame (checksum is over the decompressed bytes).
-    if not _zstd_test(dl_path):
-        report["steps"]["zstd_test"] = "FAIL zstd -t failed"
-        return False, report
-    report["steps"]["zstd_test"] = "ok"
-
-    # 4. Decompress to scratch; integrity_check must be ok.
+    # 2 + 3. Stream the download through zstd -d into a scratch db, hashing
+    # the compressed bytes on the way and letting the decompressor validate
+    # the frame.
     stem = zst_name[:-4] if zst_name.endswith(".zst") else zst_name + ".restored"
     restored = work_dir / (stem + ".db")
-    print(f"[*] Decompressing to scratch {restored.name} ...", flush=True)
+    print(f"[*] Streaming {zst_name} from HF through zstd -d ...", flush=True)
     try:
-        _decompress_zstd(dl_path, restored)
-    except RuntimeError as e:
-        report["steps"]["decompress"] = f"FAIL {e}"
+        downloaded, sha, frame_ok, err = _stream_restore(
+            repo_id, zst_name, restored
+        )
+    except Exception as e:  # noqa: BLE001 - a failed stream is a failed verify
+        report["steps"]["download"] = f"FAIL {e}"
         return False, report
-    dl_path.unlink(missing_ok=True)  # the bytes are now in the restored db
+    report["steps"]["download"] = f"ok {downloaded} bytes"
+    if sha != archive["sha256"]:
+        report["steps"]["sha256"] = (
+            f"FAIL streamed sha {sha} != manifest {archive['sha256']}"
+        )
+        restored.unlink(missing_ok=True)
+        return False, report
+    report["steps"]["sha256"] = "ok matches manifest"
+    if not frame_ok:
+        report["steps"]["zstd_frame"] = f"FAIL zstd -d failed: {err}"
+        restored.unlink(missing_ok=True)
+        return False, report
+    report["steps"]["zstd_frame"] = "ok validated by streaming decompression"
     report["steps"]["decompress"] = f"ok {restored.stat().st_size} bytes"
+
+    # 4. The restored db must pass integrity_check.
     info = _fullgate_db_info(restored)
     if info["integrity_check"] != "ok":
         report["steps"]["integrity_check"] = f"FAIL {info['integrity_check']}"

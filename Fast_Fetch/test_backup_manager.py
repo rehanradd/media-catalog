@@ -473,53 +473,54 @@ class FullGateTests(unittest.TestCase):
         return manifest
 
     def test_verify_happy_path(self):
-        from backup_manager import verify_fullgate
+        from backup_manager import calculate_sha256, verify_fullgate
 
         db = self._make_catalog()
         manifest = self._manifest(db)
         zst_name = manifest["archive"]["filename"]
         zst_path = self.out / zst_name
 
-        def fake_download(repo_id, filename, dest):
-            shutil.copy2(zst_path, dest)
-            return dest.stat().st_size
+        def fake_stream(repo_id, filename, dest_db):
+            shutil.copy2(zst_path, dest_db)
+            return zst_path.stat().st_size, calculate_sha256(zst_path), True, ""
 
         work = self.root / "verify"
         with (
             patch("backup_manager.hf_remote_listing",
                   return_value={zst_name: zst_path.stat().st_size}),
-            patch("backup_manager.download_fullgate_file", side_effect=fake_download),
-            patch("backup_manager._zstd_test", return_value=True),
-            patch("backup_manager._decompress_zstd",
-                  side_effect=lambda s, d: shutil.copy2(s, d)),
+            patch("backup_manager._stream_restore", side_effect=fake_stream),
             patch("backup_manager.free_bytes", return_value=100 * 2**30),
         ):
             ok, report = verify_fullgate(
                 zst_name, manifest, "radddao/radd-stream-gate-backups", work
             )
         self.assertTrue(ok, report)
-        for step in ("listing", "sha256", "zstd_test", "integrity_check", "counts"):
+        for step in ("listing", "sha256", "zstd_frame", "integrity_check", "counts"):
             self.assertTrue(report["steps"][step].startswith("ok"), (step, report))
         self.assertEqual(list(work.iterdir()), [])  # scratch removed on success
 
     def test_verify_fails_on_sha_mismatch_and_counts_mismatch(self):
-        from backup_manager import verify_fullgate
+        from backup_manager import calculate_sha256, verify_fullgate
 
         db = self._make_catalog()
         manifest = self._manifest(db)
         zst_name = manifest["archive"]["filename"]
         zst_path = self.out / zst_name
 
-        def fake_download_wrong(repo_id, filename, dest):
-            dest.write_bytes(b"not the backup")
-            return dest.stat().st_size
+        def fake_stream_wrong_sha(repo_id, filename, dest_db):
+            shutil.copy2(zst_path, dest_db)
+            return zst_path.stat().st_size, "0" * 64, True, ""
+
+        def fake_stream_ok(repo_id, filename, dest_db):
+            shutil.copy2(zst_path, dest_db)
+            return zst_path.stat().st_size, calculate_sha256(zst_path), True, ""
 
         work = self.root / "verify"
         with (
             patch("backup_manager.hf_remote_listing",
                   return_value={zst_name: zst_path.stat().st_size}),
-            patch("backup_manager.download_fullgate_file",
-                  side_effect=fake_download_wrong),
+            patch("backup_manager._stream_restore",
+                  side_effect=fake_stream_wrong_sha),
             patch("backup_manager.free_bytes", return_value=100 * 2**30),
         ):
             ok, report = verify_fullgate(
@@ -532,11 +533,7 @@ class FullGateTests(unittest.TestCase):
         with (
             patch("backup_manager.hf_remote_listing",
                   return_value={zst_name: zst_path.stat().st_size}),
-            patch("backup_manager.download_fullgate_file",
-                  side_effect=lambda r, f, d: shutil.copy2(zst_path, d)),
-            patch("backup_manager._zstd_test", return_value=True),
-            patch("backup_manager._decompress_zstd",
-                  side_effect=lambda s, d: shutil.copy2(s, d)),
+            patch("backup_manager._stream_restore", side_effect=fake_stream_ok),
             patch("backup_manager.free_bytes", return_value=100 * 2**30),
         ):
             ok, report = verify_fullgate(
