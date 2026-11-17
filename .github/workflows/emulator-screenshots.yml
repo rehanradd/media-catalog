@@ -8,6 +8,13 @@
 # exactly — setup-android v4.0.4 pinned to the same commit SHA, runner
 # pinned to ubuntu-24.04, all actions SHA-pinned, google-services.json
 # restored before the Gradle build (the debug build needs it, same as CI).
+# Second dispatch (run 44002960788) FAILED at the capture step, not the SDK:
+# the emulator DID boot ("Emulator booted", 593 s — software mode, no KVM on
+# the hosted runner) but the script died at once: `OUT="$GITHUB_WORKSPACE/emu-shots"`
+# expanded to empty inside android-emulator-runner's script context, so
+# `mkdir -p ""` failed ("cannot create directory ''", exit 1). Fix: fall back
+# to $PWD (`${GITHUB_WORKSPACE:-$PWD}`) and raise emulator-boot-timeout
+# 600 -> 900 s (boot took 593 s, 7 s inside the old limit).
 #
 # What it does: builds the debug APK, boots a free hardware-accelerated
 # emulator (KVM on the GitHub-hosted Ubuntu runner — free and unlimited for
@@ -86,12 +93,14 @@ jobs:
           arch: x86_64
           profile: pixel_7
           cores: 2
-          emulator-boot-timeout: 600
+          emulator-boot-timeout: 900
           disable-animations: true
           script: |
             set -e
             APK="App/app/build/outputs/apk/debug/app-debug.apk"
-            OUT="$GITHUB_WORKSPACE/emu-shots"
+            # $GITHUB_WORKSPACE is empty inside this action's script context
+            # (run 44002960788 died on `mkdir -p ""`); $PWD is the checkout.
+            OUT="${GITHUB_WORKSPACE:-$PWD}/emu-shots"
             mkdir -p "$OUT"
             adb install -r "$APK"
             # Start video capture in the background (killed after the flow).
