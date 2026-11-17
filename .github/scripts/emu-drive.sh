@@ -35,17 +35,21 @@
 # not exist" and the app never launched at all. The old script
 # swallowed that failure (|| true) and screenshotted the launcher.
 # The package is now derived from the device after install (below).
-# Run 44053140525 (head 30d056ed) died EARLIER: the Disclaimer was
-# never dismissed — tap_text 'I understand' burned all 6 tries against
-# the "Process system isn't responding" dialog (dump 4153 bytes / 12
-# nodes = dialog only), tapping Wait (540,1363) after tries 2–5, and the
-# dialog NEVER cleared. The Connect fix never got exercised. The dialog
-# is system_server starving on the TCG emulator (boot 570s); tapping
-# Wait doesn't clear it — only wall-clock recovery does, and 6 tries at
-# ~8s between dumps (~2 min) wasn't always enough (run 44048613561
-# recovered on try 6; this run didn't in 6). Fix: tap_text retries
-# 6 -> 10 and the sleep after an ANR Wait tap 5s -> 15s, so a slow
-# system_server gets ~4 min to recover before the run fails.
+# Run 44059589013 (head 51440f80) failed the FOCUS wait — but the app
+# WAS up: focus-timeout.png shows the real Disclaimer card with "I
+# understand", and logcat shows MainActivity displayed at +2m16s. The
+# guard lied. focused_pkg() took the FIRST mCurrentFocus line, which is
+# a stale `mCurrentFocus=null` (no package, no "Not Responding"), so the
+# mFocusedApp fallback never fired; and the fallback itself would have
+# taken the FIRST mFocusedApp line, which is a stale googlesdksetup
+# entry — the live one (the app) comes later in the dump. Fix: ignore
+# null mCurrentFocus lines and take the LAST one; take the LAST
+# mFocusedApp line. The dumpsys also shows an app ANR window
+# ("Application Not Responding: com.raddstream.app.debug") and logcat
+# shows a DNS failure (firebase-settings.crashlytics.com unresolvable)
+# — the same failure shape as the Welcome catalog-unreachable in run
+# 44048613561. The workflow now passes -dns-server 8.8.8.8 so the AVD
+# does not depend on the host-provided 10.0.2.3 resolver.
 # The workflow uploads emu-shots/ with `if: always()`, so a failed run
 # still leaves its (launcher) frames as evidence of what went wrong.
 set -euo pipefail
@@ -162,13 +166,20 @@ PY
 # Package currently in the foreground, or empty if it cannot be read.
 focused_pkg() {
   local focus app
-  focus=$(adb shell dumpsys window 2>/dev/null | grep -i -m1 'mCurrentFocus' || true)
+  # Run 44059589013: dumpsys window repeats these keys across sections
+  # and the FIRST mCurrentFocus line is a stale `mCurrentFocus=null`
+  # (no package, no "Not Responding"), which hid the live ANR window
+  # line below it and kept the guard blind for the whole 180 s while
+  # the app sat at the Disclaimer. Ignore null lines, take the LAST.
+  focus=$(adb shell dumpsys window 2>/dev/null | grep -i 'mCurrentFocus' | grep -v '=null' | tail -n 1 || true)
   # Run 44043626083: mCurrentFocus was "Application Not Responding:
   # system" (no package in it) while mFocusedApp was the app — the
   # guard's job is "don't screenshot the launcher", and the app being
   # the focused app satisfies it, so the ANR window must not mask it.
   if echo "$focus" | grep -qi 'Not Responding'; then
-    app=$(adb shell dumpsys window 2>/dev/null | grep -i -m1 'mFocusedApp' || true)
+    # Same stale-first trap: the first mFocusedApp line can be a
+    # googlesdksetup entry while the live one (the app) comes later.
+    app=$(adb shell dumpsys window 2>/dev/null | grep -i 'mFocusedApp' | tail -n 1 || true)
     [ -n "$app" ] && focus="$app"
   fi
   if [ -z "$focus" ]; then

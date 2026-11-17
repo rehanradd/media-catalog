@@ -104,6 +104,12 @@ jobs:
           cores: 2
           emulator-boot-timeout: 900
           disable-animations: true
+          # Run 44059589013's logcat: "Unable to resolve host
+          # firebase-settings.crashlytics.com: No address associated with
+          # hostname" — the AVD's default resolver (10.0.2.3) failed, the
+          # same shape as the Welcome catalog-unreachable in 44048613561.
+          # Point the emulator at public DNS instead.
+          emulator-options: -dns-server 8.8.8.8,8.8.4.4
           # ONE line on purpose: the action runs `script:` line by line in
           # fresh shells (see header comment) — the drive logic lives in
           # .github/scripts/emu-drive.sh so its variables/functions persist.
