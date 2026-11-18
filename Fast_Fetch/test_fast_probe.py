@@ -10,6 +10,8 @@ Pinned here:
 * verdict mapping is DELEGATED to ``link_state.classify`` — the same inputs
   give the same outputs as a ``link_health.ProbeResult``;
 * dedup: one probe per distinct URL, verdicts applied to every row sharing it;
+* selection: a batch spans many hosts — each host contributes at most
+  ``max(4, max_rows // 24)`` rows, so one giant host cannot fill it;
 * host partition: no two concurrent probes on one host, different hosts in
   parallel;
 * keep-alive: one connection per host for the run, one reconnect on a dead
@@ -258,6 +260,38 @@ class SelectionTests(unittest.TestCase):
         by_url = {g["url"]: g for _h, gs in sel["hosts"] for g in gs}
         self.assertEqual(by_url["http://big.example/a.mp4"]["stored"], "dead")
         self.assertEqual(by_url["http://big.example/b.mp4"]["stored"], "active")
+
+    def test_apply_spreads_across_hosts_with_per_host_cap(self):
+        # Skewed set, like the real catalog: one giant host (100k rows) and
+        # 30 small hosts (40 rows each). Without a per-host cap the whole
+        # 1,000-row batch would be the giant host (its count alone exceeds
+        # 2x max_rows) — the first dry-run measured exactly that: 1 host,
+        # 0.75 rows/s, the single-host spacing ceiling, not the prober's rate.
+        rows = [(i + 1, "http://giant.example/f%d.mp4" % i,
+                 "http://giant.example/f%d.mp4" % i)
+                for i in range(100000)]
+        rid = 100001
+        for h in range(30):
+            for j in range(40):
+                url = "http://s%02d.example/f%d.mp4" % (h, j)
+                rows.append((rid, url, url))
+                rid += 1
+        self.conn.executemany(
+            "INSERT INTO download_sources (id, source_url, final_url)"
+            " VALUES (?, ?, ?)", rows)
+        self.conn.commit()
+
+        sel = fast_probe.select_rows(self.conn, max_rows=1000, dry_run=False)
+        self.assertEqual(sel["scanned"], 101200)
+        self.assertEqual(sel["probeable"], 101200)
+        self.assertEqual(sel["distinct_urls"], 1000)
+        hosts = sel["hosts"]
+        # Cap is max(4, 1000 // 24) = 41: the batch spans ~25 hosts.
+        self.assertGreaterEqual(len(hosts), 20)
+        per_host = {h: len(gs) for h, gs in hosts}
+        self.assertLessEqual(max(per_host.values()), 41)
+        self.assertEqual(per_host["giant.example"], 41)
+        self.assertEqual(hosts[0][0], "giant.example")
 
 
 # ── keep-alive session ───────────────────────────────────────────────────────

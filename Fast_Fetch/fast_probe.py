@@ -75,8 +75,10 @@ Apply mode — fresh unchecked rows, biggest hosts first::
     SELECT id, source_url, final_url FROM download_sources WHERE checked_at IS NULL
 
 Pass 1 counts rows per host (probe target = ``final_url`` or ``source_url``).
-Pass 2 keeps rows whose host is in the top set (cumulative host count >=
-2x ``--max-rows``), capped at 2x ``--max-rows`` rows. Kept rows are
+Pass 2 keeps rows whose host is in the top set (cumulative *capped* host
+count >= 2x ``--max-rows``), capped at 2x ``--max-rows`` rows — and each
+host contributes at most ``max(4, max_rows // 24)`` rows, so a batch spans
+~24 hosts instead of collapsing onto the biggest one. Kept rows are
 deduped by exact target URL and taken in host-count-desc, id order until
 ``--max-rows`` distinct URLs.
 
@@ -141,6 +143,16 @@ WRITER_BUSY_TIMEOUT_MS = 30000
 WRITER_LOCK_RETRIES = 5
 #: Pass 2 keeps at most this multiple of --max-rows rows (bounded memory).
 SELECT_KEEP_MULTIPLIER = 2
+#: Per-host cap divisor: a pilot batch spans ~24 hosts (``max_rows // 24``
+#: rows per host), so the rate the pilot measures is the multi-host rate,
+#: not one host's 1.0s-spacing ceiling. Measured 2026-11-18: without a cap
+#: the first dry-run picked 1,000 streamtape rows from a single host and
+#: measured 0.75 rows/s — the single-host ceiling, not the prober's rate.
+PER_HOST_CAP_DIVISOR = 24
+#: Per-host cap floor: below it a small batch could not even take the
+#: biggest host's first rows (the 4-row selection test pins
+#: biggest-host-first); at pilot scale the cap is ``max_rows // 24``.
+PER_HOST_CAP_FLOOR = 4
 #: Dry-run "recent verdict" window: re-probe verdicts from the last 7 days.
 COMPARE_SINCE_SECONDS = 7 * 86400
 
@@ -450,13 +462,16 @@ def select_rows(conn: sqlite3.Connection, *, max_rows: int = DEFAULT_MAX_ROWS,
 
     Pass 1 streams the candidate set once and counts rows per host. Pass 2
     streams it again and keeps rows whose host is in the top set (cumulative
-    host count >= 2x ``max_rows``), capped at 2x ``max_rows`` rows. Kept rows
-    are deduped by exact target URL and taken in host-count-desc, id order
-    until ``max_rows`` distinct URLs. ``stored`` is the row's current status
-    (dry-run compare only; ``None`` in apply mode).
+    *capped* host count >= 2x ``max_rows``), capped at 2x ``max_rows`` rows.
+    Each host contributes at most ``max(4, max_rows // 24)`` kept rows, so a
+    batch spans ~24 hosts instead of collapsing onto the biggest one. Kept
+    rows are deduped by exact target URL and taken in host-count-desc, id
+    order until ``max_rows`` distinct URLs. ``stored`` is the row's current
+    status (dry-run compare only; ``None`` in apply mode).
     """
     max_rows = max(1, int(max_rows))
     keep_cap = max_rows * SELECT_KEEP_MULTIPLIER
+    per_host_cap = max(PER_HOST_CAP_FLOOR, max_rows // PER_HOST_CAP_DIVISOR)
     if dry_run:
         since = time.time() - float(since_seconds)
         where = "WHERE checked_at IS NOT NULL AND checked_at >= ?"
@@ -481,17 +496,20 @@ def select_rows(conn: sqlite3.Connection, *, max_rows: int = DEFAULT_MAX_ROWS,
         probeable += 1
         counts[host] = counts.get(host, 0) + 1
     cur.close()
-    # Top hosts: biggest first, until their rows cover 2x the pilot.
+    # Top hosts: biggest first, until their CAPPED rows cover 2x the pilot.
+    # (Counting capped rows, not raw counts: one giant host alone exceeds
+    # 2x max_rows, and without the cap the whole batch would be that host.)
     ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
     top: set[str] = set()
     covered = 0
     for host, count in ranked:
         top.add(host)
-        covered += count
+        covered += min(count, per_host_cap)
         if covered >= keep_cap:
             break
-    # Pass 2 — keep rows of the top hosts, bounded.
+    # Pass 2 — keep rows of the top hosts, bounded, per-host capped.
     kept: list[dict] = []
+    kept_per_host: dict[str, int] = {}
     cur = conn.execute(
         f"SELECT id, source_url, final_url{extra} FROM download_sources {where}",
         params)
@@ -504,6 +522,9 @@ def select_rows(conn: sqlite3.Connection, *, max_rows: int = DEFAULT_MAX_ROWS,
         host = target_host(target)
         if not host or host not in top:
             continue
+        if kept_per_host.get(host, 0) >= per_host_cap:
+            continue
+        kept_per_host[host] = kept_per_host.get(host, 0) + 1
         kept.append({"id": int(rid), "url": target, "host": host, "stored": stored})
     cur.close()
     # Dedup by exact target URL, host-rank order, then id order.
