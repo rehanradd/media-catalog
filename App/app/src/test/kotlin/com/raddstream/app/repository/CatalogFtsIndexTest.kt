@@ -109,7 +109,7 @@ class CatalogFtsIndexTest {
         repository.getPostDetail(55)
         assertEquals(
             listOf("Pathaan"),
-            db.catalogFtsDao().search("\"path\"*", 10).map { it.title },
+            db.catalogFtsDao().search("path*", 10).map { it.title },
         )
     }
 
