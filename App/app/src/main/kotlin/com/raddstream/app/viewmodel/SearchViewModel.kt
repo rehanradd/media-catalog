@@ -547,7 +547,7 @@ class SearchViewModel @Inject constructor(
         } else {
             _uiState.value.filters.type
         }
-        _uiState.update { it.copy(query = query, error = null, filters = it.filters.copy(type = type)) }
+        _uiState.update { it.copy(query = query, filters = it.filters.copy(type = type)) }
         scheduleSearch()
         scheduleSuggest()
         // Feel-instant S3a/S3c: the local index answers at once, no
