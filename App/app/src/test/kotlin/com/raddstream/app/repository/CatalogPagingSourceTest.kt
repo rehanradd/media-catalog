@@ -1,6 +1,5 @@
 package com.raddstream.app.repository
 
-import androidx.paging.LoadResult
 import androidx.paging.PagingSource
 import androidx.paging.testing.TestPager
 import com.raddstream.app.network.models.Post
@@ -319,7 +318,7 @@ class CatalogPagingSourceTest {
 
         assertEquals(
             "no total, no placeholder tail — the list just ends when the cursor does",
-            LoadResult.Page.COUNT_UNDEFINED,
+            PagingSource.LoadResult.Page.COUNT_UNDEFINED,
             result.itemsAfter,
         )
     }
