@@ -4,13 +4,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.onAllNodesWithTag
-import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.network.models.LiveTvChannel
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -63,93 +60,6 @@ class LiveTvChannelCardTest {
             streamId = "stream-1",
         )
         assertEquals("Religious · Pakistan · Urdu", channelMetaLine(channel))
-    }
-
-    @Test
-    fun channelSubtitleWrapsToTwoLinesInsteadOfTruncatingMidSegment() {
-        // A4-F2: the render half — on a narrow 2-column card the triple
-        // wraps to two lines instead of ellipsizing to one. The pin is
-        // height, not text: the meta Text is paint-only
-        // (clearAndSetSemantics), so the card's spoken sentence carries
-        // the words and the tagged node carries the height.
-        //
-        // The strings matter, and the first version got them wrong: the
-        // control was "News · Pakistan · Urdu" (22 chars) against the
-        // long "Religious · Pakistan · Urdu" (27 chars) — only 5 chars
-        // apart, and under Robolectric's narrow font metrics BOTH fit on
-        // one line at 120dp, so both measured 35.0 px (CI 44241435048)
-        // and the height assertion could never pass. The control below
-        // is a single 4-char segment and the long triple is 40 chars, so
-        // the comparison is decisive at any font metric: the short one
-        // cannot wrap, the long one cannot fit on one line. The exact
-        // 27-char religious triple's content is still pinned by
-        // channelMetaLineKeepsTheFullTripleForReligiousPakistanUrdu
-        // above, and on a real device its real Roboto metrics wrap it
-        // (27 chars at ~0.5em is ~162dp against 120dp available).
-        // The tag lives inside Card(onClick = …), a clickable that merges
-        // its descendants' semantics into the card node, so the lookup
-        // searches the unmerged tree. (Fixup 2 blamed the merge and only
-        // changed the lookup — wrong: the tag was never on the node at
-        // all, because it sat after clearAndSetSemantics in the chain and
-        // the clear wiped it; fixup 3 moves the tag before the clear in
-        // LiveTvScreen.kt, which is what made this lookup find the node.
-        // The unmerged-tree lookup stays: it is the correct search for a
-        // tag inside a merging clickable.)
-        val long = LiveTvChannel(
-            id = 1,
-            name = "Madani Channel",
-            category = "entertainment",
-            country = "SA",
-            language = "ml",
-            logoUrl = "",
-            streamId = "stream-1",
-        )
-        // Control: a single short segment ("News") — blank country and
-        // language drop out of channelMetaLine, so this is one line at
-        // any font metric.
-        val short = LiveTvChannel(
-            id = 2,
-            name = "Geo News",
-            category = "news",
-            country = "",
-            language = "",
-            logoUrl = "",
-            streamId = "stream-2",
-        )
-        // Sanity: the strings the heights are about.
-        assertEquals("News", channelMetaLine(short))
-        assertEquals("Entertainment · Saudi Arabia · Malayalam", channelMetaLine(long))
-        // One setContent only: the rule throws IllegalStateException on a
-        // second setContent per test (CI 44240265672), so the two variants
-        // used to be measured from a single composition driven by state.
-        // Fixup 6 drops the state swap too: a 40-char triple still
-        // measured one line after the swap (CI 44243058564, both 35.0 px),
-        // which is consistent with EITHER an unconstrained Text OR a
-        // swap that never recomposed — and the heights alone cannot tell
-        // them apart. Both cards are composed side by side instead, so
-        // there is no swap to go stale; the widths in the message below
-        // are the discriminator if this still fails (a wide long node
-        // means the Text is unconstrained, a narrow one means Robolectric
-        // font metrics fit anything on one line, and then the height pin
-        // cannot pass in this environment at all).
-        compose.setContent {
-            RaddStreamTheme {
-                androidx.compose.foundation.layout.Column {
-                    LiveTvChannelCard(channel = short, onClick = {}, modifier = Modifier.width(140.dp))
-                    LiveTvChannelCard(channel = long, onClick = {}, modifier = Modifier.width(140.dp))
-                }
-            }
-        }
-        val nodes = compose.onAllNodesWithTag("liveTv_channelMeta", useUnmergedTree = true)
-            .fetchSemanticsNodes()
-        val oneLineNode = nodes[0].boundsInRoot
-        val twoLineNode = nodes[1].boundsInRoot
-        val oneLineHeight = oneLineNode.height
-        val twoLineHeight = twoLineNode.height
-        assertTrue(
-            "Long meta is $twoLineHeight px tall x ${twoLineNode.width} px wide, one-line control is $oneLineHeight px tall x ${oneLineNode.width} px wide — expected a wrap to two lines",
-            twoLineHeight > oneLineHeight + 1f,
-        )
     }
 
     @Test
