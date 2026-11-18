@@ -1,10 +1,10 @@
 package com.raddstream.app.ui.screens
 
 import androidx.compose.foundation.layout.width
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.network.models.LiveTvChannel
@@ -121,21 +121,33 @@ class LiveTvChannelCardTest {
         assertEquals("Entertainment · Saudi Arabia · Malayalam", channelMetaLine(long))
         // One setContent only: the rule throws IllegalStateException on a
         // second setContent per test (CI 44240265672), so the two variants
-        // are measured from a single composition driven by state.
-        val channelState = mutableStateOf(short)
+        // used to be measured from a single composition driven by state.
+        // Fixup 6 drops the state swap too: a 40-char triple still
+        // measured one line after the swap (CI 44243058564, both 35.0 px),
+        // which is consistent with EITHER an unconstrained Text OR a
+        // swap that never recomposed — and the heights alone cannot tell
+        // them apart. Both cards are composed side by side instead, so
+        // there is no swap to go stale; the widths in the message below
+        // are the discriminator if this still fails (a wide long node
+        // means the Text is unconstrained, a narrow one means Robolectric
+        // font metrics fit anything on one line, and then the height pin
+        // cannot pass in this environment at all).
         compose.setContent {
             RaddStreamTheme {
-                LiveTvChannelCard(channel = channelState.value, onClick = {}, modifier = Modifier.width(140.dp))
+                androidx.compose.foundation.layout.Column {
+                    LiveTvChannelCard(channel = short, onClick = {}, modifier = Modifier.width(140.dp))
+                    LiveTvChannelCard(channel = long, onClick = {}, modifier = Modifier.width(140.dp))
+                }
             }
         }
-        val oneLineHeight = compose.onNodeWithTag("liveTv_channelMeta", useUnmergedTree = true)
-            .fetchSemanticsNode().boundsInRoot.height
-        channelState.value = long
-        compose.waitForIdle()
-        val twoLineHeight = compose.onNodeWithTag("liveTv_channelMeta", useUnmergedTree = true)
-            .fetchSemanticsNode().boundsInRoot.height
+        val nodes = compose.onAllNodesWithTag("liveTv_channelMeta", useUnmergedTree = true)
+            .fetchSemanticsNodes()
+        val oneLineNode = nodes[0].boundsInRoot
+        val twoLineNode = nodes[1].boundsInRoot
+        val oneLineHeight = oneLineNode.height
+        val twoLineHeight = twoLineNode.height
         assertTrue(
-            "Long meta is $twoLineHeight px, one-line control is $oneLineHeight px — expected a wrap to two lines",
+            "Long meta is $twoLineHeight px tall x ${twoLineNode.width} px wide, one-line control is $oneLineHeight px tall x ${oneLineNode.width} px wide — expected a wrap to two lines",
             twoLineHeight > oneLineHeight + 1f,
         )
     }
