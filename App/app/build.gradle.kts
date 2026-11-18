@@ -543,6 +543,11 @@ dependencies {
     implementation(libs.play.app.update)
     implementation(libs.play.app.update.ktx)
 
+    // ── Google Cast sender (E2 slice 3 spike) ─────────────────────────────
+    // CastContext / Default Media Receiver wiring only — no cast button UI
+    // yet (see App/docs/CAST_SPIKE_20261118.md). 21.4.0 keeps minSdk 21.
+    implementation(libs.play.services.cast.framework)
+
     // ── Tests ─────────────────────────────────────────────────────────────────
     testImplementation(libs.junit)
     testImplementation(composeBom)

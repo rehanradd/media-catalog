@@ -74,6 +74,15 @@
             android:authorities="${applicationId}.androidx-startup"
             tools:node="remove" />
 
+        <!-- Chromecast spike (E2 slice 3, 2026-11-18): the Cast framework
+             reads this meta-data to find the OptionsProvider that names the
+             receiver application. The Default Media Receiver (CC1AD845)
+             needs no Cast console registration. No cast UI exists yet —
+             see App/docs/CAST_SPIKE_20261118.md. -->
+        <meta-data
+            android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
+            android:value="com.raddstream.app.player.RaddCastOptionsProvider" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
