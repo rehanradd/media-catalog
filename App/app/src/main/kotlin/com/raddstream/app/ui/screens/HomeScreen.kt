@@ -783,6 +783,10 @@ private fun ContinueWatchingRow(
                 CatalogImage(
                     url = tile.post.posterUrl,
                     contentDescription = null,
+                    // A4-F1: the one call site missing a label — a failed
+                    // or hung thumb painted a labelless tile while the
+                    // no-URL branch below already named the title.
+                    fallbackLabel = tile.post.displayTitle,
                     modifier = thumbModifier,
                 )
             } else {

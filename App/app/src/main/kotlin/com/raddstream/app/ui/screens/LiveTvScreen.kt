@@ -60,6 +60,7 @@ import com.raddstream.app.ui.components.CatalogImage
 import com.raddstream.app.ui.components.EmptyState
 import com.raddstream.app.ui.components.ErrorState
 import com.raddstream.app.ui.components.LiveTvLoadingSkeleton
+import com.raddstream.app.ui.components.channelMonogram
 import com.raddstream.app.ui.components.isKnownLanguage
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.layout.CardGeometry
@@ -552,6 +553,11 @@ internal fun LiveTvChannelCard(
                     // badge sits, and a white-background asset reads as a
                     // badge, not a pasted rectangle.
                     fallbackLarge = true,
+                    // A4-F1: the short monogram beside the mark — the full
+                    // name under a 48dp mark overflowed the ~64dp-tall
+                    // plate, so the Robo capture showed the mark with no
+                    // text at all. The card below already prints the name.
+                    monogram = channelMonogram(channel.name),
                     modifier = Modifier.fillMaxSize(0.6f),
                 )
                 Row(
