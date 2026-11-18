@@ -118,7 +118,6 @@ class AppDatabaseMigrationTest {
                 assertTrue("version 10's table must survive the 2 → 10 climb", cursor.moveToFirst())
                 assertEquals(5, cursor.getInt(0))
             }
-            }
         } finally {
             db.close()
         }
