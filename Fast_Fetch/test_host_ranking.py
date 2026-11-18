@@ -51,7 +51,6 @@ import catalog_v2        # noqa: E402
 import fast_fetch        # noqa: E402
 import resolved_cache    # noqa: E402
 import serve_verify      # noqa: E402
-import tiers             # noqa: E402
 import viewer            # noqa: E402
 
 NOW = 1_791_000_000.0
@@ -94,13 +93,16 @@ class DecayedHostScoreTests(unittest.TestCase):
     def test_ancient_evidence_exits_to_neutral(self):
         serve_verify.record_host_failure(self.conn, "b.example", now=NOW)
         self.conn.commit()
-        # One failure 21 days ago weighs 1/8 of a probe — below one
-        # effective probe, so the host is unmeasured again, not dead.
+        # Six weeks on, the single failure still counts — a real probe
+        # does not evaporate into neutral just because time passed.
+        self.assertEqual(serve_verify.host_decayed_rate(
+            self.conn, "b.example", now=NOW + 42 * DAY), 0.0)
+        # Past the 90-day staleness window the host is unmeasured
+        # again, not dead — and the all-time rate still remembers.
         self.assertIsNone(serve_verify.host_decayed_rate(
-            self.conn, "b.example", now=NOW + 21 * DAY))
+            self.conn, "b.example", now=NOW + 100 * DAY))
         self.assertEqual(serve_verify.host_rank_score(
-            self.conn, "b.example", now=NOW + 21 * DAY), 0.5)
-        # ... while the all-time rate still remembers the failure.
+            self.conn, "b.example", now=NOW + 100 * DAY), 0.5)
         self.assertEqual(
             serve_verify.host_live_rate(self.conn, "b.example"), 0.0)
 
@@ -117,7 +119,7 @@ class DecayedHostScoreTests(unittest.TestCase):
         self.assertAlmostEqual(serve_verify.host_live_rate(
             self.conn, "c.example"), 1 / 11)
 
-    def test_decay_preserves_the_rate_until_the_weight_runs_out(self):
+    def test_decay_preserves_the_rate_until_staleness(self):
         serve_verify.seed_host_ranking(
             self.conn, [{"host": "d.example", "probes": 20, "successes": 19}],
             now=NOW)
@@ -125,11 +127,13 @@ class DecayedHostScoreTests(unittest.TestCase):
         # rate is unchanged — only the weight fades.
         self.assertAlmostEqual(serve_verify.host_decayed_rate(
             self.conn, "d.example", now=NOW + 7 * DAY), 0.95)
-        # 70 days on, the weight is below one effective probe: neutral.
+        self.assertAlmostEqual(serve_verify.host_decayed_rate(
+            self.conn, "d.example", now=NOW + 70 * DAY), 0.95)
+        # Past the 90-day staleness window the host is unmeasured.
         self.assertIsNone(serve_verify.host_decayed_rate(
-            self.conn, "d.example", now=NOW + 70 * DAY))
+            self.conn, "d.example", now=NOW + 100 * DAY))
         self.assertEqual(serve_verify.host_rank_score(
-            self.conn, "d.example", now=NOW + 70 * DAY), 0.5)
+            self.conn, "d.example", now=NOW + 100 * DAY), 0.5)
 
     def test_seed_seeds_decayed_counters(self):
         # The checkup's streamtape shape: 63 probes, 6 successes.

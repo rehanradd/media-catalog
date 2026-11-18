@@ -112,9 +112,22 @@ HOST_UNMEASURED_RANK = 0.5
 #: counters live beside the all-time ones: the circuit and the watchdog
 #: keep reading all-time `probes`/`successes`; only the RANK decays.
 HOST_DECAY_HALF_LIFE_S = 7 * 24 * 3600.0
-#: Below one effective (decayed) probe the rank is unmeasured — ancient
-#: evidence exits gracefully to neutral instead of dividing by ~zero.
-HOST_DECAY_MIN_PROBES = 1.0
+#: R1 staleness window (2026-11-18): a host with no measurement in this
+#: long is unmeasured again — ancient evidence exits gracefully to
+#: neutral, and the host is re-measured as unknown instead of carrying
+#: a stale verdict forever. 90 days matches the density policy's
+#: hard-delete horizon (dead + failover sibling + >90 days); the sweep
+#: re-measures every live host far more often than this, so a host this
+#: stale is one the sweep has not touched. The decay half-life above
+#: blends recency into the rate; this window decides when the rate stops
+#: counting at all. (It is a WINDOW, not a decayed-weight threshold:
+#: a 10-probe measurement must not evaporate into neutral just because
+#: six weeks passed — its decayed weight is 0.16, below one effective
+#: probe, yet it is still ten real probes. The weight threshold was the
+#: first version's bug: it failed `test_seed_from_csvs` and
+#: `test_host_priority_orders_the_winner`, which seed at a fixed NOW
+#: and read at real time.)
+HOST_STALE_AFTER_S = 90 * 24 * 3600.0
 #: Checkup #3 (DB-CHECKUP-20261118): a host with this many consecutive
 #: failures is demoted to the back of the failover ladder; at the higher
 #: count it is suppressed (tried last, after every healthier copy) until
@@ -637,9 +650,13 @@ def host_decayed_rate(conn, host: str, *, now: float | None = None):
 
     The stored decayed counters were decayed at the last write; the time
     since then decays them further, so the rank is always current without
-    a background job. Below one effective probe the answer is None —
-    ancient evidence exits gracefully to neutral, and the host is
-    re-measured as unknown instead of carrying a stale verdict forever.
+    a background job. A host whose last measurement is older than
+    `HOST_STALE_AFTER_S` is unmeasured — the rate is the best estimate
+    while the evidence is fresh enough to count, and the window is what
+    lets a host recover, not the decayed weight: a 10-probe measurement
+    must not evaporate into neutral just because six weeks passed
+    (its decayed weight is 0.16 — below one effective probe — yet it is
+    still ten real probes).
     """
     if conn is None or not host:
         return None
@@ -654,8 +671,14 @@ def host_decayed_rate(conn, host: str, *, now: float | None = None):
     if row is None:
         return None
     moment = time.time() if now is None else float(now)
+    try:
+        measured_at = float(row[2] or 0)
+    except (TypeError, ValueError):
+        return None
+    if measured_at <= 0 or moment - measured_at > HOST_STALE_AFTER_S:
+        return None
     probes, successes = _decay_counters(row, moment)
-    if probes < HOST_DECAY_MIN_PROBES:
+    if probes <= 0:
         return None
     return successes / probes
 
