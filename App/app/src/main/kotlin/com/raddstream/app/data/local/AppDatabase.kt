@@ -57,6 +57,11 @@ import com.raddstream.app.data.cache.CacheTaskEntity
  * Version 9 adds `live_tv_favourites`, the starred Live TV channels (E2 slice 1). It is a new
  * table with no prior data, real DDL like 5 and 7: the destructive fallback would still take
  * `favorite_posts` with it, and a star is a promise the same as a saved title.
+ *
+ * Version 10 adds `followed_series`, the bell on a series Detail (E2 slice 2). It is a new table
+ * with no prior data, but it is still real DDL for the same reason 5 and 7 are: the destructive
+ * fallback would take `favorite_posts` with it, and a notification preference is not worth a
+ * saved list.
  */
 @Database(
     entities = [
@@ -69,8 +74,9 @@ import com.raddstream.app.data.cache.CacheTaskEntity
         AdCadenceEntity::class,
         UnavailableWorkEntity::class,
         LiveTvFavourite::class,
+        FollowedSeries::class,
     ],
-    version = 9,
+    version = 10,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -83,6 +89,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun adCadenceDao(): AdCadenceDao
     abstract fun unavailableWorkDao(): UnavailableWorkDao
     abstract fun liveTvFavouriteDao(): LiveTvFavouriteDao
+    abstract fun followedSeriesDao(): FollowedSeriesDao
 
     companion object {
         /**
@@ -275,6 +282,23 @@ abstract class AppDatabase : RoomDatabase() {
                     "CREATE TABLE IF NOT EXISTS live_tv_favourites (" +
                         "channelId INTEGER NOT NULL, starredAt INTEGER NOT NULL, " +
                         "PRIMARY KEY(channelId))",
+                )
+            }
+        }
+
+        /**
+         * 9 → 10: the followed-series table. One statement, no existing row touched — the
+         * column names and nullability are Room's own for [FollowedSeries], so a drift
+         * throws Room's schema validation the first time a device opens the migrated
+         * database, exactly like the 2 → 3 step.
+         */
+        val MIGRATION_9_10: Migration = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS followed_series (" +
+                        "workRef TEXT NOT NULL, cleanTitle TEXT, title TEXT NOT NULL, " +
+                        "posterUrl TEXT, lastSeenSeason INTEGER, lastSeenEpisode INTEGER, " +
+                        "followedAt INTEGER NOT NULL, PRIMARY KEY(workRef))",
                 )
             }
         }

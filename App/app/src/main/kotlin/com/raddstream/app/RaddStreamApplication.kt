@@ -16,6 +16,7 @@ import com.raddstream.app.data.Telemetry
 import com.raddstream.app.data.cache.CacheEngineRunner
 import com.raddstream.app.data.cache.CacheSweepWorker
 import com.raddstream.app.data.cache.KeepTtlHolder
+import com.raddstream.app.data.follow.FollowSeriesWorker
 import com.raddstream.app.data.downloads.DeviceDownloadsRepository
 import com.raddstream.app.images.ImageSizingHolder
 import com.raddstream.app.share.LanShareRunner
@@ -135,6 +136,15 @@ class RaddStreamApplication : Application(), Configuration.Provider {
             CacheSweepWorker.UNIQUE_NAME,
             ExistingPeriodicWorkPolicy.KEEP,
             PeriodicWorkRequestBuilder<CacheSweepWorker>(1, TimeUnit.DAYS).build(),
+        )
+        // E2 slice 2: the daily new-episode check for followed series.
+        // KEEP means a reinstall of this line never duplicates the work;
+        // a failure never retries, the next day covers it. Battery-not-low
+        // is the only constraint — Wi-Fi is deliberately not required.
+        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+            FollowSeriesWorker.UNIQUE_NAME,
+            ExistingPeriodicWorkPolicy.KEEP,
+            FollowSeriesWorker.request(),
         )
     }
 }

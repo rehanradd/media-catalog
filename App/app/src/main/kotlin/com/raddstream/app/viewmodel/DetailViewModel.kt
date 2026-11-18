@@ -38,6 +38,7 @@ import com.raddstream.app.player.QualityOption
 import com.raddstream.app.player.SubtitleTrackInfo
 import com.raddstream.app.repository.CatalogRepository
 import com.raddstream.app.repository.FavoritesRepository
+import com.raddstream.app.repository.FollowedSeriesRepository
 import com.raddstream.app.repository.V2DetailResult
 import com.raddstream.app.repository.V2PlayResult
 import com.raddstream.app.sync.SyncAccountRepository
@@ -74,6 +75,14 @@ data class DetailUiState(
     val selectedSeason: Int? = null,
     val isLoading: Boolean = true,
     val isFavorite: Boolean = false,
+    /**
+     * E2 slice 2: the "Notify me" bell. True when this work's handle is on
+     * the follow list — the daily worker then watches it for a newer
+     * season/episode. False for a title with no handle: the bell is hidden
+     * there, because a follow with nothing to name the work by could never
+     * be checked.
+     */
+    val isFollowed: Boolean = false,
     val error: String? = null,
     val actionMessage: String? = null,
     /** One row per quality band, as the server collapsed them. Empty until it has any. */
@@ -373,6 +382,7 @@ class DetailViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val catalogRepository: CatalogRepository,
     private val favoritesRepository: FavoritesRepository,
+    private val followedSeriesRepository: FollowedSeriesRepository,
     private val deviceDownloads: DeviceDownloadsRepository,
     private val apiProvider: ApiProvider,
     private val syncAccountRepository: SyncAccountRepository,
@@ -673,6 +683,45 @@ class DetailViewModel @Inject constructor(
         }
     }
 
+    /** E2 slice 2: the bell's state, from the follow list, keyed by the work's handle. */
+    private fun observeFollowed(workRef: String?) {
+        val ref = workRef?.takeIf { it.isNotBlank() } ?: return
+        viewModelScope.launch {
+            followedSeriesRepository.isFollowed(ref).collect { followed ->
+                _uiState.update { it.copy(isFollowed = followed) }
+            }
+        }
+    }
+
+    /**
+     * E2 slice 2: the "Notify me" bell. Following seeds the last-seen
+     * scope from this detail (see [FollowedSeriesRepository.follow]), so
+     * the episodes already on the page are never announced as new; the
+     * daily worker then watches for anything strictly newer. A title
+     * with no handle cannot be followed — the bell is hidden there, so
+     * this guard is the second line, not the first.
+     */
+    fun toggleFollow() {
+        val detail = _uiState.value.post ?: return
+        if (detail.workRef.isNullOrBlank()) {
+            _uiState.update { it.copy(actionMessage = "Could not follow this title right now.") }
+            return
+        }
+        viewModelScope.launch {
+            val isNowFollowed = followedSeriesRepository.toggleFollow(detail)
+            _uiState.update {
+                it.copy(
+                    isFollowed = isNowFollowed,
+                    actionMessage = if (isNowFollowed) {
+                        "You'll be notified about new episodes"
+                    } else {
+                        "Notifications off for this series"
+                    },
+                )
+            }
+        }
+    }
+
     /**
      * Appetize FAILED 2 (2026-11-12) — the detail fetch, retried.
      *
@@ -776,6 +825,10 @@ class DetailViewModel @Inject constructor(
                     // The catalog answer is ungated; what the viewer may SEE is decided here,
                     // from the entitlement the repository already holds.
                     publishViewerContent()
+                    // E2 slice 2: the bell follows the handle, not the post id — a
+                    // v2 detail whose bridge found no v1 post still has a handle
+                    // worth following, so this is gated on the handle alone.
+                    observeFollowed(detail.workRef)
                     // Gap A2: pre-resolve the top link now, while the viewer
                     // is still reading the page, so Play does not pay the
                     // `playV2` round trip first.

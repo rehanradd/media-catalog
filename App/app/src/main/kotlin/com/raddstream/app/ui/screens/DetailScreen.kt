@@ -59,6 +59,8 @@ import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
@@ -196,12 +198,12 @@ fun DetailScreen(
     val state by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
-    var pendingDownload by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var pendingPermissionAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        val action = pendingDownload
-        pendingDownload = null
+        val action = pendingPermissionAction
+        pendingPermissionAction = null
         if (granted) action?.invoke()
         else Toast.makeText(
             context,
@@ -212,8 +214,8 @@ fun DetailScreen(
     val notificationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) {
-        val action = pendingDownload
-        pendingDownload = null
+        val action = pendingPermissionAction
+        pendingPermissionAction = null
         // A denied notification still lets the download run; only the progress card is silent.
         action?.invoke()
     }
@@ -225,7 +227,7 @@ fun DetailScreen(
                 Manifest.permission.POST_NOTIFICATIONS,
             ) != PackageManager.PERMISSION_GRANTED
         if (needsGrant) {
-            pendingDownload = action
+            pendingPermissionAction = action
             notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else {
             action()
@@ -239,7 +241,7 @@ fun DetailScreen(
                 Manifest.permission.WRITE_EXTERNAL_STORAGE,
             ) != PackageManager.PERMISSION_GRANTED
         if (needsLegacyGrant) {
-            pendingDownload = { requestNotificationsThen(action) }
+            pendingPermissionAction = { requestNotificationsThen(action) }
             permissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         } else {
             requestNotificationsThen(action)
@@ -511,6 +513,13 @@ fun DetailScreen(
                 onRetryReload = viewModel::loadDetail,
                 isFavorite = state.isFavorite,
                 onToggleFavorite = viewModel::toggleFavorite,
+                // E2 slice 2: the bell asks for the notification permission
+                // first (the one the download service already declares —
+                // no new permission), then toggles the follow. A denial
+                // still follows: the row is kept, only the announcement is
+                // silent until the viewer grants it in Settings.
+                isFollowed = state.isFollowed,
+                onToggleFollow = { requestNotificationsThen { viewModel.toggleFollow() } },
                 onShare = {
                     shareTitle(context, post)
                 },
@@ -981,6 +990,9 @@ internal fun DetailContent(
     onRetryReload: () -> Unit,
     isFavorite: Boolean,
     onToggleFavorite: () -> Unit,
+    /** E2 slice 2: the "Notify me" bell — series only, handle required (see below). */
+    isFollowed: Boolean = false,
+    onToggleFollow: () -> Unit = {},
     onShare: () -> Unit,
     /** Open the broken-stream report — the utility row's Report action. */
     onReport: () -> Unit = {},
@@ -1091,6 +1103,13 @@ internal fun DetailContent(
                 modifier = pageSides,
                 isFavorite = isFavorite,
                 onToggleFavorite = onToggleFavorite,
+                // E2 slice 2: the bell shows only on a series the catalog
+                // named with a handle — a film has no next episode, and a
+                // handle-less title has nothing the daily check could ask
+                // the catalog about.
+                showFollow = isSeries && !post.workRef.isNullOrBlank(),
+                isFollowed = isFollowed,
+                onToggleFollow = onToggleFollow,
                 onShare = onShare,
                 hasSimilar = similarTitles.isNotEmpty(),
                 onBrowseSimilar = {
@@ -1903,12 +1922,16 @@ private fun PrimaryActions(
  * one screen. Similar appears only when the rail below has titles;
  * Report opens the same broken-stream dialog the top bar's More menu
  * offers (kept in both places: the bar for discoverability, this row
- * for thumb reach).
+ * for thumb reach). E2 slice 2 adds "Notify me" on a series with a
+ * handle — the bell that follows the series for new episodes.
  */
 @Composable
 private fun DetailUtilityRow(
     isFavorite: Boolean,
     onToggleFavorite: () -> Unit,
+    showFollow: Boolean = false,
+    isFollowed: Boolean = false,
+    onToggleFollow: () -> Unit = {},
     onShare: () -> Unit,
     hasSimilar: Boolean,
     onBrowseSimilar: () -> Unit,
@@ -1926,6 +1949,15 @@ private fun DetailUtilityRow(
             tint = if (isFavorite) MaterialTheme.colorScheme.secondary else Color.Unspecified,
             onClick = onToggleFavorite,
         )
+        if (showFollow) {
+            UtilityAction(
+                icon = if (isFollowed) Icons.Default.NotificationsActive else Icons.Default.Notifications,
+                label = if (isFollowed) "Following" else "Notify me",
+                contentDescription = followActionLabel(isFollowed),
+                tint = if (isFollowed) MaterialTheme.colorScheme.secondary else Color.Unspecified,
+                onClick = onToggleFollow,
+            )
+        }
         UtilityAction(
             icon = Icons.Default.Share,
             label = "Share",
@@ -1986,6 +2018,10 @@ private fun RowScope.UtilityAction(
 /** Action label for the My List toggle button under Play. */
 internal fun favoriteActionLabel(isFavorite: Boolean): String =
     if (isFavorite) "Saved in My List" else "Save to My List"
+
+/** Action label for the "Notify me" bell (E2 slice 2). */
+internal fun followActionLabel(isFollowed: Boolean): String =
+    if (isFollowed) "Following this series — tap to stop notifications" else "Notify me about new episodes"
 
 /**
  * Whether this print gets the viewer somewhere: our player can start a file, or the provider's own
