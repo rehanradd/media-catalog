@@ -1,5 +1,6 @@
 package com.raddstream.app.ui.components
 
+import android.graphics.Bitmap
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
@@ -55,6 +56,7 @@ import com.raddstream.app.ui.theme.PressHaptics
 import com.raddstream.app.ui.theme.RaddArtScrim
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.ui.theme.pressScale
+import com.raddstream.app.ui.theme.rememberArtworkAccent
 
 /**
  * The canonical catalog tile. Used by Home rails, the search grid, My List and
@@ -242,6 +244,16 @@ fun PosterCard(
             contentAlignment = Alignment.BottomStart,
         ) {
             val posterUrl = post.posterUrl?.takeIf { it.isNotBlank() }
+            // S5: the poster's own accent, sampled once its bitmap lands —
+            // the loading slot paints in this colour at low alpha instead
+            // of grey, so a rail fills in as its own palette. Before the
+            // first load there is no bitmap, so the accent is the brand
+            // fallback (the floor, not a guess); a tile whose poster has
+            // loaded once repaints its own colour on every later load.
+            // Keyed on the post, so a recycled slot never wears the
+            // previous title's colour.
+            var posterBitmap by remember(post.id) { mutableStateOf<Bitmap?>(null) }
+            val posterAccent = rememberArtworkAccent(posterBitmap)
             if (posterUrl == null) {
                 ImageFallbackCard(
                     modifier = Modifier.fillMaxSize(),
@@ -257,6 +269,8 @@ fun PosterCard(
                     // A dead poster URL must not look like "no artwork exists" — the
                     // branded fallback says what failed, and keeps the title readable.
                     fallbackLabel = title,
+                    onBitmap = { posterBitmap = it },
+                    accentTint = posterAccent,
                 )
             }
 

@@ -103,6 +103,7 @@ import com.raddstream.app.ui.components.InlineLoadFailure
 import com.raddstream.app.ui.components.ErrorState
 import com.raddstream.app.ui.components.MediaRail
 import com.raddstream.app.ui.components.PosterCard
+import com.raddstream.app.ui.components.PosterCellSkeleton
 import com.raddstream.app.ui.components.SearchResultsSkeleton
 import com.raddstream.app.ui.components.SectionHeader
 import com.raddstream.app.ui.components.SkeletonBox
@@ -805,7 +806,9 @@ internal const val SearchDiscoverySkeletonTag = "search-discovery-skeleton"
  * data lands. Hand-built rows, not PosterRailSkeleton/PosterGridSkeleton:
  * those are lazy layouts and this column scrolls — a lazy child inside it
  * measures with infinite height (Robo #6, the same crash the sheet's
- * heightIn(max = 1200.dp) cap fixed).
+ * heightIn(max = 1200.dp) cap fixed). The cells themselves are the shared
+ * [PosterCellSkeleton], so a discovery cell and a rail cell are the same
+ * height by construction, not by a second set of numbers.
  */
 @Composable
 internal fun SearchDiscoverySkeleton(modifier: Modifier = Modifier) {
@@ -815,36 +818,30 @@ internal fun SearchDiscoverySkeleton(modifier: Modifier = Modifier) {
             .verticalScroll(rememberScrollState())
             .testTag(SearchDiscoverySkeletonTag),
     ) {
-        Spacer(Modifier.height(16.dp))
         // Header slots: shimmer bars where "Trending now" and
-        // "Recommended for you" will sit.
-        SkeletonBox(
-            Modifier.width(120.dp).height(20.dp),
-            shape = RoundedCornerShape(4.dp),
-        )
+        // "Recommended for you" will sit. A SectionHeader is its 24dp
+        // title with 8dp top and bottom padding, under the section's own
+        // top padding — the old 20dp bars left each header 12dp short.
+        // The bar carries the header's own padding, then the 8dp gap to
+        // the section below it.
+        Box(Modifier.fillMaxWidth().padding(top = 16.dp).padding(vertical = 8.dp)) {
+            SkeletonBox(
+                Modifier.width(120.dp).height(24.dp),
+                shape = RoundedCornerShape(4.dp),
+            )
+        }
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             repeat(4) {
-                Column(
-                    Modifier.width(CardGeometry.RAIL_CARD_WIDTH_DP.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    SkeletonBox(
-                        Modifier.fillMaxWidth(),
-                        aspectRatioValue = CardGeometry.POSTER_ASPECT,
-                    )
-                    SkeletonBox(
-                        Modifier.fillMaxWidth().height(12.dp),
-                        shape = RoundedCornerShape(6.dp),
-                    )
-                }
+                PosterCellSkeleton(Modifier.width(CardGeometry.RAIL_CARD_WIDTH_DP.dp))
             }
         }
-        Spacer(Modifier.height(20.dp))
-        SkeletonBox(
-            Modifier.width(170.dp).height(20.dp),
-            shape = RoundedCornerShape(4.dp),
-        )
+        Box(Modifier.fillMaxWidth().padding(top = 20.dp).padding(vertical = 8.dp)) {
+            SkeletonBox(
+                Modifier.width(170.dp).height(24.dp),
+                shape = RoundedCornerShape(4.dp),
+            )
+        }
         Spacer(Modifier.height(8.dp))
         repeat(2) {
             Row(
@@ -852,19 +849,7 @@ internal fun SearchDiscoverySkeleton(modifier: Modifier = Modifier) {
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 repeat(3) {
-                    Column(
-                        Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        SkeletonBox(
-                            Modifier.fillMaxWidth(),
-                            aspectRatioValue = CardGeometry.POSTER_ASPECT,
-                        )
-                        SkeletonBox(
-                            Modifier.fillMaxWidth().height(12.dp),
-                            shape = RoundedCornerShape(6.dp),
-                        )
-                    }
+                    PosterCellSkeleton(Modifier.weight(1f))
                 }
             }
             Spacer(Modifier.height(12.dp))

@@ -66,6 +66,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.raddstream.app.data.local.LocalVideoFile
 import com.raddstream.app.player.QualityOption
 import com.raddstream.app.ui.components.EmptyState
+import com.raddstream.app.ui.components.rememberDelayedVisible
 import com.raddstream.app.viewmodel.LocalFilesViewModel
 import com.raddstream.app.viewmodel.formatTime
 
@@ -133,11 +134,17 @@ fun LocalFilesScreen(
         },
     ) { contentPadding ->
         when {
-            state.isLoading -> Box(
-                modifier = Modifier.fillMaxSize().padding(contentPadding),
-                contentAlignment = Alignment.Center,
-            ) {
-                CircularProgressIndicator()
+            state.isLoading -> {
+                // S5: a local scan that lands in under 250ms never flashes
+                // a spinner — the screen stays blank until the wait proves
+                // long, then the spinner appears.
+                val showSpinner = rememberDelayedVisible(true)
+                Box(
+                    modifier = Modifier.fillMaxSize().padding(contentPadding),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (showSpinner) CircularProgressIndicator()
+                }
             }
             state.needsPermission -> Column(
                 modifier = Modifier.fillMaxSize().padding(contentPadding).padding(32.dp),

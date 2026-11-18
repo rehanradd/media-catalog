@@ -1713,6 +1713,10 @@ private fun PosterHeader(
                     // F6 (Batch A): the full title, not initials.
                     fallbackLabel = detailDisplayTitle(post),
                     onBitmap = { posterBitmap = it },
+                    // S5: the loading slot paints in the poster's own
+                    // accent, like the rail tiles — the accent is already
+                    // sampled here for the border.
+                    accentTint = posterAccent,
                 )
             } else {
                 ImageFallbackCard(

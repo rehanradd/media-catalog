@@ -21,6 +21,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -142,6 +143,16 @@ fun CatalogImage(
      * [channelMonogram] for the derivation. Only the logo plate passes one.
      */
     monogram: String? = null,
+    /**
+     * S5 (feel-instant): the poster's own accent, sampled by the caller
+     * from a bitmap it already holds ([PosterCard], the detail poster
+     * header). While this image loads, the slot paints in this colour at
+     * low alpha with the shimmer band over it — the artwork arriving in
+     * its own palette instead of a grey box. Null keeps the branded
+     * fallback card + band (every other caller: hero backdrops, channel
+     * logos, and any tile whose poster has never loaded).
+     */
+    accentTint: Color? = null,
 ) {
     val context = LocalContext.current
     val holder = remember(context) { imageSizingHolder(context) }
@@ -150,6 +161,10 @@ fun CatalogImage(
     val settingsRepository = remember(context) { serverSettingsRepository(context) }
     val serverUrl by settingsRepository.serverUrl.collectAsState(initial = null)
     val serverHost = remember(serverUrl) { ArtUrlPolicy.hostOf(serverUrl) }
+    // S5: a loaded poster fades in over its tinted slot instead of
+    // popping — 200ms, or a snap for reduced motion (the 30ms crossfade
+    // the motion system already uses for everything else).
+    val crossfadeMs = if (rememberReduceMotion()) 0 else 200
 
     // The load attempt this URL is on: 0 is the first request, and each
     // failure below bumps it (bounded) while a tap on the failed tile bumps
@@ -157,7 +172,7 @@ fun CatalogImage(
     // re-issues the fetch instead of re-showing the same failure.
     var attempt by remember(url) { mutableIntStateOf(0) }
 
-    val request = remember(url, sizing, metered, serverHost, allowAnyHost, attempt) {
+    val request = remember(url, sizing, metered, serverHost, allowAnyHost, attempt, crossfadeMs) {
         val decision = ImageSizingPolicy.decide(
             widthPx = sizing.posterMaxWidthPx,
             imagesAllowedOnMobileData = sizing.imagesAllowedOnMobileData,
@@ -174,6 +189,7 @@ fun CatalogImage(
             ImageRequest.Builder(context)
                 .data(clean)
                 .size(decision.widthPx, decision.widthPx)
+                .crossfade(crossfadeMs)
                 .build()
         } else {
             null
@@ -221,15 +237,26 @@ fun CatalogImage(
         // #20282A plate (Robo: Fan Letter, Kesariya@100) whenever the band
         // was off-frame. A gated or blank URL never reaches this slot, so
         // the surface behind the card stays the truth in that case.
+        // S5: when the caller sampled the poster's own accent, the slot
+        // paints in that colour at low alpha instead of the fallback
+        // card — the title already sits in the text row below the poster,
+        // so the slot carries no card here, just the tint and the band.
         loading = {
             loadingContent?.invoke() ?: Box(Modifier.fillMaxSize()) {
-                ImageFallbackCard(
-                    label = fallbackLabel,
-                    monogram = monogram,
-                    modifier = Modifier.fillMaxSize(),
-                    tone = fallbackTone,
-                    large = fallbackLarge,
-                )
+                if (accentTint != null) {
+                    Box(
+                        Modifier.fillMaxSize()
+                            .background(accentTint.copy(alpha = ACCENT_TINT_ALPHA)),
+                    )
+                } else {
+                    ImageFallbackCard(
+                        label = fallbackLabel,
+                        monogram = monogram,
+                        modifier = Modifier.fillMaxSize(),
+                        tone = fallbackTone,
+                        large = fallbackLarge,
+                    )
+                }
                 ShimmerBox(Modifier.fillMaxSize(), bandOnly = true)
             }
         },
@@ -295,6 +322,13 @@ internal fun CatalogImageErrorSlot(
         )
     }
 }
+
+/**
+ * S5: the accent tint's strength in a loading slot — the poster's own
+ * colour, lifted to clear 4.5:1 by [rememberArtworkAccent], at a low
+ * alpha so the slot reads as a tint, not a solid.
+ */
+internal const val ACCENT_TINT_ALPHA = 0.18f
 
 /**
  * Auto-retries for a failed catalog image: the first load plus

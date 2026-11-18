@@ -1,12 +1,9 @@
 package com.raddstream.app.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -14,7 +11,6 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -31,8 +27,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -42,6 +38,7 @@ import com.raddstream.app.ui.components.EmptyState
 import com.raddstream.app.ui.components.ErrorState
 import com.raddstream.app.ui.components.InlineLoadFailure
 import com.raddstream.app.ui.components.PosterCard
+import com.raddstream.app.ui.components.PosterCellSkeleton
 import com.raddstream.app.ui.components.PosterGridSkeleton
 import com.raddstream.app.ui.components.rememberGridEndlessPaging
 import com.raddstream.app.viewmodel.BrowseViewModel
@@ -159,10 +156,15 @@ internal fun BrowsePosterGrid(
             PosterCard(post = post, onClick = { onPostClick(post) })
         }
         if (loadingMore) {
-            item {
-                Box(Modifier.fillMaxWidth().height(60.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(Modifier.height(28.dp), strokeWidth = 2.dp)
-                }
+            // S5: placeholder rows, not a spinner — the incoming page is
+            // poster cards, so the footer stands in with the same cells
+            // (the grid's own spacing lays them out in the right columns),
+            // and a spinner in a single 60dp cell both jumped the layout
+            // and flashed on fast pages. Four cells is two rows on a
+            // phone; the ViewModel guards re-entrant loadMore, so the
+            // extra items cannot re-trigger the page.
+            items(LOAD_MORE_SKELETON_CELLS) {
+                PosterCellSkeleton(Modifier.testTag("browseLoadMoreSkeleton"))
             }
         }
         // The grid is what the viewer can see; a page that failed to arrive is not.
@@ -174,3 +176,6 @@ internal fun BrowsePosterGrid(
         }
     }
 }
+
+/** Poster cells the load-more footer stands in with — two rows on a phone. */
+private const val LOAD_MORE_SKELETON_CELLS = 4

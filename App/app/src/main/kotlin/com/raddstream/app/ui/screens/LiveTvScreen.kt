@@ -66,6 +66,7 @@ import com.raddstream.app.ui.components.ErrorState
 import com.raddstream.app.ui.components.LiveTvLoadingSkeleton
 import com.raddstream.app.ui.components.RaddChip
 import com.raddstream.app.ui.components.ScrollingChipRow
+import com.raddstream.app.ui.components.rememberDelayedVisible
 import com.raddstream.app.ui.components.channelMonogram
 import com.raddstream.app.ui.components.isKnownLanguage
 import com.raddstream.app.ui.components.raddFilterChipColors
@@ -133,7 +134,13 @@ fun LiveTvScreen(
                         enabled = !state.isLoading,
                         modifier = Modifier.semantics { contentDescription = "Refresh channels" },
                     ) {
-                        if (state.isLoading) {
+                        // S5: a refresh that lands in under 250ms never
+                        // flashes a spinner in the button — the static icon
+                        // stays until the wait proves long, and a spinner
+                        // that does appear stays up 500ms so it never
+                        // flickers off in the same beat.
+                        val showSpinner = rememberDelayedVisible(state.isLoading)
+                        if (showSpinner) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(20.dp),
                                 strokeWidth = 2.dp,

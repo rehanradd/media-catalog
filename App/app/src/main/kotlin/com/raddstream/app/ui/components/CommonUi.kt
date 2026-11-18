@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyGridState
@@ -43,27 +44,36 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
+import android.os.SystemClock
 import android.provider.Settings
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Surface
@@ -350,18 +360,26 @@ fun ShimmerBox(
         modifier
             .clip(shape)
             .then(if (bandOnly) Modifier else Modifier.background(base))
-            .drawWithContent {
-                drawContent()
+            // S5: the band's gradient is built once per size and the
+            // animation translates the canvas under it — the old code
+            // rebuilt the Brush every frame for every shimmer on screen.
+            // The translation is pixel-identical to the old moving
+            // gradient: a point (px, py) samples the same t either way.
+            .drawWithCache {
                 val band = size.width * 0.55f
-                val travel = size.width + band * 2f
-                val x = -band + travel * progress
-                drawRect(
-                    Brush.linearGradient(
-                        colors = listOf(Color.Transparent, highlight.copy(alpha = highlightAlpha), Color.Transparent),
-                        start = Offset(x, 0f),
-                        end = Offset(x + band, size.height),
-                    )
+                val brush = Brush.linearGradient(
+                    colors = listOf(Color.Transparent, highlight.copy(alpha = highlightAlpha), Color.Transparent),
+                    start = Offset(0f, 0f),
+                    end = Offset(band, size.height),
                 )
+                onDrawWithContent {
+                    drawContent()
+                    val travel = size.width + band * 2f
+                    val x = -band + travel * progress
+                    translate(left = x) {
+                        drawRect(brush, size = Size(band, size.height))
+                    }
+                }
             }
             // Robo run 7: decorative placeholder — no words, no node in the
             // accessibility tree (see the KDoc above).
@@ -395,32 +413,38 @@ fun SkeletonBox(
  * The text column under a poster tile, exactly as [PosterCard] draws it — the
  * one shared shape for every rail cell and grid cell, so a tile and its
  * placeholder are the same height:
- * - title slot: titleSmall's 20dp line, twice (40dp) — a one-line title
- *   leaves the same slot, so two bars stand in for the two lines;
- * - details line ("2023 · Movie"): labelSmall, 16dp;
- * - badge slot: always 24dp, whether or not this title carries a badge;
- * - the card's 10dp bottom padding, inside the column like the real Row's.
- * The old skeleton drew a 14dp title line, a 10dp details line and no badge
- * slot at all, so every rail and grid grew ~64dp when its cards landed.
+ * - title slot: titleSmall's own line height (20dp), one line — the old
+ *   skeleton drew two 16dp bars for the two-line title the F7 redesign
+ *   removed, so every rail and grid shrank ~20dp when its cards landed;
+ * - details line ("2023 · Movie"): labelSmall's 16dp line;
+ * - badge slot: always 24dp, whether or not this title carries a badge.
+ * No side padding and no bottom padding: the real card's text sits flush
+ * with the poster edges on the page background — the old 8dp sides and
+ * 10dp bottom were the retired footer box's insets, and they cost another
+ * ~10dp of jump. Both line heights come from the typography tokens, the
+ * same source PosterCard reads, so a token change moves both together.
+ * ([SkeletonPlaceholderTest.railCellsMatchPosterCardHeight] pins the cell
+ * at 295dp: 225dp poster + 6dp gap + this 64dp column.)
  */
 @Composable
 private fun PosterCellTextSkeleton() {
-    Column(
-        modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            SkeletonBox(
-                Modifier.fillMaxWidth().height(16.dp),
-                shape = RoundedCornerShape(8.dp),
-            )
-            SkeletonBox(
-                Modifier.fillMaxWidth(0.6f).height(16.dp),
-                shape = RoundedCornerShape(8.dp),
-            )
-        }
+    val titleSlotHeight = with(LocalDensity.current) {
+        // TextUnit has no isSpecified in this Compose version — Unspecified
+        // is the sentinel to compare against (the same read PosterCard does).
+        val lineHeight = MaterialTheme.typography.titleSmall.lineHeight
+        if (lineHeight != TextUnit.Unspecified) lineHeight.value.sp.toDp() else 20.dp
+    }
+    val detailsHeight = with(LocalDensity.current) {
+        val lineHeight = MaterialTheme.typography.labelSmall.lineHeight
+        if (lineHeight != TextUnit.Unspecified) lineHeight.value.sp.toDp() else 16.dp
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         SkeletonBox(
-            Modifier.width(80.dp).height(16.dp),
+            Modifier.fillMaxWidth().height(titleSlotHeight),
+            shape = RoundedCornerShape(8.dp),
+        )
+        SkeletonBox(
+            Modifier.width(80.dp).height(detailsHeight),
             shape = RoundedCornerShape(8.dp),
         )
         SkeletonBox(
@@ -430,10 +454,70 @@ private fun PosterCellTextSkeleton() {
     }
 }
 
+/**
+ * One poster tile as its placeholder: the poster box at
+ * [CardGeometry.POSTER_ASPECT] over the shared text column, in the same
+ * 6dp-spaced Column [PosterCard] draws — the one shape every rail cell,
+ * grid cell, discovery cell and load-more row stands in for, so a
+ * placeholder and its card are the same height on every screen.
+ */
+@Composable
+fun PosterCellSkeleton(modifier: Modifier = Modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        SkeletonBox(
+            Modifier
+                .fillMaxWidth()
+                .aspectRatio(CardGeometry.POSTER_ASPECT),
+        )
+        PosterCellTextSkeleton()
+    }
+}
+
 private const val SHIMMER_PERIOD_MS = 1_400
 
 /** The shimmer band's default strength; the hero skeleton asks for more. */
 private const val SHIMMER_HIGHLIGHT_ALPHA = 0.16f
+
+/**
+ * S5: a spinner that appears only for a wait that lasts — the
+ * delay-then-minimum state machine, anti-flash in both directions.
+ * Under [delayMs] a wait shows nothing at all (a spinner that lives
+ * 100ms reads as breakage, not progress); once the spinner has
+ * appeared it stays up at least [minVisibleMs] so a load that lands
+ * just after the delay does not flash it on and off in the same beat.
+ * A wait that ends before the delay never shows a spinner — the caller
+ * renders nothing (or a skeleton) in that window.
+ *
+ * The clock is [SystemClock.uptimeMillis]: the min-visible window is
+ * measured from the frame the spinner actually appeared, not from when
+ * the wait started.
+ */
+internal const val SPINNER_DELAY_MS = 250L
+
+/** Minimum time a spinner stays visible once it has appeared. */
+internal const val SPINNER_MIN_VISIBLE_MS = 500L
+
+@Composable
+fun rememberDelayedVisible(
+    active: Boolean,
+    delayMs: Long = SPINNER_DELAY_MS,
+    minVisibleMs: Long = SPINNER_MIN_VISIBLE_MS,
+): Boolean {
+    var visible by remember { mutableStateOf(false) }
+    var shownAt by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(active) {
+        if (active) {
+            delay(delayMs)
+            if (!visible) shownAt = SystemClock.uptimeMillis()
+            visible = true
+        } else if (visible) {
+            val elapsed = SystemClock.uptimeMillis() - shownAt
+            if (elapsed < minVisibleMs) delay(minVisibleMs - elapsed)
+            visible = false
+        }
+    }
+    return visible
+}
 
 /**
  * The catalog grid's one column rule: a tile is never narrower than 120dp, so a phone gets
@@ -475,10 +559,7 @@ fun PosterGridSkeleton(
         userScrollEnabled = false,
     ) {
         items(SKELETON_CELLS) {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                SkeletonBox(aspectRatioValue = CardGeometry.POSTER_ASPECT)
-                PosterCellTextSkeleton()
-            }
+            PosterCellSkeleton()
         }
     }
 }
@@ -500,7 +581,7 @@ fun PosterRailSkeleton(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         repeat(cells) { index ->
-            Column(
+            PosterCellSkeleton(
                 modifier = Modifier
                     .width(CardGeometry.RAIL_CARD_WIDTH_DP.dp)
                     // The first cell stands for all of them in tests: a rail
@@ -508,15 +589,7 @@ fun PosterRailSkeleton(
                     // at window height, so the Row itself reports the screen
                     // height — the cell is the unit that must match the card.
                     .then(if (index == 0) Modifier.testTag("posterRailCell") else Modifier),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                SkeletonBox(
-                    Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(CardGeometry.POSTER_ASPECT)
-                )
-                PosterCellTextSkeleton()
-            }
+            )
         }
     }
 }
@@ -535,10 +608,15 @@ fun PosterRailSkeleton(
  * gets. The old skeleton added its own 16dp sides and 8dp vertical on top
  * of that, so its poster column sat 32dp in from the edge and 8dp low.
  *
- * The hero mirrors the backdrop branch (176dp band, 92dp spacer, poster
- * header) — the common case, since most titles carry a TMDB backdrop. A
- * title without one renders 92dp shorter; that jump is the price of not
- * knowing at load time, and it is smaller than the old whole-page reflow.
+ * The hero mirrors the common case — the full-bleed 16:9 backdrop (most
+ * titles carry a TMDB backdrop) with the title block bottom-aligned in
+ * a 296dp-min box: two headlineMedium lines (36dp), the bodySmall meta
+ * (16dp), the pill + rating row (24dp) and the 22dp genre chips, 6dp
+ * apart, 16dp sides, 16dp bottom. The old skeleton mirrored a 176dp band
+ * + 92dp spacer + poster header that no longer exists anywhere on the
+ * page (Detail review P1), so the hero jumped on every load. A title
+ * with no backdrop renders the poster header instead; that jump is the
+ * price of not knowing at load time.
  *
  * No episode placeholder: the screen does not know movie-vs-series until
  * the load lands, so a series episode block here would be a guess, not a
@@ -547,15 +625,42 @@ fun PosterRailSkeleton(
 @Composable
 fun DetailSkeleton(modifier: Modifier = Modifier) {
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        // Hero: backdrop band behind, poster header overlapping it.
-        Box(Modifier.fillMaxWidth().testTag("detailSkeletonHero")) {
+        // Hero: 16:9 band behind, title block over its foot.
+        Box(
+            Modifier.fillMaxWidth().heightIn(min = 296.dp).testTag("detailSkeletonHero"),
+        ) {
             SkeletonBox(
-                Modifier.fillMaxWidth().height(176.dp),
-                shape = RoundedCornerShape(16.dp),
+                Modifier.fillMaxWidth().aspectRatio(CardGeometry.WIDE_ART_ASPECT),
+                shape = RectangleShape,
             )
-            Column(Modifier.fillMaxWidth()) {
-                Spacer(Modifier.height(92.dp))
-                DetailHeaderSkeleton()
+            Column(
+                Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .padding(bottom = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                SkeletonBox(
+                    Modifier.fillMaxWidth().height(36.dp),
+                    shape = RoundedCornerShape(8.dp),
+                )
+                SkeletonBox(
+                    Modifier.fillMaxWidth(0.7f).height(36.dp),
+                    shape = RoundedCornerShape(8.dp),
+                )
+                SkeletonBox(
+                    Modifier.fillMaxWidth(0.85f).height(16.dp),
+                    shape = RoundedCornerShape(8.dp),
+                )
+                SkeletonBox(
+                    Modifier.width(120.dp).height(24.dp),
+                    shape = RoundedCornerShape(8.dp),
+                )
+                SkeletonBox(
+                    Modifier.fillMaxWidth(0.6f).height(22.dp),
+                    shape = RoundedCornerShape(8.dp),
+                )
             }
         }
         DetailBodySkeleton()
@@ -692,64 +797,6 @@ fun DetailBodySkeleton(modifier: Modifier = Modifier) {
 }
 
 /**
- * The detail header as [DetailHeroSection]'s `PosterHeader` draws it: a
- * 120dp poster (2:3, 12dp corner) beside a 6dp-spaced column — title at
- * headlineMedium (36dp a line, two lines is the common case), meta line and
- * included line at bodySmall (16dp), the 20dp rating badge, and the 22dp
- * chips row. The column totals 176dp against the poster's 180dp, so the
- * poster sets the row height exactly as the real one does.
- */
-@Composable
-private fun DetailHeaderSkeleton() {
-    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-        SkeletonBox(
-            Modifier
-                .width(CardGeometry.DETAIL_POSTER_WIDTH_DP.dp)
-                .aspectRatio(CardGeometry.POSTER_ASPECT)
-        )
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            SkeletonBox(
-                Modifier.fillMaxWidth().height(36.dp),
-                shape = RoundedCornerShape(8.dp),
-            )
-            SkeletonBox(
-                Modifier.fillMaxWidth(0.7f).height(36.dp),
-                shape = RoundedCornerShape(8.dp),
-            )
-            SkeletonBox(
-                Modifier.fillMaxWidth(0.85f).height(16.dp),
-                shape = RoundedCornerShape(8.dp),
-            )
-            SkeletonBox(
-                Modifier.fillMaxWidth(0.6f).height(16.dp),
-                shape = RoundedCornerShape(8.dp),
-            )
-            SkeletonBox(
-                Modifier.width(72.dp).height(20.dp),
-                shape = RoundedCornerShape(4.dp),
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                SkeletonBox(
-                    Modifier.width(64.dp).height(22.dp),
-                    shape = RoundedCornerShape(8.dp),
-                )
-                SkeletonBox(
-                    Modifier.width(48.dp).height(22.dp),
-                    shape = RoundedCornerShape(8.dp),
-                )
-                SkeletonBox(
-                    Modifier.width(72.dp).height(22.dp),
-                    shape = RoundedCornerShape(8.dp),
-                )
-            }
-        }
-    }
-}
-
-/**
  * The quality-rung card as [QualityRungCard] draws it: "Quality"
  * (titleMedium, 24dp) + the Auto subtitle (bodySmall, 16dp) + one row per
  * band, 6dp apart, with the card's own 8dp bottom padding. Three rows is
@@ -810,37 +857,50 @@ fun ChipRowSkeleton(widths: List<Int>) {
 
 /**
  * The search loading state as the results list draws it: the results
- * summary line (bodyMedium, 20dp, 8dp vertical padding), the first group's
- * section header (title 24dp + subtitle 16dp, 8dp top and bottom), then
- * the grid. The old skeleton was the bare grid — the summary and the
- * header appeared out of nowhere and pushed every row down when the
- * search landed.
+ * summary line (bodyMedium, 20dp, 8dp vertical padding), one group header
+ * ([SectionHeader]: 24dp title, 8dp top and bottom) and fixed 2-wide rows
+ * of poster cells — the real results are `chunked(2)` rows in a LazyColumn,
+ * so the skeleton is the same shape instead of the adaptive grid, which
+ * lays 3+ narrow columns on a wide phone while the real results stay two
+ * wide. The old skeleton also drew a phantom 16dp subtitle under the
+ * header — the real header names the section and nothing more (A4-F4).
  */
 @Composable
 fun SearchResultsSkeleton(modifier: Modifier = Modifier) {
-    Column(modifier = modifier.fillMaxSize()) {
-        Box(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-            SkeletonBox(
-                Modifier.fillMaxWidth(0.55f).height(20.dp),
-                shape = RoundedCornerShape(8.dp),
-            )
+    LazyColumn(
+        modifier = modifier.fillMaxSize(),
+        userScrollEnabled = false,
+    ) {
+        item {
+            Box(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                SkeletonBox(
+                    Modifier.fillMaxWidth(0.55f).height(20.dp),
+                    shape = RoundedCornerShape(8.dp),
+                )
+            }
         }
-        Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-            SkeletonBox(
-                Modifier.fillMaxWidth(0.4f).height(24.dp),
-                shape = RoundedCornerShape(8.dp),
-            )
-            SkeletonBox(
-                Modifier.fillMaxWidth(0.25f).height(16.dp),
-                shape = RoundedCornerShape(8.dp),
-            )
+        item {
+            Box(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                SkeletonBox(
+                    Modifier.fillMaxWidth(0.4f).height(24.dp),
+                    shape = RoundedCornerShape(8.dp),
+                )
+            }
         }
-        PosterGridSkeleton(
-            modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(top = 0.dp, bottom = 24.dp),
-        )
+        items(SEARCH_RESULTS_SKELETON_ROWS) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                repeat(2) { PosterCellSkeleton(Modifier.weight(1f)) }
+            }
+            Spacer(Modifier.height(12.dp))
+        }
     }
 }
+
+/** Rows of poster cells the search-results skeleton stands in with — the first screen's worth. */
+private const val SEARCH_RESULTS_SKELETON_ROWS = 4
 
 /**
  * The Live TV loading state as the screen draws it: the channel search
@@ -1175,16 +1235,20 @@ fun DownloadsSkeleton(
                     modifier = Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
+                    // The real row's title is titleSmall (20dp line, one
+                    // line is the common case), the meta is labelSmall
+                    // (16dp) and the bar is LinearProgressIndicator's own
+                    // 4dp — the old 16/12/8 bars left the row 4dp short.
                     SkeletonBox(
-                        Modifier.fillMaxWidth(0.7f).height(16.dp),
+                        Modifier.fillMaxWidth(0.7f).height(20.dp),
                         shape = RoundedCornerShape(8.dp),
                     )
                     SkeletonBox(
-                        Modifier.fillMaxWidth(0.5f).height(12.dp),
+                        Modifier.fillMaxWidth(0.5f).height(16.dp),
                         shape = RoundedCornerShape(8.dp),
                     )
                     SkeletonBox(
-                        Modifier.fillMaxWidth().height(8.dp),
+                        Modifier.fillMaxWidth().height(4.dp),
                         shape = RoundedCornerShape(8.dp),
                     )
                 }
