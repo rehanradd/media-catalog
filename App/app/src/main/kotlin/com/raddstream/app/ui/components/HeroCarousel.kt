@@ -73,6 +73,7 @@ import com.raddstream.app.brand.Brand
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.network.models.WireText
 import com.raddstream.app.ui.theme.PressHaptics
+import com.raddstream.app.ui.theme.RaddArtScrim
 import com.raddstream.app.ui.theme.RaddEmphasized
 import com.raddstream.app.ui.theme.RaddMotion
 import com.raddstream.app.ui.theme.RaddStreamMark
@@ -694,15 +695,18 @@ private fun HeroSlide(
                 }
                 // Session 121 (P-26): My List on the hero, so saving a title does not
                 // need a trip to its details page first. The filled heart says saved.
-                // Gemini home review (Nov 2026): a 48dp translucent pill —
-                // white 12% fill, 1dp white 22% border — matching Watch Now's
-                // height, instead of uncontained text floating over the art.
+                // A4-F2: a solid dark scrim pill — the old 12% white fill was a
+                // translucent outline that washed out over dense, bright art
+                // (Dragon Ball Super in the Robo capture), so the secondary
+                // action read as weaker than the filled Watch Now. RaddArtScrim
+                // is the token badges already sit on over artwork (Color.kt
+                // §10): 70% black, white text, so the label survives any art.
                 Button(
                     onClick = onToggleFavorite,
                     shape = RoundedCornerShape(28.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color.White.copy(alpha = 0.12f),
-                        contentColor = MaterialTheme.colorScheme.onBackground,
+                        containerColor = RaddArtScrim,
+                        contentColor = Color.White,
                     ),
                     border = BorderStroke(1.dp, Color.White.copy(alpha = 0.22f)),
                     // Same 12dp content padding as Watch Now (see above):
