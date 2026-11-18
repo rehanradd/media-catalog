@@ -1,11 +1,15 @@
 package com.raddstream.app.ui.screens
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.unit.dp
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.SearchUiState
@@ -49,7 +53,11 @@ class SearchShowAllTest {
     ) {
         compose.setContent {
             RaddStreamTheme {
-                SearchContent(
+                // A tall viewport: SearchContent is a LazyColumn, and a lazy
+                // item below the fold is never composed — the Show-all row
+                // must exist as a node before the test can scroll to it.
+                Box(Modifier.size(width = 360.dp, height = 1000.dp)) {
+                    SearchContent(
                     state = SearchUiState(
                         query = "one piece",
                         groups = listOf(
@@ -75,7 +83,8 @@ class SearchShowAllTest {
                     onLoadMore = {},
                     onShowAll = onShowAll,
                     onPostClick = {},
-                )
+                    )
+                }
             }
         }
     }
