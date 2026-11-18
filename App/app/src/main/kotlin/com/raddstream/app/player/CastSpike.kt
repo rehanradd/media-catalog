@@ -145,7 +145,7 @@ object CastSpike {
         title: String,
         positionMs: Long = 0L,
     ): CastLoadResult {
-        val playUrl = playback.playUrl?.trim().takeIf { it.isNotEmpty() }
+        val playUrl = playback.playUrl?.trim()?.takeIf { it.isNotEmpty() }
             ?: return CastLoadResult.Failed("no play URL on this rendition")
         return try {
             val session = CastContext.getSharedInstance(context.applicationContext)
