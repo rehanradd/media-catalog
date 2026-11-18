@@ -83,8 +83,13 @@ class CatalogImageErrorTapTest {
         // flight. waitUntil re-checks after each clock advance (pumping
         // the main looper, so the failed fetch and the bounded immediate
         // auto-retries can settle) until the error slot is the thing under
-        // the finger.
-        compose.waitUntil(timeoutMillis = 30_000) {
+        // the finger. The bound is 90 s, not 30 s: under Robolectric there
+        // is no real network, so each fetch hangs to OkHttp's 10 s connect
+        // timeout — and the bounded auto-retry re-issues twice, so the
+        // error slot only appears after ~30 s of failed fetches. Round 2
+        // waited 30 s and died in waitUntil at exactly 30.092 s, just as
+        // the last retry was timing out.
+        compose.waitUntil(timeoutMillis = 90_000) {
             compose.onAllNodes(hasClickActionLabel("Retry loading image"))
                 .fetchSemanticsNodes()
                 .isNotEmpty()
