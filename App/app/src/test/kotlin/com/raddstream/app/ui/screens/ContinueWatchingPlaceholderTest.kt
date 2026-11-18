@@ -21,11 +21,13 @@ import org.robolectric.RobolectricTestRunner
 /**
  * B3 (home review, Nov 2026): the Continue Watching rows are pinned under
  * the hero and always present. With resume rows they are the real rows
- * (thumb, title, remaining label, progress bar); without rows — a fresh
- * install — the slot is ONE quiet line ("No active shows — start exploring
- * picks" + Browse), never a big card and never a "Continue watching"
- * heading — the heading belongs to the real rail, with rows under it. It
- * only shows once the catalog has landed, so a blank or loading load still
+ * (thumb, title, remaining label, progress bar); without rows — but with
+ * watch history on the device — the slot is ONE quiet line ("No active
+ * shows — start exploring picks" + Browse), never a big card and never a
+ * "Continue watching" heading — the heading belongs to the real rail, with
+ * rows under it. A4-F2: a fresh install gets no line at all — it read as an
+ * error on a populated Home, and Pick 3 onboards a new viewer. It only
+ * shows once the catalog has landed, so a blank or loading load still
  * gets the empty/loading state, not a placeholder for titles that may not
  * exist.
  */
@@ -67,8 +69,13 @@ class ContinueWatchingPlaceholderTest {
     }
 
     @Test
-    fun quietLineShowsWhenCatalogLoadedButNothingWatchedYet() {
-        setHome(HomeUiState(sections = listOf(loadedSection())))
+    fun quietLineShowsWhenHistoryExistsButNothingIsResumable() {
+        // A4-F2: the line is for a viewer who watched before and has
+        // nothing resumable now (finished everything, or removed every
+        // row) — for them "no active shows" is true. A first run gets no
+        // line at all (see noPlaceholderOnFirstRun... below): it read as
+        // an error on a populated Home, and Pick 3 onboards a new viewer.
+        setHome(HomeUiState(sections = listOf(loadedSection()), hasWatchHistory = true))
 
         // The slot sits below the hero, so the quiet line is below the
         // first fold — scroll it into view first.
@@ -80,10 +87,22 @@ class ContinueWatchingPlaceholderTest {
     }
 
     @Test
+    fun noPlaceholderOnFirstRunEvenWhenCatalogIsLoaded() {
+        // A4-F2: the Robo capture (matrix-12l8h97dvq326) showed the line
+        // under a populated hero on a fresh install — no history at all.
+        // The line is already gated on an empty Continue Watching list;
+        // the missing gate was "has this device ever watched anything".
+        setHome(HomeUiState(sections = listOf(loadedSection()), hasWatchHistory = false))
+
+        compose.onNodeWithText("No active shows — start exploring picks").assertDoesNotExist()
+        compose.onNodeWithText("Continue watching").assertDoesNotExist()
+    }
+
+    @Test
     fun browseCtaOpensBrowseWithNoType() {
         var browsedType: String? = "untouched"
         setHome(
-            HomeUiState(sections = listOf(loadedSection())),
+            HomeUiState(sections = listOf(loadedSection()), hasWatchHistory = true),
             onBrowseType = { browsedType = it },
         )
 

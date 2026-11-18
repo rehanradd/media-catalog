@@ -461,9 +461,13 @@ internal fun HomeContent(
             // B3: the Continue Watching slot is pinned here, under the hero,
             // and always present. With rows they are the real rows; without
             // rows it is the "Start watching" placeholder — but only once
-            // the catalog has landed (anyVisible). On a blank or failed
-            // load the empty/error state speaks instead, and during the first
-            // load the hero skeleton above holds the slot.
+            // the catalog has landed (anyVisible) AND this device has
+            // watch history to resume (hasWatchHistory). A4-F2: on a first
+            // run the list is empty because nothing was ever watched, and
+            // the line read as an error on a populated Home (Robo
+            // matrix-12l8h97dvq326) — Pick 3 onboards a new viewer instead.
+            // A viewer who finished everything (or removed every row) still
+            // gets the line: for them "no active shows" is true, not a bug.
             if (state.continueWatching.isNotEmpty()) {
                 Column {
                     SectionHeader(
@@ -487,7 +491,7 @@ internal fun HomeContent(
                     }
                     Spacer(Modifier.height(8.dp))
                 }
-            } else if (anyVisible) {
+            } else if (anyVisible && state.hasWatchHistory) {
                 StartWatchingPlaceholder(onBrowse = { onBrowseType(null) })
                 Spacer(Modifier.height(8.dp))
             }
@@ -896,7 +900,9 @@ private fun OfflineBanner() {
  * The clock icon says what the row is, the text says what to do, and
  * Browse opens Browse with no type. There is no "Continue watching"
  * heading above it — the heading belongs to the real rail, with rows
- * under it.
+ * under it. A4-F2: the caller gates this on [HomeUiState.hasWatchHistory],
+ * so it never shows on a first run — there it read as an error on a
+ * populated Home, and Pick 3 already onboards a new viewer.
  */
 @Composable
 private fun StartWatchingPlaceholder(onBrowse: () -> Unit) {

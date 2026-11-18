@@ -178,6 +178,16 @@ data class HomeUiState(
     val fatal: String? = null,
     /** Real local rows only — see [WatchHistoryMerge] for why an unnameable pull is dropped. */
     val continueWatching: List<ResumeTile> = emptyList(),
+    /**
+     * A4-F2: this device has watch-history rows at all — finished titles
+     * included. The rail only shows resumable rows, so [continueWatching]
+     * is empty both for a viewer who finished everything and for a viewer
+     * who never pressed play; only the second one is a first run. The
+     * "No active shows" placeholder shows for the first, never the second
+     * — on a fresh install it read as an error on a populated Home (Robo
+     * matrix-12l8h97dvq326), while Pick 3 already onboards a new viewer.
+     */
+    val hasWatchHistory: Boolean = false,
     /** Set when the operator has published a downloadable build; null means "no news". */
     val updateNotice: AppUpdate? = null,
     /** Live broadcasts from the admin panel; a dismissed one stays dismissed for this session. */
@@ -664,15 +674,23 @@ class HomeViewModel @Inject constructor(
                 // table is written by playback, and no payload ever told us a flag. Null is "not
                 // told", which [AdultPolicy] reads as no evidence either way, so the refusal is
                 // what removes a card here and a 200 later puts it back.
+                //
+                // A4-F2: the second half of the pair is whether this device has
+                // ANY history rows — finished titles included. The merge above
+                // drops finished rows from the rail, so `continueWatching` is
+                // empty both for a viewer who finished everything and for a
+                // viewer who never pressed play; only the raw local list tells
+                // the two apart, and only the first one earns the "No active
+                // shows" line (see HomeUiState.hasWatchHistory).
                 AdultPolicy.listableRows(
                     rows = WatchHistoryMerge.merge(local, synced),
                     flagOf = { null },
                     refusedOf = { it.postId in refused },
-                )
+                ) to local.isNotEmpty()
             }
-                .collect { rows ->
+                .collect { (rows, hasHistory) ->
                     val items = rows.mapNotNull { ResumeTile.of(it) }
-                    _uiState.update { it.copy(continueWatching = items) }
+                    _uiState.update { it.copy(continueWatching = items, hasWatchHistory = hasHistory) }
                     syncBecauseYouWatch(items.firstOrNull()?.post?.id)
                 }
         }
