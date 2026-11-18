@@ -1,7 +1,7 @@
 package com.raddstream.app.ui.screens
 
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.hasProgressBarRangeInfo
 import androidx.compose.ui.test.junit4.createComposeRule
