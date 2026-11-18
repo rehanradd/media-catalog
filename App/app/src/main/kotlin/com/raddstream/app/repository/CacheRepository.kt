@@ -111,6 +111,36 @@ class CacheRepository @Inject constructor(
     )
 
     /**
+     * An automatic keep (Smart Downloads): the same priority as an
+     * explicit keep — [CachePriority.USER_REQUESTED], so the scheduler
+     * treats it as a real download and drives it eagerly — but it must
+     * never evict something the viewer asked to keep in order to make
+     * room for bytes nobody requested, so admission is `Admit` only and
+     * an `EvictThenAdmit` answer is a refusal ([KeepOutcome.NoSpace]),
+     * the `preview()` rule. A third combination, and the reason this is
+     * a separate call rather than a flag on [keep]: the caller shows the
+     * refusal out loud (Smart Downloads pauses on low space) instead of
+     * the preview's invisibility.
+     */
+    suspend fun keepAuto(
+        handle: String,
+        title: String,
+        sizeBytes: Long?,
+        resumable: Boolean,
+        printLabel: String = "",
+        postId: Int = 0,
+    ): KeepOutcome = enqueue(
+        handle = handle,
+        title = title,
+        sizeBytes = sizeBytes,
+        resumable = resumable,
+        printLabel = printLabel,
+        priority = CachePriority.USER_REQUESTED,
+        mayEvictForAdmission = false,
+        postId = postId,
+    )
+
+    /**
      * The player is watching [handle], so the engine would like bytes ahead of the playhead.
      *
      * Same row, same identity, two deliberate differences from [keep], and both are the reason this

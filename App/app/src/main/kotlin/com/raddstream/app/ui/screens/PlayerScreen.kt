@@ -343,7 +343,7 @@ private fun PlayerScreenContent(
     var interactTick by remember { mutableStateOf(0L) }
     var brightness by remember { mutableFloatStateOf(-1f) } // -1 → follow system
     var hud by remember { mutableStateOf<Hud?>(null) }
-    var snackbar by remember { mutableStateOf<String?>(null) }
+    var snackbar by remember { mutableStateOf<PlayerSnackbar?>(null) }
     var scrubPreviewMs by remember { mutableStateOf<Long?>(null) }
 
     // Scrub thumbnails (API 23+ only): a second, muted ExoPlayer that renders
@@ -364,7 +364,11 @@ private fun PlayerScreenContent(
     // the surface's own bounds — the window grows out of the picture, not the corner.
     var pipSourceRect by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
     val launchPip = rememberPipLauncher(aspectRatio = state.videoAspectRatio, sourceRect = pipSourceRect)
-    PlayerEventWatcher(vm, context, onPlayNextEpisode) { snackbar = it }
+    PlayerEventWatcher(
+        vm, context, onPlayNextEpisode,
+        onMessage = { snackbar = PlayerSnackbar(it) },
+        onMessageWithUndo = { snackbar = PlayerSnackbar(it, showUndo = true) },
+    )
 
     // PL-10: opt-in auto-enter PiP — when the switch is on and the title is playing,
     // leaving the player (home, recents, another app) keeps it playing in a window.
@@ -492,7 +496,9 @@ private fun PlayerScreenContent(
     }
     LaunchedEffect(snackbar) {
         if (snackbar != null) {
-            delay(3000)
+            // An Undoable notice stays up longer — three seconds is not
+            // enough to read it, find Undo, and decide.
+            delay(if (snackbar?.showUndo == true) 8000 else 3000)
             snackbar = null
         }
     }
@@ -716,7 +722,7 @@ private fun PlayerScreenContent(
                             interactTick = System.nanoTime()
                         },
                         onActorClick = onActorClick,
-                        onMessage = { snackbar = it },
+                        onMessage = { snackbar = PlayerSnackbar(it) },
                     )
                 }
             }
@@ -1012,7 +1018,7 @@ private fun PlayerScreenContent(
         // message is not lost: it reappears on the next start-phase-free frame
         // because the snackbar state lives in the ViewModel, not in this Box.
         if (state.startPhase == StartPhase.NONE) {
-            snackbar?.let { msg ->
+            snackbar?.let { bar ->
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
                     Surface(
                         color = RaddPlayerSnackbarPlate,
@@ -1021,7 +1027,22 @@ private fun PlayerScreenContent(
                             .padding(horizontal = 24.dp)
                             .padding(bottom = 100.dp),
                     ) {
-                        Text(msg, color = Color.White, fontSize = brandSp(14), modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                        ) {
+                            Text(bar.text, color = Color.White, fontSize = brandSp(14), modifier = Modifier.weight(1f))
+                            if (bar.showUndo) {
+                                TextButton(
+                                    onClick = {
+                                        vm.undoAutoDeletedEpisode()
+                                        snackbar = null
+                                    },
+                                ) {
+                                    Text("Undo", color = Color.White, fontSize = brandSp(14))
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -4593,22 +4614,32 @@ private fun SheetRow(label: String, selected: Boolean = false, enabled: Boolean 
 // ── Event routing ──────────────────────────────────────────────────────────────
 
 /**
- * Routes ViewModel events: messages become the on-screen snackbar via [onMessage]; the
- * external-player event fires a real intent carrying OUR OWN address; next-episode events
- * are delegated to the app (the NavGraph agent wires the PlayBundle-per-episode route —
- * see HANDOFF_appplayer.md).
+ * Routes ViewModel events: messages become the on-screen snackbar via [onMessage] — an
+ * undoable message (the player auto-delete of a finished episode) via [onMessageWithUndo],
+ * which defaults to the plain route; the external-player event fires a real intent carrying
+ * OUR OWN address; next-episode events are delegated to the app (the NavGraph agent wires
+ * the PlayBundle-per-episode route — see HANDOFF_appplayer.md).
  */
 @Composable
+/**
+ * One snackbar message. [showUndo] is only for the player auto-delete
+ * of a finished episode: the Undo button re-queues it, and the bar
+ * stays up longer so the viewer can reach it.
+ */
+private data class PlayerSnackbar(val text: String, val showUndo: Boolean = false)
+
 private fun PlayerEventWatcher(
     vm: PlayerViewModel,
     context: Context,
     onPlayNextEpisode: (workKey: String?, postId: Int?, season: Int, episode: Int) -> Unit,
     onMessage: (String) -> Unit,
+    onMessageWithUndo: (String) -> Unit = onMessage,
 ) {
     LaunchedEffect(vm) {
         vm.events.collect { event ->
             when (event) {
                 is PlayerEvent.Message -> onMessage(event.text)
+                is PlayerEvent.MessageWithUndo -> onMessageWithUndo(event.text)
                 is PlayerEvent.PlayNextEpisode ->
                     onPlayNextEpisode(event.workKey, event.postId, event.season, event.episode)
                 is PlayerEvent.OpenExternalPlayer -> openExternally(context, event.url)

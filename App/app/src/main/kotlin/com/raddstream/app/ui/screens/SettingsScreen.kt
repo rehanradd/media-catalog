@@ -614,6 +614,16 @@ fun SettingsScreen(
                         style = settingsHelperStyle,
                     )
                     Spacer(Modifier.height(10.dp))
+                    SwitchRow(
+                        checked = state.prefs.smartDownloadsEnabled,
+                        onCheckedChange = viewModel::setSmartDownloadsEnabled,
+                        label = "Smart Downloads",
+                    )
+                    Text(
+                        "When on, the next episode of a series you're watching downloads itself on Wi-Fi, so it's ready offline. Only one episode per series at a time, and only while this phone has free space.",
+                        style = settingsHelperStyle,
+                    )
+                    Spacer(Modifier.height(10.dp))
                     OutlinedButton(onClick = onOpenDownloads, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                     ) {
                         Text("Open Downloads")

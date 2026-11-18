@@ -86,13 +86,16 @@ import com.raddstream.app.data.isLocalResumeUri
 import com.raddstream.app.data.ServerSettingsRepository
 import com.raddstream.app.data.cache.ConnectivityProbe
 import com.raddstream.app.data.cache.NetworkClass
+import com.raddstream.app.data.downloads.SmartDownloadsRunner
 import com.raddstream.app.data.local.WatchHistoryDao
 import com.raddstream.app.network.ApiProvider
 import com.raddstream.app.network.models.parseCastNames
 import com.raddstream.app.network.streamRedirectUrl
 import com.raddstream.app.network.withVipPass
+import com.raddstream.app.repository.CacheRepository
 import com.raddstream.app.repository.CatalogRepository
 import com.raddstream.app.repository.FavoritesRepository
+import com.raddstream.app.repository.KeepOutcome
 import com.raddstream.app.sync.SyncAccountRepository
 import com.raddstream.app.ui.navigation.DeepLinks
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -136,6 +139,8 @@ class PlayerViewModel @Inject constructor(
     private val watchHistoryDao: WatchHistoryDao,
     private val localResumeRepository: LocalResumeRepository,
     private val connectivityProbe: ConnectivityProbe,
+    private val smartDownloads: SmartDownloadsRunner,
+    private val cacheRepository: CacheRepository,
 ) : ViewModel() {
 
     private val store: PlayerSessionStore = PlayerSessionStore.Instance
@@ -554,6 +559,7 @@ class PlayerViewModel @Inject constructor(
                 rememberResume()
                 handleSleepEndOfVideo()
                 maybeAutoDeleteWatchedEpisode()
+                onEpisodeEndedSmartDownloads()
             }
         }
 
@@ -2443,6 +2449,22 @@ class PlayerViewModel @Inject constructor(
      * sweep and are never touched here; the message names what went, so the
      * deletion is never silent.
      */
+    /**
+     * What the player just auto-deleted, held so Undo can re-queue it:
+     * the handle is the only way back, and the bytes are gone — Undo
+     * downloads the episode again from scratch, it does not restore it.
+     */
+    private data class AutoDeletedEpisode(
+        val handle: String,
+        val title: String,
+        val printLabel: String,
+        val resumable: Boolean,
+        val postId: Int,
+        val episode: Int,
+    )
+
+    private var lastAutoDeletedEpisode: AutoDeletedEpisode? = null
+
     private fun maybeAutoDeleteWatchedEpisode() {
         if (!autoDeleteWatched) return
         val bundle = store.bundle.value ?: return
@@ -2452,9 +2474,82 @@ class PlayerViewModel @Inject constructor(
         if (_ui.value.keep !is KeepUiState.Stored) return
         val engine = CacheEngineHolder.engine ?: return
         val key = store.cacheKey() ?: return
+        // Capture the re-keep data BEFORE the delete: the rendition is
+        // the episode's own handle, print label and resumable flag, and
+        // the title is the title the player is showing for it.
+        val rendition = store.activeRendition()
+        val handle = rendition?.playback?.streamId?.takeIf { it.isNotBlank() }
+        val deleted = handle?.let {
+            AutoDeletedEpisode(
+                handle = it,
+                title = _ui.value.pendingTitle ?: "Episode $episode",
+                printLabel = rendition.displayLabel(),
+                resumable = rendition.playback.resumable,
+                postId = target.id,
+                episode = episode,
+            )
+        }
         viewModelScope.launch {
             runCatching { engine.cancelKeep(key) }
-            _events.emit(PlayerEvent.Message("Deleted Episode $episode — you finished watching it."))
+            if (deleted != null) {
+                lastAutoDeletedEpisode = deleted
+                _events.emit(PlayerEvent.MessageWithUndo("Deleted Episode $episode — you finished watching it."))
+            } else {
+                _events.emit(PlayerEvent.Message("Deleted Episode $episode — you finished watching it."))
+            }
+        }
+    }
+
+    /**
+     * Undo the player's auto-delete of a finished episode: re-queue it
+     * from the held handle, so it downloads again from scratch. The
+     * notice says what happened; a keep whose handle is gone cannot come
+     * back, and there is nothing to undo twice.
+     */
+    fun undoAutoDeletedEpisode() {
+        val deleted = lastAutoDeletedEpisode ?: return
+        lastAutoDeletedEpisode = null
+        viewModelScope.launch {
+            val outcome = runCatching {
+                cacheRepository.keep(
+                    handle = deleted.handle,
+                    title = deleted.title,
+                    sizeBytes = null,
+                    resumable = deleted.resumable,
+                    printLabel = deleted.printLabel,
+                    postId = deleted.postId,
+                )
+            }.getOrNull()
+            val message = when (outcome) {
+                is KeepOutcome.Enqueued, is KeepOutcome.AlreadyKept ->
+                    "Downloading Episode ${deleted.episode} again."
+                is KeepOutcome.NoSpace ->
+                    "Not enough free space to download Episode ${deleted.episode} again."
+                else -> "Could not re-queue Episode ${deleted.episode} — its copy is gone."
+            }
+            _events.emit(PlayerEvent.Message(message))
+        }
+    }
+
+    /**
+     * Smart Downloads (plan E2): an episode just ended, so the next
+     * unwatched episode of the same series can download itself on Wi-Fi.
+     * Fire-and-forget and silent on failure — the end card is not the
+     * place to report a download that did not start, and the Downloads
+     * screen's catch-up pass is the visible one.
+     */
+    private fun onEpisodeEndedSmartDownloads() {
+        val target = store.bundle.value?.target ?: return
+        if (target.episode <= 0 || target.id <= 0) return
+        viewModelScope.launch {
+            runCatching {
+                smartDownloads.onEpisodeFinished(
+                    postId = target.id,
+                    season = target.season,
+                    episode = target.episode,
+                    workRef = target.workKey,
+                )
+            }
         }
     }
 
@@ -2807,6 +2902,12 @@ fun Long.formatTime(): String {
 /** What the screen must route elsewhere (next-episode bundle, external hand-off). */
 sealed class PlayerEvent {
     data class Message(val text: String) : PlayerEvent()
+    /**
+     * Like [Message], but the screen offers Undo: the viewer just lost a
+     * download they may still want. Smart Downloads' auto-delete of a
+     * finished episode is the only sender today.
+     */
+    data class MessageWithUndo(val text: String) : PlayerEvent()
     data class PlayNextEpisode(val workKey: String?, val postId: Int?, val season: Int, val episode: Int) : PlayerEvent()
     data class OpenExternalPlayer(val url: String) : PlayerEvent()
     /** SC.24: share-a-moment text for the system share sheet. */

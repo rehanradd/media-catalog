@@ -109,6 +109,17 @@ interface WatchHistoryDao {
     suspend fun findMovieRows(): List<WatchHistoryEntity>
 
     /**
+     * Series rows only — one row per watched episode, newest first.
+     * Smart Downloads reads this once per catch-up pass: the series the
+     * viewer is actually watching are its candidates, and the rows
+     * themselves are the watched set the planner checks each episode
+     * against. A movie row has season 0 and episode 0, so it can never
+     * appear here.
+     */
+    @Query("SELECT * FROM watch_history WHERE (seasonNumber > 0 OR episodeNumber > 0) AND durationMs > 0 ORDER BY updatedAt DESC")
+    suspend fun findSeriesRows(): List<WatchHistoryEntity>
+
+    /**
      * Every row with a known duration, as a flow: the My List sort re-reads
      * it, so a title finished on another screen moves down the list while
      * this screen is still open. The finished-ness itself is judged in

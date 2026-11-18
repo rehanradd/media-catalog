@@ -878,6 +878,22 @@ class ServerSettingsRepository @Inject constructor(
     }
 
     /**
+     * Smart Downloads (plan E2): when ON, the next unwatched episode of
+     * each series the viewer follows downloads itself on Wi-Fi, so it is
+     * ready offline. OFF by default — an automatic download is a choice
+     * the viewer has to make, not one the app makes for them. The pass
+     * is always Wi-Fi-only and stops below the 500 MB free-space floor,
+     * independent of [wifiOnlyDownloads].
+     */
+    val smartDownloadsEnabled: Flow<Boolean> = dataStore.data.map { preferences ->
+        preferences[SMART_DOWNLOADS_KEY] ?: false
+    }
+
+    suspend fun saveSmartDownloadsEnabled(enabled: Boolean) {
+        dataStore.edit { preferences -> preferences[SMART_DOWNLOADS_KEY] = enabled }
+    }
+
+    /**
      * PL-10: enter picture-in-picture automatically when the viewer leaves the player
      * while it is playing. OFF by default — PiP unasked for is a window the viewer did
      * not open, and the manual PiP button is always there for the one time they want it.
@@ -1106,6 +1122,7 @@ class ServerSettingsRepository @Inject constructor(
         private val DATA_SAVER_KEY = booleanPreferencesKey("data_saver")
         private val WIFI_ONLY_DOWNLOADS_KEY = booleanPreferencesKey("wifi_only_downloads")
         private val AUTO_DELETE_WATCHED_KEY = booleanPreferencesKey("auto_delete_watched")
+        private val SMART_DOWNLOADS_KEY = booleanPreferencesKey("smart_downloads")
         private val KEEP_TTL_KEY = intPreferencesKey("keep_ttl_hours")
         private val PREFERRED_SUBTITLE_LANGUAGE_KEY = stringPreferencesKey("preferred_subtitle_language")
         private val SUBTITLE_SIZE_KEY = intPreferencesKey("subtitle_size_percent")

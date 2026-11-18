@@ -14,6 +14,7 @@ import com.raddstream.app.data.cache.OfflineCacheEngine
 import com.raddstream.app.data.downloads.DeviceDownload
 import com.raddstream.app.data.downloads.DeviceDownloadsRepository
 import com.raddstream.app.data.downloads.DownloadSpeed
+import com.raddstream.app.data.downloads.SmartDownloadsRunner
 import com.raddstream.app.data.local.WatchHistoryDao
 import com.raddstream.app.data.local.WatchHistoryEntity
 import com.raddstream.app.repository.CacheRepository
@@ -193,6 +194,7 @@ class DownloadsViewModel @Inject constructor(
     private val cacheEngine: OfflineCacheEngine,
     private val watchHistoryDao: WatchHistoryDao,
     private val settingsRepository: ServerSettingsRepository,
+    private val smartDownloads: SmartDownloadsRunner,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(DownloadsUiState())
@@ -203,12 +205,20 @@ class DownloadsViewModel @Inject constructor(
     /** The auto-delete sweep runs once per ViewModel lifetime, not on every list emission. */
     private var sweepDone = false
 
+    /** The Smart Downloads catch-up pass runs once per ViewModel lifetime, like the sweep. */
+    private var smartPassDone = false
+
     /** Keeps the last sweep deleted, so Undo can re-queue them (fresh download, bytes are gone). */
     private var lastSwept: List<KeptItem> = emptyList()
 
     init {
         viewModelScope.launch {
             settingsRepository.autoDeleteWatched.collect { autoDeleteWatched = it }
+        }
+        viewModelScope.launch {
+            settingsRepository.smartDownloadsEnabled.collect { enabled ->
+                if (enabled) runSmartDownloadsPass()
+            }
         }
         viewModelScope.launch {
             _uiState.update { it.copy(storage = readStorage()) }
@@ -316,6 +326,34 @@ class DownloadsViewModel @Inject constructor(
                     canUndoSweep = true,
                 )
             }
+        }
+    }
+
+    /**
+     * Smart Downloads (plan E2): the catch-up pass — once per ViewModel
+     * lifetime, when the switch is on, fetch the next unwatched episode
+     * of each followed series. One honest line when it starts something
+     * or when a gate stops it; silent when there is nothing to download,
+     * like the warm path. A pass that never ran (the switch is off) says
+     * nothing at all.
+     */
+    private fun runSmartDownloadsPass() {
+        if (smartPassDone) return
+        smartPassDone = true
+        viewModelScope.launch {
+            val result = runCatching { smartDownloads.runCatchUp() }.getOrNull() ?: return@launch
+            val message = when {
+                result.enqueuedTitles.size == 1 ->
+                    "Smart Downloads started downloading ${result.enqueuedTitles.first()}."
+                result.enqueuedTitles.size > 1 ->
+                    "Smart Downloads started downloading ${result.enqueuedTitles.size} episodes."
+                result.skippedNoWifi ->
+                    "Smart Downloads needs Wi-Fi — the next episode will download when you're back on Wi-Fi."
+                result.skippedLowSpace ->
+                    "Smart Downloads paused — not enough free space on this phone."
+                else -> null
+            } ?: return@launch
+            _uiState.update { it.copy(statusMessage = message) }
         }
     }
 
