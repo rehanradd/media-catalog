@@ -2,6 +2,7 @@ package com.raddstream.app.ui.screens
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -256,7 +257,12 @@ class MyListMockupScreenTest {
     ) {
         compose.setContent {
             RaddStreamTheme {
-                Box(Modifier.width(390.dp)) {
+                // A tall viewport (F4 pattern): the hidden state's message,
+                // Browse button and two rails are taller than the Robolectric
+                // window, so the second rail's heading would sit below the
+                // fold and read as not displayed. The production Column
+                // scrolls on a real phone; the test just needs room to see it.
+                Box(Modifier.size(width = 390.dp, height = 1000.dp)) {
                     MyListHiddenContent(
                         hiddenNotice = "2 saved titles are no longer offered by this server",
                         popular = popular,

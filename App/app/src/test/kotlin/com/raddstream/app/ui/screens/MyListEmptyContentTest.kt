@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -275,7 +276,12 @@ class MyListEmptyContentTest {
         val recent = listOf(post(4, "Oppenheimer"), post(5, "Barbie"), post(6, "Poor Things"))
         compose.setContent {
             RaddStreamTheme {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopStart) {
+                // A tall viewport (F4 pattern): the message, the Browse
+                // button and two rails are taller than the Robolectric
+                // window, so the second rail's heading would sit below the
+                // fold and read as not displayed. The production Column
+                // scrolls on a real phone; the test just needs room to see it.
+                Box(Modifier.size(width = 360.dp, height = 1000.dp), contentAlignment = Alignment.TopStart) {
                     MyListEmptyContent(
                         popular = popular,
                         recent = recent,

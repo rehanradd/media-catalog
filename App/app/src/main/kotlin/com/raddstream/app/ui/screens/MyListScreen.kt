@@ -17,7 +17,9 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.History
@@ -207,7 +209,12 @@ internal fun MyListHiddenContent(
     /** A4-F5: the second discovery rail — same titles as the empty state's, below Trending. */
     recent: List<Post> = emptyList(),
 ) {
-    Column(modifier = modifier) {
+    // A4-F5 fixup: the empty state grew past one screen — message + Browse
+    // button + two rails is ~800dp against ~700dp of usable height on a
+    // Pixel 5, so the second rail's cards were cut off at the bottom with
+    // no way to reach them. The Column scrolls; a screen that fits renders
+    // identically, and a tall one scrolls to the rail instead of clipping it.
+    Column(modifier = modifier.verticalScroll(rememberScrollState())) {
         EmptyState(
             // Nothing here is "empty" — the rows exist and this build may not show them.
             // Saying "your list is empty" would be a second loss on top of the first one.
@@ -429,7 +436,10 @@ internal fun MyListEmptyContent(
     /** A4-F5: the second discovery rail — freshest titles, below Trending. */
     recent: List<Post> = emptyList(),
 ) {
-    Column(modifier = modifier) {
+    // A4-F5 fixup: same scroll as the hidden branch — the message, the
+    // Browse button and two rails no longer fit one phone screen, and the
+    // second rail is the point of the slice, so it must be reachable.
+    Column(modifier = modifier.verticalScroll(rememberScrollState())) {
         EmptyState(
             title = "Your list is empty",
             message = stringResource(R.string.mylist_empty_message),
