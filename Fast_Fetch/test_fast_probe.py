@@ -344,6 +344,74 @@ class HostSessionTests(unittest.TestCase):
         self.assertEqual((status, error), (0, "timeout"))
         self.assertEqual(factory.created["n"], 1)  # no retry, no reconnect
 
+    @_public_dns
+    def test_non_ascii_path_is_percent_encoded(self):
+        # A stored URL may carry raw non-ASCII (a filename with a curly
+        # quote, U+2019); http.client encodes the request line as ASCII, so
+        # an unencoded target raised UnicodeEncodeError and killed a whole
+        # sweep batch (19:36 PKT 18 Nov). The request must go out encoded.
+        log = []
+        factory = _make_factory(_status_map({}), log)
+        session = fast_probe.HostSession(connection_factory=factory, timeout=5.0)
+        status, _h, error, _ms = session.head(
+            "http://big.example/files/Movie’s Cut.mkv",
+            fast_probe.probe_headers())
+        self.assertEqual((status, error), (200, ""))
+        requests = [e for e in log if e[0] == "request"]
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0][2], "/files/Movie%E2%80%99s%20Cut.mkv")
+
+    @_public_dns
+    def test_non_ascii_query_is_percent_encoded(self):
+        log = []
+        factory = _make_factory(_status_map({}), log)
+        session = fast_probe.HostSession(connection_factory=factory, timeout=5.0)
+        status, _h, error, _ms = session.head(
+            "http://big.example/f.mp4?title=Don’t",
+            fast_probe.probe_headers())
+        self.assertEqual((status, error), (200, ""))
+        requests = [e for e in log if e[0] == "request"]
+        self.assertEqual(requests[0][2], "/f.mp4?title=Don%E2%80%99t")
+
+    @_public_dns
+    def test_already_encoded_target_is_not_double_encoded(self):
+        log = []
+        factory = _make_factory(_status_map({}), log)
+        session = fast_probe.HostSession(connection_factory=factory, timeout=5.0)
+        status, _h, error, _ms = session.head(
+            "http://big.example/files/My%20Movie.mp4",
+            fast_probe.probe_headers())
+        self.assertEqual((status, error), (200, ""))
+        requests = [e for e in log if e[0] == "request"]
+        self.assertEqual(requests[0][2], "/files/My%20Movie.mp4")
+
+    @_public_dns
+    def test_invalid_port_is_conn_error_not_crash(self):
+        log = []
+        factory = _make_factory(_status_map({}), log)
+        session = fast_probe.HostSession(connection_factory=factory, timeout=5.0)
+        status, _h, error, _ms = session.head(
+            "http://big.example:99999/x.mp4", fast_probe.probe_headers())
+        self.assertEqual((status, error), (0, "conn_error"))
+        self.assertEqual(factory.created["n"], 0)  # never attempted
+
+    @_public_dns
+    def test_unencodable_request_is_conn_error_not_crash(self):
+        # Backstop: if the request line itself cannot be encoded (e.g. a
+        # non-ASCII header from a unicode hostname), the URL earns no
+        # verdict instead of killing the batch.
+        log = []
+
+        def behaviour(host, target, n):
+            raise UnicodeEncodeError("ascii", "’", 0, 1, "ordinal not in range")
+
+        factory = _make_factory(behaviour, log)
+        session = fast_probe.HostSession(connection_factory=factory, timeout=5.0)
+        status, _h, error, _ms = session.head(
+            "http://big.example/a.mp4", fast_probe.probe_headers())
+        self.assertEqual((status, error), (0, "conn_error"))
+        self.assertIsNone(fast_probe.head_verdict(status, error, 1795000000.0))
+
 
 # ── host partition ───────────────────────────────────────────────────────────
 

@@ -360,11 +360,20 @@ class HostSession:
         """
         parts = urllib.parse.urlsplit(url)
         host = parts.hostname or ""
-        port = parts.port or (443 if parts.scheme == "https" else 80)
+        try:
+            port = parts.port or (443 if parts.scheme == "https" else 80)
+        except ValueError:
+            # Unparseable port (e.g. :99999): never attempted, no verdict.
+            return 0, {}, "conn_error", 0
         https = parts.scheme == "https"
-        target = parts.path or "/"
+        # Percent-encode the request target: a stored URL may carry raw
+        # non-ASCII (a filename with a curly quote, U+2019) and http.client
+        # encodes the request line as ASCII — an unencoded target raised
+        # UnicodeEncodeError and killed the whole sweep batch (19:36 PKT).
+        # safe="/%" keeps separators and already-encoded %XX intact.
+        target = urllib.parse.quote(parts.path or "/", safe="/%")
         if parts.query:
-            target += "?" + parts.query
+            target += "?" + urllib.parse.quote(parts.query, safe="=&%")
         budget = float(self._timeout if timeout is None else timeout)
         for attempt in (0, 1):
             conn = self._conn_for(host, port, https)
@@ -397,6 +406,11 @@ class HostSession:
             except (http.client.HTTPException, OSError) as exc:
                 code = "tls" if "ssl" in str(exc).lower() else "conn_error"
                 return 0, {}, code, int((time.monotonic() - t0) * 1000)
+            except (UnicodeEncodeError, ValueError):
+                # Unencodable request line/header (e.g. a non-ASCII Origin
+                # from a unicode hostname): our side could not attempt the
+                # URL, so it earns no verdict and must not kill the batch.
+                return 0, {}, "conn_error", int((time.monotonic() - t0) * 1000)
         return 0, {}, "conn_error", 0  # pragma: no cover - loop guard
 
 
