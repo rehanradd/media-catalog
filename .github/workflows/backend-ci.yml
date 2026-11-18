@@ -354,6 +354,15 @@ jobs:
       - name: 🧪 test_cursor_pagination.py
         run: python3 -S Fast_Fetch/test_cursor_pagination.py
 
+      # R1 + R2 + R4 + DB-checkup #3 (2026-11-18): host reliability
+      # ranking — the decayed (7-day half-life) host score in the band
+      # walk and the v1 detail ladder, 403/429 neutrality, the
+      # suppress->=50 / demote->=10 failover tiers, the verified /
+      # checking / unavailable print annotation, and the failover
+      # first slice + deadline. Offline — temp DB / :memory:, no network.
+      - name: 🧪 test_host_ranking.py
+        run: python3 -S Fast_Fetch/test_host_ranking.py
+
       # Session 111: a v2 bundle handle names a ledger row, never the
       # projected cat id — the bundle's own handle pressed through a real
       # /api/v1/stream socket server (loopback media file, real resolver),

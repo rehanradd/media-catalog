@@ -30,6 +30,7 @@ from socketserver import ThreadingMixIn
 
 import redact
 import db_pragmas  # serve-path SQLite pragmas (Session 125)
+import serve_verify
 import tiers
 import live_tv
 import api_v2
@@ -6135,6 +6136,74 @@ def _source_ladder_key(s):
             _SOURCE_SERVICE_RANK.get(s["service"], 99))
 
 
+def _source_host_ranks(conn, source_ids):
+    """R1 (2026-11-18): per-source host rank for the v1 detail ladder.
+
+    One batched `SELECT id, source_url FROM download_sources WHERE id IN
+    (...)` (chunked at 500 ids), then one host_health read per distinct
+    host. The URLs are used ONLY to derive the sort key — they are never
+    attached to a row, never projected, never leave this function — so
+    the no-upstream-URL rule (`_SOURCE_DETAIL_COLS` carries no
+    source_url; `_WITHHELD_PLAYABLE` withholds it from the wire) still
+    holds. Fail-open: any error returns {} and every source sorts by
+    the evidence ladder exactly as before.
+    """
+    ids = [int(sid) for sid in (source_ids or [])]
+    if not ids:
+        return {}
+    rows = []
+    try:
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            marks = ", ".join("?" for _ in chunk)
+            rows.extend(conn.execute(
+                f"SELECT id, source_url FROM download_sources"
+                f" WHERE id IN ({marks})", chunk).fetchall())
+    except sqlite3.Error:
+        return {}
+    hosts = {}
+    for row in rows:
+        try:
+            host = serve_verify._host_of(row["source_url"])
+        except (TypeError, ValueError):
+            continue
+        if host:
+            hosts.setdefault(host, serve_verify.HOST_UNMEASURED_RANK)
+    for host in hosts:
+        try:
+            hosts[host] = serve_verify.host_rank_score(conn, host)
+        except Exception:      # noqa: BLE001 — fail-open: unmeasured
+            hosts[host] = serve_verify.HOST_UNMEASURED_RANK
+    ranks = {}
+    for row in rows:
+        try:
+            host = serve_verify._host_of(row["source_url"])
+            sid = int(row["id"])
+        except (TypeError, ValueError):
+            continue
+        if host in hosts:
+            ranks[sid] = hosts[host]
+    return ranks
+
+
+def _host_ranked_ladder_key(s, ranks):
+    """The v1 detail ladder with the R1 host rank layered in (2026-11-18).
+
+    Composite key: (evidence_rank, -host_rank, temp, service_rank) — the
+    evidence ladder still decides first (a probe-confirmed live copy
+    beats an unprobed claim whatever host it sits on), then the measured
+    host rank breaks ties inside a rung, then the temporary flag, then
+    the server preference. `_source_ladder_key` itself is untouched —
+    its direct callers (tests included) keep the unranked key.
+    """
+    ladder = _source_ladder_key(s)
+    try:
+        rank = ranks.get(int(s["id"]), serve_verify.HOST_UNMEASURED_RANK)
+    except (TypeError, ValueError, KeyError):
+        rank = serve_verify.HOST_UNMEASURED_RANK
+    return (ladder[0], -rank, ladder[1], ladder[2])
+
+
 #: Detail payload cap (One Piece detail 504, 2026-11-17): a detail answer
 #: carries at most this many releases, each with at most
 #: `_DETAIL_MAX_SOURCES_PER_RELEASE` sources (ladder-best first). A big
@@ -6210,11 +6279,17 @@ def _fetch_releases_with_sources(conn, post_ids, full: bool = False,
             sources_by_rel[int(s["release_id"])].append(s)
     total_releases = len(releases)
     total_sources = sum(len(v) for v in sources_by_rel.values())
+    # R1 (2026-11-18): one batched host-rank read for every source id
+    # the ladder will sort, so the evidence ladder breaks its ties by
+    # measured host health. The ranks are a sort key only — the URLs
+    # behind them never reach a row.
+    host_ranks = _source_host_ranks(
+        conn, [int(s["id"]) for v in sources_by_rel.values() for s in v])
     capped = releases if max_releases is None else releases[:max_releases]
     rel_list = []
     for rel in capped:
         sources = sorted(sources_by_rel[int(rel["id"])],
-                         key=_source_ladder_key)
+                         key=lambda s: _host_ranked_ladder_key(s, host_ranks))
         if max_sources_per_release is not None:
             sources = sources[:max_sources_per_release]
         # The ordering above is our own preference between servers; it is a

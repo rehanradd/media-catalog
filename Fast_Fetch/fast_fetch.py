@@ -6769,6 +6769,37 @@ _STAGE2_REFERER_RETRY = "https://embed.vidrift.net/"
 #: ~35 dead landing pages before answering no_playable_source.
 _FAILOVER_BUDGET_SECONDS = 10.0
 
+#: R4 (2026-11-18): the first slice of the failover budget a single
+#: sibling copy gets. The failover ladder tries siblings in order, but
+#: a slow bridge used to eat the whole 10 s budget on the FIRST sibling
+#: — the second, healthy copy never got its turn, so one dead 1080p
+#: copy cost the press 10 s before the next copy was even tried. A
+#: sibling now gets this first slice; if it has not answered by then,
+#: the loop moves on and the sibling's own call returns a
+#: deadline-expired failure (recorded nowhere — an unanswered sibling
+#: is not a dead sibling). The PRIMARY copy (the one the user pressed)
+#: gets no deadline: its full unwrap attempt is unchanged.
+FAILOVER_FIRST_SLICE_SECONDS = 5.0
+#: Per-service first-slice overrides, keyed by the service name the
+#: ladder reads from `download_sources.service`. filepress's unwrap is
+#: a two-hop chain whose own timeout is 15 s
+#: (`importers/host_resolvers.py`: FILEPRESS_TIMEOUT = 15 vs
+#: DEFAULT_TIMEOUT = 25) — a 5 s slice would cut it off before its
+#: first hop answers, so it gets its own 15 s. Every other service
+#: keeps the default slice.
+FAILOVER_FIRST_SLICE_SLOW_HOSTS = {"filepress": 15.0}
+
+
+def _first_slice_for_service(service: str) -> float:
+    """The R4 first slice for one sibling's service: the slow-host
+    override when the service is listed, else the default slice."""
+    try:
+        return float(FAILOVER_FIRST_SLICE_SLOW_HOSTS.get(
+            str(service or "").strip().lower(),
+            FAILOVER_FIRST_SLICE_SECONDS))
+    except (TypeError, ValueError):
+        return FAILOVER_FIRST_SLICE_SECONDS
+
 #: Seconds a copy recorded as failed stays refused without re-probing
 #: (Session 101 negative cache). The audit's range was 6–24 h; 12 h is
 #: the midpoint and a named constant so the operator can tune it in one
@@ -7053,8 +7084,29 @@ def _transport_cause_of(exc):
     return None
 
 
+def _deadline_expired_answer(source_id: int) -> dict:
+    """R4: the answer when a failover sibling's deadline passes before
+    its work starts. Shaped like the fall-through's no_playable_source
+    envelope (same code, same reason vocabulary) with a
+    ``deadline_expired`` flag so the ladder can tell it apart from a
+    measured failure. It is returned, never recorded: the negative
+    cache must not refuse a copy for 12 h because the ladder ran out
+    of time before trying it, and the host circuit must not strike on
+    a copy that was never contacted."""
+    return {
+        "success": False,
+        "id": int(source_id),
+        "error": "no_playable_source",
+        "code": "no_playable_source",
+        "reason": "failover_slice_expired",
+        "deadline_expired": True,
+        "stale": False,
+    }
+
+
 def resolve_live_source(source_id: int, *, v2: bool = False,
-                        want: str = "either", _failover: bool = True) -> dict:
+                        want: str = "either", _failover: bool = True,
+                        deadline: float | None = None) -> dict:
     """
     Just-In-Time (JIT) live stream resolver:
     Given a download_sources ID, returns an active, stream-ready URL.
@@ -7081,6 +7133,12 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
     probe, or a playlist offered to a download caller, is discarded and
     the next copy is tried; when no copy passes, both contracts answer
     ``no_playable_source``. Nothing is ever redirected to a page.
+
+    ``deadline`` (R4) is a monotonic-clock bound the failover ladder
+    passes to a sibling's call: when it passes, the call returns a
+    ``deadline_expired`` failure fast instead of starting new work, and
+    records nothing — an unanswered sibling is not a dead sibling. The
+    primary copy is never called with a deadline.
     """
     if want not in ("watch", "download", "either"):
         want = "either"
@@ -7394,6 +7452,15 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
         if isinstance(verdict, dict) and verdict.get("status") == "active":
             return verdict.get("final_url") or None
         return None
+
+    # R4: the failover ladder's deadline. The cached probes above may
+    # already have spent it (a slow probe on a stale cache) — in that
+    # case no new work starts: the dispatch, the sibling failover and
+    # the Stage-2 ladder all return the deadline answer instead. A
+    # failure the dispatch already earned and recorded stands; the
+    # deadline only prevents NEW work from starting.
+    if deadline is not None and time.monotonic() > deadline:
+        return _deadline_expired_answer(src["id"])
 
     if _negative_cache_hit:
         # The picked copy failed recently: its own unwrap would only
@@ -8223,6 +8290,14 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
             **_expiry_fields(src),
         }
 
+    # R4: the deadline may also have passed during the dispatch (a slow
+    # unwrap on the primary copy). The sibling failover below is new
+    # work — skip it and let the Stage-2 ladder's own check decide the
+    # same way, instead of spending the ladder's budget on copies the
+    # caller has already stopped waiting for.
+    if deadline is not None and time.monotonic() > deadline:
+        return _deadline_expired_answer(src["id"])
+
     # Stage-1 sibling failover: this copy failed, but the release may hold
     # other stage-1 copies. Try them (resolve_release caps at 10 rows and
     # ranks one winner per independence group) before answering
@@ -8242,9 +8317,15 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
             # Stage-1 sibling failover used to run up to 10 unbounded
             # unwraps with no deadline at all. Siblings are tried
             # direct-first, by the same ranking as the Stage-2 ladder.
+            # R4: the sibling release's own deadline is capped by this
+            # call's deadline, so a failover sibling's Stage-1 attempt
+            # cannot outlive the slice the ladder gave it.
+            _sibling_deadline = time.monotonic() + _FAILOVER_BUDGET_SECONDS
+            if deadline is not None:
+                _sibling_deadline = min(_sibling_deadline, deadline)
             _rel = _ch_release(
                 [dict(r) for r in _siblings],
-                deadline=time.monotonic() + _FAILOVER_BUDGET_SECONDS)
+                deadline=_sibling_deadline)
             _winner = _rel.get("watch_winner")
             if _winner and _winner.get("url"):
                 with get_db() as _conn:
@@ -8298,6 +8379,14 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
             # cross-release ladder below instead of refusing here.
         except Exception:
             pass
+
+    # R4: same stage-boundary check as before the Stage-1 sibling
+    # failover — the ladder below is new work, and a deadline that
+    # passed during the dispatch or the Stage-1 attempt ends the call
+    # here instead of spending the caller's remaining patience on
+    # siblings it will not wait for.
+    if deadline is not None and time.monotonic() > deadline:
+        return _deadline_expired_answer(src["id"])
 
     # Stage-2 general failover: the same-release-then-cross-release
     # ladder, for every backend, not just Stage-1 ones. Each sibling is
@@ -8387,6 +8476,59 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                         }
                 except Exception:
                     _live_siblings = _all_siblings
+            # R1 + checkup #3 (2026-11-18): order the ladder by the
+            # PERSISTENT host health the sweep maintains, before the
+            # in-process demotion below (which then runs after, as a
+            # stable partition, so both signals are respected). A host
+            # with >= 50 consecutive failures (pixeldrain 274, vidoza
+            # 100 in the checkup) is suppressed — tried last, after
+            # every healthier copy — and one with >= 10 is demoted a
+            # rung; within a tier the decayed host rank decides. No
+            # host names are hardcoded: the demotion comes from the
+            # measured streaks. Suppressed hosts are tried last, never
+            # skipped — a sweep or verify success resets the streak
+            # and the host climbs back. When EVERY sibling is
+            # suppressed the tier order is unchanged (all tier 2), so
+            # the ladder never refuses a press for want of a healthy
+            # host. Fail-open: any read error leaves the SQL order
+            # untouched. The service map is initialised here so the
+            # loop's per-slice lookup below never sees an unbound name
+            # when the Session-103 read fails.
+            _svc_by_id = {}
+            if _live_siblings:
+                try:
+                    import serve_verify
+                    with get_db() as _conn:
+                        _placeholders = ",".join(
+                            "?" for _ in _live_siblings)
+                        _url_by_id = dict(_conn.execute(
+                            "SELECT id, source_url FROM download_sources "
+                            "WHERE id IN (" + _placeholders + ")",
+                            tuple(_live_siblings)).fetchall())
+                        _host_info = {}
+                        for _sid in _live_siblings:
+                            _host = serve_verify._host_of(
+                                _url_by_id.get(_sid) or "")
+                            if _host and _host not in _host_info:
+                                _host_info[_host] = serve_verify.host_rank_info(
+                                    _conn, _host)
+                    _tier_by_id = {}
+                    for _sid in _live_siblings:
+                        _host = serve_verify._host_of(
+                            _url_by_id.get(_sid) or "")
+                        _failures, _rank = _host_info.get(
+                            _host, (0, serve_verify.HOST_UNMEASURED_RANK))
+                        if _failures >= serve_verify.HOST_SUPPRESS_AFTER_FAILURES:
+                            _tier = 2
+                        elif _failures >= serve_verify.HOST_DEMOTE_AFTER_FAILURES:
+                            _tier = 1
+                        else:
+                            _tier = 0
+                        _tier_by_id[_sid] = (_tier, -_rank)
+                    _live_siblings = sorted(
+                        _live_siblings, key=lambda s: _tier_by_id[s])
+                except Exception:
+                    pass
             # Host health (Session 103): demote services this process
             # has seen fail 3+ times in the last hour to the back of the
             # ladder, so a host whose CDN is down stops being tried first
@@ -8420,8 +8562,17 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                 if time.monotonic() > _failover_deadline:
                     break
                 try:
+                    # R4: each sibling gets its first slice of the
+                    # budget, capped by the ladder's overall deadline.
+                    # A sibling that has not answered by then returns
+                    # a deadline-expired failure (recorded nowhere)
+                    # and the loop moves on to the next copy.
+                    _slice = _first_slice_for_service(
+                        _svc_by_id.get(_sid))
                     _alt = resolve_live_source(
-                        int(_sid), v2=v2, want=want, _failover=False)
+                        int(_sid), v2=v2, want=want, _failover=False,
+                        deadline=min(_failover_deadline,
+                                     time.monotonic() + _slice))
                 except Exception:
                     continue
                 # A stale-flagged sibling is NOT a failover win: it means

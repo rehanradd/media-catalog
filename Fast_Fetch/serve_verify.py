@@ -105,6 +105,24 @@ HOST_WEAK_MIN_PROBES = 5
 HOST_DEAD_MIN_PROBES = 3
 HOST_UNMEASURED_RANK = 0.5
 
+#: R1 decayed host score (2026-11-18): the serve-time rank is a ROLLING
+#: live-rate with a 7-day half-life, not the all-time rate — a host that
+#: was dead a month ago and is healthy today must climb back, and a host
+#: that was healthy and broke yesterday must fall now. The decayed
+#: counters live beside the all-time ones: the circuit and the watchdog
+#: keep reading all-time `probes`/`successes`; only the RANK decays.
+HOST_DECAY_HALF_LIFE_S = 7 * 24 * 3600.0
+#: Below one effective (decayed) probe the rank is unmeasured — ancient
+#: evidence exits gracefully to neutral instead of dividing by ~zero.
+HOST_DECAY_MIN_PROBES = 1.0
+#: Checkup #3 (DB-CHECKUP-20261118): a host with this many consecutive
+#: failures is demoted to the back of the failover ladder; at the higher
+#: count it is suppressed (tried last, after every healthier copy) until
+#: a probe succeeds and resets the streak. No new probing is needed to
+#: apply this — it reads the `host_health` the sweep already maintains.
+HOST_DEMOTE_AFTER_FAILURES = 10
+HOST_SUPPRESS_AFTER_FAILURES = 50
+
 #: Poison-cache guard (research §3): over this fraction of a batch with no
 #: answer at all means our network is down — record nothing.
 POISON_NO_ANSWER_FRACTION = 0.5
@@ -430,6 +448,11 @@ def _ensure_host_health(conn) -> bool:
                 conn.execute(
                     "ALTER TABLE host_health ADD COLUMN %s"
                     " INTEGER NOT NULL DEFAULT 0" % column)
+        for column in ("decay_probes", "decay_successes"):
+            if column not in have:
+                conn.execute(
+                    "ALTER TABLE host_health ADD COLUMN %s"
+                    " REAL NOT NULL DEFAULT 0" % column)
         if "measured_at" not in have:
             conn.execute("ALTER TABLE host_health ADD COLUMN measured_at"
                          " REAL NOT NULL DEFAULT 0")
@@ -465,13 +488,50 @@ def circuit_open(conn, host: str, *, now: float | None = None) -> bool:
         return False
 
 
+def _decay_factor(last: float, now: float) -> float:
+    """Weight of evidence last measured at `last`, seen at `now`.
+
+    Exponential decay with a 7-day half-life (R1). Clamped to [0, 1]:
+    a clock that runs backwards must never inflate the counters.
+    """
+    try:
+        age = float(now) - float(last)
+    except (TypeError, ValueError):
+        return 1.0
+    if age <= 0:
+        return 1.0
+    return 0.5 ** (age / HOST_DECAY_HALF_LIFE_S)
+
+
+def _decay_counters(row, now: float) -> tuple[float, float]:
+    """A host row's decayed (probes, successes) as of `now`.
+
+    `row` is the fetched (decay_probes, decay_successes, measured_at)
+    tuple or None. The stored counters were decayed at the last write;
+    the time since then decays them further, so the rank is always
+    current without a background job.
+    """
+    if row is None:
+        return 0.0, 0.0
+    try:
+        probes = float(row[0] or 0)
+        successes = float(row[1] or 0)
+        measured_at = float(row[2] or 0)
+    except (TypeError, ValueError):
+        return 0.0, 0.0
+    factor = _decay_factor(measured_at, now)
+    return probes * factor, successes * factor
+
+
 def record_host_failure(conn, host: str, *, now: float | None = None) -> None:
     """Count one endpoint-answered failure for *host*; open the circuit
     at the threshold with doubling back-off (2 min → 1 h cap).
 
     Every failure is also a measurement: ``probes`` counts it, so the
     host's live-rate (see ``host_live_rate``) is earned by the same
-    outcomes that drive the circuit.
+    outcomes that drive the circuit. The R1 decayed counters are decayed
+    to `now` first, then the failure is added — so old evidence fades
+    even between writes.
     """
     if conn is None or not host:
         return
@@ -479,23 +539,32 @@ def record_host_failure(conn, host: str, *, now: float | None = None) -> None:
     if not _ensure_host_health(conn):
         return
     try:
-        row = conn.execute("SELECT consecutive_failures, backoff_s FROM host_health"
-                           " WHERE host = ?", (str(host),)).fetchone()
+        row = conn.execute("SELECT consecutive_failures, backoff_s,"
+                           " decay_probes, decay_successes, measured_at"
+                           " FROM host_health WHERE host = ?",
+                           (str(host),)).fetchone()
         failures = int(row[0]) + 1 if row is not None else 1
         backoff = float(row[1]) if row is not None and row[1] else HOST_CIRCUIT_BASE_S
         opened_until = 0.0
         if failures >= HOST_CIRCUIT_MIN_FAILURES:
             opened_until = moment + backoff
             backoff = min(backoff * 2, HOST_CIRCUIT_MAX_S)
+        decay_probes, decay_successes = _decay_counters(
+            (row[2], row[3], row[4]) if row is not None else None, moment)
+        decay_probes += 1.0
         conn.execute(
             "INSERT INTO host_health (host, consecutive_failures, opened_until,"
-            " backoff_s, probes, successes, measured_at)"
-            " VALUES (?, ?, ?, ?, 1, 0, ?)"
+            " backoff_s, probes, successes, decay_probes, decay_successes,"
+            " measured_at)"
+            " VALUES (?, ?, ?, ?, 1, 0, ?, ?, ?)"
             " ON CONFLICT(host) DO UPDATE SET consecutive_failures = ?,"
             " opened_until = ?, backoff_s = ?,"
-            " probes = host_health.probes + 1, measured_at = ?",
-            (str(host), failures, opened_until, backoff, moment,
-             failures, opened_until, backoff, moment))
+            " probes = host_health.probes + 1,"
+            " decay_probes = ?, decay_successes = ?, measured_at = ?",
+            (str(host), failures, opened_until, backoff,
+             decay_probes, decay_successes, moment,
+             failures, opened_until, backoff,
+             decay_probes, decay_successes, moment))
     except sqlite3.Error:
         pass
 
@@ -503,7 +572,10 @@ def record_host_failure(conn, host: str, *, now: float | None = None) -> None:
 def record_host_success(conn, host: str, *, now: float | None = None) -> None:
     """One success closes the circuit: failures reset to zero.
 
-    Also a measurement: ``probes`` and ``successes`` both count it.
+    Also a measurement: ``probes`` and ``successes`` both count it. The
+    R1 decayed counters are decayed to `now` first, then the success is
+    added — one success after a long silence does not erase a long bad
+    history outright, it starts the climb back from its decayed weight.
     """
     if conn is None or not host:
         return
@@ -511,16 +583,26 @@ def record_host_success(conn, host: str, *, now: float | None = None) -> None:
     if not _ensure_host_health(conn):
         return
     try:
+        row = conn.execute("SELECT decay_probes, decay_successes, measured_at"
+                           " FROM host_health WHERE host = ?",
+                           (str(host),)).fetchone()
+        decay_probes, decay_successes = _decay_counters(row, moment)
+        decay_probes += 1.0
+        decay_successes += 1.0
         conn.execute(
             "INSERT INTO host_health (host, consecutive_failures, opened_until,"
-            " backoff_s, probes, successes, measured_at)"
-            " VALUES (?, 0, 0, ?, 1, 1, ?)"
+            " backoff_s, probes, successes, decay_probes, decay_successes,"
+            " measured_at)"
+            " VALUES (?, 0, 0, ?, 1, 1, ?, ?, ?)"
             " ON CONFLICT(host) DO UPDATE SET"
             " consecutive_failures = 0, opened_until = 0, backoff_s = ?,"
             " probes = host_health.probes + 1,"
-            " successes = host_health.successes + 1, measured_at = ?",
-            (str(host), HOST_CIRCUIT_BASE_S, moment,
-             HOST_CIRCUIT_BASE_S, moment))
+            " successes = host_health.successes + 1,"
+            " decay_probes = ?, decay_successes = ?, measured_at = ?",
+            (str(host), HOST_CIRCUIT_BASE_S,
+             decay_probes, decay_successes, moment,
+             HOST_CIRCUIT_BASE_S,
+             decay_probes, decay_successes, moment))
     except sqlite3.Error:
         pass
 
@@ -549,12 +631,67 @@ def host_live_rate(conn, host: str):
     return successes / probes
 
 
-def host_rank_score(conn, host: str) -> float:
-    """Sort key for serve-time choice: the measured live-rate, or the
-    neutral 0.5 for an unmeasured host. Best/most-active first, weak
-    last, unknown in the middle."""
-    rate = host_live_rate(conn, host)
+def host_decayed_rate(conn, host: str, *, now: float | None = None):
+    """The host's ROLLING live-rate (7-day half-life), or None when the
+    host has no effective measurement left.
+
+    The stored decayed counters were decayed at the last write; the time
+    since then decays them further, so the rank is always current without
+    a background job. Below one effective probe the answer is None —
+    ancient evidence exits gracefully to neutral, and the host is
+    re-measured as unknown instead of carrying a stale verdict forever.
+    """
+    if conn is None or not host:
+        return None
+    if not _ensure_host_health(conn):
+        return None
+    try:
+        row = conn.execute("SELECT decay_probes, decay_successes, measured_at"
+                           " FROM host_health WHERE host = ?",
+                           (str(host),)).fetchone()
+    except sqlite3.Error:
+        return None
+    if row is None:
+        return None
+    moment = time.time() if now is None else float(now)
+    probes, successes = _decay_counters(row, moment)
+    if probes < HOST_DECAY_MIN_PROBES:
+        return None
+    return successes / probes
+
+
+def host_rank_score(conn, host: str, *, now: float | None = None) -> float:
+    """Sort key for serve-time choice: the ROLLING (7-day half-life)
+    live-rate, or the neutral 0.5 for an unmeasured host. Best/most-active
+    first, weak last, unknown in the middle. (R1, 2026-11-18: this used to
+    be the all-time rate — a host that broke yesterday kept its old rank
+    for weeks. The all-time rate still exists as `host_live_rate` for the
+    watchdog and the seed path; only the RANK decays.)"""
+    rate = host_decayed_rate(conn, host, now=now)
     return float(rate) if rate is not None else HOST_UNMEASURED_RANK
+
+
+def host_rank_info(conn, host: str, *, now: float | None = None) -> tuple[int, float]:
+    """(consecutive_failures, rank) for one host, fail-open.
+
+    The failover ladder's read: an unreadable table or an unknown host is
+    (0, 0.5) — never measured, never condemned. The streak is what the
+    #3 suppress/demote thresholds read; the rank is what orders the rest.
+    """
+    if conn is None or not host:
+        return 0, HOST_UNMEASURED_RANK
+    try:
+        row = conn.execute("SELECT consecutive_failures FROM host_health"
+                           " WHERE host = ?", (str(host),)).fetchone()
+    except sqlite3.Error:
+        return 0, HOST_UNMEASURED_RANK
+    failures = 0
+    if row is not None:
+        try:
+            failures = int(row[0] or 0)
+        except (TypeError, ValueError):
+            failures = 0
+    return failures, host_rank_score(conn, host, now=now)
 
 
 def seed_host_ranking(conn, ranking, *, now: float | None = None) -> dict:
@@ -603,14 +740,17 @@ def seed_host_ranking(conn, ranking, *, now: float | None = None) -> dict:
         try:
             conn.execute(
                 "INSERT INTO host_health (host, consecutive_failures,"
-                " opened_until, backoff_s, probes, successes, measured_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)"
+                " opened_until, backoff_s, probes, successes,"
+                " decay_probes, decay_successes, measured_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
                 " ON CONFLICT(host) DO UPDATE SET consecutive_failures = ?,"
                 " opened_until = ?, backoff_s = ?, probes = ?,"
-                " successes = ?, measured_at = ?",
+                " successes = ?, decay_probes = ?, decay_successes = ?,"
+                " measured_at = ?",
                 (host, failures, opened_until, backoff, probes, successes,
-                 moment, failures, opened_until, backoff, probes, successes,
-                 moment))
+                 float(probes), float(successes), moment,
+                 failures, opened_until, backoff, probes, successes,
+                 float(probes), float(successes), moment))
             seeded += 1
         except sqlite3.Error:
             continue
@@ -821,8 +961,15 @@ def record_probe_failure(conn, source_id: int, reason: str, *,
                 recorded["journal"] = True
     except Exception:      # noqa: BLE001 — see above
         pass
-    # 4. Host circuit breaker.
-    if host:
+    # 4. Host circuit breaker — R1 (2026-11-18): 401/403/429 are NEUTRAL
+    # for the host score. An expired signature (401/403) or a throttle
+    # (429) says nothing about the host being dead — the same rule
+    # link_state.classify applies at the link level (401/403/429 ->
+    # STATUS_EXPIRED, not dead). Counting them as host failures would
+    # demote healthy hosts the moment they throttle us. The link-level
+    # records above still stand (a 403'd link keeps its negative-cache
+    # and journal entries); only the host's counters are left untouched.
+    if host and int(http_status or 0) not in (401, 403, 429):
         try:
             record_host_failure(conn, host, now=moment)
             recorded["host"] = True

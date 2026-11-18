@@ -49,6 +49,7 @@ import db_pragmas  # serve-path SQLite pragmas (Session 125)
 import panel_feed  # the operator's tuning knobs (candidate_cap)
 import redact
 import release_descriptor
+import serve_verify
 import tiers
 
 CONTRACT_VERSION = "2.1.0"
@@ -2392,6 +2393,85 @@ def _bundle_is_gated(conn, bundle: dict, *, is_vip: bool, operator: bool) -> boo
     return band in GATED_QUALITY_BANDS
 
 
+def _print_host_ranks(conn, release_ids):
+    """R1 (2026-11-18): per-print host rank — the best measured host
+    among the print's playable copies, for the band-walk key.
+
+    One batched read: cat_links (release_id, ledger_link_id, kind, url,
+    final_url, playability, state) for the candidate ids, joined to
+    download_sources.source_url for the same ledger ids, then one
+    host_health read per distinct host (indexed by host PK). A print's
+    rank is the MAX decayed host rank among its playable copies —
+    playable by the same rule the views use
+    (`catalog_api._link_group(row) <= _GROUP_RESOLVE`, state not in
+    `tiers.UNPLAYABLE_STATES`, ledger id not None); an unmeasured host
+    ranks 0.5, a print with no playable copies ranks 0.5 too, so it
+    sorts by score exactly as before. Fail-open everywhere: a missing
+    table, an unreadable row or a host_health miss returns 0.5, never
+    an exception — the walk must never fail for want of a ranking.
+    """
+    ids = [int(r) for r in (release_ids or [])]
+    ranks = {rid: serve_verify.HOST_UNMEASURED_RANK for rid in ids}
+    if not ids:
+        return ranks
+    try:
+        has_links = conn.execute(
+            "SELECT 1 FROM sqlite_master"
+            " WHERE type = 'table' AND name = 'cat_links'").fetchone()
+        has_sources = conn.execute(
+            "SELECT 1 FROM sqlite_master"
+            " WHERE type = 'table' AND name = 'download_sources'").fetchone()
+        if has_links is None or has_sources is None:
+            return ranks
+        marks = ", ".join("?" for _ in ids)
+        rows = conn.execute(
+            f"SELECT cl.release_id, cl.ledger_link_id, cl.kind, cl.url,"
+            f" cl.final_url, cl.playability, cl.state, ds.source_url"
+            f" FROM cat_links cl"
+            f" JOIN download_sources ds ON ds.id = cl.ledger_link_id"
+            f" WHERE cl.release_id IN ({marks})",
+            ids).fetchall()
+    except sqlite3.Error:
+        return ranks
+
+    def _playable(row) -> bool:
+        try:
+            if int(row["ledger_link_id"] or 0) == 0:
+                return False
+            if catalog_api._link_group(row) > catalog_api._GROUP_RESOLVE:
+                return False
+            return str(row["state"] or "") not in tiers.UNPLAYABLE_STATES
+        except (TypeError, ValueError, KeyError, IndexError):
+            return False
+
+    hosts = {}
+    for row in rows:
+        if not _playable(row):
+            continue
+        try:
+            host = serve_verify._host_of(row["source_url"])
+        except (TypeError, ValueError):
+            continue
+        if host:
+            hosts.setdefault(host, serve_verify.HOST_UNMEASURED_RANK)
+    for host in hosts:
+        try:
+            hosts[host] = serve_verify.host_rank_score(conn, host)
+        except Exception:      # noqa: BLE001 — fail-open: unmeasured
+            hosts[host] = serve_verify.HOST_UNMEASURED_RANK
+    for row in rows:
+        if not _playable(row):
+            continue
+        try:
+            host = serve_verify._host_of(row["source_url"])
+            rid = int(row["release_id"])
+        except (TypeError, ValueError):
+            continue
+        if host in hosts and rid in ranks and hosts[host] > ranks[rid]:
+            ranks[rid] = hosts[host]
+    return ranks
+
+
 def _band_order(conn, release_ids):
     """Order candidate prints best-band first (B1 cursor pagination).
 
@@ -2399,14 +2479,14 @@ def _band_order(conn, release_ids):
     source tag plus HDR/codec/official/subs/audio/edition bonuses —
     so a kitted-out 720p BluRay outscores a bare 1080p print, and
     score order is NOT band order. The walk tries the best band
-    first; inside a band the score still decides, then id for
-    stability. A print the projection never described (no row) sorts
-    last, never first. This only orders the TRIES: the verified
-    preference in `_play_first_playable` is untouched — a verified
-    lower-band print still wins over an unverified higher-band one —
-    and the banked-resolution semantics never change. (R1 measured
-    liveness ranking layers here later: it becomes a key between
-    band and score.)
+    first; inside a band the print whose copies sit on the healthiest
+    measured host goes first (R1, 2026-11-18 — the decayed host rank
+    from `_print_host_ranks`, between band and score), then the score,
+    then id for stability. A print the projection never described (no
+    row) sorts last, never first. This only orders the TRIES: the
+    verified preference in `_play_first_playable` is untouched — a
+    verified lower-band print still wins over an unverified
+    higher-band one — and the banked-resolution semantics never change.
     """
     ids = [int(r) for r in (release_ids or [])]
     if not ids:
@@ -2426,14 +2506,16 @@ def _band_order(conn, release_ids):
         f" FROM cat_releases WHERE id IN ({marks})",
         ids).fetchall()
     info = {int(r["id"]): r for r in rows}
+    ranks = _print_host_ranks(conn, ids)
 
     def key(rid):
         row = info.get(int(rid))
         if row is None:
-            return (len(tiers.BANDS) + 1, 0, int(rid))
+            return (len(tiers.BANDS) + 1, 0, 0, int(rid))
         band = tiers.band_of(row["quality_label"], row["codec"],
                              row["resolution"])
         return (tiers.band_rank(band),
+                -ranks.get(int(rid), serve_verify.HOST_UNMEASURED_RANK),
                 -int(row["quality_score"] or 0), int(rid))
 
     return sorted(ids, key=key)

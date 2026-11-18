@@ -1810,6 +1810,101 @@ def _resolve_work(conn, *, work_id=None, work_key=None, slug=None, url=None):
 DETAIL_MAX_PRINTS = 1000
 
 
+def _annotate_print_verification(conn, prints, *, now: float | None = None) -> None:
+    """R2 (2026-11-18): stamp each print in `prints` with a
+    `verification` field — the verified-only top rung, as data.
+
+    Per print: {"state": "verified"|"checking"|"unavailable",
+    "verified_at": <epoch float of the freshest banked resolution, or
+    None>}. "verified" means at least one playable copy holds a FRESH
+    banked resolution (the same rule
+    `api_v2._release_has_verified_candidate` answers, batched here over
+    the whole work instead of once per print); "checking" means
+    playable copies exist but none is fresh — the rung is being
+    verified, never hidden; "unavailable" means no playable copy at
+    all. `playable` is untouched: a cold title still plays through the
+    walk's fallback, exactly as before.
+
+    Two batched reads: cat_links for the print ids (filtered in Python
+    with `_link_group`, the same rule the link view's `playable`
+    uses), then resolved_cache for those ledger ids with
+    `lookup_cache(want="watch")` acceptance (kind file/playlist,
+    fail_count < 3, not ip_bound, reverify_after > now) plus the 600 s
+    freshness window on resolved_at. Fail-open: any error leaves the
+    prints unannotated (never fabricate a verdict).
+    """
+    import resolved_cache
+    import serve_verify
+    if not prints:
+        return
+    try:
+        moment = time.time() if now is None else float(now)
+        ids = [int(p["release_id"]) for p in prints]
+        marks = ", ".join("?" for _ in ids)
+        rows = conn.execute(
+            f"SELECT release_id, ledger_link_id, kind, url, final_url,"
+            f" playability, state FROM cat_links"
+            f" WHERE release_id IN ({marks})", ids).fetchall()
+    except Exception:      # noqa: BLE001 — fail-open: no annotation
+        return
+    playable_by_release: dict[int, list[int]] = {}
+    for row in rows:
+        try:
+            ledger_id = row["ledger_link_id"]
+            if ledger_id is None:
+                continue
+            if _link_group(row) > _GROUP_RESOLVE:
+                continue
+            if str(row["state"] or "") in tiers.UNPLAYABLE_STATES:
+                continue
+        except (TypeError, ValueError, KeyError, IndexError):
+            continue
+        playable_by_release.setdefault(
+            int(row["release_id"]), []).append(int(ledger_id))
+    # The cache read degrades on its own: a missing or unreadable
+    # resolved_cache means "nothing fresh" (checking), never a reason
+    # to blank the annotation the ledger read already earned.
+    fresh_at: dict[int, float] = {}
+    try:
+        ledger_ids = [lid for lids in playable_by_release.values()
+                      for lid in lids]
+        if ledger_ids:
+            cache_marks = ", ".join("?" for _ in ledger_ids)
+            cache_rows = conn.execute(
+                f"SELECT link_id, resolved_at FROM resolved_cache"
+                f" WHERE link_id IN ({cache_marks})"
+                f" AND reverify_after > ? AND fail_count < ?"
+                f" AND kind IN ('file', 'playlist')"
+                f" AND (ip_bound IS NULL OR ip_bound = 0)",
+                (*ledger_ids, moment,
+                 resolved_cache.MAX_FAIL_COUNT)).fetchall()
+            for row in cache_rows:
+                try:
+                    resolved_at = float(row["resolved_at"])
+                except (TypeError, ValueError):
+                    continue
+                if 0 <= moment - resolved_at <= serve_verify.VERIFIED_FRESHNESS_S:
+                    lid = int(row["link_id"])
+                    if lid not in fresh_at or resolved_at > fresh_at[lid]:
+                        fresh_at[lid] = resolved_at
+    except Exception:      # noqa: BLE001 — fail-open: nothing fresh
+        fresh_at = {}
+    for p in prints:
+        rid = int(p["release_id"])
+        lids = playable_by_release.get(rid, [])
+        if not lids:
+            p["verification"] = {"state": "unavailable",
+                                 "verified_at": None}
+            continue
+        fresh = [fresh_at[lid] for lid in lids if lid in fresh_at]
+        if fresh:
+            p["verification"] = {"state": "verified",
+                                 "verified_at": max(fresh)}
+        else:
+            p["verification"] = {"state": "checking",
+                                 "verified_at": None}
+
+
 @public_edge
 def work_detail(conn, *, work_id=None, work_key=None, slug=None, url=None,
                 include_adult=False, fields=None, include_provenance=False,
@@ -1851,6 +1946,10 @@ def work_detail(conn, *, work_id=None, work_key=None, slug=None, url=None,
     release_ids = [row["id"] for row in release_rows]
     links_by_release = _ordered_links(conn, release_ids)
     prints = [_print_view(conn, row, links_by_release) for row in release_rows]
+    # R2 (2026-11-18): the verified-only top rung, as data — each print
+    # carries whether a copy was just verified live. Fail-open: the
+    # annotation never breaks the detail answer.
+    _annotate_print_verification(conn, prints)
     print_index = {p["release_id"]: p for p in prints}
     if prints_truncated:
         link_total = conn.execute(

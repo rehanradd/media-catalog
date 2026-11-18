@@ -7,7 +7,7 @@
 
 ## ✅ Open items — index (q3, 2026-10-30; pointers only)
 
-1. **This file is a pointer, not a history** 110 session files (107 dated + 3 undated) cover
+1. **This file is a pointer, not a history** 111 session files (108 dated + 3 undated) cover
 
    every one of them verbatim: [`checkpoints/README.md`](checkpoints/README.md). Nothing was
    deleted, reworded, or summarized. The count is `ls Fast_Fetch/checkpoints/*.md` minus `README.md`,
@@ -48,8 +48,8 @@
 13. **qoder1 pass — `0e5ae28` + `8ca798a` + `a424ffc` landed; `q3-adultkey-net` and `q2-raddrelay` refused:** all four workers idle, qoder4's seek fix missing from the landed app. Text: `checkpoints/20261031-q1-supervisor-three-lanes-reviewed-gated-and-landed-two.md`.
 14. **qoder1 pass — `0afea35` + `a775ba7` + `e7f6bbb` landed; `q3-coins-engine` found empty and re-scoped; `q5-adultkey-reconciliation` held on one guard line, then green (item 15).** Every gate was a hosted run, zero local CPU. Text: `checkpoints/20261031-q1-supervisor-pass-three-landed-the-adult-gate-held.md`.
 15. `[Q5-ADULTKEY]` — the merge-time corroborated adult fold and `link_is_adult` fail-closed; green on run 41156831610, landed `4a8c163`; **production still pre-law** — gap and read-only re-measure commands: `checkpoints/20261031-q5-adultkey-production-is-pre-law.md`.
-16. **Re-filed 2026-11-17 from `LANE_QODER13_BRIEF.md` (trashed; via `HANDOFF_apidocs.md` §F):** `validate_catalog_full.py` §8 has two checks whose condition is literal `True` (`:248`, `:252`) — needs a real condition. Held for the Crown, in order: all-clear re-run of `test_vidout` / `test_catalog_v2` / `test_api_v2` (reported errors suspected disk-full artifacts, never confirmed, one suite at a time); `unprobed`-scope question (`link_state` sets `unprobed` only on the no-unpacker branch, `fast_fetch.py:5559-5563`); whether the same-key twin `EXISTS` in `catalog_exporter` stays after `backfill_adult_key.py` runs on the deploying DB; per-service `http_status` cross-tab + §6 coverage query cost with the adult-clause join (never measured).
-17. **Re-filed 2026-11-17 from `HANDOFF_apidocs.md` (trashed) — v2 gaps, open only:** A5 `expires_at` PARTIAL (resolve path mirrors it onto `cat_links`; the projector does not persist it — NULL after a rebuild); A8 `OFFSET_QUORUM` is metadata, not a rule, and `_parts_for_work()`'s docstring (`catalog_api.py:1628-1630`) still claims the projector does not fill `cat_parts`; A10 `tv_special`/`miniseries` NOT STARTED; A11 alias `kind`s beyond `aka` NOT STARTED; C17 app-still-v1 PARTIAL (v2 types exist but were unwired — note: `playV2` is now used at Play-press time, `DetailPreResolve.kt:25`).
+16. **Re-filed 2026-11-17 from `LANE_QODER13_BRIEF.md` (trashed; via `HANDOFF_apidocs.md` §F):** `validate_catalog_full.py` §8 has two checks whose condition is literal `True` (`:248`, `:252`) — needs a real condition. Held for the Crown, in order: all-clear re-run of `test_vidout` / `test_catalog_v2` / `test_api_v2` (suspected disk-full artifacts; one suite at a time); `unprobed`-scope question (`link_state` sets `unprobed` only on the no-unpacker branch, `fast_fetch.py:5559-5563`); whether the same-key twin `EXISTS` in `catalog_exporter` stays after `backfill_adult_key.py` runs on the deploying DB; per-service `http_status` cross-tab + §6 coverage query cost with the adult-clause join (never measured).
+17. **Re-filed 2026-11-17 from `HANDOFF_apidocs.md` (trashed) — v2 gaps, open only:** A5 `expires_at` PARTIAL (resolve path mirrors it onto `cat_links`; the projector does not persist it — NULL after a rebuild); A8 `OFFSET_QUORUM` is metadata, not a rule, and `_parts_for_work()`'s docstring (`catalog_api.py:1628-1630`) still claims the projector does not fill `cat_parts`; A10 `tv_special`/`miniseries` + A11 alias `kind`s beyond `aka` — NOT STARTED; C17 app-still-v1 PARTIAL (v2 types exist but were unwired — note: `playV2` is now used at Play-press time, `DetailPreResolve.kt:25`).
 18. **Re-filed 2026-11-17 from trashed App docs (`PLAN.md` §2.5, `PARITY_BACKEND_BLOCKED.md` §3.1):** manifest deep-link filter still bare-scheme (`AndroidManifest.xml:90-95` — one `<data>` per routed shape, drop `autoVerify`); legacy PNG launcher icons still in `res/mipmap-*`; open backend asks — #2 related + facets, #3 server-side sort + suggest, #4 measured link health (`cat_link_evidence` → `speed_mbps`/`latency_ms`/`http_status`/`ok`/`state`) onto `SourceDetail`.
 
 ---
@@ -70,7 +70,6 @@
 
 ## Rotated session history
 
-Session blocks moved verbatim to [`Fast_Fetch/checkpoints/`](checkpoints/README.md); nothing was deleted or reworded.
 The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete index.
 - [Session 2026-11-17 — One Piece detail 504 + preresolve thread storm `[DETAIL-THREADCAP]`](checkpoints/20261117-detail-threadcap.md)
 - [Session 2026-11-17 — HF full-gate backup push `[HF-BACKUP-FULLGATE]`](checkpoints/20261117-hf-backup-fullgate.md)
@@ -80,6 +79,7 @@ The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete i
 - [2026-11-18 — B4 trending warm-failure loudness](checkpoints/20261118-trending-warm-loud-b4.md)
 - 2026-11-18 — H2 backfills #6/#8/#9 (`muse/db-backfills-20261118`): quality normalization, resolved_cache prune, desicinemas Date-year.
 - 2026-11-18 — B1 cursor pagination + band-aware play walk (`muse/cursor-pagination-20261118`): keyset cursors on v1 posts/trending, v2 walk verified, play best-band-first; 13 tests green locally.
+- 2026-11-18 — R1+R2+R4 + checkup #3 host ranking (`muse/host-ranking-20261118`): decayed host score + tiers + verified prints + slice; 24 tests green; see checkpoints/20261118-host-ranking-r1r2r4.md.
 - [Session 2026-11-12 — self-check `[LIVE-TV-503]`](checkpoints/20261112-selfcheck-live-tv-503-logos.md)
 - [Session 2026-11-06 — crown `[CROWN-NIGHT-CHAIN]`: five trunk commits, the live-tree gap, what was rejected](checkpoints/20261106-crown-night-chain-five-trunk-commits-one-live-tree-gap.md)
 - [Session 2026-11-06 crown `[Q75-LAND]`: 3 producer chars, red-first 18 tests, the `_sN` merge loss filed](checkpoints/20261106-crown-q75-three-producer-fixes-landed-and-the-s-n-key-loss-filed.md)

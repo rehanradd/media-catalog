@@ -1,0 +1,34 @@
+# 2026-11-18 — R1 + R2 + R4 + DB-checkup #3: host reliability ranking `[HOST-RANKING]`
+
+Branch `muse/host-ranking-20261118` from main `0ffb7fc1` (B1). Server-only, stdlib only. NOT merged — the parent merges.
+
+## What changed
+
+**R1 — decayed host score (`serve_verify.py`).** The serve-time rank is now a ROLLING live-rate with a 7-day half-life, not the all-time rate. Two new columns on `host_health` (`decay_probes`/`decay_successes`, added by `_ensure_host_health` migration); `record_host_failure`/`record_host_success` decay the stored counters to `now` before adding the new outcome; `host_decayed_rate` decays again at read time; below one effective probe the answer is None → neutral 0.5, so ancient evidence exits gracefully and a host can recover. The all-time `probes`/`successes` (and `host_live_rate`) are unchanged — the circuit and the watchdog keep reading them; only the RANK decays. `seed_host_ranking` seeds decayed counters = measured values. New `host_rank_info(conn, host)` → `(consecutive_failures, rank)`, fail-open `(0, 0.5)`.
+
+**403/429 neutrality (`record_probe_failure` step 4).** Host-circuit recording is skipped for 401/403/429 — an expired signature or a throttle says nothing about the host being dead (same rule `link_state.classify` applies at the link level). Link-level records (journal, negative cache) still stand. 404/500 still count.
+
+**Consumers.** (1) `api_v2._band_order`: new `_print_host_ranks` (one batched cat_links ⨝ download_sources read + one host_health read per distinct host; per-print rank = max decayed rank among playable copies, same playable rule the views use); key is now `(band_rank, -print_rank, -quality_score, id)`. (2) `viewer._fetch_releases_with_sources`: new `_source_host_ranks` (one batched `SELECT id, source_url`, chunked at 500) + `_host_ranked_ladder_key` = `(evidence_rank, -host_rank, temp, service_rank)`; `_source_ladder_key` untouched; the URLs never reach a row (no-leak rule intact — `_SOURCE_DETAIL_COLS` still carries no `source_url`). (3) `catalog_api._sort_links`: SKIPPED for this slice — `_link_view` deliberately strips host/service info, so attaching a rank needs private-key strip gymnastics; `_play_first_playable` + `_band_order` + stream-route failover already cover the first press. Follow-up, not a gap in this slice.
+
+**Checkup #3 — failover tiers (`fast_fetch.py` Stage-2 ladder).** Before the Session-103 in-process demotion block (which then runs after as a stable partition): persistent host-health ordering of `_live_siblings` — tier 0 (streak < 10), tier 1 (10–49, demoted), tier 2 (≥ 50, suppressed — tried last, never skipped); within a tier, decayed rank desc, stable (SQL order preserved). No hardcoded host names — streamtape's demotion comes from its measured rate. Fail-open: any read error leaves the SQL order untouched. `_svc_by_id` is initialised to `{}` before the Session-103 block so the loop's slice lookup never sees an unbound name when that read fails.
+
+**R2 — verified-only top rung, as data (`catalog_api.work_detail`).** New `_annotate_print_verification`: each print gets `"verification": {"state": "verified"|"checking"|"unavailable", "verified_at": <epoch|None>}` — verified = ≥1 playable copy with a fresh banked resolution (same rule as `api_v2._release_has_verified_candidate`, batched over the whole work); checking = playable copies exist, none fresh (never hidden); unavailable = no playable copies. `playable` untouched — cold titles still play via the walk's fallback. Two batched reads (cat_links, then resolved_cache with `lookup_cache(want="watch")` acceptance + the 600 s freshness window). Fail-open: a missing/unreadable resolved_cache degrades to "nothing fresh" instead of blanking the annotation (caught by a test — the first version blanked everything when the table did not exist yet).
+
+**R4 — failover slice + deadline (`fast_fetch.py`).** `FAILOVER_FIRST_SLICE_SECONDS = 5.0`; per-service override `{"filepress": 15.0}` (grounded in `FILEPRESS_TIMEOUT = 15` vs `DEFAULT_TIMEOUT = 25` in `importers/host_resolvers.py`). `resolve_live_source(..., deadline=None)` — monotonic deadline checked at three stage boundaries (before the Stage-1 dispatch, before the Stage-1 sibling failover, before the Stage-2 ladder); on expiry returns `_deadline_expired_answer` (`reason: failover_slice_expired`, `deadline_expired: True`) and records nothing — an unanswered sibling is not a dead sibling. The failover loop passes `deadline=min(_failover_deadline, now + slice_for_service)` per sibling; the Stage-1 sibling `_ch_release` deadline is capped by the passed deadline. The PRIMARY copy is never called with a deadline. Note: the 15 s filepress slice is capped by the ladder's 10 s budget, so filepress effectively gets the whole budget while others get 5 s.
+
+## Tests
+
+New module `Fast_Fetch/test_host_ranking.py` (24 tests, all green locally, 1.8 s), registered in `.github/workflows/backend-ci.yml` (111 🧪 steps now). Covers: decay math (fresh 1/3, ancient → neutral, recent success climbs back 4/9, rate preserved under pure time passage, seed shapes); 403/429/401 neutrality vs 404/500; old-schema migration of the decay columns; band order (unmeasured keeps score order, healthy host beats higher score in-band, band still beats host rank, verified lower-band still wins over a healthy-host higher-band print); v1 ladder (evidence tie broken by host rank in both directions, `_source_ladder_key` unchanged, no `source_url`/`final_url` in the projected JSON); R2 (verified/checking/unavailable, cross-check vs `_release_has_verified_candidate` per print, `playable` untouched, fail-open without tables); R4 (slice lengths incl. case-insensitive filepress, expired deadline returns fast with `urlopen` patched to raise + records nothing, ladder orders siblings [streak 5, 15, 60] and passes per-sibling deadlines, filepress gets a longer slice than default).
+
+## Verification
+
+- `python3 -S Fast_Fetch/test_host_ranking.py` — 24/24 OK.
+- Full backend gate (`~/workspace/run-backend-gate.py` in the worktree) — 111/111 modules PASS, <N> tests, 0 failed. (Gate log: `~/workspace/host-ranking-20261118-gate.log`.)
+- `~/workspace/pre-push-checks.py` — clean.
+- Backend CI on the pushed tip: run <N>, SUCCESS. (Filled in at push time.)
+
+## Notes / follow-ups
+
+- `catalog_api._sort_links` host ranking: skipped deliberately (see above) — needs the private-key strip design, separate slice.
+- v1 post/work detail `verification` annotation and season/episode/release detail: follow-ups; scope here is `work_detail` only (the app's title detail route).
+- The `Fast_Fetch/CONTINUITY.md` index was at 11,931 B (ceiling 12,000): freed 143 B by tightening one redundant parenthetical in item 16 (33 B) and removing the "Rotated session history" intro line whose claim item 1 already states verbatim (110 B), then added the one-line entry + this checkpoint file (count 110 → 111).
