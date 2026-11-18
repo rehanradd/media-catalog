@@ -85,9 +85,3 @@ AdminV2/data-live/
 AdminV2/backups/
 AdminV2/*.log
 
-# MX idea #1 (2026-11-18): the FFmpeg software audio decoder AAR is built
-# from source by App/scripts/build-ffmpeg-aar.sh (Media3 1.3.1 + FFmpeg 6.0)
-# in CI and locally — it is a build artifact, never committed. The app's
-# Gradle build treats a missing AAR as "no software decoder" and still
-# compiles, so a fresh checkout builds without it.
-App/app/libs/

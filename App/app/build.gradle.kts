@@ -484,25 +484,17 @@ dependencies {
 
     // MX idea #1 (2026-11-18): FFmpeg software audio decoder (AC-3 / E-AC-3 /
     // DTS / TrueHD / MLP) so titles those formats fail to decode on MediaCodec
-    // play instead of showing the give-up card. The extension is NOT on
-    // Maven — its native libraries must be built from source (Media3 1.3.1 +
-    // FFmpeg 6.0) by App/scripts/build-ffmpeg-aar.sh, which CI runs before
-    // this build and drops the AAR into app/libs/. The dependency is
-    // conditional on the file existing: a build without the AAR still
-    // compiles, runs and plays exactly as before — the player loads the
-    // extension by reflection and FfmpegSupport.isSoftwareAudioAvailable
-    // answers false. The CI script fails loudly if it cannot produce the
-    // AAR, so a missing AAR can never silently pass CI.
-    val ffmpegAar = file("libs/media3-ffmpeg-1.3.1.aar")
-    if (ffmpegAar.exists()) {
-        implementation(files(ffmpegAar))
-    } else {
-        logger.warn(
-            "FFmpeg software audio decoder AAR not found at ${ffmpegAar.path} — " +
-                "AC-3/DTS/TrueHD audio will not play on devices without a hardware " +
-                "decoder. Run App/scripts/build-ffmpeg-aar.sh to build it.",
-        )
-    }
+    // play instead of showing the give-up card. Jellyfin's prebuilt
+    // media3-ffmpeg-decoder (Maven Central) carries the same
+    // androidx.media3.decoder.ffmpeg classes as the Media3 source build, so
+    // DefaultRenderersFactory finds FfmpegAudioRenderer by the same
+    // reflective lookup and FfmpegSupport.isSoftwareAudioAvailable answers
+    // true. This replaced the in-CI native build on 2026-11-19 after it
+    // failed 4x in CI (nasm, blank-line configure, Maven 429, AAR path).
+    // License note: the Jellyfin artifact is GPL-3.0 (FFmpeg itself LGPL
+    // 2.1+); see App/ffmpeg/NOTICE.md — the repo has no license file, so
+    // this is flagged for the owner, not a blocker.
+    implementation(libs.media3.ffmpeg.decoder)
     implementation(libs.media3.exoplayer.dash)
     implementation(libs.media3.datasource)
     implementation(libs.media3.ui)
