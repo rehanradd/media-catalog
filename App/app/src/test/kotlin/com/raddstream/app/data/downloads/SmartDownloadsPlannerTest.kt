@@ -81,7 +81,10 @@ class SmartDownloadsPlannerTest {
         )
         assertEquals("h-11", next?.handle)
         assertEquals(1, next?.episode)
-        assertEquals("720p", next?.printLabel)
+        // The print's label is the descriptor's quality label, not the
+        // raw quality string: a "720p" print reads "HD" everywhere the
+        // viewer sees it (QUALITY_LABELS), including the Downloads row.
+        assertEquals("HD", next?.printLabel)
     }
 
     @Test
