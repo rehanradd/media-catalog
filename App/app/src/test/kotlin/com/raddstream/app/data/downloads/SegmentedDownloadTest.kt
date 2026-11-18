@@ -26,17 +26,20 @@ import org.junit.Test
  */
 class SegmentedDownloadTest {
 
-    private val fileBytes = ByteArray(1_000) { (it % 251).toByte() }
+    // Big enough to actually split: 4 × 256 KB + 4 B → 4 segments of
+    // 262,145 B (planSegments only splits at MIN_SEGMENT_BYTES = 256 KB
+    // per segment, so a 1 KB file would come back as one range).
+    private val fileBytes = ByteArray(4 * 256 * 1024 + 4) { (it % 251).toByte() }
 
     // ── plan ─────────────────────────────────────────────────────────────────
 
     @Test
     fun `plan tiles the file exactly with the remainder spread over the first segments`() {
-        val ranges = planSegments(1_001, 4)
+        val ranges = planSegments(4 * 256 * 1024 + 1L, 4)
         assertEquals(4, ranges.size)
-        assertEquals(listOf(251L, 250L, 250L, 250L), ranges.map { it.length })
+        assertEquals(listOf(262_145L, 262_144L, 262_144L, 262_144L), ranges.map { it.length })
         assertEquals(0L, ranges.first().start)
-        assertEquals(1_001L, ranges.last().endExclusive)
+        assertEquals(4 * 256 * 1024 + 1L, ranges.last().endExclusive)
         ranges.zipWithNext { a, b -> assertEquals(a.endExclusive, b.start) }
     }
 
@@ -48,7 +51,10 @@ class SegmentedDownloadTest {
     @Test
     fun `a small file is one segment whatever the caller asks`() {
         assertEquals(1, planSegments(512, 4).size)
-        assertEquals(1, planSegments(MIN_SEGMENTED_BYTES - 1, 4).size)
+        // MIN_SEGMENT_BYTES is the planner's floor (256 KB per segment) —
+        // not MIN_SEGMENTED_BYTES (1 MB), which is segmentCountFor's floor
+        // for bothering to split at all.
+        assertEquals(1, planSegments(MIN_SEGMENT_BYTES - 1, 4).size)
     }
 
     @Test
@@ -194,10 +200,11 @@ class SegmentedDownloadTest {
             // The finished segments' bytes are on disk, exactly where they belong.
             val bytes = temp.readBytes()
             assertEquals(fileBytes[0].toInt(), bytes[0].toInt())
-            assertEquals(fileBytes[750].toInt(), bytes[750].toInt())
+            // First byte of segment 3 (3 × 262,145) — segment 2's range is zeros.
+            assertEquals(fileBytes[786_435].toInt(), bytes[786_435].toInt())
             // The journal still proves the done segments — a resume trusts it.
             assertEquals(listOf(2), partial.journal.missingIndices())
-            assertEquals(750L, partial.journal.bytesDownloaded())
+            assertEquals(786_435L, partial.journal.bytesDownloaded())
         } finally {
             dir.deleteRecursively()
         }
