@@ -64,7 +64,12 @@ object SmartDownloadsPlanner {
             }
         for ((seasonNumber, episode) in ordered) {
             val key = seasonNumber to episode.numberWithinSeason
-            if (after != null && key <= after) continue
+            // A Pair has no ordering of its own: "after" is a lexicographic
+            // season/episode cursor, compared by hand.
+            if (after != null &&
+                (seasonNumber < after.first ||
+                    (seasonNumber == after.first && episode.numberWithinSeason <= after.second))
+            ) continue
             if (key in watched) continue
             if (episode.onlyPacked) continue
             if (episode.prints.flatMap { it.links }.any { it.streamId in keptHandles }) continue

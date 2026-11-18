@@ -4621,13 +4621,6 @@ private fun SheetRow(label: String, selected: Boolean = false, enabled: Boolean 
  * the PlayBundle-per-episode route — see HANDOFF_appplayer.md).
  */
 @Composable
-/**
- * One snackbar message. [showUndo] is only for the player auto-delete
- * of a finished episode: the Undo button re-queues it, and the bar
- * stays up longer so the viewer can reach it.
- */
-private data class PlayerSnackbar(val text: String, val showUndo: Boolean = false)
-
 private fun PlayerEventWatcher(
     vm: PlayerViewModel,
     context: Context,
@@ -4650,6 +4643,13 @@ private fun PlayerEventWatcher(
         }
     }
 }
+
+/**
+ * One snackbar message. [showUndo] is only for the player auto-delete
+ * of a finished episode: the Undo button re-queues it, and the bar
+ * stays up longer so the viewer can reach it.
+ */
+private data class PlayerSnackbar(val text: String, val showUndo: Boolean = false)
 
 // SC.24: the share chooser for a moment. No try/catch: the chooser is a system
 // activity, so unlike a video player intent it always resolves.
