@@ -143,7 +143,28 @@ fi
 
 echo "Building the decoder AAR with Gradle ..."
 cd "$MEDIA3_DIR"
-./gradlew :lib-decoder-ffmpeg:assembleRelease --no-daemon --console=plain
+# Retry the Gradle build on a Maven Central rate limit (HTTP 429): the
+# Media3 build must download AGP 8.0.1 + its transitive deps on a cold
+# cache, and GitHub's shared runner IPs are rate-limited by Maven
+# Central (proven by Android CI 44383733251 — jdom2, commons-codec and
+# javawriter all 429'd). A 429 is transient, so retry it (up to 3
+# attempts, 60 s apart); any other failure fails immediately, so a real
+# build error is never retried into a long wait.
+GRADLE_LOG="$WORK_DIR/gradle-aar.log"
+gradle_attempt=0
+while true; do
+    if ./gradlew :lib-decoder-ffmpeg:assembleRelease --no-daemon --console=plain 2>&1 | tee "$GRADLE_LOG"; then
+        break
+    fi
+    gradle_attempt=$((gradle_attempt + 1))
+    if [ "$gradle_attempt" -ge 3 ] || ! grep -q -e "429" -e "Too Many Requests" "$GRADLE_LOG"; then
+        echo "Gradle AAR build failed (attempt $gradle_attempt) — not a rate limit, or retries exhausted." >&2
+        tail -20 "$GRADLE_LOG" >&2
+        exit 1
+    fi
+    echo "Gradle AAR build hit a Maven Central rate limit (429) — retrying in 60s (attempt $gradle_attempt/3)."
+    sleep 60
+done
 
 BUILT_AAR="$MEDIA3_DIR/libraries/decoder_ffmpeg/build/outputs/aar/lib-decoder-ffmpeg-release.aar"
 if [ ! -f "$BUILT_AAR" ]; then
