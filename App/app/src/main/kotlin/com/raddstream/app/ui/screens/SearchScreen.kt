@@ -21,7 +21,6 @@ import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -105,6 +104,8 @@ import com.raddstream.app.ui.components.SkeletonBox
 import com.raddstream.app.ui.components.prefetchPosterArt
 import com.raddstream.app.ui.components.searchPrefetchUrls
 import com.raddstream.app.ui.components.raddFilterChipColors
+import com.raddstream.app.ui.components.RaddChip
+import com.raddstream.app.ui.components.ScrollingChipRow
 import com.raddstream.app.ui.layout.CardGeometry
 import com.raddstream.app.viewmodel.GenreFilter
 import com.raddstream.app.viewmodel.LanguageFilter
@@ -308,15 +309,16 @@ fun SearchScreen(
                 // that title — it never opens a page, because a suggestion names
                 // a work, not a post.
                 if (state.suggestions.isNotEmpty()) {
-                    LazyRow(
-                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    // A4-F3: rides ScrollingChipRow now — the fade and the
+                    // row are the shared component, not a hand-rolled copy.
+                    ScrollingChipRow(
+                        modifier = Modifier.padding(top = 4.dp),
                         // Session 121 (P-14): the last suggestion chip was clipped at the
                         // right edge — the row needs the same end padding the rail gets.
                         contentPadding = PaddingValues(start = 0.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
                     ) {
                         items(state.suggestions, key = { it.id }) { suggestion ->
-                            FilterChip(
+                            RaddChip(
                                 colors = raddFilterChipColors(),
                                 selected = false,
                                 onClick = { viewModel.runSuggestion(suggestion.title) },
@@ -330,8 +332,6 @@ fun SearchScreen(
                                         } ?: suggestion.title,
                                     )
                                 },
-                                // Audit #54: a FilterChip is 32 dp tall — the touch-target floor is 48 dp, so the chip itself carries it.
-                                modifier = Modifier.heightIn(min = 48.dp),
                             )
                         }
                     }
@@ -506,7 +506,7 @@ private fun DirectVideoRow(url: String, title: String, onPlay: () -> Unit) {
  * in the scrolling row — fully off-screen on a 360dp phone, so the sheet
  * was undiscoverable without a swipe. It is fixed at the row's left edge
  * now, so it can never clip; the type chips scroll in the space that is
- * left, under Home's shared RowEndFade.
+ * left, under the shared [ScrollingChipRow] fade.
  */
 @Composable
 internal fun FilterRail(state: SearchUiState, onSelectType: (String?) -> Unit, onOpenFilters: () -> Unit) {
@@ -586,53 +586,48 @@ internal fun FilterRail(state: SearchUiState, onSelectType: (String?) -> Unit, o
                 .heightIn(min = 48.dp)
                 .semantics { contentDescription = filtersA11y },
         )
-        // Home's pattern (HomeFilterRow): the scrolling row is fillMaxWidth
-        // inside the Box and the fade is an overlay aligned to its end —
-        // the LazyRow's own height is its content, so the Box stays 48dp.
-        Box(Modifier.weight(1f)) {
-            LazyRow(
-                state = listState,
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                // Session 121 (P-29): the last chip ("Anime") was clipped at the right edge —
-                // the row needs end padding; start stays 0 because the outer column already
-                // pads 16 dp.
-                contentPadding = PaddingValues(start = 0.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
-            ) {
-                items(railTypeChips) { (label, value) ->
-                    val selected = state.filters.type == value
-                    FilterChip(
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                            selectedLabelColor = MaterialTheme.colorScheme.primary,
-                            containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                            labelColor = MaterialTheme.colorScheme.onSurface,
-                        ),
-                        selected = selected,
-                        onClick = { onSelectType(value) },
-                        label = {
-                            Text(
-                                label,
-                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                            )
-                        },
-                        shape = RoundedCornerShape(24.dp),
-                        // CL-3, same as the sheet: the rail's "All" chip is the Type
-                        // group's "All", and it must SAY so — the spoken name is
-                        // "All types", not the bare label.
-                        // Audit #54: a FilterChip is 32 dp tall — the touch-target floor is 48 dp, so the chip itself carries it.
-                        modifier = if (label == "All") {
-                            Modifier.heightIn(min = 48.dp).semantics { contentDescription = "All types" }
-                        } else {
-                            Modifier.heightIn(min = 48.dp)
-                        },
-                    )
-                }
+        // A4-F3: the scrolling row is ScrollingChipRow now — Home's
+        // pattern, shared: the row is fillMaxWidth inside the Box and the
+        // fade is an overlay aligned to its end — the LazyRow's own height
+        // is its content, so the Box stays 48dp.
+        ScrollingChipRow(
+            modifier = Modifier.weight(1f),
+            state = listState,
+            // Session 121 (P-29): the last chip ("Anime") was clipped at the right edge —
+            // the row needs end padding; start stays 0 because the outer column already
+            // pads 16 dp.
+            contentPadding = PaddingValues(start = 0.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            fadeTestTag = FilterRailFadeTag,
+        ) {
+            items(railTypeChips) { (label, value) ->
+                val selected = state.filters.type == value
+                RaddChip(
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                        selectedLabelColor = MaterialTheme.colorScheme.primary,
+                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                        labelColor = MaterialTheme.colorScheme.onSurface,
+                    ),
+                    selected = selected,
+                    onClick = { onSelectType(value) },
+                    label = {
+                        Text(
+                            label,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                        )
+                    },
+                    shape = RoundedCornerShape(24.dp),
+                    // CL-3, same as the sheet: the rail's "All" chip is the Type
+                    // group's "All", and it must SAY so — the spoken name is
+                    // "All types", not the bare label.
+                    modifier = if (label == "All") {
+                        Modifier.semantics { contentDescription = "All types" }
+                    } else {
+                        Modifier
+                    },
+                )
             }
-            // The overlay carries no click handling, so taps pass through to
-            // the chips beneath it.
-            RowEndFade(Modifier.align(Alignment.CenterEnd).testTag(FilterRailFadeTag))
         }
     }
 }

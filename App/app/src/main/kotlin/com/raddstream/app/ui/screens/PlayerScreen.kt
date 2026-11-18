@@ -41,6 +41,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -57,7 +58,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -88,7 +88,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
@@ -206,6 +205,8 @@ import com.raddstream.app.player.qualityCostPerHour
 import com.raddstream.app.ui.components.CatalogImage
 import com.raddstream.app.ui.components.RaddDialogTitle
 import com.raddstream.app.ui.components.raddFilterChipColors
+import com.raddstream.app.ui.components.RaddChip
+import com.raddstream.app.ui.components.ScrollingChipRow
 import com.raddstream.app.ui.components.rememberReduceMotion
 import com.raddstream.app.ui.theme.RaddCaptionPlate
 import com.raddstream.app.ui.theme.RaddCaptionPlateArgb
@@ -2094,20 +2095,20 @@ internal fun BottomControls(
             // is a strip that steals the picture. The cast list itself is the
             // loaded signal — it is empty until the title stages it.
             if (!state.isPlaying && state.castNames.isNotEmpty()) {
-                LazyRow(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                // A4-F3: rides ScrollingChipRow + RaddChip now — the fade
+                // and the row are the shared component, not a hand-rolled
+                // copy. The cast strip gains the fade the other rows
+                // already had.
+                ScrollingChipRow(
+                    modifier = Modifier.padding(top = 8.dp),
+                    contentPadding = PaddingValues(start = 0.dp, end = 16.dp),
                 ) {
                     items(state.castNames, key = { it }) { actor ->
-                        FilterChip(
+                        RaddChip(
                             selected = false,
                             onClick = { onActorClick(actor) },
                             label = { Text(actor, maxLines = 1) },
                             colors = raddFilterChipColors(),
-                            // Audit #54: a FilterChip is 32 dp tall — the touch-target floor is 48 dp, so the chip itself carries it.
-                            modifier = Modifier.heightIn(min = 48.dp),
                         )
                     }
                 }

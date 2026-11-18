@@ -9,12 +9,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -24,7 +22,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -59,6 +56,8 @@ import com.raddstream.app.ui.components.EmptyState
 import com.raddstream.app.ui.components.PosterCard
 import com.raddstream.app.ui.components.PosterGridSkeleton
 import com.raddstream.app.ui.components.PosterRailSkeleton
+import com.raddstream.app.ui.components.RaddChip
+import com.raddstream.app.ui.components.ScrollingChipRow
 import com.raddstream.app.viewmodel.ListSort
 import com.raddstream.app.viewmodel.MyListUiState
 import com.raddstream.app.viewmodel.MyListViewModel
@@ -350,13 +349,15 @@ internal fun MyListSortRow(
     onSort: (ListSort) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    LazyRow(
-        modifier = modifier.fillMaxWidth().testTag(MyListSortRowTag),
-        contentPadding = PaddingValues(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    // A4-F3: rides ScrollingChipRow + RaddChip now — the fade and the row
+    // are the shared component, not a hand-rolled copy. The sort row gains
+    // the fade the other rows already had.
+    ScrollingChipRow(
+        modifier = modifier,
+        rowTestTag = MyListSortRowTag,
     ) {
         items(ListSort.entries) { entry ->
-            FilterChip(
+            RaddChip(
                 selected = entry == sort,
                 onClick = { onSort(entry) },
                 label = {
@@ -369,7 +370,7 @@ internal fun MyListSortRow(
                     selectedContainerColor = MaterialTheme.colorScheme.primary,
                     selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
                 ),
-                modifier = Modifier.height(48.dp).testTag("myListSortChip_${entry.name}"),
+                modifier = Modifier.testTag("myListSortChip_${entry.name}"),
             )
         }
     }

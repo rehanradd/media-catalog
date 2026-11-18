@@ -9,11 +9,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -30,7 +28,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -63,6 +60,8 @@ import com.raddstream.app.ui.components.CatalogImage
 import com.raddstream.app.ui.components.EmptyState
 import com.raddstream.app.ui.components.ErrorState
 import com.raddstream.app.ui.components.LiveTvLoadingSkeleton
+import com.raddstream.app.ui.components.RaddChip
+import com.raddstream.app.ui.components.ScrollingChipRow
 import com.raddstream.app.ui.components.channelMonogram
 import com.raddstream.app.ui.components.isKnownLanguage
 import com.raddstream.app.ui.components.raddFilterChipColors
@@ -397,7 +396,7 @@ internal fun LiveTvChannelGrid(
  * more, and a clipped chip is worse than a scrollable row. The selected
  * chip is the shared jade fill ([raddFilterChipColors]); the unselected
  * chips keep the default thin border, as the mockup draws them. The row
- * shares Home's right-edge fade ([RowEndFade]) so the last chip fades out
+ * shares the [ScrollingChipRow] right-edge fade so the last chip fades out
  * instead of hard-clipping mid-word.
  *
  * A4-F2: while a text search is active the query is the filter, not "All"
@@ -416,75 +415,70 @@ internal fun LiveTvCategoryRow(
     onQueryCleared: () -> Unit = {},
 ) {
     val searchActive = query.isNotBlank()
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
+    // A4-F3: rides ScrollingChipRow now — the fade and the row are the
+    // shared component, not a hand-rolled copy. The outer padding stays on
+    // the modifier; the row's own contentPadding is end-only, as before.
+    ScrollingChipRow(
+        modifier = modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        contentPadding = PaddingValues(end = 16.dp),
     ) {
-        LazyRow(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = PaddingValues(end = 16.dp),
-        ) {
-            if (searchActive) {
-                item {
-                    FilterChip(
-                        colors = raddFilterChipColors(),
-                        selected = true,
-                        onClick = onQueryCleared,
-                        label = {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            ) {
-                                Text(
-                                    text = query.trim(),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Icon(
-                                    Icons.Default.Close,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp),
-                                )
-                            }
-                        },
-                        // The chip itself is 48dp tall, like "All" below.
-                        modifier = Modifier.height(48.dp).testTag("liveTv_queryPill")
-                            .semantics { contentDescription = "Clear search for ${query.trim()}" },
-                    )
-                }
-            }
+        if (searchActive) {
             item {
-                FilterChip(
+                RaddChip(
                     colors = raddFilterChipColors(),
-                    selected = selectedCategory == null && !searchActive,
-                    onClick = { onCategorySelected(null) },
-                    label = { Text("All") },
-                    // Live TV review (Nov 2026): the chip itself is 48dp
-                    // tall, not just its touch target — the 32dp visible
-                    // chip read as shallow next to the search pill, and
-                    // Home's filter row is 48dp. A4-F2: half alpha while
-                    // a text search is active, so the jade fill never
-                    // claims a filter the query already owns.
-                    modifier = Modifier.height(48.dp)
-                        .alpha(if (searchActive) 0.5f else 1f)
-                        .testTag("liveTv_chip_all"),
-                )
-            }
-            items(categories) { category ->
-                FilterChip(
-                    colors = raddFilterChipColors(),
-                    selected = selectedCategory == category,
-                    onClick = { onCategorySelected(category) },
-                    label = { Text(categoryLabel(category)) },
-                    // Live TV review (Nov 2026): same 48dp visible height
-                    // as the "All" chip above.
-                    modifier = Modifier.height(48.dp).testTag("liveTv_chip_$category"),
+                    selected = true,
+                    onClick = onQueryCleared,
+                    label = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Text(
+                                text = query.trim(),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+                    },
+                    // The chip itself is 48dp tall, like "All" below.
+                    modifier = Modifier.testTag("liveTv_queryPill")
+                        .semantics { contentDescription = "Clear search for ${query.trim()}" },
                 )
             }
         }
-        RowEndFade(Modifier.align(Alignment.CenterEnd))
+        item {
+            RaddChip(
+                colors = raddFilterChipColors(),
+                selected = selectedCategory == null && !searchActive,
+                onClick = { onCategorySelected(null) },
+                label = { Text("All") },
+                // Live TV review (Nov 2026): the chip itself is 48dp
+                // tall, not just its touch target — the 32dp visible
+                // chip read as shallow next to the search pill, and
+                // Home's filter row is 48dp. A4-F2: half alpha while
+                // a text search is active, so the jade fill never
+                // claims a filter the query already owns.
+                modifier = Modifier
+                    .alpha(if (searchActive) 0.5f else 1f)
+                    .testTag("liveTv_chip_all"),
+            )
+        }
+        items(categories) { category ->
+            RaddChip(
+                colors = raddFilterChipColors(),
+                selected = selectedCategory == category,
+                onClick = { onCategorySelected(category) },
+                label = { Text(categoryLabel(category)) },
+                // Live TV review (Nov 2026): same 48dp visible height
+                // as the "All" chip above.
+                modifier = Modifier.testTag("liveTv_chip_$category"),
+            )
+        }
     }
 }
 

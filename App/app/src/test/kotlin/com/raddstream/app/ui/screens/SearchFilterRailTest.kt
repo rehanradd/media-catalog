@@ -153,7 +153,7 @@ class SearchFilterRailTest {
     fun rightEdgeFadeMaskExists() {
         // Search review (Nov 2026): the last chip hard-clipped at the right
         // edge ("KPO") — a fade mask over the row's right edge replaces the
-        // hard clip. The mask is Home's shared RowEndFade now (the local
+        // hard clip. The mask is the shared ScrollingChipRow fade now (the local
         // 32dp fade painted, but chip fill → background is ~10 RGB steps
         // on this palette, so it advertised nothing); it is still a plain
         // overlay with no click handling, so the test only pins its

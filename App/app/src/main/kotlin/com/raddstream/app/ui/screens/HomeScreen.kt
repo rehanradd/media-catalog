@@ -14,13 +14,9 @@ import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -33,8 +29,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -49,7 +43,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -75,7 +68,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -88,7 +80,6 @@ import androidx.compose.ui.text.font.FontWeight
 import com.raddstream.app.brand.Brand
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.raddstream.app.network.models.FacetsResponse
@@ -106,6 +97,9 @@ import com.raddstream.app.ui.components.InlineLoadFailure
 import com.raddstream.app.ui.components.MediaRail
 import com.raddstream.app.ui.components.PosterCard
 import com.raddstream.app.ui.components.PosterRailSkeleton
+import com.raddstream.app.ui.components.RaddChip
+import com.raddstream.app.ui.components.RaddChipStyle
+import com.raddstream.app.ui.components.ScrollingChipRow
 import com.raddstream.app.ui.components.SectionHeader
 import com.raddstream.app.ui.components.SeeAllButton
 import com.raddstream.app.ui.components.UserWords
@@ -683,42 +677,12 @@ internal fun HomeHeader(scrolled: Boolean = false) {
 }
 
 /**
- * Home review (Nov 2026): the right-edge fade for the horizontally
- * scrolling chip strips — the last chip fades out instead of hard-clipping
- * mid-word ("Complete s..."). A paint-only overlay: it has no click
- * handling, so taps pass straight through to the row beneath it. Shared
- * by the filter row and the Browse facets row, which both scroll — and by
- * Live TV's category row (Nov 2026 review) and Detail's genre chips
- * (Nov 2026 review), which pass their own height: 48dp is the height of
- * the filter, Browse and Live TV rows; the genre chips are 22dp Pills.
- */
-@Composable
-internal fun RowEndFade(modifier: Modifier = Modifier, height: Dp = 48.dp) {
-    // The fade needs an explicit height: fillMaxHeight() collapses to 0
-    // here — the parent Box is wrap-content inside a scrollable column,
-    // so there is no definite height to fill, and the 24dp-wide strip
-    // painted nothing (Pixel 5 shots and the homeLoaded golden both show
-    // "KPO" at full brightness to the edge). The default 48dp is the
-    // height of the filter, Browse and Live TV rows; callers with
-    // shorter rows pass their own height.
-    Box(
-        modifier = modifier
-            .width(24.dp)
-            .height(height)
-            .background(
-                Brush.horizontalGradient(
-                    0f to Color.Transparent,
-                    1f to MaterialTheme.colorScheme.background,
-                ),
-            ),
-    )
-}
-
-/**
  * Mockup (Nov 2026): the filter chips under the header — ALL / MOVIES /
  * SERIES / ANIME / KPOP — 48dp tall, horizontally scrollable, filtering the
  * rails in place. The active chip is jade-filled; tapping it again restores
- * ALL (that toggle lives in [HomeContent], where the state sits).
+ * ALL (that toggle lives in [HomeContent], where the state sits). A4-F3:
+ * rides [ScrollingChipRow] + [RaddChip] now — the fade and the row are the
+ * shared component, not a hand-rolled copy.
  */
 @Composable
 internal fun HomeFilterRow(
@@ -726,31 +690,27 @@ internal fun HomeFilterRow(
     onSelect: (HomeFilter) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Box(modifier = modifier.fillMaxWidth()) {
-        LazyRow(
-            modifier = Modifier.fillMaxWidth().testTag(HomeFilterRowTag),
-            contentPadding = PaddingValues(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            items(HomeFilter.entries) { filter ->
-                FilterChip(
-                    selected = filter == selected,
-                    onClick = { onSelect(filter) },
-                    label = {
-                        Text(
-                            filter.label,
-                            fontWeight = if (filter == selected) FontWeight.Bold else FontWeight.Normal,
-                        )
-                    },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = MaterialTheme.colorScheme.primary,
-                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-                    ),
-                    modifier = Modifier.height(48.dp).testTag("filterChip_${filter.name}"),
-                )
-            }
+    ScrollingChipRow(
+        modifier = modifier,
+        rowTestTag = HomeFilterRowTag,
+    ) {
+        items(HomeFilter.entries) { filter ->
+            RaddChip(
+                selected = filter == selected,
+                onClick = { onSelect(filter) },
+                label = {
+                    Text(
+                        filter.label,
+                        fontWeight = if (filter == selected) FontWeight.Bold else FontWeight.Normal,
+                    )
+                },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                ),
+                modifier = Modifier.testTag("filterChip_${filter.name}"),
+            )
         }
-        RowEndFade(Modifier.align(Alignment.CenterEnd))
     }
 }
 
@@ -1258,48 +1218,36 @@ internal fun BrowseSection(
         // with a 1 dp outline — so this row reads as navigation links and
         // never as a second filter system next to the filled filter row
         // above it. The right edge fades instead of hard-clipping the
-        // last chip mid-word.
-        Box(Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .horizontalScrollPadding(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                browseTypeTiles.forEach { tile ->
-                    Surface(
-                        onClick = { onBrowseType(tile.type) },
-                        shape = RoundedCornerShape(24.dp),
-                        color = Color.Transparent,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    ) {
+        // last chip mid-word. A4-F3: rides [ScrollingChipRow] +
+        // [RaddChip] (Navigation) now — the fade and the row are the
+        // shared component, not a hand-rolled copy.
+        ScrollingChipRow {
+            items(browseTypeTiles) { tile ->
+                RaddChip(
+                    selected = false,
+                    onClick = { onBrowseType(tile.type) },
+                    label = {
                         Text(
                             text = tile.label,
                             style = MaterialTheme.typography.labelMedium,
-                            // E-T4: 16dp of vertical padding takes the tile to >= 48dp.
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 16.dp),
                         )
-                    }
-                }
-                chips.forEach { chip ->
-                    Surface(
-                        onClick = { onFacetSelected(chip.genre, chip.industry, chip.language) },
-                        shape = RoundedCornerShape(24.dp),
-                        color = Color.Transparent,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    ) {
+                    },
+                    style = RaddChipStyle.Navigation,
+                )
+            }
+            items(chips) { chip ->
+                RaddChip(
+                    selected = false,
+                    onClick = { onFacetSelected(chip.genre, chip.industry, chip.language) },
+                    label = {
                         Text(
                             text = chip.label,
                             style = MaterialTheme.typography.labelMedium,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 16.dp),
                         )
-                    }
-                }
+                    },
+                    style = RaddChipStyle.Navigation,
+                )
             }
-            RowEndFade(Modifier.align(Alignment.CenterEnd))
         }
     }
 }
@@ -1314,8 +1262,6 @@ private val browseTypeTiles = listOf(
     JumpOff("Anime", "anime"),
     JumpOff("Complete series", "complete_season"),
 )
-
-private fun Modifier.horizontalScrollPadding(): Modifier = this.padding(horizontal = 16.dp)
 
 @Composable
 private fun HomeRailSection(

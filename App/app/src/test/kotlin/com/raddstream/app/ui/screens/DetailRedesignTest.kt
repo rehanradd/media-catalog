@@ -244,8 +244,8 @@ class DetailRedesignTest {
 
     @Test
     fun genreChipsFadeIsTwentyTwoDp() {
-        // Detail review (Nov 2026, P1): the genre row shares Home's
-        // RowEndFade at the chips' own height — 22dp for a Pill, not
+        // Detail review (Nov 2026, P1): the genre row shares the
+        // ScrollingChipRow fade at the chips' own height — 22dp for a Pill, not
         // the shared 48dp, and not the invisible local fade it replaces.
         content()
         compose.onNodeWithTag(GenreChipsFadeTag).assertHeightIsEqualTo(22.dp)

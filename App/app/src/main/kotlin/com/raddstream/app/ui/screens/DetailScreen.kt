@@ -47,7 +47,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -150,6 +149,8 @@ import com.raddstream.app.ui.components.audioBadgeText
 import com.raddstream.app.ui.components.hdrBadgeText
 import com.raddstream.app.ui.components.prefetchPosterArt
 import com.raddstream.app.ui.components.raddFilterChipColors
+import com.raddstream.app.ui.components.RaddChip
+import com.raddstream.app.ui.components.ScrollingChipRow
 import com.raddstream.app.ui.components.sourceBadgeText
 import com.raddstream.app.ui.components.subtitleBadgeText
 import com.raddstream.app.ui.layout.CardGeometry
@@ -1604,8 +1605,8 @@ private fun GenreChipsRow(
     // pill rows under the title. One row now; capabilities ride with
     // the genres.
     // Detail review (Nov 2026, P1): the last chip hard-clipped at the
-    // right edge reads as broken — Home's shared RowEndFade, the same
-    // treatment Search's filter rail gets, so the row reads as
+    // right edge reads as broken — the shared ScrollingChipRow fade, the
+    // same treatment Search's filter rail gets, so the row reads as
     // scrollable. 22dp, not the shared 48dp: a CapabilityChip is a Pill
     // (labelSmall 11sp/16sp line height + 3dp vertical padding × 2), so
     // the fade is exactly as tall as the row it covers. The local 32dp
@@ -1614,19 +1615,16 @@ private fun GenreChipsRow(
     // (Home §3.4), and the detailMovie golden shows the last chip as
     // "E…" hard-clipped with no fade at all.
     if (chips.isEmpty()) return
-    Box(modifier = modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            chips.forEach { CapabilityChip(it) }
-        }
-        // The overlay carries no click handling, so taps pass through to
-        // the chips beneath it.
-        RowEndFade(
-            Modifier.align(Alignment.CenterEnd).testTag(GenreChipsFadeTag),
-            height = 22.dp,
-        )
+    // A4-F3: rides ScrollingChipRow now — the fade and the row are the
+    // shared component, not a hand-rolled copy. 6dp gaps, as before.
+    ScrollingChipRow(
+        modifier = modifier,
+        contentPadding = PaddingValues(end = 16.dp),
+        horizontalSpacing = 6.dp,
+        fadeHeight = 22.dp,
+        fadeTestTag = GenreChipsFadeTag,
+    ) {
+        items(chips) { CapabilityChip(it) }
     }
 }
 
@@ -2092,20 +2090,19 @@ private fun CastSection(cast: List<String>, onActorClick: (String) -> Unit) {
 private fun SeasonChips(seasons: List<SeasonGroup>, selectedSeason: Int?, onSelect: (Int) -> Unit) {
     Column {
         SectionHeader(title = "Seasons", modifier = Modifier.padding(horizontal = 0.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        // A4-F3: rides ScrollingChipRow + RaddChip now — the fade and the
+        // row are the shared component, not a hand-rolled copy. The season
+        // strip gains the fade the other rows already had.
+        ScrollingChipRow(
+            contentPadding = PaddingValues(end = 16.dp),
         ) {
-            seasons.forEach { s ->
-                FilterChip(
+            items(seasons) { s ->
+                RaddChip(
                     colors = raddFilterChipColors(),
                     selected = selectedSeason == s.number,
                     onClick = { onSelect(s.number) },
                     label = { Text("Season ${s.number} · ${s.episodeCount}") },
                     leadingIcon = { SeasonThumbnail(season = s, modifier = Modifier.size(24.dp)) },
-                    // Robo run 2: a season chip is 32dp tall — the touch-target
-                    // floor is 48dp, so the chip itself carries it.
-                    modifier = Modifier.heightIn(min = 48.dp),
                 )
             }
         }

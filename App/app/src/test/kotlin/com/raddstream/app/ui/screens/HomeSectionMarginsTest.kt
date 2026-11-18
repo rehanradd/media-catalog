@@ -52,4 +52,23 @@ class HomeSectionMarginsTest {
         }
         compose.onNodeWithText("Browse").assertLeftPositionInRootIsEqualTo(16.dp)
     }
+
+    @Test
+    fun browseSectionKeepsItsNavigationTiles() {
+        // A4-F3: the Browse row rides the shared ScrollingChipRow now,
+        // but it is still a navigation row, not a second filter system —
+        // the type jump-offs and the facet chips must still be there.
+        val facets = FacetsResponse(
+            genres = listOf(FacetEntry(key = "action", label = "Action", count = 12)),
+        )
+        compose.setContent {
+            RaddStreamTheme {
+                BrowseSection(facets = facets, onBrowseType = {}, onFacetSelected = { _, _, _ -> })
+            }
+        }
+        compose.onNodeWithText("Browse").assertExists()
+        compose.onNodeWithText("All").assertExists()
+        compose.onNodeWithText("Movies").assertExists()
+        compose.onNodeWithText("Action · 12").assertExists()
+    }
 }
