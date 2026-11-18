@@ -12,6 +12,7 @@ import com.raddstream.app.data.cache.CacheFileDao
 import com.raddstream.app.data.cache.CacheTaskDao
 import com.raddstream.app.data.cache.ConnectivityProbe
 import com.raddstream.app.data.cache.HlsAheadBuffer
+import com.raddstream.app.data.cache.HlsKeepDownloader
 import com.raddstream.app.data.cache.KeepSourceFactory
 import com.raddstream.app.data.cache.KeepTtlHolder
 import com.raddstream.app.data.cache.NetworkClass
@@ -114,6 +115,17 @@ object CacheModule {
     fun provideHlsAheadBuffer(client: OkHttpClient, clock: UptimeClock): HlsAheadBuffer =
         HlsAheadBuffer(client, clock)
 
+    /**
+     * R3: the Media3 bridge for user-requested HLS keeps. A plain
+     * context-constructed singleton — it reads the process-wide
+     * [com.raddstream.app.data.cache.MediaDownloadCache] inside, so the
+     * manager it drives is the same instance the player reads through.
+     */
+    @Provides
+    @Singleton
+    fun provideHlsKeepDownloader(@ApplicationContext context: Context): HlsKeepDownloader =
+        HlsKeepDownloader(context)
+
     @Provides
     @Singleton
     fun provideAheadExecutor(
@@ -172,6 +184,7 @@ object CacheModule {
         clock: UptimeClock,
         policy: SchedulerPolicy,
         networkProvider: @JvmSuppressWildcards () -> NetworkClass,
+        hlsKeepDownloader: HlsKeepDownloader,
     ): CacheCoordinator = CacheCoordinator(
         scope = scope,
         taskDao = taskDao,
@@ -185,5 +198,6 @@ object CacheModule {
         clock = clock,
         policy = policy,
         networkProvider = networkProvider,
+        hlsKeepDownloader = hlsKeepDownloader,
     )
 }

@@ -511,6 +511,7 @@ private fun deviceStatusLine(item: DeviceDownload): String {
         DeviceDownloadState.PAUSED -> "Paused — resume when you are ready"
         DeviceDownloadState.READY -> "Saved on device — plays here or in any video player"
         DeviceDownloadState.FAILED -> "Download failed — resume, or cancel and try again"
+        DeviceDownloadState.PARTIAL -> "Partially saved$percent — retry to finish the missing parts"
     }
 }
 

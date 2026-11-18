@@ -57,6 +57,12 @@ class OfflineCacheEngine @Inject constructor(
     private val storage: StorageGate,
     private val keepTtl: KeepTtlHolder,
     @CacheScope private val scope: CoroutineScope,
+    /**
+     * R3: the Media3 bridge for HLS keeps. Null in tests and anywhere the
+     * bridge is unavailable — then HLS keeps serve exactly as before
+     * (which, without a file row, is not at all).
+     */
+    private val hlsKeepDownloader: HlsKeepDownloader? = null,
 ) : ProgressiveCacheEngine {
 
     private val observed = ConcurrentHashMap<String, StateFlow<CacheSnapshot?>>()
@@ -208,6 +214,13 @@ class OfflineCacheEngine @Inject constructor(
      * Serve one kept work to the player — complete when it is complete, and
      * up to its verified prefix when it is not.
      *
+     * R3: a completed Media3 HLS keep does not go through the loopback proxy
+     * at all — there is no single file to serve. The player opens the
+     * manifest URL the manager fetched, and the shared cache serves its
+     * segments offline ([MediaDownloadCache.playbackFactory]). The URL
+     * returned is the manager's own request URI, not the task row's
+     * possibly re-resolved `currentUrl`: the cache keyed on the former.
+     *
      * Session 123 (SU-1): this used to answer null for anything but a
      * committed file, so a download interrupted by a dead server was
      * unplayable even though its bytes were on disk — the server going away
@@ -218,6 +231,12 @@ class OfflineCacheEngine @Inject constructor(
      * later open's prefix, never bytes served past what the manifest proved.
      */
     private suspend fun serveUri(sourceKey: String): String? {
+        val task = taskDao.getBySourceKey(sourceKey)
+        if (task != null && task.linkKind == CacheCoordinator.KIND_HLS &&
+            hlsKeepDownloader?.isComplete(sourceKey) == true
+        ) {
+            return hlsKeepDownloader?.manifestUrlFor(sourceKey) ?: task.currentUrl
+        }
         val files = fileDao.getBySourceKey(sourceKey)
         return when (val choice = selectServeFile(files)) {
             is ServeFileChoice.Complete -> {
@@ -326,7 +345,10 @@ class OfflineCacheEngine @Inject constructor(
     }
 
     private suspend fun hasCommittedFile(sourceKey: String): Boolean =
-        fileDao.getBySourceKey(sourceKey).any { it.isComplete && !it.isTemporary }
+        fileDao.getBySourceKey(sourceKey).any { it.isComplete && !it.isTemporary } ||
+            // R3: a completed Media3 HLS keep has no file row — its bytes live
+            // in the shared cache — but it is committed all the same.
+            (hlsKeepDownloader?.isComplete(sourceKey) == true)
 
     private fun CacheSessionKey.sourceKeyOrNull(): String? =
         KeepIdentity.handleFromRedirectorUrl(url)?.let { KeepIdentity.sourceKeyFor(it) }

@@ -118,6 +118,8 @@
     <string name="detail_not_available_stream">Not available to stream yet — download it instead.</string>
     <string name="detail_quality_auto_plays">Auto plays the best picture your plan can hold.</string>
     <string name="detail_quality_select_download">Select download quality</string>
+    <!-- R3: notification channel name for the Media3 HLS keep service. -->
+    <string name="media_download_channel_name">Media downloads</string>
     <!-- Detail review (Nov 2026): the server caps the detail at 1,000 releases —
          the list is the first of many, not the whole work. -->
     <string name="detail_truncated_releases">Showing the first %1$s of %2$s releases</string>

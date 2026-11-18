@@ -33,6 +33,7 @@ import com.raddstream.app.data.PlaybackBeaconErrors
 import com.raddstream.app.data.PlaybackBeacons
 import com.raddstream.app.data.Telemetry
 import com.raddstream.app.data.cache.ConnectivityProbe
+import com.raddstream.app.data.cache.MediaDownloadCache
 import com.raddstream.app.player.subtitles.OffsetSubtitleDecoderFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -134,7 +135,14 @@ class PlaybackService : MediaSessionService() {
         // go through DefaultDataSource — it opens local schemes directly (no
         // network, no connectivity check) and delegates http(s) to the factory
         // above. This is what makes a saved file play in airplane mode.
-        val dataFactory = DefaultDataSource.Factory(this, httpFactory)
+        // R3/R5: the http(s) leg runs through the shared Media3 cache
+        // (read-only — playback never writes to the download store), so a
+        // completed HLS keep plays offline from the same bytes its download
+        // wrote, with no second fetch of the same segments.
+        val dataFactory = DefaultDataSource.Factory(
+            this,
+            MediaDownloadCache.playbackFactory(this, httpFactory),
+        )
 
         // TextRenderer is the one renderer we replace: it is final in 1.3.1 and knows no
         // subtitle offset, so its decoder gets a wrapper that holds each cue block back by

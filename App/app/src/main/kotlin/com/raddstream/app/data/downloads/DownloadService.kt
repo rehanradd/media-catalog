@@ -21,6 +21,7 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.raddstream.app.MainActivity
 import com.raddstream.app.brand.Brand
+import com.raddstream.app.data.cache.ConnectivityProbe
 import dagger.hilt.android.AndroidEntryPoint
 import java.io.File
 import java.io.FileOutputStream
@@ -55,6 +56,8 @@ import java.util.concurrent.TimeUnit
 class DownloadService : Service() {
 
     @Inject lateinit var repo: DeviceDownloadsRepository
+
+    @Inject lateinit var connectivityProbe: ConnectivityProbe
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val queue = ArrayDeque<String>()
@@ -112,6 +115,7 @@ class DownloadService : Service() {
                 queue.remove(id)
                 if (activeId == id) job?.cancel()
                 repo.entity(id)?.let { repo.deleteOutput(it) }
+                deleteSegmentTemp(id)
                 repo.removeEntry(id)
                 finishIfIdle()
             }
@@ -157,7 +161,170 @@ class DownloadService : Service() {
         val entry = repo.entity(id) ?: return@withContext
         if (entry.state != DeviceDownloadState.QUEUED) return@withContext
 
-        var output: OutputStream? = null
+        // R3: a file big enough to split, on unmetered Wi-Fi, goes segmented —
+        // parallel Range segments with a per-segment resume journal. A host
+        // that will not do Range falls back to the single connection below.
+        // A single-connection resume offset (bytes already in the public
+        // file, no journal) stays single: segmenting would throw the
+        // head-start away and re-download from zero into a temp file.
+        val hasJournal = repo.loadSegmentJournal(id) != null
+        val segments = segmentCountFor(
+            ConnectivityProbe.current(this@DownloadService),
+            connectivityProbe.isMetered(),
+            entry.bytesTotal,
+        )
+        if (segments >= 2 && (entry.bytesDownloaded == 0L || hasJournal)) {
+            when (downloadSegmented(id, entry, segments)) {
+                SegmentedOutcome.FallbackToSingle -> {
+                    clearSegmentState(id)
+                    // Fall through to the single connection below.
+                }
+                else -> return@withContext
+            }
+        }
+        downloadSingle(id, entry)
+    }
+
+    /**
+     * R3: segmented parallel download into a pre-allocated temp file, merged
+     * into the MediaStore destination only when every segment is done. The
+     * MediaStore entry is created at merge time, never upfront — a PARTIAL
+     * download must not leave a pending row in Movies/RaddStream. Returns the
+     * outcome so the caller knows whether to fall back to a single connection.
+     */
+    private suspend fun downloadSegmented(
+        id: String,
+        entry: DeviceDownloadEntity,
+        segmentCount: Int,
+    ): SegmentedOutcome {
+        val total = entry.bytesTotal
+        val tempFile = segmentTempFile(id)
+        tempFile.parentFile?.mkdirs()
+        var latestJournal = repo.loadSegmentJournal(id)?.takeIf { it.totalBytes == total }
+            ?: SegmentJournal.fresh(total, planSegments(total, segmentCount)).also {
+                repo.saveSegmentJournal(id, it)
+            }
+        var downloaded = latestJournal.bytesDownloaded()
+        var lastPersist = 0L
+        repo.markRunning(id, downloaded, total)
+        notifyProgress(id, entry, downloaded, total)
+        val engine = SegmentedDownloader(OkHttpSegmentFetcher(client))
+        val outcome = try {
+            engine.download(entry.url, tempFile, latestJournal) { done, snapshot ->
+                downloaded = done
+                latestJournal = snapshot
+                val now = SystemClock.elapsedRealtime()
+                if (now - lastPersist >= NOTIFY_INTERVAL_MS) {
+                    lastPersist = now
+                    repo.saveSegmentJournal(id, snapshot)
+                    repo.markProgress(id, done, total)
+                    notifyProgress(id, entry, done, total)
+                }
+            }
+        } catch (cancelled: CancellationException) {
+            // Pause keeps everything: the temp file and the journal are the
+            // resume proof. The repo's byte count is display-only; the journal
+            // is what the next run trusts.
+            repo.saveSegmentJournal(id, latestJournal)
+            repo.entity(id)?.let { repo.markPaused(id, downloaded) }
+            throw cancelled
+        }
+        return when (outcome) {
+            is SegmentedOutcome.Complete -> {
+                repo.saveSegmentJournal(id, outcome.journal)
+                mergeSegmented(id, entry, tempFile, total, outcome.contentType)
+                outcome
+            }
+            is SegmentedOutcome.Partial -> {
+                repo.saveSegmentJournal(id, outcome.journal)
+                val reason = "${outcome.missingSegments.size} of " +
+                    "${outcome.journal.segments.size} parts did not finish."
+                repo.markPartial(id, outcome.journal.bytesDownloaded(), total, reason)
+                repo.entity(id)?.let { notifyPartial(it, outcome.journal.bytesDownloaded(), total) }
+                outcome
+            }
+            is SegmentedOutcome.Failed -> {
+                clearSegmentState(id)
+                repo.markFailed(id, outcome.journal.bytesDownloaded(), total, outcome.reason)
+                repo.entity(id)?.let { notifyFailed(it, outcome.journal.bytesDownloaded(), total) }
+                outcome
+            }
+            SegmentedOutcome.FallbackToSingle -> outcome
+        }
+    }
+
+    /**
+     * Merge a fully-segmented temp file into the public destination, through
+     * the same completion gate as the single connection: a partial or
+     * wrong-type file is NEVER marked READY. A merge interrupted by a pause
+     * keeps the temp file and the (complete) journal, so a Resume re-merges
+     * instead of re-downloading.
+     */
+    private suspend fun mergeSegmented(
+        id: String,
+        entry: DeviceDownloadEntity,
+        tempFile: File,
+        total: Long,
+        contentType: String,
+    ) {
+        val defect = completionDefect(total, total, contentType)
+        if (defect != null) {
+            clearSegmentState(id)
+            repo.markFailed(id, total, total, defect)
+            repo.entity(id)?.let { repo.deleteOutput(it) }
+            repo.entity(id)?.let { notifyFailed(it, total, total) }
+            return
+        }
+        val target = prepareOutput(entry)
+        repo.setOutputUri(id, target.uri.toString())
+        try {
+            openOutput(target.uri, false).use { out ->
+                tempFile.inputStream().use { input ->
+                    val buffer = ByteArray(CHUNK_BYTES)
+                    while (true) {
+                        coroutineContext.ensureActive()
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        out.write(buffer, 0, read)
+                    }
+                }
+                out.flush()
+            }
+        } catch (cancelled: CancellationException) {
+            repo.markPaused(id, total)
+            throw cancelled
+        } catch (failure: Throwable) {
+            clearSegmentState(id)
+            repo.markFailed(
+                id, total, total,
+                failure.message?.takeIf { it.isNotBlank() }
+                    ?: "The download could not be saved.",
+            )
+            repo.entity(id)?.let { notifyFailed(it, total, total) }
+            return
+        }
+        finalizeOutput(target.uri, entry.mimeType)
+        repo.markReady(id, total, total, target.uri.toString())
+        tempFile.delete()
+        repo.clearSegmentJournal(id)
+        notifyCompleted(entry.title)
+    }
+
+    /** The app-private temp file one segmented download assembles into. */
+    private fun segmentTempFile(id: String): File =
+        File(File(cacheDir, SEGMENT_DIR), "$id.tmp")
+
+    /** Drop a segmented download's temp file and journal (finished, failed hard, or removed). */
+    private fun clearSegmentState(id: String) {
+        deleteSegmentTemp(id)
+        repo.clearSegmentJournal(id)
+    }
+
+    private fun deleteSegmentTemp(id: String) {
+        runCatching { segmentTempFile(id).delete() }
+    }
+
+    private suspend fun downloadSingle(id: String, entry: DeviceDownloadEntity): Unit = withContext(Dispatchers.IO) {
         var downloaded = entry.bytesDownloaded.coerceAtLeast(0L)
         var total = entry.bytesTotal
         var target: OutputTarget? = null
@@ -185,7 +352,9 @@ class DownloadService : Service() {
                 } catch (refusal: IOException) {
                     if (downloaded == 0L) throw refusal
                     repo.resetResume(id)
-                    return@withContext download(id)
+                    val fresh = repo.entity(id) ?: return@withContext
+                    downloadSingle(id, fresh)
+                    return@withContext
                 }
                 output = stream
                 repo.markRunning(id, downloaded, total)
@@ -361,6 +530,13 @@ class DownloadService : Service() {
         )
     }
 
+    private fun notifyPartial(entry: DeviceDownloadEntity, downloaded: Long, total: Long) {
+        notifications.notify(
+            NOTIFICATION_ID,
+            buildNotification(entry, DeviceDownloadState.PARTIAL, downloaded, total),
+        )
+    }
+
     private fun notifyFailed(entry: DeviceDownloadEntity, downloaded: Long, total: Long) {
         notifications.notify(
             NOTIFICATION_ID,
@@ -385,6 +561,7 @@ class DownloadService : Service() {
             DeviceDownloadState.PAUSED -> "Paused — ${formatBytes(downloaded)} saved"
             DeviceDownloadState.READY -> "Saved to Movies/$SUBDIR"
             DeviceDownloadState.FAILED -> "Stopped — open Downloads to resume"
+            DeviceDownloadState.PARTIAL -> "Partially saved — retry to finish the missing parts"
         }
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
@@ -402,7 +579,7 @@ class DownloadService : Service() {
         when (state) {
             DeviceDownloadState.DOWNLOADING, DeviceDownloadState.QUEUED ->
                 builder.addAction(0, "Pause", serviceIntent(ACTION_PAUSE, entry.id))
-            DeviceDownloadState.PAUSED, DeviceDownloadState.FAILED ->
+            DeviceDownloadState.PAUSED, DeviceDownloadState.FAILED, DeviceDownloadState.PARTIAL ->
                 builder.addAction(0, "Resume", resumeIntent(entry.id))
             else -> Unit
         }
@@ -484,6 +661,7 @@ class DownloadService : Service() {
         private const val ACTION_PAUSE = "com.raddstream.app.downloads.PAUSE"
         private const val ACTION_CANCEL = "com.raddstream.app.downloads.CANCEL"
         private const val SUBDIR = "RaddStream"
+        private const val SEGMENT_DIR = "segmented"
         private const val CHUNK_BYTES = 64 * 1024
         private const val NOTIFY_INTERVAL_MS = 750L
 

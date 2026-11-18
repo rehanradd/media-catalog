@@ -44,6 +44,12 @@ class CacheCoordinator(
     private val clock: UptimeClock,
     private val policy: SchedulerPolicy,
     private val networkProvider: @JvmSuppressWildcards () -> NetworkClass,
+    /**
+     * R3: the Media3 bridge for user-requested HLS keeps. Null in tests and
+     * anywhere the bridge is unavailable — then HLS keeps drive through
+     * [HlsAheadBuffer] exactly as before.
+     */
+    private val hlsKeepDownloader: HlsKeepDownloader? = null,
 ) {
 
     private val jobs = ConcurrentHashMap<Long, Job>()
@@ -268,8 +274,23 @@ class CacheCoordinator(
      * download fetches the whole playlist in one pass, from segment 0. The old code always
      * started at the playhead and always took 20 segments, so a keep that was never played
      * re-covered segments 0..20 forever and never reached segment 21.
+     *
+     * R3: a user-requested full download goes through Media3's DownloadManager
+     * ([HlsKeepDownloader]) instead — durable, per-segment resumable, and
+     * playable offline from the shared cache. Previews stay on [HlsAheadBuffer]:
+     * the ahead window is a partial playlist, not a download.
      */
     private suspend fun runHlsPass(task: CacheTaskEntity, mode: FetchMode): FetchOutcome {
+        if (mode == FetchMode.FULL_DOWNLOAD && hlsKeepDownloader != null) {
+            // Storage gate, same shape as the progressive path's suspension:
+            // a keep that cannot fit must park, not start a download the
+            // disk cannot hold. (Media3 bytes bypass the file-DAO ceiling
+            // accounting, so free disk — not the ceiling — is the bound here.)
+            if (task.totalSizeBytes > 0 && storage.osFreeBytes() < task.totalSizeBytes) {
+                return FetchOutcome.STORAGE_SUSPENDED
+            }
+            return driveMedia3Hls(task)
+        }
         val workDir = File(storage.openForWrite(task.sourceKey, task.totalSizeBytes.takeIf { it > 0 }).parentFile, task.sourceKey)
         val result = hlsBuffer.run(
             manifestUrl = task.currentUrl,
@@ -283,6 +304,36 @@ class CacheCoordinator(
             result.error != null -> FetchOutcome.RETRY_LATER
             result.isComplete -> FetchOutcome.COMPLETED
             else -> FetchOutcome.WINDOW_FILLED
+        }
+    }
+
+    /**
+     * Drive one user-requested HLS keep through Media3's DownloadManager.
+     * Progress lands on the task row as it arrives, so the Downloads list
+     * shows a real percent instead of 0-until-done; the final record stamps
+     * the total the playlist actually held. Outcomes map onto the existing
+     * fetch outcomes, so the retry / re-resolve / gate machinery above does
+     * not learn a second vocabulary.
+     */
+    private suspend fun driveMedia3Hls(task: CacheTaskEntity): FetchOutcome {
+        val downloader = hlsKeepDownloader ?: return FetchOutcome.RETRY_LATER
+        return when (val outcome = downloader.drive(task) { downloaded, total ->
+            taskDao.recordProgress(task.id, downloaded, downloaded, total, "", task.currentUrl)
+        }) {
+            is HlsKeepDriveOutcome.Completed -> {
+                taskDao.recordProgress(
+                    task.id,
+                    outcome.bytesDownloaded,
+                    outcome.bytesDownloaded,
+                    task.totalSizeBytes.takeIf { it > 0 } ?: outcome.bytesDownloaded,
+                    "",
+                    task.currentUrl,
+                )
+                FetchOutcome.COMPLETED
+            }
+            is HlsKeepDriveOutcome.Failed -> FetchOutcome.RETRY_LATER
+            HlsKeepDriveOutcome.SourceDead -> FetchOutcome.NEEDS_RERESOLVE
+            HlsKeepDriveOutcome.Gated -> FetchOutcome.GATED
         }
     }
 
@@ -477,6 +528,8 @@ class CacheCoordinator(
     /**
      * Cancel a keep the user aborted: stop its job, drop its held bytes and ledger, and remove the
      * row so it disappears from the list. Safe to call on a completed or already-gone task.
+     * A Media3 HLS keep's download goes with it — otherwise its segments would sit in the
+     * shared cache forever with no task row owning them.
      */
     suspend fun cancelTask(taskId: Long) {
         jobs[taskId]?.cancel()
@@ -484,6 +537,7 @@ class CacheCoordinator(
         playheadBytes.remove(taskId)
         rateTracker.forget(taskId)
         val task = taskDao.getById(taskId) ?: return
+        hlsKeepDownloader?.remove(task.sourceKey)
         manifestDao.deleteForTask(taskId)
         runCatching { storage.deleteOnDisk(task.sourceKey) }
         fileDao.listByTask(taskId).forEach { fileDao.deleteById(it.fileId) }

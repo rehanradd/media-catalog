@@ -25,8 +25,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 
-/** The five states a public download can be in. */
-enum class DeviceDownloadState { QUEUED, DOWNLOADING, PAUSED, READY, FAILED }
+/**
+ * The six states a public download can be in. PARTIAL is a download that
+ * ended with some segments done and some missing after all retries (R3):
+ * the bytes and the segment journal are kept, the file is NEVER marked
+ * READY, and a Resume retries only the missing segments.
+ */
+enum class DeviceDownloadState { QUEUED, DOWNLOADING, PAUSED, READY, FAILED, PARTIAL }
 
 /** One public download as the Downloads screen and the service both see it. */
 data class DeviceDownload(
@@ -77,7 +82,9 @@ data class DeviceDownload(
     val canPause: Boolean
         get() = state == DeviceDownloadState.QUEUED || state == DeviceDownloadState.DOWNLOADING
     val canResume: Boolean
-        get() = state == DeviceDownloadState.PAUSED || state == DeviceDownloadState.FAILED
+        get() = state == DeviceDownloadState.PAUSED ||
+            state == DeviceDownloadState.FAILED ||
+            state == DeviceDownloadState.PARTIAL
 
     /**
      * Robo run 9: the same shape as the keeps — a print label identical to
@@ -198,7 +205,7 @@ class DeviceDownloadsRepository @Inject constructor(
                 when (existing.state) {
                     DeviceDownloadState.QUEUED ->
                         runCatching { DownloadService.start(context, existing.id) }
-                    DeviceDownloadState.PAUSED -> requestResume(existing.id)
+                    DeviceDownloadState.PAUSED, DeviceDownloadState.PARTIAL -> requestResume(existing.id)
                     else -> Unit
                 }
                 return@withContext DeviceDownloadResult.Enqueued(existing.toUi())
@@ -271,7 +278,8 @@ class DeviceDownloadsRepository @Inject constructor(
     fun requestResume(id: String) {
         val current = load().firstOrNull { it.id == id } ?: return
         if (current.state != DeviceDownloadState.PAUSED &&
-            current.state != DeviceDownloadState.FAILED
+            current.state != DeviceDownloadState.FAILED &&
+            current.state != DeviceDownloadState.PARTIAL
         ) {
             return
         }
@@ -367,6 +375,44 @@ class DeviceDownloadsRepository @Inject constructor(
         }
     }
 
+    /**
+     * R3: a download that ended with some segments done and some missing.
+     * The bytes and the segment journal stay exactly where they are — a
+     * Resume retries only the missing segments — and the file is NEVER
+     * marked READY. The reason names how many parts are missing, so the row
+     * can say it instead of hiding it.
+     */
+    internal fun markPartial(
+        id: String,
+        downloaded: Long,
+        total: Long,
+        reason: String,
+    ) {
+        dropLiveRate(id)
+        update(id) {
+            it.copy(
+                state = DeviceDownloadState.PARTIAL,
+                bytesDownloaded = downloaded,
+                bytesTotal = if (total > 0) total else it.bytesTotal,
+                error = reason,
+            )
+        }
+    }
+
+    /** Persist a segment journal (R3) — the resume proof for one download id. */
+    internal fun saveSegmentJournal(id: String, journal: SegmentJournal) {
+        prefs.edit().putString(KEY_SEGMENTS + id, journal.encode()).apply()
+    }
+
+    /** The stored segment journal for one download id, or null when absent or corrupt. */
+    internal fun loadSegmentJournal(id: String): SegmentJournal? =
+        SegmentJournal.decode(prefs.getString(KEY_SEGMENTS + id, null))
+
+    /** Drop a segment journal — the download finished, failed hard, or was removed. */
+    internal fun clearSegmentJournal(id: String) {
+        prefs.edit().remove(KEY_SEGMENTS + id).apply()
+    }
+
     internal fun markReady(id: String, downloaded: Long, total: Long, localUri: String) {
         dropLiveRate(id)
         update(id) {
@@ -387,6 +433,9 @@ class DeviceDownloadsRepository @Inject constructor(
 
     /** Drops the resume offset when the destination cannot append; bytes restart from zero. */
     internal fun resetResume(id: String) {
+        // A restart from zero invalidates the segment journal too: its ranges
+        // describe bytes of a download that no longer exists.
+        clearSegmentJournal(id)
         update(id) { it.copy(bytesDownloaded = 0L) }
     }
 
@@ -397,6 +446,7 @@ class DeviceDownloadsRepository @Inject constructor(
         val remaining = load().filterNot { it.id == id }
         persistedAt.remove(id)
         dropLiveRate(id)
+        clearSegmentJournal(id)
         persist(remaining)
         emit(remaining)
     }
@@ -467,7 +517,9 @@ class DeviceDownloadsRepository @Inject constructor(
         etaSeconds = liveRates[id]?.second,
         // The failure reason is stored, not guessed: the row renders it
         // under the generic line instead of hiding it in the database.
-        failureReason = if (state == DeviceDownloadState.FAILED) error else null,
+        // A PARTIAL row shows its reason the same way — how many parts are
+        // missing is the one thing the viewer needs to decide on a retry.
+        failureReason = if (state == DeviceDownloadState.FAILED || state == DeviceDownloadState.PARTIAL) error else null,
     )
 
     /** Rolling progress samples per download (bytes, monotonic ms), last five only. */
@@ -530,6 +582,7 @@ class DeviceDownloadsRepository @Inject constructor(
     private companion object {
         const val PREFS_NAME = "radd_device_downloads"
         const val KEY_ENTRIES = "entries"
+        const val KEY_SEGMENTS = "segments:"
         const val MAX_NAME_CHARS = 80
         const val PROGRESS_FLUSH_MS = 1_000L
     }

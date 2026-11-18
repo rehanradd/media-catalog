@@ -147,6 +147,12 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- Media3 HLS keeps (R3): durable, resumable segment downloads -->
+        <service
+            android:name=".data.cache.Media3HlsDownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
         <!-- Auto-resume interrupted downloads on boot completion or app update -->
         <receiver
             android:name=".data.downloads.BootReceiver"
