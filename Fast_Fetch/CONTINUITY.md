@@ -78,6 +78,7 @@ The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete i
 - [Session 2026-11-16 — playback telemetry beacon](checkpoints/20261116-playback-telemetry-beacon.md)
 - [2026-11-18 — B4 trending warm-failure loudness](checkpoints/20261118-trending-warm-loud-b4.md)
 - 2026-11-18 — H2 backfills #6/#8/#9: quality normalization, resolved_cache prune, desicinemas year.
+- 2026-11-18 — Sweep host-partitioned scheduler (`muse/sweep-host-scheduler-20261118`): single-writer + dedup + HEAD-only keep-alive probes, replacing the per-site lanes that died 3× on SQLite locks; 17 tests (14 green locally, 3 httpx-parity skipped without httpx); pilot on the Oracle VM owed before any rollout.
 - 2026-11-18 — B1 cursor pagination + band-aware play walk (`muse/cursor-pagination-20261118`): keyset cursors on v1 posts/trending, v2 walk verified, play best-band-first; 13 tests green locally.
 - 2026-11-18 — R1+R2+R4 + checkup #3 host ranking: decayed score + tiers + verified prints + slice; 24 tests green; checkpoints/20261118-host-ranking-r1r2r4.md.
 - [Session 2026-11-12 — self-check `[LIVE-TV-503]`](checkpoints/20261112-selfcheck-live-tv-503-logos.md)

@@ -298,6 +298,12 @@ jobs:
       - name: 🧪 test_link_state_runner.py
         run: python3 -S Fast_Fetch/test_link_state_runner.py
 
+      # The host-partitioned sweep scheduler (2026-11-18): one writer,
+      # dedup, HEAD-only keep-alive probes — the replacement for the
+      # per-site lanes that died twice on SQLite writer locks.
+      - name: 🧪 test_sweep_host_scheduler.py
+        run: python3 -S Fast_Fetch/test_sweep_host_scheduler.py
+
       # The work grouping shared by v1 and v2 search dedup (Session 152).
       - name: 🧪 test_title_clean.py
         run: python3 -S Fast_Fetch/test_title_clean.py
