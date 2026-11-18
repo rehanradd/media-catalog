@@ -62,6 +62,15 @@ import com.raddstream.app.data.cache.CacheTaskEntity
  * with no prior data, but it is still real DDL for the same reason 5 and 7 are: the destructive
  * fallback would take `favorite_posts` with it, and a notification preference is not worth a
  * saved list.
+ *
+ * Version 11 adds `catalog_fts`, the on-device search index (feel-instant S3c). It is a
+ * standalone FTS4 virtual table — FTS5 is absent from the system SQLite, and Room 2.8's
+ * bundled driver would raise minSdk 21 → 23 for ranking FTS4 + popularity already covers.
+ * The DDL below must equal Room's own output for [CatalogFtsEntity] (the `prefix` option
+ * included): a drift is caught the first time a device opens the migrated database, and
+ * [com.raddstream.app.data.local.AppDatabaseMigrationTest] holds that contract on CI.
+ * The table starts empty on every device and fills from traffic — there is no data to
+ * preserve across the step, only a schema to land.
  */
 @Database(
     entities = [
@@ -75,8 +84,9 @@ import com.raddstream.app.data.cache.CacheTaskEntity
         UnavailableWorkEntity::class,
         LiveTvFavourite::class,
         FollowedSeries::class,
+        CatalogFtsEntity::class,
     ],
-    version = 10,
+    version = 11,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -90,6 +100,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun unavailableWorkDao(): UnavailableWorkDao
     abstract fun liveTvFavouriteDao(): LiveTvFavouriteDao
     abstract fun followedSeriesDao(): FollowedSeriesDao
+    abstract fun catalogFtsDao(): CatalogFtsDao
 
     companion object {
         /**
@@ -299,6 +310,24 @@ abstract class AppDatabase : RoomDatabase() {
                         "workRef TEXT NOT NULL, cleanTitle TEXT, title TEXT NOT NULL, " +
                         "posterUrl TEXT, lastSeenSeason INTEGER, lastSeenEpisode INTEGER, " +
                         "followedAt INTEGER NOT NULL, PRIMARY KEY(workRef))",
+                )
+            }
+        }
+
+        /**
+         * 10 → 11: the on-device search index (feel-instant S3c). One statement, no
+         * existing row touched — the table starts empty and fills from traffic. The
+         * DDL is Room's own output for [CatalogFtsEntity]: backticked identifiers,
+         * `USING FTS4`, and the `prefix` option the entity declares. A drift from
+         * that output throws Room's schema validation the first time a device opens
+         * the migrated database, exactly like the 2 → 3 step.
+         */
+        val MIGRATION_10_11: Migration = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS `catalog_fts` USING FTS4(" +
+                        "`title` TEXT NOT NULL, `year` INTEGER, `type` TEXT, " +
+                        "`posterUrl` TEXT, `popularity` INTEGER NOT NULL, prefix='1,2,3,4')",
                 )
             }
         }

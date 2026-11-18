@@ -6,6 +6,7 @@ import com.raddstream.app.data.ServerSettingsRepository
 import com.raddstream.app.network.ApiProvider
 import com.raddstream.app.network.RaddStreamApi
 import com.raddstream.app.network.models.Post
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -39,11 +40,15 @@ class CatalogPostCacheTest {
     fun `a cached post answers the title a failed detail needs`() {
         val repository = repository()
         assertNull(repository.cachedPost(101))
-        repository.cachePosts(
-            listOf(
-                Post(id = 101, title = "Jawan", cleanTitle = "Jawan", year = 2023, contentType = "movie"),
-            ),
-        )
+        // Feel-instant S3c: cachePosts is suspend now — the FTS upsert
+        // runs inline with the cache write, on the same call.
+        runBlocking {
+            repository.cachePosts(
+                listOf(
+                    Post(id = 101, title = "Jawan", cleanTitle = "Jawan", year = 2023, contentType = "movie"),
+                ),
+            )
+        }
         assertEquals("Jawan", repository.cachedPost(101)?.cleanTitle)
         assertNull("an id never cached is simply no fallback", repository.cachedPost(999))
     }
@@ -51,29 +56,33 @@ class CatalogPostCacheTest {
     @Test
     fun `a post with no id is never cached`() {
         val repository = repository()
-        repository.cachePosts(
-            listOf(
-                Post(id = 0, title = "Nameless", cleanTitle = "Nameless", contentType = "movie"),
-            ),
-        )
+        runBlocking {
+            repository.cachePosts(
+                listOf(
+                    Post(id = 0, title = "Nameless", cleanTitle = "Nameless", contentType = "movie"),
+                ),
+            )
+        }
         assertNull(repository.cachedPost(0))
     }
 
     @Test
     fun `a v2 browse row resolves from workCache by workId when post id is sentinel`() {
         val repository = repository()
-        repository.cachePosts(
-            listOf(
-                Post(
-                    id = -77,
-                    workId = 77L,
-                    title = "Pathaan",
-                    cleanTitle = "Pathaan",
-                    year = 2023,
-                    contentType = "movie",
+        runBlocking {
+            repository.cachePosts(
+                listOf(
+                    Post(
+                        id = -77,
+                        workId = 77L,
+                        title = "Pathaan",
+                        cleanTitle = "Pathaan",
+                        year = 2023,
+                        contentType = "movie",
+                    ),
                 ),
-            ),
-        )
+            )
+        }
         assertEquals("Pathaan", repository.cachedPost(postId = -77, workId = 77L)?.cleanTitle)
     }
 }

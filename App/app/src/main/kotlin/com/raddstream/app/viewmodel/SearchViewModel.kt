@@ -3,6 +3,8 @@ package com.raddstream.app.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.raddstream.app.data.ServerSettingsRepository
+import com.raddstream.app.data.local.CatalogFtsDao
+import com.raddstream.app.data.local.buildFtsPrefixQuery
 import com.raddstream.app.data.normalizeSearchRecents
 import com.raddstream.app.network.friendlyNetworkError
 import com.raddstream.app.network.models.Post
@@ -299,6 +301,19 @@ data class SearchUiState(
     /** Type-ahead titles for the current query; empty when the route is blocked or the server is old. */
     val suggestions: List<SuggestItem> = emptyList(),
     /**
+     * Feel-instant S3a/S3c: the titles this device already knows, matching
+     * the current query from the local FTS index — painted the moment a
+     * keystroke lands, while the server search is still debounced. A tap
+     * runs the server search for that title (the index carries no id to
+     * open). Cleared the moment a server search for the query answers:
+     * the server list is the complete answer, and the local rows are its
+     * instant preview, not a second list. Kept when the server search
+     * fails, so a dead connection still answers from the device.
+     */
+    val localResults: List<LocalSearchResult> = emptyList(),
+    /** The query [localResults] answers — the screen only shows them while it still matches. */
+    val localResultsQuery: String = "",
+    /**
      * F14 (Batch B): the trending row for the empty state — the server's own
      * "Most versions" order, loaded once per screen. Empty when the route is
      * blocked or the server is old; the empty state simply shows no row
@@ -334,6 +349,15 @@ data class SearchUiState(
     val hasSearchIntent: Boolean
         get() = query.isNotBlank() || filters.anyServerFilterActive
 
+    /**
+     * Feel-instant S3a/S3c: the local rows are on screen only while they
+     * still answer the query in the field — a keystroke cancels the job
+     * that wrote them, and the query guard below is the second line, so a
+     * stale list can never sit under a newer query.
+     */
+    val hasLocalResults: Boolean
+        get() = localResults.isNotEmpty() && localResultsQuery == query.trim()
+
     val hasActiveFilters: Boolean
         get() = filters.type != null || filters.anyServerFilterActive ||
             filters.anyClientFilterActive || sort != SearchSort.DEFAULT
@@ -353,6 +377,12 @@ class SearchViewModel @Inject constructor(
     private val catalogRepository: CatalogRepository,
     private val settingsRepository: ServerSettingsRepository,
     private val syncAccountRepository: SyncAccountRepository,
+    /**
+     * Feel-instant S3c: the on-device search index. Null in the tests that
+     * build this ViewModel by hand — then search stays server-only, exactly
+     * as before this slice.
+     */
+    private val catalogFtsDao: CatalogFtsDao? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SearchUiState())
@@ -361,7 +391,16 @@ class SearchViewModel @Inject constructor(
     private var searchJob: Job? = null
     private var moreJob: Job? = null
     private var suggestJob: Job? = null
+    private var localSearchJob: Job? = null
     private var rawResults: List<Post> = emptyList()
+
+    /**
+     * Feel-instant S3b: the last server suggestions, kept so the local job
+     * can merge them under the instant ones — and the query they answer,
+     * so a stale server batch never rides under a newer query's locals.
+     */
+    private var lastServerSuggestions: List<SuggestItem> = emptyList()
+    private var lastServerSuggestionsQuery: String = ""
 
     /** F14 (Batch B): the trending load runs once per ViewModel, not per recomposition. */
     private var trendingRequested = false
@@ -440,6 +479,9 @@ class SearchViewModel @Inject constructor(
         _uiState.update { it.copy(query = query, error = null, filters = it.filters.copy(type = type)) }
         scheduleSearch(reset = true)
         scheduleSuggest()
+        // Feel-instant S3a/S3c: the local index answers at once, no
+        // debounce — the server call above still waits out its own.
+        scheduleLocalSearch()
     }
 
     /** Records the current query and forces an immediate search (IME "Search" key). */
@@ -760,6 +802,7 @@ class SearchViewModel @Inject constructor(
                     isLoading = false, error = null, groups = emptyList(), resultCount = 0,
                     serverTotal = 0, totalCapped = false, hasSearched = false, hasMore = false, page = 1,
                     isFuzzy = false, showExactOnly = false, didYouMean = null,
+                    localResults = emptyList(), localResultsQuery = "",
                 )
             }
             return
@@ -774,7 +817,7 @@ class SearchViewModel @Inject constructor(
                     isLoading = false, error = null, groups = emptyList(), resultCount = 0,
                     serverTotal = 0, totalCapped = false, hasSearched = false, hasMore = false, page = 1,
                     isFuzzy = false, showExactOnly = false, suggestions = emptyList(),
-                    didYouMean = null,
+                    didYouMean = null, localResults = emptyList(), localResultsQuery = "",
                 )
             }
             return
@@ -823,6 +866,10 @@ class SearchViewModel @Inject constructor(
                                 // v2 carries no suggestion yet; the v1
                                 // fallback below is the only source of one.
                                 didYouMean = null,
+                                // The server answered: the local rows were
+                                // its instant preview, not a second list.
+                                localResults = emptyList(),
+                                localResultsQuery = "",
                             )
                         }
                         recompute()
@@ -861,6 +908,10 @@ class SearchViewModel @Inject constructor(
                         didYouMean = resp.suggestion?.trim()?.takeIf {
                             it.isNotBlank() && !it.equals(query, ignoreCase = true)
                         },
+                        // The server answered: the local rows were its
+                        // instant preview, not a second list.
+                        localResults = emptyList(),
+                        localResultsQuery = "",
                     )
                 }
                 recompute()
@@ -907,6 +958,11 @@ class SearchViewModel @Inject constructor(
      * slow suggest never delays the results. Two characters minimum — the
      * server answers nothing shorter — and a blank query clears the chips.
      * A blocked route or an old server just leaves the list empty.
+     *
+     * Feel-instant S3b: the chips are local first. The instant rows from
+     * [scheduleLocalSearch] already sit above; the server batch merges
+     * underneath them, deduped by title, so a title the device knows never
+     * waits on the network to appear as a chip.
      */
     private fun scheduleSuggest() {
         suggestJob?.cancel()
@@ -932,13 +988,73 @@ class SearchViewModel @Inject constructor(
             // cancelled suggest whose call already returned must not paint
             // chips for a query the viewer has already edited past.
             if (query != _uiState.value.query.trim()) return@launch
+            lastServerSuggestions = items ?: emptyList()
+            lastServerSuggestionsQuery = query
             _uiState.update {
                 it.copy(
-                    suggestions = items ?: emptyList(),
+                    suggestions = mergeSuggestions(
+                        localSuggestionsFor(it, query),
+                        lastServerSuggestions,
+                    ),
                 )
             }
         }
     }
+
+    /**
+     * Feel-instant S3a/S3c: the local index answers a keystroke at once —
+     * no debounce, no network. The query runs on the FTS table Room
+     * already holds, and the rows paint as the instant preview while the
+     * debounced server search is still out. A cancelled job whose query
+     * already returned must not paint rows for a query the viewer has
+     * already edited past (Issue 6, same stale-write class as the
+     * search job) — and a null DAO means no index, so search stays
+     * server-only instead of failing.
+     */
+    private fun scheduleLocalSearch() {
+        localSearchJob?.cancel()
+        val query = _uiState.value.query.trim()
+        val matchQuery = buildFtsPrefixQuery(query)
+        if (matchQuery == null) {
+            _uiState.update { it.copy(localResults = emptyList(), localResultsQuery = "") }
+            return
+        }
+        val dao = catalogFtsDao ?: return
+        localSearchJob = viewModelScope.launch {
+            val rows = runCatching { dao.search(matchQuery, LOCAL_SEARCH_LIMIT) }.getOrNull()
+                ?: emptyList()
+            if (query != _uiState.value.query.trim()) return@launch
+            val results = rows.map {
+                LocalSearchResult(title = it.title, year = it.year, type = it.type, posterUrl = it.posterUrl)
+            }
+            _uiState.update {
+                it.copy(
+                    localResults = results,
+                    localResultsQuery = query,
+                    suggestions = mergeSuggestions(
+                        results.take(LOCAL_SUGGEST_LIMIT).map { result -> result.toSuggestItem() },
+                        serverSuggestionsFor(query),
+                    ),
+                )
+            }
+        }
+    }
+
+    /**
+     * Feel-instant S3b: the local rows for this query as suggestion chips,
+     * or none when the rows in state answer an older query — the guard is
+     * the same one [SearchUiState.hasLocalResults] carries.
+     */
+    private fun localSuggestionsFor(state: SearchUiState, query: String): List<SuggestItem> =
+        if (state.localResultsQuery == query) {
+            state.localResults.take(LOCAL_SUGGEST_LIMIT).map { it.toSuggestItem() }
+        } else {
+            emptyList()
+        }
+
+    /** Feel-instant S3b: the last server batch, only when it answers this query. */
+    private fun serverSuggestionsFor(query: String): List<SuggestItem> =
+        if (lastServerSuggestionsQuery == query) lastServerSuggestions else emptyList()
 
     private fun recompute() {
         val filters = _uiState.value.filters
@@ -976,7 +1092,15 @@ class SearchViewModel @Inject constructor(
     }
 
     private companion object {
-        const val DEBOUNCE_MS = 300L
+        /**
+         * Feel-instant S3a: 150 ms, down from 300 ms — the network call no
+         * longer carries the whole experience, because the local index
+         * answers each keystroke at once ([scheduleLocalSearch] runs with
+         * no debounce at all). 300 ms was the right wait while every
+         * keystroke was a round trip; with instant locals it is just lag.
+         * The suggest call rides the same debounce.
+         */
+        const val DEBOUNCE_MS = 150L
         const val PAGE_SIZE = 100
         /**
          * A4-F4: the server counts at most 1000 matches for a search and a
@@ -984,7 +1108,57 @@ class SearchViewModel @Inject constructor(
          * pages to hold every row the server will ever serve.
          */
         const val MAX_SHOW_ALL_EXTRA_PAGES = 9
+        /**
+         * Feel-instant S3a/S3c: how many local rows a keystroke paints —
+         * an instant preview, not a second results page.
+         */
+        const val LOCAL_SEARCH_LIMIT = 20
+        /** Feel-instant S3b: how many local rows may lead the chip row. */
+        const val LOCAL_SUGGEST_LIMIT = 5
     }
+}
+
+/** Feel-instant S3b: the merged chip row never runs longer than this. */
+internal const val MAX_SUGGESTIONS = 8
+
+/**
+ * Feel-instant S3a/S3c: one row of the instant local answer — a title this
+ * device already knows, with the year, type and poster the row paints.
+ * There is deliberately no id: the index carries none, and a tap runs the
+ * server search for the title instead of opening a page.
+ */
+data class LocalSearchResult(
+    val title: String,
+    val year: Int?,
+    val type: String?,
+    val posterUrl: String?,
+)
+
+/**
+ * Feel-instant S3b: a local row as a suggestion chip. The id is a negative
+ * hash of the title — the chips are keyed by id, and a server id is a
+ * positive post id, so a local chip can never collide with a server one.
+ * Two titles with the same hash are vanishingly rare, and the merge below
+ * dedupes by title anyway.
+ */
+internal fun LocalSearchResult.toSuggestItem(): SuggestItem =
+    SuggestItem(id = -title.hashCode(), title = title, year = year)
+
+/**
+ * Feel-instant S3b: one chip row from the two halves — the instant local
+ * rows first, then the server batch underneath, deduped by title
+ * (case-insensitive: the same title from both sides is one chip), capped
+ * so the row never runs long. Pure so a test can pin it without a
+ * ViewModel.
+ */
+internal fun mergeSuggestions(local: List<SuggestItem>, server: List<SuggestItem>): List<SuggestItem> {
+    val seen = local.map { it.title.lowercase() }.toMutableSet()
+    val merged = local.toMutableList()
+    for (item in server) {
+        if (merged.size >= MAX_SUGGESTIONS) break
+        if (seen.add(item.title.lowercase())) merged.add(item)
+    }
+    return merged.take(MAX_SUGGESTIONS)
 }
 
 /**

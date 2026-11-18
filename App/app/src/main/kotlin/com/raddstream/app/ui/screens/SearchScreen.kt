@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -72,6 +73,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -91,8 +93,11 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.raddstream.app.R
 import com.raddstream.app.network.models.Post
+import com.raddstream.app.network.models.currentCalendarYear
+import com.raddstream.app.network.models.displayYearLabel
 import com.raddstream.app.player.PastedText
 import com.raddstream.app.player.classifyPastedText
+import com.raddstream.app.ui.components.CatalogImage
 import com.raddstream.app.ui.components.EmptyState
 import com.raddstream.app.ui.components.InlineLoadFailure
 import com.raddstream.app.ui.components.ErrorState
@@ -110,12 +115,14 @@ import com.raddstream.app.ui.layout.CardGeometry
 import com.raddstream.app.viewmodel.GenreFilter
 import com.raddstream.app.viewmodel.LanguageFilter
 import com.raddstream.app.viewmodel.IndustryFilter
+import com.raddstream.app.viewmodel.LocalSearchResult
 import com.raddstream.app.viewmodel.QualityFilter
 import com.raddstream.app.viewmodel.SearchSort
 import com.raddstream.app.viewmodel.SearchUiState
 import com.raddstream.app.viewmodel.SearchViewModel
 import com.raddstream.app.viewmodel.displayLanguageName
 import com.raddstream.app.viewmodel.effectiveTypeChip
+import com.raddstream.app.viewmodel.normalizeTypeLabel
 import com.raddstream.app.viewmodel.resultsSummary
 import com.raddstream.app.viewmodel.showAllLabel
 
@@ -712,6 +719,82 @@ internal fun RecentsList(
     }
 }
 
+/** Test tag prefix for one instant local row, so a test can tap the row itself. */
+internal const val LocalResultRowTagPrefix = "local-result:"
+
+/**
+ * Feel-instant S3a/S3c: the instant local answer — titles this device
+ * already knows, painted while the server search is still out (or after
+ * it failed). One row per title: a small poster, the title, and the year
+ * + type line the rail already paints. A tap runs the server search for
+ * that title — the index carries no id to open, so the row is a question
+ * restated, not a page.
+ */
+@Composable
+internal fun LocalSearchResults(
+    results: List<LocalSearchResult>,
+    onRunSuggestion: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState()),
+    ) {
+        SectionHeader(
+            title = "Matches on this device",
+            modifier = Modifier.padding(top = 8.dp),
+        )
+        Spacer(Modifier.height(8.dp))
+        results.forEach { result ->
+            val metaLine = remember(result) {
+                listOfNotNull(
+                    displayYearLabel(result.year, currentCalendarYear()),
+                    normalizeTypeLabel(result.type).takeIf { it != "Other" },
+                ).takeIf { it.isNotEmpty() }?.joinToString(" · ")
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 64.dp)
+                    .testTag("$LocalResultRowTagPrefix${result.title}")
+                    .clickable { onRunSuggestion(result.title) },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                CatalogImage(
+                    url = result.posterUrl,
+                    contentDescription = null, // the title beside it says which title this is
+                    modifier = Modifier
+                        .width(44.dp)
+                        .aspectRatio(CardGeometry.POSTER_ASPECT)
+                        .clip(RoundedCornerShape(6.dp)),
+                    fallbackLabel = result.title,
+                )
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        result.title,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    metaLine?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
 /** Test tag on the discovery page's loading skeleton, so a test can tell loading from the settled hint. */
 internal const val SearchDiscoverySkeletonTag = "search-discovery-skeleton"
 
@@ -959,12 +1042,24 @@ internal fun SearchContent(
                 onSeeAllRecommended = onSeeAllRecommended,
             )
         }
-        state.isLoading && state.groups.isEmpty() -> SearchResultsSkeleton(
+        state.isLoading && state.groups.isEmpty() && !state.hasLocalResults -> SearchResultsSkeleton(
             // The results arrive as a summary line, a group header and a
             // 2-wide grid — the bare grid skeleton let the summary and the
             // header appear out of nowhere and push every row down.
+            // Feel-instant S3a/S3c: when the device already knows titles
+            // for this query, those rows are the loading state — a skeleton
+            // over them would hide the instant answer.
         )
-        state.error != null && state.groups.isEmpty() -> ErrorState(title = "Couldn't search", message = state.error ?: "Search failed.", onRetry = onSubmitCurrentQuery)
+        state.error != null && state.groups.isEmpty() && !state.hasLocalResults -> ErrorState(title = "Couldn't search", message = state.error ?: "Search failed.", onRetry = onSubmitCurrentQuery)
+        // Feel-instant S3a/S3c: the instant local answer — titles this
+        // device already knows, painted while the server search is still
+        // out (or after it failed: a dead connection still answers from
+        // the device). A tap runs the server search for that title; the
+        // index carries no id to open.
+        state.hasLocalResults && state.groups.isEmpty() -> LocalSearchResults(
+            results = state.localResults,
+            onRunSuggestion = onRunSuggestion,
+        )
         // Audit #36: "No matches" only after a completed search returns zero
         // rows — never while a search is still in flight (the skeleton owns
         // that window), and never before the first search.
@@ -1000,6 +1095,19 @@ internal fun SearchContent(
             },
         )
         else -> LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+            // Feel-instant S3a: the previous results stay on screen while a
+            // fresh search runs — and this one skeleton row on top is the
+            // signal that they are refreshing, so the stale count below it
+            // is never mistaken for the new answer.
+            if (state.isLoading) {
+                item {
+                    SkeletonBox(
+                        Modifier.fillMaxWidth(0.55f).height(20.dp).padding(vertical = 8.dp)
+                            .testTag("searchRefreshingRow"),
+                        shape = RoundedCornerShape(8.dp),
+                    )
+                }
+            }
             item {
                 // P1-S3: one filter entry point — the top bar's Tune icon (and
                 // the "Filtered" pill) opens the sheet. The header keeps only

@@ -129,6 +129,7 @@ import com.raddstream.app.ui.components.CapabilityChip
 import com.raddstream.app.ui.components.CamBadge
 import com.raddstream.app.ui.components.CatalogImage
 import com.raddstream.app.ui.components.CenteredMockupDialog
+import com.raddstream.app.ui.components.DetailBodySkeleton
 import com.raddstream.app.ui.components.DetailSkeleton
 import com.raddstream.app.ui.components.ErrorState
 import com.raddstream.app.ui.components.HdrBadge
@@ -403,7 +404,28 @@ fun DetailScreen(
         val layoutDirection = LocalLayoutDirection.current
         val detailPadding = detailContentPadding(paddingValues, safeDrawingPadding, layoutDirection)
         val post = state.post
+        // Feel-instant S4, read once: `state` is a delegated property, so
+        // the branch below cannot smart-cast `state.optimisticDetail` —
+        // this local is what the hero actually receives.
+        val optimistic = state.optimisticDetail
         when {
+            // Feel-instant S4: the tap already knows the title — paint the
+            // real hero from the row, and skeleton only the body the fetch
+            // still owes. The warm + fetch run underneath; the header never
+            // waits for them.
+            state.isLoading && optimistic != null -> Column(
+                Modifier.padding(detailPadding),
+            ) {
+                DetailHeroSection(
+                    post = optimistic,
+                    capabilities = emptyList(),
+                    seasonCount = 0,
+                    includedPill = null,
+                    pageSides = Modifier.padding(horizontal = 16.dp),
+                )
+                Spacer(Modifier.height(16.dp))
+                DetailBodySkeleton()
+            }
             state.isLoading -> DetailSkeleton(Modifier.padding(detailPadding))
             state.error != null && post == null -> Column(
                 modifier = Modifier

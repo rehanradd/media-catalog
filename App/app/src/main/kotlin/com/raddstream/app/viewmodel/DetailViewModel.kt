@@ -71,6 +71,16 @@ data class DetailUiState(
      * deep link, or a cold start straight to detail).
      */
     val fallbackPost: Post? = null,
+    /**
+     * Feel-instant S4: the title this screen was opened from, as a detail
+     * — painted the moment the tap lands, before any network call. The
+     * header (title, poster, year, type) is real content from the list
+     * row the viewer just saw; only the body (links, prints, episodes)
+     * skeletons until the fetch lands. Cleared when the real detail
+     * arrives; kept when the fetch fails, so the error branch still has
+     * its header through [fallbackPost].
+     */
+    val optimisticDetail: PostDetail? = null,
     val layout: ReleaseLayout? = null,
     val selectedSeason: Int? = null,
     val isLoading: Boolean = true,
@@ -379,6 +389,36 @@ sealed class DetailNavigationEvent {
     /** A legacy device must grant storage before a public download can start. */
     data object DownloadNeedsPermission : DetailNavigationEvent()
 }
+
+/**
+ * Feel-instant S4: one list row as the detail it will become — the header
+ * fields only (title, poster, year, type, and the artwork, genres, rating
+ * and handle the header paints). Everything the fetch still owes stays
+ * absent: no releases, no synopsis, no cast, no runtime. Nothing here is
+ * invented — every field is the row's own, and an empty release list is
+ * the honest "not loaded yet", never "nothing to play". Pure so a test
+ * can pin it without a ViewModel.
+ */
+internal fun optimisticDetailFromPost(post: Post): PostDetail = PostDetail(
+    id = post.id,
+    title = post.title,
+    cleanTitle = post.cleanTitle,
+    displayTitleWire = post.displayTitleWire,
+    year = post.year,
+    contentType = post.contentType,
+    seasons = post.seasons,
+    posterUrl = post.posterUrl,
+    backdropUrls = post.backdropUrls,
+    imdbRating = post.imdbRating,
+    imdbId = post.imdbId,
+    tmdbId = post.tmdbId,
+    genres = post.genres,
+    isAnimated = post.isAnimated,
+    industry = post.industry,
+    country = post.country,
+    language = post.language,
+    workRef = post.workRef,
+)
 
 @HiltViewModel
 class DetailViewModel @Inject constructor(
@@ -792,7 +832,19 @@ class DetailViewModel @Inject constructor(
             return
         }
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, error = null, fallbackPost = null) }
+            // Feel-instant S4: paint the header at once, from the list row
+            // this process already holds — the tap answers within a frame,
+            // and the warm + fetch below only ever fill the body. A row the
+            // cache never held (a deep link, a cold start straight to
+            // detail) paints the skeleton exactly as before.
+            val optimistic = catalogRepository.cachedPost(postId, workId)
+                ?.let(::optimisticDetailFromPost)
+            _uiState.update {
+                it.copy(
+                    isLoading = true, error = null, fallbackPost = null,
+                    optimisticDetail = optimistic,
+                )
+            }
             try {
                 // Session 153: warm the connection once before the first detail
                 // call — a cold pool can fail the first tap before any byte
@@ -823,6 +875,9 @@ class DetailViewModel @Inject constructor(
                             post = detail,
                             selectedSeason = layout.seasons.firstOrNull()?.number,
                             isLoading = false,
+                            // The real detail is on screen now; the
+                            // optimistic header has done its job.
+                            optimisticDetail = null,
                         )
                     }
                     // The catalog answer is ungated; what the viewer may SEE is decided here,

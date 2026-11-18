@@ -558,6 +558,24 @@ fun DetailSkeleton(modifier: Modifier = Modifier) {
                 DetailHeaderSkeleton()
             }
         }
+        DetailBodySkeleton()
+    }
+}
+
+/**
+ * Feel-instant S4: everything below the detail hero — Play, synopsis,
+ * utility row, audio line, quality rungs, cast, print summary, similar.
+ * Split out of [DetailSkeleton] so the optimistic load can paint the real
+ * hero from the tapped row and skeleton only the body: the same pieces,
+ * in the same order, with the same tags, so [SkeletonParityTest] still
+ * reads them in page order (this function sits directly after
+ * [DetailSkeleton], inside that test's scan window). The outer column's
+ * 16dp gap and this column's own 16dp gaps keep the geometry identical
+ * to the unsplit skeleton.
+ */
+@Composable
+fun DetailBodySkeleton(modifier: Modifier = Modifier) {
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         // Play — 48dp, the same min the real hero button carries
         // ([SkeletonParityTest] pins the two together).
         SkeletonBox(

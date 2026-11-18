@@ -2,6 +2,8 @@ package com.raddstream.app.repository
 
 import android.util.Log
 import com.raddstream.app.data.ServerSettingsRepository
+import com.raddstream.app.data.local.CatalogFtsDao
+import com.raddstream.app.data.local.CatalogFtsEntity
 import com.raddstream.app.network.ApiProvider
 import com.raddstream.app.network.bearerHeader
 import kotlinx.coroutines.CancellationException
@@ -34,6 +36,12 @@ import retrofit2.HttpException
 class CatalogRepository @Inject constructor(
     private val apiProvider: ApiProvider,
     private val settingsRepository: ServerSettingsRepository,
+    /**
+     * Feel-instant S3c: the on-device search index. Null in the tests that
+     * build this repository by hand — then the list routes keep their
+     * in-memory cache and simply do not seed the index.
+     */
+    private val catalogFtsDao: CatalogFtsDao? = null,
 ) {
     /**
      * F9 (Batch B): the last few hundred list rows, by post id, in memory.
@@ -50,7 +58,15 @@ class CatalogRepository @Inject constructor(
     private val postCache = ConcurrentHashMap<Int, Post>()
     private val workCache = ConcurrentHashMap<Long, Post>()
 
-    fun cachePosts(posts: List<Post>) {
+    /**
+     * Feel-instant S3c: every list page feeds the on-device search index as
+     * well as the in-memory fallback cache, so the index grows from the
+     * traffic the viewer already caused — no new endpoint, no new call. A
+     * row with no readable title indexes nothing. Best-effort by design:
+     * the write is a Room suspend call on Room's own executor, and a
+     * failure there must never fail the list that already answered.
+     */
+    suspend fun cachePosts(posts: List<Post>) {
         if (postCache.size > POST_CACHE_MAX) postCache.clear()
         if (workCache.size > POST_CACHE_MAX) workCache.clear()
         for (post in posts) {
@@ -58,6 +74,26 @@ class CatalogRepository @Inject constructor(
             val wId = post.workId
             if (wId != null && wId > 0) workCache[wId] = post
         }
+        indexPosts(posts)
+    }
+
+    private suspend fun indexPosts(posts: List<Post>) {
+        val dao = catalogFtsDao ?: return
+        val entries = posts.mapNotNull { it.toCatalogFtsEntry() }
+            .distinctBy { it.title to it.year to it.type }
+        if (entries.isEmpty()) return
+        runCatching { dao.upsert(entries) }
+    }
+
+    /**
+     * Feel-instant S3c: a detail load seeds its one title too — a title
+     * opened from a deep link never passed through a list, so without this
+     * the index would never learn it. Same best-effort rule as [indexPosts].
+     */
+    private suspend fun indexDetail(detail: PostDetail) {
+        val dao = catalogFtsDao ?: return
+        val entry = detail.toCatalogFtsEntry() ?: return
+        runCatching { dao.upsert(listOf(entry)) }
     }
 
     fun cachedPost(postId: Int, workId: Long = -1L): Post? =
@@ -255,6 +291,7 @@ class CatalogRepository @Inject constructor(
             return null
         }
         if (response.success && response.data != null) {
+            indexDetail(response.data)
             return response.data
         }
         return null
@@ -471,6 +508,7 @@ class CatalogRepository @Inject constructor(
         // a 200 that cannot become a detail is unavailable, not a crash.
         val detail = response.toPostDetail(baseUrl, v1PostId, castNames, seasonArtwork)
             ?: return V2DetailResult.Unavailable
+        indexDetail(detail)
         return V2DetailResult.Found(detail)
     }
 
@@ -725,4 +763,40 @@ sealed interface V2DetailResult {
     data class Found(val detail: PostDetail) : V2DetailResult
     data object Unavailable : V2DetailResult
     data class TransientFailure(val error: Exception) : V2DetailResult
+}
+
+/**
+ * Feel-instant S3c: one list row as one index row. The title is the
+ * display title — the words the viewer actually reads — and the popularity
+ * is the coverage ranking the sort already uses (releases + sources), so
+ * the index orders the way "Most versions" does. Null when the row has no
+ * readable title: a titleless row is unsearchable, and indexing it would
+ * only ever answer a blank query.
+ */
+internal fun Post.toCatalogFtsEntry(): CatalogFtsEntity? {
+    val title = displayTitle.takeIf { it.isNotBlank() } ?: return null
+    return CatalogFtsEntity(
+        title = title,
+        year = year,
+        type = contentType,
+        posterUrl = posterUrl,
+        popularity = (releaseCount ?: 0) + (sourceCount ?: 0),
+    )
+}
+
+/**
+ * Feel-instant S3c: one detail as one index row — the deep-link path that
+ * never passed through a list. A detail carries no release/source counts,
+ * so its popularity is its release total (the capped list's size when the
+ * server truncated it); a title with no releases still indexes, at zero.
+ */
+internal fun PostDetail.toCatalogFtsEntry(): CatalogFtsEntity? {
+    val title = displayTitle.takeIf { it.isNotBlank() } ?: return null
+    return CatalogFtsEntity(
+        title = title,
+        year = year,
+        type = contentType,
+        posterUrl = posterUrl,
+        popularity = totalReleases,
+    )
 }
