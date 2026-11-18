@@ -235,20 +235,16 @@ fun CatalogImage(
         // A failed load shows the branded fallback — and the fallback is
         // tappable to try again, because a tile that failed once must not
         // stay failed for the whole visit when the URL itself is alive.
+        // (A3 Proof 3: that tap is the regression surface — see
+        // [CatalogImageErrorSlot].)
         error = {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .clickable(onClickLabel = "Retry loading image") { attempt++ },
-            ) {
-                ImageFallbackCard(
-                    label = fallbackLabel,
-                    monogram = monogram,
-                    modifier = Modifier.fillMaxSize(),
-                    tone = fallbackTone,
-                    large = fallbackLarge,
-                )
-            }
+            CatalogImageErrorSlot(
+                fallbackLabel = fallbackLabel,
+                monogram = monogram,
+                tone = fallbackTone,
+                large = fallbackLarge,
+                onRetry = { attempt++ },
+            )
         },
         // The artwork-accent hook: only a caller that passed onBitmap pays the
         // decode-to-bitmap, and only on a real success — a gated or failed load
@@ -266,6 +262,42 @@ fun CatalogImage(
             if (shouldAutoRetryImage(attempt)) attempt++ else loaded = false
         },
     )
+}
+
+/**
+ * A3 Proof 3 (Nov 2026): the content of [CatalogImage]'s error slot,
+ * extracted so its tap path is testable without Coil. A failed load shows
+ * the branded fallback — and the fallback is tappable to try again, so a
+ * tile that failed once is not failed for the whole visit. That tap is
+ * also the bug: the retry clickable covers the whole tile, so in Compose
+ * the innermost clickable consumes a centre tap and the parent card's
+ * own onClick never fires — Discover Pakistan's logo 429s, Robo tapped
+ * the card centre twice, and nothing navigated. [CatalogImageErrorTapTest]
+ * pins the tap path against this slot directly: a centre tap must reach
+ * the parent card, and the retry must not swallow it.
+ */
+@Composable
+internal fun CatalogImageErrorSlot(
+    fallbackLabel: String?,
+    monogram: String?,
+    tone: FallbackTone,
+    large: Boolean,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier
+            .fillMaxSize()
+            .clickable(onClickLabel = "Retry loading image") { onRetry() },
+    ) {
+        ImageFallbackCard(
+            label = fallbackLabel,
+            monogram = monogram,
+            modifier = Modifier.fillMaxSize(),
+            tone = tone,
+            large = large,
+        )
+    }
 }
 
 /**

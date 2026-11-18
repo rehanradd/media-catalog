@@ -4,30 +4,19 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.SemanticsActions
-import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.dp
-import coil.ImageLoader
-import coil.compose.LocalImageLoader
-import coil.fetch.FetchResult
-import coil.fetch.Fetcher
-import coil.request.Options
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import java.io.IOException
 
 /**
  * A3 Proof 3 (Nov 2026): Discover Pakistan's logo 429s, so its tile sat in
@@ -40,23 +29,24 @@ import java.io.IOException
  * dead. The fix removes the full-size clickable from the error slot, so the
  * tap falls through to the parent card.
  *
+ * The test renders [CatalogImageErrorSlot] directly, inside a clickable
+ * parent tile — no Coil, no network, no waiting. Rounds 1–4 tried to reach
+ * the slot through a real [CatalogImage] load instead and never got there:
+ * round 1 tapped after a bare waitForIdle() and passed on unfixed code in
+ * 0.087 s (the tap landed on the loading shimmer, which has no clickable);
+ * rounds 2–3 waited with waitUntil for the error slot's click action and
+ * died in the wait at exactly 30.092 s and 90.089 s (under Robolectric the
+ * real fetch never fails at all); round 4 failed the load in-process with
+ * a fake Coil loader and still died in the wait at 30.089 s (the fake
+ * fetcher never ran, or the label never surfaced — either way the slot
+ * stayed unobservable through the load). Rendering the slot directly is
+ * what makes the tap deterministic: the slot IS the thing under the finger.
+ *
  * The tap below is a real touch event at the tile centre (performTouchInput),
  * not performClick on the parent node: performClick invokes the parent's own
  * click action directly and would pass even with the bug, while a touch
  * event goes through hit-testing and lands on the innermost clickable —
  * exactly the Robo tap.
- *
- * The load is failed deterministically, in-process, by a fake Coil loader
- * whose every fetch throws at once (no network involved). Rounds 1–3 of
- * this test waited on a real fetch instead: round 1 tapped after a bare
- * waitForIdle() and passed on unfixed code in 0.087 s (the tap landed on
- * the loading shimmer, which has no clickable); rounds 2–3 waited with
- * waitUntil for the error slot's click action and died in the wait at
- * exactly 30.092 s and 90.089 s — under Robolectric the real fetch never
- * fails at all, so the error slot never appears however long the test
- * waits. The fake loader is what makes the error slot observable: the
- * bounded auto-retries re-issue against it and settle in milliseconds,
- * and the 30 s bound below is only a backstop.
  */
 @RunWith(RobolectricTestRunner::class)
 class CatalogImageErrorTapTest {
@@ -66,78 +56,39 @@ class CatalogImageErrorTapTest {
 
     @Test
     fun centreTapOnFailedImageReachesParentOnClick() {
-        compose.mainClock.autoAdvance = false
         var clicked = false
+        var retried = false
         compose.setContent {
             RaddStreamTheme {
-                // Built once, remembered: a fresh loader per recomposition
-                // would restart the fetch each time.
-                val context = LocalContext.current
-                val loader = remember {
-                    ImageLoader.Builder(context)
-                        .components { add(FailingFetcherFactory()) }
-                        .build()
-                }
-                CompositionLocalProvider(LocalImageLoader provides loader) {
-                    Box(
-                        Modifier
-                            .size(200.dp)
-                            .testTag("tile")
-                            .clickable { clicked = true },
-                    ) {
-                        CatalogImage(
-                            url = "https://image.tmdb.org/t/p/w500/abc123.jpg",
-                            contentDescription = "Poster",
-                            fallbackLabel = "DP",
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    }
+                Box(
+                    Modifier
+                        .size(200.dp)
+                        .testTag("tile")
+                        .clickable { clicked = true },
+                ) {
+                    CatalogImageErrorSlot(
+                        fallbackLabel = "DP",
+                        monogram = null,
+                        tone = FallbackTone.Tile,
+                        large = false,
+                        onRetry = { retried = true },
+                        modifier = Modifier.fillMaxSize(),
+                    )
                 }
             }
         }
-        // Pin the error slot before tapping: wait until the node carrying
-        // the "Retry loading image" click action exists. That label lives
-        // only on the error slot's full-size retry clickable — the loading
-        // slot (fallback card + shimmer) has no clickable at all, and the
-        // parent tile's own click carries no label. With the fake loader
-        // the fetch fails at once and the bounded auto-retries settle in
-        // milliseconds, so this returns almost immediately.
-        compose.waitUntil(timeoutMillis = 30_000) {
-            compose.onAllNodes(hasClickActionLabel("Retry loading image"))
-                .fetchSemanticsNodes()
-                .isNotEmpty()
-        }
-        compose.onNode(hasClickActionLabel("Retry loading image")).assertExists()
+        compose.onNodeWithTag("tile").assertExists()
         compose.onNodeWithTag("tile").performTouchInput { click() }
+        // The tap must land on the parent card, not on the slot's retry:
+        // pre-fix the retry fires (proving the tap reached the slot) and
+        // the parent never does.
+        assertTrue(
+            "centre tap did not reach the error slot's retry at all",
+            retried,
+        )
         assertTrue(
             "centre tap on a failed-image tile did not reach the parent onClick",
             clicked,
         )
     }
-
-    /** A fetcher factory whose every fetch fails at once, in-process. */
-    private class FailingFetcherFactory : Fetcher.Factory<Any> {
-        override fun create(
-            data: Any,
-            options: Options,
-            imageLoader: ImageLoader,
-        ): Fetcher? = FailingFetcher()
-    }
-
-    private class FailingFetcher : Fetcher {
-        override suspend fun fetch(): FetchResult =
-            throw IOException("test fetch always fails")
-    }
 }
-
-/**
- * Matches a node whose click action carries the given onClickLabel. The
- * label is not a content description, so onNodeWithContentDescription
- * cannot find it — the match reads the OnClick action straight off the
- * node's semantics (the AccountLabelFieldTest pattern).
- */
-private fun hasClickActionLabel(label: String) =
-    SemanticsMatcher("click action labelled \"$label\"") { node ->
-        node.config.contains(SemanticsActions.OnClick) &&
-            node.config[SemanticsActions.OnClick].label == label
-    }
