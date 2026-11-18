@@ -134,6 +134,7 @@ import com.raddstream.app.ui.components.HdrBadge
 import com.raddstream.app.ui.components.ImageFallbackCard
 import com.raddstream.app.ui.components.InlineLoadFailure
 import com.raddstream.app.ui.components.PosterRailSkeleton
+import com.raddstream.app.ui.components.detailPrefetchUrls
 import com.raddstream.app.ui.components.isKnownLanguage
 import com.raddstream.app.ui.components.MediaRail
 import com.raddstream.app.ui.components.Pill
@@ -147,6 +148,7 @@ import com.raddstream.app.ui.components.SectionHeader
 import com.raddstream.app.ui.components.SubtitleBadge
 import com.raddstream.app.ui.components.audioBadgeText
 import com.raddstream.app.ui.components.hdrBadgeText
+import com.raddstream.app.ui.components.prefetchPosterArt
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.components.sourceBadgeText
 import com.raddstream.app.ui.components.subtitleBadgeText
@@ -298,6 +300,16 @@ fun DetailScreen(
             autoPlayedFor = post.id
             if (state.resume != null && state.resumePlayable) viewModel.playResume() else viewModel.playBest()
         }
+    }
+
+    // Feel-instant S2: warm the backdrop + similar-rail posters when the
+    // title lands, so the header and the rail below paint art, not shimmer.
+    // Capped; the helper dedupes, and never runs on metered data the
+    // viewer never granted. Keyed on the title and the rail, so a similar
+    // load that lands after the title warms its own rows.
+    LaunchedEffect(state.post?.id, state.similarTitles) {
+        val urls = detailPrefetchUrls(state.post, state.similarTitles)
+        if (urls.isNotEmpty()) prefetchPosterArt(context, urls)
     }
 
     var showReportDialog by remember { mutableStateOf(false) }

@@ -12,6 +12,7 @@ import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.first
+import okhttp3.Cache
 import okhttp3.CertificatePinner
 import okhttp3.OkHttpClient
 import retrofit2.Retrofit
@@ -56,6 +57,16 @@ internal fun readTimeoutSecondsForPath(path: String): Int = when {
  * There is also no `If-None-Match` / ETag handling: the v1 server sends no ETag, and the v2
  * contract's ETag/304 support is not served yet — see `models/EndpointGaps.kt`.
  *
+ * Feel-instant S1 (Nov 2026): the client DOES carry a 50 MB disk cache
+ * ([httpCache], provided by [HttpCacheModule]) with two interceptors — a
+ * network interceptor that forces `Cache-Control: public, max-age=…` onto
+ * cacheable GET responses the server left unannotated, and an application
+ * interceptor that serves those GETs stale while offline. Both are
+ * allowlisted to the catalog read paths; POST `/api/v2/play`, auth and panel
+ * calls never touch the cache. The two constructor parameters default to
+ * null so plain-JVM tests keep constructing `ApiProvider(settings)` — a
+ * null cache means no disk cache, exactly as before.
+ *
  * Open, with [current] open, so a test can stand in a provider that throws
  * without a server (Session 157): the detail path must answer null on a
  * provider failure, and that contract is only pinnable through a fake.
@@ -63,6 +74,8 @@ internal fun readTimeoutSecondsForPath(path: String): Int = when {
 @Singleton
 open class ApiProvider @Inject constructor(
     private val settingsRepository: ServerSettingsRepository,
+    private val httpCache: Cache? = null,
+    private val offlineCacheInterceptor: OfflineCacheInterceptor? = null,
 ) {
     @Volatile
     private var cachedBaseUrl: String? = null
@@ -147,6 +160,15 @@ open class ApiProvider @Inject constructor(
             val clientBuilder = OkHttpClient.Builder()
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(15, TimeUnit.SECONDS)
+                // Feel-instant S1: the 50 MB disk cache for catalog GETs, plus
+                // the offline interceptor (added first, so a stale serve
+                // short-circuits before the timeout/UA interceptors touch the
+                // request) and the network interceptor that forces a max-age
+                // onto unannotated catalog responses. A null cache (tests, or
+                // a build without the module) means no disk cache, as before.
+                .cache(httpCache)
+                .addNetworkInterceptor(CacheControlNetworkInterceptor())
+                .apply { offlineCacheInterceptor?.let { addInterceptor(it) } }
                 // Screenshot-fix (2026-11-16): the 15 s read timeout is a
                 // per-read silence budget, and the big catalog bodies do
                 // not fit it on a slow connection — GET /api/v2/works/{id}

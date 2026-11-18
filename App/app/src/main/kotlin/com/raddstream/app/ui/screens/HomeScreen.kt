@@ -109,7 +109,9 @@ import com.raddstream.app.ui.components.PosterRailSkeleton
 import com.raddstream.app.ui.components.SectionHeader
 import com.raddstream.app.ui.components.SeeAllButton
 import com.raddstream.app.ui.components.UserWords
+import com.raddstream.app.ui.components.homeRailPrefetchUrls
 import com.raddstream.app.ui.components.prefetchHeroArt
+import com.raddstream.app.ui.components.prefetchPosterArt
 import com.raddstream.app.ui.components.rememberReduceMotion
 import com.raddstream.app.ui.layout.CardGeometry
 import com.raddstream.app.ui.theme.RaddMotion
@@ -420,6 +422,14 @@ internal fun HomeContent(
             val prefetchContext = LocalContext.current
             LaunchedEffect(heroItems) {
                 if (heroItems.isNotEmpty()) prefetchHeroArt(prefetchContext, heroItems)
+            }
+            // Feel-instant S2: warm the rails' art the moment rows are known,
+            // so scrolling into a rail finds posters, not shimmer — first two
+            // posters per visible rail, capped. The helper dedupes, and never
+            // runs on metered data the viewer never granted.
+            LaunchedEffect(state.sections) {
+                val urls = homeRailPrefetchUrls(state.sections)
+                if (urls.isNotEmpty()) prefetchPosterArt(prefetchContext, urls)
             }
             if (heroMax > 0) {
                 if (heroItems.isNotEmpty()) {

@@ -68,13 +68,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import coil.imageLoader
-import coil.request.ImageRequest
 import com.raddstream.app.R
 import com.raddstream.app.brand.Brand
-import com.raddstream.app.images.ArtUrlPolicy
-import com.raddstream.app.images.ImageSizingPolicy
-import com.raddstream.app.images.PosterUrlPolicy
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.network.models.WireText
 import com.raddstream.app.ui.theme.PressHaptics
@@ -85,7 +80,6 @@ import com.raddstream.app.ui.theme.RaddTokens
 import com.raddstream.app.ui.theme.brandSp
 import com.raddstream.app.ui.theme.pressScale
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -368,35 +362,12 @@ internal fun heroTitle(post: Post): String =
 /**
  * Hero art prefetch (Nov 2026): when Home lands, warm the hero items' art so
  * first paint has art, not placeholders. Hero items only — the caller passes
- * the capped hero list (HERO_LIMIT = 6), never the whole rail. The request is
- * built exactly like the slide's own ([CatalogImage]): the same TMDB sizing
- * rewrite, the same host allowlist, the same metered gate — so the prefetched
- * bytes are the bytes the slide shows, and a metered connection the viewer
- * never granted image loading to fetches nothing. Coil dedupes an in-flight
- * request for the same URL, so this never double-fetches the slide that is
- * already loading. Never throws: a prefetch is an optimisation, and a failed
- * one must leave Home exactly as it was.
+ * the capped hero list (HERO_LIMIT = 6), never the whole rail. The work lives
+ * in [prefetchPosterArt] now; this keeps the hero's contract (widest artwork
+ * per slide, via [heroArtUrls]) and the call site untouched.
  */
 internal suspend fun prefetchHeroArt(context: Context, posts: List<Post>) {
-    val urls = heroArtUrls(posts)
-    if (urls.isEmpty()) return
-    runCatching {
-        val holder = imageSizingHolder(context)
-        val sizing = holder.sizing.value
-        if (!ImageSizingPolicy.shouldLoad(sizing.imagesAllowedOnMobileData, holder.isMetered())) return
-        val serverHost = ArtUrlPolicy.hostOf(serverSettingsRepository(context).serverUrl.first())
-        val loader = context.imageLoader
-        urls.forEach { url ->
-            val clean = PosterUrlPolicy.sizedForTile(url, sizing.posterMaxWidthPx)
-            if (!ArtUrlPolicy.isAllowed(clean, serverHost)) return@forEach
-            loader.enqueue(
-                ImageRequest.Builder(context)
-                    .data(clean)
-                    .size(sizing.posterMaxWidthPx, sizing.posterMaxWidthPx)
-                    .build(),
-            )
-        }
-    }
+    prefetchPosterArt(context, heroArtUrls(posts))
 }
 
 /**

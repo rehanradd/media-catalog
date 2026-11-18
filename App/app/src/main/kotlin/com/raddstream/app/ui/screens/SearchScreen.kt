@@ -75,6 +75,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
@@ -101,6 +102,8 @@ import com.raddstream.app.ui.components.PosterCard
 import com.raddstream.app.ui.components.SearchResultsSkeleton
 import com.raddstream.app.ui.components.SectionHeader
 import com.raddstream.app.ui.components.SkeletonBox
+import com.raddstream.app.ui.components.prefetchPosterArt
+import com.raddstream.app.ui.components.searchPrefetchUrls
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.layout.CardGeometry
 import com.raddstream.app.viewmodel.GenreFilter
@@ -208,6 +211,15 @@ fun SearchScreen(
         initialLanguage?.let { wire ->
             LanguageFilter.entries.firstOrNull { it.wireValue == wire }?.let { viewModel.selectLanguage(it) }
         }
+    }
+
+    // Feel-instant S2: warm the first page's posters when results land, so
+    // the grid paints art, not shimmer. Capped; the helper dedupes, and
+    // never runs on metered data the viewer never granted.
+    val prefetchContext = LocalContext.current
+    LaunchedEffect(state.groups) {
+        val urls = searchPrefetchUrls(state.groups)
+        if (urls.isNotEmpty()) prefetchPosterArt(prefetchContext, urls)
     }
 
     Scaffold(
