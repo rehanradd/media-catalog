@@ -63,4 +63,50 @@ class WireTextTest {
         assertTrue(WireText.splitOnAny(null, ",").isEmpty())
         assertTrue(WireText.splitOnAny("  ", ",").isEmpty())
     }
+
+    // "Unknown" labels (Nov 2026): the catalog writes the literal words
+    // "Unknown" and "N/A" where a value was never recorded — a missing
+    // value, not a value — so every render site drops them through these
+    // predicates instead of re-deciding what counts as unknown.
+
+    @Test
+    fun placeholderIsBlankUnknownOrNA() {
+        assertTrue(WireText.isPlaceholder(null))
+        assertTrue(WireText.isPlaceholder(""))
+        assertTrue(WireText.isPlaceholder("   "))
+        assertTrue(WireText.isPlaceholder("Unknown"))
+        assertTrue(WireText.isPlaceholder("unknown"))
+        assertTrue(WireText.isPlaceholder(" UNKNOWN "))
+        assertTrue(WireText.isPlaceholder("N/A"))
+        assertTrue(WireText.isPlaceholder("n/a"))
+        assertTrue(WireText.isKnownValue("Hindi"))
+        assertTrue(WireText.isKnownValue("Action"))
+        assertFalse(WireText.isKnownValue("Unknown"))
+        assertFalse(WireText.isKnownValue("N/A"))
+    }
+
+    @Test
+    fun knownLanguageAndGenreShareThePlaceholderRule() {
+        assertTrue(WireText.isKnownLanguage("Hindi"))
+        assertFalse(WireText.isKnownLanguage("Unknown"))
+        assertFalse(WireText.isKnownLanguage("N/A"))
+        assertFalse(WireText.isKnownLanguage("  "))
+        assertTrue(WireText.isKnownGenre("Action"))
+        assertFalse(WireText.isKnownGenre("Unknown"))
+        assertFalse(WireText.isKnownGenre("N/A"))
+    }
+
+    @Test
+    fun knownPrintLabelAlsoDropsTheServersUnknownPrintFallback() {
+        // catalog_api.py:1043 labels a print with no describable parts
+        // "Unknown print" — the episode title and the quality pill must
+        // never paint it.
+        assertFalse(WireText.isKnownPrintLabel("Unknown print"))
+        assertFalse(WireText.isKnownPrintLabel("unknown print"))
+        assertFalse(WireText.isKnownPrintLabel(" Unknown Print "))
+        assertFalse(WireText.isKnownPrintLabel("Unknown"))
+        assertFalse(WireText.isKnownPrintLabel(null))
+        assertTrue(WireText.isKnownPrintLabel("One Piece S01 E01"))
+        assertTrue(WireText.isKnownPrintLabel("1080p"))
+    }
 }

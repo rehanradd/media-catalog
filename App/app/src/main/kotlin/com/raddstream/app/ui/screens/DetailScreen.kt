@@ -2642,11 +2642,15 @@ internal fun printSpokenLabel(print: RankedPrint, copyIndex: Int, copyTotal: Int
  * Pure, so DetailAudioLineTest pins it.
  */
 internal fun audioSubtitleLine(prints: List<RankedPrint>): String? {
+    // The server's language lists carry the literal words "Unknown" and
+    // "N/A" where a print's language was never recorded — a missing value,
+    // not a language — so drop those the same way the detail meta line
+    // already does, instead of printing "Audio: Unknown".
     val audio = prints.flatMap { it.languages }.map { it.trim() }
-        .filter { it.isNotBlank() }.distinct()
+        .filter { isKnownLanguage(it) }.distinct()
     val subtitles = prints.filter { it.subtitlesAvailable }
         .flatMap { it.subtitleLangs }.map { it.trim() }
-        .filter { it.isNotBlank() }.distinct()
+        .filter { isKnownLanguage(it) }.distinct()
     // Detail review (Nov 2026, P1): the first real surround layout
     // across the prints — "5.1" or "7.1" only, never "unknown". Prints
     // arrive best-first, so this is the best print's layout when it

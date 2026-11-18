@@ -8,6 +8,7 @@ import androidx.compose.ui.unit.dp
 import com.raddstream.app.network.models.LiveTvChannel
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -60,6 +61,37 @@ class LiveTvChannelCardTest {
             streamId = "stream-1",
         )
         assertEquals("Religious · Pakistan · Urdu", channelMetaLine(channel))
+    }
+
+    @Test
+    fun channelMetaLineHidesAnUnknownCountry() {
+        // "Unknown" labels (Nov 2026): the registry can carry the literal
+        // word "Unknown" where a channel's country was never recorded — a
+        // missing value, not a country — so the meta line drops the segment
+        // instead of reading "News · Unknown · Urdu".
+        val channel = LiveTvChannel(
+            id = 1,
+            name = "Geo News",
+            category = "news",
+            country = "Unknown",
+            language = "urdu",
+            logoUrl = "",
+            streamId = "stream-1",
+        )
+        assertEquals("News · Urdu", channelMetaLine(channel))
+        assertEquals("News · Urdu", channelMetaLine(channel.copy(country = "N/A")))
+        assertEquals("News · Pakistan · Urdu", channelMetaLine(channel.copy(country = "PK")))
+    }
+
+    @Test
+    fun countryLabelDropsPlaceholdersButPassesUnknownCodesThrough() {
+        assertNull(countryLabel("Unknown"))
+        assertNull(countryLabel("unknown"))
+        assertNull(countryLabel("N/A"))
+        assertNull(countryLabel(null))
+        assertNull(countryLabel("  "))
+        assertEquals("Pakistan", countryLabel("PK"))
+        assertEquals("xx", countryLabel("xx"))
     }
 
     @Test

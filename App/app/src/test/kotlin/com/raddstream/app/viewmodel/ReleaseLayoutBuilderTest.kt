@@ -5,6 +5,7 @@ import com.raddstream.app.network.models.CoverageType
 import com.raddstream.app.network.models.HdrFormat
 import com.raddstream.app.network.models.LinkState
 import com.raddstream.app.network.models.ReleaseDetail
+import com.raddstream.app.network.models.ReleaseLabelParsing
 import com.raddstream.app.network.models.Resolution
 import com.raddstream.app.network.models.SeasonArtwork
 import com.raddstream.app.network.models.SourceDetail
@@ -524,5 +525,63 @@ class ReleaseLayoutBuilderTest {
         // The un-named season still draws from the pool; the named one uses its own still.
         assertNotNull(s1.episodes.single().stillUrl)
         assertEquals("https://art.invalid/two.jpg", s2.episodes.single().stillUrl)
+    }
+
+    // "Unknown" labels (Nov 2026): the server labels a print with no
+    // describable parts "Unknown print" (catalog_api.py:1043) — every One
+    // Piece print on work 112505 arrives that way, and the v8 Robo shots
+    // caught it as the episode title AND the quality pill, three rows over.
+    // The builder drops the placeholder at construction, so the episode
+    // falls back to "Episode N" in the UI and the pill to "Print".
+
+    @Test
+    fun `an unknown print release carries no placeholder title`() {
+        val print = moviePrint(
+            release(id = 1, releaseTitle = "Unknown print", quality = "unknown"),
+        ).single()
+        assertNull(print.rawTitle)
+        assertEquals("Print", print.qualityLabel)
+        assertFalse(print.detailLine.lowercase().contains("unknown"))
+    }
+
+    @Test
+    fun `an unknown print episode title falls back to the episode number`() {
+        val layout = ReleaseLayoutBuilder.build(
+            contentType = "tv",
+            releases = listOf(
+                release(id = 1, releaseTitle = "Unknown print", quality = "unknown", season = "1", episode = "1"),
+                release(id = 2, releaseTitle = "Unknown print", quality = "unknown", season = "1", episode = "2"),
+            ),
+        )
+        assertTrue(layout.isSeriesLike)
+        val s1 = layout.seasons.single { it.number == 1 }
+        assertEquals(listOf(1, 2), s1.episodes.map { it.numberWithinSeason })
+        // A null title is what the detail screen renders as "Episode N" —
+        // the placeholder never reaches the row.
+        assertNull(s1.episodes.first().title)
+        assertNull(s1.episodes.last().title)
+        assertEquals("Print", s1.episodes.first().prints.single().qualityLabel)
+    }
+
+    @Test
+    fun `a print detail line drops unknown languages`() {
+        // The v1 descriptor's alias map already refuses "Unknown", but a v2
+        // print carries the server's own `audio_languages` list — and the
+        // ledger holds 83,864 releases whose languages are literally
+        // "Unknown" — so the detail line filters them itself.
+        val print = RankedPrint(
+            releaseId = 1,
+            rawTitle = "A Movie",
+            descriptor = ReleaseLabelParsing.describe(releaseTitle = "A Movie", quality = "1080p"),
+            languages = listOf("Unknown", "Hindi", "N/A"),
+            sizeBytes = null,
+            coverage = CoverageType.WHOLE_WORK,
+            season = null,
+            episodeFrom = null,
+            episodeTo = null,
+            links = emptyList(),
+        )
+        assertEquals("Hindi", print.detailLine)
+        assertFalse(print.detailLine.contains("Unknown"))
     }
 }

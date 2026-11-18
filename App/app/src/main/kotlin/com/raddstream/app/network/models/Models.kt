@@ -221,7 +221,7 @@ data class Post(
     val yearLabel: String? get() = displayYearLabel(year, currentCalendarYear())
     /** The one type word a tile or banner paints — "Anime" for an animated series. */
     val typeLabel: String? get() = WorkTypeLabel.of(contentType, isAnimated)
-    val genreList: List<String> get() = WireText.listOf(genres)
+    val genreList: List<String> get() = WireText.listOf(genres).filter { WireText.isKnownGenre(it) }
     val backdropList: List<String> get() = WireText.listOf(backdropUrls)
     /** The widest artwork this row carries: the first backdrop, else the poster, else none. */
     val heroArtUrl: String? get() = backdropList.firstOrNull() ?: posterUrl?.takeIf { it.isNotBlank() }
@@ -322,7 +322,7 @@ data class PostDetail(
     val yearLabel: String? get() = displayYearLabel(year, currentCalendarYear())
     /** Same rule as [Post.typeLabel], so the detail header cannot disagree with its tile. */
     val typeLabel: String? get() = WorkTypeLabel.of(contentType, isAnimated)
-    val genreList: List<String> get() = WireText.listOf(genres)
+    val genreList: List<String> get() = WireText.listOf(genres).filter { WireText.isKnownGenre(it) }
     val backdropList: List<String> get() = WireText.listOf(backdropUrls)
     val seasonArtwork: List<SeasonArtwork> get() = seasonArtworkRows.orEmpty()
     /** True when the server cut this detail's release list at its cap. */

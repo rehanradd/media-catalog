@@ -86,6 +86,26 @@ class AudioTrackMatcherTest {
         assertNull(AudioTrackMatcher.displayName("zzz"))
     }
 
+    // "Unknown" labels (Nov 2026): a muxer that never recorded a language
+    // writes "und", and the catalog writes "Unknown" / "N/A" — both are
+    // missing values, not languages, so the track sheet shows the bare
+    // track label instead of "und" or "Unknown".
+
+    @Test
+    fun `displayableLanguageTag drops placeholders and keeps real tags`() {
+        assertNull(AudioTrackMatcher.displayableLanguageTag(null))
+        assertNull(AudioTrackMatcher.displayableLanguageTag(""))
+        assertNull(AudioTrackMatcher.displayableLanguageTag("   "))
+        assertNull(AudioTrackMatcher.displayableLanguageTag("und"))
+        assertNull(AudioTrackMatcher.displayableLanguageTag("UND"))
+        assertNull(AudioTrackMatcher.displayableLanguageTag("Unknown"))
+        assertNull(AudioTrackMatcher.displayableLanguageTag("unknown"))
+        assertNull(AudioTrackMatcher.displayableLanguageTag("N/A"))
+        assertEquals("Hindi", AudioTrackMatcher.displayableLanguageTag("Hindi"))
+        assertEquals("hi", AudioTrackMatcher.displayableLanguageTag("hi"))
+        assertEquals("English", AudioTrackMatcher.displayableLanguageTag("  English  "))
+    }
+
     // ── label fallback ───────────────────────────────────────────────────────────
 
     @Test

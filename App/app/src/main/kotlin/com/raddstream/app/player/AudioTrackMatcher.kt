@@ -132,6 +132,24 @@ object AudioTrackMatcher {
     /** The English name for one language, when this catalog knows it; null otherwise. */
     fun displayName(tag: String?): String? = canonicalLanguageCode(tag)?.let { CODE_TO_NAME[it] }
 
+    /**
+     * A language tag a screen may PRINT, trimmed — null when there is nothing
+     * worth printing. A muxer that never recorded a language writes "und"
+     * (Media3's undetermined code), and the catalog writes "Unknown" / "N/A"
+     * where a language was never recorded; both are missing values, not
+     * languages, so the track sheet shows the bare track label ("Audio 1",
+     * "Subtitles") instead of "und" or "Unknown". Anything else passes
+     * through untouched — a language this catalog does not know by name is
+     * still a real language. Display only: matching still reads the raw tag.
+     */
+    fun displayableLanguageTag(tag: String?): String? {
+        val text = tag?.trim().orEmpty()
+        if (text.isEmpty()) return null
+        val lower = text.lowercase()
+        if (lower == "unknown" || lower == "n/a" || lower == "und") return null
+        return text
+    }
+
     // ── internals ────────────────────────────────────────────────────────────────
 
     private sealed interface Pick {

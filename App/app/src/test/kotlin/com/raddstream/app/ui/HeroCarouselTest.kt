@@ -58,6 +58,17 @@ class HeroCarouselTest {
     }
 
     @Test
+    fun metaLineDropsAnUnknownFirstGenre() {
+        // The catalog writes the literal word "Unknown" where a work's
+        // genres were never recorded — a missing value, not a genre — so the
+        // hero's meta line skips it and reads the next real genre, or the
+        // year alone when there is none.
+        assertEquals("Action · 2026", heroMetaLine(post(genres = "Unknown, Action", year = 2026)))
+        assertEquals("2026", heroMetaLine(post(genres = "Unknown", year = 2026)))
+        assertEquals("2026", heroMetaLine(post(genres = "N/A", year = 2026)))
+    }
+
+    @Test
     fun metaLineTakesTheFirstGenreOnly() {
         assertEquals("Action · 2023", heroMetaLine(post(genres = "Action, Thriller", year = 2023)))
     }

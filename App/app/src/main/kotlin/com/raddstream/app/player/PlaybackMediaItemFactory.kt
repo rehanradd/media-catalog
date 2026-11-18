@@ -172,7 +172,7 @@ object PlaybackMediaItemFactory {
             val url = track.url?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
             ExternalSubtitle(
                 url = url,
-                label = track.language?.takeIf { it.isNotBlank() } ?: "Subtitles",
+                label = AudioTrackMatcher.displayableLanguageTag(track.language) ?: "Subtitles",
                 formatHint = track.format.orEmpty(),
                 customRendered = isCustomRenderable(track.format),
             )

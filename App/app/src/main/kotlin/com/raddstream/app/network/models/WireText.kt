@@ -59,4 +59,43 @@ object WireText {
         val value = raw?.trim()?.lowercase().orEmpty()
         return value.startsWith("http://") || value.startsWith("https://")
     }
+
+    /**
+     * True when a wire value means "nothing was recorded" — blank, "Unknown"
+     * or "N/A", case-insensitive. The catalog serves these literally on
+     * ~60–100k works (language 62,654 / country 102,877 / industry 103,608
+     * rows, Nov 2026), and the app must never paint them: a missing value
+     * renders as nothing, never as the word "Unknown".
+     */
+    fun isPlaceholder(value: String?): Boolean {
+        val text = value?.trim().orEmpty()
+        if (text.isEmpty()) return true
+        val lower = text.lowercase()
+        return lower == "unknown" || lower == "n/a"
+    }
+
+    /** The inverse of [isPlaceholder]: a value a screen may show the user. */
+    fun isKnownValue(value: String?): Boolean = !isPlaceholder(value)
+
+    /**
+     * A language name a screen may show: the same placeholder rule as
+     * [isKnownValue] — "Unknown" and "N/A" languages are dropped at render.
+     * (The hero's [com.raddstream.app.ui.components.isKnownLanguage] is the
+     * same rule; it delegates here so the two can never drift apart.)
+     */
+    fun isKnownLanguage(value: String): Boolean = isKnownValue(value)
+
+    /** A genre name a screen may show: the same placeholder rule. */
+    fun isKnownGenre(value: String): Boolean = isKnownValue(value)
+
+    /**
+     * A print label a screen may show. Besides the generic placeholders,
+     * the server's own fallback label "Unknown print" (catalog_api.py:1043 —
+     * a print with no describable parts) is a placeholder too: the episode
+     * title and the quality pill fall back to "Episode N" / "Print" instead.
+     */
+    fun isKnownPrintLabel(value: String?): Boolean {
+        if (isPlaceholder(value)) return false
+        return !value.trim().equals("unknown print", ignoreCase = true)
+    }
 }

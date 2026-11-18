@@ -86,6 +86,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.raddstream.app.network.models.FacetsResponse
 import com.raddstream.app.network.models.PanelBroadcast
 import com.raddstream.app.network.models.Post
+import com.raddstream.app.network.models.WireText
 import com.raddstream.app.network.models.currentCalendarYear
 import com.raddstream.app.ui.components.CatalogImage
 import com.raddstream.app.ui.components.CenteredMockupDialog
@@ -1187,18 +1188,7 @@ internal fun BrowseSection(
     onBrowseType: (String?) -> Unit,
     onFacetSelected: (genre: String?, industry: String?, language: String?) -> Unit,
 ) {
-    val chips = remember(facets) {
-        val genreChips = facets?.genres.orEmpty()
-            .filter { it.count > 0 }
-            .map { FacetChip(label = "${it.label} · ${it.count}", genre = it.key, industry = null, language = null) }
-        val industryChips = facets?.industries.orEmpty()
-            .filter { it.count > 0 }
-            .map { FacetChip(label = "${it.label} · ${it.count}", genre = null, industry = it.key, language = null) }
-        val languageChips = facets?.languages.orEmpty()
-            .filter { it.count > 0 }
-            .map { FacetChip(label = "${it.label} · ${it.count}", genre = null, industry = null, language = it.key) }
-        genreChips + industryChips + languageChips
-    }
+    val chips = remember(facets) { browseFacetChips(facets) }
     Column(Modifier.padding(top = 4.dp)) {
         // Audit #15: every section heading carries the 16 dp phone margin.
         SectionHeader(title = "Browse", modifier = Modifier.padding(horizontal = 16.dp))
@@ -1253,7 +1243,30 @@ internal fun BrowseSection(
     }
 }
 
-private data class FacetChip(val label: String, val genre: String?, val industry: String?, val language: String?)
+/** One facet chip. Internal (not private) so BrowseFacetChipsTest can read the labels. */
+internal data class FacetChip(val label: String, val genre: String?, val industry: String?, val language: String?)
+
+/**
+ * The Browse row's facet chips from `GET /api/v1/facets`, pure so the
+ * placeholder rule is testable without a composition: genres, industries,
+ * and languages, each with a live count. A facet whose key or label is a
+ * placeholder — the server serves a language facet literally labelled
+ * "Unknown" with 60,226 posts behind it — is dropped, not drawn: a chip
+ * that promises "Unknown · 60226" is a broken promise to browse for a
+ * language nobody recorded.
+ */
+internal fun browseFacetChips(facets: FacetsResponse?): List<FacetChip> {
+    val genreChips = facets?.genres.orEmpty()
+        .filter { it.count > 0 && WireText.isKnownValue(it.key) && WireText.isKnownValue(it.label) }
+        .map { FacetChip(label = "${it.label} · ${it.count}", genre = it.key, industry = null, language = null) }
+    val industryChips = facets?.industries.orEmpty()
+        .filter { it.count > 0 && WireText.isKnownValue(it.key) && WireText.isKnownValue(it.label) }
+        .map { FacetChip(label = "${it.label} · ${it.count}", genre = null, industry = it.key, language = null) }
+    val languageChips = facets?.languages.orEmpty()
+        .filter { it.count > 0 && WireText.isKnownValue(it.key) && WireText.isKnownValue(it.label) }
+        .map { FacetChip(label = "${it.label} · ${it.count}", genre = null, industry = null, language = it.key) }
+    return genreChips + industryChips + languageChips
+}
 
 /** The browse type jump-offs. "Complete series" is the viewer's word for `complete_season`. */
 private val browseTypeTiles = listOf(

@@ -58,6 +58,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.raddstream.app.network.models.LiveTvChannel
+import com.raddstream.app.network.models.WireText
 import com.raddstream.app.ui.components.CatalogGridColumns
 import com.raddstream.app.ui.components.CatalogImage
 import com.raddstream.app.ui.components.EmptyState
@@ -629,10 +630,14 @@ internal fun categoryLabel(category: String): String =
  * codes ("PK", "IN") and "INTL" for the international set — two-letter
  * codes on a card are alphabet soup, and a viewer should not need a
  * geography lesson to know which country's channel this is. Unknown codes
- * pass through untouched, never guessed at.
+ * pass through untouched, never guessed at — except the literal words
+ * "Unknown" / "N/A", which mean the country was never recorded: those
+ * return null so the meta line drops the segment instead of printing
+ * "· Unknown" on the card.
  */
 internal fun countryLabel(code: String?): String? {
     if (code.isNullOrBlank()) return null
+    if (WireText.isPlaceholder(code)) return null
     return when (code.trim().uppercase()) {
         "PK" -> "Pakistan"
         "IN" -> "India"

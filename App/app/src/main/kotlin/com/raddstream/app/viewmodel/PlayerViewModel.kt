@@ -21,6 +21,7 @@ import com.raddstream.app.brand.Brand
 import com.raddstream.app.player.AbRepeat
 import com.raddstream.app.player.AspectMode
 import com.raddstream.app.player.AudioBoostUi
+import com.raddstream.app.player.AudioTrackMatcher
 import com.raddstream.app.player.AudioTrackPolicy
 import com.raddstream.app.player.AudioTrackRow
 import com.raddstream.app.player.AutoplayCountdown
@@ -2235,7 +2236,7 @@ class PlayerViewModel @Inject constructor(
             AudioTrackRow(
                 id = "bundle-sub-$index",
                 language = track.language,
-                label = track.language,
+                label = AudioTrackMatcher.displayableLanguageTag(track.language) ?: "Subtitles",
                 selected = false,
                 supported = true,
             )
@@ -2251,7 +2252,7 @@ class PlayerViewModel @Inject constructor(
             customSubtitleFile = SubtitleParser.parse(text, SubtitleFormat.fromFileNameOrMime(picked.format ?: ""))
             customSubtitleFromBundle = true
             val label = AudioTrackPolicy.nameFor(picked.language)
-                ?: picked.language?.takeIf { it.isNotBlank() } ?: "Subtitles"
+                ?: AudioTrackMatcher.displayableLanguageTag(picked.language) ?: "Subtitles"
             _ui.update { it.copy(customSubtitleLoaded = label) }
         }
     }
@@ -2930,7 +2931,14 @@ internal object TrackMapper {
                         id = "g$groupIndex-t$i",
                         group = group.mediaTrackGroup,
                         trackIndex = i,
-                        label = (format.label ?: format.language ?: fallback).toString(),
+                        // A track's own label, else its language, else the
+                        // numbered fallback — but never a placeholder: a muxer
+                        // writes "und" for an unrecorded language, and a bare
+                        // "und" as the row's label is the same leak as the
+                        // catalog's "Unknown".
+                        label = AudioTrackMatcher.displayableLanguageTag(format.label?.toString())
+                            ?: AudioTrackMatcher.displayableLanguageTag(format.language)
+                            ?: fallback,
                         language = format.language,
                         supported = group.isTrackSupported(i),
                         selected = group.isTrackSelected(i),

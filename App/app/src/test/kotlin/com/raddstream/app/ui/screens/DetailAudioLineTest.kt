@@ -199,4 +199,45 @@ class DetailAudioLineTest {
             ReleaseLabelParsing.describe(releaseTitle = "A Movie Stereo", quality = "1080p").channelLayout,
         )
     }
+
+    // "Unknown" labels (Nov 2026): the server's language lists carry the
+    // literal words "Unknown" and "N/A" where a print's language was never
+    // recorded — a missing value, not a language — so the line drops them
+    // instead of printing "Audio: Unknown".
+
+    @Test
+    fun unknownAudioLanguagesAreDropped() {
+        assertEquals(
+            "Audio: Hindi",
+            audioSubtitleLine(
+                listOf(
+                    print(1, listOf("Unknown", "Hindi", "N/A")),
+                    print(2, listOf("unknown")),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun unknownSubtitleLanguagesAreDropped() {
+        assertEquals(
+            "Subtitles: English",
+            audioSubtitleLine(
+                listOf(
+                    print(1, emptyList(), subtitlesAvailable = true, subtitleLangs = listOf("Unknown", "English", "N/A")),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun allUnknownLanguagesMeansNoLine() {
+        assertNull(
+            audioSubtitleLine(
+                listOf(
+                    print(1, listOf("Unknown"), subtitlesAvailable = true, subtitleLangs = listOf("N/A")),
+                ),
+            ),
+        )
+    }
 }

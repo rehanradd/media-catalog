@@ -15,6 +15,7 @@ import com.raddstream.app.network.models.Resolution
 import com.raddstream.app.network.models.SeasonArtwork
 import com.raddstream.app.network.models.SourceDetail
 import com.raddstream.app.network.models.SourceTag
+import com.raddstream.app.network.models.WireText
 import com.raddstream.app.network.models.WorkType
 import com.raddstream.app.player.NOT_PLAYABLE_HERE
 import com.raddstream.app.player.PLAYABLE_HERE
@@ -228,7 +229,11 @@ data class RankedPrint(
             val parts = mutableListOf<String>()
             codec?.let { parts.add(it.display()) }
             sizeBytes?.let { parts.add(formatBytes(it)) }
-            if (languages.isNotEmpty()) parts.add(languages.joinToString("/"))
+            // A print's languages are the server's own words — "Unknown" slips
+            // through here the same way it did on the audio line, so drop the
+            // placeholders instead of joining them into the row.
+            val knownLanguages = languages.filter { WireText.isKnownLanguage(it) }
+            if (knownLanguages.isNotEmpty()) parts.add(knownLanguages.joinToString("/"))
             return parts.joinToString(" · ")
         }
 }
@@ -497,7 +502,8 @@ object ReleaseLayoutBuilder {
             if (singleEpisode == null) ReleaseLabelParsing.parseRange(descriptor.episodeRange) else 0 to 0
         return RankedPrint(
             releaseId = release.id,
-            rawTitle = release.releaseTitle?.takeIf { it.isNotBlank() } ?: release.quality,
+            rawTitle = release.releaseTitle?.takeIf { WireText.isKnownPrintLabel(it) }
+                ?: release.quality?.takeIf { WireText.isKnownPrintLabel(it) },
             descriptor = descriptor,
             languages = descriptor.audioLanguages,
             sizeBytes = descriptor.sizeBytes.takeIf { it > 0L },

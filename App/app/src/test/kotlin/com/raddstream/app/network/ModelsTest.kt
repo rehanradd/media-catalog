@@ -617,6 +617,25 @@ class ModelsTest {
     }
 
     @Test
+    fun `an unknown genre never paints as a genre`() {
+        // The catalog writes the literal word "Unknown" where a work's
+        // genres were never recorded (13 posts, Nov 2026) — a missing value,
+        // not a genre. The genre list drops it, so the hero meta line, the
+        // detail chips and the a11y sentence never read "Unknown".
+        val onlyUnknown = gson.fromJson(
+            """{"id":4,"title":"W","clean_title":"W","genres":"Unknown"}""",
+            Post::class.java,
+        )
+        assertEquals(emptyList<String>(), onlyUnknown.genreList)
+
+        val mixed = gson.fromJson(
+            """{"id":5,"title":"V","clean_title":"V","genres":"Unknown, Action, N/A"}""",
+            Post::class.java,
+        )
+        assertEquals(listOf("Action"), mixed.genreList)
+    }
+
+    @Test
     fun `coin earn request carries reason only`() {
         val json = gson.toJson(CoinEarnRequest())
 

@@ -164,6 +164,7 @@ import com.raddstream.app.player.AUTOPLAY_COUNTDOWN_SECONDS
 import com.raddstream.app.player.AspectMode
 import com.raddstream.app.player.AudioBoost
 import com.raddstream.app.player.AudioBoostUi
+import com.raddstream.app.player.AudioTrackMatcher
 import com.raddstream.app.player.AudioTrackPolicy
 import com.raddstream.app.player.CacheAffordance
 import com.raddstream.app.player.EDGE_DEAD_ZONE_DP
@@ -3997,18 +3998,24 @@ private fun SubtitleSettingsSheet(state: PlayerUiState, vm: PlayerViewModel) {
                 SheetSection(stringResource(R.string.player_audio_title))
                 state.audioTracks.forEach { track ->
                     SheetRow(
-                        label = track.language
+                        label = AudioTrackMatcher.displayableLanguageTag(track.language)
                             ?.let { stringResource(R.string.player_track_with_language, track.label, it) }
                             ?: track.label,
                         selected = track.id == state.selectedAudioId || track.selected,
                     ) { vm.selectAudioTrack(track) }
                 }
-                if (state.preferredAudioLanguage != null) {
+                // The preferred-audio note names the preference only when it
+                // names a real language: a stored preference of "und" or
+                // "Unknown" is a missing value, not a language, so the line
+                // is hidden instead of reading "Preferred audio: und".
+                val preferredAudioName = state.preferredAudioLanguage?.let {
+                    AudioTrackPolicy.nameFor(it) ?: AudioTrackMatcher.displayableLanguageTag(it)
+                }
+                if (preferredAudioName != null) {
                     Text(
                         stringResource(
                             R.string.player_preferred_audio,
-                            AudioTrackPolicy.nameFor(state.preferredAudioLanguage)
-                                ?: state.preferredAudioLanguage,
+                            preferredAudioName,
                         ),
                         color = Color.White.copy(alpha = 0.55f),
                         fontSize = brandSp(11),
@@ -4178,12 +4185,18 @@ private fun TracksSheet(state: PlayerUiState, vm: PlayerViewModel) {
                 SheetRow(label = stringResource(R.string.player_cycle_audio), enabled = state.canCycleAudio) {
                     vm.cycleAudioTrack()
                 }
-                if (state.preferredAudioLanguage != null) {
+                // The preferred-audio note names the preference only when it
+                // names a real language: a stored preference of "und" or
+                // "Unknown" is a missing value, not a language, so the line
+                // is hidden instead of reading "Preferred audio: und".
+                val preferredAudioName = state.preferredAudioLanguage?.let {
+                    AudioTrackPolicy.nameFor(it) ?: AudioTrackMatcher.displayableLanguageTag(it)
+                }
+                if (preferredAudioName != null) {
                     Text(
                         stringResource(
                             R.string.player_preferred_audio,
-                            AudioTrackPolicy.nameFor(state.preferredAudioLanguage)
-                                ?: state.preferredAudioLanguage,
+                            preferredAudioName,
                         ),
                         color = Color.White.copy(alpha = 0.55f),
                         fontSize = brandSp(11),

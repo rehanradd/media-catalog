@@ -840,10 +840,10 @@ internal fun HeroIndicator(
  * A language value the server actually knows. The catalog sends the literal words
  * "Unknown" and "N/A" for titles whose language was never recorded — a missing value,
  * not a language — so every place that draws a language name drops those (F2, Batch A),
- * instead of each site re-deciding what counts as unknown.
+ * instead of each site re-deciding what counts as unknown. The rule lives in
+ * [WireText.isKnownLanguage]; this is only the hero's short name for it.
  */
-internal fun isKnownLanguage(value: String): Boolean =
-    value.isNotBlank() && !value.equals("unknown", ignoreCase = true) && !value.equals("n/a", ignoreCase = true)
+internal fun isKnownLanguage(value: String): Boolean = WireText.isKnownLanguage(value)
 
 /**
  * The auto-advance step, pure so the wrap-around is testable: the next page, or page 0
