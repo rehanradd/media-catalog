@@ -29,6 +29,10 @@ name: 🐍 Backend CI — Stdlib Python Tests
 #     - Fast_Fetch/test_backfill_cast.py     (cast backfill: report-only by
 #                                             default; --apply fills blanks from
 #                                             staging by page URL, never overwrites)
+#     - Fast_Fetch/test_metadata_backfill.py (metadata backfill: site-sibling
+#                                             pass, IMDb-datasets join, multi-API
+#                                             pass; staging SQL only, never
+#                                             writes the input DB)
 #     - Fast_Fetch/test_site_scout.py        (site discovery / spec phases)
 #     - Fast_Fetch/test_backup_manager.py    (offsite backup tooling)
 #     - Fast_Fetch/test_usage_stats.py       (operator counters + token gate)
@@ -418,6 +422,13 @@ jobs:
       # fake HTTP client, temp-file DB, no network.
       - name: 🧪 test_backfill_tmdb.py
         run: python3 -S Fast_Fetch/test_backfill_tmdb.py
+
+      # Metadata backfill (ratings/synopsis/poster/cast/director/year/ids):
+      # site-sibling pass, IMDb-datasets join, multi-API pass with a fake
+      # HTTP layer; staging SQL only, never writes the input DB. Offline,
+      # stdlib, temp-file DB, no network.
+      - name: 🧪 test_metadata_backfill.py
+        run: python3 -S Fast_Fetch/test_metadata_backfill.py
 
       # The resolved-link cache (Session 123, scale plan B2): lazy-first
       # freshness reads over the ledger row + the top-200 eager warmer.
