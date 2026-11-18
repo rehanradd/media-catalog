@@ -165,6 +165,17 @@ class PlaybackService : MediaSessionService() {
                 )
             }
         }
+        // MX idea #1 (2026-11-18): the FFmpeg software audio decoder. PREFER
+        // puts FfmpegAudioRenderer ahead of MediaCodecAudioRenderer — but it
+        // only ever claims the formats the FFmpeg build knows (AC-3, E-AC-3,
+        // DTS, TrueHD, MLP; see FfmpegLibrary.supportsFormat), so AAC/MP3
+        // and everything else stays on the hardware decoder exactly as
+        // before. Without the AAR the factory loads nothing extra (the
+        // extension is reflection-loaded and silently skipped when absent),
+        // so a build without FFmpeg plays exactly as today.
+        renderersFactory.setExtensionRendererMode(
+            DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER,
+        )
 
         val exo = ExoPlayer.Builder(this)
             .setRenderersFactory(renderersFactory)
@@ -541,6 +552,16 @@ class PlaybackService : MediaSessionService() {
                     delay(decision.backoffMs)
                     loadRendition(bundle, decision.index)
                 }
+            }
+            is FailoverDecision.RetryWithSoftwareDecoder -> {
+                // MX idea #1: same rendition, same position, fresh prepare —
+                // no backoff, the decoder is the problem, not the network.
+                // The player was built with EXTENSION_RENDERER_MODE_PREFER,
+                // so the fresh prepare re-runs renderer selection with the
+                // FFmpeg audio renderer first for the formats it knows.
+                store.appendFailover(listOf(decision.record))
+                pendingResumeMs = preservePositionMs.takeIf { it > 0 }
+                loadRendition(bundle, decision.index)
             }
 
             is FailoverDecision.AdvanceBackup -> {
@@ -978,6 +999,13 @@ class PlaybackService : MediaSessionService() {
             // Session 159 (S5): the attempt that just failed may have been
             // the kept copy, not the live link — the machine's RetrySame
             // then loads the redirector, not the failed copy.
+            // MX idea #1 (2026-11-18): a decode failure is a decoder problem,
+            // not a dead copy. The machine retries the same rendition once
+            // with the software decoder before hopping — but only when the
+            // FFmpeg library is actually there (FfmpegSupport answers false
+            // on a build without the AAR and on an ABI it did not ship).
+            val isDecodingFailed =
+                error.errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED
             val decision = machine.onFailure(
                 rawSummary,
                 isGateRefusal = gateRefusal,
@@ -985,6 +1013,8 @@ class PlaybackService : MediaSessionService() {
                 isDeadHandle = deadHandle,
                 isRateLimited = rateLimited,
                 isLocalCopyAttempt = lastLoadedWasLocalCopy,
+                isDecodingFailed = isDecodingFailed,
+                isSoftwareDecoderAvailable = FfmpegSupport.isSoftwareAudioAvailable,
             )
             applyDecision(bundle, decision, preservePositionMs = lastKnownPositionMs)
         }

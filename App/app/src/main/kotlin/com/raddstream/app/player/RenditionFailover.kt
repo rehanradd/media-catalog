@@ -151,6 +151,18 @@ sealed class FailoverDecision {
     data class RetrySame(val index: Int, val backoffMs: Long, val record: FailoverRecord) : FailoverDecision()
 
     /**
+     * MX idea #1 (2026-11-18): a decode failure is a decoder problem, not a dead copy.
+     * Retry the SAME rendition once with the software (FFmpeg) decoder before hopping
+     * to another copy. The service reloads the same rendition at the same position;
+     * the player was built with EXTENSION_RENDERER_MODE_PREFER, so the fresh prepare
+     * re-runs renderer selection with the FFmpeg audio renderer first for the
+     * formats it knows (AC-3, E-AC-3, DTS, TrueHD, MLP). One per rendition: a
+     * second decode failure falls through to the ordinary hop path. No backoff —
+     * the decoder is the problem, not the network, so waiting buys nothing.
+     */
+    data class RetryWithSoftwareDecoder(val index: Int, val record: FailoverRecord) : FailoverDecision()
+
+    /**
      * Switch to another copy of the SAME rung, [streamId], at [playUrl] (our own
      * redirector, one handle swapped for another). Silent by contract: same quality,
      * same position, no banner, no dialog — the viewer keeps watching while a
@@ -201,6 +213,13 @@ internal fun humanizeErrorSummary(raw: String): String {
             "This copy is no longer on the server."
         raw.contains("ERROR_CODE_IO_NO_PERMISSION") ->
             "The server refused access to this copy."
+        // MX idea #1 (2026-11-18): a decode failure is the exact error the
+        // software decoder exists to fix — it must read as a device problem,
+        // not the generic "playback failed". (The ERROR_CODE_DECODER branch
+        // below does not match it: "DECODING_FAILED" holds no "DECODER"
+        // substring, so without this branch it fell to the generic message.)
+        raw.contains("ERROR_CODE_DECODING_FAILED") ->
+            "This device could not play this video."
         raw.contains("ERROR_CODE_DECODER") ->
             "This device could not play this video."
         raw.contains("ERROR_CODE_IO_") ->
@@ -216,6 +235,8 @@ class FailoverStateMachine(
 
     private val attemptsByIndex = HashMap<Int, Int>()
     private val backupsUsedByIndex = HashMap<Int, Int>()
+    /** Renditions whose one software-decoder retry is already spent (MX idea #1). */
+    private val softwareRetryUsedByIndex = HashSet<Int>()
     private var ranksBurned = 0
     private val _log = ArrayList<FailoverRecord>()
 
@@ -339,6 +360,19 @@ class FailoverStateMachine(
      * received a 302 on its first load; S4's identical title did). The
      * retry_same budget still bounds it: one local failure buys one live
      * attempt, and a second pre-frame failure hands off as before.
+     *
+     * [isDecodingFailed] marks a [PlaybackException.ERROR_CODE_DECODING_FAILED]
+     * (MX idea #1, 2026-11-18): the decoder, not the copy, failed — AC-3 /
+     * E-AC-3 / DTS / TrueHD audio the chip cannot decode. Together with
+     * [isSoftwareDecoderAvailable] it is the S2 exception: a decode failure
+     * retries the SAME rendition once with the software (FFmpeg) decoder
+     * ([FailoverDecision.RetryWithSoftwareDecoder]) instead of hopping to
+     * another copy, before the first frame and after it. Without the
+     * software decoder there is nothing to retry with, so the flag alone
+     * changes nothing; and one per rendition — a second decode failure
+     * falls through to the ordinary hop path. It does not touch the
+     * retry_same budget: a decoder retry and a network retry are
+     * different kinds of second chance.
      */
     fun onFailure(
         errorSummary: String,
@@ -348,6 +382,8 @@ class FailoverStateMachine(
         isDeadHandle: Boolean = false,
         isRateLimited: Boolean = false,
         isLocalCopyAttempt: Boolean = false,
+        isDecodingFailed: Boolean = false,
+        isSoftwareDecoderAvailable: Boolean = false,
     ): FailoverDecision {
         // Session 121 (P-6): the summary may be a raw ExoPlayer code; the machine is the
         // single funnel every failure passes through, so translate it here — the Handoff
@@ -386,13 +422,33 @@ class FailoverStateMachine(
             _log.add(record)
             return FailoverDecision.Handoff(HandoffWhy.RATE_LIMITED, displaySummary, record)
         }
+        val record = FailoverRecord(current.rank, current.releaseId, current.displayLabel(), displaySummary, "")
+
+        if (isDecodingFailed && isSoftwareDecoderAvailable && index !in softwareRetryUsedByIndex) {
+            // MX idea #1 (2026-11-18): a decode failure is a decoder problem,
+            // not a dead copy — and it is the S2 exception. A start failure
+            // normally never retries the SAME rendition (re-paying the 6-12 s
+            // resolve for a file that just failed to start), but a decode
+            // failure means the decoder, not the copy, failed: the software
+            // decoder gets one shot at the same file before the machine hops
+            // to another copy, and if every copy carries the same audio the
+            // viewer keeps the best one instead of the give-up card. One per
+            // rendition: the retry is consumed here, so a second decode
+            // failure falls through to the ordinary hop path below. It does
+            // not touch the retry_same budget — a decoder retry and a network
+            // retry are different kinds of second chance.
+            softwareRetryUsedByIndex.add(index)
+            val swRecord = record.copy(action = "retried with the software decoder")
+            _log.add(swRecord)
+            return FailoverDecision.RetryWithSoftwareDecoder(index, swRecord)
+        }
+
         // Read-modify-write instead of `HashMap.merge`: `merge` is a Java 8 default method and
         // lint correctly refuses it against minSdk 21 (it ships in API 24). The count below is
         // only ever read on this thread, so the atomicity `merge` would have bought is not a
         // behaviour this class depends on.
         val usedSoFar = (attemptsByIndex[index] ?: 0) + 1
         attemptsByIndex[index] = usedSoFar
-        val record = FailoverRecord(current.rank, current.releaseId, current.displayLabel(), displaySummary, "")
 
         return when {
             // retry_same budget still available for THIS candidate — but
