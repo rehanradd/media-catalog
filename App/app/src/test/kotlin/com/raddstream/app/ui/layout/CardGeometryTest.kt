@@ -126,10 +126,20 @@ class CardGeometryTest {
                 "width MediaRail gives the real tiles",
             Regex("""RAIL_CARD_WIDTH_DP""").containsMatchIn(body),
         )
+        // S5: the rail's cells are the shared PosterCellSkeleton — the
+        // image box's aspect lives in that component now, not in the rail.
+        // The rail must either shape its own box from
+        // CardGeometry.POSTER_ASPECT or delegate to the cell that does;
+        // either way the placeholder is the card's box, not an impression
+        // of it. The cell body is read too, so the delegation cannot pass
+        // over an empty component.
+        val cellBody = cellPlaceholderBody()
         assertTrue(
             "PosterRailSkeleton must shape its image box from CardGeometry.POSTER_ASPECT, not a " +
                 "pinned height — a 190dp placeholder box above a 194dp card is the row that jumps",
-            Regex("""aspectRatio\(\s*CardGeometry\.POSTER_ASPECT\s*\)""").containsMatchIn(body),
+            Regex("""aspectRatio\(\s*CardGeometry\.POSTER_ASPECT\s*\)""").containsMatchIn(body) ||
+                ("PosterCellSkeleton" in body &&
+                    Regex("""aspectRatio\(\s*CardGeometry\.POSTER_ASPECT\s*\)""").containsMatchIn(cellBody)),
         )
     }
 
@@ -144,6 +154,19 @@ class CardGeometryTest {
             ?.value
             ?: error("PosterRailSkeleton is gone from $commonUiPath: a rail that fills in with no " +
                 "stand-in above it is idea #84 un-implemented")
+    }
+
+    /**
+     * The shared rail/grid cell's source, same window as [railPlaceholderBody]:
+     * from its signature to the next `@Composable`.
+     */
+    private fun cellPlaceholderBody(): String {
+        val commonUi = sourcesByPath().getValue(commonUiPath)
+        return Regex("""fun PosterCellSkeleton\([\s\S]*?(?=\n@Composable|\z)""")
+            .find(commonUi)
+            ?.value
+            ?: error("PosterCellSkeleton is gone from $commonUiPath: the rail placeholder " +
+                "delegates to a cell that no longer exists")
     }
 
     // ── 4. the artwork classes stay distinct ─────────────────────────────────

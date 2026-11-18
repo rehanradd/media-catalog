@@ -6,7 +6,6 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.hasProgressBarRangeInfo
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
-import com.raddstream.app.network.models.Post
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import org.junit.Rule
 import org.junit.Test
@@ -34,28 +33,17 @@ class BrowseLoadMoreSkeletonTest {
     @Test
     fun loadMoreShowsSkeletonCellsNotASpinner() {
         compose.mainClock.autoAdvance = false
-        val posts = listOf(
-            Post(
-                id = 1,
-                title = "Jawan",
-                cleanTitle = "Jawan",
-                year = 2023,
-                contentType = "movie",
-                posterUrl = "https://example.com/a.jpg",
-            ),
-            Post(
-                id = 2,
-                title = "Dunki",
-                cleanTitle = "Dunki",
-                year = 2023,
-                contentType = "movie",
-                posterUrl = "https://example.com/b.jpg",
-            ),
-        )
+        // An empty page: the load-more footer is independent of the page
+        // contents, and a lazy grid only composes the rows intersecting
+        // the ~470dp test window — with posts present the third row
+        // (skeletons 3–4) would fall below the fold and never compose,
+        // so the count would read 2 for a 4-cell footer that is really
+        // there. Two rows of skeleton cells fit the window, so all four
+        // exist.
         compose.setContent {
             RaddStreamTheme {
                 BrowsePosterGrid(
-                    items = posts,
+                    items = emptyList(),
                     loadingMore = true,
                     error = null,
                     gridState = rememberLazyGridState(),
