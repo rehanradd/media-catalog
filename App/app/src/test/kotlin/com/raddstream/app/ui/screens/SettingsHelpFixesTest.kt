@@ -89,8 +89,10 @@ class SettingsHelpFixesTest {
     fun `about version line is the version name only`() {
         val line = aboutVersionLine()
         assertEquals("Version ${Brand.versionName}", line)
-        assertFalse("no build number in the painted line, was: $line", line.contains(Brand.versionCode.toString()))
-        assertFalse("no scheme name in the painted line, was: $line", line.contains(Brand.schemeName))
+        // The bare number is a substring of the version name itself ("0.1.0" contains "1"),
+        // so the old shape is pinned by its parentheses, not by the digits.
+        assertFalse("no build number in the painted line, was: $line", line.contains("(${Brand.versionCode})"))
+        assertFalse("no scheme name in the painted line, was: $line", line.endsWith(Brand.schemeName))
     }
 
     @Test
