@@ -1,6 +1,6 @@
 # 2026-11-18 — R1 + R2 + R4 + DB-checkup #3: host reliability ranking `[HOST-RANKING]`
 
-Branch `muse/host-ranking-20261118` from main `0ffb7fc1` (B1). Server-only, stdlib only. NOT merged — the parent merges.
+Branch `muse/host-ranking-20261118` from main `0ffb7fc1` (B1), rebased onto main `ed3ea496` (H2) clean, no conflicts. Server-only, stdlib only. NOT merged — the parent merges.
 
 ## What changed
 
@@ -18,7 +18,7 @@ Branch `muse/host-ranking-20261118` from main `0ffb7fc1` (B1). Server-only, stdl
 
 ## Tests
 
-New module `Fast_Fetch/test_host_ranking.py` (24 tests, all green locally, 1.8 s), registered in `.github/workflows/backend-ci.yml` (111 🧪 steps now). Covers: decay math (fresh 1/3, ancient → neutral, recent success climbs back 4/9, rate preserved under pure time passage, seed shapes); 403/429/401 neutrality vs 404/500; old-schema migration of the decay columns; band order (unmeasured keeps score order, healthy host beats higher score in-band, band still beats host rank, verified lower-band still wins over a healthy-host higher-band print); v1 ladder (evidence tie broken by host rank in both directions, `_source_ladder_key` unchanged, no `source_url`/`final_url` in the projected JSON); R2 (verified/checking/unavailable, cross-check vs `_release_has_verified_candidate` per print, `playable` untouched, fail-open without tables); R4 (slice lengths incl. case-insensitive filepress, expired deadline returns fast with `urlopen` patched to raise + records nothing, ladder orders siblings [streak 5, 15, 60] and passes per-sibling deadlines, filepress gets a longer slice than default).
+New module `Fast_Fetch/test_host_ranking.py` (24 tests, all green locally, 1.8 s), registered in `.github/workflows/backend-ci.yml` (114 🧪 steps now, after the H2 rebase added 3). Covers: decay math (fresh 1/3, ancient → neutral, recent success climbs back 4/9, rate preserved under pure time passage, seed shapes); 403/429/401 neutrality vs 404/500; old-schema migration of the decay columns; band order (unmeasured keeps score order, healthy host beats higher score in-band, band still beats host rank, verified lower-band still wins over a healthy-host higher-band print); v1 ladder (evidence tie broken by host rank in both directions, `_source_ladder_key` unchanged, no `source_url`/`final_url` in the projected JSON); R2 (verified/checking/unavailable, cross-check vs `_release_has_verified_candidate` per print, `playable` untouched, fail-open without tables); R4 (slice lengths incl. case-insensitive filepress, expired deadline returns fast with `urlopen` patched to raise + records nothing, ladder orders siblings [streak 5, 15, 60] and passes per-sibling deadlines, filepress gets a longer slice than default).
 
 ## Verification
 
@@ -31,4 +31,4 @@ New module `Fast_Fetch/test_host_ranking.py` (24 tests, all green locally, 1.8 s
 
 - `catalog_api._sort_links` host ranking: skipped deliberately (see above) — needs the private-key strip design, separate slice.
 - v1 post/work detail `verification` annotation and season/episode/release detail: follow-ups; scope here is `work_detail` only (the app's title detail route).
-- The `Fast_Fetch/CONTINUITY.md` index was at 11,931 B (ceiling 12,000): freed 143 B by tightening one redundant parenthetical in item 16 (33 B) and removing the "Rotated session history" intro line whose claim item 1 already states verbatim (110 B), then added the one-line entry + this checkpoint file (count 110 → 111).
+- The `Fast_Fetch/CONTINUITY.md` index was at 11,931 B (ceiling 12,000): freed 143 B by tightening one redundant parenthetical in item 16 (33 B) and removing the "Rotated session history" intro line whose claim item 1 already states verbatim (110 B), then added the one-line entry + this checkpoint file (count 110 → 111). After the H2 rebase the file hit 12,024 B (over ceiling): freed 76 B by dropping the redundant branch parentheticals from the H2 line and this lane's line, now 11,948 B / 95 lines.
