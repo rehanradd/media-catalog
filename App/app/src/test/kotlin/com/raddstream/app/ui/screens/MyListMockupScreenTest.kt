@@ -17,6 +17,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.ui.theme.RaddStreamTheme
@@ -257,11 +258,12 @@ class MyListMockupScreenTest {
     ) {
         compose.setContent {
             RaddStreamTheme {
-                // A tall viewport (F4 pattern): the hidden state's message,
-                // Browse button and two rails are taller than the Robolectric
-                // window, so the second rail's heading would sit below the
-                // fold and read as not displayed. The production Column
-                // scrolls on a real phone; the test just needs room to see it.
+                // A tall viewport (F4 pattern) plus scroll-into-view: the
+                // hidden state's message, Browse button and two rails are
+                // taller than the Robolectric window, so the second rail
+                // sits below the fold. The Box alone does not extend the
+                // window — below-fold tests scroll the node into view,
+                // which is also what the production Column does on a phone.
                 Box(Modifier.size(width = 390.dp, height = 1000.dp)) {
                     MyListHiddenContent(
                         hiddenNotice = "2 saved titles are no longer offered by this server",
@@ -314,8 +316,8 @@ class MyListMockupScreenTest {
             recent = listOf(post(3, "Oppenheimer")),
         )
         compose.onNodeWithText("Trending to Start Your List").assertIsDisplayed()
-        compose.onNodeWithText("Recently Added").assertIsDisplayed()
-        compose.onNodeWithText("Oppenheimer").assertIsDisplayed()
+        compose.onNodeWithText("Recently Added").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Oppenheimer").performScrollTo().assertIsDisplayed()
     }
 
     @Test

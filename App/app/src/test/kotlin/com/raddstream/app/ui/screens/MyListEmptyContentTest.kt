@@ -20,6 +20,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.network.models.Post
@@ -276,11 +277,12 @@ class MyListEmptyContentTest {
         val recent = listOf(post(4, "Oppenheimer"), post(5, "Barbie"), post(6, "Poor Things"))
         compose.setContent {
             RaddStreamTheme {
-                // A tall viewport (F4 pattern): the message, the Browse
-                // button and two rails are taller than the Robolectric
-                // window, so the second rail's heading would sit below the
-                // fold and read as not displayed. The production Column
-                // scrolls on a real phone; the test just needs room to see it.
+                // A tall viewport (F4 pattern) plus scroll-into-view: the
+                // message, the Browse button and two rails are taller than
+                // the Robolectric window, so the second rail sits below the
+                // fold. The Box alone does not extend the window — the test
+                // scrolls each below-fold node into view, which is also
+                // what the production Column does on a real phone.
                 Box(Modifier.size(width = 360.dp, height = 1000.dp), contentAlignment = Alignment.TopStart) {
                     MyListEmptyContent(
                         popular = popular,
@@ -293,8 +295,8 @@ class MyListEmptyContentTest {
             }
         }
         compose.onNodeWithText("Trending to Start Your List").assertIsDisplayed()
-        compose.onNodeWithText("Recently Added").assertIsDisplayed()
-        compose.onNodeWithText("Oppenheimer").assertIsDisplayed()
+        compose.onNodeWithText("Recently Added").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Oppenheimer").performScrollTo().assertIsDisplayed()
     }
 
     @Test
