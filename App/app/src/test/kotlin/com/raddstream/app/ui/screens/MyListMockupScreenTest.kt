@@ -1,8 +1,8 @@
 package com.raddstream.app.ui.screens
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -258,13 +258,14 @@ class MyListMockupScreenTest {
     ) {
         compose.setContent {
             RaddStreamTheme {
-                // A tall viewport (F4 pattern) plus scroll-into-view: the
-                // hidden state's message, Browse button and two rails are
-                // taller than the Robolectric window, so the second rail
-                // sits below the fold. The Box alone does not extend the
-                // window — below-fold tests scroll the node into view,
-                // which is also what the production Column does on a phone.
-                Box(Modifier.size(width = 390.dp, height = 1000.dp)) {
+                // Window-height host, scroll-into-view for the second rail:
+                // the hidden state's message, Browse button and two rails
+                // are taller than the Robolectric window. A 1000dp Box does
+                // NOT help — it makes the Column's viewport taller than its
+                // content, so there is nothing to scroll and the rail stays
+                // outside the window. fillMaxHeight gives the Column a real
+                // scroll range; the second-rail test scrolls the rail in.
+                Box(Modifier.width(390.dp).fillMaxHeight()) {
                     MyListHiddenContent(
                         hiddenNotice = "2 saved titles are no longer offered by this server",
                         popular = popular,

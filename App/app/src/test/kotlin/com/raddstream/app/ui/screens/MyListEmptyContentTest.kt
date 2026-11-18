@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -277,13 +276,15 @@ class MyListEmptyContentTest {
         val recent = listOf(post(4, "Oppenheimer"), post(5, "Barbie"), post(6, "Poor Things"))
         compose.setContent {
             RaddStreamTheme {
-                // A tall viewport (F4 pattern) plus scroll-into-view: the
-                // message, the Browse button and two rails are taller than
-                // the Robolectric window, so the second rail sits below the
-                // fold. The Box alone does not extend the window — the test
-                // scrolls each below-fold node into view, which is also
-                // what the production Column does on a real phone.
-                Box(Modifier.size(width = 360.dp, height = 1000.dp), contentAlignment = Alignment.TopStart) {
+                // Window-sized host, scroll-into-view for the second rail:
+                // the message, the Browse button and two rails are taller
+                // than the Robolectric window, so the second rail sits
+                // below the fold. A 1000dp Box does NOT help — it makes
+                // the Column's viewport taller than its content, so there
+                // is nothing to scroll and the rail stays outside the
+                // window. With a window-sized host the Column has a real
+                // scroll range and performScrollTo brings the rail in.
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopStart) {
                     MyListEmptyContent(
                         popular = popular,
                         recent = recent,
