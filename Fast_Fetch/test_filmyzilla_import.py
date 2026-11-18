@@ -301,5 +301,221 @@ class Session104FilmyzillaTests(unittest.TestCase):
         self.assertTrue(gw[0]["final_url"].startswith("https://www.filmyzilla80.com/download/40321/"))
 
 
+class SeriesPocketB5Tests(unittest.TestCase):
+    """B5 (2026-11-18): filmyzilla series rows must not file as movies.
+
+    The trap, measured live: the site prints "Seaosn" (its own typo) and
+    "Web Series" in series titles while the importer hardcoded
+    media_type="movie". The loose pocket (clean_title LIKE '%season%' OR
+    '%web series%') is 243 rows — but a bare "season" word is NOT a marker:
+    "Season of the Witch", "Open Season", "Killing Season" are real movies,
+    so the rule needs a number, the typo, or the "Web Series" suffix.
+    """
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.temp_dir.name) / "test_filmyzilla.db"
+        import_filmyzilla.init_staging_db(self.db_path)
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def _page(self, title: str, server_href: str = "/server/39911/Money-Heist-Seaosn-3.html") -> str:
+        return (
+            "<html><head><title>" + title + "</title></head><body>"
+            '<a href="' + server_href + '">720p</a>'
+            "</body></html>"
+        )
+
+    def test_seaosn_money_heist_is_series_with_season(self):
+        parsed = import_filmyzilla.parse_filmyzilla_movie_page(
+            self._page("Money HeistSeaosn 3 Netflix Original Web Series Free Download Filmyzilla"),
+            "https://www.filmyzilla80.com/movie/1/money-heist.html",
+        )
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed["media_type"], "series")
+        self.assertEqual(parsed["seasons"], "Season 3")
+        self.assertEqual(parsed["season_number"], 3)
+
+    def test_web_series_without_number_is_series_without_season(self):
+        parsed = import_filmyzilla.parse_filmyzilla_movie_page(
+            self._page("Money HeistNetflix Original Web Series Free Download Filmyzilla"),
+            "https://www.filmyzilla80.com/movie/1/money-heist.html",
+        )
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed["media_type"], "series")
+        self.assertIsNone(parsed["seasons"])
+        self.assertIsNone(parsed["season_number"])
+
+    def test_plain_movie_stays_movie(self):
+        parsed = import_filmyzilla.parse_filmyzilla_movie_page(
+            self._page("Street Fighter (2026) Hindi Dubbed Movie Free Download Filmyzilla",
+                       "/server/39911/Street-Fighter.html"),
+            "https://www.filmyzilla80.com/movie/22418/street-fighter.html",
+        )
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed["media_type"], "movie")
+        self.assertIsNone(parsed["seasons"])
+
+    def test_bare_season_word_stays_movie(self):
+        # The false-positive guard: a "season" with no number is a movie
+        # title, not a series marker.
+        for title in (
+            "Season of the Witch (2011) Hindi Dubbed Movie Free Download Filmyzilla",
+            "Open Season (2015) Hindi Dubbed Movie Free Download Filmyzilla",
+            "Killing Season (2013) Hindi Dubbed Movie Free Download Filmyzilla",
+        ):
+            is_series, _num = import_filmyzilla.detect_series_markers(title)
+            self.assertFalse(is_series, title)
+        parsed = import_filmyzilla.parse_filmyzilla_movie_page(
+            self._page("Season of the Witch (2011) Hindi Dubbed Movie Free Download Filmyzilla",
+                       "/server/39911/Season-of-the-Witch.html"),
+            "https://www.filmyzilla80.com/movie/1/season-of-the-witch.html",
+        )
+        self.assertEqual(parsed["media_type"], "movie")
+
+    def test_bare_s_token_is_not_a_season(self):
+        # Live row 222787, "S4: The Bob Lazar Story": "S4" is the Area 51
+        # facility the film is named after, not a fourth season. Only the
+        # S0[0-9] shape is claimed; a bare S<N> token is not a marker.
+        self.assertFalse(import_filmyzilla.detect_series_markers("S4: The Bob Lazar Story")[0])
+        self.assertFalse(import_filmyzilla.detect_series_markers("Show Name S2")[0])
+        self.assertTrue(import_filmyzilla.detect_series_markers("Show Name S01")[0])
+        self.assertEqual(import_filmyzilla.detect_series_markers("Show Name S01")[1], 1)
+
+    def test_dash_season_is_series(self):
+        parsed = import_filmyzilla.parse_filmyzilla_movie_page(
+            self._page("Panchayat Season - 3 Hindi Series Free Download Filmyzilla",
+                       "/server/39911/Panchayat-Season-3.html"),
+            "https://www.filmyzilla80.com/movie/1/panchayat.html",
+        )
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed["media_type"], "series")
+        self.assertEqual(parsed["seasons"], "Season 3")
+
+    def test_extract_carries_season_number_onto_releases(self):
+        movie = self._page(
+            "Money HeistSeaosn 3 Netflix Original Web Series Free Download Filmyzilla",
+            "/server/105261/money-heist.html",
+        )
+        server = '<a href="/download/105261/server_1">1080p - 3.22GB</a>'
+        client = _FakeFZClient(
+            {
+                "https://filmyzillahq.in/movie/1/money-heist.html": (200, "", movie),
+                "https://filmyzillahq.in/server/105261/money-heist.html": (200, "", server),
+            },
+            {},
+        )
+        data = import_filmyzilla.extract_post_data_filmyzilla(
+            client, "https://filmyzillahq.in/movie/1/money-heist.html", resolve_direct=False
+        )
+        self.assertIsNotNone(data)
+        self.assertEqual(data["media_type"], "series")
+        self.assertEqual(data["seasons"], "Season 3")
+        self.assertEqual(data["releases"][0]["season_number"], 3)
+
+    def test_save_series_post_persists_media_type_and_seasons(self):
+        post_data = {
+            "canonical_key": "money_heistseaosn_3_netflix_original_web_series",
+            "title": "Money HeistSeaosn 3 Netflix Original Web Series",
+            "original_title": "Money HeistSeaosn 3 Netflix Original Web Series",
+            "year": None,
+            "media_type": "series",
+            "seasons": "Season 3",
+            "site": "filmyzilla",
+            "post_url": "https://www.filmyzilla80.com/movie/1/money-heist.html",
+            "releases": [{
+                "label": "Money HeistSeaosn 3 720p",
+                "quality": "720p",
+                "resolution": "720p",
+                "size_bytes": None,
+                "season_number": 3,
+                "episode_number": None,
+                "audio_languages": '["Hindi"]',
+                "codec": "x264",
+                "bridge_url": "https://www.filmyzilla80.com/download/1/server_1",
+                "sources": [],
+            }],
+        }
+        self.assertTrue(import_filmyzilla.save_post_to_staging_db(self.db_path, post_data))
+        with sqlite3.connect(str(self.db_path)) as conn:
+            row = conn.execute(
+                "SELECT media_type, seasons FROM posts WHERE canonical_key = ?",
+                (post_data["canonical_key"],),
+            ).fetchone()
+            self.assertEqual(row, ("series", "Season 3"))
+            rel = conn.execute(
+                "SELECT season_number FROM releases WHERE post_id = "
+                "(SELECT id FROM posts WHERE canonical_key = ?)",
+                (post_data["canonical_key"],),
+            ).fetchone()
+            self.assertEqual(rel, (3,))
+
+    def test_staging_db_migrates_seasons_column(self):
+        old_db = Path(self.temp_dir.name) / "old_filmyzilla.db"
+        with sqlite3.connect(str(old_db)) as conn:
+            conn.execute(
+                "CREATE TABLE posts (id INTEGER PRIMARY KEY, canonical_key TEXT UNIQUE, "
+                "title TEXT, media_type TEXT DEFAULT 'movie')"
+            )
+            conn.commit()
+        import_filmyzilla.init_staging_db(old_db)
+        with sqlite3.connect(str(old_db)) as conn:
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(posts);").fetchall()}
+        self.assertIn("seasons", cols)
+
+    def test_backfill_plan_and_apply_on_fixture(self):
+        import backfill_series_pocket
+
+        db = sqlite3.connect(":memory:")
+        db.execute(
+            "CREATE TABLE posts (id INTEGER PRIMARY KEY, title TEXT, clean_title TEXT, "
+            "content_type TEXT, seasons TEXT, source_site TEXT, is_18_plus INTEGER)"
+        )
+        fixture = [
+            (101820, "Money HeistSeaosn 3 Netflix Original Web Series",
+             "Money HeistSeaosn 3 Netflix Original Web Series", "movie", None, "filmyzilla", 0),
+            (101821, "Money HeistSeaosn 4 Netflix Original Web Series",
+             "Money HeistSeaosn 4 Netflix Original Web Series", "movie", None, "filmyzilla", 0),
+            (101822, "Money HeistSeaosn 5Netflix Web Series",
+             "Money HeistSeaosn 5Netflix Web Series", "movie", None, "filmyzilla", 0),
+            (101823, "Money HeistSeaosn 2 Netflix Original Web Series",
+             "Money HeistSeaosn 2 Netflix Original Web Series", "movie", None, "filmyzilla", 0),
+            (101828, "Money HeistNetflix Original Web Series",
+             "Money HeistNetflix Original Web Series", "movie", None, "filmyzilla", 0),
+            (32053, "Season of the Witch In", "Season of the Witch In",
+             "movie", None, "hindilinks4u", 0),
+            (886, "Open Season", "Open Season", "movie", None, "rareanimes", 0),
+            (999999, "Street Fighter", "Street Fighter", "movie", None, "filmyzilla", 0),
+        ]
+        db.executemany("INSERT INTO posts VALUES (?, ?, ?, ?, ?, ?, ?)", fixture)
+        plan = backfill_series_pocket.plan_backfill(db)
+        self.assertEqual(len(plan["hits"]), 5)
+        self.assertEqual(plan["servable_flips"], 5)
+        self.assertEqual(plan["loose_pocket"], 7)
+        self.assertEqual(len(plan["loose_minus_strict"]), 2)
+        self.assertEqual(backfill_series_pocket.series_count(db), 0)
+
+        flipped = backfill_series_pocket.apply_backfill(db, plan)
+        db.commit()
+        self.assertEqual(flipped, 5)
+        self.assertEqual(backfill_series_pocket.series_count(db), 5)
+        seasons = dict(db.execute(
+            "SELECT id, seasons FROM posts WHERE content_type = 'series'").fetchall())
+        self.assertEqual(seasons[101820], "Season 3")
+        self.assertEqual(seasons[101821], "Season 4")
+        self.assertEqual(seasons[101822], "Season 5")
+        self.assertEqual(seasons[101823], "Season 2")
+        self.assertIsNone(seasons[101828])
+        still_movie = db.execute(
+            "SELECT id FROM posts WHERE content_type = 'movie' ORDER BY id").fetchall()
+        self.assertEqual([r[0] for r in still_movie], [886, 32053, 999999])
+
+        # Idempotent: a second plan finds nothing left to flip.
+        plan2 = backfill_series_pocket.plan_backfill(db)
+        self.assertEqual(len(plan2["hits"]), 0)
+        self.assertEqual(backfill_series_pocket.apply_backfill(db, plan2), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

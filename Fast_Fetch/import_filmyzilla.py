@@ -77,6 +77,63 @@ def _is_adult_title(*texts) -> int:
     return 1 if any(re.search(p, joined, re.IGNORECASE) for p in _ADULT_TITLE_PATTERNS) else 0
 
 
+# B5 (2026-11-18): filmyzilla files web series under "movie" — the site prints
+# "Web Series" (and its own typo "Seaosn") in the title while the importer
+# hardcoded media_type="movie" and never populated seasons. Live measure on
+# the 2026-11-18 catalog: the loose pocket (clean_title LIKE '%season%' OR
+# '%web series%') is 243 rows, but ~118 of those are real movies whose titles
+# merely contain the word — "Open Season", "Season of the Witch", "Killing
+# Season", "Wedding Season", "Happiest Season" — so a bare "season" word is
+# NOT a marker here. A marker needs a number, the typo, or the "Web Series"
+# suffix. The evidence-backed pocket is 150 rows (143 servable).
+_SERIES_MARKER_RES = (
+    # The site's own typo, substring on purpose: "Money HeistSeaosn 3" glues
+    # it to the previous word, so \b would miss it. "Seaosn" occurs in no
+    # real movie title.
+    re.compile(r"seaosn", re.IGNORECASE),
+    # Season + number, dash optional: "Season 3", "Season - 3", "season1".
+    re.compile(r"season\s*[-–]?\s*\d+", re.IGNORECASE),
+    # The reliable suffix: "Netflix Original Web Series", "Web Series".
+    re.compile(r"web\s+series", re.IGNORECASE),
+    # "Complete Season", "COMPLETE MERGED SEASON", "COMPLETE FINAL SEASON",
+    # and the "COMPLET SEASON" typo — up to two words may sit between.
+    re.compile(r"complet[e]?\s+(?:\w+\s+){0,2}seasons?\b", re.IGNORECASE),
+    # Season token, exactly the S0[0-9] shape: "S01", "S09". A bare "S<N>"
+    # token is NOT claimed — "S4: The Bob Lazar Story" is a film whose title
+    # is the Area 51 facility "S4", not a fourth season (live row 222787,
+    # caught by the wider token during verification and then excluded).
+    re.compile(r"\bS0\d\b", re.IGNORECASE),
+    # Episode code, glued or spaced: "S01E01", "S2E05".
+    re.compile(r"s\d{1,2}e\d{1,2}", re.IGNORECASE),
+)
+
+_SEASON_NUMBER_RES = (
+    re.compile(r"season\s*[-–]?\s*(\d{1,2})", re.IGNORECASE),
+    re.compile(r"seaosn\s*(\d{1,2})", re.IGNORECASE),
+    re.compile(r"\bS0(\d)\b", re.IGNORECASE),
+    re.compile(r"s0?(\d{1,2})e\d{1,2}", re.IGNORECASE),
+)
+
+
+def detect_series_markers(*texts: str) -> tuple[bool, int | None]:
+    """Is this title a series, and which season number does it carry?
+
+    Returns (is_series, season_number): season_number is the int when a
+    season number is present ("Season 3" -> 3), else None — a "Web Series"
+    base row (e.g. Money Heist with no season number) is a series with
+    season_number None. A bare "season" word with no number never matches:
+    "Season of the Witch" is a movie.
+    """
+    joined = " ".join(t for t in texts if t)
+    if not any(p.search(joined) for p in _SERIES_MARKER_RES):
+        return False, None
+    for p in _SEASON_NUMBER_RES:
+        m = p.search(joined)
+        if m:
+            return True, int(m.group(1))
+    return True, None
+
+
 def sig_handler(signum, frame):
     global STOP_REQUESTED
     STOP_REQUESTED = True
@@ -212,6 +269,7 @@ def init_staging_db(db_path: Path):
                 original_title TEXT,
                 year INTEGER,
                 media_type TEXT DEFAULT 'movie',
+                seasons TEXT,
                 imdb_id TEXT,
                 poster_url TEXT,
                 synopsis TEXT,
@@ -232,7 +290,7 @@ def init_staging_db(db_path: Path):
 
         # Auto-migration for schema changes
         existing_cols = [c[1] for c in conn.execute("PRAGMA table_info(posts);").fetchall()]
-        for col in ["cast_names", "director", "languages"]:
+        for col in ["cast_names", "director", "languages", "seasons"]:
             if col not in existing_cols:
                 try:
                     conn.execute(f"ALTER TABLE posts ADD COLUMN {col} TEXT;")
@@ -375,6 +433,14 @@ def parse_filmyzilla_movie_page(html_text: str, page_url: str) -> dict | None:
     if not clean_title:
         return None
 
+    # B5: the site's series rows carry the marker in the title ("Seaosn N",
+    # "Web Series") while media_type used to be hardcoded "movie" below.
+    # Detect on the raw title AND the clean one: cleaning strips "Movie" and
+    # promo suffixes, never a series marker, but the raw title is the
+    # evidence and must not depend on what cleaning keeps.
+    is_series, season_number = detect_series_markers(raw_title, clean_title)
+    seasons = f"Season {season_number}" if season_number is not None else None
+
     # Poster
     poster_url = None
     p_og = re.search(r'<meta\s+property=["\']og:image["\']\s+content=["\']([^"\']+)["\']', html_text, re.I)
@@ -499,7 +565,9 @@ def parse_filmyzilla_movie_page(html_text: str, page_url: str) -> dict | None:
         "title": clean_title,
         "original_title": raw_title,
         "year": year,
-        "media_type": "movie",
+        "media_type": "series" if is_series else "movie",
+        "seasons": seasons,
+        "season_number": season_number,
         "imdb_id": None,
         "poster_url": poster_url,
         "genres": json.dumps(genres) if genres else None,
@@ -570,7 +638,7 @@ def extract_post_data_filmyzilla(client: FilmyZillaClient, movie_url: str, resol
                     "quality": qual,
                     "resolution": res,
                     "size_bytes": size_bytes,
-                    "season_number": None,
+                    "season_number": parsed.get("season_number"),
                     "episode_number": None,
                     "audio_languages": parsed["languages"],
                     "codec": codec,
@@ -649,7 +717,7 @@ def extract_post_data_filmyzilla(client: FilmyZillaClient, movie_url: str, resol
                 "quality": s["quality"],
                 "resolution": s["resolution"],
                 "size_bytes": None,
-                "season_number": None,
+                "season_number": parsed.get("season_number"),
                 "episode_number": None,
                 "audio_languages": parsed["languages"],
                 "codec": s["codec"],
@@ -673,15 +741,16 @@ def save_post_to_staging_db(db_path: Path, post_data: dict) -> bool:
         cur.execute(
             """
             INSERT INTO posts (
-                canonical_key, title, original_title, year, media_type,
+                canonical_key, title, original_title, year, media_type, seasons,
                 imdb_id, poster_url, synopsis, genres, cast_names, director, languages, rating, is_18_plus, site, post_url,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ON CONFLICT(canonical_key) DO UPDATE SET
                 title = excluded.title,
                 original_title = excluded.original_title,
                 year = COALESCE(excluded.year, posts.year),
                 media_type = excluded.media_type,
+                seasons = COALESCE(excluded.seasons, posts.seasons),
                 imdb_id = COALESCE(excluded.imdb_id, posts.imdb_id),
                 poster_url = COALESCE(excluded.poster_url, posts.poster_url),
                 synopsis = COALESCE(excluded.synopsis, posts.synopsis),
@@ -701,6 +770,7 @@ def save_post_to_staging_db(db_path: Path, post_data: dict) -> bool:
                 post_data["original_title"],
                 post_data["year"],
                 post_data["media_type"],
+                post_data.get("seasons"),
                 post_data.get("imdb_id"),
                 post_data.get("poster_url"),
                 post_data.get("synopsis"),
