@@ -49,7 +49,7 @@ fun SetupScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
 
-    // UI-fix P0-4: the shipped server is probed once on arrival, with the
+    // UI-fix P0-4: the shipped catalog is probed once on arrival, with the
     // progress visible — a first-run user never meets a dead screen that
     // only asks for an address they do not have.
     LaunchedEffect(Unit) {
@@ -72,8 +72,8 @@ fun SetupScreen(
  * the jade Connect. Extracted from [SetupScreen] so the layout is testable
  * without the ViewModel: the screen keeps the state collection and the
  * arrival probe, and this renders only the content. The wiring is untouched:
- * the address field still opens only when the viewer asks for a different
- * server, and the shipped server is still probed without ever printing it.
+ * the address field still opens only when the viewer asks for their own
+ * catalog, and the shipped catalog is still probed without ever printing it.
  */
 @Composable
 internal fun SetupScreenContent(
@@ -126,14 +126,14 @@ internal fun SetupScreenContent(
         Spacer(Modifier.height(24.dp))
 
         // The address is never printed on first sight: Connect tests the
-        // shipped server without displaying it, and the field below opens
-        // only when the viewer explicitly asks for a different server.
+        // shipped catalog without displaying it, and the field below opens
+        // only when the viewer explicitly asks for their own catalog.
         if (state.showUrlField) {
             OutlinedTextField(
                 value = state.serverUrl,
                 onValueChange = onServerUrlChanged,
-                label = { Text("Server address") },
-                placeholder = { Text("https://media.example.com:8080") },
+                label = { Text("Catalog address") },
+                placeholder = { Text("https://catalog.example.com") },
                 singleLine = true,
                 enabled = !state.isChecking,
                 modifier = Modifier.fillMaxWidth(),
@@ -155,35 +155,22 @@ internal fun SetupScreenContent(
         }
 
         Spacer(Modifier.height(20.dp))
-        if (state.showUrlField) {
-            OutlinedButton(
-                onClick = onTestConnection,
-                enabled = !state.isChecking && state.serverUrl.isNotBlank(),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                if (state.isChecking) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.height(18.dp),
-                        strokeWidth = 2.dp,
-                    )
-                } else {
-                    Text("Test connection")
-                }
-            }
-        } else {
-            OutlinedButton(
-                onClick = onRetryDefault,
-                enabled = !state.isChecking,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                if (state.isChecking) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.height(18.dp),
-                        strokeWidth = 2.dp,
-                    )
-                } else {
-                    Text("Connect")
-                }
+        // One Connect, not a Connect plus a Test: Connect already tests —
+        // the shipped catalog when the field is hidden, the typed address
+        // when it is open — so a second button would test the same thing
+        // under a different name.
+        OutlinedButton(
+            onClick = if (state.showUrlField) onTestConnection else onRetryDefault,
+            enabled = !state.isChecking && (!state.showUrlField || state.serverUrl.isNotBlank()),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            if (state.isChecking) {
+                CircularProgressIndicator(
+                    modifier = Modifier.height(18.dp),
+                    strokeWidth = 2.dp,
+                )
+            } else {
+                Text("Connect")
             }
         }
 
@@ -200,7 +187,7 @@ internal fun SetupScreenContent(
             Text("Continue", style = MaterialTheme.typography.labelLarge)
         }
 
-        // UI-fix P0-4: never strand the user. If the shipped server does not
+        // UI-fix P0-4: never strand the user. If the shipped catalog does not
         // answer, Home still opens — saved titles and the retry there — with
         // no address to type and no dead end.
         if (!state.isConnected) {
@@ -213,7 +200,7 @@ internal fun SetupScreenContent(
         if (!state.showUrlField) {
             Spacer(Modifier.height(8.dp))
             TextButton(onClick = onRevealUrlField) {
-                Text("Use a different server")
+                Text("Use your own catalog")
             }
         }
     }

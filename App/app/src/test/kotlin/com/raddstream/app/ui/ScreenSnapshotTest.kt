@@ -196,8 +196,8 @@ class ScreenSnapshotTest {
             Box(Modifier.fillMaxSize()) { MaintenanceScreen() }
         }
         assertTrue(
-            "the notice without an escape still offered a server switch",
-            compose.onAllNodes(hasText("Use a different server", substring = true))
+            "the notice without an escape still offered a catalog switch",
+            compose.onAllNodes(hasText("Use a different catalog", substring = true))
                 .fetchSemanticsNodes().isEmpty(),
         )
         capture("01_maintenance_locked")
@@ -210,7 +210,7 @@ class ScreenSnapshotTest {
         }
         assertTrue(
             "the escape hatch a wrongly-flagged deployment depends on is gone",
-            compose.onAllNodes(hasText("Use a different server", substring = true))
+            compose.onAllNodes(hasText("Use a different catalog", substring = true))
                 .fetchSemanticsNodes().isNotEmpty(),
         )
         capture("02_maintenance_server_switch")

@@ -275,19 +275,19 @@ class PlayerPolicyBridgeTest {
     }
 
     @Test
-    fun `the caption states the applied value when the request is capped`() {
+    fun `the caption states the applied percent and says the ceiling plainly`() {
         assertEquals("Volume 100%", AudioBoostUi.honestSummary(1f, 1f))
         assertEquals("Volume 60%", AudioBoostUi.honestSummary(0.6f, 1f))
 
-        val headroom = AudioBoostUi.honestSummary(1.5f, 0.6f)
-        assertTrue(headroom, headroom.contains("Requested 150%"))
-        assertTrue(headroom, headroom.contains("applied 90%"))
+        // Below the ceiling, just the percent — no "Requested" and no
+        // explanation of a mechanism the viewer cannot act on.
+        assertEquals("Volume 90%", AudioBoostUi.honestSummary(1.5f, 0.6f))
 
         val capped = AudioBoostUi.honestSummary(1.5f, 1f)
-        assertTrue(capped, capped.contains("Requested 150%"))
-        assertTrue(capped, capped.contains("100%"))
-        // The promise this build cannot keep is named as unavailable, not as done.
-        assertTrue(capped, capped.contains("no software gain"))
+        assertTrue(capped, capped.contains("Louder than the player can play"))
+        assertTrue(capped, capped.contains("turn up your device volume"))
+        assertFalse(capped, capped.contains("Requested"))
+        assertFalse(capped, capped.contains("no software gain"))
         assertFalse(capped, capped.contains("Volume 150%"))
         assertEquals(90, AudioBoostUi.appliedPercent(1.5f, 0.6f))
         assertEquals(100, AudioBoostUi.appliedPercent(2f, 1f))

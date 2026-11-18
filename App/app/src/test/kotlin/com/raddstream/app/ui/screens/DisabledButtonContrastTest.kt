@@ -8,8 +8,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Robo run 5: the two disabled Settings buttons ("Test & Save Connection"
- * with no server typed, "Sign in" with no key typed) read 2.98:1 — the M3
+ * Robo run 5: the two disabled Settings buttons ("Save"
+ * with no catalog typed, "Sign in" with no code typed) read 2.98:1 — the M3
  * default disabled text (onSurface at 38%) on the dark fill, under the
  * 4.5:1 floor. The buttons now use onSurface at DisabledButtonContentAlpha
  * for their disabled text. This test pins the math against the real dark

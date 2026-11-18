@@ -48,7 +48,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -62,6 +61,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -126,8 +126,8 @@ internal val subtitleOptions = listOf("Off", "English", "Hindi", "Urdu", "Tamil"
 /**
  * Robo run 5: the M3 default disabled button text (onSurface at 38%) reads
  * 2.98:1 on the dark fill — under the 4.5:1 floor. The two buttons that can
- * sit disabled on this screen ("Test & Save Connection" with no server typed,
- * "Sign in" with no key typed) brighten their disabled text to onSurface at
+ * sit disabled on this screen ("Save" with no catalog typed,
+ * "Sign in" with no code typed) brighten their disabled text to onSurface at
  * this alpha, which clears 4.5:1 against the disabled fill (≈5.7:1, pinned
  * by DisabledButtonContrastTest) while the washed-out fill still reads as
  * disabled. Internal so that test can read the same value the buttons use.
@@ -193,9 +193,12 @@ fun SettingsScreen(
     var showAdvanced by remember { mutableStateOf(false) }
     // UI-fix P1-T1: the Account card's key machinery lives behind these
     // two doors — guests see Sign in / Create account only, signed-in
-    // viewers see Sync / Sign out, and the rest waits behind a tap.
+    // viewers see Sign out, and the rest waits behind a tap.
     var showSignInForm by remember { mutableStateOf(false) }
     var showAccountDetails by remember { mutableStateOf(false) }
+    // B5: the About card's build details (build number, theme name) sit
+    // behind a tap on the version line, never in the painted line.
+    var showBuildDetails by remember { mutableStateOf(false) }
     // D2: the contact card's and the column's top edges in window
     // coordinates, in pixels — recorded on layout so the deep link can
     // scroll to the card. The offset is derived from the two window
@@ -208,6 +211,13 @@ fun SettingsScreen(
     // the Scaffold can drive it.
     val scrollState = rememberScrollState()
 
+    // D2: the account code is shown once — leaving Settings hides it, so
+    // a code is never left on screen after the viewer walks away. The
+    // effect runs on dispose, which is also what retires a trial-minted
+    // code's one-shot (see hideRevealedKey).
+    DisposableEffect(Unit) {
+        onDispose { viewModel.hideRevealedKey() }
+    }
     // A status line this screen used to print inside the About card as a button that did
     // nothing. It is a transient answer to an action, so it lives where every other screen
     // in this app puts one: a snack bar, shown once, then cleared back through the ViewModel
@@ -345,12 +355,14 @@ fun SettingsScreen(
             // viewer never has to guess which one won.
             // Mockup: the card carries its translate icon at the top-right.
             SettingsCard(title = "Languages", icon = Icons.Default.Translate) {
-                // F5a (Batch A): same effective values and provenance as the
-                // Languages screen's top line, so the two can never disagree
-                // without saying why.
+                // F5a (Batch A): same effective values as the Languages
+                // screen's top line, so the two can never disagree. The
+                // provenance ("your choice" / "<Region> default") is still
+                // computed with the values, but it is not painted: a viewer
+                // reads a language, not where it came from.
                 Text(
-                    "Audio: ${state.prefs.audioLanguage} (${state.prefs.audioProvenance}). " +
-                        "Subtitles: ${state.prefs.subtitleLang} (${state.prefs.subtitleProvenance}).",
+                    "Audio: ${state.prefs.audioLanguage} · " +
+                        "Subtitles: ${state.prefs.subtitleLang}.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -473,7 +485,8 @@ fun SettingsScreen(
                 }
                 // Still worth saying: below the ceiling the boost is real, but it rides on the
                 // viewer's own system volume, so the caption states what is applied, not what
-                // was asked. The range above is already the range this build can honour.
+                // was asked. Above the ceiling it says so in plain words, and below it just
+                // the percent — the range above is already the range this build can honour.
                 Text(
                     AudioBoostUi.honestSummary(state.prefs.audioBoost, 1f),
                     style = settingsHelperStyle,
@@ -492,8 +505,7 @@ fun SettingsScreen(
                     )
                 }
                 Text(
-                    "Saved on this device, and applied the next time each one matters: image size " +
-                        "from the next poster, the download duration from the next download.",
+                    "Saved on this device.",
                     style = settingsHelperStyle,
                 )
             }
@@ -656,40 +668,6 @@ fun SettingsScreen(
                 }
             }
 
-            // ── Cache ──────────────────────────────────────────────────
-            // D10: the card carries its icon at the top-right, like every
-            // other card — it had none.
-            SettingsCard(title = "Storage & cache", icon = Icons.Default.Storage) {
-                // The poster-image cache as a bar: what it holds now against the
-                // loader's own cap. Nothing here is a guess at the device's free
-                // space, and the kept videos are not in this number at all — they
-                // are listed and removed on the Downloads screen.
-                val cacheBytes = state.posterCacheBytes
-                val cacheMax = state.posterCacheMaxBytes
-                if (cacheBytes != null && cacheMax != null) {
-                    Text(
-                        "Poster images: ${viewModel.formatCacheSize(cacheBytes)} of " +
-                            viewModel.formatCacheSize(cacheMax),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    LinearProgressIndicator(
-                        progress = { cacheBytes.toFloat() / cacheMax.toFloat().coerceAtLeast(1f) },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-                Button(onClick = viewModel::clearImageCache, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                ) {
-                    Text("Clear poster images")
-                }
-                Text(
-                    "This clears only the poster images the app has fetched; they come back as you " +
-                        "browse. Videos you downloaded for offline are not touched here — they are removed " +
-                        "individually on the Downloads screen.",
-                    style = settingsHelperStyle,
-                )
-            }
-
             SettingsSectionHeading("Account")
             // ── VIP membership ─────────────────────────────────────────
             // Free launch: the whole card (prices, payment instructions,
@@ -789,13 +767,19 @@ fun SettingsScreen(
                         value = key,
                         onValueChange = {},
                         readOnly = true,
-                        label = { Text("Your sync key") },
+                        label = { Text("Your account code") },
                         textStyle = MaterialTheme.typography.bodySmall,
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         trailingIcon = {
                             val clipboard = LocalClipboardManager.current
-                            TextButton(onClick = { clipboard.setText(AnnotatedString(key)) },
+                            // D2: copying is the end of the reveal — the
+                            // code hides the moment it is copied, so it is
+                            // never left on screen after the viewer has it.
+                            TextButton(onClick = {
+                                clipboard.setText(AnnotatedString(key))
+                                viewModel.hideRevealedKey()
+                            },
                                 modifier = Modifier.heightIn(min = 48.dp),
                             ) {
                                 Text("Copy")
@@ -803,7 +787,7 @@ fun SettingsScreen(
                         },
                     )
                     // Honest, and it must stay honest: the warning names the transport the
-                    // server in use actually speaks — plain HTTP in the clear, or TLS for
+                    // catalog in use actually speaks — plain HTTP in the clear, or TLS for
                     // the shipped default — instead of implying a protection the transport
                     // does not provide.
                     Text(
@@ -815,7 +799,7 @@ fun SettingsScreen(
                         onClick = viewModel::hideRevealedKey,
                         modifier = Modifier.heightIn(min = 48.dp),
                     ) {
-                        Text("Done showing this key") 
+                        Text("Done showing this code")
                     }
                 }
 
@@ -851,20 +835,20 @@ fun SettingsScreen(
                         OutlinedTextField(
                             value = account.quickInput,
                             onValueChange = viewModel::onQuickInputChanged,
-                            label = { Text("Sync key") },
-                            placeholder = { Text("The 16-character key from your other device") },
+                            label = { Text("Account code") },
+                            placeholder = { Text("The 16-character account code from your other device") },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
                         )
                         // The sentence this card used to print — "anyone who knows it can derive the
                         // same key" — described a feature that is now deleted, so it is replaced by
                         // the two facts that are true of what is left: a number cannot open an
-                        // account, and the key is the whole account.
+                        // account, and the code is the whole account.
                         Text(
-                            "Enter the key this app showed once, when it created the account. A mobile " +
-                                "number is not a key and this app cannot turn one into a key: knowing " +
+                            "Enter the account code this app showed once, when it created the account. A mobile " +
+                                "number is not a code and this app cannot turn one into a code: knowing " +
                                 "someone's number gets them nowhere. An account is only as strong as " +
-                                "its key, so keep the key somewhere safe, and sign out on any device " +
+                                "its code, so keep the code somewhere safe, and sign out on any device " +
                                 "that is not yours.",
                             style = settingsHelperStyle,
                         )
@@ -898,7 +882,7 @@ fun SettingsScreen(
                                 modifier = Modifier.weight(1f).heightIn(min = 48.dp),
 
                             ) {
-                                Text("Create a random key")
+                                Text("Create account")
                             }
                         }
                         TextButton(
@@ -909,26 +893,16 @@ fun SettingsScreen(
                         }
                     }
                 } else {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    // A5: no "Sync now" — syncing happens on its own, on
+                    // sign-in and when this card opens, so the button was
+                    // a tap the viewer should never have had to find.
+                    Button(
+                        onClick = viewModel::signOut,
+                        enabled = !account.isBusy,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+
                     ) {
-                        Button(
-                            onClick = viewModel::syncNow,
-                            enabled = !account.isBusy,
-                            modifier = Modifier.weight(1f).heightIn(min = 48.dp),
-
-                        ) {
-                            BusyLabel(account.isBusy, "Sync now")
-                        }
-                        OutlinedButton(
-                            onClick = viewModel::signOut,
-                            enabled = !account.isBusy,
-                            modifier = Modifier.weight(1f).heightIn(min = 48.dp),
-
-                        ) {
-                            Text("Sign out")
-                        }
+                        Text("Sign out")
                     }
                     TextButton(onClick = { showAccountDetails = !showAccountDetails },
                         modifier = Modifier.heightIn(min = 48.dp),
@@ -938,8 +912,8 @@ fun SettingsScreen(
                     if (showAccountDetails) {
                         if (account.revealedKey == null && account.keyHint.isNotEmpty()) {
                             Text(
-                                "Key on this device: ${account.keyHint}. The full key was shown once, when it " +
-                                    "was created, and is not stored anywhere it can be re-displayed.",
+                                "Account code on this device: ${account.keyHint}. The full code was shown once, when it " +
+                                    "was created, and is not stored anywhere it can be shown again.",
                                 style = settingsHelperStyle,
                             )
                         }
@@ -992,13 +966,6 @@ fun SettingsScreen(
                         },
                     )
                 }
-                Text(
-                    "Sync only ever names a title by the reference the server gave it, so a " +
-                        "title this app cannot reference stays on this device. Your saved list " +
-                        "is read from this device either way — offline, it shows exactly what it " +
-                        "always showed.",
-                    style = settingsHelperStyle,
-                )
             }
 
             // ── Watch history ────────────────────────────────────────────────
@@ -1091,8 +1058,11 @@ fun SettingsScreen(
             // a document, the totals are analytics, About keeps the "i".
             SettingsCard(title = "Disclaimer", icon = Icons.Default.Description) {
                 val disclaimer = state.disclaimer.effective()
+                // B8: no version in the painted line — acceptance is
+                // already tracked per version, so the number says nothing
+                // a viewer can act on.
                 Text(
-                    "Version ${disclaimer.version} — what this app is, and what it is not.",
+                    "What this app is, and what it is not.",
                     style = settingsHelperStyle,
                 )
                 OutlinedButton(
@@ -1143,15 +1113,29 @@ fun SettingsScreen(
                     ),
                     style = settingsHelperStyle,
                 )
+                // B5: the painted line is the version name only. The build
+                // number and theme name sit behind a tap on the line —
+                // support asks for them, a viewer never does.
                 Text(
                     aboutVersionLine(),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.clickable(
+                        role = Role.Button,
+                        onClickLabel = if (showBuildDetails) "Hide build details" else "Show build details",
+                    ) { showBuildDetails = !showBuildDetails },
                 )
+                if (showBuildDetails) {
+                    Text(
+                        aboutBuildDetailsLine(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
 
             // ── Advanced ───────────────────────────────────────────────
-            // Audit #51: the server switcher lives behind Advanced, so a
+            // Audit #51: the catalog switcher lives behind Advanced, so a
             // casual tap can never disconnect the app from its catalog.
             SettingsSectionHeading("Advanced")
             TextButton(
@@ -1162,15 +1146,16 @@ fun SettingsScreen(
                 Text(if (showAdvanced) "Hide advanced settings" else "Show advanced settings")
             }
             if (showAdvanced) {
-                            // ── Server Connection ──────────────────────────────────────
-                            SettingsCard(title = "Catalog server", icon = Icons.Default.Storage) {
-                                // The address is never printed here: a saved server reads as
+                            // ── Your catalog ──────────────────────────────────────
+                            SettingsCard(title = "Your catalog", icon = Icons.Default.Storage) {
+                                // The address is never printed here: a saved catalog reads as
                                 // "Connected", and the field opens only when the viewer asks
-                                // to change it. The test still fetches the counts for its own
-                                // message, which never includes the address either.
+                                // to change it. The save still tests the address before it
+                                // keeps it, and the test's message never includes the address
+                                // either.
                                 if (!state.showServerField) {
                                     Text(
-                                        text = if (state.serverUrl.isNotBlank()) "Connected to your catalog." else "No catalog server set.",
+                                        text = if (state.serverUrl.isNotBlank()) "Connected to your catalog." else "No catalog connected yet.",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -1183,8 +1168,8 @@ fun SettingsScreen(
                                     OutlinedTextField(
                                         value = state.serverUrl,
                                         onValueChange = viewModel::onServerUrlChanged,
-                                        label = { Text("Server URL") },
-                                        placeholder = { Text("http://<host> — one address, any catalog you may use") },
+                                        label = { Text("Catalog address") },
+                                        placeholder = { Text("https://catalog.example.com") },
                                         singleLine = true,
                                         modifier = Modifier.fillMaxWidth(),
                                     )
@@ -1213,14 +1198,14 @@ fun SettingsScreen(
                                         } else {
                                             Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
                                             Spacer(Modifier.width(8.dp))
-                                            Text("Test & Save Connection")
+                                            Text("Save")
                                         }
                                     }
                                     // Settings review (Nov 2026, D6): the
                                     // field is a door that closes — Cancel
                                     // returns to the calm summary line, and
-                                    // a successful Test & Save closes it
-                                    // too (see hideServerField).
+                                    // a successful Save closes it too
+                                    // (see hideServerField).
                                     TextButton(
                                         onClick = viewModel::hideServerField,
                                         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
@@ -1232,7 +1217,7 @@ fun SettingsScreen(
 
                                 // No counts here: works/releases/links are the operator's numbers,
                                 // not something a viewer needs to see on their own Settings screen.
-                                // The connection test above still fetches them for its own message.
+                                // The save above still tests the address for its own message.
                             }
 
             }
@@ -1373,10 +1358,20 @@ internal fun audioLevelPercent(level: Float): String =
 
 /**
  * Settings review (Nov 2026, D9): the one version line both About
- * surfaces print — name, code and scheme — so a screenshot from either
- * answers the same question. Help's About dialog uses this too.
+ * surfaces print — the version name only. The build number and the
+ * theme name are not painted: they live behind a tap on the line
+ * ([aboutBuildDetailsLine]), so a screenshot from either surface
+ * answers the same question, and support still gets its numbers.
  */
 internal fun aboutVersionLine(): String =
+    "Version ${Brand.versionName}"
+
+/**
+ * The build details the painted version line hides: the build number
+ * and the theme name, shown only when the viewer taps the version line
+ * (Settings) — never in the painted line itself.
+ */
+internal fun aboutBuildDetailsLine(): String =
     "Version ${Brand.versionName} (${Brand.versionCode}) • ${Brand.schemeName}"
 
 @Composable
@@ -1513,16 +1508,16 @@ internal fun ChipRow(options: List<String>, selectedIndex: Int, onSelect: (Int) 
 @Composable
 /**
  * Renders the socket's real state as one short line. Reports what is actually bound, not what was
- * asked: a share that could not bind says so plainly, and a live share names the concrete address and
- * the number of files currently servable so the row never advertises a URL that nothing answers on.
+ * asked: a share that could not bind says so plainly, and a live share says how many kept files
+ * another device on the same Wi-Fi can play. No address and no port — a viewer cannot act on
+ * either, and printing them teaches nothing but the network's shape.
  */
 private fun lanShareStatusLine(status: LanShareStatus): String = when (status) {
     LanShareStatus.Off -> "Off — nothing is shared on your network."
-    LanShareStatus.Failed -> "On, but it could not start (port busy). No files are being shared."
-    is LanShareStatus.Listening -> {
-        val where = status.address?.let { "$it:${status.port}" } ?: "port ${status.port}"
-        "Listening on $where · ${status.servableCount} kept ${if (status.servableCount == 1) "file" else "files"}"
-    }
+    LanShareStatus.Failed -> "Sharing couldn't start. No files are being shared."
+    is LanShareStatus.Listening ->
+        "Sharing on — devices on your Wi-Fi can play " +
+            "${status.servableCount} kept ${if (status.servableCount == 1) "file" else "files"}."
 }
 
 /**
@@ -1713,7 +1708,7 @@ internal fun ContactDialog(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(
-                        "@ $shownEmail",
+                        "$shownEmail",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.Medium,

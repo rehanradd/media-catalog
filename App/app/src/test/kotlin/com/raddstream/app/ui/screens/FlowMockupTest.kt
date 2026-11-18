@@ -167,7 +167,7 @@ class FlowMockupTest {
         compose.onNodeWithText("We'll be back soon.").assertIsDisplayed()
         compose.onNodeWithText("Retry").performClick()
         assertEquals(1, retries)
-        compose.onNodeWithText("Use a different server").performClick()
+        compose.onNodeWithText("Use a different catalog").performClick()
         assertEquals(1, changes)
     }
 
@@ -177,13 +177,13 @@ class FlowMockupTest {
             RaddStreamTheme { MaintenanceScreen() }
         }
         compose.onNodeWithText("Retry").assertDoesNotExist()
-        compose.onNodeWithText("Use a different server").assertDoesNotExist()
+        compose.onNodeWithText("Use a different catalog").assertDoesNotExist()
     }
 
     @Test
     fun setupContentShowsFieldAndTestConnection() {
         // The content is stateless — the test owns the state, so typing into
-        // the field really updates it and the Test button enables. A fixed
+        // the field really updates it and the Connect button enables. A fixed
         // blank state would leave the button disabled and the click a no-op.
         var state by mutableStateOf(SetupUiState(serverUrl = "", showUrlField = true))
         var tested = 0
@@ -201,10 +201,11 @@ class FlowMockupTest {
         }
         compose.onNode(hasText("Welcome to", substring = true)).assertIsDisplayed()
         compose.onNodeWithText("Watch movies, shows and live TV.").assertIsDisplayed()
-        compose.onNodeWithText("Server address").assertIsDisplayed()
+        compose.onNodeWithText("Catalog address").assertIsDisplayed()
         compose.onNode(hasSetTextAction()).performTextInput("https://example.com:8080")
         assertEquals("https://example.com:8080", state.serverUrl)
-        compose.onNodeWithText("Test connection").performClick()
+        // One button only: Connect tests the address when the field is open.
+        compose.onNodeWithText("Connect").performClick()
         assertEquals(1, tested)
         // Not connected yet: Continue stays disabled, offline stays offered.
         compose.onNodeWithText("Continue").assertIsNotEnabled()
@@ -220,12 +221,13 @@ class FlowMockupTest {
             onRetryDefault = { retried++ },
             onRevealUrlField = { revealed++ },
         )
-        // The address is never printed on first sight: no field, no test.
-        compose.onNodeWithText("Server address").assertDoesNotExist()
-        compose.onNodeWithText("Test connection").assertDoesNotExist()
+        // The address is never printed on first sight: no field, and the
+        // one Connect button retries the default catalog.
+        compose.onNodeWithText("Catalog address").assertDoesNotExist()
+        compose.onNodeWithText("Connect").assertIsDisplayed()
         compose.onNodeWithText("Connect").performClick()
         assertEquals(1, retried)
-        compose.onNodeWithText("Use a different server").performClick()
+        compose.onNodeWithText("Use your own catalog").performClick()
         assertEquals(1, revealed)
     }
 

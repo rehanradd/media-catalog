@@ -340,8 +340,8 @@ object ThermalCap {
  * the app declares no equalizer dependency. [effectivePlayerGain] therefore multiplies
  * the boost into the user's own volume and clamps the product to the contract. Below the
  * ceiling the boost is completely real (a viewer at 60% who asks for 150% gets 90%); at
- * the ceiling only the part up to 100% applies, and [honestSummary] says which part, so
- * the UI can never claim a boost it did not apply.
+ * the ceiling only the part up to 100% applies, and [honestSummary] says so in plain words
+ * and points at the device volume, so the UI can never claim a boost it did not apply.
  *
  * AND THE CONTROL DOES NOT OFFER THE DEAD ZONE: a caption can explain a dead range, but a
  * thumb the viewer can drag to 170% while the sound cannot change is still a promise the build
@@ -383,21 +383,19 @@ object AudioBoostUi {
     fun requestedPercent(level: Float): Int = (AudioBoost.clampLevel(level) * 100f).roundToInt()
 
     /**
-     * User-facing caption. Never promises more than [effectivePlayerGain] delivers: at or
-     * below the ceiling it states the level, above it states the request AND the applied
-     * value, because those differ and the difference is the honest part.
+     * User-facing caption. Never promises more than [effectivePlayerGain] delivers: below the
+     * ceiling it states the applied percent and nothing else; at the ceiling it says so in
+     * plain words and points at the device volume, because the rest of the request is not
+     * something this build can apply.
      */
     fun honestSummary(level: Float, userVolume: Float): String {
         val plan = AudioBoost.plan(level)
         if (!plan.boostActive) return AudioBoost.labelFor(level)
-        val requested = requestedPercent(level)
         val applied = appliedPercent(level, userVolume)
         return if (applied >= 100) {
-            "Requested $requested% — applied at the 100% player ceiling; " +
-                "the extra ${requested - 100}% needs system volume, this build adds no software gain."
+            "Louder than the player can play — turn up your device volume for the rest."
         } else {
-            "Requested $requested% — applied $applied% of the player's 0..100% range; " +
-                "no software gain is available on this build."
+            "Volume $applied%"
         }
     }
 }

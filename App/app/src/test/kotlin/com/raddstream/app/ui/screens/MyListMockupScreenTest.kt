@@ -270,7 +270,7 @@ class MyListMockupScreenTest {
                 // scroll range; the second-rail test scrolls the rail in.
                 Box(Modifier.width(390.dp).fillMaxHeight()) {
                     MyListHiddenContent(
-                        hiddenNotice = "2 saved titles are no longer offered by this server",
+                        hiddenNotice = "2 saved titles are no longer available.",
                         popular = popular,
                         recent = recent,
                         popularLoading = popularLoading,
@@ -286,7 +286,7 @@ class MyListMockupScreenTest {
     fun hiddenBranchShowsTheNoticeAndTheWayOut() {
         hiddenContent()
         compose.onNodeWithText("Nothing to show from your list").assertIsDisplayed()
-        compose.onNodeWithText("2 saved titles are no longer offered by this server")
+        compose.onNodeWithText("2 saved titles are no longer available.")
             .assertIsDisplayed()
         compose.onNodeWithText("Browse the catalog").assertIsDisplayed()
     }

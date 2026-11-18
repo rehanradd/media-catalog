@@ -137,25 +137,26 @@ class OnboardHonestyTest {
         // this is written across concatenated fragments.
         val joined = literals.joinToString("")
         assertTrue(
-            "the modal must say the number and PIN cross this host in the clear",
-            joined.contains("in the clear"),
+            "the modal must say anyone on this network could read what is typed",
+            joined.contains("could read what you type here"),
         )
         assertTrue(
-            "and the trial must be described as a count per install, not as a lock or an identity",
-            joined.contains("per install") && joined.contains("not a lock"),
+            "and the trial must be described as a count per phone, not per person, and must " +
+                "say it does not lock the phone",
+            joined.contains("per phone") && joined.contains("don't lock your phone"),
         )
         assertTrue(
             "the card must say what a number is worth now that the derivation is deleted — the " +
                 "same fact the key card above it prints, not the claim this app used to make",
-            joined.contains("cannot turn a number into a key"),
+            joined.contains("cannot turn a number into an account code"),
         )
         assertTrue(
             "a wrongly-flagged deployment keeps its escape hatch, as the maintenance notice does",
-            joined.contains("Server card"),
+            joined.contains("catalog shown in the card above"),
         )
         assertTrue(
             "and the limiter, not the app, is what stands between a 4-digit PIN and a guesser",
-            joined.contains("Do not enter a PIN you also use somewhere else."),
+            joined.contains("don't use a PIN you use anywhere else"),
         )
     }
 

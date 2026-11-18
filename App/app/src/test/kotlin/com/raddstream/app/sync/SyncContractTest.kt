@@ -54,6 +54,29 @@ class SyncContractTest {
     }
 
     /**
+     * The preview is the last four characters and nothing else. A screenshot of the account card
+     * must never carry a usable credential: the old first-six-plus-last-four preview handed a
+     * viewer ten of sixteen characters, and ten characters of a sixteen-character alphabet is a
+     * credential half shown. Two different codes must still read as different previews, and a
+     * blank or missing code previews as nothing.
+     */
+    @Test
+    fun `keyPreview shows only the last four characters`() {
+        assertEquals("••••wxyz", SyncContract.keyPreview("abcdefghijklmnwxyz"))
+        assertEquals("••••5678", SyncContract.keyPreview("ABCD1234EFGH5678"))
+        assertNotEquals(
+            "two codes must not share a preview",
+            SyncContract.keyPreview("AAAAAAAAAAAAAAAA"),
+            SyncContract.keyPreview("AAAAAAAAAAAAAAAB"),
+        )
+        assertEquals("••••", SyncContract.keyPreview("abcd"))
+        assertEquals("••••", SyncContract.keyPreview("a"))
+        assertEquals("", SyncContract.keyPreview(""))
+        assertEquals("", SyncContract.keyPreview("   "))
+        assertEquals("", SyncContract.keyPreview(null))
+    }
+
+    /**
      * The retired attack, stated as a refusal. Every spelling of one number, and the number that
      * a whole country's worth of viewers wrote down, must open NOTHING. A single line here that
      * returns a String would mean the derivation is back.

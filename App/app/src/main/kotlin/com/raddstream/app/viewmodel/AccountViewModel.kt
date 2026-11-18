@@ -14,7 +14,7 @@ import kotlinx.coroutines.launch
 
 /**
  * Everything the account screens show, in one state. Session 123: the app
- * had no profile and no dashboard. These screens read what the server
+ * had no profile and no dashboard. These screens read what the catalog
  * already publishes (`entitlement`, `account`) and write nothing. (The
  * coin balance, the streak, the ladder, the pass catalog and the ledger
  * history lived here until coins and daily check-in were removed
@@ -87,14 +87,14 @@ class AccountViewModel @Inject constructor(
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        loadError = "Could not reach the server — showing what was last read.",
+                        loadError = "Couldn't reach the catalog — showing what was last read.",
                     )
                 }
             }
         }
     }
 
-    /** Sign out on this device: the key is dropped locally and the server is told to revoke it. */
+    /** Sign out on this device: the code is dropped locally and the catalog is told to revoke it. */
     fun signOut() {
         viewModelScope.launch {
             syncAccountRepository.signOut()

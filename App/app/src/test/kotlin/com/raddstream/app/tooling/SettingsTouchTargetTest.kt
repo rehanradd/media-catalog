@@ -14,7 +14,7 @@ import org.junit.Test
  * A source scan, like [DetailTouchTargetTest], but exact instead of a
  * character window: each call's own argument list (paren-balanced, string
  * literals stripped) must contain heightIn(min = 48.dp). A window would
- * lie here — the Test & Save button's modifier sits 801 characters past
+ * lie here — the Save button's modifier sits 801 characters past
  * its open, while the Dashboard/Profile pair is only 153 characters
  * apart. SettingsScreen carries no preview-only mock buttons, so the
  * whole file is shipped UI and the whole file is scanned.

@@ -73,13 +73,17 @@ class SetupViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(isChecking = true, message = null, isConnected = false) }
             try {
-                val stats = catalogRepository.testAndSaveServer(submittedUrl)
+                catalogRepository.testAndSaveServer(submittedUrl)
                 _uiState.update {
                     it.copy(
                         serverUrl = com.raddstream.app.network.normalizeServerUrl(submittedUrl),
                         isChecking = false,
                         isConnected = true,
-                        message = CatalogScale.connectionNotice(stats.posts),
+                        // B1: the success line prints no count — the stored
+                        // total is not a browsable count, so the count
+                        // itself is not the news. The count still lives in
+                        // the log, not on the screen.
+                        message = "Connected — you're ready to watch.",
                         messageIsError = false,
                     )
                 }

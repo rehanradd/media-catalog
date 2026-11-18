@@ -1,9 +1,7 @@
 package com.raddstream.app.viewmodel
 
-import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import coil.Coil
 import com.raddstream.app.data.ServerSettingsRepository
 import com.raddstream.app.data.Telemetry
 import com.raddstream.app.data.UserRegion
@@ -24,16 +22,13 @@ import com.raddstream.app.sync.ProfileLinkFiled
 import com.raddstream.app.sync.SyncContract
 import com.raddstream.app.sync.SyncReport
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 enum class ImageQuality(val label: String) {
     AUTO("Auto"), HIGH("High"), MEDIUM("Medium"), LOW("Battery saver");
@@ -169,13 +164,7 @@ data class SettingsUiState(
     val planMonthlyPkr: Int = 0,
     val planYearlyPkr: Int = 0,
     /**
-     * The poster-image disk cache, measured from Coil's own disk cache —
-     * null until the first measurement lands. max is the loader's own cap,
-     * so the bar is size-of-cap, never a guess at the device's free space.
-     */
-    val posterCacheBytes: Long? = null,
-    val posterCacheMaxBytes: Long? = null,
-    /** The contact form's whole state. The message lives only until it is sent. */
+     * The contact form's whole state. The message lives only until it is sent. */
     val contact: ContactUiState = ContactUiState(),
     /**
      * The regional-dub choice the onboarding screen wrote, normalized. Seeded with
@@ -202,16 +191,16 @@ data class SettingsUiState(
 /**
  * The account card's whole state, and the reason the card can stay honest.
  *
- * [revealedKey] is the only place a full key exists in UI state. It is filled by exactly two code
- * paths — a key this screen's own button just minted, and a key the launch trial minted that this
+ * [revealedKey] is the only place a full code exists in UI state. It is filled by exactly two code
+ * paths — a code this screen's own button just minted, and a code the launch trial minted that this
  * card has not shown yet — and both clear it on the same tap, so a credential is never kept on
  * screen after the viewer said they had written it down. The second path is the one exception to
  * "never read back out of storage", and it exists because the trial mints while no screen is open:
- * without it the app would have created an account whose key nobody could ever see.
+ * without it the app would have created an account whose code nobody could ever see.
  * [keyHint] is what the card falls back to: a partial preview, which is enough to tell two
- * accounts apart and is not a usable key.
+ * accounts apart and is not a usable code.
  * [keyHint] is what the card falls back to: a partial preview, which is enough to tell two
- * accounts apart and is not a usable key.
+ * accounts apart and is not a usable code.
  *
  * [accountLabel] is the only other account text this card paints, and it is the opposite of a
  * key in every respect: the viewer typed it about themselves, it is sent nowhere, and nothing
@@ -274,7 +263,6 @@ data class ContactUiState(
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
-    @ApplicationContext private val context: Context,
     private val settingsRepository: ServerSettingsRepository,
     private val catalogRepository: CatalogRepository,
     private val lanShareRunner: LanShareRunner,
@@ -298,7 +286,6 @@ class SettingsViewModel @Inject constructor(
                 _uiState.update { it.copy(paywallVisible = enabled) }
             }
         }
-        measurePosterCache()
     }
 
     /**
@@ -311,6 +298,12 @@ class SettingsViewModel @Inject constructor(
      */
     private fun observeAccount() {
         viewModelScope.launch {
+            // A5: the first read is the only one that can tell "opened
+            // already signed in" from "signed in just now" — a key that
+            // arrives later is a sign-in, and quickSignIn already syncs
+            // on that path, so only the first read may trigger the
+            // automatic sync below.
+            var firstKeyRead = true
             syncAccountRepository.syncKey.collect { key ->
                 val usable = key?.takeIf { it.isNotBlank() }
                 // One-shot: a key the launch trial minted while no screen was open. Cleared by
@@ -326,6 +319,10 @@ class SettingsViewModel @Inject constructor(
                             revealedKey = if (unseenMint) usable else it.account.revealedKey,
                         ),
                     )
+                }
+                if (firstKeyRead) {
+                    firstKeyRead = false
+                    if (usable != null) syncOnOpen()
                 }
             }
         }
@@ -389,17 +386,6 @@ class SettingsViewModel @Inject constructor(
                     )
                 }
             }
-        }
-    }
-
-    /** Reads Coil's own disk cache size and cap, on IO because both are file I/O. */
-    private fun measurePosterCache() {
-        viewModelScope.launch {
-            val (bytes, max) = withContext(Dispatchers.IO) {
-                val disk = Coil.imageLoader(context).diskCache
-                (disk?.size to disk?.maxSize)
-            }
-            _uiState.update { it.copy(posterCacheBytes = bytes, posterCacheMaxBytes = max) }
         }
     }
 
@@ -623,7 +609,7 @@ class SettingsViewModel @Inject constructor(
     /**
      * Settings review (Nov 2026, D6): the field is a door that closes.
      * Cancel returns to the "Connected to your catalog." summary line, and
-     * a successful Test & Save closes it too — the calm default Audit #51
+     * a successful Save closes it too — the calm default Audit #51
      * built must survive one tap on Change.
      */
     fun hideServerField() {
@@ -636,11 +622,14 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(isTesting = true, testMessage = null) }
             try {
-                val stats = catalogRepository.testAndSaveServer(url)
+                // B1: the success line prints no count — the stored total
+                // is not a browsable count. A save that works says only
+                // that the catalog is connected.
+                catalogRepository.testAndSaveServer(url)
                 _uiState.update {
                     it.copy(
                         isTesting = false,
-                        testMessage = CatalogScale.connectionNotice(stats.posts),
+                        testMessage = "Connected to your catalog.",
                         testIsError = false,
                         showServerField = false,
                     )
@@ -743,44 +732,6 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    /**
-     * Drop the app's fetched images: [Coil.imageLoader] is the same singleton every
-     * [com.raddstream.app.ui.components.CatalogImage] paints from — the app installs no custom
-     * loader — so this empties what the app actually downloaded, not a copy of it. Memory is
-     * cleared inline because `clear()` is free; the disk cache is walked and deleted on an IO
-     * thread because `size` and `clear()` are file I/O. Offline keeps are a different store and
-     * are deliberately untouched: they are listed and removed on the Downloads screen.
-     */
-    fun clearImageCache() {
-        val loader = Coil.imageLoader(context)
-        loader.memoryCache?.clear()
-        _uiState.update { it.copy(statusMessage = "Clearing cached poster images…") }
-        viewModelScope.launch {
-            val freedBytes = withContext(Dispatchers.IO) {
-                val disk = loader.diskCache
-                if (disk == null) 0L else disk.size.also { disk.clear() }
-            }
-            _uiState.update {
-                it.copy(
-                    statusMessage = if (freedBytes <= 0L) {
-                        "No cached poster images to clear."
-                    } else {
-                        "Cleared ${formatCacheSize(freedBytes)} of cached poster images."
-                    },
-                )
-            }
-            // The bar must show the empty cache, not the size it measured before the clear.
-            measurePosterCache()
-        }
-    }
-
-    /** Shared with the screen: the same MB/KB/B rule paints the cache bar and the cleared notice. */
-    internal fun formatCacheSize(bytes: Long): String = when {
-        bytes >= 1024 * 1024 -> "${bytes / (1024 * 1024)} MB"
-        bytes >= 1024 -> "${bytes / 1024} KB"
-        else -> "$bytes B"
-    }
-
     private fun updatePrefs(transform: (UserPreferences) -> UserPreferences) {
         _uiState.update { it.copy(prefs = transform(it.prefs)) }
     }
@@ -792,8 +743,8 @@ class SettingsViewModel @Inject constructor(
     // ── The optional sync account ────────────────────────────────────────────────
 
     /**
-     * Create an account on the connected server. The answer's key is put into UI state exactly
-     * once, by this call and by no other path, because the server only ever sends it here.
+     * Create an account on the connected catalog. The answer's code is put into UI state exactly
+     * once, by this call and by no other path, because the catalog only ever sends it here.
      */
     fun createAccount() {
         if (noServerYet()) return
@@ -801,12 +752,12 @@ class SettingsViewModel @Inject constructor(
     }
 
     /**
-     * One tap: sign in with a 16-character sync key the viewer already holds, then pull the
+     * One tap: sign in with a 16-character account code the viewer already holds, then pull the
      * library down immediately. The sign-in answer alone would leave a second device
-     * signed in but empty until the viewer found "Sync now", which is exactly the extra tap
-     * this flow exists to remove. A failed first sync does not undo the sign-in.
+     * signed in but empty until the next open, which is exactly the wait this flow exists to
+     * remove. A failed first sync does not undo the sign-in.
      *
-     * The optional label is written whether or not the key opened anything: it is a note the
+     * The optional label is written whether or not the code opened anything: it is a note the
      * viewer typed about themselves, not part of the credential, so a refused sign-in keeps it.
      */
     fun quickSignIn() {
@@ -860,8 +811,8 @@ class SettingsViewModel @Inject constructor(
     }
 
     /**
-     * The card's own precondition: an account is a row on the connected server, so without a
-     * server there is nothing to ask. Checked here rather than deep in the sync layer, because
+     * The card's own precondition: an account is a row on the connected catalog, so without a
+     * catalog there is nothing to ask. Checked here rather than deep in the sync layer, because
      * this screen is the one place that knows whether the URL field has anything in it.
      */
     private fun noServerYet(): Boolean {
@@ -912,9 +863,9 @@ class SettingsViewModel @Inject constructor(
     }
 
     /**
-     * Drop the full key on this screen; the preview stays, the credential does not linger. This is
-     * also what retires a trial-minted key's one-shot: the flag is cleared here and nowhere else,
-     * so a key the launch minted can be shown exactly once from storage.
+     * Drop the full code on this screen; the preview stays, the credential does not linger. This is
+     * also what retires a trial-minted code's one-shot: the flag is cleared here and nowhere else,
+     * so a code the launch minted can be shown exactly once from storage.
      */
     fun hideRevealedKey() {
         _uiState.update { it.copy(account = it.account.copy(revealedKey = null)) }
@@ -972,7 +923,7 @@ class SettingsViewModel @Inject constructor(
         val account = _uiState.value.account
         if (account.isLinking) return
         // The card's own precondition, said in the dialog rather than in the card's message slot:
-        // a profile is a row on a server, and with no address there is no server to write to.
+        // a profile is a row on a catalog, and with no address there is no catalog to write to.
         if (_uiState.value.serverUrl.isBlank()) {
             _uiState.update {
                 it.copy(
@@ -1081,8 +1032,8 @@ class SettingsViewModel @Inject constructor(
             return
         }
         // The card's own precondition, said in the dialog rather than in the
-        // card's message slot: a message is a row on a server, and with no
-        // address there is no server to write to.
+        // card's message slot: a message is a row on a catalog, and with no
+        // address there is no catalog to write to.
         if (_uiState.value.serverUrl.isBlank()) {
             _uiState.update {
                 it.copy(
@@ -1126,30 +1077,30 @@ class SettingsViewModel @Inject constructor(
     }
 
     /**
-     * "Sync now": both lists read, the library's missing favorites written, the pulled resume
-     * points folded into the local mirror. The counts are the only thing reported, because the
-     * app cannot name a server row — it has no title for one, and inventing a label from a
-     * handle would be exactly the provenance leak this project forbids.
+     * The automatic sync on opening the account card (A5): the manual
+     * "Sync now" button is gone, so a viewer who opens Settings already
+     * signed in gets their list brought up to date without hunting for a
+     * button. Quiet on failure — a sync that cannot finish leaves the
+     * saved list on the device, and the next open tries again; only a
+     * finished sync says so, in the card's message slot.
      */
-    fun syncNow() {
-        if (_uiState.value.account.isBusy) return
-        _uiState.update { it.copy(account = it.account.copy(isBusy = true, message = null)) }
+    private fun syncOnOpen() {
         viewModelScope.launch {
             val report = syncAccountRepository.syncNow()
+            if (!report.completed || syncAccountRepository.isPaused) return@launch
             _uiState.update {
                 it.copy(
                     account = it.account.copy(
-                        isBusy = false,
                         lastReport = report,
-                        message = syncSentence(report, paused = syncAccountRepository.isPaused),
-                        messageIsError = !report.completed,
+                        message = syncSentence(report, paused = false, signedIn = true),
+                        messageIsError = false,
                     ),
                 )
             }
         }
     }
 
-    /** Sign out, revoking the key on the server too. Local rows and keeps are untouched. */
+    /** Sign out, revoking the code on the catalog too. Local rows and keeps are untouched. */
     fun signOut() {
         if (_uiState.value.account.isBusy) return
         _uiState.update { it.copy(account = it.account.copy(isBusy = true, message = null)) }
@@ -1209,38 +1160,39 @@ class SettingsViewModel @Inject constructor(
 
     companion object {
         /**
-         * The one sentence the app says about a key it just minted. Honest about the two things
+         * The one sentence the app says about a code it just minted. Honest about the two things
          * a viewer can actually be harmed by: it is shown once, and the transport is whatever
-         * the server they chose speaks — the shipped default is HTTPS, a server the viewer
-         * points at over plain HTTP still sends the key in the clear — so the copy never
-         * claims a protection the transport does not provide. [revealWarning] picks the
-         * sentence for the server in use; [REVEAL_WARNING] is the plain-HTTP variant.
+         * the catalog they chose speaks — the shipped default is HTTPS, a catalog the viewer
+         * points at over plain HTTP still sends the code where anyone on the network can read
+         * it — so the copy never claims a protection the transport does not provide.
+         * [revealWarning] picks the sentence for the catalog in use; [REVEAL_WARNING] is the
+         * plain-HTTP variant.
          */
         const val REVEAL_WARNING =
-            "This is the only time the key is shown. Write it down now: this server speaks plain " +
-                "HTTP, so the key travels in the clear, and anyone who reads it can open your " +
-                "list. Losing it means starting a new list."
+            "This is the only time the account code is shown. Write it down now: anyone on " +
+                "this network could read it, and anyone who reads it can open your list. " +
+                "Losing it means starting a new list."
 
         const val REVEAL_WARNING_SECURED =
-            "This is the only time the key is shown. Write it down now: anyone who reads it can " +
+            "This is the only time the account code is shown. Write it down now: anyone who reads it can " +
                 "open your list. Losing it means starting a new list."
 
-        /** The reveal warning for the server in use: the plain-HTTP sentence only when the
-         * server actually speaks plain HTTP. */
+        /** The reveal warning for the catalog in use: the plain-HTTP sentence only when the
+         * catalog actually speaks plain HTTP. */
         fun revealWarning(serverUrl: String): String =
             if (serverUrl.trim().startsWith("https", ignoreCase = true)) REVEAL_WARNING_SECURED
             else REVEAL_WARNING
     }
 }
 
-/** Our own sentence for a refusal. The server's `detail` text is never shown, by design. */
-private fun refusalSentence(reason: Refusal): String = when (reason) {
-    Refusal.NO_SERVER -> "No server is connected yet, so there is nothing to sign in to."
-    Refusal.WEAK_KEY -> "Enter the 16-character sync key from the other device. A mobile number is not a key."
-    Refusal.REJECTED -> "The server refused that key. Nothing was changed on this device."
-    Refusal.THROTTLED -> "The server is asking this device to slow down. Syncing is paused until the app is restarted."
-    Refusal.OFFLINE -> "The server could not be reached. Nothing was changed on this device."
-    Refusal.SIGNED_OUT -> "That key is no longer valid here, so this device is signed out."
+/** Our own sentence for a refusal. The catalog's `detail` text is never shown, by design. */
+internal fun refusalSentence(reason: Refusal): String = when (reason) {
+    Refusal.NO_SERVER -> "Nothing to sign in to yet — connect to a catalog first."
+    Refusal.WEAK_KEY -> "Enter the 16-character account code from the other device. A mobile number is not a code."
+    Refusal.REJECTED -> "That code wasn't recognised. Nothing was changed on this device."
+    Refusal.THROTTLED -> "Syncing is paused until you restart the app."
+    Refusal.OFFLINE -> "Couldn't reach the catalog. Nothing was changed on this device."
+    Refusal.SIGNED_OUT -> "That code is no longer valid here, so this device is signed out."
 }
 
 /**
@@ -1248,18 +1200,18 @@ private fun refusalSentence(reason: Refusal): String = when (reason) {
  * words a viewer acts on and the words this repository can be audited against.
  *
  * Four rules they all obey, and the reason each one is a rule rather than a style:
- *  - **no security claim.** A server the viewer points at over plain HTTP has no TLS, so the
- *    PIN and the phone cross the wire in the clear — the shipped default is HTTPS, and the
- *    transport warning says which one is in use. Nothing here may say secure, encrypted,
- *    private, or "only you" about a plain-HTTP server;
+ *  - **no security claim.** A catalog the viewer points at over plain HTTP has no TLS, so the
+ *    PIN and the phone cross the wire where anyone on the network can read them — the shipped
+ *    default is HTTPS, and the transport warning says which one is in use. Nothing here may say
+ *    secure, encrypted, private, or "only you" about a plain-HTTP catalog;
  *  - **no lock claim.** The trial is opened by a device id this app makes up about itself
  *    (`accounts.py:240`: "client-reported … spoofable on a rooted phone"), so it is a gate, and no
  *    copy may call it verified, locked to a device, or proof of who somebody is;
- *  - **no invented entitlement.** The days come from the server's answer and the +1 comes from its
+ *  - **no invented entitlement.** The days come from the catalog's answer and the +1 comes from its
  *    `bonus_granted`, never from arithmetic this app did to a local clock;
  *  - **the escape hatch stays.** A wrongly-flagged deployment must remain escapable, so the form
- *    names the server it writes to and points at the row that changes it — the same precedent the
- *    maintenance notice set with "Use a different server".
+ *    names the catalog it writes to and points at the row that changes it — the same precedent the
+ *    maintenance notice set with "Use a different catalog".
  */
 object AccountCardCopy {
 
@@ -1273,9 +1225,8 @@ object AccountCardCopy {
 
     /** What the trial actually is, said before a viewer could mistake it for protection. */
     internal const val TRIAL_HONESTY =
-        "The server counts these days per install, not per person. It cannot tell one phone from " +
-            "another and does not try to: the count is a gate on repeat free trials, not a lock on " +
-            "your device and not proof of who you are."
+        "These free days are counted per phone, not per person. They only limit repeat free " +
+            "trials — they don't lock your phone, and they don't prove who you are."
 
     internal const val LINK_TITLE = "Link a phone number and a 4-digit PIN"
     internal const val LINK_BONUS = "+1 free VIP day, once per account"
@@ -1284,21 +1235,19 @@ object AccountCardCopy {
 
     /**
      * The transport warning. It is the sentence the whole modal exists to earn the right to show,
-     * and it states what is true about the server in use rather than what a TLS deployment would
-     * be: the plain-HTTP sentence only when the server actually speaks plain HTTP.
-     * [linkTransportWarning] picks the sentence for the server in use;
+     * and it states what is true about the catalog in use rather than what a TLS deployment would
+     * be: the plain-HTTP sentence only when the catalog actually speaks plain HTTP.
+     * [linkTransportWarning] picks the sentence for the catalog in use;
      * [LINK_TRANSPORT_WARNING] is the plain-HTTP variant.
      */
     internal const val LINK_TRANSPORT_WARNING =
-        "This server speaks plain HTTP, so the name, the number and the PIN you are about to type " +
-            "travel across the network in the clear. Anyone able to read this traffic can read them. " +
-            "Do not enter a PIN you also use somewhere else."
+        "Anyone on this network could read what you type here, so don't use a PIN you use " +
+            "anywhere else."
 
     internal const val LINK_TRANSPORT_WARNING_SECURED =
-        "This server speaks HTTPS, so the name, the number and the PIN you are about to type " +
-            "travel across the network under TLS. Do not enter a PIN you also use somewhere else."
+        "Don't use a PIN you use anywhere else."
 
-    /** The transport warning for the server in use. */
+    /** The transport warning for the catalog in use. */
     internal fun linkTransportWarning(serverUrl: String): String =
         if (serverUrl.trim().startsWith("https", ignoreCase = true)) LINK_TRANSPORT_WARNING_SECURED
         else LINK_TRANSPORT_WARNING
@@ -1311,8 +1260,8 @@ object AccountCardCopy {
      */
     internal const val LINK_PIN_MEANING =
         "The phone number is not a password and the PIN is not a second one. This app cannot turn a " +
-            "number into a key, so linking adds nothing to how well your list is protected: the key " +
-            "the server minted is the whole account. The PIN only lets you edit this profile later."
+            "number into an account code, so linking adds nothing to how well your list is protected: the account " +
+            "code is the whole account. The PIN only lets you edit this profile later."
 
     internal const val LINK_ONCE_PER_ACCOUNT =
         "The extra day is granted once per account. Linking again, or fixing a typo, changes the " +
@@ -1320,8 +1269,8 @@ object AccountCardCopy {
 
     /** The escape hatch, in the maintenance notice's own shape. */
     internal const val LINK_WHICH_SERVER =
-        "This is written to the server whose address is in the Server card above. If that is not " +
-            "the server you meant, change it there first — this form cannot move the profile for you."
+        "This goes to the catalog shown in the card above — change it there first if that's not " +
+            "the one you meant."
 
     internal const val LINK_NAME_LABEL = "A name for this account"
     internal const val LINK_PHONE_LABEL = "Phone number"
@@ -1338,50 +1287,49 @@ object AccountCardCopy {
         LinkRefusal.NOT_SIGNED_IN ->
             "This device is not signed in, so there is no account to link a profile to."
         LinkRefusal.WRONG_PIN ->
-            "That PIN does not match the one on file, so the profile was not changed. Your sync " +
-                "key still works and you are still signed in."
+            "That PIN does not match the one on file, so the profile was not changed. Your account " +
+                "code still works and you are still signed in."
         LinkRefusal.DEAD_KEY ->
-            "This server no longer recognises the key on this device, so it is signed out here. " +
+            "This catalog no longer recognises the code on this device, so it is signed out here. " +
                 "Nothing was linked."
         LinkRefusal.THROTTLED ->
-            "The server is asking this device to slow down, so the profile was not saved. Try again " +
-                "after restarting the app."
+            "Syncing is paused until you restart the app, so the profile was not saved."
         LinkRefusal.BAD_INPUT ->
-            "That name, number or PIN is not something this server will store. Nothing was changed."
+            "That name, number or PIN is not something this catalog will store. Nothing was changed."
         LinkRefusal.OFFLINE ->
-            "The server could not be reached, so nothing was linked. A number and PIN that were " +
+            "The catalog could not be reached, so nothing was linked. A number and PIN that were " +
                 "already saved stay saved."
     }
 }
 
 /**
- * What one sync pass says about itself. Every branch is a count of rows, never a title: the
- * account payload carries no displayable metadata, so any sentence naming what was synced would
- * have to invent one.
+ * What one sync pass says about itself. The success line names no counts: a sync that finished
+ * says only that the saved list is up to date on this device. The two follow-ups name titles,
+ * never rows — a title from the other device that arrived, and a title from the other device
+ * that has not arrived here yet — because the account payload carries no displayable metadata
+ * beyond the titles themselves.
  */
-private fun syncSentence(report: SyncReport, paused: Boolean, signedIn: Boolean = false): String = when {
+internal fun syncSentence(report: SyncReport, paused: Boolean, signedIn: Boolean = false): String = when {
     paused -> if (signedIn) {
-        "Signed in, but the server asked this device to slow down, so the first sync is paused until the app is restarted."
+        "Signed in, but syncing is paused until you restart the app."
     } else {
-        "The server asked this device to slow down, so syncing is paused until the app is restarted."
+        "Syncing is paused until you restart the app."
     }
     !report.completed -> if (signedIn) {
-        "Signed in on this device, but the first sync did not finish. Nothing was lost: tap Sync now to try again."
+        "Signed in on this device, but the first sync did not finish. Nothing was lost: it will try again when you open this screen."
     } else {
         "Sync did not finish. Nothing was lost: your saved list is still on this device."
     }
     else -> buildString {
-        append(if (signedIn) "Signed in and synced. " else "Synced. ")
-        append("${report.favoritesPushed} ${if (report.favoritesPushed == 1) "save" else "s"} sent up, ")
-        append("${report.progressRowsPulled} resume ${if (report.progressRowsPulled == 1) "point" else "points"} pulled down.")
+        append("Your saved list is up to date on this device.")
         if (report.favoritesPulled > 0) {
             append(" ${report.favoritesPulled} saved ${if (report.favoritesPulled == 1) "title" else "titles"} from your other device ${if (report.favoritesPulled == 1) "is" else "are"} now on this device too.")
         }
         if (report.favoritesUnknownHere > 0) {
-            append(" ${report.favoritesUnknownHere} saved ${if (report.favoritesUnknownHere == 1) "title is" else "titles are"} on the server but not on this device — open them once and they will be yours here too.")
+            append(" Some saved titles from your other device aren't on this phone yet — open one to add it here.")
         }
         if (report.favoritesUnnamable > 0) {
-            append(" ${report.favoritesUnnamable} local ${if (report.favoritesUnnamable == 1) "save has" else "saves have"} no server reference yet and stayed on this device.")
+            append(" Some titles you saved here can't move to your other devices yet.")
         }
     }
 }

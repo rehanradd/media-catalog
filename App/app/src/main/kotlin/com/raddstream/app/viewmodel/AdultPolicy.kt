@@ -181,7 +181,7 @@ object AdultPolicy {
      */
     fun hiddenNotice(hiddenCount: Int): String? = when {
         hiddenCount <= 0 -> null
-        hiddenCount == 1 -> "1 saved title is no longer offered by this server."
-        else -> "$hiddenCount saved titles are no longer offered by this server."
+        hiddenCount == 1 -> "1 saved title is no longer available."
+        else -> "$hiddenCount saved titles are no longer available."
     }
 }

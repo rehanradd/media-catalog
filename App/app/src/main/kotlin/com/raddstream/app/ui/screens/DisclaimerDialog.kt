@@ -121,11 +121,9 @@ internal fun DisclaimerDialog(
                                 style = MaterialTheme.typography.bodyMedium,
                             )
                         }
-                    Text(
-                        "Version ${disclaimer.version}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    // B8: no version in the painted text — acceptance is
+                    // already tracked per version, so the number says
+                    // nothing a viewer can act on.
                     if (disclaimer.email.isNotBlank()) {
                         // F13 (Batch B) & Small #5: ClickableText ignores LocalContentColor
                         // and rendered "Contact: " in dark ink on a dark surface. Use M3 Text

@@ -117,7 +117,7 @@ object SyncContract {
     const val MIN_SYNC_KEY_CHARS = 16
     const val MAX_SYNC_KEY_CHARS = 256
 
-    /** The length the server mints and the card calls a "16-character Sync Key". */
+    /** The length the catalog mints and the card calls a "16-character account code". */
     const val SHORT_SYNC_KEY_CHARS = 16
 
     /**
@@ -149,10 +149,12 @@ object SyncContract {
         return trimmed.none { it.code < 33 || it.code == 127 || it == '"' || it == '\\' }
     }
 
-    /** A key for the screen: never the whole thing, so a screenshot is not a credential. */
+    /** A code for the screen: never the whole thing, so a screenshot is not a credential. Only
+     * the last four characters are shown — enough to tell two accounts apart, never enough to
+     * open one. */
     fun keyPreview(syncKey: String?): String {
         val key = syncKey?.takeIf { it.isNotBlank() } ?: return ""
-        return if (key.length <= 12) key else "${key.take(6)}…${key.takeLast(4)}"
+        return if (key.length <= 4) "••••" else "••••${key.takeLast(4)}"
     }
 
     /**
@@ -182,7 +184,7 @@ object SyncContract {
     }
 
     /**
-     * A key exactly as the server mints it: sixteen characters from the URL-safe alphabet.
+     * A code exactly as the catalog mints it: sixteen characters from the URL-safe alphabet.
      * Case is preserved. The key IS the credential, so folding case would silently change
      * which account it opens — and throw away entropy while doing it.
      */

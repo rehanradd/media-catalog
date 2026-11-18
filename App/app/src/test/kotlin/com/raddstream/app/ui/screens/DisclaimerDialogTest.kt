@@ -56,7 +56,9 @@ class DisclaimerDialogTest {
         }
         compose.onNodeWithText("I understand").assertIsDisplayed()
         compose.onNodeWithText("Decline").assertIsDisplayed()
-        compose.onNodeWithText("Version 1").assertExists()
+        // B8: no version in the painted text — acceptance is tracked per
+        // version, so the number says nothing a viewer can act on.
+        compose.onNodeWithText("Version 1").assertDoesNotExist()
         compose.onNodeWithText("Contact: radddao1@gmail.com").assertExists()
         val contactNode = compose.onNode(
             androidx.compose.ui.test.hasClickAction() and

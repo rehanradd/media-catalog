@@ -84,15 +84,23 @@ class SettingsHelpFixesTest {
     }
 
     @Test
-    fun `about version line carries name code and scheme`() {
+    fun `about version line is the version name only`() {
         val line = aboutVersionLine()
+        assertEquals("Version ${Brand.versionName}", line)
+        assertFalse("no build number in the painted line, was: $line", line.contains(Brand.versionCode.toString()))
+        assertFalse("no scheme name in the painted line, was: $line", line.contains(Brand.schemeName))
+    }
+
+    @Test
+    fun `build details behind the tap still carry name code and scheme`() {
+        val details = aboutBuildDetailsLine()
         assertTrue(
-            "the line must start with the version name and code, was: $line",
-            line.startsWith("Version ${Brand.versionName} (${Brand.versionCode})"),
+            "the details must start with the version name and code, was: $details",
+            details.startsWith("Version ${Brand.versionName} (${Brand.versionCode})"),
         )
         assertTrue(
-            "the line must end with the scheme name, was: $line",
-            line.endsWith(Brand.schemeName),
+            "the details must end with the scheme name, was: $details",
+            details.endsWith(Brand.schemeName),
         )
     }
 }

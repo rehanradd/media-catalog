@@ -65,33 +65,33 @@ class StatsHonestyTest {
     }
 
     /**
-     * The notice must keep the server's figure and refuse to size it against the catalog. The
-     * direction is the load-bearing half: 2026-10-28 measured `stats.posts` as the LARGER number
-     * (the projection carries adult-flagged rows the list route refuses), 2026-10-29 measured it as
-     * the SMALLER one (`116922` against a browsable `total` of `131559`, then `134815`) because the
-     * endpoint answers from `cat_projection_meta` while the list route counts the live table. Both
-     * sentences were confident and one of them was wrong on the day it shipped, so an arrow of either
-     * sign is now a failure rather than a wording preference.
+     * The connection notice is gone: a first-run or Settings connection
+     * success no longer prints the server's stored count at all. The
+     * direction problem it was written to guard (2026-10-28 measured
+     * `stats.posts` as the LARGER number, 2026-10-29 as the SMALLER one)
+     * is solved by not printing the number — a viewer is told they are
+     * connected, and nothing else.
      */
     @Test
-    fun `the connection notice keeps the server figure and never compares its size`() {
-        for (posts in listOf(116_922, 0)) {
-            val notice = CatalogScale.connectionNotice(posts)
-
-            assertTrue(notice.contains(posts.toString()))
-            assertTrue("the number is the server's stored count", notice.contains("stores"))
-            assertTrue(
-                "and the viewer is told it is not what the grid answers with",
-                notice.contains("not the count you can browse"),
+    fun `connection success prints no stored count`() {
+        assertFalse(
+            "the notice that printed the count must not come back",
+            source("App/app/src/main/kotlin/com/raddstream/app/viewmodel/CatalogScale.kt")
+                .readText().contains("connectionNotice"),
+        )
+        assertTrue(
+            "setup says only that the viewer is ready",
+            setupViewModel.readText().contains("\"Connected — you're ready to watch.\""),
+        )
+        assertTrue(
+            "settings says only that the catalog is connected",
+            settingsViewModel.readText().contains("\"Connected to your catalog.\""),
+        )
+        for (file in listOf(setupViewModel, settingsViewModel)) {
+            assertFalse(
+                "${file.name} must not print a stored count on success",
+                file.readText().contains("connectionNotice"),
             )
-            assertFalse(notice.contains("available"))
-            assertFalse(notice.contains("title"))
-            for (arrow in listOf("smaller", "larger", "bigger", "fewer", "more works", "above", "below")) {
-                assertFalse(
-                    "a $posts-work server must not be described as $arrow the browsable catalog",
-                    notice.contains(arrow),
-                )
-            }
         }
     }
 
@@ -126,11 +126,11 @@ class StatsHonestyTest {
 
     /**
      * Session 63 removed the stored totals from Settings outright, so the Settings half of this
-     * test is now a negative: the screen must not paint a stored count at all, and the two
-     * connection notices are the surfaces that still speak through the single owner.
+     * test is now a negative: the screen must not paint a stored count at all, and neither
+     * connection success prints one either.
      */
     @Test
-    fun `the connection notices still ask the single owner and Settings shows no stored totals`() {
+    fun `no connection success prints a stored count and Settings shows no stored totals`() {
         // Positive controls: the refusal above would also pass on a file that renders nothing.
         assertFalse(
             "Session 63 removed the raw counts from Settings — they must not creep back",
@@ -138,13 +138,13 @@ class StatsHonestyTest {
         )
         assertFalse(settingsScreen.readText().contains("CatalogScale.WORKS_LABEL"))
         assertFalse(settingsScreen.readText().contains("CatalogScale.SCOPE_NOTE"))
-        assertTrue(
-            "setup speaks through the owner",
-            setupViewModel.readText().contains("CatalogScale.connectionNotice(stats.posts)"),
+        assertFalse(
+            "setup must not print a stored count on success",
+            setupViewModel.readText().contains("connectionNotice"),
         )
-        assertTrue(
-            "so does the settings connection test",
-            settingsViewModel.readText().contains("CatalogScale.connectionNotice(stats.posts)"),
+        assertFalse(
+            "so must the settings connection test",
+            settingsViewModel.readText().contains("connectionNotice"),
         )
     }
 

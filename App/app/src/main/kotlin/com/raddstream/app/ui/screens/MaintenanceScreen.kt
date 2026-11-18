@@ -52,9 +52,9 @@ import com.raddstream.app.brand.Brand
  *
  * Flow mockup (Nov 2026): a centred empty state — the sync mark in a rounded tile,
  * the reason in plain words — and one full-width dark Retry button with jade text
- * pinned to the bottom. The "Use a different server" exit is not in the mockup
+ * pinned to the bottom. The "Use a different catalog" exit is not in the mockup
  * and stays anyway, as a quiet text button under Retry: it is the only way out
- * of a wrongly-flagged server, and the mockup never asked to remove it.
+ * of a wrongly-flagged catalog, and the mockup never asked to remove it.
  */
 @Composable
 fun MaintenanceScreen(
@@ -131,7 +131,7 @@ fun MaintenanceScreen(
         if (onChangeServer != null) {
             Spacer(modifier = Modifier.height(8.dp))
             TextButton(onClick = onChangeServer) {
-                Text("Use a different server")
+                Text("Use a different catalog")
             }
         }
         Spacer(modifier = Modifier.height(16.dp))

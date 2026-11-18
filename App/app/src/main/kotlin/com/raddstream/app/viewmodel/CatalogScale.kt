@@ -25,9 +25,14 @@ package com.raddstream.app.viewmodel
  * must ask the list route for its `total` (`/api/v1/posts?limit=1` answers it adult-scoped), not
  * reskin this one.
  *
- * One owner for the phrase, because the same three numbers appear on two screens and in two
- * connection notices: a viewer who reads "Works stored" in Settings and "titles available" in the
- * setup notice has been told two different things by one server.
+ * One owner for the phrase, because the same three numbers appear on two screens: a viewer who
+ * reads "Works stored" in Settings and "titles available" in the setup notice has been told two
+ * different things by one catalog.
+ *
+ * B1 (Nov 2026): the connection notices no longer print the count at all — the stored total is
+ * not a browsable count, so the count itself is not the news. A success says only that the
+ * catalog is connected. The labels below stay the owner for any surface that ever does name a
+ * stored total, so the wording cannot drift back into a browsable claim one screen at a time.
  */
 object CatalogScale {
 
@@ -45,14 +50,4 @@ object CatalogScale {
         "Stored totals, not a browsable count: they come from the server's own tally, which can " +
             "include works this app must not show and links that no longer play, and can lag the " +
             "catalog a phone can list. Live counts reflect the connected server only."
-
-    /**
-     * The notice a successful connection prints. It keeps the server's own figure — a viewer
-     * choosing between two servers wants to know which one holds more — and says plainly that this
-     * is not the count the grid will answer with. It compares nothing: which of the two numbers is
-     * bigger is measured to have flipped between one day and the next (class doc above), so an
-     * arrow here would be a claim about someone's merge schedule, not about the app.
-     */
-    fun connectionNotice(posts: Int): String =
-        "Connected. This server stores $posts works — its own total, not the count you can browse here."
 }

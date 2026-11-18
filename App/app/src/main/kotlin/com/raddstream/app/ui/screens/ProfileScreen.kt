@@ -34,14 +34,14 @@ import com.raddstream.app.viewmodel.AccountOverviewUiState
 import com.raddstream.app.viewmodel.AccountViewModel
 
 /**
- * The profile: what this account is, on the server's own record. Session
- * 123: the app had no profile screen — the account existed only as a sync
- * key in Settings and a trial countdown. This screen shows the membership
- * and the dates the server recorded, and nothing the server did not say:
+ * The profile: what this account is, on the catalog's own record. Session
+ * 123: the app had no profile screen — the account existed only as an account
+ * code in Settings and a trial countdown. This screen shows the membership
+ * and the dates the catalog recorded, and nothing the catalog did not say:
  * no name, no phone, no invented identity. (The streak and coin balance
  * lived here until coins and daily check-in were removed 2026-11-17.)
- * Signing out drops the key on this device and tells the server to revoke
- * it, so the account cannot be reopened from a copy of the key.
+ * Signing out drops the code on this device and tells the catalog to revoke
+ * it, so the account cannot be reopened from a copy of the code.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -102,7 +102,7 @@ fun ProfileContent(
             }
             if (!state.signedIn) {
                 Text(
-                    "No account on this device yet. Sign in from Settings — an account is just a sync key, no name or phone needed.",
+                    "No account on this device yet. Sign in from Settings — an account is just an account code, no name or phone needed.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -129,13 +129,13 @@ fun ProfileContent(
                         }
                         state.lastSeenAt?.let { seen ->
                             Text(
-                                "Last seen: ${formatAccountDay(seen)}.",
+                                "Last opened: ${formatAccountDay(seen)}.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                         Text(
-                            "This app collects no name, phone, location, titles or searches. Your account is a key the server recognises, nothing more.",
+                            "This app collects no name, phone, location, titles or searches. Your account is a code the catalog recognises, nothing more.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
