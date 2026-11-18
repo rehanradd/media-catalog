@@ -207,7 +207,10 @@ class TestGetDomainsOverlay(unittest.TestCase):
         self.assertEqual(domains["7starhd"], "https://7starhd.dentist")
         self.assertEqual(domains["10xflix"], "https://10xflix.hair")
         self.assertEqual(domains["multimovies"], "https://m1.multimovies.courses")
-        self.assertEqual(domains["filmyzilla"], "https://thefilmyzilla.in")
+        # The registry still outranks the DB — but the host registry then
+        # rewrites thefilmyzilla.in to its moved domain filmdb.in (domain
+        # audit, 18 Nov), so the value get_domains() serves is the new one.
+        self.assertEqual(domains["filmyzilla"], "https://filmdb.in")
 
     def test_multimovies_precedence_is_pinned_from_outside(self):
         # Review note (crown, 2026-11-05 ~03:00): test_vidout derives its
@@ -281,7 +284,9 @@ class TestGetDomainsOverlay(unittest.TestCase):
     def test_unrelated_keys_are_untouched(self):
         domains = self._get_domains()
         self.assertEqual(domains["katmoviehd_landing"], "https://katmovieshd.net")
-        self.assertEqual(domains["hubcloud"], ff.DEFAULT_DOMAINS["hubcloud"])
+        # hubcloud is host-registry managed now: the static literal is
+        # hubcloud.ist but the audit pair rewrites it to hubcloud.mov.
+        self.assertEqual(domains["hubcloud"], "https://hubcloud.mov")
         self.assertEqual(domains["fastdl"], ff.DEFAULT_DOMAINS["fastdl"])
 
     def test_no_registry_falls_back_to_static_then_db(self):
