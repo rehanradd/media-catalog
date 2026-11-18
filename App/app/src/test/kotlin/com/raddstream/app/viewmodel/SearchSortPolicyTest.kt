@@ -56,7 +56,7 @@ class SearchSortPolicyTest {
                 label.contains("trending") || label.contains("popular"),
             )
         }
-        assertEquals("Most copies", SearchSort.MOST_SOURCES.label)
+        assertEquals("Most versions", SearchSort.MOST_SOURCES.label)
     }
 
     @Test

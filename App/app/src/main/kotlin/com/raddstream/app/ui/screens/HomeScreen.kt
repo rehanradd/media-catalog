@@ -77,6 +77,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import com.raddstream.app.brand.Brand
 import androidx.compose.ui.text.style.TextAlign
@@ -381,6 +382,9 @@ internal fun HomeContent(
             ErrorState(
                 message = state.fatal ?: "Couldn't reach the catalog.",
                 onRetry = onRefresh,
+                // Dev-cleanup (Nov 2026): Home's fatal error names its own
+                // screen instead of the shared "Something went wrong".
+                title = stringResource(R.string.home_fatal_title),
                 // The address is the one thing a person can fix themselves, and
                 // Settings is four taps away. Offer it where the failure is seen.
                 secondaryLabel = "Try a different address",

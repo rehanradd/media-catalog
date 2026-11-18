@@ -2307,7 +2307,8 @@ private fun PackedSeasonBanner(season: SeasonGroup, onPlay: (RankedPrint) -> Uni
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
-            "This season is offered as one file (${pack.qualityLabel}).",
+            pack.qualityLabel?.let { "This season is offered as one file ($it)." }
+                ?: "This season is offered as one file.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurface,
         )
@@ -2438,6 +2439,12 @@ internal fun EpisodeRow(
                     // on the Play button below — but only while a Play button exists
                     // to carry them; a download-only episode keeps its badges, its
                     // only spoken quality signal.
+                    // Dev-cleanup (Nov 2026): when the best print carries no
+                    // quality data at all there is no badge row — the old
+                    // "No quality info" label narrated the absence of
+                    // metadata, and the row already has its title plus
+                    // Play/Download. Each badge also hides itself when it
+                    // has nothing to say, so the row can end up empty.
                     FlowRow(
                         modifier = if (playableBest != null) Modifier.clearAndSetSemantics { } else Modifier,
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -2447,12 +2454,6 @@ internal fun EpisodeRow(
                         HdrBadge(print = best)
                         AudioBadge(print = best)
                     }
-                } else {
-                    Text(
-                        text = "No quality info",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
                 }
                 if (suffix.isNotBlank()) {
                     Text(
@@ -2519,7 +2520,7 @@ internal fun EpisodeRow(
                     onClick = { onPlayPrint(playableBest) },
                     modifier = Modifier.size(48.dp),
                 ) {
-                    Icon(Icons.Default.PlayArrow, contentDescription = "Play episode ${episode.numberWithinSeason}, ${playableBest.qualityLabel}$episodeFacts", tint = MaterialTheme.colorScheme.primary)
+                    Icon(Icons.Default.PlayArrow, contentDescription = "Play episode ${episode.numberWithinSeason}${playableBest.qualityLabel?.let { ", $it" } ?: ""}$episodeFacts", tint = MaterialTheme.colorScheme.primary)
                 }
             } else if (best != null) {
                 // No playable copy on this episode: the button that would have
@@ -2622,7 +2623,7 @@ internal fun EpisodeRow(
  * The spoken name for a print card's best-option line. The painted text is
  * the tier plus the playability ("Standard · Plays here"), and two prints at
  * one quality share it — so the spoken line carries the print's own facts
- * (its codec/size detail line) and its copy number, and each card speaks
+ * (its codec/size detail line) and its version number, and each card speaks
  * differently while the painted text stays the short label. Robo run 6.
  * Pure, so PrintCardSpokenLabelTest pins it.
  */
@@ -2630,7 +2631,7 @@ internal fun printSpokenLabel(print: RankedPrint, copyIndex: Int, copyTotal: Int
     buildString {
         append(print.bestOptionLabel.orEmpty())
         if (print.detailLine.isNotBlank()) append(" · ").append(print.detailLine)
-        if (copyTotal > 1) append(", copy $copyIndex of $copyTotal")
+        if (copyTotal > 1) append(", version $copyIndex of $copyTotal")
     }
 
 /**
@@ -2683,12 +2684,12 @@ private fun PrintCard(
 ) {
     // Robo run 2: two prints at one quality announced identically — "Play
     // 720p", "Download video", "Open in external player", "Picture quality
-    // 720p" — once per print. The copy number makes each print's actions
+    // 720p" — once per print. The version number makes each print's actions
     // distinct, and the badge facts move into the Play button's spoken label,
     // so the badges stay paint-only instead of repeating on every card. The
     // visible Play text is unchanged (CL-4); only what is spoken grows.
-    val copySuffix = if (copyTotal > 1) ", copy $copyIndex" else ""
-    val playText = "${print.playLabel()} ${print.qualityLabel}"
+    val copySuffix = if (copyTotal > 1) ", version $copyIndex" else ""
+    val playText = "${print.playLabel()}${print.qualityLabel?.let { " $it" } ?: ""}"
     val spokenPlay = playText + copySuffix + print.spokenBadgeFacts()
     Column(
         modifier = Modifier
@@ -2782,11 +2783,11 @@ private fun PrintCard(
                 onClick = { onKeep(print) },
                 modifier = Modifier.heightIn(min = 48.dp),
             ) {
-                Icon(Icons.Default.Download, contentDescription = "Download ${print.qualityLabel} video$copySuffix")
+                Icon(Icons.Default.Download, contentDescription = print.qualityLabel?.let { "Download $it video$copySuffix" } ?: "Download video$copySuffix")
             }
             if (print.playableHere) {
                 IconButton(onClick = { onOpenExternal(print) }, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.Default.OpenInNew, contentDescription = "Open ${print.qualityLabel} in external player$copySuffix",
+                    Icon(Icons.Default.OpenInNew, contentDescription = print.qualityLabel?.let { "Open $it in external player$copySuffix" } ?: "Open in external player$copySuffix",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
@@ -2796,7 +2797,7 @@ private fun PrintCard(
         // only offers for download says so in words, under its own buttons.
         if (!print.canStart) {
             Text(
-                text = "Download only — no playable copy for this print.",
+                text = stringResource(R.string.detail_download_only),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -2806,12 +2807,13 @@ private fun PrintCard(
 
 /**
  * Copy numbers within one quality, keyed by releaseId: the first 1080p print
- * is copy 1 of 2, the second copy 2 of 2, and a print alone at its quality is
- * copy 1 of 1 (no suffix — nothing to distinguish it from).
+ * is version 1 of 2, the second version 2 of 2, and a print alone at its quality is
+ * version 1 of 1 (no suffix — nothing to distinguish it from). Prints with no
+ * quality label group together under a null key; they still count apart.
  */
 private fun copyNumbers(prints: List<RankedPrint>): Map<Int, Pair<Int, Int>> {
     val totals = prints.groupingBy { it.qualityLabel }.eachCount()
-    val seen = mutableMapOf<String, Int>()
+    val seen = mutableMapOf<String?, Int>()
     return prints.associate { print ->
         val index = (seen[print.qualityLabel] ?: 0) + 1
         seen[print.qualityLabel] = index

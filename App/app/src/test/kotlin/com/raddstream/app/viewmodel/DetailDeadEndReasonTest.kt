@@ -16,9 +16,9 @@ import org.junit.Test
 class DetailDeadEndReasonTest {
 
     @Test
-    fun noReleasesAtAll() {
+    fun noVersionsForThisTitleYet() {
         assertEquals(
-            "No sources for this title yet.",
+            "No versions for this title yet.",
             deadEndReasonFor(
                 hasReleases = false,
                 gatedHasPrints = false,
@@ -30,9 +30,9 @@ class DetailDeadEndReasonTest {
     }
 
     @Test
-    fun onlyVipCopiesExist() {
+    fun onlyVipVersionsExist() {
         assertEquals(
-            "Only VIP copies exist for this title.",
+            "Only VIP versions exist for this title.",
             deadEndReasonFor(
                 hasReleases = true,
                 gatedHasPrints = false,
@@ -44,9 +44,9 @@ class DetailDeadEndReasonTest {
     }
 
     @Test
-    fun noCopiesForThisViewer() {
+    fun noVersionsForThisViewer() {
         assertEquals(
-            "No copies available for this title right now.",
+            "No versions available for this title right now.",
             deadEndReasonFor(
                 hasReleases = true,
                 gatedHasPrints = false,
@@ -60,7 +60,7 @@ class DetailDeadEndReasonTest {
     @Test
     fun unplayableButDownloadable() {
         assertEquals(
-            "No working sources right now — download is available.",
+            "No working versions right now — download is available.",
             deadEndReasonFor(
                 hasReleases = true,
                 gatedHasPrints = true,
@@ -74,7 +74,7 @@ class DetailDeadEndReasonTest {
     @Test
     fun unplayableAndNotDownloadable() {
         assertEquals(
-            "No working sources right now.",
+            "No working versions right now.",
             deadEndReasonFor(
                 hasReleases = true,
                 gatedHasPrints = true,

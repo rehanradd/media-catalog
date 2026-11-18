@@ -444,7 +444,25 @@ class DownloadsMockupTest {
         assertEquals("2 h 14 m", formatRemaining(2 * 3_600_000L + 14 * 60_000L))
         assertEquals("42 min", formatRemaining(42 * 60_000L))
         assertEquals("less than a minute", formatRemaining(30_000L))
-        assertEquals("soon", formatRemaining(null))
+        // Dev-cleanup (Nov 2026): an unknown countdown is "less than a
+        // minute" too — the old "soon" read as "Kept — expires in soon".
+        assertEquals("less than a minute", formatRemaining(null))
+    }
+
+    @Test
+    fun keepProgressLineBeforeTheFirstByteIsJustStarting() {
+        // Dev-cleanup (Nov 2026): while nothing has arrived and the total
+        // is unknown there are no byte counts to show — the old
+        // "0 KB / unknown size · calculating…" read as a broken counter.
+        val starting = keep(
+            id = "9",
+            title = "Echoes of Silence",
+            printLabel = "1080p · High bitrate",
+            state = KeepState.DOWNLOADING,
+            bytesDownloaded = 0L,
+            bytesTotal = 0L,
+        )
+        assertEquals("Starting…", keepProgressLine(starting))
     }
 
     @Test

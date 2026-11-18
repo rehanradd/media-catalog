@@ -542,8 +542,12 @@ internal fun PopularRow(
     // A4-F5: the rail's heading is a parameter now — the Trending rail
     // keeps its title, the second rail says "Recently Added". The default
     // is the Trending copy, so the loaded grid's starter shelf is unchanged.
+    // Dev-cleanup (Nov 2026): the Trending rail carries no subtitle — its
+    // old one ("Trending titles to start your list") said the same thing as
+    // the title. The second rail keeps its own subtitle; a null subtitle
+    // paints no line at all.
     titleRes: Int = R.string.mylist_popular_title,
-    subtitleRes: Int = R.string.mylist_popular_subtitle,
+    subtitleRes: Int? = null,
 ) {
     Column(
         modifier = modifier
@@ -557,11 +561,13 @@ internal fun PopularRow(
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onBackground,
             )
-            Text(
-                stringResource(subtitleRes),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            subtitleRes?.let {
+                Text(
+                    stringResource(it),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
         Row(
             modifier = Modifier.fillMaxWidth(),

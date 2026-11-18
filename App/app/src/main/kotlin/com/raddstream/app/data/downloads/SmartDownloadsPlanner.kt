@@ -78,7 +78,7 @@ object SmartDownloadsPlanner {
             val link = best.links.firstOrNull { !it.streamId.isBlank() && !it.isPageLink } ?: continue
             return SmartDownloadCandidate(
                 handle = link.streamId,
-                printLabel = best.qualityLabel,
+                printLabel = best.qualityLabel.orEmpty(),
                 title = episode.title ?: "Episode ${episode.numberWithinSeason}",
                 sizeBytes = best.sizeBytes,
                 season = seasonNumber,

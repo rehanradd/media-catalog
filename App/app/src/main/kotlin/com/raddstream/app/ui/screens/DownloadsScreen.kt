@@ -416,7 +416,11 @@ internal fun DeviceDownloadRow(
             DownloadMetaLine(
                 printLabel = item.shownPrintLabel(),
                 printLabelDescription = item.printLabelDescription(),
-                sizeText = if (item.bytesTotal > 0) formatMiB(item.bytesTotal) else "unknown size",
+                // Dev-cleanup (Nov 2026): an unknown total paints no size
+                // segment at all — the old lowercase "unknown size" read as
+                // a broken value, and the progress bar already says the
+                // download is moving.
+                sizeText = if (item.bytesTotal > 0) formatMiB(item.bytesTotal) else null,
             )
             if (item.state == DeviceDownloadState.DOWNLOADING ||
                 item.state == DeviceDownloadState.QUEUED
@@ -571,7 +575,7 @@ internal fun KeptItemRow(
             DownloadMetaLine(
                 printLabel = item.shownPrintLabel(),
                 printLabelDescription = item.printLabelDescription(),
-                sizeText = if (item.bytesTotal > 0) formatMiB(item.bytesTotal) else "unknown size",
+                sizeText = if (item.bytesTotal > 0) formatMiB(item.bytesTotal) else null,
             )
             if (item.state == KeepState.DOWNLOADING || item.state == KeepState.QUEUED || item.state == KeepState.NO_SPACE) {
                 // Restyle 2026-11-13: rounded ends + a visible track, same as
@@ -698,11 +702,20 @@ private fun statusLine(item: KeptItem): String {
 /**
  * The keep downloading line: real percent + real bytes + real speed + ETA, from the same rolling
  * rate the device row reports — "calculating" until the second tick, never a guessed number.
+ * Dev-cleanup (Nov 2026): while nothing has arrived and the total is unknown there are no
+ * byte counts to show — the old "0 KB / unknown size · calculating…" read as a broken
+ * counter. The line is just "Starting…" until the first bytes land.
  */
 internal fun keepProgressLine(item: KeptItem): String {
-    val total = if (item.bytesTotal > 0) formatMiB(item.bytesTotal) else "unknown size"
+    if (item.bytesDownloaded <= 0L && item.bytesTotal <= 0L) return "Starting…"
     val percent = item.percent?.let { "$it% · " } ?: ""
-    val bytes = "${formatMiB(item.bytesDownloaded)} / $total"
+    // The total is unknown: the bytes-so-far stand alone, never "X / unknown
+    // size" — the lowercase "unknown size" read as a broken value (B3).
+    val bytes = if (item.bytesTotal > 0) {
+        "${formatMiB(item.bytesDownloaded)} / ${formatMiB(item.bytesTotal)}"
+    } else {
+        formatMiB(item.bytesDownloaded)
+    }
     val speed = if (item.bytesPerSec > 0) {
         DownloadSpeed.formatSpeed(item.bytesPerSec) +
             (DownloadSpeed.formatEta(item.etaSeconds)?.let { " · $it" } ?: "")
@@ -714,7 +727,11 @@ internal fun keepProgressLine(item: KeptItem): String {
 
 /** "2 h 14 m", "42 min", "less than a minute" — the countdown an EXPIRING row speaks. */
 internal fun formatRemaining(remainingMillis: Long?): String {
-    val millis = remainingMillis ?: return "soon"
+    // Dev-cleanup (Nov 2026): an unknown countdown is "less than a minute",
+    // never the bare word "soon" — "Kept — expires in soon" is a broken
+    // sentence. Near-unreachable today (EXPIRING needs a non-null expiry),
+    // but wrong if it ever fires.
+    val millis = remainingMillis ?: return "less than a minute"
     if (millis <= 0L) return "less than a minute"
     val totalMinutes = millis / 60_000L
     if (totalMinutes < 1L) return "less than a minute"
@@ -778,7 +795,7 @@ private fun DownloadThumb() {
 private fun DownloadMetaLine(
     printLabel: String?,
     printLabelDescription: String,
-    sizeText: String,
+    sizeText: String?,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         if (printLabel != null) {
@@ -793,12 +810,14 @@ private fun DownloadMetaLine(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Text(
-            sizeText,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-        )
+        sizeText?.let {
+            Text(
+                it,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+        }
     }
 }
 

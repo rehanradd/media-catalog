@@ -229,8 +229,8 @@ data class PendingSeasonKeep(
 /**
  * Why a title cannot be played, in the viewer's own words — null when
  * it can. The answers, in order: the catalog holds nothing for
- * this title at all; it holds only VIP copies; it holds copies but none
- * this viewer may take; or it holds copies that cannot play, with a
+ * this title at all; it holds only VIP versions; it holds versions but none
+ * this viewer may take; or it holds versions that cannot play, with a
  * download still on the table when at least one of them is keepable.
  * Pure so a test can pin every branch without a ViewModel.
  */
@@ -241,11 +241,11 @@ internal fun deadEndReasonFor(
     gatedKeepable: Boolean,
     premiumLocked: Boolean,
 ): String? = when {
-    !hasReleases -> "No sources for this title yet."
-    !gatedHasPrints && premiumLocked -> "Only VIP copies exist for this title."
-    !gatedHasPrints -> "No copies available for this title right now."
-    !gatedPlayable && gatedKeepable -> "No working sources right now — download is available."
-    !gatedPlayable -> "No working sources right now."
+    !hasReleases -> "No versions for this title yet."
+    !gatedHasPrints && premiumLocked -> "Only VIP versions exist for this title."
+    !gatedHasPrints -> "No versions available for this title right now."
+    !gatedPlayable && gatedKeepable -> "No working versions right now — download is available."
+    !gatedPlayable -> "No working versions right now."
     else -> null
 }
 
@@ -304,7 +304,7 @@ internal fun seasonKeepPlan(
             ?: return@mapNotNull null
         SeasonKeepItem(
             handle = link.streamId,
-            printLabel = best.qualityLabel,
+            printLabel = best.qualityLabel.orEmpty(),
             title = episode.title ?: "Episode ${episode.numberWithinSeason}",
             sizeBytes = best.sizeBytes,
         )
@@ -326,9 +326,12 @@ fun keepSizeLabel(sizeBytes: Long?): String =
  * Wi-Fi-only note only when the viewer's own switch is on. "Salaar ·
  * 1080p · 1.30 GB · Wi-Fi only" (CacheAffordance prints GB with two
  * decimals); a size the server never named says so instead of inventing one.
+ * A print with no quality label leaves no dangling separator: blank parts
+ * are dropped, so the line reads "Salaar · 1.30 GB · Wi-Fi only".
  */
 fun keepConfirmLine(pending: PendingKeep, wifiOnly: Boolean): String {
-    val parts = listOf(pending.title, pending.printLabel, keepSizeLabel(pending.sizeBytes)) +
+    val parts = listOf(pending.title, pending.printLabel, keepSizeLabel(pending.sizeBytes))
+        .filter { it.isNotBlank() } +
         if (wifiOnly) listOf("Wi-Fi only") else emptyList()
     return parts.joinToString(" · ")
 }
@@ -1910,7 +1913,7 @@ class DetailViewModel @Inject constructor(
         }
         keep(
             handle = link.streamId,
-            printLabel = print.qualityLabel,
+            printLabel = print.qualityLabel.orEmpty(),
         )
     }
 

@@ -80,10 +80,20 @@ object WireText {
     /**
      * A language name a screen may show: the same placeholder rule as
      * [isKnownValue] — "Unknown" and "N/A" languages are dropped at render.
+     * "Multi" is dropped too: the server writes it on multi-audio works
+     * (One Piece post 1459 carries language "Multi"), and it is a
+     * multi-audio marker, not a language — it painted as "Series · Multi ·
+     * 1 season" on the detail meta line. A multi-audio print still says so
+     * through its dual-audio badge, never through a language word.
      * (The hero's [com.raddstream.app.ui.components.isKnownLanguage] is the
      * same rule; it delegates here so the two can never drift apart.)
      */
-    fun isKnownLanguage(value: String): Boolean = isKnownValue(value)
+    fun isKnownLanguage(value: String): Boolean {
+        val text = value.trim()
+        if (text.isEmpty()) return false
+        if (text.lowercase() == "multi") return false
+        return isKnownValue(value)
+    }
 
     /** A genre name a screen may show: the same placeholder rule. */
     fun isKnownGenre(value: String): Boolean = isKnownValue(value)
@@ -92,7 +102,8 @@ object WireText {
      * A print label a screen may show. Besides the generic placeholders,
      * the server's own fallback label "Unknown print" (catalog_api.py:1043 —
      * a print with no describable parts) is a placeholder too: the episode
-     * title and the quality pill fall back to "Episode N" / "Print" instead.
+     * title falls back to "Episode N", and the quality pill is hidden — the
+     * print carries no quality label at all, so there is no "Print" fallback.
      */
     fun isKnownPrintLabel(value: String?): Boolean {
         val text = value?.trim().orEmpty()

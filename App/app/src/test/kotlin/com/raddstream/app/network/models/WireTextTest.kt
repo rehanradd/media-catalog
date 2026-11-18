@@ -98,6 +98,19 @@ class WireTextTest {
     }
 
     @Test
+    fun multiIsAMultiAudioMarkerNotALanguage() {
+        // Dev-cleanup (Nov 2026): the server writes language "Multi" on
+        // multi-audio works (One Piece post 1459) — it painted as
+        // "Series · Multi · 1 season" on the detail meta line. "Multi" is
+        // not a language name, so it is dropped wherever a language is shown.
+        // A genre may still be called anything — only languages drop it.
+        assertFalse(WireText.isKnownLanguage("Multi"))
+        assertFalse(WireText.isKnownLanguage("multi"))
+        assertFalse(WireText.isKnownLanguage(" MULTI "))
+        assertTrue(WireText.isKnownGenre("Multi"))
+    }
+
+    @Test
     fun knownPrintLabelAlsoDropsTheServersUnknownPrintFallback() {
         // catalog_api.py:1043 labels a print with no describable parts
         // "Unknown print" — the episode title and the quality pill must

@@ -946,7 +946,8 @@ fun ErrorState(
     modifier: Modifier = Modifier,
     // UI-fix P2-2: one headline for every failure read the same — a dead
     // server, an empty search and a failed page all said "Something went
-    // wrong". Callers name the context; the default stays for Home's fatal.
+    // wrong". Callers name the context; the default stays for callers that
+    // have not named theirs yet (Home names its own title now).
     title: String = "Something went wrong",
     secondaryLabel: String? = null,
     onSecondary: (() -> Unit)? = null,

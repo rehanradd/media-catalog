@@ -31,11 +31,13 @@ object UserWords {
      * The rating to paint for a raw catalog value, or null when nothing
      * honest can be shown. "100.0" becomes "10.0" (the old 0–100 scale);
      * "8.6" stays "8.6"; "abc", "-1", "101" and blanks show no badge.
+     * A 0.0 means "no rating recorded", not "rated zero" — it paints
+     * nothing, so a tile never reads "★ 0.0" for an unrated film.
      */
     fun displayRating(raw: String?): String? {
         val value = raw?.trim()?.toDoubleOrNull() ?: return null
         val onTen = when {
-            value < 0 -> return null
+            value <= 0 -> return null
             value <= 10.0 -> value
             value <= 100.0 -> value / 10.0
             else -> return null

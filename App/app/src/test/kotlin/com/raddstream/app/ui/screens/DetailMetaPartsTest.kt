@@ -60,6 +60,20 @@ class DetailMetaPartsTest {
     }
 
     @Test
+    fun multiLanguageIsDropped() {
+        // Dev-cleanup (Nov 2026): "Multi" is the server's multi-audio
+        // marker, not a language — the One Piece detail page read
+        // "Series · Multi · 1 season". The segment drops; "Series" stays.
+        assertEquals(
+            listOf("Series", "1 season"),
+            detailMetaParts(
+                post(contentType = "series", language = "Multi"),
+                seasonCount = 1,
+            ),
+        )
+    }
+
+    @Test
     fun emptyPostHasNoMeta() {
         assertEquals(emptyList<String>(), detailMetaParts(post(), seasonCount = 0))
     }

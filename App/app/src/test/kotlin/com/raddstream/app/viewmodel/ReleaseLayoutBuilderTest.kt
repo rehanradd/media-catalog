@@ -427,9 +427,9 @@ class ReleaseLayoutBuilderTest {
             release(id = 1, releaseTitle = "Movie 1080p Via Fastdl Com Vipe Common", quality = "1080p"),
         ).first()
         assertEquals("Full HD", print.qualityLabel)
-        assertFalse(print.qualityLabel.lowercase().contains("fastdl"))
-        assertFalse(print.qualityLabel.lowercase().contains("vipe"))
-        assertFalse(print.qualityLabel.lowercase().contains("common"))
+        assertFalse(print.qualityLabel?.lowercase()?.contains("fastdl") == true)
+        assertFalse(print.qualityLabel?.lowercase()?.contains("vipe") == true)
+        assertFalse(print.qualityLabel?.lowercase()?.contains("common") == true)
         assertFalse(print.detailLine.lowercase().contains("fastdl"))
         assertFalse(print.detailLine.lowercase().contains("vipe"))
         assertFalse(print.detailLine.lowercase().contains("common"))
@@ -532,7 +532,9 @@ class ReleaseLayoutBuilderTest {
     // Piece print on work 112505 arrives that way, and the v8 Robo shots
     // caught it as the episode title AND the quality pill, three rows over.
     // The builder drops the placeholder at construction, so the episode
-    // falls back to "Episode N" in the UI and the pill to "Print".
+    // falls back to "Episode N" in the UI — and the print carries no quality
+    // label at all, so the pill is hidden instead of reading "Print"
+    // (dev-cleanup, Nov 2026).
 
     @Test
     fun `an unknown print release carries no placeholder title`() {
@@ -540,7 +542,7 @@ class ReleaseLayoutBuilderTest {
             release(id = 1, releaseTitle = "Unknown print", quality = "unknown"),
         ).single()
         assertNull(print.rawTitle)
-        assertEquals("Print", print.qualityLabel)
+        assertNull(print.qualityLabel)
         assertFalse(print.detailLine.lowercase().contains("unknown"))
     }
 
@@ -560,7 +562,32 @@ class ReleaseLayoutBuilderTest {
         // the placeholder never reaches the row.
         assertNull(s1.episodes.first().title)
         assertNull(s1.episodes.last().title)
-        assertEquals("Print", s1.episodes.first().prints.single().qualityLabel)
+        assertNull(s1.episodes.first().prints.single().qualityLabel)
+    }
+
+    @Test
+    fun `a print with a real quality part still labels itself`() {
+        // The null above is only for prints with nothing to say: a rung,
+        // a resolution, an HDR tag, a source or an edition still labels.
+        // ("1080p" reads as the server's own "Full HD" rung label here —
+        // the same construction the bridge-server test below uses.)
+        val print = moviePrint(
+            release(id = 1, releaseTitle = "Film (2024) 1080p WEB-DL", quality = "1080p"),
+        ).single()
+        assertEquals("Full HD", print.qualityLabel)
+    }
+
+    @Test
+    fun `sub megabyte sizes are suppressed not painted as bytes`() {
+        // Dev-cleanup (Nov 2026): a real video file is never 512 B — a
+        // sub-MB stored size means the size itself is wrong, so the detail
+        // line drops it instead of painting a raw byte count.
+        assertNull(formatBytes(512L))
+        assertNull(formatBytes(999_999L))
+        assertNull(formatBytes(0L))
+        assertEquals("1 MB", formatBytes(1L shl 20))
+        assertEquals("544 MB", formatBytes(544L shl 20))
+        assertEquals("15.2 GB", formatBytes((15.2 * (1L shl 30)).toLong()))
     }
 
     @Test

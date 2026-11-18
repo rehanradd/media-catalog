@@ -211,16 +211,23 @@ data class RankedPrint(
      */
     val rankKey: Int get() = descriptor.qualityScore * 10 + availableLinks.coerceAtMost(9)
 
-    /** What the detail row leads with: the server's quality rung, else a composed honest label. */
-    val qualityLabel: String
+    /**
+     * What the detail row leads with: the server's quality rung, else a composed honest label.
+     * Null when the print carries no quality part at all — no rung, no resolution, no HDR,
+     * no source, no edition. The old fallback ("Print", else the raw release title) painted
+     * a quality pill that literally read "Print" on prints with nothing to say about
+     * quality; a missing quality is now a missing badge, and the row falls back to its
+     * size/languages detail line. The raw title is not a quality part, so it never lands here.
+     */
+    val qualityLabel: String?
         get() {
             descriptor.qualityLabel.takeIf { it.isNotBlank() }?.let { return it }
             val parts = mutableListOf<String>()
             if (resolution != Resolution.UNKNOWN) parts.add(resolution.display())
-            hdr.firstOrNull()?.let { parts.add(it.display()) }
+            hdr.firstOrNull()?.display()?.takeIf { it.isNotBlank() }?.let { parts.add(it) }
             if (sourceTag != SourceTag.UNKNOWN) parts.add(sourceTag.display())
             edition?.let { parts.add(it.display()) }
-            return parts.joinToString(" · ").ifBlank { rawTitle?.takeIf { it.isNotBlank() } ?: "Print" }
+            return parts.joinToString(" · ").ifBlank { null }
         }
 
     /** What the detail row shows second: codec / size / languages, honest parts only. */
@@ -228,7 +235,7 @@ data class RankedPrint(
         get() {
             val parts = mutableListOf<String>()
             codec?.let { parts.add(it.display()) }
-            sizeBytes?.let { parts.add(formatBytes(it)) }
+            sizeBytes?.let { formatBytes(it)?.let { formatted -> parts.add(formatted) } }
             // A print's languages are the server's own words — "Unknown" slips
             // through here the same way it did on the audio line, so drop the
             // placeholders instead of joining them into the row.
@@ -591,10 +598,13 @@ private fun Edition.display(): String = when (this) {
 // how a "15.2GB" print is really 15.2 x 1024^3 bytes. Dividing it by 1000 here printed that same
 // file as "16.3 GB", so the detail screen disagreed with the label the release carries and with
 // the download card, which reads sizeBytes directly. Same units on both sides of the arrow.
-private fun formatBytes(bytes: Long): String = when {
+//
+// Dev-cleanup (Nov 2026): sizes under 1 MB are null, not "512 B" — a real video file is never
+// that small, so a sub-MB stored size means the size itself is wrong, and painting "512 B" on a
+// print card is a raw byte count a viewer cannot use. Internal so the rule is unit-tested.
+internal fun formatBytes(bytes: Long): String? = when {
     bytes >= 1L shl 40 -> "%.1f TB".format(bytes / (1L shl 40).toDouble())
     bytes >= 1L shl 30 -> "%.1f GB".format(bytes / (1L shl 30).toDouble())
     bytes >= 1L shl 20 -> "%.0f MB".format(bytes / (1L shl 20).toDouble())
-    bytes >= 1L shl 10 -> "%.0f KB".format(bytes / (1L shl 10).toDouble())
-    else -> "$bytes B"
+    else -> null
 }

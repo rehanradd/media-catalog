@@ -93,6 +93,10 @@ fun Pill(
  */
 @Composable
 fun PrintQualityBadge(print: RankedPrint, modifier: Modifier = Modifier) {
+    // Dev-cleanup (Nov 2026): a print with no quality part at all has no
+    // badge — the old fallback painted a pill that literally read "Print".
+    // The same early return the HDR/source/audio badges already use.
+    val label = print.qualityLabel ?: return
     val bg = when {
         print.isCam -> RaddCamPill
         print.resolution == Resolution.R2160 -> MaterialTheme.colorScheme.primaryContainer
@@ -106,11 +110,11 @@ fun PrintQualityBadge(print: RankedPrint, modifier: Modifier = Modifier) {
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
     Pill(
-        text = print.qualityLabel,
+        text = label,
         modifier = modifier,
         backgroundColor = bg,
         contentColor = fg,
-        contentDescription = "Picture quality ${print.qualityLabel}" +
+        contentDescription = "Picture quality $label" +
             if (print.isCam) ", cam recording — low quality" else "",
     )
 }

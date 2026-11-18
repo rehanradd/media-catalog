@@ -116,6 +116,10 @@
     <!-- Detail review (Nov 2026): the two contradictory hero/quality lines,
          moved out of hardcoded literals so the words are the same everywhere. -->
     <string name="detail_not_available_stream">Not available to stream yet — download it instead.</string>
+    <!-- Dev-cleanup (Nov 2026): a print the server only offers for download
+         says so in words, under its own buttons — "copy" is the word the app
+         already uses for one version of a title, "print" is catalog jargon. -->
+    <string name="detail_download_only">Download only — this copy can\'t play here.</string>
     <string name="detail_quality_auto_plays">Auto plays the best picture your plan can hold.</string>
     <string name="detail_quality_select_download">Select download quality</string>
     <!-- R3: notification channel name for the Media3 HLS keep service. -->
@@ -227,7 +231,11 @@
          "Hand-picked picks" (Nov 2026): it claimed human curation for
          the server's own trending order. -->
     <string name="mylist_popular_title">Trending to Start Your List</string>
-    <string name="mylist_popular_subtitle">Trending titles to start your list</string>
+    <!-- Dev-cleanup (Nov 2026): Home's fatal error names its own screen —
+         every other ErrorState caller already does ("Couldn't search",
+         "Could not load this row"); the shared default "Something went
+         wrong" is the vaguest headline on the most important screen. -->
+    <string name="home_fatal_title">Couldn\'t load Home</string>
     <string name="mylist_empty_message">Tap the heart on any title to save it here.</string>
     <!-- A4-F5: the empty state's primary way out — a filled button, not a
          sentence telling the viewer to go find the catalog. -->

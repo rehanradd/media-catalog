@@ -36,6 +36,15 @@ class UserWordsTest {
     }
 
     @Test
+    fun ratingZeroMeansNoRatingRecorded() {
+        // Dev-cleanup (Nov 2026): a 0.0 is "no rating recorded", not "rated
+        // zero" — it painted "★ 0.0" on tiles and "0.0 IMDb" on Detail.
+        assertNull(UserWords.displayRating("0"))
+        assertNull(UserWords.displayRating("0.0"))
+        assertNull(UserWords.displayRating("0.00"))
+    }
+
+    @Test
     fun synopsisDropsSectionMarkerLines() {
         val text = "A thief steals a dream.\n/PLOT\nHe wakes up changed."
         assertEquals(

@@ -147,8 +147,11 @@ class MyListMockupScreenTest {
         // My List review (Nov 2026): the rail's old "Most copies" title
         // read like warehouse inventory; the shelf now says what it is.
         compose.onNodeWithText("Trending to Start Your List").assertIsDisplayed()
+        // Dev-cleanup (Nov 2026): the subtitle said the same thing as the
+        // title ("Trending titles to start your list") — the rail carries
+        // the title alone now.
         compose.onNodeWithText("Trending titles to start your list")
-            .assertIsDisplayed()
+            .assertDoesNotExist()
         compose.onNodeWithText("Inception").assertIsDisplayed()
         compose.onNodeWithText("Dune").assertIsDisplayed()
         compose.onNodeWithText("McLintock!").assertIsDisplayed()

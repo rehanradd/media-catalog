@@ -11,7 +11,7 @@ import org.junit.Test
  * Robo run 6: two SD print cards (544 MB and 379 MB) both announced the
  * identical "Standard · Plays here" line — the label is the tier plus the
  * playability, and neither names the print. The spoken line now carries the
- * print's own facts (its codec/size detail line) and its copy number, so
+ * print's own facts (its codec/size detail line) and its version number, so
  * each card speaks differently while the painted text stays the short label.
  * Pins [printSpokenLabel] against real prints built the way the detail
  * screen builds them.
@@ -49,17 +49,17 @@ class PrintCardSpokenLabelTest {
         // Both paint the same short label — that is the bug's raw material.
         assertEquals(prints[0].bestOptionLabel, prints[1].bestOptionLabel)
         assertEquals("Standard · Plays here", prints[0].bestOptionLabel)
-        // The spoken lines differ: each carries its own size and copy number.
+        // The spoken lines differ: each carries its own size and version number.
         val spoken = prints.mapIndexed { index, print ->
             printSpokenLabel(print, copyIndex = index + 1, copyTotal = 2)
         }
         assertNotEquals(spoken[0], spoken[1])
-        assertEquals("Standard · Plays here · H.264 · 544 MB, copy 1 of 2", spoken[0])
-        assertEquals("Standard · Plays here · H.264 · 379 MB, copy 2 of 2", spoken[1])
+        assertEquals("Standard · Plays here · H.264 · 544 MB, version 1 of 2", spoken[0])
+        assertEquals("Standard · Plays here · H.264 · 379 MB, version 2 of 2", spoken[1])
     }
 
     @Test
-    fun singleCopyOmitsTheCopyNumber() {
+    fun singleVersionOmitsTheVersionNumber() {
         val prints = moviePrints(release(1, "544 MB"))
         assertEquals(1, prints.size)
         assertEquals(

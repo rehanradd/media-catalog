@@ -96,6 +96,16 @@ class DialogsMockupTest {
     }
 
     @Test
+    fun keepConfirmLineDropsABlankQualityLabel() {
+        // Dev-cleanup (Nov 2026): a print with no quality label leaves no
+        // dangling separator in the confirm line.
+        assertEquals(
+            "Salaar · 1.30 GB · Wi-Fi only",
+            keepConfirmLine(pendingKeep().copy(printLabel = ""), wifiOnly = true),
+        )
+    }
+
+    @Test
     fun keepConfirmShowsOneLineAndDownloadButton() {
         var confirmed = false
         compose.setContent {
