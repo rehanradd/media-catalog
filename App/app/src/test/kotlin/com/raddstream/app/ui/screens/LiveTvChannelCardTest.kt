@@ -73,6 +73,10 @@ class LiveTvChannelCardTest {
         // the words and the tagged node carries the height. A short meta
         // ("News · Urdu") is the one-line control — both go through the
         // same type scale, so the comparison holds at any scale.
+        // The tag lives inside Card(onClick = …), a clickable that merges
+        // its descendants' semantics into the card node, so the tag is
+        // only visible in the unmerged tree — the merged-tree lookup
+        // finds nothing (CI 44236763707: "could not find any node").
         val long = LiveTvChannel(
             id = 1,
             name = "Madani Channel",
@@ -88,14 +92,14 @@ class LiveTvChannelCardTest {
                 LiveTvChannelCard(channel = short, onClick = {}, modifier = Modifier.width(140.dp))
             }
         }
-        val oneLineHeight = compose.onNodeWithTag("liveTv_channelMeta")
+        val oneLineHeight = compose.onNodeWithTag("liveTv_channelMeta", useUnmergedTree = true)
             .fetchSemanticsNode().boundsInRoot.height
         compose.setContent {
             RaddStreamTheme {
                 LiveTvChannelCard(channel = long, onClick = {}, modifier = Modifier.width(140.dp))
             }
         }
-        val twoLineHeight = compose.onNodeWithTag("liveTv_channelMeta")
+        val twoLineHeight = compose.onNodeWithTag("liveTv_channelMeta", useUnmergedTree = true)
             .fetchSemanticsNode().boundsInRoot.height
         assertTrue(
             "Long meta is $twoLineHeight px, one-line control is $oneLineHeight px — expected a wrap to two lines",
