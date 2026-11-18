@@ -469,16 +469,22 @@ class WriterTests(unittest.TestCase):
         # BEGIN IMMEDIATE fails fast (50ms busy timeout), retries with
         # backoff (1s, 2s), and lands once the lock releases. The holder
         # connection is created and used inside its own thread (sqlite3
-        # objects are thread-bound).
+        # objects are thread-bound). The holder signals `locked` only after
+        # BEGIN EXCLUSIVE succeeds, so the writer cannot walk in before the
+        # lock exists (a bare start() race failed twice in CI).
+        locked = threading.Event()
+
         def hold_lock():
             holder = sqlite3.connect(self.db, timeout=30.0)
             holder.execute("BEGIN EXCLUSIVE")
+            locked.set()
             time.sleep(1.5)
             holder.execute("COMMIT")
             holder.close()
 
         holder_thread = threading.Thread(target=hold_lock)
         holder_thread.start()
+        self.assertTrue(locked.wait(timeout=10.0))
         writer = self._writer(batch_size=10, busy_timeout_ms=50)
         writer.start()
         writer.submit({"row_ids": [1, 2], "status": "dead",
@@ -493,17 +499,22 @@ class WriterTests(unittest.TestCase):
     def test_lock_exhaustion_fails_loud(self):
         # The lock never releases: retries exhaust and finish() raises.
         # Same thread-owned holder as above, but it never commits.
+        # `locked` is set only after BEGIN EXCLUSIVE succeeds, so the
+        # writer cannot walk in before the lock exists (see the retry test).
         stop = threading.Event()
+        locked = threading.Event()
 
         def hold_forever():
             holder = sqlite3.connect(self.db, timeout=30.0)
             holder.execute("BEGIN EXCLUSIVE")
+            locked.set()
             stop.wait()
             holder.execute("ROLLBACK")
             holder.close()
 
         holder_thread = threading.Thread(target=hold_forever)
         holder_thread.start()
+        self.assertTrue(locked.wait(timeout=10.0))
         try:
             writer = self._writer(batch_size=10, busy_timeout_ms=50, lock_retries=2)
             writer.start()

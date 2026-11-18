@@ -35,3 +35,4 @@ Checked before building: **link-check-lite** (tidybytetools, MIT, stdlib; checks
 - Prober GET-fallback for vcloud/rozgarlelo HEAD-vs-GET false-dead (follow-up, not this build).
 - `gpdl2.hubcloud.ist` SQL LIKE (fast_fetch.py:9360) untouched.
 - No panel restart/deploy (main chat's job through the proper procedure); no live DB, sweep loop, or verify touched.
+- 19:3x PKT main chat: lock-test race fix (holder signals Event after BEGIN EXCLUSIVE; both tests wait on it) + rebase onto main dba4fbf1 (Chromecast). test_fast_probe.py 18/18 x4 local, lock tests 3/3 isolated.
