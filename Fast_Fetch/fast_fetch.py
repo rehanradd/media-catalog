@@ -680,9 +680,21 @@ def classify_media(source_site: str, title: str, slug: str, html: str = "") -> d
     is_marathi = bool(re.search(r"\b(marathi)\b", title_slug))
     is_gujarati = bool(re.search(r"\b(gujarati)\b", title_slug))
     is_south_dubbed = bool(re.search(r"\b(south\b|south dubbed|hindi dubbed line|org dubbed)\b", title_slug))
+    # A4-F6: "Hindi ... Web Series" is an Indian original, but the phrase
+    # list above only fires on the adjacent "hindi series" — "Kesariya@100
+    # S01 (2025) Hindi Completed Web Series" fell through to the Hollywood
+    # default while its language still came out Hindi. Hindi plus a series
+    # marker within a short window is Indian; a Hindi-dubbed MOVIE (no
+    # series marker) still falls through to Hollywood, which is correct
+    # for a dubbed Hollywood film. Tradeoff, documented: a non-Indian
+    # series dubbed in Hindi (e.g. "Wednesday Hindi Dubbed Web Series")
+    # also classifies Bollywood — the catalog's Hindi-series rows are
+    # overwhelmingly Indian originals, and the language already reads
+    # Hindi either way.
+    is_hindi_series = bool(re.search(r"\bhindi\b.{0,40}\b(web series|series)\b", title_slug))
     is_indian = source_site == "rogmovies" or any([
         is_punjabi, is_telugu, is_tamil, is_malayalam, is_kannada,
-        is_bengali, is_marathi, is_gujarati, is_south_dubbed,
+        is_bengali, is_marathi, is_gujarati, is_south_dubbed, is_hindi_series,
         re.search(r"\b(bollywood|hindi movie|hindi series|ullu|alt balaji|hotstar|jiohotstar|zeecinema|sonyliv)\b", title_slug)
     ])
     is_wwe = bool(re.search(r"\b(wwe|smackdown|raw|nxt|wrestlemania|summerslam|royal rumble|ple|ppv|aew)\b", title_slug))

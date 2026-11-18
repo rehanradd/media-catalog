@@ -201,6 +201,32 @@ def normalize_rating(value) -> str | None:
     return "%.1f" % rating
 
 
+def valid_rating(value) -> float | None:
+    """A 0–10 rating as a float, or None for anything outside the scale.
+
+    This is the STORE guard, not a display conversion: a percent or vote
+    count (``"100"``, ``25``) is rejected, never divided by 10 — dividing
+    is a guess, not data, and a stored ``100.0`` is what rendered the
+    fake ★ 10.0 on ``Kesariya@100`` (A4-F6). ``normalize_rating`` above
+    still converts such values for display (pinned by the 59619eb4 audit
+    tests); the write paths must not file them. ``"7.8/10"`` labels are
+    tolerated the same way, and zero, negative, missing, non-finite and
+    unparseable values are all None.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    text = str(value).strip().split("/", 1)[0].strip()
+    if not text:
+        return None
+    try:
+        rating = float(text)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(rating) or rating <= 0 or rating > 10:
+        return None
+    return rating
+
+
 # ── work identity for search / rail dedupe ────────────────────────────────────
 
 #: Tokens that carry no identity: technical tags, sizes, qualities, and the

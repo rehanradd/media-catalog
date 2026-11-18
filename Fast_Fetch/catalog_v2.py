@@ -28,6 +28,8 @@ import sqlite3
 import time
 from pathlib import Path
 
+import title_clean
+
 BASE_DIR = Path(__file__).parent.resolve()
 
 #: A full rebuild of the production catalog runs for hours on this one-CPU box and
@@ -1052,11 +1054,12 @@ def project(conn: sqlite3.Connection, *, rev: int | None = None, reset: bool = T
         adult = any(int(_post_column(p, "is_18_plus", default=0) or 0) for p in acc.posts)
         if adult:
             adult_keys.add(key)
-        rating = acc.best.get("imdb_rating")
-        try:
-            rating = float(rating) if rating not in (None, "") else None
-        except (TypeError, ValueError):
-            rating = None
+        # A4-F6: the work rating is the store guard, not a bare float() —
+        # a percent or vote count filed on a post (``"100"`` on Kesariya@100,
+        # ``25`` on Dupahiya) used to mint a fake ★ 10.0 / ★ 2.5 work
+        # rating here. title_clean.valid_rating rejects anything outside
+        # 0–10 instead of dividing it into a plausible-looking score.
+        rating = title_clean.valid_rating(acc.best.get("imdb_rating"))
         cur = conn.execute(
             """
             INSERT INTO cat_works (work_key, title, original_title, year, work_type,

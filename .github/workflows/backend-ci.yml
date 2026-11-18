@@ -390,6 +390,15 @@ jobs:
       - name: 🧪 test_backfill_quality.py
         run: python3 -S Fast_Fetch/test_backfill_quality.py
 
+      # A4-F6 Kesariya data: out-of-range rating backfill + the store
+      # guard (merge + projector) + Hindi-series classification.
+      # Offline, stdlib, temp-file DBs, no network.
+      - name: 🧪 test_backfill_kesariya_data.py
+        run: python3 -S Fast_Fetch/test_backfill_kesariya_data.py
+
+      - name: 🧪 test_rating_guard.py
+        run: python3 -S Fast_Fetch/test_rating_guard.py
+
       - name: 🧪 test_backfill_resolved_cache.py
         run: python3 -S Fast_Fetch/test_backfill_resolved_cache.py
 

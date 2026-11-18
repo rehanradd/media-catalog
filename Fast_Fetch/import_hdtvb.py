@@ -393,6 +393,13 @@ def extract_post_data_hdtvb(
             "sources": sources,
         })
 
+    # A4-F6: industry/country used to be absent here, so save_scraped_data
+    # filed every hdtvb row under the Hollywood/USA schema defaults —
+    # Kesariya@100 (a Hindi Zee5 series) included. Classify like the other
+    # importers do (5movierulz, animahd) so the row carries its origin;
+    # the page-derived `language` above stays primary.
+    cls = fast_fetch.classify_media(SITE_KEY, raw_title, slug, page_html)
+
     return {
         "url": post_url,
         "slug": slug,
@@ -404,6 +411,8 @@ def extract_post_data_hdtvb(
         "genres": genres,
         "synopsis": synopsis,
         "language": language,
+        "industry": cls["industry"],
+        "country": cls["country"],
         "source_site": SITE_KEY,
         "canonical_key": canonical_key,
         "releases": releases,

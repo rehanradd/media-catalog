@@ -93,6 +93,44 @@ class HDTVBImportTests(unittest.TestCase):
         self.assertEqual(len(data["releases"]), 1)
         self.assertEqual(data["releases"][0]["quality"], "1080p-HEVC")
 
+    def test_extract_carries_industry_country_for_hindi_series(self):
+        # A4-F6: Kesariya@100 was filed Hollywood/USA because the
+        # extractor never set industry/country. A Hindi web series now
+        # carries Bollywood/India; a Hindi-dubbed Hollywood movie still
+        # carries Hollywood/USA.
+        series_html = """
+        <html>
+        <head><title>Kesariya@100 S01 (2025) Hindi Completed Web Series</title></head>
+        <body>
+          <h1 class="entry-title">Kesariya@100 S01 (2025) Hindi Completed Web Series HEVC ESub</h1>
+          <a href="https://hubcdn.io/cloud/series_token">Download 4.5Gb {1080p-HEVC}</a>
+        </body>
+        </html>
+        """
+        data = import_hdtvb.extract_post_data_hdtvb(
+            "https://hdtvb.net/kesariya-100-s01-2025-hindi-completed-web-series-hevc-esub.html",
+            series_html,
+            resolve_direct=False,
+        )
+        self.assertIsNotNone(data)
+        self.assertEqual(data["industry"], "Bollywood")
+        self.assertEqual(data["country"], "India")
+        movie_html = series_html.replace(
+            "Kesariya@100 S01 (2025) Hindi Completed Web Series HEVC ESub",
+            "Avengers Endgame (2019) Hindi Dubbed BluRay",
+        ).replace(
+            "Kesariya@100 S01 (2025) Hindi Completed Web Series",
+            "Avengers Endgame (2019) Hindi Dubbed BluRay",
+        )
+        data = import_hdtvb.extract_post_data_hdtvb(
+            "https://hdtvb.net/avengers-endgame-2019-hindi-dubbed-bluray.html",
+            movie_html,
+            resolve_direct=False,
+        )
+        self.assertIsNotNone(data)
+        self.assertEqual(data["industry"], "Hollywood")
+        self.assertEqual(data["country"], "USA")
+
     def test_save_post_record_into_staging_db(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             temp_db = Path(tmp_dir) / "test_hdtvb.db"

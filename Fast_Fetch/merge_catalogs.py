@@ -21,6 +21,7 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 import fast_fetch
+import title_clean
 
 
 def _fmt_size(value) -> str | None:
@@ -127,7 +128,12 @@ def _collect_staging_post(src_conn: sqlite3.Connection, post: sqlite3.Row,
         "seasons": _pick(post, "seasons"),
         "poster_url": _pick(post, "poster_url"),
         "backdrop_urls": json.dumps([backdrops]) if backdrops else _pick(post, "backdrop_urls"),
-        "imdb_rating": _pick(post, "rating", "imdb_rating"),
+        # A4-F6: a staging value outside the 0–10 scale is a percent or a
+        # vote count, not a rating — it is rejected here, at the merge into
+        # the catalog, so it can never be filed on a post (moviecok filed
+        # "100" on Kesariya@100 and "25" on Dupahiya, which the projector
+        # then minted as fake ★ 10.0 / ★ 2.5 work ratings).
+        "imdb_rating": title_clean.valid_rating(_pick(post, "rating", "imdb_rating")),
         "genres": _pick(post, "genres"),
         "synopsis": _pick(post, "synopsis"),
         "cast_names": _pick(post, "cast_names"),
@@ -201,7 +207,8 @@ def _collect_unified_post(src_conn: sqlite3.Connection, post: sqlite3.Row) -> di
         "seasons": post["seasons"],
         "poster_url": post["poster_url"],
         "backdrop_urls": post["backdrop_urls"] if "backdrop_urls" in post.keys() else None,
-        "imdb_rating": post["imdb_rating"] if "imdb_rating" in post.keys() else None,
+        "imdb_rating": title_clean.valid_rating(post["imdb_rating"])
+        if "imdb_rating" in post.keys() else None,
         "genres": post["genres"] if "genres" in post.keys() else None,
         "synopsis": post["synopsis"] if "synopsis" in post.keys() else None,
         "cast_names": post["cast_names"] if "cast_names" in post.keys() else None,
