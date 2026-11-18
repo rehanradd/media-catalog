@@ -428,10 +428,17 @@ class BrowseTests(CatalogApiTestCase):
         """Session 115: a scraped year outside 1900..next-year is junk, not
         the newest title — 2099 sorts with the missing years, last, and the
         clamped sequence stays non-increasing."""
+        # Dev-cleanup (2026-11-18, C7): the ingest now refuses a 2099, so
+        # the junk row is written out-of-band — it pins the sort's handling
+        # of the 53 legacy future-year rows still in the live catalog (the
+        # backfill that nulls them is gate-time, not yet run).
         self.add_post("site_a", "https://site-a.example/junk-2099/",
-                      clean_title="Junk 2099", year=2099, releases=[{}])
+                      clean_title="Junk 2099", year=2024, releases=[{}])
         self.add_post("site_a", "https://site-a.example/no-year/",
                       clean_title="No Year", year=None, releases=[{}])
+        self.conn.execute(
+            "UPDATE posts SET year = 2099 WHERE clean_title = 'Junk 2099'")
+        self.conn.commit()
         self.project()
         page = catalog_api.browse(self.conn, sort="newest", limit=100)
         self.assertTrue(page["ok"], page)
@@ -2322,6 +2329,154 @@ class SearchDedupTests(CatalogApiTestCase):
         self.assertEqual(catalog_api._dedupe_search_items(single), single)
         broken = [{"title": "No id here"}]
         self.assertEqual(catalog_api._dedupe_search_items(broken), broken)
+
+class PlaceholderValueTests(unittest.TestCase):
+    """Dev-cleanup (2026-11-18, C1–C3, C5): the shared placeholder /
+    genre-curation helpers. The app keeps its own identical rule
+    (WireText.isPlaceholder) as a safety net; the server is the fix."""
+
+    def test_placeholder_values_are_the_whole_set(self):
+        for value in ("Unknown", "unknown", "UNKNOWN", "N/A", "n/a",
+                      "N.A.", "null", "Null", "None", "none", "TBD",
+                      "undefined", "not specified", "not available",
+                      "not applicable", "", "   "):
+            self.assertTrue(catalog_api.is_placeholder_value(value), value)
+        for value in ("Hindi", "India", "Bollywood", "Action", "0", "2024"):
+            self.assertFalse(catalog_api.is_placeholder_value(value), value)
+        # None is a missing value, so it is a placeholder too; 0 is a real
+        # (if odd) value and is not.
+        self.assertTrue(catalog_api.is_placeholder_value(None))
+        self.assertFalse(catalog_api.is_placeholder_value(0))
+
+    def test_clean_text_value_nulls_placeholders_and_trims(self):
+        self.assertIsNone(catalog_api.clean_text_value("Unknown"))
+        self.assertIsNone(catalog_api.clean_text_value("  N/A  "))
+        self.assertIsNone(catalog_api.clean_text_value(""))
+        self.assertIsNone(catalog_api.clean_text_value(None))
+        self.assertEqual(catalog_api.clean_text_value("  India "), "India")
+
+    def test_clean_text_list_drops_placeholders_in_every_shape(self):
+        self.assertEqual(catalog_api.clean_text_list('["Unknown"]'), [])
+        self.assertEqual(catalog_api.clean_text_list('["Hindi", "Unknown"]'),
+                         ["Hindi"])
+        self.assertEqual(catalog_api.clean_text_list("Hindi, Unknown"),
+                         ["Hindi"])
+        self.assertEqual(catalog_api.clean_text_list(["Hindi", "N/A"]),
+                         ["Hindi"])
+        self.assertEqual(catalog_api.clean_text_list("Unknown"), [])
+        self.assertEqual(catalog_api.clean_text_list(None), [])
+        self.assertEqual(catalog_api.clean_text_list("Hindi"), ["Hindi"])
+
+    def test_curate_genres_drops_non_genres_and_normalises(self):
+        self.assertEqual(
+            catalog_api.curate_genres(
+                '["Action", "NETFLIX", "COMPLETED", "Hindi Dub", "Animes"]'),
+            ["Action", "Anime"])
+        self.assertEqual(
+            catalog_api.curate_genres('["Adapted From Manga", "Drama"]'),
+            ["Drama"])
+        self.assertEqual(
+            catalog_api.curate_genres('["Action", "Dual Audio", "Prime Video"]'),
+            ["Action"])
+        self.assertEqual(catalog_api.curate_genres('["NETFLIX"]'), [])
+        self.assertEqual(catalog_api.curate_genres(None), [])
+        self.assertEqual(catalog_api.curate_genres('["Action", "Drama"]'),
+                         ["Action", "Drama"])
+
+
+class PrintLabelFallbackTests(unittest.TestCase):
+    """Dev-cleanup (2026-11-18, C4 / S1): print_label() never emits
+    "Unknown print" — the exact label the user saw on every One Piece
+    episode row and quality pill. A print with no describable parts
+    returns "" (the app falls back to "Episode N") or its clean episode
+    identifier when the stored label is one."""
+
+    def _row(self, **overrides):
+        row = {"resolution": "unknown", "source_tag": "unknown",
+               "edition": "unknown", "label": "Episode 1",
+               "audio_languages": '["Unknown"]', "codec": "unknown",
+               "subtitle_mode": None, "print_version": 0,
+               "bit_depth": 0, "watermarked": 0}
+        row.update(overrides)
+        return row
+
+    def test_no_describable_parts_returns_empty_never_unknown_print(self):
+        label = catalog_api.print_label(
+            self._row(label="Download One Piece S01 Complete 720p"))
+        self.assertEqual(label, "")
+        self.assertNotIn("Unknown", label)
+
+    def test_episode_label_is_the_title(self):
+        self.assertEqual(catalog_api.print_label(self._row()), "Episode 1")
+        self.assertEqual(
+            catalog_api.print_label(self._row(label="S02E03")), "S02E03")
+        self.assertEqual(
+            catalog_api.print_label(self._row(label="Part 2")), "Part 2")
+
+    def test_scrape_fragment_never_becomes_the_label(self):
+        for fragment in ("Download One Piece S01 Complete 720p",
+                         "One Piece (2023) Hindi Dubbed",
+                         "Episode 1 Hindi Dub 720p WEB-DL"):
+            self.assertEqual(
+                catalog_api.print_label(self._row(label=fragment)), "",
+                fragment)
+
+    def test_unknown_audio_language_never_leaks_into_the_details(self):
+        label = catalog_api.print_label(
+            self._row(label="Episode 1", audio_languages='["Unknown"]'))
+        self.assertEqual(label, "Episode 1")
+        self.assertNotIn("Unknown", label)
+        label = catalog_api.print_label(
+            self._row(resolution="1080p", source_tag="webdl",
+                      label="x", audio_languages='["Unknown"]'))
+        self.assertEqual(label, "1080p WEB-DL")
+
+    def test_cam_warning_still_applies_when_the_print_is_a_cam(self):
+        label = catalog_api.print_label(
+            self._row(resolution="720p", source_tag="cam", label="x"))
+        self.assertEqual(label, "720p CAM — avoid")
+
+
+class PlaceholderWorkViewTests(CatalogApiTestCase):
+    """Dev-cleanup (2026-11-18, C1–C3, C5): a work whose stored rows
+    carry the merge's "Unknown" literals and junk genre tokens serves
+    nulls and a curated genre list in both work views — the same rule
+    the app already applies on its side."""
+
+    def test_browse_and_detail_never_serve_unknown_or_junk_genres(self):
+        self.add_post("site-z", "https://z.test/unknown-film/",
+                      clean_title="Unknown Film", year=2023,
+                      language="Unknown",
+                      genres='["Action", "NETFLIX", "COMPLETED", "Hindi Dub", "Animes"]',
+                      releases=[{"release_title": "Unknown Film (2023) 720p",
+                                 "quality": "720p", "sources": [cdn("UF-1")]}])
+        self.project(rev=2)
+        # The stored rows carry the merge's literals, as the live DB does.
+        self.conn.execute(
+            "UPDATE cat_works SET country = 'Unknown', industry = 'Unknown'"
+            " WHERE title = 'Unknown Film'")
+        self.conn.commit()
+        item = [i for i in catalog_api.browse(self.conn, limit=100)["items"]
+                if i["title"] == "Unknown Film"][0]
+        self.assertEqual(item["genres"], ["Action", "Anime"])
+        self.assertEqual(item["languages"], [])
+        # The helper returns None for a placeholder; the public edge's
+        # scrub then coerces a missing scalar under a LIST_KEY
+        # (country/industry) to "" — the established wire encoding for
+        # "missing" on these fields, which the app already drops. Either
+        # way the word "Unknown" never reaches a client.
+        self.assertEqual(item["country"], "")
+        self.assertEqual(item["industry"], "")
+        self.assertEqual(item["title"], "Unknown Film",
+                         "the title is the film's own name, not a placeholder")
+        detail = catalog_api.work_detail(
+            self.conn, work_id=self.work["Unknown Film"]["id"])
+        self.assertTrue(detail["ok"])
+        self.assertEqual(detail["work"]["genres"], ["Action", "Anime"])
+        self.assertEqual(detail["work"]["languages"], [])
+        self.assertEqual(detail["work"]["country"], "")
+        self.assertEqual(detail["work"]["industry"], "")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

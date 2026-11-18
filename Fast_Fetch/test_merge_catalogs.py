@@ -778,6 +778,76 @@ class Wave0MergeMetadataTests(unittest.TestCase):
             self.assertEqual(row["release_date"], "2025-01-31")
             self.assertEqual(row["raw_meta"], self._RAW_META)
 
+    def test_missing_industry_country_language_merge_as_null_not_unknown(self):
+        """Dev-cleanup (2026-11-18): the merge used to write the literal
+        word "Unknown" when a staging row had no industry / country /
+        language — 102,877 posts carry country "Unknown" and 103,608
+        industry "Unknown" because of it. A missing value is NULL; the
+        API nulls the stored placeholders at serve time too, so this
+        stops new ones being written."""
+        with tempfile.TemporaryDirectory() as td:
+            src_db = Path(td) / "site.db"
+            tgt_db = Path(td) / "unified.db"
+            conn = sqlite3.connect(src_db)
+            conn.executescript(
+                """
+                CREATE TABLE posts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    canonical_key TEXT, title TEXT, original_title TEXT, year INTEGER,
+                    media_type TEXT, imdb_id TEXT, tmdb_id TEXT, poster_url TEXT,
+                    backdrop_url TEXT, rating REAL, genres TEXT, synopsis TEXT,
+                    languages TEXT, language TEXT, industry TEXT, country TEXT,
+                    is_18_plus INTEGER DEFAULT 0, site TEXT, post_url TEXT,
+                    duration TEXT, runtime TEXT, director TEXT, release_date TEXT,
+                    raw_meta TEXT
+                );
+                CREATE TABLE releases (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    post_id INTEGER, label TEXT, quality TEXT, resolution TEXT,
+                    size_bytes INTEGER, season_number INTEGER, episode_number INTEGER,
+                    codec TEXT, bridge_url TEXT, audio_languages TEXT
+                );
+                CREATE TABLE sources (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    release_id INTEGER, source_name TEXT, service TEXT, resource_id TEXT,
+                    source_url TEXT, final_url TEXT, is_temporary INTEGER, quality TEXT
+                );
+                """
+            )
+            # industry / country / languages / language are all absent
+            # (NULL) on this staging row — the old defaults wrote "Unknown".
+            conn.execute(
+                "INSERT INTO posts (canonical_key, title, original_title, year,"
+                " media_type, poster_url, genres, synopsis, is_18_plus, site, post_url)"
+                " VALUES ('noplace_2024', 'Noplace', 'Noplace (2024)', 2024, 'movie',"
+                " 'https://cdn/p.jpg', '[\"Drama\"]', 'Noplace synopsis.', 0, 'somesite',"
+                " 'https://somesite.example/noplace-2024/')")
+            post_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO releases (post_id, label, quality, size_bytes, codec,"
+                " bridge_url, audio_languages) VALUES (?, 'Noplace 1080p', '1080p',"
+                " 1000, 'x264', 'https://link.example/?id=9', '[\"Hindi\"]')",
+                (post_id,))
+            rel_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO sources (release_id, source_name, service, resource_id,"
+                " source_url, final_url, is_temporary, quality) VALUES"
+                " (?, 'HubCloud', 'hubcloud', '9', 'https://link.example/?id=9',"
+                " 'https://hubcloud.ist/drive/9', 0, '1080p')",
+                (rel_id,))
+            conn.commit()
+            conn.close()
+
+            stats = merge_catalogs.merge_site_db(src_db, tgt_db, verbose=False)
+            self.assertEqual(stats["posts_merged"], 1)
+            with sqlite3.connect(tgt_db) as conn:
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    "SELECT industry, country, language FROM posts").fetchone()
+            self.assertIsNone(row["industry"])
+            self.assertIsNone(row["country"])
+            self.assertIsNone(row["language"])
+
     def test_runtime_spelling_is_picked_up_as_duration(self):
         """The shared parser/Cinemeta spell the field `runtime`; the staging
         columns of Group C spell it `duration`. Both must land."""

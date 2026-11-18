@@ -1073,8 +1073,14 @@ def project(conn: sqlite3.Connection, *, rev: int | None = None, reset: bool = T
                 is_animated,
                 1 if adult else 0,
                 acc.best.get("synopsis"), acc.best.get("genres"),
-                _post_column(head, "language", default=""), _post_column(head, "country", default="Unknown"),
-                _post_column(head, "industry", default="Unknown"), rating,
+                _post_column(head, "language", default=""),
+                # Dev-cleanup (2026-11-18): no "Unknown" defaults — the
+                # projection minted the literal word on works whose head
+                # post had no country/industry (89,029 / 89,537 works).
+                # A missing value is NULL; the API nulls placeholders
+                # at serve time too.
+                _post_column(head, "country", default=None),
+                _post_column(head, "industry", default=None), rating,
                 acc.best.get("imdb_id"), acc.best.get("tmdb_id"),
                 acc.best.get("poster_url"), acc.best.get("backdrop_urls"),
                 len({str(_post_column(p, "source_site", default="unknown")) for p in acc.posts}),

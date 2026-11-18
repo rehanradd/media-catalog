@@ -87,6 +87,16 @@ class Fixture(unittest.TestCase):
         self.addCleanup(os.environ.pop, "RADD_STREAM_SECRET", None)
         self.addCleanup(setattr, viewer, "_SIGNING_SECRET", None)
         self.addCleanup(lambda: redact.limiter._buckets.clear())
+        # Dev-cleanup (2026-11-18, C15): the facets cache is process-global
+        # and keyed by database fingerprint, so a fresh temp DB per test is
+        # already isolated — but a test that mutates its own DB between two
+        # facets calls must see the fresh counts, so reset it per test.
+        viewer._FACETS_CACHE.update(
+            {"expires": 0.0, "value": None, "fingerprint": None,
+             "rebuilding": False})
+        self.addCleanup(viewer._FACETS_CACHE.update,
+                        {"expires": 0.0, "value": None, "fingerprint": None,
+                         "rebuilding": False})
         self.seed_id = self.ingest(
             title="Dune", year=2021, content_type="movie",
             genres=["Action", "Sci-Fi", "Adventure"],
@@ -579,6 +589,63 @@ class FacetsTests(Fixture):
                 content_type=entry["key"])["total"]
             self.assertEqual(total, entry["count"],
                              "type %s" % entry["key"])
+
+    def test_placeholder_language_is_not_a_facet(self):
+        """Dev-cleanup (2026-11-18, C6): a language of "Unknown" is 60,226
+        rows of missing data, not a chip — it must not appear in the
+        facet list, and its rows must not inflate any real language."""
+        self.ingest(title="Mystery Film", year=2022, content_type="movie",
+                    genres=["Drama"], cast=["Nobody"],
+                    industry="Hollywood", language="Unknown",
+                    n_releases=1, n_sources=1)
+        facets = viewer.api_v1_get_facets()
+        keys = [entry["key"] for entry in facets["languages"]]
+        self.assertNotIn("unknown", keys)
+        self.assertNotIn("n/a", keys)
+        self.assertEqual(self._facet(facets, "languages", "english")["count"], 4)
+
+    def test_second_call_is_served_from_cache_without_rebuilding(self):
+        """Dev-cleanup (2026-11-18, C15): the facet values change slowly,
+        so a second call inside the TTL must not rescan the catalog —
+        the 503 the live server returned under sweep load was the
+        per-request full-catalog aggregate tripping the 10 s deadline."""
+        builds = []
+        original = viewer._facets_build
+
+        def _counting_build(*args, **kwargs):
+            builds.append(1)
+            return original(*args, **kwargs)
+
+        with mock.patch.object(viewer, "_facets_build", _counting_build):
+            first = viewer.api_v1_get_facets()
+            second = viewer.api_v1_get_facets()
+        self.assertEqual(len(builds), 1, "the second call must be cached")
+        self.assertEqual(first, second)
+        self.assertIsNot(first, second,
+                         "callers get a copy, never the cached entry itself")
+
+    def test_expired_entry_is_served_stale_while_it_rebuilds(self):
+        """Stale-while-revalidate, the same trade the trending order
+        already makes: an expired entry is still answered immediately,
+        and the rebuild happens off the request thread."""
+        first = viewer.api_v1_get_facets()
+        with viewer._FACETS_CACHE_LOCK:
+            viewer._FACETS_CACHE["expires"] = 0.0
+        rebuilt = threading.Event()
+        original = viewer._facets_build
+
+        def _slow_build(*args, **kwargs):
+            value = original(*args, **kwargs)
+            rebuilt.set()
+            return value
+
+        with mock.patch.object(viewer, "_facets_build", _slow_build):
+            stale = viewer.api_v1_get_facets()
+            self.assertEqual(stale, first, "stale is served, not a 503")
+            self.assertTrue(rebuilt.wait(timeout=10),
+                            "the background rebuild must finish")
+        fresh = viewer.api_v1_get_facets()
+        self.assertEqual(fresh, first)
 
 
 class GenreFilterTests(Fixture):

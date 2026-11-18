@@ -86,7 +86,12 @@ def _collect_staging_post(src_conn: sqlite3.Connection, post: sqlite3.Row,
     site = _pick(post, "site", "source_site", default=default_site) or default_site
     media_type = (_pick(post, "media_type", "content_type", default="movie") or "movie").lower()
     backdrops = _pick(post, "backdrop_url")
-    language = _pick(post, "languages", "language", default="Unknown")
+    # Dev-cleanup (2026-11-18): no "Unknown" default. A missing language
+    # is NULL, not the literal word "Unknown" — the old default is why
+    # 62,654 posts carry language "Unknown" (and the same for industry /
+    # country below). The API now nulls placeholders at serve time too;
+    # this stops new ones being written.
+    language = _pick(post, "languages", "language")
 
     releases = []
     for rel in _post_release_rows(src_conn, post):
@@ -149,8 +154,12 @@ def _collect_staging_post(src_conn: sqlite3.Connection, post: sqlite3.Row,
         "is_18_plus": _pick(post, "is_18_plus", default=0),
         "is_animated": _pick(post, "is_animated", default=0),
         "source_site": site,
-        "industry": _pick(post, "industry", default="Unknown"),
-        "country": _pick(post, "country", default="Unknown"),
+        # Dev-cleanup (2026-11-18): no "Unknown" defaults — see the
+        # language note above. 102,877 posts carry country "Unknown" and
+        # 103,608 industry "Unknown" because the merge wrote the word
+        # when the staging row had nothing.
+        "industry": _pick(post, "industry"),
+        "country": _pick(post, "country"),
         "language": language,
         "canonical_key": _pick(post, "canonical_key"),
         "tmdb_id": _pick(post, "tmdb_id"),
@@ -221,9 +230,11 @@ def _collect_unified_post(src_conn: sqlite3.Connection, post: sqlite3.Row) -> di
         "is_18_plus": post["is_18_plus"],
         "is_animated": post["is_animated"] if "is_animated" in post.keys() else 0,
         "source_site": post["source_site"],
-        "industry": post["industry"] if "industry" in post.keys() else "Unknown",
-        "country": post["country"] if "country" in post.keys() else "Unknown",
-        "language": post["language"] if "language" in post.keys() else "Unknown",
+        # Dev-cleanup (2026-11-18): no "Unknown" defaults — see the
+        # staging collector above.
+        "industry": post["industry"] if "industry" in post.keys() else None,
+        "country": post["country"] if "country" in post.keys() else None,
+        "language": post["language"] if "language" in post.keys() else None,
         "canonical_key": post["canonical_key"],
         "tmdb_id": post["tmdb_id"],
         "imdb_id": post["imdb_id"],

@@ -222,6 +222,102 @@ def _json_list(value) -> list:
     return [p.strip().strip('"').strip() for p in parts if p and p.strip()]
 
 
+#: Display placeholders — values that mean "we do not know", never a real
+#: language / country / industry / genre. Dev-cleanup (2026-11-18): the
+#: ledger stores these literals on ~60–100k works per field (language
+#: "Unknown" 62,654 posts; country 102,877; industry 103,608) because the
+#: merge used to write the word "Unknown" when a source had no value.
+#: The API must not serve them: a missing value is null (or an empty
+#: list), never the word "Unknown". The app keeps its own identical rule
+#: (WireText.isPlaceholder) as a safety net. Matching is on the
+#: casefolded, whitespace-collapsed token, so "Unknown", "UNKNOWN" and
+#: " unknown " are all placeholders — and so is the computed label
+#: "Unknown print", which the old print_label() minted for prints with
+#: no describable parts.
+_PLACEHOLDER_VALUES = frozenset({
+    "unknown", "unknown print", "n/a", "n.a.", "null", "none", "tbd",
+    "undefined", "not specified", "not available", "not applicable",
+})
+
+
+def is_placeholder_value(value) -> bool:
+    """True when `value` carries no real display value: None, blank, or
+    one of the placeholder words above."""
+    if value is None:
+        return True
+    text = " ".join(str(value).split()).casefold()
+    return text == "" or text in _PLACEHOLDER_VALUES
+
+
+def clean_text_value(value):
+    """A display string, or None when it is blank or a placeholder."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return None if is_placeholder_value(text) else text
+
+
+def clean_text_list(value) -> list:
+    """A `_json_list` with placeholder tokens dropped."""
+    return [item for item in _json_list(value)
+            if not is_placeholder_value(item)]
+
+
+#: Genre tokens that are not genres — platform names, release-status
+#: words and dub markers the importers filed verbatim into `genres`
+#: ("Hindi Dub" on 11,047 works, "NETFLIX" on 1,908, "COMPLETED" on
+#: 745). Compared on the casefolded, whitespace-collapsed token, so
+#: "NETFLIX", "Netflix" and " netflix " all match. "Animes" is not
+#: dropped, it is normalised to "Anime" (see below). Stored rows are
+#: untouched — this curates at serve time only, so a wrong entry here
+#: hides a chip, never deletes data.
+_GENRE_DENYLIST = frozenset({
+    # Platforms.
+    "netflix", "amazon prime", "amazon prime video", "prime video",
+    "disney+", "disney plus", "disney+ hotstar", "hotstar", "hbo",
+    "hbo max", "max", "hulu", "apple tv", "apple tv+", "zee5",
+    "sonyliv", "sony liv", "voot", "jio cinema", "jiocinema",
+    "mx player", "alt balaji", "altbalaji", "ullu", "crunchyroll",
+    "funimation", "aha", "eros now", "hoichoi", "mubi",
+    "lionsgate play", "discovery+", "paramount+", "peacock", "amc+",
+    "shudder", "kanopy", "sunnxt", "sun nxt", "shemaroo", "hungama",
+    "yupp tv", "yupptv", "airtel xstream", "erosnow", "jiohotstar",
+    # Release status, not a genre.
+    "completed", "ongoing", "on-going", "on going", "coming soon",
+    "announced", "cancelled", "canceled", "hiatus", "airing",
+    "finished", "upcoming", "ended", "returning series", "tba",
+    "to be announced", "not yet aired", "complete", "incomplete",
+    # Dub / audio markers, not a genre (the language list carries this).
+    "hindi dub", "hindi dubbed", "english dub", "english dubbed",
+    "dual audio", "multi audio", "multi-audio", "dual-audio",
+    "dubbed", "subbed", "multi audios", "dual audios", "hindi-dub",
+    "english-dub", "multi language", "multilingual",
+    "multi-language", "multiple audio", "all languages",
+    "original audio", "original language",
+})
+
+#: Genre spellings normalised at serve time (the stored token stays).
+_GENRE_NORMALISATIONS = {"animes": "Anime"}
+
+
+def curate_genres(value) -> list:
+    """A work's genre list with non-genres dropped and spellings
+    normalised. Placeholder tokens go first (a genre of "Unknown" is
+    not a genre); then the denylist above; then tokens starting with
+    "adapted from" ("Adapted From A Manga" is a source note, not a
+    genre). Everything else passes through verbatim, original casing
+    kept."""
+    out = []
+    for item in _json_list(value):
+        token = " ".join(str(item).split()).casefold()
+        if not token or token in _PLACEHOLDER_VALUES:
+            continue
+        if token in _GENRE_DENYLIST or token.startswith("adapted from"):
+            continue
+        out.append(_GENRE_NORMALISATIONS.get(token, str(item).strip()))
+    return out
+
+
 def normalize_text(text) -> str:
     """casefold + diacritic folding + punctuation → space, for matching only.
 
@@ -750,10 +846,17 @@ def _browse_item(row) -> dict:
         "adult": bool(work.get("is_18_plus")),
         "poster": _images(work)["poster"],
         "rating": work.get("imdb_rating"),
-        "genres": _json_list(work.get("genres")),
-        "languages": _json_list(work.get("languages")),
-        "country": work.get("country"),
-        "industry": work.get("industry"),
+        # Dev-cleanup (2026-11-18): placeholder language / country /
+        # industry are served as null (never the word "Unknown"), and
+        # genres are curated — non-genre tokens never reach a chip.
+        # Note the public edge's scrub coerces a None country/industry
+        # to "" on the wire (they sit in redact.LIST_KEYS): "" is the
+        # established encoding for "missing" on these fields, which the
+        # app already drops — the word "Unknown" is what must never ship.
+        "genres": curate_genres(work.get("genres")),
+        "languages": clean_text_list(work.get("languages")),
+        "country": clean_text_value(work.get("country")),
+        "industry": clean_text_value(work.get("industry")),
         "site_count": work.get("site_count"),
         "seasons": seasons if seasons is not None else None,
         "episodes": work.get("episode_count"),
@@ -1003,11 +1106,24 @@ def _ordered_links(conn, release_ids: list[int]) -> dict[int, list[dict]]:
 
 # ── print label ──────────────────────────────────────────────────────────────
 
+#: A raw print label that is itself a clean episode identifier
+#: ("Episode 1", "Part 2", "S02E01") — the only raw labels the human
+#: print name may fall back to. Anything else (a scrape fragment, a
+#: title) stays out: the pinned rule is that nothing from the raw
+#: scrape label leaks into the human label (see the print-label test).
+_EPISODE_LABEL_RE = re.compile(
+    r"^(?:episode|ep\.?|part|chapter|season)\s+\d+(?:\s*[-–]\s*\d+)?$"
+    r"|^E\d+$|^S\d+E\d+$", re.IGNORECASE)
+
+
 def print_label(release) -> str:
     """Human print name for the UI: '4K HDR10 BluRay REPACK', '720p CAM — avoid'.
 
     Built only from columns the projector writes; a CAM-family print always gets the
     explicit ' — avoid' warning so a cam can never look like a distribution print.
+    A print with no describable parts returns "" (or its episode
+    identifier when the stored label is one) — never "Unknown print":
+    the UI falls back to "Episode N" for an empty label.
     """
     row = _as_dict(release) if not isinstance(release, dict) else release
     res = _RES_LABEL.get(str(row.get("resolution") or "").strip().lower(),
@@ -1040,21 +1156,31 @@ def print_label(release) -> str:
     if row.get("watermarked"):
         parts.append("Watermarked")
     if not parts:
-        parts.append("Unknown print")
+        # Dev-cleanup (2026-11-18): never "Unknown print" — the exact
+        # label the user saw on every One Piece episode row and quality
+        # pill. A clean episode identifier from the stored label is the
+        # title ("Episode 1"); anything else leaves the core empty and
+        # the UI falls back to "Episode N" (the app already does this).
+        fallback = (label_text or "").strip()
+        if fallback and _EPISODE_LABEL_RE.match(fallback):
+            parts.append(fallback)
     core = " ".join(parts)
     details: list[str] = []
     codec = str(row.get("codec") or "").strip()
     if codec and codec.lower() not in ("unknown",):
         details.append(codec.upper())
-    audio = _json_list(row.get("audio_languages"))
+    # Dev-cleanup (2026-11-18): an audio language of "Unknown" is not a
+    # language — it used to leak into the label as a " + " detail.
+    audio = clean_text_list(row.get("audio_languages"))
     if audio:
         details.append(" + ".join(audio))
     if str(row.get("subtitle_mode") or "") == "external":
         details.append("ESubs")
     elif str(row.get("subtitle_mode") or "") == "hardcoded":
         details.append("HardSubs")
-    out = " · ".join([core] + [d for d in details if d]) if details else core
-    if str(row.get("source_tag") or "").strip().lower() in _CAM_TAGS:
+    segments = ([core] if core else []) + [d for d in details if d]
+    out = " · ".join(segments)
+    if out and str(row.get("source_tag") or "").strip().lower() in _CAM_TAGS:
         out = f"{out} — avoid"
     return out
 
@@ -1094,14 +1220,16 @@ def _print_view(conn, release_row, links_by_release: dict[int, list[dict]]) -> d
         "size_bytes": release.get("size_bytes"),
         "size_per_episode_bytes": release.get("size_per_episode_bytes"),
         "audio": {
-            "languages": _json_list(release.get("audio_languages")),
+            # Dev-cleanup (2026-11-18): a release language of "Unknown"
+            # is not a language — drop it (S3; 83,864 releases carry it).
+            "languages": clean_text_list(release.get("audio_languages")),
             "channels": release.get("audio_channels"),
             "codecs": _json_list(release.get("audio_codecs")),
             "dual_audio": bool(release.get("dual_audio")),
         },
         "subtitles": {
             "mode": release.get("subtitle_mode"),
-            "languages": _json_list(release.get("subtitle_languages")),
+            "languages": clean_text_list(release.get("subtitle_languages")),
         },
         "watermarked": bool(release.get("watermarked")),
         "official_print": bool(release.get("official_print")),
@@ -2051,10 +2179,12 @@ def work_detail(conn, *, work_id=None, work_key=None, slug=None, url=None,
             "work_type": work.get("work_type"),
             "animated": bool(work.get("is_animated")),
             "synopsis": work.get("synopsis"),
-            "genres": _json_list(work.get("genres")),
-            "languages": _json_list(work.get("languages")),
-            "country": work.get("country"),
-            "industry": work.get("industry"),
+            # Dev-cleanup (2026-11-18): same placeholder / genre rules as
+            # the browse item above — one rule for every work view.
+            "genres": curate_genres(work.get("genres")),
+            "languages": clean_text_list(work.get("languages")),
+            "country": clean_text_value(work.get("country")),
+            "industry": clean_text_value(work.get("industry")),
             "rating": work.get("imdb_rating"),
             "runtime_minutes": work.get("runtime_minutes"),
             "images": _images(work),
@@ -3041,6 +3171,7 @@ __all__ = [
     "browse", "search", "suggest", "work_detail", "season_detail", "episode_detail",
     "release_detail", "episode_manifest", "play_bundle", "resolve_entitlement",
     "resolve_episode_target", "catalog_state", "print_label", "normalize_text",
+    "is_placeholder_value", "clean_text_value", "clean_text_list", "curate_genres",
     "encode_cursor", "decode_cursor", "SORT_KEYS", "COVERAGE_TYPES", "DEFAULT_LIMIT",
     "MAX_LIMIT",
 ]

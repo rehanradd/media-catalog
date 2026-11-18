@@ -41,6 +41,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import db_pragmas  # serve-path SQLite pragmas (Session 125); stdlib-only
 import title_clean  # shared title/synopsis/rating rules (stdlib only)
 import quality  # release-quality spelling (DB checkup fix #6); stdlib only
+import backfill_year_from_title  # conservative year-from-title rules; stdlib only
 try:
     import panel_feed  # the operator's tuning knobs + pauses
 except Exception:  # pragma: no cover - panel_feed is always importable in-repo
@@ -5763,6 +5764,17 @@ def _normalize_scraped_data(data: dict) -> None:
     if "imdb_rating" in data:
         data["imdb_rating"] = title_clean.normalize_rating(
             data.get("imdb_rating"))
+    # Dev-cleanup (2026-11-18): a year outside 1900..this year is never a
+    # release year — several importers take the LAST year-like number in
+    # the title ("(2020) (2067)" filed as 2067). Reject it here, at the
+    # save choke point the merge funnels through too, so a bad year can
+    # never be filed on a post; the title extractor gets one chance to
+    # find the right one, otherwise the row carries no year. A missing
+    # year is left alone — the blank-year backfill owns that (C8).
+    if data.get("year") is not None:
+        data["year"] = backfill_year_from_title.validate_year(
+            data.get("year"),
+            data.get("title") or data.get("clean_title") or "")
 
 
 def _enrich_scraped_metadata(data: dict) -> None:

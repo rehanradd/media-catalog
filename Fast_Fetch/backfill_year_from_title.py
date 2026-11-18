@@ -95,6 +95,33 @@ def extract_year_from_title(title, *, max_year: int) -> int | None:
     return None
 
 
+def validate_year(value, title=None, *, max_year: int | None = None) -> int | None:
+    """The release year a new row may be filed under, or None.
+
+    Dev-cleanup (2026-11-18): importers parse a year from the post title
+    and several take the LAST year-like number, so "(2020) (2067)" was
+    filed as 2067 and "(2024) Unofficial (2029)" as 2029 — 53 posts /
+    50 works carry a future year the app then prints on the poster. A
+    year outside 1900..max_year (default: the current year) is never a
+    release year, so it is rejected and the conservative title
+    extractor above gets one chance to find the right one (the first
+    standalone in-range year); otherwise the row is filed with no year
+    at all. A missing year is honest; a future year is a lie. Used at
+    the save choke point (`fast_fetch._normalize_scraped_data`), which
+    the merge funnels through too, so one guard covers every importer.
+    """
+    if max_year is None:
+        max_year = time.localtime().tm_year
+    year = None
+    try:
+        year = int(value) if value is not None and str(value).strip() != "" else None
+    except (TypeError, ValueError):
+        year = None
+    if year is not None and 1900 <= year <= max_year:
+        return year
+    return extract_year_from_title(title, max_year=max_year)
+
+
 def scan(conn, *, max_year: int, limit: int | None):
     """Yield (post_id, title, year) for every blank-year post with a safe year."""
     sql = "SELECT id, title FROM posts WHERE year IS NULL ORDER BY id"

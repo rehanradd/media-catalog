@@ -14,6 +14,7 @@ Usage:
 from __future__ import annotations
 import base64
 import binascii
+import copy
 import hashlib
 import sys
 import json
@@ -34,6 +35,7 @@ import serve_verify
 import tiers
 import live_tv
 import api_v2
+import catalog_api
 import catalog_v2
 import engagement
 import accounts_api
@@ -5998,8 +6000,37 @@ def api_v1_get_related(work_id, page: int = 1, limit: int = 20,
         }
 
 
-def api_v1_get_facets() -> dict:
-    """GET /api/v1/facets — the browse jump-off chips.
+#: GET /api/v1/facets cache — the same stale-while-revalidate trade the
+#: trending order already makes (see `_TRENDING_ORDER_CACHE`).
+#: Dev-cleanup (2026-11-18, C15): the handler scans the whole catalog
+#: three times (genres+industries aggregate, languages GROUP BY, types
+#: GROUP BY), and under sweep load that exceeds the 10 s progress
+#: deadline — the route then 503s and the Home Browse chips fail to
+#: load (measured 20:52 PKT: facets 503 at 13.17 s while posts answered
+#: 200 in 2.88 s). The facet values change only on merges/backfills,
+#: so a 15-minute TTL is ample. A fresh entry is served as-is; an
+#: expired (or superseded-fingerprint) entry is served stale while a
+#: daemon thread rebuilds it on its own connection with no progress
+#: deadline (the request's connection carries the deadline, and this
+#: build is the query that deadline exists to kill), so no hit ever
+#: pays the grouping; only a true cold start (no entry at all) builds
+#: synchronously — once per process start. A failed rebuild logs and
+#: leaves the stale value in place for the next hit to retry. The
+#: fail-safe direction keeps its lag: an un-hide waits for the TTL,
+#: and counts can lag the same window — they are numbers, never a
+#: listing. The fingerprint scopes the entry to one database file, so
+#: a swapped catalog (or a test's throwaway DB) never gets served
+#: another file's facets.
+_FACETS_CACHE_TTL_SECONDS = 900.0
+#: {"expires": float(monotonic), "value": dict | None,
+#:  "fingerprint": tuple, "rebuilding": bool}
+_FACETS_CACHE: dict = {"expires": 0.0, "value": None,
+                       "fingerprint": None, "rebuilding": False}
+_FACETS_CACHE_LOCK = threading.Lock()
+
+
+def _facets_build(*, deadline_seconds=SEARCH_DEADLINE_SECONDS) -> dict:
+    """The facet groups, computed fresh from the catalog.
 
     Four groups, each entry {key, label, count}: genres (the 11 panel
     categories), languages (top 12), industries (the 5 fixed keys), types
@@ -6012,12 +6043,13 @@ def api_v1_get_facets() -> dict:
     """
     _ensure_schema()
     with get_db() as conn:
-        deadline = time.monotonic() + SEARCH_DEADLINE_SECONDS
+        if deadline_seconds is not None:
+            deadline = time.monotonic() + deadline_seconds
 
-        def _facets_deadline():
-            return 1 if time.monotonic() > deadline else 0
+            def _facets_deadline():
+                return 1 if time.monotonic() > deadline else 0
 
-        conn.set_progress_handler(_facets_deadline, 1000)
+            conn.set_progress_handler(_facets_deadline, 1000)
         adult = redact.adult_clause("p")
         hidden = panel_feed.hidden_work_ids()
         hidden_sql = ""
@@ -6050,7 +6082,9 @@ def api_v1_get_facets() -> dict:
                       for key in INDUSTRY_KEYS]
         # Languages: group by the raw value, then split multi-language
         # rows in Python — a Hindi+English post counts for both, the same
-        # rows a `language=` filter matches.
+        # rows a `language=` filter matches. Placeholder tokens are
+        # dropped (dev-cleanup C6): a language of "Unknown" is not a
+        # chip, it is 60,226 rows of missing data.
         lang_counts: dict[str, int] = {}
         lang_rows = conn.execute(
             "SELECT p.language, COUNT(*) AS c FROM posts p"
@@ -6058,6 +6092,8 @@ def api_v1_get_facets() -> dict:
             % (adult, hidden_sql), hidden_params).fetchall()
         for raw, count in lang_rows:
             for token in _genre_tokens(raw):
+                if catalog_api.is_placeholder_value(token):
+                    continue
                 lang_counts[token] = lang_counts.get(token, 0) + int(count)
         languages = [{"key": key, "label": key.title(), "count": count}
                      for key, count in sorted(
@@ -6074,6 +6110,68 @@ def api_v1_get_facets() -> dict:
                  if ctype]
         return {"genres": genres, "languages": languages,
                 "industries": industries, "types": types}
+
+
+def _facets_rebuild_background() -> None:
+    """Rebuild the facets cache off the request path, on its own
+    connection and with no progress deadline — the request's connection
+    carries the 10 s deadline, and this build is the query that
+    deadline exists to kill, so it must never run on it. A failure here
+    is not an error for any client: the stale facets stay served and
+    the next hit re-triggers a rebuild."""
+    try:
+        value = _facets_build(deadline_seconds=None)
+    except Exception as exc:  # noqa: BLE001 — the stale value covers it
+        sys.stderr.write("facets rebuild failed: %s\n" % (exc,))
+    else:
+        with _FACETS_CACHE_LOCK:
+            _FACETS_CACHE["value"] = value
+            _FACETS_CACHE["fingerprint"] = _trending_db_fingerprint()
+            _FACETS_CACHE["expires"] = time.monotonic() + _FACETS_CACHE_TTL_SECONDS
+    finally:
+        with _FACETS_CACHE_LOCK:
+            _FACETS_CACHE["rebuilding"] = False
+
+
+def _facets_rebuild_async() -> bool:
+    """Start a background facets rebuild unless one is already running
+    for this process. Returns True when a thread was started. The
+    caller serves the stale facets either way."""
+    with _FACETS_CACHE_LOCK:
+        if _FACETS_CACHE["rebuilding"]:
+            return False
+        _FACETS_CACHE["rebuilding"] = True
+    thread = threading.Thread(target=_facets_rebuild_background,
+                              daemon=True)
+    thread.start()
+    return True
+
+
+def api_v1_get_facets() -> dict:
+    """GET /api/v1/facets — the browse jump-off chips, served from the
+    cache above. A deep copy is returned so no caller can mutate the
+    cached entry. The entry is scoped to one database file by its
+    fingerprint: a value built for another file is never served."""
+    fingerprint = _trending_db_fingerprint()
+    with _FACETS_CACHE_LOCK:
+        same_file = (_FACETS_CACHE["value"] is not None
+                     and _FACETS_CACHE["fingerprint"] is not None
+                     and _FACETS_CACHE["fingerprint"][0] == fingerprint[0])
+        fresh = (same_file
+                 and _FACETS_CACHE["fingerprint"] == fingerprint
+                 and time.monotonic() < _FACETS_CACHE["expires"])
+        if fresh:
+            return copy.deepcopy(_FACETS_CACHE["value"])
+        stale = _FACETS_CACHE["value"] if same_file else None
+    if stale is not None:
+        _facets_rebuild_async()
+        return copy.deepcopy(stale)
+    value = _facets_build()
+    with _FACETS_CACHE_LOCK:
+        _FACETS_CACHE["value"] = value
+        _FACETS_CACHE["fingerprint"] = _trending_db_fingerprint()
+        _FACETS_CACHE["expires"] = time.monotonic() + _FACETS_CACHE_TTL_SECONDS
+    return copy.deepcopy(value)
 
 
 def api_v1_search_by_media(query: str = "", duration_s=None, resolution: str = "",

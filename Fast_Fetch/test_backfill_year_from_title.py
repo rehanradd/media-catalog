@@ -110,6 +110,42 @@ class ExtractYearTests(unittest.TestCase):
             2020)
 
 
+class ValidateYearTests(unittest.TestCase):
+    """Dev-cleanup (2026-11-18, C7): the scrape-time year clamp the
+    importers now share through `_normalize_scraped_data` — a year
+    outside 1900..current year is rejected, falling back to the first
+    safe year in the title, else NULL. The audit found 53 posts dated
+    2027+ because the title's LAST year-like number won ("(2020)
+    (2067)" → 2067)."""
+
+    def test_valid_year_passes_through(self):
+        self.assertEqual(byt.validate_year(2024, max_year=MAX_YEAR), 2024)
+        self.assertEqual(byt.validate_year("2024", max_year=MAX_YEAR), 2024)
+
+    def test_future_year_falls_back_to_the_title_then_null(self):
+        self.assertEqual(
+            byt.validate_year(2067, "Some Film (2020) (2067)",
+                              max_year=MAX_YEAR), 2020)
+        self.assertIsNone(
+            byt.validate_year(2067, "Some Film (2067)", max_year=MAX_YEAR))
+        self.assertIsNone(byt.validate_year(2027, max_year=MAX_YEAR))
+
+    def test_too_old_year_is_rejected(self):
+        self.assertIsNone(byt.validate_year(1899, max_year=MAX_YEAR))
+        self.assertIsNone(
+            byt.validate_year(1899, "Old Film (1899)", max_year=MAX_YEAR))
+
+    def test_missing_or_unparseable_year_is_null(self):
+        self.assertIsNone(byt.validate_year(None, max_year=MAX_YEAR))
+        self.assertIsNone(
+            byt.validate_year("not a year", max_year=MAX_YEAR))
+        self.assertIsNone(byt.validate_year("", max_year=MAX_YEAR))
+
+    def test_boundary_years_are_kept(self):
+        self.assertEqual(byt.validate_year(1900, max_year=MAX_YEAR), 1900)
+        self.assertEqual(byt.validate_year(2026, max_year=MAX_YEAR), 2026)
+
+
 class ScanAndApplyTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

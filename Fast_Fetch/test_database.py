@@ -204,6 +204,29 @@ class DatabaseSaveTests(unittest.TestCase):
             "SELECT imdb_rating FROM posts WHERE id = ?", (post_id,))[0]
         self.assertIsNone(row[0])
 
+    def test_ingest_clamps_a_future_year_from_the_title(self):
+        """Dev-cleanup (2026-11-18, C7): a scraper that parses the LAST
+        year-like number ("(2020) (2067)" → 2067) used to file 53 posts
+        dated 2027+. The shared normaliser now rejects a year past the
+        current year, falling back to the first safe year in the title,
+        else NULL — so no new future-dated row can be written."""
+        data = self.media("site_a", "https://site-a.example/future-year/",
+                          title="Some Film (2020) (2067)",
+                          clean_title="Some Film", year=2067)
+        post_id = fast_fetch.save_scraped_data(data)
+        row = self.rows(
+            "SELECT year FROM posts WHERE id = ?", (post_id,))[0]
+        self.assertEqual(row[0], 2020)
+
+    def test_ingest_nulls_a_future_year_with_no_safe_fallback(self):
+        data = self.media("site_a", "https://site-a.example/future-only/",
+                          title="Some Film (2067)",
+                          clean_title="Some Film", year=2067)
+        post_id = fast_fetch.save_scraped_data(data)
+        row = self.rows(
+            "SELECT year FROM posts WHERE id = ?", (post_id,))[0]
+        self.assertIsNone(row[0])
+
     def test_an_unprobed_source_is_stored_as_unverified_not_active(self):
         """
         `status` is a measurement, so the writer may not invent one.
@@ -4572,10 +4595,23 @@ seg-00002.ts
             ("Junk 2099", 2099),
         ]
         for title, year in seed:
+            # Dev-cleanup (2026-11-18, C7): the ingest now refuses a 2099
+            # (and nulls a 0, the same as the zero-to-null backfill), so the
+            # junk rows are written out-of-band — they pin the list's
+            # handling of the legacy future-year / zero-year rows still in
+            # the live catalog (the backfill that nulls them is gate-time,
+            # not yet run).
+            save_year = 2024 if title in ("Junk 2099", "ZeroYear") else year
             fast_fetch.save_scraped_data(
                 self.media("site_a", f"https://site-a.example/{title.lower()}/",
-                           title=f"{title} ({year})" if year else title,
-                           clean_title=title, year=year))
+                           title=f"{title} ({save_year})" if save_year else title,
+                           clean_title=title, year=save_year))
+        with fast_fetch.get_db() as conn:
+            conn.execute(
+                "UPDATE posts SET year = 2099 WHERE clean_title = 'Junk 2099'")
+            conn.execute(
+                "UPDATE posts SET year = 0 WHERE clean_title = 'ZeroYear'")
+            conn.commit()
 
         with patch.object(viewer, "DB_PATH", self.db_path):
             default = viewer.api_v1_get_posts(limit=10)["results"]
