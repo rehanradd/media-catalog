@@ -68,7 +68,7 @@ class ProvenanceWireTest {
             add(print.rawTitle.orEmpty())
             links.forEach { add(it.displayLabel()) }
         }
-        val leaked = rendered.filter { line -> needles.any { line.lowercase().contains(it) } }
+        val leaked = rendered.filter { line -> needles.any { line?.lowercase()?.contains(it) == true } }
         assertTrue("provenance reached a rendered label: $leaked", leaked.isEmpty())
     }
 
