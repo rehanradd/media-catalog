@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -150,6 +151,7 @@ fun MyListScreen(
             state.favorites.isEmpty() && state.hiddenCount > 0 -> MyListHiddenContent(
                 hiddenNotice = state.hiddenNotice,
                 popular = state.popular,
+                recent = state.recent,
                 popularLoading = !popularSettled,
                 onPostClick = onPostClick,
                 isFavorite = isFavorite,
@@ -159,10 +161,12 @@ fun MyListScreen(
             )
             state.favorites.isEmpty() -> MyListEmptyContent(
                 popular = state.popular,
+                recent = state.recent,
                 popularLoading = !popularSettled,
                 onPostClick = onPostClick,
                 isFavorite = isFavorite,
                 onToggleFavorite = { viewModel.toggleFavorite(it) },
+                onBrowseClick = onBrowseClick,
                 modifier = Modifier.fillMaxSize().padding(contentPadding),
             )
             else -> MyListLoadedContent(
@@ -200,6 +204,8 @@ internal fun MyListHiddenContent(
     popularLoading: Boolean = false,
     isFavorite: (Post) -> Boolean = { false },
     onToggleFavorite: ((Post) -> Unit)? = null,
+    /** A4-F5: the second discovery rail — same titles as the empty state's, below Trending. */
+    recent: List<Post> = emptyList(),
 ) {
     Column(modifier = modifier) {
         EmptyState(
@@ -231,6 +237,19 @@ internal fun MyListHiddenContent(
             )
         } else if (popularLoading) {
             PosterRailSkeleton(cells = 3, modifier = Modifier.padding(bottom = 16.dp))
+        }
+        // A4-F5: the second rail, below Trending — the hidden list gets the
+        // same discovery as the truly-empty one, so it never ends in a void either.
+        if (recent.isNotEmpty()) {
+            PopularRow(
+                popular = recent,
+                onPostClick = onPostClick,
+                isFavorite = isFavorite,
+                onToggleFavorite = onToggleFavorite,
+                titleRes = R.string.mylist_recent_title,
+                subtitleRes = R.string.mylist_recent_subtitle,
+                modifier = Modifier.padding(bottom = 16.dp),
+            )
         }
     }
 }
@@ -400,6 +419,15 @@ internal fun MyListEmptyContent(
     popularLoading: Boolean = false,
     isFavorite: (Post) -> Boolean = { false },
     onToggleFavorite: ((Post) -> Unit)? = null,
+    /**
+     * A4-F5: the empty state's primary way out — the filled "Browse
+     * Titles" button under the copy, to Search/Browse (wired in NavGraph).
+     * The copy alone ("tap the heart…") sent the viewer hunting for a
+     * title to save with no way to reach one.
+     */
+    onBrowseClick: () -> Unit = {},
+    /** A4-F5: the second discovery rail — freshest titles, below Trending. */
+    recent: List<Post> = emptyList(),
 ) {
     Column(modifier = modifier) {
         EmptyState(
@@ -408,6 +436,16 @@ internal fun MyListEmptyContent(
             icon = { MyListEmptyHeartIcon() },
             fillScreen = false,
             modifier = Modifier.fillMaxWidth(),
+            action = {
+                Button(
+                    onClick = onBrowseClick,
+                    // The primary way out gets the 48dp floor every other
+                    // control on this screen already has, and the shared
+                    // browse tag the hidden state's button already carries
+                    // — the two branches never render together.
+                    modifier = Modifier.testTag(MyListBrowseButtonTag).heightIn(min = 48.dp),
+                ) { Text(stringResource(R.string.mylist_browse_titles)) }
+            },
         )
         if (popular.isNotEmpty()) {
             PopularRow(
@@ -423,6 +461,25 @@ internal fun MyListEmptyContent(
             )
         } else if (popularLoading) {
             PosterRailSkeleton(cells = 3, modifier = Modifier.padding(bottom = 16.dp))
+        }
+        // A4-F5: the second discovery rail, below Trending. The choice over
+        // vertically centring the empty-state block: the Nov 2026 review
+        // deliberately un-centred it (a weight(1f) EmptyState pushed the
+        // rail to the bottom edge), and centring would only split the same
+        // void top and bottom on a tall phone. A second rail fills the
+        // space with something worth tapping instead, in the screen's own
+        // rail pattern. It renders only when the load produced titles; a
+        // failed load settles to no second rail, like the first.
+        if (recent.isNotEmpty()) {
+            PopularRow(
+                popular = recent,
+                onPostClick = onPostClick,
+                isFavorite = isFavorite,
+                onToggleFavorite = onToggleFavorite,
+                titleRes = R.string.mylist_recent_title,
+                subtitleRes = R.string.mylist_recent_subtitle,
+                modifier = Modifier.padding(bottom = 16.dp),
+            )
         }
     }
 }
@@ -472,6 +529,11 @@ internal fun PopularRow(
     isFavorite: (Post) -> Boolean = { false },
     onToggleFavorite: ((Post) -> Unit)? = null,
     modifier: Modifier = Modifier,
+    // A4-F5: the rail's heading is a parameter now — the Trending rail
+    // keeps its title, the second rail says "Recently Added". The default
+    // is the Trending copy, so the loaded grid's starter shelf is unchanged.
+    titleRes: Int = R.string.mylist_popular_title,
+    subtitleRes: Int = R.string.mylist_popular_subtitle,
 ) {
     Column(
         modifier = modifier
@@ -481,12 +543,12 @@ internal fun PopularRow(
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
-                stringResource(R.string.mylist_popular_title),
+                stringResource(titleRes),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onBackground,
             )
             Text(
-                stringResource(R.string.mylist_popular_subtitle),
+                stringResource(subtitleRes),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

@@ -81,13 +81,17 @@ class MyListEmptyContentTest {
         // are the tile bodies only. The hearts are 48dp by construction and
         // would fail the poster's >100dp floor; they announce themselves as
         // "Save <title> to My List" / "Remove <title> from My List".
+        // A4-F5: the "Browse Titles" button is a third clickable on the
+        // screen — it is not a tile, so the tag filter keeps it out here.
         val tiles = compose.onAllNodes(hasClickAction()).fetchSemanticsNodes().filter { node ->
             // SemanticsConfiguration has no getOrNull in this Compose
             // version — getOrElse with an empty default is the read.
             val description = node.config
                 .getOrElse(SemanticsProperties.ContentDescription) { emptyList() }
                 .joinToString(" ")
-            !description.startsWith("Save ") && !description.startsWith("Remove ")
+            val tag = node.config.getOrElse(SemanticsProperties.TestTag) { "" }
+            tag != MyListBrowseButtonTag &&
+                !description.startsWith("Save ") && !description.startsWith("Remove ")
         }
         assertEquals(popular.size, tiles.size)
         return tiles.map {
@@ -233,6 +237,79 @@ class MyListEmptyContentTest {
         compose.onNodeWithTag("posterRailSkeleton").assertDoesNotExist()
         compose.onNodeWithText("Trending to Start Your List").assertDoesNotExist()
         compose.onNodeWithText("Your list is empty").assertIsDisplayed()
+    }
+
+    @Test
+    fun browseTitlesButtonCallsOnBrowseClick() {
+        // A4-F5: the empty state's primary way out — a filled "Browse
+        // Titles" button under the copy, on the 48dp floor, that hands the
+        // tap to the screen's onBrowseClick (Search/Browse in NavGraph).
+        var browsed = 0
+        compose.setContent {
+            RaddStreamTheme {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopStart) {
+                    MyListEmptyContent(
+                        popular = popular,
+                        onPostClick = {},
+                        onToggleFavorite = {},
+                        onBrowseClick = { browsed++ },
+                        modifier = Modifier.width(360.dp),
+                    )
+                }
+            }
+        }
+        compose.onNodeWithText("Browse Titles").assertIsDisplayed()
+        val height = with(compose.density) {
+            compose.onNodeWithTag(MyListBrowseButtonTag)
+                .fetchSemanticsNode().boundsInRoot.height.toDp()
+        }
+        assertTrue("Browse Titles is $height tall, expected at least 48dp", height >= 48.dp)
+        compose.onNodeWithTag(MyListBrowseButtonTag).performClick()
+        assertEquals(1, browsed)
+    }
+
+    @Test
+    fun secondRailShowsWhenRecentLoaded() {
+        // A4-F5: the second discovery rail, below Trending — freshest
+        // titles, with its own heading, rendered from the recent feed.
+        val recent = listOf(post(4, "Oppenheimer"), post(5, "Barbie"), post(6, "Poor Things"))
+        compose.setContent {
+            RaddStreamTheme {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopStart) {
+                    MyListEmptyContent(
+                        popular = popular,
+                        recent = recent,
+                        onPostClick = {},
+                        onToggleFavorite = {},
+                        modifier = Modifier.width(360.dp),
+                    )
+                }
+            }
+        }
+        compose.onNodeWithText("Trending to Start Your List").assertIsDisplayed()
+        compose.onNodeWithText("Recently Added").assertIsDisplayed()
+        compose.onNodeWithText("Oppenheimer").assertIsDisplayed()
+    }
+
+    @Test
+    fun secondRailAbsentWhenRecentEmpty() {
+        // A4-F5: a failed newest load settles to no second rail — the
+        // screen never paints an empty "Recently Added" heading.
+        compose.setContent {
+            RaddStreamTheme {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopStart) {
+                    MyListEmptyContent(
+                        popular = popular,
+                        recent = emptyList(),
+                        onPostClick = {},
+                        onToggleFavorite = {},
+                        modifier = Modifier.width(360.dp),
+                    )
+                }
+            }
+        }
+        compose.onNodeWithText("Trending to Start Your List").assertIsDisplayed()
+        compose.onNodeWithText("Recently Added").assertDoesNotExist()
     }
 
     @Test

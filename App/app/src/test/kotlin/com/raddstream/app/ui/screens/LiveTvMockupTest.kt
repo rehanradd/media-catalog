@@ -317,6 +317,55 @@ class LiveTvMockupTest {
     }
 
     @Test
+    fun endOfResultsFooterShowsWhenFiltered() {
+        // A4-F5: a filtered list ends with its own footer — the count line
+        // plus the way back to the full list. The Robo case: one channel
+        // after filtering "Discover Pakistan" reads as a complete answer,
+        // not a grid that failed to load the rest.
+        var cleared = 0
+        val channels = listOf(channel("Discover Pakistan"))
+        compose.setContent {
+            RaddStreamTheme {
+                LiveTvChannelGrid(
+                    channels = channels,
+                    onChannelClick = {},
+                    filtered = true,
+                    visibleCount = 1,
+                    totalCount = 759,
+                    onClearFilter = { cleared++ },
+                )
+            }
+        }
+        compose.onNodeWithText("End of results · 1 of 759 channels").assertIsDisplayed()
+        compose.onNodeWithText("Clear filter").assertIsDisplayed()
+        compose.onNodeWithTag(LiveTvClearFilterTag).performClick()
+        assertEquals(1, cleared)
+    }
+
+    @Test
+    fun endOfResultsFooterAbsentWhenUnfiltered() {
+        // A4-F5: the unfiltered 759-channel grid needs no footer — its end
+        // needs no announcement and no way back.
+        val channels = (1..6).map {
+            channel(name = "Channel $it").copy(id = it, streamId = "stream-$it")
+        }
+        compose.setContent {
+            RaddStreamTheme {
+                LiveTvChannelGrid(
+                    channels = channels,
+                    onChannelClick = {},
+                    filtered = false,
+                    visibleCount = 6,
+                    totalCount = 759,
+                    onClearFilter = {},
+                )
+            }
+        }
+        compose.onNodeWithTag(LiveTvEndOfResultsTag).assertDoesNotExist()
+        compose.onNodeWithText("Clear filter").assertDoesNotExist()
+    }
+
+    @Test
     fun backToTopAppearsAfterScrollingAndReturnsToTheFirstRow() {
         // Live TV review D8: a 759-item grid needs a way home that is not
         // the thumb. The grid is extracted (LiveTvChannelGrid) so the

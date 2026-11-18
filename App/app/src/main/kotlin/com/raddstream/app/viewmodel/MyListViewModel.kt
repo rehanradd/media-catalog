@@ -37,6 +37,14 @@ data class MyListUiState(
     val hiddenCount: Int = 0,
     /** The three most-covered titles in the catalog, for the empty state. Empty when unloaded. */
     val popular: List<Post> = emptyList(),
+    /**
+     * A4-F5: the second discovery rail under Trending — the freshest
+     * titles, for the empty state. Same shape as [popular]: at most three,
+     * poster-bearing, empty when unloaded. A list that is only a Trending
+     * rail ends in a ~40% black void on a tall phone; the second rail is
+     * what fills it with something worth tapping.
+     */
+    val recent: List<Post> = emptyList(),
     /** The title just removed, so the screen can offer Undo. Null when nothing is waiting. */
     val removedTitle: String? = null,
     /**
@@ -248,12 +256,16 @@ class MyListViewModel @Inject constructor(
 
     private val sortFlow = MutableStateFlow(ListSort.RECENT)
     private val popularFlow = MutableStateFlow<List<Post>>(emptyList())
+    /** A4-F5: the second rail's titles — the freshest-first load, beside [popularFlow]. */
+    private val recentFlow = MutableStateFlow<List<Post>>(emptyList())
     private val removedTitleFlow = MutableStateFlow<String?>(null)
     /**
      * Whether the trending load has settled — success or failure, either
      * is an answer. The empty state shows a rail skeleton while this is
      * false, so the rail never pops in underneath a message that names a
-     * heart that is not on screen yet.
+     * heart that is not on screen yet. A4-F5: the same flag gates the
+     * second (Recently Added) rail — both rails load in the same pass, so
+     * one settled flag covers both.
      */
     private val popularSettledFlow = MutableStateFlow(false)
     val popularSettled: StateFlow<Boolean> = popularSettledFlow
@@ -274,6 +286,8 @@ class MyListViewModel @Inject constructor(
      */
     private var latestVisibleRows: List<FavoritePost> = emptyList()
     private var popularLoaded = false
+    /** A4-F5: the second rail's latch — same rule as [popularLoaded]: only a load that produced titles latches, so a failed newest load retries on the next emission instead of going quiet. */
+    private var recentLoaded = false
 
     // Six flows, combined as two triples: the typed `combine` overloads this
     // codebase already uses stop at three, and a six-flow call falls back to
@@ -289,10 +303,14 @@ class MyListViewModel @Inject constructor(
         ) { list, refused, sort -> Triple(list, refused, sort) },
         combine(
             watchHistoryDao.observeDurations(),
-            popularFlow,
+            // A4-F5: the second rail rides beside the trending load — the
+            // typed combine overloads stop at three, so the two rails pair
+            // up first (same nesting the six-flow combine already uses).
+            combine(popularFlow, recentFlow) { popular, recent -> popular to recent },
             removedTitleFlow,
-        ) { history, popular, removedTitle -> Triple(history, popular, removedTitle) },
-    ) { (list, refused, sort), (history, popular, removedTitle) ->
+        ) { history, popularAndRecent, removedTitle -> Triple(history, popularAndRecent, removedTitle) },
+    ) { (list, refused, sort), (history, popularAndRecent, removedTitle) ->
+        val (popular, recent) = popularAndRecent
         // The stored rows are filtered here, before anything sorts or maps them, so no later step
         // can be handed the unfiltered list by accident. `is18Plus` is the strict half and is null
         // for every row on today's wire; the refusal ledger is the half that fires against a public
@@ -310,6 +328,7 @@ class MyListViewModel @Inject constructor(
             isLoading = false,
             hiddenCount = list.size - visible.size,
             popular = starterShelf(popular),
+            recent = starterShelf(recent),
             removedTitle = removedTitle,
             progressByPostId = myListProgressByPostId(history),
             progressLabelByPostId = myListProgressLabelByPostId(history),
@@ -365,6 +384,21 @@ class MyListViewModel @Inject constructor(
                     popularFlow.value = loaded
                     popularLoaded = loaded.isNotEmpty()
                     popularSettledFlow.value = true
+                }
+                // A4-F5: the second rail loads in the same pass, from the
+                // server's freshest-first order — the same "newest" sort
+                // Home's rails already ask for (see HomeViewModel: a rail
+                // with no server sort defaults to "newest"). Same 6
+                // candidates, same v2-then-v1 fallback, same poster-only
+                // shelf filter at the state edge.
+                if (!state.isLoading && state.favorites.size <= 1 && !recentLoaded) {
+                    val loaded = runCatching {
+                        catalogRepository.browseWorksV2(sort = "newest", limit = 6)?.posts
+                            ?.takeIf { it.isNotEmpty() }
+                            ?: catalogRepository.getPosts(sort = "newest", page = 1, limit = 6).results
+                    }.getOrNull() ?: emptyList()
+                    recentFlow.value = loaded
+                    recentLoaded = loaded.isNotEmpty()
                 }
             }
         }

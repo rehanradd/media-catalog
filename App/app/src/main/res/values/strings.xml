@@ -229,6 +229,13 @@
     <string name="mylist_popular_title">Trending to Start Your List</string>
     <string name="mylist_popular_subtitle">Trending titles to start your list</string>
     <string name="mylist_empty_message">Tap the heart on any title to save it here.</string>
+    <!-- A4-F5: the empty state's primary way out — a filled button, not a
+         sentence telling the viewer to go find the catalog. -->
+    <string name="mylist_browse_titles">Browse Titles</string>
+    <!-- A4-F5: the second discovery rail under Trending — the server's
+         freshest-first order, the same "newest" sort Home's rails use. -->
+    <string name="mylist_recent_title">Recently Added</string>
+    <string name="mylist_recent_subtitle">New titles in the catalog</string>
     <string name="mylist_count_one">1 title</string>
     <string name="mylist_count_many">%1$d titles</string>
     <string name="mylist_save_failed">Couldn\'t save — check your connection</string>

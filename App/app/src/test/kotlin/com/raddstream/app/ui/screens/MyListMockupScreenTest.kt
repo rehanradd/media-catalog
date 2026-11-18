@@ -252,6 +252,7 @@ class MyListMockupScreenTest {
     private fun hiddenContent(
         popular: List<Post> = emptyList(),
         popularLoading: Boolean = false,
+        recent: List<Post> = emptyList(),
     ) {
         compose.setContent {
             RaddStreamTheme {
@@ -259,6 +260,7 @@ class MyListMockupScreenTest {
                     MyListHiddenContent(
                         hiddenNotice = "2 saved titles are no longer offered by this server",
                         popular = popular,
+                        recent = recent,
                         popularLoading = popularLoading,
                         onPostClick = {},
                         onBrowseClick = {},
@@ -295,6 +297,19 @@ class MyListMockupScreenTest {
         hiddenContent(popular = listOf(post(1, "Inception"), post(2, "Dune")))
         compose.onNodeWithText("Trending to Start Your List").assertIsDisplayed()
         compose.onNodeWithText("Inception").assertIsDisplayed()
+    }
+
+    @Test
+    fun hiddenBranchShowsSecondRailWhenRecentLoaded() {
+        // A4-F5: the hidden list gets the same second rail as the
+        // truly-empty state, so it never ends in a void either.
+        hiddenContent(
+            popular = listOf(post(1, "Inception"), post(2, "Dune")),
+            recent = listOf(post(3, "Oppenheimer")),
+        )
+        compose.onNodeWithText("Trending to Start Your List").assertIsDisplayed()
+        compose.onNodeWithText("Recently Added").assertIsDisplayed()
+        compose.onNodeWithText("Oppenheimer").assertIsDisplayed()
     }
 
     @Test

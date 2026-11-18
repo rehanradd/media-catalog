@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -283,6 +284,17 @@ fun LiveTvScreen(
                 } else {
                     LiveTvChannelGrid(
                         channels = state.visibleChannels,
+                        // A4-F5: the filtered list ends with its own footer —
+                        // "End of results · 1 of 759 channels" plus the way
+                        // back to the full list. The counts are the same
+                        // numbers the heading above the grid already says.
+                        filtered = state.query.isNotBlank() || state.selectedCategory != null,
+                        visibleCount = state.visibleChannels.size,
+                        totalCount = state.channels.size,
+                        onClearFilter = {
+                            viewModel.onQueryChanged("")
+                            viewModel.onCategorySelected(null)
+                        },
                         onChannelClick = { channel ->
                             // Batch C: warm the channel's link in parallel
                             // with the navigation, so the player 302s from
@@ -342,12 +354,25 @@ internal fun LiveTvChannelCountHeading(
  * animates back to the first row. The grid itself is lazy with stable
  * keys — 759 rows do not all compose — the button only shortens the
  * drag home.
+ *
+ * A4-F5: a filtered list ends with its own footer — the full-span
+ * [LiveTvEndOfResultsFooter] — so a one-channel result never reads as a
+ * grid that failed to load the rest. Unfiltered, there is no footer: the
+ * 759-channel grid's end needs no announcement and no way back.
  */
+internal const val LiveTvEndOfResultsTag = "liveTv_endOfResults"
+internal const val LiveTvClearFilterTag = "liveTv_clearFilter"
+
 @Composable
 internal fun LiveTvChannelGrid(
     channels: List<LiveTvChannel>,
     onChannelClick: (LiveTvChannel) -> Unit,
     modifier: Modifier = Modifier,
+    filtered: Boolean = false,
+    visibleCount: Int = channels.size,
+    totalCount: Int = channels.size,
+    /** Clears both the query and the category — null renders no footer. */
+    onClearFilter: (() -> Unit)? = null,
 ) {
     val gridState = rememberLazyGridState()
     val scope = rememberCoroutineScope()
@@ -371,6 +396,18 @@ internal fun LiveTvChannelGrid(
                     onClick = { onChannelClick(channel) },
                 )
             }
+            if (filtered && onClearFilter != null) {
+                item(
+                    key = "liveTv_endOfResults",
+                    span = { GridItemSpan(maxLineSpan) },
+                ) {
+                    LiveTvEndOfResultsFooter(
+                        visibleCount = visibleCount,
+                        totalCount = totalCount,
+                        onClearFilter = onClearFilter,
+                    )
+                }
+            }
         }
         if (showBackToTop) {
             IconButton(
@@ -385,6 +422,41 @@ internal fun LiveTvChannelGrid(
                 Icon(Icons.Default.KeyboardArrowUp, contentDescription = null)
             }
         }
+    }
+}
+
+/**
+ * A4-F5: the end of a filtered channel list — one line naming the result
+ * ("End of results · 1 of 759 channels", the same count text the heading
+ * above the grid already speaks) and the way back to the full list. The
+ * count is the footer: a filtered list that just stops reads as a grid
+ * that failed to load the rest. Extracted so the text and the clear action
+ * pin without the Hilt screen around them (see LiveTvMockupTest).
+ */
+@Composable
+internal fun LiveTvEndOfResultsFooter(
+    visibleCount: Int,
+    totalCount: Int,
+    onClearFilter: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp, bottom = 8.dp)
+            .testTag(LiveTvEndOfResultsTag),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            text = "End of results · ${liveTvChannelCountText(visibleCount, totalCount, filtered = true)}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        TextButton(
+            onClick = onClearFilter,
+            modifier = Modifier.testTag(LiveTvClearFilterTag).heightIn(min = 48.dp),
+        ) { Text("Clear filter") }
     }
 }
 
