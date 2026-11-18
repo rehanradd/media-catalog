@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -34,9 +36,15 @@ import org.robolectric.RobolectricTestRunner
  * click action directly and would pass even with the bug, while a touch
  * event goes through hit-testing and lands on the innermost clickable —
  * exactly the Robo tap. Under Robolectric the TMDB URL cannot fetch (no
- * real network), so by the time the first query runs the load has errored
- * and the bounded auto-retries have settled (the CatalogImageLoadingTest
- * pattern) — the error slot is what is under the finger.
+ * real network), so the load errors and the bounded auto-retries settle
+ * into the error slot — but only after the test waits for it: the test
+ * waits until the error slot's "Retry loading image" click action is
+ * present before tapping, so the tap is guaranteed to land on the error
+ * slot rather than the loading shimmer, which has no clickable and would
+ * let the tap through to the parent vacuously. (Round 1 of this test
+ * tapped after a bare waitForIdle() and passed on unfixed code in 0.087s
+ * — Coil fetches on real threads invisible to the compose clock, so idle
+ * returned while the load was still in flight.)
  */
 @RunWith(RobolectricTestRunner::class)
 class CatalogImageErrorTapTest {
@@ -65,10 +73,23 @@ class CatalogImageErrorTapTest {
                 }
             }
         }
-        // Let the load fail and the bounded auto-retries settle, so the
-        // error slot — not the loading shimmer — is under the finger.
-        compose.onNodeWithTag("tile").assertExists()
-        compose.waitForIdle()
+        // Pin the error slot before tapping: wait until the node carrying
+        // the "Retry loading image" click action exists. That label lives
+        // only on the error slot's full-size retry clickable — the loading
+        // slot (fallback card + shimmer) has no clickable at all, and the
+        // parent tile's own click carries no label. A bare waitForIdle()
+        // cannot pin this: Coil fetches on real threads invisible to the
+        // compose clock, so idle can return while the load is still in
+        // flight. waitUntil re-checks after each clock advance (pumping
+        // the main looper, so the failed fetch and the bounded immediate
+        // auto-retries can settle) until the error slot is the thing under
+        // the finger.
+        compose.waitUntil(timeoutMillis = 30_000) {
+            compose.onAllNodes(hasClickActionLabel("Retry loading image"))
+                .fetchSemanticsNodes()
+                .isNotEmpty()
+        }
+        compose.onNode(hasClickActionLabel("Retry loading image")).assertExists()
         compose.onNodeWithTag("tile").performTouchInput { click() }
         assertTrue(
             "centre tap on a failed-image tile did not reach the parent onClick",
@@ -76,3 +97,14 @@ class CatalogImageErrorTapTest {
         )
     }
 }
+
+/**
+ * Matches a node whose click action carries the given onClickLabel. The
+ * label is not a content description, so onNodeWithContentDescription
+ * cannot find it — the match reads the OnClick action straight off the
+ * node's semantics (the AccountLabelFieldTest pattern).
+ */
+private fun hasClickActionLabel(label: String) =
+    SemanticsMatcher("click action labelled \"$label\"") { node ->
+        node.config.getOrNull(SemanticsActions.OnClick)?.label == label
+    }
