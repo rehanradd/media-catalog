@@ -1,9 +1,7 @@
 package com.raddstream.app.viewmodel
 
 import com.raddstream.app.network.models.Post
-import com.raddstream.app.network.models.WorkRef
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -12,6 +10,11 @@ import org.junit.Test
  * Feel-instant S4: one list row as the detail it will become — the header
  * fields only. Pure, so it is pinned here without a ViewModel: what it
  * copies, what it leaves empty, and what it never invents.
+ *
+ * The wire types are the model's own: ratings, genres and backdrops arrive
+ * as TEXT (`imdbRating` "7.2", `genres` CSV, `backdropUrls` a JSON-array
+ * string), and the work handle is a plain string — the mapping copies
+ * them, it does not parse them.
  */
 class OptimisticDetailTest {
 
@@ -21,12 +24,12 @@ class OptimisticDetailTest {
         year = 2018,
         contentType = "movie",
         posterUrl = "https://cdn.example/poster.jpg",
-        backdropUrls = listOf("https://cdn.example/back.jpg"),
-        imdbRating = 7.2,
-        genres = listOf("Comedy", "Romance"),
+        backdropUrls = "[\"https://cdn.example/back.jpg\"]",
+        imdbRating = "7.2",
+        genres = "Comedy, Romance",
         industry = "bollywood",
         language = "hindi",
-        workRef = WorkRef(987, "Work"),
+        workRef = "w987",
     )
 
     @Test
@@ -37,21 +40,21 @@ class OptimisticDetailTest {
         assertEquals(2018, detail.year)
         assertEquals("movie", detail.contentType)
         assertEquals("https://cdn.example/poster.jpg", detail.posterUrl)
-        assertEquals(listOf("https://cdn.example/back.jpg"), detail.backdropUrls)
-        assertEquals(7.2, detail.imdbRating!!, 0.001)
-        assertEquals(listOf("Comedy", "Romance"), detail.genres)
+        assertEquals("[\"https://cdn.example/back.jpg\"]", detail.backdropUrls)
+        assertEquals("7.2", detail.imdbRating)
+        assertEquals("Comedy, Romance", detail.genres)
         assertEquals("bollywood", detail.industry)
         assertEquals("hindi", detail.language)
-        assertEquals(WorkRef(987, "Work"), detail.workRef)
+        assertEquals("w987", detail.workRef)
     }
 
     @Test
     fun `the body stays empty until the fetch lands`() {
         val detail = optimisticDetailFromPost(post())
         assertTrue(detail.releases.isEmpty())
-        assertNull(detail.description)
-        assertNull(detail.cast)
+        assertNull(detail.synopsis)
+        assertNull(detail.castNames)
         assertNull(detail.runtimeMinutes)
-        assertFalse(detail.isAnimated)
+        assertNull(detail.isAnimated)
     }
 }
