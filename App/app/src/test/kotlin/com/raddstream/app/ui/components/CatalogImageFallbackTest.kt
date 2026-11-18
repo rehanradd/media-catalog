@@ -56,4 +56,42 @@ class CatalogImageFallbackTest {
         }
         compose.onNodeWithText("The Three Stooges").assertExists()
     }
+
+    // A4-F1: on a large plate the monogram replaces the full label — the
+    // name under a 48dp mark overflowed the plate and never painted, so
+    // the Row shows mark + two letters and the full name stays out.
+    @Test
+    fun monogramReplacesFullLabelOnLargePlate() {
+        compose.setContent {
+            RaddStreamTheme {
+                CatalogImage(
+                    url = null,
+                    contentDescription = "Logo",
+                    fallbackLabel = "Discover Pakistan",
+                    fallbackLarge = true,
+                    monogram = "DP",
+                )
+            }
+        }
+        compose.onNodeWithText("DP").assertExists()
+        compose.onNodeWithText("Discover Pakistan").assertDoesNotExist()
+    }
+
+    // A4-F1: without a monogram the large plate keeps the old mark +
+    // full-label column — only the logo plate passes a monogram, so a
+    // poster tile that happens to be large still names its title.
+    @Test
+    fun largePlateWithoutMonogramKeepsFullLabel() {
+        compose.setContent {
+            RaddStreamTheme {
+                CatalogImage(
+                    url = null,
+                    contentDescription = "Poster",
+                    fallbackLabel = "The Three Stooges",
+                    fallbackLarge = true,
+                )
+            }
+        }
+        compose.onNodeWithText("The Three Stooges").assertExists()
+    }
 }
