@@ -1,6 +1,7 @@
 package com.raddstream.app.ui.screens
 
 import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -75,12 +76,13 @@ class LiveTvChannelCardTest {
         // same type scale, so the comparison holds at any scale.
         // The tag lives inside Card(onClick = …), a clickable that merges
         // its descendants' semantics into the card node, so the lookup
-        // searches the unmerged tree. (First fixup blamed the merge and
-        // only changed the lookup — wrong: the tag was never on the node
-        // at all, because it sat after clearAndSetSemantics in the chain
-        // and the clear wiped it; fixup 3 moves the tag before the clear
-        // in LiveTvScreen.kt. The unmerged-tree lookup stays: it is the
-        // correct search for a tag inside a merging clickable.)
+        // searches the unmerged tree. (Fixup 2 blamed the merge and only
+        // changed the lookup — wrong: the tag was never on the node at
+        // all, because it sat after clearAndSetSemantics in the chain and
+        // the clear wiped it; fixup 3 moves the tag before the clear in
+        // LiveTvScreen.kt, which is what made this lookup find the node.
+        // The unmerged-tree lookup stays: it is the correct search for a
+        // tag inside a merging clickable.)
         val long = LiveTvChannel(
             id = 1,
             name = "Madani Channel",
@@ -91,18 +93,19 @@ class LiveTvChannelCardTest {
             streamId = "stream-1",
         )
         val short = long.copy(name = "Geo News", category = "news")
+        // One setContent only: the rule throws IllegalStateException on a
+        // second setContent per test (CI 44240265672), so the two variants
+        // are measured from a single composition driven by state.
+        val channelState = mutableStateOf(short)
         compose.setContent {
             RaddStreamTheme {
-                LiveTvChannelCard(channel = short, onClick = {}, modifier = Modifier.width(140.dp))
+                LiveTvChannelCard(channel = channelState.value, onClick = {}, modifier = Modifier.width(140.dp))
             }
         }
         val oneLineHeight = compose.onNodeWithTag("liveTv_channelMeta", useUnmergedTree = true)
             .fetchSemanticsNode().boundsInRoot.height
-        compose.setContent {
-            RaddStreamTheme {
-                LiveTvChannelCard(channel = long, onClick = {}, modifier = Modifier.width(140.dp))
-            }
-        }
+        channelState.value = long
+        compose.waitForIdle()
         val twoLineHeight = compose.onNodeWithTag("liveTv_channelMeta", useUnmergedTree = true)
             .fetchSemanticsNode().boundsInRoot.height
         assertTrue(
