@@ -23,9 +23,9 @@ New module `Fast_Fetch/test_host_ranking.py` (24 tests, all green locally, 1.8 s
 ## Verification
 
 - `python3 -S Fast_Fetch/test_host_ranking.py` — 24/24 OK.
-- Full backend gate (`~/workspace/run-backend-gate.py` in the worktree) — 111/111 modules PASS, <N> tests, 0 failed. (Gate log: `~/workspace/host-ranking-20261118-gate.log`.)
+- Full backend gate (`~/workspace/run-backend-gate.py` in the worktree, at the pushed tip `66c4e1ea`) — 97 modules, 96 PASS, 1 FAIL: `test_download_endpoint` (known token-minting expiry-second flake, 26/26 on solo re-run); 3,299 tests ran, 3,298 passed. `test_redact` passed in this run. (Gate log: `~/workspace/host-ranking-20261118-gate3.log`. An earlier gate at the pre-rebase tip was 93/94 with `test_redact` flaking, also clean on re-run; the 34 importer modules the gate script misses were run solo, 34/34 PASS, 1,713 tests.)
 - `~/workspace/pre-push-checks.py` — clean.
-- Backend CI on the pushed tip: run <N>, SUCCESS. (Filled in at push time.)
+- Backend CI on the pushed tip: run 44225613434, SUCCESS (offline suites job, 4m5s).
 
 ## Notes / follow-ups
 
