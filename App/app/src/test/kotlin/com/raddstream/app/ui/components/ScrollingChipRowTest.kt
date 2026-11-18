@@ -4,6 +4,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Text
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
@@ -43,7 +46,7 @@ class ScrollingChipRowTest {
     @Test
     fun filterChipRendersClicksAndKeepsSelectedSemantics() {
         var clicks = 0
-        var selected = false
+        var selected by mutableStateOf(false)
         compose.setContent {
             RaddStreamTheme {
                 RaddChip(
@@ -61,18 +64,11 @@ class ScrollingChipRowTest {
 
         // The selected state is what MyListMockupScreenTest pins on the
         // sort chips — RaddChip(Filter) delegates to FilterChip, so it
-        // survives the migration.
+        // survives the migration. setContent may only be called once per
+        // test, so the state is hoisted and updated instead of recomposing
+        // from a second setContent call.
         selected = true
-        compose.setContent {
-            RaddStreamTheme {
-                RaddChip(
-                    selected = selected,
-                    onClick = {},
-                    label = { Text("Movies") },
-                    modifier = Modifier.testTag("chip_movies"),
-                )
-            }
-        }
+        compose.waitForIdle()
         compose.onNodeWithTag("chip_movies").assertIsSelected()
     }
 
