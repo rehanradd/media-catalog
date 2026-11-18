@@ -95,7 +95,9 @@ object WireText {
      * title and the quality pill fall back to "Episode N" / "Print" instead.
      */
     fun isKnownPrintLabel(value: String?): Boolean {
-        if (isPlaceholder(value)) return false
-        return !value.trim().equals("unknown print", ignoreCase = true)
+        val text = value?.trim().orEmpty()
+        if (text.isEmpty()) return false
+        val lower = text.lowercase()
+        return lower != "unknown" && lower != "n/a" && lower != "unknown print"
     }
 }
