@@ -442,7 +442,12 @@ class NestedScrollCrashTest {
                 }
             }
         }
-        compose.onNodeWithText("DD Sports").assertIsDisplayed()
+        // A4-F1: the logo plate paints the monogram (mark + "DS"), not the
+        // full name — the name under a 48dp mark overflowed the plate, so
+        // the Row replaced the label. The card still carries the full name
+        // in its one a11y sentence, and prints it below the plate.
+        compose.onNodeWithText("DS").assertIsDisplayed()
+        compose.onNodeWithContentDescription("DD Sports, live", substring = true).assertExists()
     }
 
     @Test
