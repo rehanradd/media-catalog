@@ -1564,5 +1564,88 @@ class TestFillServeStats(unittest.TestCase):
         self.assertIsNone(share["pool_share"])
 
 
+class PruneTests(unittest.TestCase):
+    """prune_resolved_cache (DB checkup fix #8): orphans + expired go,
+    everything servable stays. Same no-commit contract as the rest of
+    this module — the caller's transaction owns the commit."""
+
+    NOW = 1_800_000_000.0
+
+    def _conn_with_rows(self):
+        conn = fresh_conn()
+        conn.execute("CREATE TABLE download_sources (id INTEGER PRIMARY KEY)")
+        conn.executemany("INSERT INTO download_sources VALUES (?)", [(1,), (2,)])
+        rows = [
+            # link exists, unexpired — the only row that must survive.
+            (1, "https://cdn.example.com/a.mp4", "A", "file",
+             self.NOW - 60, self.NOW + 3600, self.NOW + 3600),
+            # link exists, past its measured expiry — expired.
+            (2, "https://cdn.example.com/b.mp4", "B", "file",
+             self.NOW - 3600, self.NOW - 10, self.NOW + 3600),
+            # orphan, unexpired — link 3 has no download_sources row.
+            (3, "https://cdn.example.com/c.mp4", "B", "file",
+             self.NOW - 60, self.NOW + 3600, self.NOW + 3600),
+            # orphan AND expired — the orphan delete runs first, so it
+            # counts as an orphan, never twice.
+            (4, "https://cdn.example.com/d.mp4", "B", "playlist",
+             self.NOW - 3600, self.NOW - 10, self.NOW + 3600),
+        ]
+        conn.executemany(
+            "INSERT INTO resolved_cache (link_id, url, category, kind,"
+            " resolved_at, expires_at, reverify_after)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
+        conn.commit()
+        return conn
+
+    def _link_ids(self, conn):
+        return [r[0] for r in conn.execute(
+            "SELECT link_id FROM resolved_cache ORDER BY link_id").fetchall()]
+
+    def test_prune_deletes_orphans_and_expired_only(self):
+        conn = self._conn_with_rows()
+        stats = resolved_cache.prune_resolved_cache(conn, now=self.NOW)
+        self.assertEqual(stats, {"orphans_deleted": 2, "expired_deleted": 1})
+        self.assertEqual(self._link_ids(conn), [1])
+
+    def test_prune_is_a_noop_on_a_clean_cache(self):
+        conn = self._conn_with_rows()
+        resolved_cache.prune_resolved_cache(conn, now=self.NOW)
+        stats = resolved_cache.prune_resolved_cache(conn, now=self.NOW)
+        self.assertEqual(stats, {"orphans_deleted": 0, "expired_deleted": 0})
+        self.assertEqual(self._link_ids(conn), [1])
+
+    def test_prune_without_download_sources_table_deletes_expired_only(self):
+        conn = fresh_conn()  # no download_sources table at all
+        conn.execute(
+            "INSERT INTO resolved_cache (link_id, url, category, kind,"
+            " resolved_at, expires_at, reverify_after) VALUES"
+            " (1, 'https://cdn.example.com/a.mp4', 'A', 'file', ?, ?, ?),"
+            " (2, 'https://cdn.example.com/b.mp4', 'B', 'file', ?, ?, ?)",
+            (self.NOW - 60, self.NOW + 3600, self.NOW + 3600,
+             self.NOW - 3600, self.NOW - 10, self.NOW + 3600))
+        conn.commit()
+        stats = resolved_cache.prune_resolved_cache(conn, now=self.NOW)
+        self.assertEqual(stats, {"orphans_deleted": 0, "expired_deleted": 1})
+        self.assertEqual(self._link_ids(conn), [1])
+
+    def test_prune_does_not_commit_caller_transaction(self):
+        conn = self._conn_with_rows()
+        conn.execute("CREATE TABLE scratch(x INTEGER)")
+        conn.execute("INSERT INTO scratch VALUES (1)")  # opens an implicit txn
+        self.assertTrue(conn.in_transaction,
+                        "fixture: caller must hold a pending transaction")
+        stats = resolved_cache.prune_resolved_cache(conn, now=self.NOW)
+        self.assertEqual(stats["orphans_deleted"], 2)
+        self.assertTrue(conn.in_transaction,
+                        "prune must run inside the caller's transaction, "
+                        "never commit it")
+        conn.rollback()
+        left = conn.execute("SELECT COUNT(*) FROM scratch").fetchone()[0]
+        self.assertEqual(left, 0,
+                         "the caller's rolled-back write must have actually died")
+        self.assertEqual(self._link_ids(conn), [1, 2, 3, 4],
+                         "the prune's own deletes must roll back with it")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

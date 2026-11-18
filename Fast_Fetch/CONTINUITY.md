@@ -78,6 +78,7 @@ The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete i
 - [Session 2026-11-16 — pre-peak fill (play-fast §2 (j))](checkpoints/20261116-pre-peak-fill.md)
 - [Session 2026-11-16 — playback telemetry beacon](checkpoints/20261116-playback-telemetry-beacon.md)
 - [2026-11-18 — B4 trending warm-failure loudness](checkpoints/20261118-trending-warm-loud-b4.md)
+- 2026-11-18 — H2 backfills #6/#8/#9 (`muse/db-backfills-20261118`): quality normalization, resolved_cache prune, desicinemas Date-year.
 - 2026-11-18 — B1 cursor pagination + band-aware play walk (`muse/cursor-pagination-20261118`): keyset cursors on v1 posts/trending, v2 walk verified, play best-band-first; 13 tests green locally.
 - [Session 2026-11-12 — self-check `[LIVE-TV-503]`](checkpoints/20261112-selfcheck-live-tv-503-logos.md)
 - [Session 2026-11-06 — crown `[CROWN-NIGHT-CHAIN]`: five trunk commits, the live-tree gap, what was rejected](checkpoints/20261106-crown-night-chain-five-trunk-commits-one-live-tree-gap.md)
@@ -92,5 +93,3 @@ The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete i
 ## Moved out (reference prose, verbatim)
 
 - ✍️ Incoming Agent Checklist → `../docs/SPEC_INCOMING_AGENT_CHECKLIST.md` (294 lines) — the onboarding procedure, unchanged
-
-- 🎯 Current Operational State → `checkpoints/20261030-pre-diet-state-and-roadmap.md`

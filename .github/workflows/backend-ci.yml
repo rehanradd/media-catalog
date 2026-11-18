@@ -373,6 +373,17 @@ jobs:
       - name: 🧪 test_backfill_cast.py
         run: python3 -S Fast_Fetch/test_backfill_cast.py
 
+      # DB checkup fixes #6 (quality spelling) + #8 (resolved_cache prune):
+      # offline, stdlib, temp-file DBs, no network.
+      - name: 🧪 test_quality.py
+        run: python3 -S Fast_Fetch/test_quality.py
+
+      - name: 🧪 test_backfill_quality.py
+        run: python3 -S Fast_Fetch/test_backfill_quality.py
+
+      - name: 🧪 test_backfill_resolved_cache.py
+        run: python3 -S Fast_Fetch/test_backfill_resolved_cache.py
+
       # TMDB/Cinemeta artwork backfill (A1 poster re-resolve): offline, stdlib,
       # fake HTTP client, temp-file DB, no network.
       - name: 🧪 test_backfill_tmdb.py

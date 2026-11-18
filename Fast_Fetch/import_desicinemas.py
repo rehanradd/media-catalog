@@ -412,10 +412,11 @@ class DesiCinemasClient:
 
 
 # --- HTML Content Extractor ---
-def parse_desicinemas_content(content_html: str, url: str) -> tuple[str | None, str | None, str | None, str | None, str | None, list[str], list[str]]:
+def parse_desicinemas_content(content_html: str, url: str) -> tuple[str | None, str | None, str | None, str | None, str | None, list[str], list[str], str | None, list[str], list[str], int | None]:
     """
     Parses DesiCinemas page HTML.
-    Returns: (imdb_id, tmdb_id, poster_url, backdrop_url, synopsis, trembed_urls, direct_iframes)
+    Returns: (imdb_id, tmdb_id, poster_url, backdrop_url, synopsis, director,
+    cast_names, genres, trembed_urls, direct_iframes, year)
     """
     imdb_id = None
     tmdb_id = None
@@ -477,6 +478,19 @@ def parse_desicinemas_content(content_html: str, url: str) -> tuple[str | None, 
     if genre_m:
         genres = re.sub(r"<[^>]*>", "", genre_m.group(1)).strip()
 
+    # Year (DB checkup fix #9): the <h1> title usually carries no year —
+    # live proof, "Next Goal Wins (HD)" with year NULL on 4,719 of 5,223
+    # desicinemas rows — but the DooPlay meta block does, as
+    # <span class="Date">YYYY</span> beside <span class="Time">. Validated
+    # 1900..current year, so a stray 4-digit token never lands as a year.
+    # The caller prefers the title year and falls back to this one.
+    year = None
+    date_m = re.search(r'<span class="Date">((?:19|20)\d\d)</span>', content_html)
+    if date_m:
+        date_year = int(date_m.group(1))
+        if 1900 <= date_year <= time.localtime().tm_year:
+            year = date_year
+
     # Find DooPlay trembed iframes
     all_iframes = re.findall(r'<iframe[^>]+src=["\']([^"\']+)["\']', content_html, re.IGNORECASE)
     trembed_urls = []
@@ -489,7 +503,7 @@ def parse_desicinemas_content(content_html: str, url: str) -> tuple[str | None, 
         elif not clean_ifr.startswith("javascript:") and not clean_ifr.startswith("about:"):
             direct_iframes.append(clean_ifr)
 
-    return imdb_id, tmdb_id, poster_url, backdrop_url, synopsis, director, cast_names, genres, trembed_urls, direct_iframes
+    return imdb_id, tmdb_id, poster_url, backdrop_url, synopsis, director, cast_names, genres, trembed_urls, direct_iframes, year
 
 
 # --- Database Layer ---
@@ -773,7 +787,11 @@ def scrape_post_item(item: tuple, client: DesiCinemasClient, unwrap_bridges: boo
         clean_title, year, season_num, episode_num, quality, languages, media_type, canonical_key = clean_desicinemas_title(raw_title, loc)
 
         # Parse content
-        imdb_id, tmdb_id, poster_url, backdrop_url, synopsis, director, cast_names, genres, trembed_urls, direct_iframes = parse_desicinemas_content(html_text, loc)
+        imdb_id, tmdb_id, poster_url, backdrop_url, synopsis, director, cast_names, genres, trembed_urls, direct_iframes, date_year = parse_desicinemas_content(html_text, loc)
+
+        # The <h1> year wins; the DooPlay Date span is the fallback for the
+        # ~90% of pages whose title carries no year (DB checkup fix #9).
+        year = year or date_year
 
         # Resolve streams
         sources = []

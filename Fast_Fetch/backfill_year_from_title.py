@@ -35,6 +35,14 @@ Safety: `--dry-run` is the default and touches nothing. `--apply` writes
 `posts.year` in a single transaction and reports the count. The live run is
 parent-gated (backup first, like every live data job).
 
+Fix #9 (DB checkup 2026-11-18): 17 posts carry the bogus year 0 on the
+05:09 side copy (the checkup report's 67 does not reproduce on its own
+copy — same three sites, desicinemas/movienestbd/multimovies). A 0 is not
+a year; it blocks the title scan (it only looks at NULL) and lies to the
+year filter. `--apply` first sets every year=0 row to NULL in the same
+transaction, so a newly-nulled row whose title carries a year is filled
+in the same run; `--dry-run` reports how many year=0 rows there are.
+
 Stdlib only, like everything else in Fast_Fetch.
 
 Usage:
@@ -106,6 +114,22 @@ def scan(conn, *, max_year: int, limit: int | None):
     return found, skipped, len(rows)
 
 
+def count_zero_year(conn) -> int:
+    """How many posts carry the bogus year 0 (DB checkup fix #9: 17 rows on
+    the 05:09 side copy — desicinemas, movienestbd, multimovies). A 0 is not
+    a year; it blocks the title scan (which only looks at NULL) and lies to
+    the year filter."""
+    return conn.execute(
+        "SELECT COUNT(*) FROM posts WHERE year = 0").fetchone()[0]
+
+
+def zero_to_null(conn) -> int:
+    """Set every year=0 row to NULL so the title scan can see it. Returns
+    the rows changed. Runs inside the caller's transaction."""
+    return conn.execute(
+        "UPDATE posts SET year = NULL WHERE year = 0").rowcount
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", type=Path, default=None,
@@ -120,30 +144,35 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     db_path = Path(args.db).expanduser() if args.db else _default_db()
 
-    conn = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True) if not args.apply \
-        else sqlite3.connect(str(db_path))
-    try:
-        found, skipped, scanned = scan(conn, max_year=args.max_year,
-                                       limit=args.limit)
-    finally:
-        conn.close()
-
-    print("scanned %d blank-year posts" % scanned)
-    print("extracted a safe year for %d" % len(found))
-    print("skipped %d (no standalone year in the title)" % skipped)
-    for post_id, title, year in found[:20]:
-        print("  %d: %r -> %d" % (post_id, title, year))
-    if len(found) > 20:
-        print("  ... and %d more" % (len(found) - 20))
-
     if not args.apply:
+        conn = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True)
+        try:
+            zeroed = count_zero_year(conn)
+            found, skipped, scanned = scan(conn, max_year=args.max_year,
+                                           limit=args.limit)
+        finally:
+            conn.close()
+        print("scanned %d blank-year posts" % scanned)
+        print("extracted a safe year for %d" % len(found))
+        print("skipped %d (no standalone year in the title)" % skipped)
+        for post_id, title, year in found[:20]:
+            print("  %d: %r -> %d" % (post_id, title, year))
+        if len(found) > 20:
+            print("  ... and %d more" % (len(found) - 20))
+        print("year=0 rows that would be set to NULL first: %d" % zeroed)
         print("dry-run: nothing written (pass --apply to write posts.year)")
         return 0
 
+    # --apply: zero-to-null runs FIRST, inside the same transaction as the
+    # fills, so a newly-nulled row whose title carries a year is filled in
+    # this same run instead of waiting for the next one.
     conn = sqlite3.connect(str(db_path))
     try:
         conn.execute("BEGIN IMMEDIATE")
         try:
+            zeroed = zero_to_null(conn)
+            found, skipped, scanned = scan(conn, max_year=args.max_year,
+                                           limit=args.limit)
             conn.executemany("UPDATE posts SET year=? WHERE id=?",
                              [(year, post_id) for post_id, _, year in found])
             conn.execute("COMMIT")
@@ -152,7 +181,11 @@ def main(argv=None) -> int:
             raise
     finally:
         conn.close()
-    print("applied: updated year on %d posts" % len(found))
+    print("scanned %d blank-year posts" % scanned)
+    print("extracted a safe year for %d" % len(found))
+    print("skipped %d (no standalone year in the title)" % skipped)
+    print("applied: set year=0 to NULL on %d posts; updated year on %d posts"
+          % (zeroed, len(found)))
     return 0
 
 

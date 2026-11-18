@@ -40,6 +40,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import db_pragmas  # serve-path SQLite pragmas (Session 125); stdlib-only
 import title_clean  # shared title/synopsis/rating rules (stdlib only)
+import quality  # release-quality spelling (DB checkup fix #6); stdlib only
 try:
     import panel_feed  # the operator's tuning knobs + pauses
 except Exception:  # pragma: no cover - panel_feed is always importable in-repo
@@ -6005,7 +6006,11 @@ def _save_scraped_data(data: dict, *, ensure_db: bool = True,
                     rel.get("release_title") or title,
                     rel.get("season"),
                     rel.get("episode"),
-                    rel.get("quality"),
+                    # DB checkup fix #6: the quality spelling is normalized
+                    # at this one funnel — direct scrapes and merge_catalogs
+                    # both land here — so a bare "HD" never reaches the
+                    # catalog as "HD" again (it is a 720p claim).
+                    quality.normalize_quality(rel.get("quality")),
                     rel.get("codec"),
                     rel.get("size"),
                     rel.get("languages"),

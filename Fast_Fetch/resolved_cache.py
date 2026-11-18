@@ -62,6 +62,7 @@ __all__ = [
     "note_failure",
     "note_serve_outcome",
     "serve_share",
+    "prune_resolved_cache",
     "REVERIFY_MARGIN_SECONDS",
     "MAX_FAIL_COUNT",
 ]
@@ -567,6 +568,38 @@ def note_failure_from_probe(conn: sqlite3.Connection, link_id: int,
     if isinstance(cause, str) and cause in TRANSPORT_CAUSES:
         return 0          # our transport failed — not evidence about the link
     return note_failure(conn, link_id)
+
+
+def prune_resolved_cache(conn: sqlite3.Connection, *,
+                         now: float | None = None) -> dict:
+    """Delete cache rows that can never serve again (DB checkup fix #8).
+
+    Two exact statements from the checkup report: rows whose ``link_id``
+    points at a ``download_sources`` row that no longer exists (1,802 of
+    3,237 on the live catalog — orphans accumulate whenever a source row is
+    deleted, because nothing cascades), and rows past their measured
+    ``expires_at`` (765). A fresh row, an unexpired row and a row whose link
+    still exists are all kept. Returns {"orphans_deleted",
+    "expired_deleted"}. Like ``record_resolved_cache`` this does NOT commit
+    — the caller's transaction owns that. A missing ``download_sources``
+    table (fresh DB) skips the orphan delete rather than erroring: there is
+    nothing to join against, and the cache table is empty there anyway.
+    """
+    _ensure_schema(conn)
+    now = now if now is not None else time.time()
+    tables = {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
+    orphans = 0
+    if "download_sources" in tables:
+        cur = conn.execute(
+            "DELETE FROM resolved_cache WHERE link_id NOT IN "
+            "(SELECT id FROM download_sources)")
+        orphans = cur.rowcount
+    cur = conn.execute(
+        "DELETE FROM resolved_cache WHERE expires_at IS NOT NULL "
+        "AND expires_at < ?",
+        (now,))
+    return {"orphans_deleted": orphans, "expired_deleted": cur.rowcount}
 
 
 def lookup_cache(conn: sqlite3.Connection, link_id: int, want: str = "watch", *,

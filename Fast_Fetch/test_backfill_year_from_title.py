@@ -10,6 +10,8 @@ this table does not need to change — it pins the *rule*, not the catalog.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import os
 import sqlite3
 import sys
@@ -158,6 +160,72 @@ class ScanAndApplyTests(unittest.TestCase):
         self.assertEqual(len(found), 1)
         self.assertEqual(found[0], (1, "LEGO Ninjago: Dragons Rising (2023)", 2023))
         self.assertEqual(skipped, 2)
+
+
+class ZeroToNullTests(unittest.TestCase):
+    """Fix #9: the bogus year 0 (67 live rows) is nulled first, inside the
+    same transaction as the fills, so a newly-nulled row whose title carries
+    a year is filled in the same run."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.tmp.name) / "catalog.db"
+        conn = sqlite3.connect(str(self.db_path))
+        conn.execute("CREATE TABLE posts (id INTEGER PRIMARY KEY, title TEXT, year INTEGER)")
+        conn.executemany(
+            "INSERT INTO posts (id, title, year) VALUES (?,?,?)",
+            [(1, "Film With Year (2021)", 0),
+             (2, "No Year Here", 0),
+             (3, "Already Dated (2019)", 2019),
+             (4, "Title Year (2020)", None)])
+        conn.commit()
+        conn.close()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _years(self):
+        conn = sqlite3.connect(str(self.db_path))
+        try:
+            return {r[0]: r[1] for r in conn.execute("SELECT id, year FROM posts")}
+        finally:
+            conn.close()
+
+    def test_dry_run_reports_zero_rows_and_writes_nothing(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(
+                byt.main(["--db", str(self.db_path), "--max-year", "2026"]), 0)
+        self.assertIn("year=0 rows that would be set to NULL first: 2",
+                      out.getvalue())
+        self.assertEqual(self._years(),
+                         {1: 0, 2: 0, 3: 2019, 4: None})
+
+    def test_apply_nulls_zero_then_fills_from_title(self):
+        self.assertEqual(
+            byt.main(["--db", str(self.db_path), "--max-year", "2026", "--apply"]), 0)
+        self.assertEqual(self._years(),
+                         {1: 2021, 2: None, 3: 2019, 4: 2020})
+
+    def test_apply_is_idempotent(self):
+        byt.main(["--db", str(self.db_path), "--max-year", "2026", "--apply"])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(
+                byt.main(["--db", str(self.db_path), "--max-year", "2026", "--apply"]), 0)
+        self.assertIn("set year=0 to NULL on 0 posts", out.getvalue())
+        self.assertIn("updated year on 0 posts", out.getvalue())
+        self.assertEqual(self._years(),
+                         {1: 2021, 2: None, 3: 2019, 4: 2020})
+
+    def test_zero_to_null_counts_and_returns_rowcount(self):
+        conn = sqlite3.connect(str(self.db_path))
+        try:
+            self.assertEqual(byt.count_zero_year(conn), 2)
+            self.assertEqual(byt.zero_to_null(conn), 2)
+            self.assertEqual(byt.count_zero_year(conn), 0)
+        finally:
+            conn.close()
 
 
 if __name__ == "__main__":

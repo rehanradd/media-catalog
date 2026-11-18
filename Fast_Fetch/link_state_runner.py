@@ -163,7 +163,8 @@ def run_once(*, db_path=None, max_rows: int = DEFAULT_MAX_ROWS,
     """
     import link_state
 
-    summary: dict = {"yielded": None, "demand": None, "background": None}
+    summary: dict = {"yielded": None, "demand": None, "background": None,
+                     "cache_prune": None}
     available = mem_mb if mem_mb is not None else mem_available_mb()
     if available is not None and available < MEMORY_FLOOR_MB:
         summary["yielded"] = f"memory floor: MemAvailable {available:.0f} MB"
@@ -228,6 +229,25 @@ def run_once(*, db_path=None, max_rows: int = DEFAULT_MAX_ROWS,
     log("background phase: %(rows_checked)s checked, %(rows_updated)s updated, "
         "by_status %(by_status)s, last_id %(last_id)s, state %(state)s"
         % summary["background"])
+
+    # Cache hygiene (DB checkup fix #8): the resolved_cache orphans whenever
+    # a source row is deleted — serve-verify deletes one row at a time,
+    # importers delete in bulk — and nothing cascades, so a bounded prune at
+    # the end of each sweep keeps press-banking honest. The table is ~3k
+    # rows; the prune is two DELETEs. It never fails the sweep and never
+    # runs on a dry-run.
+    if not dry_run:
+        try:
+            import resolved_cache
+            with open_conn() as conn:
+                summary["cache_prune"] = resolved_cache.prune_resolved_cache(conn)
+            log("cache prune: %(orphans_deleted)s orphans, "
+                "%(expired_deleted)s expired" % summary["cache_prune"])
+        except Exception as exc:  # noqa: BLE001 — hygiene must never fail a sweep
+            summary["cache_prune"] = {"orphans_deleted": 0,
+                                      "expired_deleted": 0,
+                                      "error": str(exc)[:200]}
+            log("cache prune skipped: %s" % exc)
     if verbose:
         log(f"summary: {summary}")
     return summary

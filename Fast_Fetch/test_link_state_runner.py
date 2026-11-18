@@ -306,6 +306,57 @@ class RunOnceTests(RunnerTestCase):
         self.assertIn("memory floor", summary["yielded"])
         self.assertEqual(calls, [])
 
+    def test_sweep_prunes_resolved_cache_at_the_end(self):
+        # DB checkup fix #8: orphans + expired rows leave at the end of
+        # every sweep, so press-banking never serves a dead link_id. The
+        # fixture resolved_cache table is minimal (link_id, url,
+        # resolved_at, expires_at, reverify_after) — the prune only reads
+        # link_id and expires_at, so it works on it as-is.
+        now = time.time()
+        live_id = self.ids[self.LIVE1]
+        self.conn.execute(
+            "INSERT INTO resolved_cache (link_id, url, resolved_at,"
+            " expires_at, reverify_after) VALUES (?, ?, ?, ?, ?)",
+            (live_id, self.LIVE1, now - 60, now - 10, now + 3600))
+        self.conn.execute(
+            "INSERT INTO resolved_cache (link_id, url, resolved_at,"
+            " expires_at, reverify_after) VALUES (?, ?, ?, ?, ?)",
+            (424242, "https://gone.example.com/d.mp4",
+             now - 60, now + 3600, now + 3600))
+        self.conn.commit()
+        calls = []
+        with unittest.mock.patch.object(link_state, "propagate",
+                                        self._fake_propagate(calls)):
+            summary = link_state_runner.run_once(
+                db_path=self.db_path, max_rows=5,
+                wait_quiet=self._quiet, check_service=self._no_neighbour,
+                mem_mb=9000.0)
+        self.assertEqual(summary["cache_prune"],
+                         {"orphans_deleted": 1, "expired_deleted": 1})
+        left = [r[0] for r in self.conn.execute(
+            "SELECT link_id FROM resolved_cache").fetchall()]
+        self.assertEqual(left, [])
+
+    def test_dry_run_skips_the_cache_prune(self):
+        now = time.time()
+        self.conn.execute(
+            "INSERT INTO resolved_cache (link_id, url, resolved_at,"
+            " expires_at, reverify_after) VALUES (?, ?, ?, ?, ?)",
+            (424242, "https://gone.example.com/d.mp4",
+             now - 60, now + 3600, now + 3600))
+        self.conn.commit()
+        calls = []
+        with unittest.mock.patch.object(link_state, "propagate",
+                                        self._fake_propagate(calls)):
+            summary = link_state_runner.run_once(
+                db_path=self.db_path, max_rows=5, dry_run=True,
+                wait_quiet=self._quiet, check_service=self._no_neighbour,
+                mem_mb=9000.0)
+        self.assertIsNone(summary["cache_prune"])
+        left = [r[0] for r in self.conn.execute(
+            "SELECT link_id FROM resolved_cache").fetchall()]
+        self.assertEqual(left, [424242])
+
 
 class CliTests(RunnerTestCase):
     def test_once_is_required_and_args_reach_run_once(self):

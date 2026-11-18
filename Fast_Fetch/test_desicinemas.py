@@ -21,6 +21,7 @@ from import_desicinemas import (
     normalize_media_type,
     parse_desicinemas_content,
     save_post_to_staging,
+    scrape_post_item,
     slug_from_url,
     unpack_dean_edwards,
 )
@@ -107,7 +108,7 @@ class TestDesiCinemasImporter(unittest.TestCase):
         <a href="https://www.imdb.com/title/tt1234567/">IMDb</a>
         <iframe src="https://www.desicinemas.pk/?trembed=0&#038;trid=1387&trtype=1"></iframe>
         """
-        imdb_id, tmdb_id, poster, backdrop, synopsis, director, cast_names, genres, trembed_urls, direct_iframes = parse_desicinemas_content(
+        imdb_id, tmdb_id, poster, backdrop, synopsis, director, cast_names, genres, trembed_urls, direct_iframes, year = parse_desicinemas_content(
             sample_html, "https://www.desicinemas.pk/movies/auron-mein-kahan-dum-tha/"
         )
         self.assertEqual(imdb_id, "tt1234567")
@@ -120,6 +121,77 @@ class TestDesiCinemasImporter(unittest.TestCase):
         self.assertEqual(len(trembed_urls), 1)
         self.assertIn("trembed=0", trembed_urls[0])
         self.assertEqual(len(direct_iframes), 0)
+        # No <span class="Date"> in this fixture: no page year.
+        self.assertIsNone(year)
+
+    def test_parse_desicinemas_content_reads_date_span_year(self):
+        # Live proof (DB checkup fix #9): "Next Goal Wins (HD)" carries no
+        # year in its <h1>, but the DooPlay meta block does —
+        # <span class="Date">2023</span> beside <span class="Time">.
+        sample_html = """
+        <a href="javascript:void(0)"><h1 class="Title">Next Goal Wins (HD)</h1></a>
+        <img data-src="//image.tmdb.org/t/p/original/riuTxOEKQ9lfvSan2vwaOPipwtr.jpg" />
+        <span class="Date">2023</span>
+        <span class="Time">1h 44m</span>
+        <div class="Description"><p>Next Goal Wins watch online full movie download.</p></div>
+        """
+        *_, year = parse_desicinemas_content(
+            sample_html, "https://www.desicinemas.pk/movies/awnext-goal-wins-n-t/"
+        )
+        self.assertEqual(year, 2023)
+
+    def test_parse_desicinemas_content_rejects_bad_date_years(self):
+        # 1899 is not a 19xx/20xx token for the regex; 2099 matches the
+        # pattern but fails the 1900..current-year range check.
+        for date_year in ("1899", "2099"):
+            sample_html = (
+                '<h1 class="Title">Some Film (HD)</h1>'
+                f'<span class="Date">{date_year}</span>'
+            )
+            *_, year = parse_desicinemas_content(
+                sample_html, "https://www.desicinemas.pk/movies/some-film/"
+            )
+            self.assertIsNone(year, f"Date {date_year} must not become a year")
+
+    def test_scrape_post_item_year_falls_back_to_date_span(self):
+        # The 4,719 NULL-year desicinemas rows: the title has no year, the
+        # Date span does. The scrape must carry it into the post.
+        html = """
+        <a href="javascript:void(0)"><h1 class="Title">Next Goal Wins (HD)</h1></a>
+        <span class="Date">2023</span>
+        <span class="Time">1h 44m</span>
+        <div class="Description"><p>Next Goal Wins watch online.</p></div>
+        """
+
+        class StubClient:
+            def get_text(self, loc, referer=None, timeout=None):
+                return (200, None, html, None)
+
+        result = scrape_post_item(
+            ("https://www.desicinemas.pk/movies/awnext-goal-wins-n-t/",
+             None, "awnext-goal-wins-n-t"),
+            StubClient(), unwrap_bridges=False)
+        self.assertTrue(result["success"])
+        self.assertEqual(result["post"]["year"], 2023)
+
+    def test_scrape_post_item_title_year_wins_over_date_span(self):
+        # When the <h1> itself carries a year, it wins over the Date span.
+        html = """
+        <a href="javascript:void(0)"><h1 class="Title">Pind Aala School (Punjabi) (HD) 2024</h1></a>
+        <span class="Date">2023</span>
+        <div class="Description"><p>A school comedy.</p></div>
+        """
+
+        class StubClient:
+            def get_text(self, loc, referer=None, timeout=None):
+                return (200, None, html, None)
+
+        result = scrape_post_item(
+            ("https://www.desicinemas.pk/movies/pind-aala-school/",
+             None, "pind-aala-school"),
+            StubClient(), unwrap_bridges=False)
+        self.assertTrue(result["success"])
+        self.assertEqual(result["post"]["year"], 2024)
 
     def test_db_init_and_save(self):
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
