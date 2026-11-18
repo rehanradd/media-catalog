@@ -32,6 +32,8 @@ class Media3HlsDownloadService : DownloadService(
     DEFAULT_FOREGROUND_NOTIFICATION_UPDATE_INTERVAL,
     DOWNLOAD_NOTIFICATION_CHANNEL_ID,
     R.string.media_download_channel_name,
+    // 1.3.1's constructor takes the channel description resource too.
+    R.string.media_download_channel_description,
 ) {
 
     override fun getDownloadManager(): DownloadManager =

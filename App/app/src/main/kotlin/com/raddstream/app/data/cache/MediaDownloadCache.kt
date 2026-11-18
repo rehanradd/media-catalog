@@ -91,8 +91,12 @@ object MediaDownloadCache {
             cache,
             httpFactory,
             Executors.newFixedThreadPool(MAX_PARALLEL_DOWNLOADS),
-            MAX_PARALLEL_DOWNLOADS,
         )
+        // 1.3.1 has no max-parallel constructor argument — the cap is a
+        // setter (the default is 3). Two keeps at once is the R3 cap: a
+        // third keep waits its turn instead of opening a third set of
+        // connections against a host that may already be throttling us.
+        downloadManager.setMaxParallelDownloads(MAX_PARALLEL_DOWNLOADS)
         return Holder(cache, downloadManager)
     }
 

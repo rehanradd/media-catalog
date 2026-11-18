@@ -161,7 +161,7 @@ class HlsKeepDownloader(private val context: Context) {
      */
     suspend fun drive(
         task: CacheTaskEntity,
-        onProgress: (downloadedBytes: Long, totalBytes: Long) -> Unit,
+        onProgress: suspend (downloadedBytes: Long, totalBytes: Long) -> Unit,
     ): HlsKeepDriveOutcome {
         val id = task.sourceKey
         val existing = manager.downloadIndex.getDownload(id)
