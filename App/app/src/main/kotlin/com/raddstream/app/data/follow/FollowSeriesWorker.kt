@@ -118,24 +118,35 @@ suspend fun checkFollowedSeries(
     onNewEpisode: (FollowedSeries, EpisodeScope) -> Unit,
 ) {
     for (series in dao.followedOnce()) {
-        runCatching {
-            val posts = catalog.postsForWork(series.workRef, series.cleanTitle)
-            var newest: EpisodeScope? = null
-            for (post in posts.take(MAX_DETAIL_CALLS_PER_SERIES)) {
-                val detail = catalog.detailFor(post.id) ?: continue
-                val scope = NewEpisodeCheck.newestScope(detail.releases)
-                if (scope != null && (newest == null || scope > newest)) newest = scope
-            }
-            val seen = newest ?: continue
-            val lastSeen = series.lastSeenSeason?.let { EpisodeScope(it, series.lastSeenEpisode) }
-            if (lastSeen == null) {
-                // Never checked: seed, do not announce.
-                dao.updateLastSeen(series.workRef, seen.season, seen.episode)
-            } else if (seen > lastSeen) {
-                onNewEpisode(series, seen)
-                dao.updateLastSeen(series.workRef, seen.season, seen.episode)
-            }
-        }
+        // One series' failure never stops the others — and the per-series
+        // body lives in its own function because `continue` inside
+        // `runCatching`'s inline lambda is an experimental feature: a
+        // plain `return` here is the same shape without the flag.
+        runCatching { checkOneSeries(series, dao, catalog, onNewEpisode) }
+    }
+}
+
+private suspend fun checkOneSeries(
+    series: FollowedSeries,
+    dao: FollowedSeriesDao,
+    catalog: FollowSeriesCatalog,
+    onNewEpisode: (FollowedSeries, EpisodeScope) -> Unit,
+) {
+    val posts = catalog.postsForWork(series.workRef, series.cleanTitle)
+    var newest: EpisodeScope? = null
+    for (post in posts.take(MAX_DETAIL_CALLS_PER_SERIES)) {
+        val detail = catalog.detailFor(post.id) ?: continue
+        val scope = NewEpisodeCheck.newestScope(detail.releases)
+        if (scope != null && (newest == null || scope > newest)) newest = scope
+    }
+    val seen = newest ?: return
+    val lastSeen = series.lastSeenSeason?.let { EpisodeScope(it, series.lastSeenEpisode) }
+    if (lastSeen == null) {
+        // Never checked: seed, do not announce.
+        dao.updateLastSeen(series.workRef, seen.season, seen.episode)
+    } else if (seen > lastSeen) {
+        onNewEpisode(series, seen)
+        dao.updateLastSeen(series.workRef, seen.season, seen.episode)
     }
 }
 
