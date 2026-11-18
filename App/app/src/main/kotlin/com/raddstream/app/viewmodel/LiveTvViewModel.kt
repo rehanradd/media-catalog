@@ -8,6 +8,7 @@ import com.raddstream.app.network.models.LiveTvChannel
 import com.raddstream.app.network.models.LiveTvChannelsResponse
 import com.raddstream.app.player.PlayerSessionStore
 import com.raddstream.app.repository.CatalogRepository
+import com.raddstream.app.repository.LiveTvFavouritesRepository
 import com.raddstream.app.ui.screens.categoryLabel
 import com.raddstream.app.ui.screens.countryLabel
 import com.raddstream.app.ui.screens.languageLabel
@@ -45,6 +46,7 @@ import kotlinx.coroutines.withTimeout
 @HiltViewModel
 class LiveTvViewModel @Inject constructor(
     private val repository: CatalogRepository,
+    private val favouritesRepository: LiveTvFavouritesRepository,
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
 
@@ -59,14 +61,23 @@ class LiveTvViewModel @Inject constructor(
         val showingCached: Boolean = false,
         /** When the saved list in [channels] was stored (epoch millis), or null when fresh or unknown. */
         val cachedAtMillis: Long? = null,
+        /** The starred channel ids, from Room — the star survives a tab change and a fresh fetch. */
+        val favoriteChannelIds: Set<Int> = emptySet(),
+        /** True while the Favourites chip owns the grid: only starred channels show. */
+        val showFavoritesOnly: Boolean = false,
     ) {
-        /** What the grid shows: the chosen category, then the search across name + language + country + category. */
+        /** What the grid shows: favourites first, then the chosen category, then the search across name + language + country + category. */
         val visibleChannels: List<LiveTvChannel>
             get() {
-                val byCategory = if (selectedCategory == null) {
-                    channels
+                val byFavourites = if (showFavoritesOnly) {
+                    channels.filter { it.id in favoriteChannelIds }
                 } else {
-                    channels.filter { it.category == selectedCategory }
+                    channels
+                }
+                val byCategory = if (selectedCategory == null) {
+                    byFavourites
+                } else {
+                    byFavourites.filter { it.category == selectedCategory }
                 }
                 val needle = query.trim().lowercase()
                 return if (needle.isEmpty()) {
@@ -81,6 +92,15 @@ class LiveTvViewModel @Inject constructor(
     val uiState = _uiState.asStateFlow()
 
     init {
+        // E2 slice 1: the starred ids are a Room flow, so a star tapped on
+        // the grid lands in the state on its own — the ViewModel never
+        // re-reads the table, and a star survives leaving the tab because
+        // the row outlives the screen that wrote it.
+        viewModelScope.launch {
+            favouritesRepository.observeFavoriteIds().collect { ids ->
+                _uiState.update { it.copy(favoriteChannelIds = ids) }
+            }
+        }
         // Live TV review D1: stale-while-revalidate — paint the saved list
         // at once, then refresh behind it. The skeleton only runs when
         // there is nothing at all to show; the 45 s budget and the one
@@ -196,11 +216,33 @@ class LiveTvViewModel @Inject constructor(
     }
 
     fun onCategorySelected(category: String?) {
-        _uiState.update { it.copy(selectedCategory = category) }
+        // A category is a different view from Favourites, not a refinement
+        // of it — picking one leaves the starred-only grid behind.
+        _uiState.update { it.copy(selectedCategory = category, showFavoritesOnly = false) }
     }
 
     fun onQueryChanged(query: String) {
         _uiState.update { it.copy(query = query) }
+    }
+
+    /**
+     * E2 slice 1: the Favourites chip owns the grid while it is selected.
+     * It is its own view, not a category — turning it on clears the
+     * category, and turning it off returns to All. The search still
+     * narrows inside it: a query plus Favourites finds the starred channel
+     * whose name matches, not the whole starred list.
+     */
+    fun onFavouritesSelected(show: Boolean) {
+        _uiState.update {
+            it.copy(showFavoritesOnly = show, selectedCategory = if (show) null else it.selectedCategory)
+        }
+    }
+
+    /** Stars or unstars the channel; the Room flow above repaints the grid. */
+    fun toggleFavorite(channelId: Int) {
+        viewModelScope.launch {
+            favouritesRepository.toggleFavorite(channelId)
+        }
     }
 
     private var warmJob: Job? = null

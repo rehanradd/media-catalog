@@ -62,7 +62,7 @@ class LiveTvMockupTest {
     )
 
     @Test
-    fun categoryRowRendersAllFirstThenCategoriesInOrder() {
+    fun categoryRowRendersFavouritesFirstThenAllThenCategories() {
         compose.setContent {
             RaddStreamTheme {
                 LiveTvCategoryRow(
@@ -72,15 +72,18 @@ class LiveTvMockupTest {
                 )
             }
         }
-        // The row lays its chips out left to right in list order: "All"
-        // first, then the server's categories as they arrived.
+        // E2 slice 1: "Favourites" heads the row, then "All", then the
+        // server's categories as they arrived.
+        val favouritesLeft = compose.onNodeWithTag("liveTv_chip_favourites")
+            .fetchSemanticsNode().boundsInRoot.left
         val allLeft = compose.onNodeWithTag("liveTv_chip_all")
             .fetchSemanticsNode().boundsInRoot.left
         val newsLeft = compose.onNodeWithTag("liveTv_chip_news")
             .fetchSemanticsNode().boundsInRoot.left
         val sportsLeft = compose.onNodeWithTag("liveTv_chip_sports")
             .fetchSemanticsNode().boundsInRoot.left
-        assertTrue("All chip is not first", allLeft < newsLeft)
+        assertTrue("Favourites chip is not first", favouritesLeft < allLeft)
+        assertTrue("All chip is not second", allLeft < newsLeft)
         assertTrue("News chip is not before Sports", newsLeft < sportsLeft)
     }
 

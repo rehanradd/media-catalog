@@ -53,6 +53,10 @@ import com.raddstream.app.data.cache.CacheTaskEntity
  * for the same reason 4 through 7 are: the destructive fallback on this builder would take the
  * viewer's saved list with it, and a rule about hidden rows that costs a library to install is
  * not a rule the app should ship.
+ *
+ * Version 9 adds `live_tv_favourites`, the starred Live TV channels (E2 slice 1). It is a new
+ * table with no prior data, real DDL like 5 and 7: the destructive fallback would still take
+ * `favorite_posts` with it, and a star is a promise the same as a saved title.
  */
 @Database(
     entities = [
@@ -64,8 +68,9 @@ import com.raddstream.app.data.cache.CacheTaskEntity
         WatchHistoryEntity::class,
         AdCadenceEntity::class,
         UnavailableWorkEntity::class,
+        LiveTvFavourite::class,
     ],
-    version = 8,
+    version = 9,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -77,6 +82,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun watchHistoryDao(): WatchHistoryDao
     abstract fun adCadenceDao(): AdCadenceDao
     abstract fun unavailableWorkDao(): UnavailableWorkDao
+    abstract fun liveTvFavouriteDao(): LiveTvFavouriteDao
 
     companion object {
         /**
@@ -252,6 +258,23 @@ abstract class AppDatabase : RoomDatabase() {
                     "CREATE TABLE IF NOT EXISTS unavailable_works (" +
                         "postId INTEGER NOT NULL, refusedAt INTEGER NOT NULL, " +
                         "reason TEXT NOT NULL, PRIMARY KEY(postId))",
+                )
+            }
+        }
+
+        /**
+         * 8 → 9: the starred-channels table. One statement, no existing row
+         * touched — a star is a row this build writes the moment it is
+         * meaningful, and a channel that left the registry leaves a dead
+         * row behind, never a stale card. The column names and nullability
+         * are Room's own for [LiveTvFavourite].
+         */
+        val MIGRATION_8_9: Migration = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS live_tv_favourites (" +
+                        "channelId INTEGER NOT NULL, starredAt INTEGER NOT NULL, " +
+                        "PRIMARY KEY(channelId))",
                 )
             }
         }

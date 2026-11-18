@@ -23,6 +23,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -75,8 +77,11 @@ import kotlinx.coroutines.launch
  * The Live TV tab: a category-first channel grid, in the same shape as the
  * catalog grids (category chips on top, a logo grid below, search inside the
  * tab). There is no EPG time-grid in v1 — no EPG data source is wired for
- * these channels, and a grid of invented times would be a lie — and no
- * favourites yet, because favourites are a posts system, not a channels one.
+ * these channels, and a grid of invented times would be a lie. Favourites
+ * are the channels-side kind: a star on the card, a "Favourites" chip at
+ * the head of the row, and a tiny Room table keyed by the registry id —
+ * not the posts system, because a channel is not a post and has no handle
+ * to sync.
  *
  * A tap plays the channel through the EXISTING player, addressed by the
  * server's opaque `stream_id` handle — the same route a movie uses. No raw
@@ -235,6 +240,10 @@ fun LiveTvScreen(
                     categories = state.categories,
                     selectedCategory = state.selectedCategory,
                     onCategorySelected = viewModel::onCategorySelected,
+                    // E2 slice 1: the Favourites chip owns the grid while
+                    // selected — only starred channels show, in starred order.
+                    showFavoritesOnly = state.showFavoritesOnly,
+                    onFavouritesSelected = viewModel::onFavouritesSelected,
                     // A4-F2: the row owns the "All"-while-searching state —
                     // the query rides here as a removable pill, and "All"
                     // dims while it is up (see LiveTvCategoryRow).
@@ -251,13 +260,26 @@ fun LiveTvScreen(
                     LiveTvChannelCountHeading(
                         visible = state.visibleChannels.size,
                         total = state.channels.size,
-                        filtered = state.query.isNotBlank() || state.selectedCategory != null,
+                        filtered = state.query.isNotBlank() || state.selectedCategory != null ||
+                            state.showFavoritesOnly,
                     )
                 }
                 if (state.visibleChannels.isEmpty()) {
+                    // E2 slice 1: "No favourites yet" is only the
+                    // nothing-starred case — a starred list narrowed by a
+                    // query that matches nothing is still "No channels
+                    // match", with the search to clear.
+                    val noFavouritesYet = state.showFavoritesOnly &&
+                        state.favoriteChannelIds.isEmpty()
                     EmptyState(
-                        title = "No channels match",
-                        message = if (state.query.isNotBlank()) {
+                        title = if (noFavouritesYet) {
+                            "No favourites yet"
+                        } else {
+                            "No channels match"
+                        },
+                        message = if (noFavouritesYet) {
+                            "Tap the star on a channel to keep it here."
+                        } else if (state.query.isNotBlank()) {
                             "Nothing matching \"${state.query}\" is on live TV right now."
                         } else {
                             "Nothing in this category is on live TV right now."
@@ -267,7 +289,12 @@ fun LiveTvScreen(
                         // a query is set, "Show all channels" when a
                         // category is set.
                         action = {
-                            if (state.query.isNotBlank()) {
+                            if (noFavouritesYet) {
+                                Button(
+                                    onClick = { viewModel.onFavouritesSelected(false) },
+                                    modifier = Modifier.heightIn(min = 48.dp),
+                                ) { Text("Show all channels") }
+                            } else if (state.query.isNotBlank()) {
                                 Button(
                                     onClick = { viewModel.onQueryChanged("") },
                                     modifier = Modifier.heightIn(min = 48.dp),
@@ -284,16 +311,22 @@ fun LiveTvScreen(
                 } else {
                     LiveTvChannelGrid(
                         channels = state.visibleChannels,
+                        // E2 slice 1: the star state rides with the card,
+                        // and the tap writes Room through the ViewModel.
+                        favoriteChannelIds = state.favoriteChannelIds,
+                        onFavoriteClick = { channel -> viewModel.toggleFavorite(channel.id) },
                         // A4-F5: the filtered list ends with its own footer —
                         // "End of results · 1 of 759 channels" plus the way
                         // back to the full list. The counts are the same
                         // numbers the heading above the grid already says.
-                        filtered = state.query.isNotBlank() || state.selectedCategory != null,
+                        filtered = state.query.isNotBlank() || state.selectedCategory != null ||
+                            state.showFavoritesOnly,
                         visibleCount = state.visibleChannels.size,
                         totalCount = state.channels.size,
                         onClearFilter = {
                             viewModel.onQueryChanged("")
                             viewModel.onCategorySelected(null)
+                            viewModel.onFavouritesSelected(false)
                         },
                         onChannelClick = { channel ->
                             // Batch C: warm the channel's link in parallel
@@ -373,6 +406,10 @@ internal fun LiveTvChannelGrid(
     totalCount: Int = channels.size,
     /** Clears both the query and the category — null renders no footer. */
     onClearFilter: (() -> Unit)? = null,
+    /** Starred channel ids — a card draws its star filled when its id is in here. */
+    favoriteChannelIds: Set<Int> = emptySet(),
+    /** The star tap — never the card tap: starring must not play the channel. */
+    onFavoriteClick: (LiveTvChannel) -> Unit = {},
 ) {
     val gridState = rememberLazyGridState()
     val scope = rememberCoroutineScope()
@@ -394,6 +431,8 @@ internal fun LiveTvChannelGrid(
                 LiveTvChannelCard(
                     channel = channel,
                     onClick = { onChannelClick(channel) },
+                    isFavorite = channel.id in favoriteChannelIds,
+                    onFavoriteClick = { onFavoriteClick(channel) },
                 )
             }
             if (filtered && onClearFilter != null) {
@@ -462,20 +501,25 @@ internal fun LiveTvEndOfResultsFooter(
 
 /**
  * The category chips, extracted so their order and selected state are
- * unit-testable (see LiveTvMockupTest): "All" first, then the server's
- * categories in the order they arrived. The row scrolls when the list is
- * long — the mockup's five chips happen to fit, but the registry can hold
- * more, and a clipped chip is worse than a scrollable row. The selected
- * chip is the shared jade fill ([raddFilterChipColors]); the unselected
- * chips keep the default thin border, as the mockup draws them. The row
- * shares the [ScrollingChipRow] right-edge fade so the last chip fades out
- * instead of hard-clipping mid-word.
+ * unit-testable (see LiveTvMockupTest): "Favourites" first, then "All",
+ * then the server's categories in the order they arrived. The row scrolls
+ * when the list is long — the mockup's five chips happen to fit, but the
+ * registry can hold more, and a clipped chip is worse than a scrollable
+ * row. The selected chip is the shared jade fill ([raddFilterChipColors]);
+ * the unselected chips keep the default thin border, as the mockup draws
+ * them. The row shares the [ScrollingChipRow] right-edge fade so the last
+ * chip fades out instead of hard-clipping mid-word.
  *
  * A4-F2: while a text search is active the query is the filter, not "All"
  * — "All" loses its selected fill and dims to half alpha, and the query
  * itself rides first as a removable jade pill ("Discover Pakistan ×").
  * Tapping the pill clears the query; tapping "All" still clears only the
  * category, exactly as before.
+ *
+ * E2 slice 1: "Favourites" is its own view, not a category — it sits at
+ * the head of the row, and while it is selected "All" and the categories
+ * lose their fill (a category tap leaves the favourites view, see
+ * [LiveTvViewModel.onCategorySelected]).
  */
 @Composable
 internal fun LiveTvCategoryRow(
@@ -485,6 +529,8 @@ internal fun LiveTvCategoryRow(
     modifier: Modifier = Modifier,
     query: String = "",
     onQueryCleared: () -> Unit = {},
+    showFavoritesOnly: Boolean = false,
+    onFavouritesSelected: (Boolean) -> Unit = {},
 ) {
     val searchActive = query.isNotBlank()
     // A4-F3: rides ScrollingChipRow now — the fade and the row are the
@@ -526,7 +572,18 @@ internal fun LiveTvCategoryRow(
         item {
             RaddChip(
                 colors = raddFilterChipColors(),
-                selected = selectedCategory == null && !searchActive,
+                selected = showFavoritesOnly,
+                onClick = { onFavouritesSelected(!showFavoritesOnly) },
+                label = { Text("Favourites") },
+                // Live TV review (Nov 2026): the chip itself is 48dp
+                // tall, like "All" below.
+                modifier = Modifier.testTag("liveTv_chip_favourites"),
+            )
+        }
+        item {
+            RaddChip(
+                colors = raddFilterChipColors(),
+                selected = selectedCategory == null && !searchActive && !showFavoritesOnly,
                 onClick = { onCategorySelected(null) },
                 label = { Text("All") },
                 // Live TV review (Nov 2026): the chip itself is 48dp
@@ -640,13 +697,20 @@ internal fun LiveTvChannelCard(
     channel: LiveTvChannel,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    /** True when this channel is starred — the star draws filled. */
+    isFavorite: Boolean = false,
+    /** The star tap — a nested click, so starring never plays the channel. */
+    onFavoriteClick: () -> Unit = {},
 ) {
     val metaLine = channelMetaLine(channel)
     // Robo run 2: every card announced its name three times (logo description,
     // name text, and the "LIVE" badge on every card) — the same words on all
     // ~18 channels. One sentence per card; the logo, badge and texts are paint.
+    // E2 slice 1: a starred card says so in its sentence, so a screen-reader
+    // viewer hears the star without hunting for it.
     val a11y = listOfNotNull(
         "${channel.name}, live",
+        "starred".takeIf { isFavorite },
         metaLine.takeIf { it.isNotBlank() },
     ).joinToString(" · ")
     Card(
@@ -723,6 +787,42 @@ internal fun LiveTvChannelCard(
                         text = "LIVE",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+                // E2 slice 1: the star lives top-end, opposite the LIVE
+                // badge — the logo's safe zone is centred at 60%, so the
+                // corners are free, and the same 0.85 surface disc keeps
+                // the mark legible over any logo. It is a nested click
+                // inside the card: tapping it stars the channel and never
+                // plays it. The filled star takes the Detail favourite's
+                // secondary tint, so a starred card reads starred at a
+                // glance without a second colour language.
+                IconButton(
+                    onClick = onFavoriteClick,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(2.dp)
+                        .background(
+                            MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+                            CircleShape,
+                        )
+                        .testTag("liveTv_favorite_${channel.id}")
+                        .semantics {
+                            contentDescription = if (isFavorite) {
+                                "Unstar ${channel.name}"
+                            } else {
+                                "Star ${channel.name}"
+                            }
+                        },
+                ) {
+                    Icon(
+                        imageVector = if (isFavorite) Icons.Default.Star else Icons.Default.StarBorder,
+                        contentDescription = null,
+                        tint = if (isFavorite) {
+                            MaterialTheme.colorScheme.secondary
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        },
                     )
                 }
             }

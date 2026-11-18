@@ -8,6 +8,7 @@ import com.raddstream.app.data.cache.CacheTaskDao
 import com.raddstream.app.data.local.AdCadenceDao
 import com.raddstream.app.data.local.AppDatabase
 import com.raddstream.app.data.local.FavoriteDao
+import com.raddstream.app.data.local.LiveTvFavouriteDao
 import com.raddstream.app.data.local.SyncedProgressDao
 import com.raddstream.app.data.local.UnavailableWorkDao
 import com.raddstream.app.data.local.WatchHistoryDao
@@ -38,6 +39,7 @@ object DatabaseModule {
                 AppDatabase.MIGRATION_5_6,
                 AppDatabase.MIGRATION_6_7,
                 AppDatabase.MIGRATION_7_8,
+                AppDatabase.MIGRATION_8_9,
             )
             // The ladder 1 → 7 is continuous, so this fallback never fires for a known schema;
             // it is a last resort against an unknown future version, and no step may ever be
@@ -85,6 +87,11 @@ object DatabaseModule {
     @Provides
     fun provideUnavailableWorkDao(database: AppDatabase): UnavailableWorkDao {
         return database.unavailableWorkDao()
+    }
+
+    @Provides
+    fun provideLiveTvFavouriteDao(database: AppDatabase): LiveTvFavouriteDao {
+        return database.liveTvFavouriteDao()
     }
 }
 
