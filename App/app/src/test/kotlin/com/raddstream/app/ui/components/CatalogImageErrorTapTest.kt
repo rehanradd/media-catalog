@@ -106,5 +106,6 @@ class CatalogImageErrorTapTest {
  */
 private fun hasClickActionLabel(label: String) =
     SemanticsMatcher("click action labelled \"$label\"") { node ->
-        node.config.getOrNull(SemanticsActions.OnClick)?.label == label
+        node.config.contains(SemanticsActions.OnClick) &&
+            node.config[SemanticsActions.OnClick].label == label
     }
