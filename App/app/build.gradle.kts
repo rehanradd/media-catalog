@@ -303,6 +303,11 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // MX idea #1 (2026-11-19): the Jellyfin FFmpeg decoder AAR requires
+        // core library desugaring (its aar-metadata sets
+        // coreLibraryDesugaringEnabled=true) — AGP's checkDebugAarMetadata
+        // fails the build without it (proven by Android CI 44393698539).
+        isCoreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
@@ -495,6 +500,9 @@ dependencies {
     // 2.1+); see App/ffmpeg/NOTICE.md — the repo has no license file, so
     // this is flagged for the owner, not a blocker.
     implementation(libs.media3.ffmpeg.decoder)
+    // MX idea #1: the Jellyfin decoder AAR requires core library desugaring
+    // (see compileOptions above) — this is the library that provides it.
+    coreLibraryDesugaring(libs.desugar.jdk.libs)
     implementation(libs.media3.exoplayer.dash)
     implementation(libs.media3.datasource)
     implementation(libs.media3.ui)

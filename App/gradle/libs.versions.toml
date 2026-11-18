@@ -35,7 +35,13 @@ play-app-update     = "2.1.0"
 # integrate doc, and bumping minSdk is an owner decision for the follow-up
 # slice, not this spike. 21.4.0 is in use by minSdk-21 apps in the wild.
 cast-framework      = "21.4.0"
-# Firebase Crashlytics (2026-11-14): BOM 33.7.0 pins firebase-crashlytics
+# Core library desugaring (MX idea #1): the Jellyfin FFmpeg decoder AAR
+# declares that it requires desugaring (its aar-metadata sets
+# coreLibraryDesugaringEnabled=true, inherited from Media3's library
+# config) — AGP's checkDebugAarMetadata fails the build without it
+# (proven by Android CI 44393698539). 2.0.4 is the standard pairing for
+# AGP 8.5.2; it backports java.time etc. to this app's minSdk 21.
+desugar-jdk-libs    = "2.0.4"
 # 19.3.0 + firebase-analytics 22.1.2 — both declare minSdk 21 in their
 # manifests (verified against the published AARs), exactly this app's
 # minSdk, so no manifest-merger conflict. google-services 4.4.2 and the
@@ -116,6 +122,10 @@ hilt-work-compiler      = { group = "androidx.hilt", name = "hilt-compiler",   v
 
 # Core
 core-ktx                = { group = "androidx.core", name = "core-ktx", version.ref = "core-ktx" }
+
+# Core library desugaring (MX idea #1, 2026-11-19): required by the
+# Jellyfin FFmpeg decoder AAR — see the version note above.
+desugar-jdk-libs        = { group = "com.android.tools", name = "desugar_jdk_libs", version.ref = "desugar-jdk-libs" }
 
 # Firebase (Crashlytics crash reporting + Analytics; versions managed by the
 # BOM — no version.ref on the libraries themselves)
