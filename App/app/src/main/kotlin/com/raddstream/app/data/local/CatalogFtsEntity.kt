@@ -29,7 +29,7 @@ import androidx.room.Fts4
  * work arriving from a v1 list and a v2 list is one row, the freshest
  * wins, and the table cannot grow a duplicate per print.
  */
-@Fts4(prefix = ["1", "2", "3", "4"])
+@Fts4(prefix = [1, 2, 3, 4])
 @Entity(tableName = "catalog_fts")
 data class CatalogFtsEntity(
     @ColumnInfo(name = "title") val title: String,
