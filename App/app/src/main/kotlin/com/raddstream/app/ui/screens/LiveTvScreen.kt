@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Tv
@@ -45,6 +46,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -233,6 +235,11 @@ fun LiveTvScreen(
                     categories = state.categories,
                     selectedCategory = state.selectedCategory,
                     onCategorySelected = viewModel::onCategorySelected,
+                    // A4-F2: the row owns the "All"-while-searching state —
+                    // the query rides here as a removable pill, and "All"
+                    // dims while it is up (see LiveTvCategoryRow).
+                    query = state.query,
+                    onQueryCleared = { viewModel.onQueryChanged("") },
                 )
                 // Live TV review D7: the biggest list in the app says how
                 // big it is — "759 channels" unfiltered, "12 of 759
@@ -392,6 +399,12 @@ internal fun LiveTvChannelGrid(
  * chips keep the default thin border, as the mockup draws them. The row
  * shares Home's right-edge fade ([RowEndFade]) so the last chip fades out
  * instead of hard-clipping mid-word.
+ *
+ * A4-F2: while a text search is active the query is the filter, not "All"
+ * — "All" loses its selected fill and dims to half alpha, and the query
+ * itself rides first as a removable jade pill ("Discover Pakistan ×").
+ * Tapping the pill clears the query; tapping "All" still clears only the
+ * category, exactly as before.
  */
 @Composable
 internal fun LiveTvCategoryRow(
@@ -399,7 +412,10 @@ internal fun LiveTvCategoryRow(
     selectedCategory: String?,
     onCategorySelected: (String?) -> Unit,
     modifier: Modifier = Modifier,
+    query: String = "",
+    onQueryCleared: () -> Unit = {},
 ) {
+    val searchActive = query.isNotBlank()
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -410,17 +426,50 @@ internal fun LiveTvCategoryRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             contentPadding = PaddingValues(end = 16.dp),
         ) {
+            if (searchActive) {
+                item {
+                    FilterChip(
+                        colors = raddFilterChipColors(),
+                        selected = true,
+                        onClick = onQueryCleared,
+                        label = {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Text(
+                                    text = query.trim(),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            }
+                        },
+                        // The chip itself is 48dp tall, like "All" below.
+                        modifier = Modifier.height(48.dp).testTag("liveTv_queryPill")
+                            .semantics { contentDescription = "Clear search for ${query.trim()}" },
+                    )
+                }
+            }
             item {
                 FilterChip(
                     colors = raddFilterChipColors(),
-                    selected = selectedCategory == null,
+                    selected = selectedCategory == null && !searchActive,
                     onClick = { onCategorySelected(null) },
                     label = { Text("All") },
                     // Live TV review (Nov 2026): the chip itself is 48dp
                     // tall, not just its touch target — the 32dp visible
                     // chip read as shallow next to the search pill, and
-                    // Home's filter row is 48dp.
-                    modifier = Modifier.height(48.dp).testTag("liveTv_chip_all"),
+                    // Home's filter row is 48dp. A4-F2: half alpha while
+                    // a text search is active, so the jade fill never
+                    // claims a filter the query already owns.
+                    modifier = Modifier.height(48.dp)
+                        .alpha(if (searchActive) 0.5f else 1f)
+                        .testTag("liveTv_chip_all"),
                 )
             }
             items(categories) { category ->

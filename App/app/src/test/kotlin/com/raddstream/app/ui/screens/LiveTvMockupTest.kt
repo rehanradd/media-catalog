@@ -85,6 +85,52 @@ class LiveTvMockupTest {
     }
 
     @Test
+    fun categoryRowDimsAllAndShowsRemovableQueryPillWhileSearching() {
+        // A4-F2 (OR-14): "All" stayed jade-filled while the search bar
+        // held "Discover Pakistan", so it was unclear whether "All" was
+        // an active filter or the default. While a query is active the
+        // query pill is the filter — "All" loses its selected fill, and
+        // tapping the pill clears the query.
+        var cleared = false
+        compose.setContent {
+            RaddStreamTheme {
+                LiveTvCategoryRow(
+                    categories = listOf("news", "sports"),
+                    selectedCategory = null,
+                    onCategorySelected = {},
+                    query = "Discover Pakistan",
+                    onQueryCleared = { cleared = true },
+                )
+            }
+        }
+        compose.onNodeWithText("All").assertIsNotSelected()
+        compose.onNodeWithTag("liveTv_queryPill").assertIsDisplayed()
+        compose.onNodeWithText("Discover Pakistan").assertIsDisplayed()
+        compose.onNodeWithTag("liveTv_queryPill").performClick()
+        assertTrue("Tapping the query pill did not clear the search", cleared)
+    }
+
+    @Test
+    fun categoryRowWithoutQueryKeepsAllSelected() {
+        // A4-F2: the dimming is only while a text search is active — with
+        // no query, "All" is the selected filter exactly as before, and
+        // no query pill exists.
+        compose.setContent {
+            RaddStreamTheme {
+                LiveTvCategoryRow(
+                    categories = listOf("news", "sports"),
+                    selectedCategory = null,
+                    onCategorySelected = {},
+                    query = "",
+                    onQueryCleared = {},
+                )
+            }
+        }
+        compose.onNodeWithText("All").assertIsSelected()
+        compose.onNodeWithTag("liveTv_queryPill").assertDoesNotExist()
+    }
+
+    @Test
     fun categoryRowMarksOnlyTheSelectedChip() {
         compose.setContent {
             RaddStreamTheme {
