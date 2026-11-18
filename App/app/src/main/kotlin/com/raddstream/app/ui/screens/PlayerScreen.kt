@@ -3882,7 +3882,7 @@ internal fun SwitchSourceRow(title: String, sizeText: String?, playing: Boolean,
         Text(
             title,
             color = if (playing) RaddCurrent500 else Color.White,
-            fontSize = brandSp(15),
+            fontSize = brandSp(14),
             fontWeight = if (playing) FontWeight.SemiBold else FontWeight.Normal,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -4055,7 +4055,7 @@ private fun SubtitleSettingsSheet(state: PlayerUiState, vm: PlayerViewModel) {
             Text(
                 stringResource(R.string.player_subtitle_size, state.subtitle.sizePercent),
                 color = Color.White,
-                fontSize = brandSp(15),
+                fontSize = brandSp(14),
                 modifier = Modifier.padding(horizontal = 16.dp),
             )
             Slider(
@@ -4068,7 +4068,7 @@ private fun SubtitleSettingsSheet(state: PlayerUiState, vm: PlayerViewModel) {
             Text(
                 stringResource(R.string.player_subtitle_position, (state.subtitle.bottomFraction * 100).toInt()),
                 color = Color.White,
-                fontSize = brandSp(15),
+                fontSize = brandSp(14),
                 modifier = Modifier.padding(horizontal = 16.dp),
             )
             Slider(
@@ -4086,7 +4086,7 @@ private fun SubtitleSettingsSheet(state: PlayerUiState, vm: PlayerViewModel) {
 
             val switchHaptics = LocalHapticFeedback.current
             Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(stringResource(R.string.player_subtitle_bold), color = Color.White, fontSize = brandSp(15), modifier = Modifier.weight(1f))
+                Text(stringResource(R.string.player_subtitle_bold), color = Color.White, fontSize = brandSp(14), modifier = Modifier.weight(1f))
                 Switch(
                     checked = state.subtitle.bold,
                     onCheckedChange = {
@@ -4099,7 +4099,7 @@ private fun SubtitleSettingsSheet(state: PlayerUiState, vm: PlayerViewModel) {
                 )
             }
             Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(stringResource(R.string.player_subtitle_background), color = Color.White, fontSize = brandSp(15), modifier = Modifier.weight(1f))
+                Text(stringResource(R.string.player_subtitle_background), color = Color.White, fontSize = brandSp(14), modifier = Modifier.weight(1f))
                 Switch(
                     checked = state.subtitle.textBackground,
                     onCheckedChange = {
@@ -4115,7 +4115,7 @@ private fun SubtitleSettingsSheet(state: PlayerUiState, vm: PlayerViewModel) {
             Text(
                 stringResource(R.string.player_subtitle_colour),
                 color = Color.White,
-                fontSize = brandSp(15),
+                fontSize = brandSp(14),
                 modifier = Modifier.padding(horizontal = 16.dp),
             )
             Row(
@@ -4590,7 +4590,7 @@ private fun SheetRow(label: String, selected: Boolean = false, enabled: Boolean 
                     !enabled -> Color.White.copy(alpha = 0.4f)
                     else -> Color.White
                 },
-                fontSize = brandSp(15),
+                fontSize = brandSp(14),
             )
         },
         leadingContent = if (selected) {

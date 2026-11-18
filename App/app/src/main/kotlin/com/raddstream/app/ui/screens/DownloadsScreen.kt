@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -195,35 +194,41 @@ fun DownloadsScreen(
 
             if (!state.hasAnything && !state.isLoading) {
                 item {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(240.dp),
-                        verticalArrangement = Arrangement.Center,
-                    ) {
-                        EmptyState(
-                            title = "Nothing downloaded yet",
-                            message = "Use the Download button on a movie or episode. " +
-                                "Files go to Movies/RaddStream and play anywhere; downloads play here.",
-                            icon = {
-                                Icon(
-                                    Icons.Default.Download,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(40.dp),
-                                )
-                            },
-                            modifier = Modifier.fillMaxSize(),
-                            action = {
-                                // A downloads tab nobody has used yet is not a dead end: the way
-                                // to fill it is one tap away, on the title they came from.
-                                OutlinedButton(
-                                    onClick = onBackClick,
-                                    modifier = Modifier.heightIn(min = 48.dp),
-                                ) { Text("Find something to download") }
-                            },
-                        )
-                    }
+                    // A4-F7: the empty state wraps its own content instead of
+                    // sitting in a fixed 240dp box. Robo v7 (v7-11.png) caught
+                    // the old shape half-cutting the "Find something to
+                    // download" pill: EmptyState's fillScreen padding (32dp)
+                    // left the 240dp box 176dp of room for ~206dp of content
+                    // (40dp icon + title + 3-line message + 48dp button), so
+                    // the button text clipped at the box edge. Wrapping the
+                    // content (fillScreen = false, the F5 My List pattern)
+                    // makes the item ~246dp tall and the whole stack —
+                    // top bar + storage + local-files + empty state — fits
+                    // above the fold on a 360×640dp viewport with room to
+                    // spare, whatever the message wraps to.
+                    EmptyState(
+                        title = "Nothing downloaded yet",
+                        message = "Use the Download button on a movie or episode. " +
+                            "Files go to Movies/RaddStream and play anywhere; downloads play here.",
+                        icon = {
+                            Icon(
+                                Icons.Default.Download,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(40.dp),
+                            )
+                        },
+                        fillScreen = false,
+                        modifier = Modifier.fillMaxWidth(),
+                        action = {
+                            // A downloads tab nobody has used yet is not a dead end: the way
+                            // to fill it is one tap away, on the title they came from.
+                            OutlinedButton(
+                                onClick = onBackClick,
+                                modifier = Modifier.heightIn(min = 48.dp),
+                            ) { Text("Find something to download") }
+                        },
+                    )
                 }
             }
         }

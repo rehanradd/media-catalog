@@ -137,21 +137,23 @@ internal const val DisabledButtonContentAlpha = 0.65f
 /**
  * Settings review (Gemini 5.5/10, 2026-11-16): the screen's two text roles.
  * Group headers — section headings, card titles, in-card row titles — are
- * 13sp Medium; helpers are 13sp Regular in #A3ABA8 at 1.4 line-height
- * (18sp). Both go through brandSp so typography.scale still reaches them.
+ * 12sp Medium; helpers are 12sp Regular in #A3ABA8 at 16sp line-height
+ * (the M3 bodySmall/labelSmall 12/16 pair). Both go through brandSp so
+ * typography.scale still reaches them. A4-F7: 13sp/18sp → 12sp/16sp —
+ * 13 and 18 are off the M3 scale (Type.kt).
  */
 private val settingsGroupTitleStyle = TextStyle(
     fontFamily = RaddTextFamily,
     fontWeight = FontWeight.Medium,
-    fontSize = brandSp(13),
-    lineHeight = brandSp(18),
+    fontSize = brandSp(12),
+    lineHeight = brandSp(16),
 )
 
 private val settingsHelperStyle = TextStyle(
     fontFamily = RaddTextFamily,
     fontWeight = FontWeight.Normal,
-    fontSize = brandSp(13),
-    lineHeight = brandSp(18),
+    fontSize = brandSp(12),
+    lineHeight = brandSp(16),
     color = RaddSettingsHelper,
 )
 
