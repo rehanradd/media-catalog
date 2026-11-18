@@ -71,9 +71,21 @@ class LiveTvChannelCardTest {
         // wraps to two lines instead of ellipsizing to one. The pin is
         // height, not text: the meta Text is paint-only
         // (clearAndSetSemantics), so the card's spoken sentence carries
-        // the words and the tagged node carries the height. A short meta
-        // ("News · Urdu") is the one-line control — both go through the
-        // same type scale, so the comparison holds at any scale.
+        // the words and the tagged node carries the height.
+        //
+        // The strings matter, and the first version got them wrong: the
+        // control was "News · Pakistan · Urdu" (22 chars) against the
+        // long "Religious · Pakistan · Urdu" (27 chars) — only 5 chars
+        // apart, and under Robolectric's narrow font metrics BOTH fit on
+        // one line at 120dp, so both measured 35.0 px (CI 44241435048)
+        // and the height assertion could never pass. The control below
+        // is a single 4-char segment and the long triple is 40 chars, so
+        // the comparison is decisive at any font metric: the short one
+        // cannot wrap, the long one cannot fit on one line. The exact
+        // 27-char religious triple's content is still pinned by
+        // channelMetaLineKeepsTheFullTripleForReligiousPakistanUrdu
+        // above, and on a real device its real Roboto metrics wrap it
+        // (27 chars at ~0.5em is ~162dp against 120dp available).
         // The tag lives inside Card(onClick = …), a clickable that merges
         // its descendants' semantics into the card node, so the lookup
         // searches the unmerged tree. (Fixup 2 blamed the merge and only
@@ -86,13 +98,27 @@ class LiveTvChannelCardTest {
         val long = LiveTvChannel(
             id = 1,
             name = "Madani Channel",
-            category = "religious",
-            country = "PK",
-            language = "urdu",
+            category = "entertainment",
+            country = "SA",
+            language = "ml",
             logoUrl = "",
             streamId = "stream-1",
         )
-        val short = long.copy(name = "Geo News", category = "news")
+        // Control: a single short segment ("News") — blank country and
+        // language drop out of channelMetaLine, so this is one line at
+        // any font metric.
+        val short = LiveTvChannel(
+            id = 2,
+            name = "Geo News",
+            category = "news",
+            country = "",
+            language = "",
+            logoUrl = "",
+            streamId = "stream-2",
+        )
+        // Sanity: the strings the heights are about.
+        assertEquals("News", channelMetaLine(short))
+        assertEquals("Entertainment · Saudi Arabia · Malayalam", channelMetaLine(long))
         // One setContent only: the rule throws IllegalStateException on a
         // second setContent per test (CI 44240265672), so the two variants
         // are measured from a single composition driven by state.
