@@ -5,7 +5,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.SemanticsMatcher
@@ -66,13 +68,16 @@ class CatalogImageErrorTapTest {
     fun centreTapOnFailedImageReachesParentOnClick() {
         compose.mainClock.autoAdvance = false
         var clicked = false
-        // Built once, outside the composition: a fresh loader per
-        // recomposition would restart the fetch each time.
-        val loader = ImageLoader.Builder(compose.activity.applicationContext)
-            .components { add(FailingFetcherFactory()) }
-            .build()
         compose.setContent {
             RaddStreamTheme {
+                // Built once, remembered: a fresh loader per recomposition
+                // would restart the fetch each time.
+                val context = LocalContext.current
+                val loader = remember {
+                    ImageLoader.Builder(context)
+                        .components { add(FailingFetcherFactory()) }
+                        .build()
+                }
                 CompositionLocalProvider(LocalImageLoader provides loader) {
                     Box(
                         Modifier
@@ -111,7 +116,7 @@ class CatalogImageErrorTapTest {
     }
 
     /** A fetcher factory whose every fetch fails at once, in-process. */
-    private class FailingFetcherFactory : Fetcher.Factory {
+    private class FailingFetcherFactory : Fetcher.Factory<Any> {
         override fun create(
             data: Any,
             options: Options,
