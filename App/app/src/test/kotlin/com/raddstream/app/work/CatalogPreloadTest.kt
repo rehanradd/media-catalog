@@ -2,7 +2,7 @@ package com.raddstream.app.work
 
 import androidx.work.NetworkType
 import com.raddstream.app.viewmodel.HomeSection
-import java.time.Duration
+import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -51,14 +51,17 @@ class CatalogPreloadTest {
     @Test
     fun `warm request is daily in the overnight window`() {
         val request = CatalogWarmWorker.request()
-        assertEquals(Duration.ofDays(1), request.workSpec.intervalDuration)
+        // WorkSpec.intervalDuration is a long in milliseconds, not a
+        // Duration — comparing a Duration to it compiles (Object overload)
+        // and fails at runtime.
+        assertEquals(TimeUnit.DAYS.toMillis(1), request.workSpec.intervalDuration)
         assertEquals(NetworkType.UNMETERED, request.workSpec.constraints.requiredNetworkType)
     }
 
     @Test
     fun `sync request is daily in the overnight window`() {
         val request = CatalogIndexSyncWorker.request()
-        assertEquals(Duration.ofDays(1), request.workSpec.intervalDuration)
+        assertEquals(TimeUnit.DAYS.toMillis(1), request.workSpec.intervalDuration)
         assertEquals(NetworkType.UNMETERED, request.workSpec.constraints.requiredNetworkType)
     }
 }

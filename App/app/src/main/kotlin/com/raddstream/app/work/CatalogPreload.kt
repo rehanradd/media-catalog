@@ -1,5 +1,6 @@
 package com.raddstream.app.work
 
+import android.os.Build
 import androidx.work.Constraints
 import androidx.work.NetworkType
 import com.raddstream.app.viewmodel.HomeSection
@@ -29,14 +30,24 @@ internal const val SYNC_MAX_TITLES_PER_RUN: Int = 5_000
  * a requirement. The constraints are the guarantee, not a preference:
  * without UNMETERED the worker could burn the viewer's data plan, and
  * without battery-not-low it could spend the last of the battery.
+ *
+ * `setRequiresDeviceIdle` needs API 23 and the app's minSdk is 21, so it
+ * is set only behind the SDK guard — the pattern lint's NewApi check
+ * honours, and the one the codebase's own minSdk rule asks for. On an
+ * API 21/22 device the warm runs on charging + Wi-Fi alone, which is the
+ * same overnight window in practice.
  */
-internal fun catalogPreloadConstraints(): Constraints = Constraints.Builder()
-    .setRequiredNetworkType(NetworkType.UNMETERED)
-    .setRequiresCharging(true)
-    .setRequiresDeviceIdle(true)
-    .setRequiresBatteryNotLow(true)
-    .setRequiresStorageNotLow(true)
-    .build()
+internal fun catalogPreloadConstraints(): Constraints {
+    val builder = Constraints.Builder()
+        .setRequiredNetworkType(NetworkType.UNMETERED)
+        .setRequiresCharging(true)
+        .setRequiresBatteryNotLow(true)
+        .setRequiresStorageNotLow(true)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        builder.setRequiresDeviceIdle(true)
+    }
+    return builder.build()
+}
 
 /**
  * The rails the warm worker fetches: Home's own static rails, minus the
