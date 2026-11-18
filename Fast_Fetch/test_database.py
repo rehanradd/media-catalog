@@ -2084,8 +2084,11 @@ class DatabaseSaveTests(unittest.TestCase):
         self.assertTrue(res["success"])
         self.assertEqual(res["url"], "https://fresh.r2.cloudflarestorage.com/new_token")
         self.assertTrue(res["refreshed"])
+        # Host registry (2026-11-18): the unwrapper receives the
+        # rewritten host (hubcloud.mov); the stored row keeps .ist
+        # until the remap gate runs.
         self.assertEqual(resolvers.calls, [("hubcloud",
-                                            "https://hubcloud.ist/drive/test12345",
+                                            "https://hubcloud.mov/drive/test12345",
                                             True)])
 
     def test_direct_media_and_bridge_urls_are_classified_honestly(self):
@@ -2543,7 +2546,11 @@ class DatabaseSaveTests(unittest.TestCase):
         self.assertEqual(res["url"], "https://cdn.mxdrop.example/f.mp4")
         self.assertTrue(res["refreshed"])
         self.assertTrue(res["is_temporary"], "a signed token is never permanent")
-        self.assertEqual(resolvers.calls, [("mxdrop", embed, True)])
+        # Host registry (2026-11-18): the unwrapper receives the
+        # rewritten host (mxdrop.click); the stored row keeps .to.
+        self.assertEqual(resolvers.calls, [("mxdrop",
+                                            "https://mxdrop.click/e/6d9c9f6d93dfb18063cbdb697dd4db5d",
+                                            True)])
         with fast_fetch.get_db() as conn:
             row = conn.execute(
                 "SELECT final_url, is_temporary, status FROM download_sources"
@@ -3521,9 +3528,12 @@ seg-00002.ts
             "https://cloud.secure-storage.top:8080/d/abc/Film.mkv")
         self.assertTrue(res["refreshed"])
         self.assertTrue(res["is_temporary"], "a rotating token is never permanent")
+        # Host registry (2026-11-18): the unwrapper receives the
+        # rewritten host (1uploadflix.net); the stored row keeps
+        # dl.uploadflix.com until the remap gate runs.
         self.assertEqual(resolvers.calls,
                          [("uploadflix",
-                           "https://dl.uploadflix.com/yba4err36sxr", True)])
+                           "https://1uploadflix.net/yba4err36sxr", True)])
 
     def test_resolve_live_source_unwraps_a_1xplayer_play_to_its_master(self):
         """Session 104b: 1xplayer cracked (playlist POST + CSRF key).
@@ -3553,9 +3563,12 @@ seg-00002.ts
             res["url"], "https://i-arch-400.example/stream2/index.m3u8")
         self.assertTrue(res["refreshed"])
         self.assertTrue(res["is_temporary"], "a signed master is never permanent")
+        # Host registry (2026-11-18): the unwrapper receives the
+        # rewritten host (geffe448mik.com); the stored row keeps
+        # vd.1xplayer.com until the remap gate runs.
         self.assertEqual(resolvers.calls,
                          [("1xplayer",
-                           "https://vd.1xplayer.com/play/ftt4479696?tr=2",
+                           "https://geffe448mik.com/play/ftt4479696?tr=2",
                            True)])
 
     def test_resolve_live_source_unwraps_a_moviebox_detail_to_its_signed_mp4(self):
@@ -3797,8 +3810,11 @@ seg-00002.ts
         self.assertTrue(res["success"], res)
         self.assertEqual(res["url"],
                          "https://fresh.r2.cloudflarestorage.com/new_token")
+        # Host registry (2026-11-18): the unwrapper receives the
+        # rewritten host (hubcloud.mov); the stored row keeps .ist
+        # until the remap gate runs.
         self.assertEqual(resolvers.calls, [("hubcloud",
-                                            "https://hubcloud.ist/drive/test12345",
+                                            "https://hubcloud.mov/drive/test12345",
                                             True)])
 
     def test_resolve_live_source_routes_an_hglink_row_to_the_new_streamwish_unwrapper(self):
@@ -4067,7 +4083,11 @@ seg-00002.ts
 
         self.assertTrue(res["success"], res)
         self.assertEqual(res["url"], "https://cdn.mxdrop.example/f.mp4")
-        self.assertEqual(resolvers.calls, [("mxdrop", embed, True)])
+        # Host registry (2026-11-18): the unwrapper receives the
+        # rewritten host (mxdrop.click); the stored row keeps .to.
+        self.assertEqual(resolvers.calls, [("mxdrop",
+                                            "https://mxdrop.click/e/6d9c9f6d93dfb18063cbdb697dd4db5d",
+                                            True)])
 
     def test_resolve_live_source_falls_through_to_the_filmu_unwrapper_when_stage1_vidly_fails(self):
         """Session 119 (D2.5 probe): Stage-1 vidly fails (blocked) on a

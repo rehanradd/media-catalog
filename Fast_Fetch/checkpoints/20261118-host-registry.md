@@ -26,7 +26,8 @@ Checked before building: **link-check-lite** (tidybytetools, MIT, stdlib; checks
 ## Verification
 
 - Local: test_host_registry 32/32, test_fast_probe 18/18, panel test_host_registry 20/20, full AdminV2 suite green as modules (see Tests), test_docs_invariants 22/22, pre-push-checks (result below), orphan audit 0 orphans.
-- Backend CI on the branch tip (run id + verdict in the final report).
+- Backend CI run 44320256295 on tip 61088083 FAILED in the offline-suites job, step 🧪 test_database.py only: 6 tests pinned the URL handed to the unwrapper on the OLD host — the rewrite is correct, the expectations were stale. Fixup (new tip, see the final report): updated the 6 `resolvers.calls` expectations to the rewritten hosts (hubcloud.ist→.mov ×2, mxdrop.to→.click ×2, vd.1xplayer.com→geffe448mik.com, dl.uploadflix.com→1uploadflix.net); the stored rows in those tests still carry the old hosts, which is correct until the remap gate runs. Local re-run after the fixup: test_database.py 237/237 OK (skipped=1).
+- Backend CI on the new tip (run id + verdict in the final report).
 
 ## Deliberately left out
 
