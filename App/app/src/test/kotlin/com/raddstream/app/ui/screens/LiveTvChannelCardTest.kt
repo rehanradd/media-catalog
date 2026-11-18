@@ -102,6 +102,9 @@ class LiveTvChannelCardTest {
             twoLineHeight > oneLineHeight + 1f,
         )
     }
+
+    @Test
+    fun languageLabelMapsCodesAndPassesUnknownThrough() {
         // Live TV review (Nov 2026): mirrors countryLabel — known codes
         // map to names, unknown codes pass through untouched, never guessed.
         assertEquals("Urdu", languageLabel("ur"))
