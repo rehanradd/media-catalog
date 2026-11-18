@@ -684,8 +684,14 @@ internal fun LiveTvChannelCard(
                 // triple on a 2-column card; anything longer still ellipsizes.
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(horizontal = 10.dp).padding(bottom = 10.dp).clearAndSetSemantics { }
-                    .testTag("liveTv_channelMeta"),
+                // The tag MUST sit before clearAndSetSemantics: the clear
+                // wipes every semantics set after it in the chain, so a tag
+                // after it is never on the node at all — the wrap test
+                // failed twice on "could not find any node" (CI 44236763707,
+                // 44238820887) before this order was fixed. Before the
+                // clear, the tag survives and the text stays paint-only.
+                modifier = Modifier.padding(horizontal = 10.dp).padding(bottom = 10.dp)
+                    .testTag("liveTv_channelMeta").clearAndSetSemantics { },
             )
         }
     }

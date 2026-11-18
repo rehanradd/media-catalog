@@ -74,9 +74,13 @@ class LiveTvChannelCardTest {
         // ("News · Urdu") is the one-line control — both go through the
         // same type scale, so the comparison holds at any scale.
         // The tag lives inside Card(onClick = …), a clickable that merges
-        // its descendants' semantics into the card node, so the tag is
-        // only visible in the unmerged tree — the merged-tree lookup
-        // finds nothing (CI 44236763707: "could not find any node").
+        // its descendants' semantics into the card node, so the lookup
+        // searches the unmerged tree. (First fixup blamed the merge and
+        // only changed the lookup — wrong: the tag was never on the node
+        // at all, because it sat after clearAndSetSemantics in the chain
+        // and the clear wiped it; fixup 3 moves the tag before the clear
+        // in LiveTvScreen.kt. The unmerged-tree lookup stays: it is the
+        // correct search for a tag inside a merging clickable.)
         val long = LiveTvChannel(
             id = 1,
             name = "Madani Channel",
