@@ -349,6 +349,8 @@ tasks.withType<Test>().configureEach {
             excludeTestsMatching("com.raddstream.app.data.local.AppDatabaseMigrationTest")
             excludeTestsMatching("com.raddstream.app.data.cache.AheadFetcherFinalizeTest")
             excludeTestsMatching("com.raddstream.app.data.cache.CacheSweepWorkerTest")
+            excludeTestsMatching("com.raddstream.app.work.CatalogWarmWorkerTest")
+            excludeTestsMatching("com.raddstream.app.work.CatalogIndexSyncWorkerTest")
             excludeTestsMatching("com.raddstream.app.data.CrashReportingTest")
         }
         doFirst {
@@ -356,7 +358,8 @@ tasks.withType<Test>().configureEach {
             // gets that the suite count below is not the whole suite count.
             logger.lifecycle(
                 "Skipping PosterCardProvenanceTest, ScreenSnapshotTest, AppDatabaseMigrationTest, " +
-                    "AheadFetcherFinalizeTest, CacheSweepWorkerTest and CrashReportingTest: Robolectric has no native runtime for " +
+                    "AheadFetcherFinalizeTest, CacheSweepWorkerTest, CatalogWarmWorkerTest, " +
+                    "CatalogIndexSyncWorkerTest and CrashReportingTest: Robolectric has no native runtime for " +
                     "${System.getProperty("os.arch")}. Run these classes on an x86_64 CI runner."
             )
         }

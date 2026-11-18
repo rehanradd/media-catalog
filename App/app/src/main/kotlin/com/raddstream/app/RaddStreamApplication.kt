@@ -17,6 +17,8 @@ import com.raddstream.app.data.cache.CacheEngineRunner
 import com.raddstream.app.data.cache.CacheSweepWorker
 import com.raddstream.app.data.cache.KeepTtlHolder
 import com.raddstream.app.data.follow.FollowSeriesWorker
+import com.raddstream.app.work.CatalogIndexSyncWorker
+import com.raddstream.app.work.CatalogWarmWorker
 import com.raddstream.app.data.downloads.DeviceDownloadsRepository
 import com.raddstream.app.images.ImageSizingHolder
 import com.raddstream.app.share.LanShareRunner
@@ -145,6 +147,22 @@ class RaddStreamApplication : Application(), Configuration.Provider {
             FollowSeriesWorker.UNIQUE_NAME,
             ExistingPeriodicWorkPolicy.KEEP,
             FollowSeriesWorker.request(),
+        )
+        // Feel-instant S8: the overnight catalog warm + index sync — the
+        // client-side twin of the server's 21:00 top-100 pre-warm. KEEP
+        // means a reinstall of these lines never duplicates the work; a
+        // failure never retries, the next day covers it. Both run in the
+        // overnight window (Wi-Fi + charging + idle, never on a low
+        // battery), ≤ 1/day.
+        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+            CatalogWarmWorker.UNIQUE_NAME,
+            ExistingPeriodicWorkPolicy.KEEP,
+            CatalogWarmWorker.request(),
+        )
+        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+            CatalogIndexSyncWorker.UNIQUE_NAME,
+            ExistingPeriodicWorkPolicy.KEEP,
+            CatalogIndexSyncWorker.request(),
         )
     }
 }

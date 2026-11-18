@@ -619,6 +619,13 @@ class HomeViewModel @Inject constructor(
         observePickThreeShown()
         observeFirstBrowseDone()
         _uiState.update { it.copy(sections = initialHomeSections() + regionalHomeSections()) }
+        // Feel-instant S8: warm the connection at Home first paint, once
+        // per process — the first search or detail tap then never pays TLS
+        // + cold connection. The repository's own guard makes this a no-op
+        // after the first call, and it never blocks the paint: the call
+        // runs on a background scope and swallows its own failures.
+        // Detail keeps its own call as the deep-link backstop.
+        viewModelScope.launch { catalogRepository.warmConnectionIfNeeded() }
         // Gap A5: cache-first — the saved Home renders before the network
         // answers, and the refresh runs behind it. The restore is awaited
         // first so a fresh load can never be overwritten by stale rows.
