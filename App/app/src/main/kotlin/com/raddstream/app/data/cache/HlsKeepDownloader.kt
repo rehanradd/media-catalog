@@ -166,7 +166,9 @@ class HlsKeepDownloader(private val context: Context) {
         val id = task.sourceKey
         val existing = manager.downloadIndex.getDownload(id)
         when {
-            existing == null || existing.state == Download.STATE_REMOVED -> {
+            existing == null -> {
+                // Absent from the index — never added, or removed entirely
+                // (Media3 has no STATE_REMOVED; a removed download is gone).
                 if (!enqueue(id, task.currentUrl)) {
                     return HlsKeepDriveOutcome.Failed("hls_enqueue_failed")
                 }
@@ -256,17 +258,20 @@ class HlsKeepDownloader(private val context: Context) {
 
         /**
          * Pure Media3-state mapping, kept testable without a [DownloadManager]:
-         * a stopped download reads PAUSED (not DOWNLOADING), a removed one
-         * reads NOT_STARTED so the drive re-adds it.
+         * a stopped download reads PAUSED (not DOWNLOADING), and anything
+         * that is not in flight reads NOT_STARTED so the drive re-adds it.
          */
         internal fun mapHlsKeepState(state: Int, stopReason: Int): HlsKeepDownloadState = when (state) {
             Download.STATE_COMPLETED -> HlsKeepDownloadState.COMPLETED
             Download.STATE_FAILED -> HlsKeepDownloadState.FAILED
-            Download.STATE_REMOVED -> HlsKeepDownloadState.NOT_STARTED
             Download.STATE_QUEUED, Download.STATE_RESTARTING -> HlsKeepDownloadState.QUEUED
             Download.STATE_DOWNLOADING ->
                 if (stopReason != Download.STOP_REASON_NONE) HlsKeepDownloadState.PAUSED
                 else HlsKeepDownloadState.DOWNLOADING
+            // STOPPED, REMOVING, and anything else: no download is in
+            // flight. (Media3 1.3.1 has no STATE_REMOVED — a removed
+            // download is simply absent from the index, and the caller
+            // reads NOT_STARTED for it through the null path.)
             else -> HlsKeepDownloadState.NOT_STARTED
         }
     }

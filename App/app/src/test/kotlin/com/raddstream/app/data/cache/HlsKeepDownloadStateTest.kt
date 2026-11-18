@@ -60,18 +60,18 @@ class HlsKeepDownloadStateTest {
     }
 
     @Test
-    fun `removed reads not started so the drive re-adds it`() {
-        assertEquals(
-            HlsKeepDownloadState.NOT_STARTED,
-            HlsKeepDownloader.mapHlsKeepState(Download.STATE_REMOVED, Download.STOP_REASON_NONE),
-        )
-    }
-
-    @Test
     fun `an unknown state never claims completion`() {
         assertEquals(
             HlsKeepDownloadState.NOT_STARTED,
             HlsKeepDownloader.mapHlsKeepState(999, Download.STOP_REASON_NONE),
+        )
+    }
+
+    @Test
+    fun `a stopped download reads not started, not downloading`() {
+        assertEquals(
+            HlsKeepDownloadState.NOT_STARTED,
+            HlsKeepDownloader.mapHlsKeepState(Download.STATE_STOPPED, Download.STOP_REASON_NONE),
         )
     }
 }

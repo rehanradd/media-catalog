@@ -328,6 +328,7 @@ class DownloadService : Service() {
         var downloaded = entry.bytesDownloaded.coerceAtLeast(0L)
         var total = entry.bytesTotal
         var target: OutputTarget? = null
+        var output: OutputStream? = null
         var contentType = ""
         try {
             target = prepareOutput(entry)
