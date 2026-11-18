@@ -49,6 +49,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -235,18 +236,15 @@ fun LiveTvScreen(
                 )
                 // Live TV review D7: the biggest list in the app says how
                 // big it is — "759 channels" unfiltered, "12 of 759
-                // channels" once a filter cuts it.
+                // channels" once a filter cuts it. A4-F2: a section
+                // subheading, not floating grey body text — the count is
+                // the section's own header, so it reads at the same weight
+                // as the category row above it.
                 if (state.visibleChannels.isNotEmpty()) {
-                    Text(
-                        text = liveTvChannelCountText(
-                            visible = state.visibleChannels.size,
-                            total = state.channels.size,
-                            filtered = state.query.isNotBlank() || state.selectedCategory != null,
-                        ),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-                            .testTag("liveTv_channelCount"),
+                    LiveTvChannelCountHeading(
+                        visible = state.visibleChannels.size,
+                        total = state.channels.size,
+                        filtered = state.query.isNotBlank() || state.selectedCategory != null,
                     )
                 }
                 if (state.visibleChannels.isEmpty()) {
@@ -304,6 +302,30 @@ internal fun liveTvChannelCountText(visible: Int, total: Int, filtered: Boolean)
     val totalText = if (total == 1) "1 channel" else "$total channels"
     if (!filtered) return totalText
     return "${if (visible == 1) "1" else "$visible"} of $totalText"
+}
+
+/**
+ * A4-F2: the channel count as the grid's section subheading — titleSmall,
+ * semibold, on-surface — not floating grey body text. It carries the
+ * heading role so a screen reader lands on it as the section's header.
+ * Extracted so the style is pinned without the Hilt screen around it.
+ */
+@Composable
+internal fun LiveTvChannelCountHeading(
+    visible: Int,
+    total: Int,
+    filtered: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Text(
+        text = liveTvChannelCountText(visible, total, filtered),
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onSurface,
+        modifier = modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            .testTag("liveTv_channelCount")
+            .semantics { heading() },
+    )
 }
 
 /**
@@ -606,9 +628,15 @@ internal fun LiveTvChannelCard(
                 text = metaLine,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
+                // A4-F2: two lines, not one — a one-line ellipsis cut the
+                // meta mid-segment ("Religious · Pakistan · Ur…"), so the
+                // language the viewer filters by was the part that vanished.
+                // Two lines hold the full "Category · Country · Language"
+                // triple on a 2-column card; anything longer still ellipsizes.
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(horizontal = 10.dp).padding(bottom = 10.dp).clearAndSetSemantics { },
+                modifier = Modifier.padding(horizontal = 10.dp).padding(bottom = 10.dp).clearAndSetSemantics { }
+                    .testTag("liveTv_channelMeta"),
             )
         }
     }

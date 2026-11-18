@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
@@ -219,6 +220,23 @@ class LiveTvMockupTest {
             compose.onNode(hasContentDescription(label)).assertExists()
             compose.onNode(hasContentDescription(label.uppercase())).assertDoesNotExist()
         }
+    }
+
+    @Test
+    fun channelCountHeadingIsASectionHeading() {
+        // A4-F2: "759 channels" is the grid's section subheading now, not
+        // floating grey body text — titleSmall semibold on-surface, and a
+        // heading in the semantics tree so a screen reader lands on it as
+        // the section's header. The text itself is pinned by
+        // channelCountTextNamesTheTotalAndTheFilter above.
+        compose.setContent {
+            RaddStreamTheme {
+                LiveTvChannelCountHeading(visible = 759, total = 759, filtered = false)
+            }
+        }
+        compose.onNodeWithText("759 channels").assertIsDisplayed()
+        val node = compose.onNodeWithTag("liveTv_channelCount").fetchSemanticsNode()
+        assertTrue("Channel count is not a heading", node.config.contains(SemanticsProperties.Heading))
     }
 
     @Test
