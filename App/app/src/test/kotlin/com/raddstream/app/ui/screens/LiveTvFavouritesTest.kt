@@ -77,6 +77,13 @@ class LiveTvFavouritesTest {
     }
 
     @Test
+    fun starredIdsThatLeftTheRegistryShowNothing() {
+        // A star outlives the channel it names; when the registry drops
+        // that channel the Favourites view is empty, not a stale card.
+        assertTrue(stateWith(favorites = setOf(99), showFavoritesOnly = true).visibleChannels.isEmpty())
+    }
+
+    @Test
     fun favouritesOffShowsTheWholeList() {
         val visible = stateWith(favorites = setOf(1)).visibleChannels
         assertEquals(listOf(1, 2, 3), visible.map { it.id })

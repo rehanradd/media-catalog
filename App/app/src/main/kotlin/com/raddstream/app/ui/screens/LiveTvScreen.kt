@@ -281,6 +281,10 @@ fun LiveTvScreen(
                             "Tap the star on a channel to keep it here."
                         } else if (state.query.isNotBlank()) {
                             "Nothing matching \"${state.query}\" is on live TV right now."
+                        } else if (state.showFavoritesOnly) {
+                            // Starred ids exist but none is in today's list —
+                            // the registry dropped them, not the viewer.
+                            "Your starred channels aren't on live TV right now."
                         } else {
                             "Nothing in this category is on live TV right now."
                         },
@@ -299,6 +303,11 @@ fun LiveTvScreen(
                                     onClick = { viewModel.onQueryChanged("") },
                                     modifier = Modifier.heightIn(min = 48.dp),
                                 ) { Text("Clear search") }
+                            } else if (state.showFavoritesOnly) {
+                                Button(
+                                    onClick = { viewModel.onFavouritesSelected(false) },
+                                    modifier = Modifier.heightIn(min = 48.dp),
+                                ) { Text("Show all channels") }
                             } else if (state.selectedCategory != null) {
                                 Button(
                                     onClick = { viewModel.onCategorySelected(null) },
