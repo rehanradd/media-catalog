@@ -53,7 +53,7 @@ class CatalogFtsDaoTest {
     @Test
     fun `a prefix query finds the title by its first letters`() = runBlocking {
         dao.upsert(listOf(entry("Avengers: Endgame", popularity = 5), entry("Avatar", popularity = 9)))
-        val found = dao.search("\"aven\"*", 10)
+        val found = dao.search("aven*", 10)
         assertEquals(listOf("Avengers: Endgame"), found.map { it.title })
     }
 
@@ -66,14 +66,14 @@ class CatalogFtsDaoTest {
                 entry("Dunkirk", popularity = 8),
             ),
         )
-        val found = dao.search("\"dun\"*", 10)
+        val found = dao.search("dun*", 10)
         assertEquals(listOf("Dune: Part Two", "Dunkirk", "Dune"), found.map { it.title })
     }
 
     @Test
     fun `a query with no match answers empty, never an error`() = runBlocking {
         dao.upsert(listOf(entry("Inception")))
-        assertTrue(dao.search("\"zzzz\"*", 10).isEmpty())
+        assertTrue(dao.search("zzzz*", 10).isEmpty())
     }
 
     @Test
@@ -81,7 +81,7 @@ class CatalogFtsDaoTest {
         dao.upsert(listOf(entry("Jawan", popularity = 1)))
         dao.upsert(listOf(entry("Jawan", popularity = 7)))
         assertEquals(1, dao.count())
-        assertEquals(7, dao.search("\"jawan\"*", 10).single().popularity)
+        assertEquals(7, dao.search("jawan*", 10).single().popularity)
     }
 
     @Test
@@ -95,7 +95,7 @@ class CatalogFtsDaoTest {
         dao.upsert(listOf(entry("Untitled", year = null)))
         dao.upsert(listOf(entry("Untitled", year = null, popularity = 4)))
         assertEquals(1, dao.count())
-        assertEquals(4, dao.search("\"untitled\"*", 10).single().popularity)
+        assertEquals(4, dao.search("untitled*", 10).single().popularity)
     }
 
     @Test

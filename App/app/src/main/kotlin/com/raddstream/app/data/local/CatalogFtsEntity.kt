@@ -22,7 +22,7 @@ import androidx.room.Fts4
  * id here: a local hit is a title to search for, not a page to open, so a
  * tap runs the server search for that title (the remote half of the
  * hybrid: local FTS → instant, remote API → complete). The `prefix`
- * option is the autocomplete index: `"aveng"*` answers in milliseconds
+ * option is the autocomplete index: `aveng*` answers in milliseconds
  * instead of scanning.
  *
  * Dedupe is by title + year + type in [CatalogFtsDao.upsert]: the same

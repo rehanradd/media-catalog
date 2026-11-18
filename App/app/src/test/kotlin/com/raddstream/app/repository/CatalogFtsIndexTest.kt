@@ -96,8 +96,8 @@ class CatalogFtsIndexTest {
         )
         repository.getPosts()
         val dao = db.catalogFtsDao()
-        assertEquals(listOf("Jawan"), dao.search("\"jaw\"*", 10).map { it.title })
-        assertEquals(listOf("Dune: Part Two"), dao.search("\"dune\"*", 10).map { it.title })
+        assertEquals(listOf("Jawan"), dao.search("jaw*", 10).map { it.title })
+        assertEquals(listOf("Dune: Part Two"), dao.search("dune*", 10).map { it.title })
     }
 
     @Test

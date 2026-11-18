@@ -18,34 +18,34 @@ class FtsPrefixQueryTest {
     }
 
     @Test
-    fun `one word becomes one quoted prefix term`() {
-        assertEquals("\"aveng\"*", buildFtsPrefixQuery("aveng"))
+    fun `one word becomes one prefix term`() {
+        assertEquals("aveng*", buildFtsPrefixQuery("aveng"))
     }
 
     @Test
     fun `words are ANDed, each prefix-starred`() {
-        assertEquals("\"the\"* \"aveng\"*", buildFtsPrefixQuery("the aveng"))
+        assertEquals("the* aveng*", buildFtsPrefixQuery("the aveng"))
     }
 
     @Test
     fun `quotes dashes and parens are split away, never passed through`() {
         // Only punctuation is stripped: "OR" and "1" are letters and digits,
         // so they survive as tokens — the operators around them do not.
-        assertEquals("\"aveng\"*", buildFtsPrefixQuery("aveng\" -- ("))
-        assertEquals("\"aveng\"* \"OR\"* \"1\"* \"1\"*", buildFtsPrefixQuery("aveng\" OR (1=1) --"))
-        assertEquals("\"spider\"* \"man\"*", buildFtsPrefixQuery("spider-man"))
+        assertEquals("aveng*", buildFtsPrefixQuery("aveng\" -- ("))
+        assertEquals("aveng* OR* 1* 1*", buildFtsPrefixQuery("aveng\" OR (1=1) --"))
+        assertEquals("spider* man*", buildFtsPrefixQuery("spider-man"))
     }
 
     @Test
     fun `more than five tokens are capped at five`() {
         assertEquals(
-            "\"one\"* \"two\"* \"three\"* \"four\"* \"five\"*",
+            "one* two* three* four* five*",
             buildFtsPrefixQuery("one two three four five six seven"),
         )
     }
 
     @Test
     fun `non-latin letters survive the split`() {
-        assertEquals("\"जवान\"*", buildFtsPrefixQuery("जवान"))
+        assertEquals("जवान*", buildFtsPrefixQuery("जवान"))
     }
 }

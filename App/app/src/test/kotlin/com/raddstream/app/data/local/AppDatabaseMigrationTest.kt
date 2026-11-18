@@ -128,7 +128,7 @@ class AppDatabaseMigrationTest {
                 "INSERT INTO catalog_fts (title, year, type, posterUrl, popularity) " +
                     "VALUES ('Jawan', 2023, 'movie', NULL, 4)",
             )
-            runtime.query("SELECT title FROM catalog_fts WHERE catalog_fts MATCH '\"jaw\"*'").use { cursor ->
+            runtime.query("SELECT title FROM catalog_fts WHERE catalog_fts MATCH 'jaw*'").use { cursor ->
                 assertTrue("version 11's index must survive the 2 → 11 climb", cursor.moveToFirst())
                 assertEquals("Jawan", cursor.getString(0))
             }

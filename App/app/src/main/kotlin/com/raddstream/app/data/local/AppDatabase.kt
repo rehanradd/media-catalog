@@ -318,16 +318,23 @@ abstract class AppDatabase : RoomDatabase() {
          * 10 → 11: the on-device search index (feel-instant S3c). One statement, no
          * existing row touched — the table starts empty and fills from traffic. The
          * DDL is Room's own output for [CatalogFtsEntity]: backticked identifiers,
-         * `USING FTS4`, and the `prefix` option the entity declares. A drift from
-         * that output throws Room's schema validation the first time a device opens
-         * the migrated database, exactly like the 2 → 3 step.
+         * `USING FTS4`, and the `prefix` option the entity declares. Two of its
+         * shapes are NOT the declaration order and must not be "fixed" back:
+         * Room's expected FTS table lists the TEXT columns first
+         * (`title, type, posterUrl`) and then the INTEGER ones
+         * (`year, popularity`), and the option value carries backticks
+         * (`prefix=`1,2,3,4``) where a hand-written DDL would use quotes —
+         * both pinned by the migration test's `FtsTableInfo` comparison.
+         * A drift from that output throws Room's schema validation the first
+         * time a device opens the migrated database, exactly like the
+         * 2 → 3 step.
          */
         val MIGRATION_10_11: Migration = object : Migration(10, 11) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
                     "CREATE VIRTUAL TABLE IF NOT EXISTS `catalog_fts` USING FTS4(" +
-                        "`title` TEXT NOT NULL, `year` INTEGER, `type` TEXT, " +
-                        "`posterUrl` TEXT, `popularity` INTEGER NOT NULL, prefix='1,2,3,4')",
+                        "`title` TEXT NOT NULL, `type` TEXT, `posterUrl` TEXT, " +
+                        "`year` INTEGER, `popularity` INTEGER NOT NULL, prefix=`1,2,3,4`)",
                 )
             }
         }

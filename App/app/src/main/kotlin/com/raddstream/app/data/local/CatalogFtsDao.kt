@@ -65,19 +65,25 @@ internal const val MAX_FTS_QUERY_TOKENS = 5
  * Feel-instant S3c: the FTS `MATCH` query for raw keystrokes, as a pure
  * function so a test can pin it without a database.
  *
- * The input is split on anything that is not a letter or a digit, so no
- * quote, dash, parenthesis or other FTS operator can survive into the
- * query; each token is then quoted and prefix-starred, and the tokens are
- * ANDed (a space is an AND in `MATCH`). `"aveng"*` matches "Avengers";
- * `"the"* "aveng"*` matches titles holding both prefixes. Null when
- * nothing searchable was typed — the caller answers an empty list, never
- * a `MATCH ''` that SQLite would reject.
+ * The input is split on anything that is not a letter, a combining mark
+ * or a digit, so no quote, dash, parenthesis or other FTS operator can
+ * survive into the query; each token is then prefix-starred, and the
+ * tokens are ANDed (a space is an AND in `MATCH`). `aven*` matches
+ * "Avengers"; `the* aveng*` matches titles holding both prefixes.
+ * The tokens are deliberately BARE, not quoted: in FTS4 `"aven"*` — a
+ * quoted phrase with a star — is not a prefix query at all and matches
+ * nothing (measured on SQLite 3.45: `aven*` matches, `"aven"*` does not).
+ * The split is the safety: a bare token holds only letters, marks and
+ * digits, so no operator can hide in it — not even `or*`, `and*` or
+ * `not*`, which parse as prefix terms once starred. Null when nothing
+ * searchable was typed — the caller answers an empty list, never a
+ * `MATCH ''` that SQLite would reject.
  */
 internal fun buildFtsPrefixQuery(raw: String): String? {
     val tokens = raw.trim()
-        .split(Regex("[^\\p{L}\\p{N}]+"))
+        .split(Regex("[^\\p{L}\\p{M}\\p{N}]+"))
         .filter { it.isNotEmpty() }
         .take(MAX_FTS_QUERY_TOKENS)
     if (tokens.isEmpty()) return null
-    return tokens.joinToString(" ") { "\"$it\"*" }
+    return tokens.joinToString(" ") { "$it*" }
 }
