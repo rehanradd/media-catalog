@@ -131,6 +131,9 @@ class SearchPagingTest {
     fun appendLoadingShowsSkeletonRowsNotASpinner() {
         // While the next page is out, the tail of the list is two rows of
         // the S5 geometry-matched skeleton cells — four cells, no spinner.
+        // The test viewport only composes the first row: a LazyColumn never
+        // lays out the second row while it sits below the fold, so the pin
+        // is the two visible cells, not all four.
         setResults(
             PagingData.from(
                 data = listOf(samplePost(1, "One Piece")),
@@ -141,7 +144,7 @@ class SearchPagingTest {
                 ),
             ),
         )
-        compose.onAllNodesWithTag("searchAppendSkeleton").assertCountEquals(4)
+        compose.onAllNodesWithTag("searchAppendSkeleton").assertCountEquals(2)
     }
 
     @Test

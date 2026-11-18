@@ -24,6 +24,8 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.unit.dp
 import androidx.paging.LoadState
 import androidx.paging.LoadStates
@@ -473,6 +475,16 @@ class NestedScrollCrashTest {
             }
         }
         compose.onAllNodesWithText("Jawan")[0].assertIsDisplayed()
+        // S6: the error row is the grid's last item — with 8 posts it sits
+        // below the fold, and a Lazy grid only composes visible items, so
+        // the test swipes it into view first (the Detail tests use the
+        // same swipeUp pattern for below-fold content).
+        var swipes = 0
+        while (compose.onAllNodesWithText("Could not load more.").fetchSemanticsNodes().isEmpty() && swipes < 5) {
+            compose.onRoot().performTouchInput { swipeUp() }
+            compose.waitForIdle()
+            swipes++
+        }
         compose.onNodeWithText("Could not load more.").assertIsDisplayed()
     }
 

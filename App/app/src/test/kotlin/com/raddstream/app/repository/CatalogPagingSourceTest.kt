@@ -162,7 +162,7 @@ class CatalogPagingSourceTest {
             v2Page(71..90, nextCursor = null, hasMore = false, totalEstimate = 100),
         )
         val source = CatalogPagingSource(
-            loadV2 = { _, _ -> v2Answers.removeFirst() },
+            loadV2 = { _, _ -> v2Answers.removeAt(0) },
             loadV1 = { _, _ -> error("v1 must not be asked on a v2 list") },
             onPageMeta = { metas += it },
         )
@@ -193,7 +193,7 @@ class CatalogPagingSourceTest {
         )
         val source = CatalogPagingSource(
             loadV2 = { _, _ -> null },
-            loadV1 = { _, _ -> v1Answers.removeFirst() },
+            loadV1 = { _, _ -> v1Answers.removeAt(0) },
         )
         val pager = TestPager(CATALOG_PAGING_CONFIG, source)
 
@@ -236,7 +236,7 @@ class CatalogPagingSourceTest {
         )
         val source = CatalogPagingSource(
             loadV2 = { _, _ -> null },
-            loadV1 = { _, _ -> v1Answers.removeFirst() },
+            loadV1 = { _, _ -> v1Answers.removeAt(0) },
         )
         val pager = TestPager(CATALOG_PAGING_CONFIG, source)
 
@@ -259,7 +259,7 @@ class CatalogPagingSourceTest {
         )
         val source = CatalogPagingSource(
             loadV2 = { _, _ -> null },
-            loadV1 = { _, _ -> v1Answers.removeFirst() },
+            loadV1 = { _, _ -> v1Answers.removeAt(0) },
         )
         val pager = TestPager(CATALOG_PAGING_CONFIG, source)
 
@@ -295,7 +295,7 @@ class CatalogPagingSourceTest {
             null,
         )
         val source = CatalogPagingSource(
-            loadV2 = { _, _ -> v2Answers.removeFirst() },
+            loadV2 = { _, _ -> v2Answers.removeAt(0) },
             loadV1 = { _, _ -> error("v1 must not be asked on a v2 list") },
         )
         val pager = TestPager(CATALOG_PAGING_CONFIG, source)
@@ -331,7 +331,7 @@ class CatalogPagingSourceTest {
             v2Page(71..90, nextCursor = null, hasMore = false, totalEstimate = 200),
         )
         val source = CatalogPagingSource(
-            loadV2 = { _, _ -> v2Answers.removeFirst() },
+            loadV2 = { _, _ -> v2Answers.removeAt(0) },
             loadV1 = { _, _ -> error("v1 must not be asked on a v2 list") },
         )
         val pager = TestPager(CATALOG_PAGING_CONFIG, source)
