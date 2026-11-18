@@ -27,8 +27,19 @@
 # drops the x86/x86_64 blocks, so the build is half the work and the AAR
 # carries only the two ABIs the app ships. Everything else — the common
 # configure options, the toolchain checks, the decoder loop — is upstream,
-# unchanged. Do not edit the configure lines by hand: if Media3 moves,
-# re-trim from the new upstream file and keep this header in sync.
+# unchanged, except for ONE deliberate deviation (see below).
+#
+# DEVIATION — --disable-x86asm (added to COMMON_OPTIONS): FFmpeg 6.0's
+# configure probes for nasm/yasm even for ARM targets (x86asm is enabled
+# by default) and DIES if neither is installed — proven by Android CI
+# 44377426180, which failed 1.5 s into the first configure with
+# "nasm/yasm not found or too old. Use --disable-x86asm for a crippled
+# build." The GitHub ubuntu-24.04 runner ships no nasm. For an ARM-only
+# build this is not a cripple at all: there is no x86 assembly in an ARM
+# library, and the ARM (NEON) assembly is unaffected. Upstream's script
+# does not pass it because Media3's environment has nasm; ours does not.
+# Do not edit the configure lines by hand: if Media3 moves, re-trim from
+# the new upstream file and keep this header in sync.
 #
 # Usage (called by build-ffmpeg-aar.sh, not by hand):
 #   build-ffmpeg.sh FFMPEG_MODULE_PATH NDK_PATH HOST_PLATFORM ANDROID_ABI ENABLED_DECODERS...
@@ -96,6 +107,8 @@ COMMON_OPTIONS="
     --disable-v4l2-m2m
 
     --disable-vulkan
+
+    --disable-x86asm
 
     "
 

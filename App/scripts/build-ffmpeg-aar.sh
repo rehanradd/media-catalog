@@ -80,9 +80,19 @@ if [ -z "${ANDROID_HOME:-}" ]; then
     echo "ANDROID_HOME is not set — the Media3 Gradle build needs the SDK." >&2
     exit 1
 fi
-NDK_PATH="${ANDROID_NDK_HOME:-$ANDROID_HOME/ndk/$NDK_VERSION}"
-if [ ! -d "$NDK_PATH/toolchains/llvm/prebuilt/$HOST_PLATFORM/bin" ]; then
-    echo "NDK $NDK_VERSION not found at $NDK_PATH (need ndk;$NDK_VERSION)." >&2
+# Prefer the pinned NDK (r26b — the NDK Media3 1.3.1 was tested with) when
+# it is installed. setup-android sets ANDROID_NDK_HOME to the LATEST
+# preinstalled NDK (27.x on the GitHub runner), which must not silently
+# override the pin; ANDROID_NDK_HOME is only a fallback. (Proven by
+# Android CI 44377426180: the first run used NDK 27.3.13750724 via
+# ANDROID_NDK_HOME instead of the pinned r26b.)
+if [ -d "$ANDROID_HOME/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/$HOST_PLATFORM/bin" ]; then
+    NDK_PATH="$ANDROID_HOME/ndk/$NDK_VERSION"
+elif [ -n "${ANDROID_NDK_HOME:-}" ] && [ -d "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/$HOST_PLATFORM/bin" ]; then
+    echo "Pinned NDK $NDK_VERSION not installed; falling back to ANDROID_NDK_HOME ($ANDROID_NDK_HOME)."
+    NDK_PATH="$ANDROID_NDK_HOME"
+else
+    echo "No usable NDK found: install ndk;$NDK_VERSION or set ANDROID_NDK_HOME." >&2
     exit 1
 fi
 
