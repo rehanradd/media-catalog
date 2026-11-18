@@ -3,7 +3,6 @@ package com.raddstream.app.ui.components
 import android.content.Context
 import android.graphics.Bitmap
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -92,12 +91,14 @@ import dagger.hilt.components.SingletonComponent
  * phone showed the dark "SA" fallback — one transient fetch failure, and
  * Coil's single attempt left the tile failed for the whole visit, with no
  * way back. A failure now re-requests at once, up to [MAX_IMAGE_AUTO_RETRIES]
- * times ([shouldAutoRetryImage] is the bound), and once those are spent the
- * fallback itself is tappable to try again — a tap is a deliberate retry, so
- * it is never bounded. The retries are immediate on purpose: a delayed retry
- * would park a coroutine on the composition clock, which the frozen-clock
- * Robolectric tests cannot advance past; a bounded immediate re-request
- * settles the same way a single attempt does.
+ * times ([shouldAutoRetryImage] is the bound). Once those are spent the tile
+ * stays on the fallback until the composition is recreated — there is
+ * deliberately no tap-to-retry on the error slot (A3 Proof 3: a full-size
+ * retry clickable there swallowed the parent card's tap, so a tap on a
+ * failed-image tile belongs to the parent card). The retries are immediate
+ * on purpose: a delayed retry would park a coroutine on the composition
+ * clock, which the frozen-clock Robolectric tests cannot advance past; a
+ * bounded immediate re-request settles the same way a single attempt does.
  */
 @Composable
 fun CatalogImage(
@@ -232,18 +233,16 @@ fun CatalogImage(
                 ShimmerBox(Modifier.fillMaxSize(), bandOnly = true)
             }
         },
-        // A failed load shows the branded fallback — and the fallback is
-        // tappable to try again, because a tile that failed once must not
-        // stay failed for the whole visit when the URL itself is alive.
-        // (A3 Proof 3: that tap is the regression surface — see
-        // [CatalogImageErrorSlot].)
+        // A failed load shows the branded fallback (A3 Proof 3: the slot
+        // itself has no tap-to-retry — a full-size retry clickable there
+        // swallowed the parent card's tap, so a tap on a failed-image
+        // tile belongs to the parent card; see [CatalogImageErrorSlot]).
         error = {
             CatalogImageErrorSlot(
                 fallbackLabel = fallbackLabel,
                 monogram = monogram,
                 tone = fallbackTone,
                 large = fallbackLarge,
-                onRetry = { attempt++ },
             )
         },
         // The artwork-accent hook: only a caller that passed onBitmap pays the
@@ -256,8 +255,10 @@ fun CatalogImage(
         // A transient failure re-requests at once, bounded by
         // [shouldAutoRetryImage]: one failed fetch must not leave a live
         // poster as a dark initials tile for the whole visit. Once the
-        // bound is spent the error slot above is the way back — a tap
-        // re-issues the fetch without a bound, because a tap is deliberate.
+        // bound is spent the error slot stays — the slot has no
+        // tap-to-retry (A3 Proof 3), so a tap on the tile belongs to the
+        // parent card, and the image is re-requested when the composition
+        // is recreated.
         onError = {
             if (shouldAutoRetryImage(attempt)) attempt++ else loaded = false
         },
@@ -267,14 +268,14 @@ fun CatalogImage(
 /**
  * A3 Proof 3 (Nov 2026): the content of [CatalogImage]'s error slot,
  * extracted so its tap path is testable without Coil. A failed load shows
- * the branded fallback — and the fallback is tappable to try again, so a
- * tile that failed once is not failed for the whole visit. That tap is
- * also the bug: the retry clickable covers the whole tile, so in Compose
- * the innermost clickable consumes a centre tap and the parent card's
- * own onClick never fires — Discover Pakistan's logo 429s, Robo tapped
- * the card centre twice, and nothing navigated. [CatalogImageErrorTapTest]
- * pins the tap path against this slot directly: a centre tap must reach
- * the parent card, and the retry must not swallow it.
+ * the branded fallback — and the slot deliberately has NO clickable of
+ * its own: a full-size tap-to-retry here swallowed the parent card's tap
+ * (Discover Pakistan's logo 429s, Robo tapped the card centre twice, and
+ * nothing navigated), so a tap on a failed-image tile belongs to the
+ * parent card. The bounded auto-retry ([shouldAutoRetryImage]) is the
+ * recovery for a transient failure; once it is spent the tile stays on
+ * the fallback until the composition is recreated. [CatalogImageErrorTapTest]
+ * pins this: a centre tap on the slot must reach the parent onClick.
  */
 @Composable
 internal fun CatalogImageErrorSlot(
@@ -282,14 +283,9 @@ internal fun CatalogImageErrorSlot(
     monogram: String?,
     tone: FallbackTone,
     large: Boolean,
-    onRetry: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Box(
-        modifier
-            .fillMaxSize()
-            .clickable(onClickLabel = "Retry loading image") { onRetry() },
-    ) {
+    Box(modifier.fillMaxSize()) {
         ImageFallbackCard(
             label = fallbackLabel,
             monogram = monogram,
@@ -302,10 +298,11 @@ internal fun CatalogImageErrorSlot(
 
 /**
  * Auto-retries for a failed catalog image: the first load plus
- * [MAX_IMAGE_AUTO_RETRIES] immediate re-requests, then the error slot's
- * tap-to-retry is the only way back. The bound is what keeps a permanently
- * dead URL from re-requesting forever; the tap is unbounded because a tap
- * is a deliberate retry. Pure so the bound is testable without Coil.
+ * [MAX_IMAGE_AUTO_RETRIES] immediate re-requests, then the error slot
+ * stays until the composition is recreated — there is deliberately no
+ * tap-to-retry (A3 Proof 3: it swallowed the parent card's tap). The
+ * bound is what keeps a permanently dead URL from re-requesting
+ * forever. Pure so the bound is testable without Coil.
  */
 internal const val MAX_IMAGE_AUTO_RETRIES = 2
 

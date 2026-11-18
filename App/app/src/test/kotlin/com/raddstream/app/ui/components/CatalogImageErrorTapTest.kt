@@ -57,7 +57,6 @@ class CatalogImageErrorTapTest {
     @Test
     fun centreTapOnFailedImageReachesParentOnClick() {
         var clicked = false
-        var retried = false
         compose.setContent {
             RaddStreamTheme {
                 Box(
@@ -71,7 +70,6 @@ class CatalogImageErrorTapTest {
                         monogram = null,
                         tone = FallbackTone.Tile,
                         large = false,
-                        onRetry = { retried = true },
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
@@ -79,13 +77,8 @@ class CatalogImageErrorTapTest {
         }
         compose.onNodeWithTag("tile").assertExists()
         compose.onNodeWithTag("tile").performTouchInput { click() }
-        // The tap must land on the parent card, not on the slot's retry:
-        // pre-fix the retry fires (proving the tap reached the slot) and
-        // the parent never does.
-        assertTrue(
-            "centre tap did not reach the error slot's retry at all",
-            retried,
-        )
+        // The tap must reach the parent card: the slot has no clickable
+        // of its own, so there is nothing between the finger and the tile.
         assertTrue(
             "centre tap on a failed-image tile did not reach the parent onClick",
             clicked,
