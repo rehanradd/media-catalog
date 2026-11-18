@@ -203,9 +203,6 @@
     <string name="player_open_external_row">Open in external player</string>
     <string name="player_pip_refused">Picture-in-picture isn\'t available right now.</string>
     <string name="player_pip_unsupported">Picture-in-picture needs Android 8.0+</string>
-    <!-- Dev-cleanup (Nov 2026): the service-bind failure shows this one fixed
-         sentence — the exception's own words go to logcat only (E1). -->
-    <string name="player_service_unavailable">Couldn\'t open the player. Try again.</string>
     <string name="player_chooser">Play with…</string>
     <string name="player_no_external_player">No external video player found</string>
     <!-- ═══ PROVIDER PAGE ═══

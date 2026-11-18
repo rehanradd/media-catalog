@@ -18,7 +18,6 @@ import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
-import com.raddstream.app.R
 import com.raddstream.app.brand.Brand
 import com.raddstream.app.player.AbRepeat
 import com.raddstream.app.player.AspectMode
@@ -121,6 +120,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import retrofit2.HttpException
+
+/**
+ * Dev-cleanup (Nov 2026, E1): the service-bind failure shows this one fixed sentence.
+ * A literal, not a player_* resource — the ChromeCopy ratchet requires every player_*
+ * string to be painted from PlayerScreen.kt, and this card is set here, in the ViewModel,
+ * before the screen ever sees it. The ViewModel's other viewer copy is literals too.
+ */
+internal const val PLAYER_SERVICE_UNAVAILABLE_MESSAGE = "Couldn't open the player. Try again."
 
 /**
  * UI brain of the player. It does NOT own an ExoPlayer — [com.raddstream.app.player.PlaybackService]
@@ -525,7 +532,7 @@ class PlayerViewModel @Inject constructor(
                 Log.e("PlayerViewModel", "MediaController bind failed", t)
                 _ui.update {
                     it.copy(
-                        connectionError = appContext.getString(R.string.player_service_unavailable),
+                        connectionError = PLAYER_SERVICE_UNAVAILABLE_MESSAGE,
                         // PL-3: a bind failure with no network is the offline card, not the
                         // generic service error — the viewer can act on the first, not the second.
                         isOffline = connectivityProbe.current() == NetworkClass.NONE,

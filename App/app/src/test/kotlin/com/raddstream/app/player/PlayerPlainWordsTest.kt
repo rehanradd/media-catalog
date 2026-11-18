@@ -14,19 +14,20 @@ import org.robolectric.RobolectricTestRunner
  * words — no raw exception text, no rank numbers, no internal vocabulary.
  * These strings are the contract: if the wording changes, change the test
  * with it, deliberately.
+ *
+ * The context is a deferred getter, not a field initializer: the two older
+ * Robolectric tests in this repo (PlayerMockupTest, PlayerReviewFixesTest)
+ * do the same — an ApplicationProvider call at class-instantiation time runs
+ * before the sandbox is ready. E1's sentence is not here: it is a ViewModel
+ * literal (PLAYER_SERVICE_UNAVAILABLE_MESSAGE), pinned by
+ * PlayerViewModelErrorMessageTest, because the ChromeCopy ratchet requires
+ * every player_* resource to be painted from PlayerScreen.kt.
  */
 @RunWith(RobolectricTestRunner::class)
 class PlayerPlainWordsTest {
 
-    private val context: Context = ApplicationProvider.getApplicationContext()
-
-    @Test
-    fun `service bind failure is one fixed sentence`() {
-        assertEquals(
-            "Couldn't open the player. Try again.",
-            context.getString(R.string.player_service_unavailable),
-        )
-    }
+    private val context: Context
+        get() = ApplicationProvider.getApplicationContext()
 
     @Test
     fun `pip refusal is one fixed line with no exception slot`() {

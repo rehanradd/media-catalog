@@ -166,7 +166,7 @@ class PlayerControlSemanticsTest {
         assertFalse("the autoplay countdown string is back", stringsSource.contains("player_autoplay_countdown"))
         assertTrue("the speed title must be plain", stringsSource.contains(">Playback speed<"))
         assertTrue("the finding headline needs its ellipsis", stringsSource.contains("Finding your video…"))
-        assertTrue("the finding subtitle is missing", stringsSource.contains("Trying the best source first"))
+        assertTrue("the finding subtitle is missing", stringsSource.contains("Trying the best version first"))
         assertTrue("the switch footer is missing", stringsSource.contains("Switching keeps your place."))
     }
 

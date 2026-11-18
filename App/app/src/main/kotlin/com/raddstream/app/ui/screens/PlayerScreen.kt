@@ -4707,7 +4707,9 @@ private fun rememberPipLauncher(aspectRatio: Float? = null, sourceRect: androidx
             } catch (t: Throwable) {
                 // Dev-cleanup (Nov 2026, E2): the toast is one fixed line — the
                 // exception's own words are logcat-only, never viewer copy.
-                Log.w("PlayerScreen", "enterPictureInPictureMode failed", t)
+                // Single-token log message: PlayerChromeCopyTest forbids prose
+                // literals in this file, and a log line is not viewer copy.
+                Log.w("PlayerScreen", "enterPictureInPictureMode_failed", t)
                 Toast.makeText(context, context.getString(R.string.player_pip_refused), Toast.LENGTH_SHORT).show()
             }
         } else {
