@@ -524,6 +524,12 @@ dependencies {
     implementation(libs.room.ktx)
     kapt(libs.room.compiler)
 
+    // ── Paging 3 (feel-instant S6) ────────────────────────────────────────
+    // Network-only PagingSource for browse/search lists; RemoteMediator +
+    // Room as source of truth comes after S3c, not this slice.
+    implementation(libs.paging.runtime)
+    implementation(libs.paging.compose)
+
     // ── Image loading (Coil) ──────────────────────────────────────────────────
     implementation(libs.coil.compose)
 
@@ -572,6 +578,8 @@ dependencies {
 
     // ── Tests ─────────────────────────────────────────────────────────────────
     testImplementation(libs.junit)
+    testImplementation(libs.coroutines.test)
+    testImplementation(libs.paging.testing)
     testImplementation(composeBom)
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.test.core)

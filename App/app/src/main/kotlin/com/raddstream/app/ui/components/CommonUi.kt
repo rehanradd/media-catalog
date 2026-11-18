@@ -23,7 +23,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -43,7 +42,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -1143,34 +1141,6 @@ fun <T> MediaRail(
     ) {
         items(items, key = key) { item ->
             Box(Modifier.width(itemWidthDp.dp)) { itemContent(item) }
-        }
-    }
-}
-
-/**
- * Emits [onLoadMore] when the user is within [buffer] rows of the bottom of a grid.
- * Cancelled automatically with the composition.
- *
- * The trigger arms on the viewer's own advance into the bottom window, once per depth:
- * it never re-arms on a total-items change alone. A load-more footer (or an inline
- * failure row) toggling changes `totalItemsCount` without any new cells arriving —
- * and since a de-duplicated page can legitimately add zero visible cells, keying the
- * re-arm on the total would walk the remaining catalog one request at a time while
- * the viewer stands still at the bottom.
- */
-@Composable
-fun rememberGridEndlessPaging(
-    gridState: LazyGridState,
-    buffer: Int = 4,
-    onLoadMore: () -> Unit,
-) {
-    val total = gridState.layoutInfo.totalItemsCount
-    val lastVisible = gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
-    var lastTriggerAt by remember { mutableIntStateOf(-1) }
-    LaunchedEffect(total, lastVisible) {
-        if (total > 0 && lastVisible >= total - buffer && lastVisible > lastTriggerAt) {
-            lastTriggerAt = total - 1
-            onLoadMore()
         }
     }
 }

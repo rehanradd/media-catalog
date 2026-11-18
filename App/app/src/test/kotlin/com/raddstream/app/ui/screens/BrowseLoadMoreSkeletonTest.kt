@@ -6,7 +6,13 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.hasProgressBarRangeInfo
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.paging.LoadState
+import androidx.paging.LoadStates
+import androidx.paging.PagingData
+import androidx.paging.compose.collectAsLazyPagingItems
+import com.raddstream.app.network.models.Post
 import com.raddstream.app.ui.theme.RaddStreamTheme
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -18,6 +24,12 @@ import org.robolectric.RobolectricTestRunner
  * cells, and a spinner in a single 60dp cell both jumped the layout and
  * flashed on fast pages. Pins that the footer is four skeleton cells and
  * no indeterminate progress indicator anywhere in the grid.
+ *
+ * Feel-instant S6: the footer is driven by the PagingData's append
+ * loadState now — it shows while the next page loads and the server gave
+ * no total to placeholder against — so the test feeds the grid a
+ * PagingData whose append is Loading, through a MutableStateFlow exactly
+ * the way the Android Paging test guide prescribes.
  *
  * Requires an x86_64 runner. Robolectric's native runtime has no
  * Linux/aarch64 build (robolectric/robolectric#9166) and it fails while the
@@ -40,15 +52,24 @@ class BrowseLoadMoreSkeletonTest {
         // so the count would read 2 for a 4-cell footer that is really
         // there. Two rows of skeleton cells fit the window, so all four
         // exist.
+        val idle = LoadState.NotLoading(endOfPaginationReached = false)
+        val pagingDataFlow = MutableStateFlow(
+            PagingData.from(
+                data = emptyList<Post>(),
+                sourceLoadStates = LoadStates(
+                    refresh = idle,
+                    prepend = idle,
+                    append = LoadState.Loading,
+                ),
+            ),
+        )
         compose.setContent {
             RaddStreamTheme {
+                val pagingItems = pagingDataFlow.collectAsLazyPagingItems()
                 BrowsePosterGrid(
-                    items = emptyList(),
-                    loadingMore = true,
-                    error = null,
+                    pagingItems = pagingItems,
                     gridState = rememberLazyGridState(),
                     onPostClick = {},
-                    onRetryLoadMore = {},
                 )
             }
         }

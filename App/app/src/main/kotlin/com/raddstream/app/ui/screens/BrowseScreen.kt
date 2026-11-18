@@ -32,6 +32,10 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.paging.LoadState
+import androidx.paging.compose.LazyPagingItems
+import androidx.paging.compose.collectAsLazyPagingItems
+import com.raddstream.app.network.friendlyNetworkError
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.ui.components.CatalogGridColumns
 import com.raddstream.app.ui.components.EmptyState
@@ -40,7 +44,6 @@ import com.raddstream.app.ui.components.InlineLoadFailure
 import com.raddstream.app.ui.components.PosterCard
 import com.raddstream.app.ui.components.PosterCellSkeleton
 import com.raddstream.app.ui.components.PosterGridSkeleton
-import com.raddstream.app.ui.components.rememberGridEndlessPaging
 import com.raddstream.app.viewmodel.BrowseViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -51,8 +54,11 @@ fun BrowseScreen(
     viewModel: BrowseViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    // Feel-instant S6: the grid pages itself now — Paging prefetches the
+    // next page five rows before the end, so the old scroll-end trigger
+    // (`rememberGridEndlessPaging`) and its `loadMore()` are gone.
+    val pagingItems = viewModel.pagingData.collectAsLazyPagingItems()
     val gridState = rememberLazyGridState()
-    rememberGridEndlessPaging(gridState = gridState) { viewModel.loadMore() }
 
     // The native feed card is capped at one per twelve posters, and the grid's own scroll index is
     // the only honest measure of how many the viewer has passed. Reporting the delta rather than
@@ -94,18 +100,29 @@ fun BrowseScreen(
             )
         },
     ) { contentPadding ->
+        // Feel-instant S6: the list states come from the PagingData's
+        // loadState now, not a ViewModel list. `itemCount` counts the
+        // placeholders too, so the empty check reads the loaded snapshot:
+        // a category with rows on the way still has an empty snapshot
+        // while the first page is out.
+        val refreshState = pagingItems.loadState.refresh
+        val loadedCount = pagingItems.itemSnapshotList.count { it != null }
         when {
-            state.loading && state.items.isEmpty() -> PosterGridSkeleton(
+            refreshState is LoadState.Loading && loadedCount == 0 -> PosterGridSkeleton(
                 modifier = Modifier.fillMaxSize().padding(contentPadding),
                 // The real grid's bottom breathing is 32dp, not the
                 // skeleton's 24dp default — a short category would jump
                 // 8dp at the bottom when its rows arrived.
                 contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp, start = 16.dp, end = 16.dp),
             )
-            state.error != null && state.items.isEmpty() ->
-                ErrorState(title = "Couldn't load this category", message = state.error ?: "Could not load.", onRetry = viewModel::load,
-                    modifier = Modifier.padding(contentPadding))
-            state.items.isEmpty() -> EmptyState(
+            refreshState is LoadState.Error && loadedCount == 0 ->
+                ErrorState(
+                    title = "Couldn't load this category",
+                    message = friendlyNetworkError(refreshState.error, "Could not load."),
+                    onRetry = { pagingItems.retry() },
+                    modifier = Modifier.padding(contentPadding),
+                )
+            loadedCount == 0 && refreshState is LoadState.NotLoading -> EmptyState(
                 title = "Nothing here yet",
                 message = "This category has no titles here yet.",
                 modifier = Modifier.padding(contentPadding),
@@ -115,12 +132,9 @@ fun BrowseScreen(
                 },
             )
             else -> BrowsePosterGrid(
-                items = state.items,
-                loadingMore = state.loadingMore,
-                error = state.error,
+                pagingItems = pagingItems,
                 gridState = gridState,
                 onPostClick = onPostClick,
-                onRetryLoadMore = viewModel::loadMore,
                 modifier = Modifier.fillMaxSize().padding(contentPadding),
             )
         }
@@ -133,15 +147,18 @@ fun BrowseScreen(
  * bottom nav. Extracted from [BrowseScreen] so the grid is testable
  * without the ViewModel: the screen keeps the Scaffold, the paging and
  * the state machine, and this renders only the rows.
+ *
+ * Feel-instant S6: the grid reads a [LazyPagingItems] now. Placeholders
+ * are on, so a position Paging has not loaded yet reads as `null` — and
+ * a null never reaches a card: it renders the S5 geometry-matched
+ * [PosterCellSkeleton] instead (the crash the research warned about is
+ * exactly a null item handed to a card).
  */
 @Composable
 internal fun BrowsePosterGrid(
-    items: List<Post>,
-    loadingMore: Boolean,
-    error: String?,
+    pagingItems: LazyPagingItems<Post>,
     gridState: LazyGridState,
     onPostClick: (Post) -> Unit,
-    onRetryLoadMore: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     LazyVerticalGrid(
@@ -152,26 +169,51 @@ internal fun BrowsePosterGrid(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        items(items, key = { it.id }) { post ->
-            PosterCard(post = post, onClick = { onPostClick(post) })
+        items(
+            count = pagingItems.itemCount,
+            // A loaded row is keyed by its post id; a placeholder has no
+            // post, so it is keyed by its position — and `peek` reads the
+            // row without triggering a load for it.
+            key = { index -> pagingItems.peek(index)?.id ?: "placeholder-$index" },
+        ) { index ->
+            val post = pagingItems[index]
+            if (post == null) {
+                PosterCellSkeleton(Modifier.testTag("browsePlaceholderSkeleton"))
+            } else {
+                PosterCard(post = post, onClick = { onPostClick(post) })
+            }
         }
-        if (loadingMore) {
-            // S5: placeholder rows, not a spinner — the incoming page is
-            // poster cards, so the footer stands in with the same cells
-            // (the grid's own spacing lays them out in the right columns),
-            // and a spinner in a single 60dp cell both jumped the layout
-            // and flashed on fast pages. Four cells is two rows on a
-            // phone; the ViewModel guards re-entrant loadMore, so the
-            // extra items cannot re-trigger the page.
+        val appendState = pagingItems.loadState.append
+        // S5: placeholder rows, not a spinner — the incoming page is
+        // poster cards, so the footer stands in with the same cells (the
+        // grid's own spacing lays them out in the right columns), and a
+        // spinner in a single 60dp cell both jumped the layout and
+        // flashed on fast pages. Four cells is two rows on a phone. The
+        // footer only shows when no placeholder rows are already standing
+        // in for the page: when the server gave no total, Paging has no
+        // placeholders to show, and without the footer the bottom of the
+        // list would sit silent while the next page loads.
+        val hasPlaceholders = pagingItems.itemSnapshotList.any { it == null }
+        if (appendState is LoadState.Loading && !hasPlaceholders) {
             items(LOAD_MORE_SKELETON_CELLS) {
                 PosterCellSkeleton(Modifier.testTag("browseLoadMoreSkeleton"))
             }
         }
         // The grid is what the viewer can see; a page that failed to arrive is not.
         // Without this a dead next page just looks like a shorter category.
-        error?.let { failure ->
+        // The refresh error rides here too when rows are already on screen:
+        // a refresh that fails with a loaded grid is a page that failed to
+        // arrive, not a screen that failed to load — the full error state
+        // above owns only the empty grid.
+        val refreshState = pagingItems.loadState.refresh
+        val loadError = (appendState as? LoadState.Error)?.error
+            ?: (refreshState as? LoadState.Error)?.error
+        if (loadError != null) {
             item(contentType = "failure") {
-                InlineLoadFailure(message = failure, onRetry = onRetryLoadMore)
+                InlineLoadFailure(
+                    message = friendlyNetworkError(loadError, "Could not load more."),
+                    onRetry = { pagingItems.retry() },
+                )
             }
         }
     }

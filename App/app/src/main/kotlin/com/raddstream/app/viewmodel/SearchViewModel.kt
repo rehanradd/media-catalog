@@ -2,25 +2,32 @@ package com.raddstream.app.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.paging.Pager
+import androidx.paging.PagingData
+import androidx.paging.cachedIn
 import com.raddstream.app.data.ServerSettingsRepository
 import com.raddstream.app.data.local.CatalogFtsDao
 import com.raddstream.app.data.local.buildFtsPrefixQuery
 import com.raddstream.app.data.normalizeSearchRecents
-import com.raddstream.app.network.friendlyNetworkError
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.network.models.SuggestItem
 import com.raddstream.app.network.models.WorkType
 import com.raddstream.app.player.PastedText
 import com.raddstream.app.player.classifyPastedText
+import com.raddstream.app.repository.CATALOG_PAGING_CONFIG
+import com.raddstream.app.repository.CatalogPageMeta
+import com.raddstream.app.repository.CatalogPagingSource
 import com.raddstream.app.repository.CatalogRepository
 import com.raddstream.app.sync.SyncAccountRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -254,17 +261,6 @@ internal fun effectiveTypeChip(selectedType: String?, groups: List<TypeGroup>): 
 }
 
 /**
- * A4-F4: the "Show all" affordance at the end of a capped list — one tap
- * loads every page the server will serve, so the count line above it stops
- * being a promise the list cannot keep without repeated "Load more" taps.
- * A capped total keeps its "+" (the server counts at most 1000 matches,
- * so the real total is larger — same "+" [resultsSummary] prints).
- */
-internal fun showAllLabel(serverTotal: Int, totalCapped: Boolean = false): String =
-    if (totalCapped) "Show all $serverTotal+ results"
-    else "Show all $serverTotal result" + if (serverTotal == 1) "" else "s"
-
-/**
  * Mockup (Nov 2026): the type the server actually receives. "kpop" is a
  * query preset, not a content_type — no post carries it, so sending it
  * would answer zero rows on both routes. The query ("kpop") carries the
@@ -275,20 +271,13 @@ internal fun effectiveSearchType(type: String?): String? = if (type == "kpop") n
 
 data class SearchUiState(
     val query: String = "",
-    val isLoading: Boolean = false,
-    val isLoadingMore: Boolean = false,
-    val error: String? = null,
     val filters: SearchFilters = SearchFilters(),
     val sort: SearchSort = SearchSort.DEFAULT,
-    val groups: List<TypeGroup> = emptyList(),
-    val resultCount: Int = 0,
     /** What the server says the query matches, not merely what this page holds. */
     val serverTotal: Int = 0,
     /** True when serverTotal is the server's cap (1000), not the real total. */
     val totalCapped: Boolean = false,
     val recents: List<String> = emptyList(),
-    val page: Int = 1,
-    val hasMore: Boolean = false,
     val hasSearched: Boolean = false,
     /** A VIP viewer has everything included, so the chip never shows for them. */
     val isVip: Boolean = false,
@@ -389,10 +378,92 @@ class SearchViewModel @Inject constructor(
     val uiState = _uiState.asStateFlow()
 
     private var searchJob: Job? = null
-    private var moreJob: Job? = null
     private var suggestJob: Job? = null
     private var localSearchJob: Job? = null
-    private var rawResults: List<Post> = emptyList()
+
+    /**
+     * Feel-instant S6: the search the Pager is built for. A new value means
+     * a new PagingSource — and `flatMapLatest` cancels the old source's
+     * in-flight loads, so a superseded search can never append its rows
+     * onto the new search's list (Issue 6, the class the old `loadMore`
+     * guarded by hand). Null is "no search": a blank query, or a pasted
+     * address the catalog has nothing to say about.
+     */
+    private val searchParams = MutableStateFlow<SearchParams?>(null)
+
+    /**
+     * Feel-instant S6: the results list is a Pager, not a hand-rolled page
+     * loop. The screen collects this with `collectAsLazyPagingItems()` and
+     * pages it with the S5 skeletons as placeholders; the ViewModel only
+     * owns the search that built it and the totals the first page reports.
+     * Each params value builds its own Pager (cached in this scope, so a
+     * rotation resumes the loaded pages instead of re-fetching them).
+     */
+    val pagingData: Flow<PagingData<Post>> = searchParams
+        .filterNotNull()
+        .flatMapLatest { params ->
+            Pager(
+                config = CATALOG_PAGING_CONFIG,
+                pagingSourceFactory = {
+                    // The generation this source belongs to: a fresh search
+                    // scheduled while its first page is in flight supersedes
+                    // it, and the meta callback below refuses a superseded
+                    // source's write (Issue 6, same stale-write class as the
+                    // old scheduleSearch/loadMore guards).
+                    val generation = searchGeneration
+                    CatalogPagingSource(
+                        // Phase 7 (M1): v2 search first — one row per work.
+                        // The v2 side has no free-only filter and no
+                        // language filter, so a free-only or language search
+                        // stays on v1: no v2 loader at all, and the source
+                        // goes straight to v1 without ever asking v2.
+                        loadV2 = if (params.filters.includedOnly ||
+                            params.filters.language != LanguageFilter.ALL
+                        ) {
+                            null
+                        } else {
+                            { cursor, limit ->
+                                catalogRepository.searchWorksV2(
+                                    query = params.query,
+                                    sort = params.sort.wireValue,
+                                    limit = limit,
+                                    cursor = cursor,
+                                    type = effectiveSearchType(params.filters.type),
+                                    genres = params.filters.genre.wireValue?.let { listOf(it) },
+                                    industries = params.filters.industry.wireValues.takeIf { it.isNotEmpty() },
+                                    qualities = params.filters.quality.wireValue?.let { listOf(it) },
+                                )
+                            }
+                        },
+                        loadV1 = { page, limit ->
+                            catalogRepository.getPosts(
+                                query = params.query,
+                                type = effectiveSearchType(params.filters.type),
+                                industry = params.filters.industry.wireValue,
+                                genre = params.filters.genre.wireValue,
+                                language = params.filters.language.wireValue,
+                                quality = params.filters.quality.wireValue,
+                                sort = params.sort.wireValue,
+                                freeOnly = params.filters.includedOnly.takeIf { it },
+                                page = page,
+                                limit = limit,
+                            )
+                        },
+                        onPageMeta = { meta -> onPageMeta(params, generation, meta) },
+                        onFirstPageError = { onFirstPageError(generation) },
+                    )
+                },
+            ).flow.cachedIn(viewModelScope)
+        }
+
+    /**
+     * Session 158 (S5): what the identical-search skip reads — whether the
+     * current search's first page landed with rows, and whether it failed.
+     * The meta/error callbacks maintain both; a failed search leaves
+     * nothing to dedupe against, so a retry after an error always re-asks.
+     */
+    private var hasFirstPageResults: Boolean = false
+    private var firstPageFailed: Boolean = false
 
     /**
      * Feel-instant S3b: the last server suggestions, kept so the local job
@@ -477,7 +548,7 @@ class SearchViewModel @Inject constructor(
             _uiState.value.filters.type
         }
         _uiState.update { it.copy(query = query, error = null, filters = it.filters.copy(type = type)) }
-        scheduleSearch(reset = true)
+        scheduleSearch()
         scheduleSuggest()
         // Feel-instant S3a/S3c: the local index answers at once, no
         // debounce — the server call above still waits out its own.
@@ -491,20 +562,20 @@ class SearchViewModel @Inject constructor(
         if (classifyPastedText(_uiState.value.query) == PastedText.NotAUrl) {
             recordRecent(_uiState.value.query)
         }
-        scheduleSearch(reset = true, immediate = true)
+        scheduleSearch(immediate = true)
     }
 
     fun runRecent(query: String) {
         _uiState.update { it.copy(query = query, suggestions = emptyList()) }
         recordRecent(query)
-        scheduleSearch(reset = true, immediate = true)
+        scheduleSearch(immediate = true)
     }
 
     /** A suggestion is a title to search for, not a page to open: the id it carries is a work id. */
     fun runSuggestion(title: String) {
         _uiState.update { it.copy(query = title, suggestions = emptyList()) }
         recordRecent(title)
-        scheduleSearch(reset = true, immediate = true)
+        scheduleSearch(immediate = true)
     }
 
     /** Show only exact matches on a fuzzy page (the empty state — every fuzzy row is one-edit-away). */
@@ -540,37 +611,37 @@ class SearchViewModel @Inject constructor(
         // zero rows. Editing the query releases the preset ([onQueryChanged]).
         val query = if (type == "kpop") "kpop" else _uiState.value.query
         _uiState.update { it.copy(filters = it.filters.copy(type = type), query = query) }
-        scheduleSearch(reset = true)
+        scheduleSearch()
     }
 
     fun selectIndustry(industry: IndustryFilter) {
         if (_uiState.value.filters.industry == industry) return
         _uiState.update { it.copy(filters = it.filters.copy(industry = industry)) }
-        scheduleSearch(reset = true)
+        scheduleSearch()
     }
 
     fun selectGenre(genre: GenreFilter) {
         if (_uiState.value.filters.genre == genre) return
         _uiState.update { it.copy(filters = it.filters.copy(genre = genre)) }
-        scheduleSearch(reset = true)
+        scheduleSearch()
     }
 
     fun selectQuality(quality: QualityFilter) {
         if (_uiState.value.filters.quality == quality) return
         _uiState.update { it.copy(filters = it.filters.copy(quality = quality)) }
-        scheduleSearch(reset = true)
+        scheduleSearch()
     }
 
     fun selectLanguage(language: LanguageFilter) {
         if (_uiState.value.filters.language == language) return
         _uiState.update { it.copy(filters = it.filters.copy(language = language)) }
-        scheduleSearch(reset = true)
+        scheduleSearch()
     }
 
     fun setIncludedOnly(includedOnly: Boolean) {
         if (_uiState.value.filters.includedOnly == includedOnly) return
         _uiState.update { it.copy(filters = it.filters.copy(includedOnly = includedOnly)) }
-        scheduleSearch(reset = true)
+        scheduleSearch()
     }
 
     fun setSort(sort: SearchSort) {
@@ -578,12 +649,16 @@ class SearchViewModel @Inject constructor(
         _uiState.update { it.copy(sort = sort) }
         // Sort is a server ordering, so re-fetch instead of reordering only the
         // rows this device happens to hold.
-        scheduleSearch(reset = true)
+        scheduleSearch()
     }
 
     fun setYearRange(from: Int?, to: Int?) {
+        // The year range is a client-side filter over the rows the Pager
+        // already holds: the screen re-groups the loaded snapshot when the
+        // range moves, so this is a state write only — no refetch, no
+        // re-group here (the old `recompute()` did the grouping in the
+        // ViewModel; S6 moved it to the screen, next to the snapshot).
         _uiState.update { it.copy(filters = it.filters.copy(yearFrom = from, yearTo = to)) }
-        recompute()
     }
 
     /**
@@ -601,13 +676,8 @@ class SearchViewModel @Inject constructor(
                 sort = SearchSort.DEFAULT,
             )
         }
-        scheduleSearch(reset = true)
+        scheduleSearch()
     }
-
-    /** The v2 keyset cursor for the next page, or null once the list is on v1 paging. */
-    private var v2Cursor: String? = null
-    /** True once a search has loaded from v2: the list must never mix sources. */
-    private var onV2: Boolean = false
 
     /**
      * Monotonic id of the latest scheduled search. A search job that is no
@@ -620,7 +690,11 @@ class SearchViewModel @Inject constructor(
      * repeats, and a tap on the result card was followed by the stale
      * job landing and the list going empty — the order the two in-flight
      * searches finished in decided what the viewer saw. Every write
-     * below is gated on still being the latest generation.
+     * below is gated on still being the latest generation — and so is
+     * every write a PagingSource reports back ([onPageMeta],
+     * [onFirstPageError]): a superseded source's first page must never
+     * write totals over the newer search's list, the same stale-write
+     * class as the old search job.
      */
     private var searchGeneration = 0
 
@@ -632,137 +706,77 @@ class SearchViewModel @Inject constructor(
      */
     private var lastCompletedSearch: CompletedSearchKey? = null
 
-    fun loadMore() {
-        val state = _uiState.value
-        if (!state.hasMore || state.isLoadingMore || !state.hasSearchIntent) return
-        moreJob?.cancel()
-        // The generation this page belongs to: a fresh search scheduled
-        // while the page is in flight supersedes it, and the page must
-        // never append its rows onto the new search's list (Issue 6).
-        val generation = searchGeneration
-        moreJob = viewModelScope.launch {
-            _uiState.update { it.copy(isLoadingMore = true, error = null) }
-            try {
-                fetchNextPage(generation)
-            } finally {
-                _uiState.update { it.copy(isLoadingMore = false) }
-            }
-        }
-    }
-
     /**
-     * A4-F4: load every remaining page in one tap — "Load more" pages 100
-     * rows at a time, so a 52-result answer still takes repeated taps to
-     * reach the count the summary line already promises. The server counts
-     * at most 1000 matches for a search and a page holds 100, so 9 more
-     * pages is every row the server will ever hand over; the loop cannot
-     * run past the cap. A fresh search cancels the job (scheduleSearch
-     * cancels moreJob) and the generation guard stops the loop, so a page
-     * never lands on a newer search's list (Issue 6, same class as
-     * loadMore). The button hides once hasMore clears, so this is a
-     * no-op when the list is already whole.
+     * Feel-instant S6: what a loaded page reports back. The PagingSource
+     * calls this on every page it serves; the first page also completes
+     * the search (recent, dedupe key, local-rows clear). Generation-gated
+     * (Issue 6): a superseded search's source must never write totals over
+     * the newer search's list — `flatMapLatest` cancels its loads, but a
+     * page whose network call already returned still runs its callback, so
+     * the gate is the second line, same as the old search job's writes.
+     *
+     * The list error itself is NOT written here: the screen reads it from
+     * the PagingData's `loadState` (refresh Error → the full error state,
+     * append Error → the inline retry row), so there is no ViewModel error
+     * flag to strand. This callback only maintains the totals and the
+     * identical-search skip's inputs.
      */
-    fun showAll() {
-        val state = _uiState.value
-        if (!state.hasMore || state.isLoadingMore || !state.hasSearchIntent) return
-        moreJob?.cancel()
-        val generation = searchGeneration
-        moreJob = viewModelScope.launch {
-            _uiState.update { it.copy(isLoadingMore = true, error = null) }
-            try {
-                var pagesFetched = 0
-                while (_uiState.value.hasMore && pagesFetched < MAX_SHOW_ALL_EXTRA_PAGES &&
-                    generation == searchGeneration
-                ) {
-                    if (!fetchNextPage(generation)) break
-                    pagesFetched++
-                }
-            } finally {
-                _uiState.update { it.copy(isLoadingMore = false) }
-            }
+    private fun onPageMeta(params: SearchParams, generation: Int, meta: CatalogPageMeta) {
+        if (generation != searchGeneration) return
+        if (meta.isFirstPage) {
+            // The server answered: the local rows were its instant preview,
+            // not a second list — and the search is the one on screen now.
+            lastCompletedSearch = CompletedSearchKey(params.query, params.filters, params.sort)
+            firstPageFailed = false
+            hasFirstPageResults = meta.loadedCount > 0
+            recordRecent(params.query)
         }
-    }
-
-    /**
-     * One more page of the current search, appended onto [rawResults] and
-     * re-grouped — the fetch half of [loadMore], shared with [showAll] so
-     * the two doors cannot drift apart. Reads the current page from state
-     * on every call, so a loop sees each page land before asking for the
-     * next. Returns whether more pages remain afterwards; false also
-     * covers a superseded fetch (its rows must never land) and a failed
-     * fetch (the error is on screen for the retry). The loading flag is
-     * the caller's: loadMore owns one page, showAll owns the whole loop.
-     */
-    private suspend fun fetchNextPage(generation: Int): Boolean {
-        val state = _uiState.value
-        val next = state.page + 1
-        try {
-            if (onV2) {
-                val page = catalogRepository.searchWorksV2(
-                    query = state.query.trim(),
-                    sort = state.sort.wireValue,
-                    limit = PAGE_SIZE,
-                    cursor = v2Cursor,
-                    type = effectiveSearchType(state.filters.type),
-                    genres = state.filters.genre.wireValue?.let { listOf(it) },
-                    industries = state.filters.industry.wireValues.takeIf { it.isNotEmpty() },
-                    qualities = state.filters.quality.wireValue?.let { listOf(it) },
-                )
-                if (generation != searchGeneration) return false
-                if (page != null) {
-                    v2Cursor = page.nextCursor
-                    rawResults = (rawResults + page.posts).distinctById()
-                    _uiState.update {
-                        it.copy(
-                            page = next,
-                            serverTotal = page.totalEstimate ?: rawResults.size,
-                            totalCapped = page.totalCapped,
-                            hasMore = page.hasMore,
-                            isFuzzy = false,
-                        )
+        _uiState.update {
+            it.copy(
+                // v2's totalEstimate can be null; then the total is however
+                // many rows have loaded so far, which the meta reports on
+                // every page — without the per-page report the count line
+                // would freeze at the first page's size while the list kept
+                // growing past it.
+                serverTotal = meta.totalEstimate ?: meta.loadedCount,
+                totalCapped = meta.totalCapped,
+                // The fuzzy flag and the suggestion ride only on the first
+                // page: an append's v1 page carries the same values, but the
+                // first page is the one that defines the answer.
+                isFuzzy = if (meta.isFirstPage) meta.isFuzzy else it.isFuzzy,
+                showExactOnly = if (meta.isFirstPage) false else it.showExactOnly,
+                didYouMean = if (meta.isFirstPage) {
+                    // A suggestion that only repeats the query is no
+                    // suggestion at all.
+                    meta.suggestion?.trim()?.takeIf { suggestion ->
+                        suggestion.isNotBlank() && !suggestion.equals(params.query, ignoreCase = true)
                     }
-                    recompute()
-                    return page.hasMore
-                }
-                throw IllegalStateException("The catalog could not serve the next page.")
-            }
-            val resp = catalogRepository.getPosts(
-                query = state.query.trim(),
-                type = effectiveSearchType(state.filters.type),
-                industry = state.filters.industry.wireValue,
-                genre = state.filters.genre.wireValue,
-                language = state.filters.language.wireValue,
-                quality = state.filters.quality.wireValue,
-                sort = state.sort.wireValue,
-                freeOnly = state.filters.includedOnly.takeIf { it },
-                page = next,
-                limit = PAGE_SIZE,
+                } else {
+                    it.didYouMean
+                },
+                hasSearched = true,
+                localResults = if (meta.isFirstPage) emptyList() else it.localResults,
+                localResultsQuery = if (meta.isFirstPage) "" else it.localResultsQuery,
             )
-            if (generation != searchGeneration) return false
-            rawResults = (rawResults + resp.results).distinctById()
-            val more = resp.results.size >= PAGE_SIZE && next < resp.totalPages
-            _uiState.update {
-                it.copy(
-                    page = next,
-                    serverTotal = resp.total,
-                    totalCapped = false,
-                    hasMore = more,
-                    isFuzzy = resp.fuzzy,
-                )
-            }
-            recompute()
-            return more
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (error: Exception) {
-            if (generation == searchGeneration) {
-                _uiState.update { it.copy(error = friendlyNetworkError(error, "Could not load more.")) }
-            }
-            return false
         }
     }
 
-    private fun scheduleSearch(reset: Boolean, immediate: Boolean = false) {
+    /**
+     * Feel-instant S6: the first page failed. The screen shows the failure
+     * from the PagingData's `loadState`; this only clears the dedupe key
+     * and arms the identical-search skip's failure input, so a retry after
+     * an error always re-asks (Session 158, S5). Generation-gated like
+     * [onPageMeta]: a superseded search's failure must not clear the newer
+     * search's completed key.
+     */
+    private fun onFirstPageError(generation: Int) {
+        if (generation != searchGeneration) return
+        lastCompletedSearch = null
+        firstPageFailed = true
+        hasFirstPageResults = false
+    }
+
+    private fun scheduleSearch(immediate: Boolean = false) {
         // Session 158 (S5): an identical search whose results are already
         // on screen is a no-op, not a re-fetch. Typing fires a debounced
         // search and pressing Search (IME) fires an immediate one for the
@@ -780,15 +794,11 @@ class SearchViewModel @Inject constructor(
                 current.query.trim(),
                 current.filters,
                 current.sort,
-                current.hasSearched && current.groups.isNotEmpty(),
-                current.error != null,
+                current.hasSearched && hasFirstPageResults,
+                firstPageFailed,
             )
         ) return
         searchJob?.cancel()
-        // A fresh search supersedes a page load too: the page would append
-        // its rows onto the new search's list (Issue 6, same stale-write
-        // class as the search job itself).
-        moreJob?.cancel()
         // This schedule is the latest search from here on; an older job
         // still in flight must not write anything when it lands.
         val generation = ++searchGeneration
@@ -796,11 +806,12 @@ class SearchViewModel @Inject constructor(
         val query = state.query.trim()
         val filters = state.filters
         if (query.isBlank() && !filters.anyServerFilterActive) {
-            rawResults = emptyList()
+            searchParams.value = null
+            firstPageFailed = false
+            hasFirstPageResults = false
             _uiState.update {
                 it.copy(
-                    isLoading = false, error = null, groups = emptyList(), resultCount = 0,
-                    serverTotal = 0, totalCapped = false, hasSearched = false, hasMore = false, page = 1,
+                    serverTotal = 0, totalCapped = false, hasSearched = false,
                     isFuzzy = false, showExactOnly = false, didYouMean = null,
                     localResults = emptyList(), localResultsQuery = "",
                 )
@@ -811,145 +822,33 @@ class SearchViewModel @Inject constructor(
         // about it, and the screen already shows the play row (or the
         // YouTube note) for it — so no server call, no suggest, no recent.
         if (classifyPastedText(query) != PastedText.NotAUrl) {
-            rawResults = emptyList()
+            searchParams.value = null
+            firstPageFailed = false
+            hasFirstPageResults = false
             _uiState.update {
                 it.copy(
-                    isLoading = false, error = null, groups = emptyList(), resultCount = 0,
-                    serverTotal = 0, totalCapped = false, hasSearched = false, hasMore = false, page = 1,
+                    serverTotal = 0, totalCapped = false, hasSearched = false,
                     isFuzzy = false, showExactOnly = false, suggestions = emptyList(),
                     didYouMean = null, localResults = emptyList(), localResultsQuery = "",
                 )
             }
             return
         }
-        if (reset) _uiState.update { it.copy(page = 1) }
         searchJob = viewModelScope.launch {
             if (!immediate) delay(DEBOUNCE_MS)
             if (generation != searchGeneration) return@launch
-            _uiState.update { it.copy(isLoading = true, error = null) }
-            v2Cursor = null
-            onV2 = false
-            try {
-                // Phase 7 (M1): v2 search first — one row per work — with v1 as
-                // the fallback. The v2 side has no free-only filter and no
-                // language filter, so a free-only or language search stays on
-                // v1; and v2 matches titles only, so an EMPTY v2 page falls
-                // back to v1, which is the route that matches cast names
-                // (actor search, per the cast directive).
-                val freeOnly = filters.includedOnly
-                if (!freeOnly && filters.language == LanguageFilter.ALL) {
-                    val page = catalogRepository.searchWorksV2(
-                        query = query,
-                        sort = state.sort.wireValue,
-                        limit = PAGE_SIZE,
-                        type = effectiveSearchType(filters.type),
-                        genres = filters.genre.wireValue?.let { listOf(it) },
-                        industries = filters.industry.wireValues.takeIf { it.isNotEmpty() },
-                        qualities = filters.quality.wireValue?.let { listOf(it) },
-                    )
-                    if (generation != searchGeneration) return@launch
-                    if (page != null && page.posts.isNotEmpty()) {
-                        onV2 = true
-                        v2Cursor = page.nextCursor
-                        rawResults = page.posts.distinctById()
-                        _uiState.update {
-                            it.copy(
-                                isLoading = false,
-                                hasSearched = true,
-                                page = 1,
-                                serverTotal = page.totalEstimate ?: rawResults.size,
-                                totalCapped = page.totalCapped,
-                                hasMore = page.hasMore,
-                                error = null,
-                                isFuzzy = false,
-                                showExactOnly = false,
-                                // v2 carries no suggestion yet; the v1
-                                // fallback below is the only source of one.
-                                didYouMean = null,
-                                // The server answered: the local rows were
-                                // its instant preview, not a second list.
-                                localResults = emptyList(),
-                                localResultsQuery = "",
-                            )
-                        }
-                        recompute()
-                        lastCompletedSearch = CompletedSearchKey(query, filters, state.sort)
-                        recordRecent(query)
-                        return@launch
-                    }
-                }
-                val resp = catalogRepository.getPosts(
-                    query = query,
-                    type = effectiveSearchType(filters.type),
-                    industry = filters.industry.wireValue,
-                    genre = filters.genre.wireValue,
-                    language = filters.language.wireValue,
-                    quality = filters.quality.wireValue,
-                    sort = state.sort.wireValue,
-                    freeOnly = filters.includedOnly.takeIf { it },
-                    page = 1,
-                    limit = PAGE_SIZE,
-                )
-                if (generation != searchGeneration) return@launch
-                rawResults = resp.results.distinctById()
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        hasSearched = true,
-                        page = 1,
-                        serverTotal = resp.total,
-                        totalCapped = false,
-                        hasMore = resp.results.size >= PAGE_SIZE && resp.totalPages > 1,
-                        error = null,
-                        isFuzzy = resp.fuzzy,
-                        showExactOnly = false,
-                        // A suggestion that only repeats the query is no
-                        // suggestion at all.
-                        didYouMean = resp.suggestion?.trim()?.takeIf {
-                            it.isNotBlank() && !it.equals(query, ignoreCase = true)
-                        },
-                        // The server answered: the local rows were its
-                        // instant preview, not a second list.
-                        localResults = emptyList(),
-                        localResultsQuery = "",
-                    )
-                }
-                recompute()
-                lastCompletedSearch = CompletedSearchKey(query, filters, state.sort)
-                recordRecent(query)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Exception) {
-                // A superseded search must not paint its failure over the
-                // newer search's list either (Issue 6, same stale-write
-                // class as the success path above).
-                if (generation != searchGeneration) return@launch
-                // Session 158 (S5): a failed search leaves nothing on
-                // screen to dedupe against — a retry must re-ask.
-                lastCompletedSearch = null
-                rawResults = emptyList()
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        error = friendlyNetworkError(error, "Search failed. Check the server connection."),
-                        groups = emptyList(),
-                        resultCount = 0,
-                    )
-                }
-            } finally {
-                // Batch C: a search cancelled mid-flight — a newer filter
-                // tap, keystroke or sort change while the network call is
-                // still out — must not strand isLoading = true: the grid
-                // skeleton would sit on screen forever, with no error and
-                // no results, and no retry path out of it. The generation
-                // guard keeps a stale job's finally from clearing a newer
-                // job's loading flag (the same guard the writes above
-                // carry). loadMore already clears its flag in a finally;
-                // the search job is the one that did not.
-                if (generation == searchGeneration) {
-                    _uiState.update { it.copy(isLoading = false) }
-                }
-            }
+            // Feel-instant S6: the search is a set of params, not a fetch.
+            // Setting them builds a new Pager (and its PagingSource); a
+            // newer search replaces them, `flatMapLatest` cancels the old
+            // source's in-flight loads, and the meta callback is
+            // generation-gated, so a superseded source can never write over
+            // this search (Issue 6, the same stale-write class the old
+            // scheduleSearch guarded with four generation checks around its
+            // two network calls). There is no isLoading flag to strand
+            // here: the screen reads the PagingData's `loadState`, and
+            // Paging owns that state — a cancelled search leaves no
+            // skeleton behind (Batch C, same class as the old `finally`).
+            searchParams.value = SearchParams(query = query, filters = filters, sort = state.sort)
         }
     }
 
@@ -1056,30 +955,6 @@ class SearchViewModel @Inject constructor(
     private fun serverSuggestionsFor(query: String): List<SuggestItem> =
         if (lastServerSuggestionsQuery == query) lastServerSuggestions else emptyList()
 
-    private fun recompute() {
-        val filters = _uiState.value.filters
-        val sort = _uiState.value.sort
-        val filtered = rawResults.filter { post ->
-            // Post.year arrives as a JSON number (Int?), so no string parsing is needed.
-            val year = post.year
-            val yearOk = when {
-                filters.yearFrom != null && (year == null || year < filters.yearFrom) -> false
-                filters.yearTo != null && (year == null || year > filters.yearTo) -> false
-                else -> true
-            }
-            yearOk
-        }
-
-        val groups = groupSearchResults(filtered, sort)
-
-        _uiState.update {
-            it.copy(
-                groups = groups,
-                resultCount = groups.sumOf { g -> g.items.size },
-            )
-        }
-    }
-
     private fun recordRecent(query: String) {
         val trimmed = query.trim()
         if (trimmed.isBlank()) return
@@ -1101,13 +976,6 @@ class SearchViewModel @Inject constructor(
          * The suggest call rides the same debounce.
          */
         const val DEBOUNCE_MS = 150L
-        const val PAGE_SIZE = 100
-        /**
-         * A4-F4: the server counts at most 1000 matches for a search and a
-         * page holds 100, so a "Show all" from page 1 needs at most 9 more
-         * pages to hold every row the server will ever serve.
-         */
-        const val MAX_SHOW_ALL_EXTRA_PAGES = 9
         /**
          * Feel-instant S3a/S3c: how many local rows a keystroke paints —
          * an instant preview, not a second results page.
@@ -1160,6 +1028,38 @@ internal fun mergeSuggestions(local: List<SuggestItem>, server: List<SuggestItem
     }
     return merged.take(MAX_SUGGESTIONS)
 }
+
+/**
+ * Feel-instant S6: the search a Pager is built for — the trimmed query
+ * plus the filters and sort that shaped the list. A new value builds a new
+ * PagingSource; two searches with the same value answer the same list.
+ * Private: the screen never names it, it only collects the Pager the
+ * ViewModel builds from it.
+ */
+private data class SearchParams(
+    val query: String,
+    val filters: SearchFilters,
+    val sort: SearchSort,
+)
+
+/**
+ * Feel-instant S6: the year range is a client-side filter over the rows
+ * the Pager already holds (the old `recompute()` did this filtering plus
+ * the grouping in the ViewModel, over the accumulated rows). The screen
+ * calls this on the loaded snapshot before grouping, so moving the range
+ * re-groups what is on screen without a refetch. Pure so the screen —
+ * and a test — can call it without a ViewModel.
+ */
+internal fun filterByYearRange(posts: List<Post>, filters: SearchFilters): List<Post> =
+    posts.filter { post ->
+        // Post.year arrives as a JSON number (Int?), so no string parsing is needed.
+        val year = post.year
+        when {
+            filters.yearFrom != null && (year == null || year < filters.yearFrom) -> false
+            filters.yearTo != null && (year == null || year > filters.yearTo) -> false
+            else -> true
+        }
+    }
 
 /**
  * Session 158 (S5): the search whose results are on screen, as the

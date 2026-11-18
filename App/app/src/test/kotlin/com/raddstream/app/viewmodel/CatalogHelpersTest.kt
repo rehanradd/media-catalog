@@ -195,14 +195,9 @@ class CatalogHelpersTest {
         assertEquals("kpop", effectiveTypeChip("kpop", seriesOnly))
     }
 
-    // A4-F4: the "Show all" affordance at the end of a capped list names the
-    // server total — the count the summary line already promises — with a "+"
-    // while the total itself is the server's 1000 cap.
-    @Test
-    fun `show all names the full count`() {
-        assertEquals("Show all 52 results", showAllLabel(serverTotal = 52))
-        assertEquals("Show all 1 result", showAllLabel(serverTotal = 1))
-        assertEquals("Show all 1000+ results", showAllLabel(serverTotal = 1000, totalCapped = true))
-        assertEquals("Show all 1000 results", showAllLabel(serverTotal = 1000))
-    }
+    // Feel-instant S6: the "Show all" affordance is retired with the
+    // manual page loop — the list pages itself as the viewer scrolls, so
+    // there is no button left for `showAllLabel` to name. The label and
+    // its test go with it; the count line (`resultsSummary`, above) is the
+    // one count left on the screen.
 }

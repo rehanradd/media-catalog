@@ -25,6 +25,11 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.dp
+import androidx.paging.LoadState
+import androidx.paging.LoadStates
+import androidx.paging.PagingData
+import androidx.paging.compose.collectAsLazyPagingItems
+import kotlinx.coroutines.flow.MutableStateFlow
 import com.raddstream.app.data.UserRegion
 import com.raddstream.app.data.local.LocalVideoFile
 import com.raddstream.app.network.models.FacetEntry
@@ -210,28 +215,39 @@ class NestedScrollCrashTest {
 
     @Test
     fun searchResultsWithGroups() {
+        // S6: SearchContent reads the PagingData now — the groups arrive as
+        // a parameter (derived from the snapshot by the screen) and the
+        // list states from the PagingData's loadState.
+        val movies = samplePosts("", 31, listOf("Dune", "Dune: Part Two"))
+        val series = samplePosts("", 41, listOf("Dune: Prophecy"))
+        val idle = LoadState.NotLoading(endOfPaginationReached = false)
+        val pagingDataFlow = MutableStateFlow(
+            PagingData.from(
+                data = movies + series,
+                sourceLoadStates = LoadStates(refresh = idle, prepend = idle, append = idle),
+            ),
+        )
         compose.setContent {
             RaddStreamTheme {
+                val pagingItems = pagingDataFlow.collectAsLazyPagingItems()
                 SearchContent(
                     state = SearchUiState(
                         query = "dune",
                         hasSearched = true,
-                        groups = listOf(
-                            TypeGroup("Movies", "movie", samplePosts("", 31, listOf("Dune", "Dune: Part Two"))),
-                            TypeGroup("Series", "series", samplePosts("", 41, listOf("Dune: Prophecy"))),
-                        ),
-                        resultCount = 3,
                         serverTotal = 3,
+                    ),
+                    pagingItems = pagingItems,
+                    groups = listOf(
+                        TypeGroup("Movies", "movie", movies),
+                        TypeGroup("Series", "series", series),
                     ),
                     onRunQuery = {},
                     onRemoveRecent = {},
-                    onSubmitCurrentQuery = {},
                     onResetFilters = {},
                     onQueryChanged = {},
                     onShowCloseMatches = {},
                     onShowExactOnly = {},
                     onRunSuggestion = {},
-                    onLoadMore = {},
                     onPostClick = {},
                 )
             }
@@ -402,21 +418,62 @@ class NestedScrollCrashTest {
 
     @Test
     fun browseGridWithItemsLoadingMoreAndError() {
+        // S6: BrowsePosterGrid reads the PagingData now — the append
+        // loadState is one state at a time, so the old "loading AND error
+        // at once" combination cannot exist any more. The crash coverage
+        // splits in two: items with the next page loading (skeleton
+        // footer), and items with the next page failed (retry row).
+        val posts = samplePosts("", 81, listOf("Jawan", "Dune", "Inception", "Oppenheimer", "Baahubali", "Pushpa", "Salaar", "Animal"))
+        val idle = LoadState.NotLoading(endOfPaginationReached = false)
+        val loadingFlow = MutableStateFlow(
+            PagingData.from(
+                data = posts,
+                sourceLoadStates = LoadStates(refresh = idle, prepend = idle, append = LoadState.Loading),
+            ),
+        )
         compose.setContent {
             RaddStreamTheme {
                 val gridState = rememberLazyGridState()
+                val pagingItems = loadingFlow.collectAsLazyPagingItems()
                 BrowsePosterGrid(
-                    items = samplePosts("", 81, listOf("Jawan", "Dune", "Inception", "Oppenheimer", "Baahubali", "Pushpa", "Salaar", "Animal")),
-                    loadingMore = true,
-                    error = "Page 2 failed to load.",
+                    pagingItems = pagingItems,
                     gridState = gridState,
                     onPostClick = {},
-                    onRetryLoadMore = {},
                     modifier = Modifier.fillMaxSize(),
                 )
             }
         }
         compose.onAllNodesWithText("Jawan")[0].assertIsDisplayed()
+    }
+
+    @Test
+    fun browseGridWithItemsAndAppendError() {
+        val posts = samplePosts("", 81, listOf("Jawan", "Dune", "Inception", "Oppenheimer", "Baahubali", "Pushpa", "Salaar", "Animal"))
+        val idle = LoadState.NotLoading(endOfPaginationReached = false)
+        val errorFlow = MutableStateFlow(
+            PagingData.from(
+                data = posts,
+                sourceLoadStates = LoadStates(
+                    refresh = idle,
+                    prepend = idle,
+                    append = LoadState.Error(java.io.IOException("Page 2 failed to load.")),
+                ),
+            ),
+        )
+        compose.setContent {
+            RaddStreamTheme {
+                val gridState = rememberLazyGridState()
+                val pagingItems = errorFlow.collectAsLazyPagingItems()
+                BrowsePosterGrid(
+                    pagingItems = pagingItems,
+                    gridState = gridState,
+                    onPostClick = {},
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
+        compose.onAllNodesWithText("Jawan")[0].assertIsDisplayed()
+        compose.onNodeWithText("Could not load more.").assertIsDisplayed()
     }
 
     @Test

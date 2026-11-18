@@ -15,6 +15,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.paging.LoadState
+import androidx.paging.LoadStates
+import androidx.paging.PagingData
+import androidx.paging.compose.collectAsLazyPagingItems
+import kotlinx.coroutines.flow.MutableStateFlow
+import java.io.IOException
 import app.cash.paparazzi.DeviceConfig
 import app.cash.paparazzi.Paparazzi
 import com.raddstream.app.network.models.CoverageType
@@ -733,20 +739,30 @@ class PaparazziPreviewTest {
     // the results grid, and the loading / error / empty states all live here.
     // FilterRail and FilterSheetBody are shot on their own: the rail lives in
     // SearchScreen's column, the sheet in a ModalBottomSheet.
-    private fun shotSearch(state: SearchUiState) {
+    // Feel-instant S6: SearchContent reads the PagingData now — the shots
+    // feed it a static PagingData through a StateFlow, the way the Paging
+    // test guide drives load states in isolation, and the groups arrive as
+    // a parameter (derived from the snapshot by the screen).
+    private fun shotSearch(
+        state: SearchUiState,
+        groups: List<TypeGroup> = emptyList(),
+        pagingData: PagingData<Post> = PagingData.empty(),
+    ) {
+        val pagingDataFlow = MutableStateFlow(pagingData)
         paparazzi.snapshot {
             themed {
+                val pagingItems = pagingDataFlow.collectAsLazyPagingItems()
                 SearchContent(
                     state = state,
+                    pagingItems = pagingItems,
+                    groups = groups,
                     onRunQuery = {},
                     onRemoveRecent = {},
-                    onSubmitCurrentQuery = {},
                     onResetFilters = {},
                     onQueryChanged = {},
                     onShowCloseMatches = {},
                     onShowExactOnly = {},
                     onRunSuggestion = {},
-                    onLoadMore = {},
                     onPostClick = {},
                 )
             }
@@ -762,15 +778,14 @@ class PaparazziPreviewTest {
         recommended = homePosts,
     )
 
+    private val searchResultGroups = listOf(
+        TypeGroup(label = "Movies", typeKey = "movie", items = listOf(jawan, salaars)),
+        TypeGroup(label = "Series", typeKey = "series", items = listOf(mclintock)),
+    )
+
     private val searchResults = SearchUiState(
         query = "jwan",
-        groups = listOf(
-            TypeGroup(label = "Movies", typeKey = "movie", items = listOf(jawan, salaars)),
-            TypeGroup(label = "Series", typeKey = "series", items = listOf(mclintock)),
-        ),
-        resultCount = 3,
         serverTotal = 3,
-        hasMore = true,
         hasSearched = true,
         // The query is one edit away from a real title, so both the
         // did-you-mean line and the fuzzy banner render in this shot.
@@ -785,21 +800,50 @@ class PaparazziPreviewTest {
 
     @Test
     fun searchResults() {
-        shotSearch(searchResults)
+        // The append is not at its end, so the count line still reads the
+        // capped "Showing 3 of 3 results" the old golden carried — the
+        // footer below it is gone (S6 retires Load more / Show all), so
+        // this golden is refreshed by the record run.
+        val idle = LoadState.NotLoading(endOfPaginationReached = false)
+        shotSearch(
+            searchResults,
+            groups = searchResultGroups,
+            pagingData = PagingData.from(
+                data = listOf(jawan, salaars, mclintock),
+                sourceLoadStates = LoadStates(refresh = idle, prepend = idle, append = idle),
+            ),
+        )
     }
 
     @Test
     fun searchLoading() {
-        shotSearch(SearchUiState(query = "jawan", isLoading = true, hasSearched = true))
+        val idle = LoadState.NotLoading(endOfPaginationReached = false)
+        shotSearch(
+            SearchUiState(query = "jawan", hasSearched = true),
+            pagingData = PagingData.empty(
+                sourceLoadStates = LoadStates(
+                    refresh = LoadState.Loading,
+                    prepend = idle,
+                    append = idle,
+                ),
+            ),
+        )
     }
 
     @Test
     fun searchError() {
+        // The message is the friendly one for an unresolvable host now —
+        // the old golden carried a hardcoded string the app never showed —
+        // so this golden is refreshed by the record run.
+        val idle = LoadState.NotLoading(endOfPaginationReached = false)
         shotSearch(
-            SearchUiState(
-                query = "jawan",
-                error = "Couldn't reach the server. Check your connection and try again.",
-                hasSearched = true,
+            SearchUiState(query = "jawan", hasSearched = true),
+            pagingData = PagingData.empty(
+                sourceLoadStates = LoadStates(
+                    refresh = LoadState.Error(IOException("Unable to resolve host")),
+                    prepend = idle,
+                    append = idle,
+                ),
             ),
         )
     }

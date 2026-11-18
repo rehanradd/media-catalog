@@ -91,7 +91,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.paging.LoadState
+import androidx.paging.compose.LazyPagingItems
+import androidx.paging.compose.collectAsLazyPagingItems
 import com.raddstream.app.R
+import com.raddstream.app.network.friendlyNetworkError
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.network.models.currentCalendarYear
 import com.raddstream.app.network.models.displayYearLabel
@@ -123,9 +127,11 @@ import com.raddstream.app.viewmodel.SearchUiState
 import com.raddstream.app.viewmodel.SearchViewModel
 import com.raddstream.app.viewmodel.displayLanguageName
 import com.raddstream.app.viewmodel.effectiveTypeChip
+import com.raddstream.app.viewmodel.filterByYearRange
+import com.raddstream.app.viewmodel.groupSearchResults
 import com.raddstream.app.viewmodel.normalizeTypeLabel
 import com.raddstream.app.viewmodel.resultsSummary
-import com.raddstream.app.viewmodel.showAllLabel
+import com.raddstream.app.viewmodel.TypeGroup
 
 private val typeChips = listOf(
     "All" to null,
@@ -158,9 +164,6 @@ internal const val SeeAllRecommendedTag = "see-all-recommended"
 
 /** Test tag on the filter rail's right-edge fade mask. */
 internal const val FilterRailFadeTag = "filter-rail-fade"
-
-/** Test tag on the "Show all N results" affordance at the end of a capped list. */
-internal const val ShowAllResultsTag = "show-all-results"
 
 /**
  * The Browse route's type for a "See all" tap: the rail's type values are
@@ -197,6 +200,12 @@ fun SearchScreen(
     viewModel: SearchViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    // Feel-instant S6: the results list is a Pager — the screen collects
+    // it, and the groups are derived from its loaded snapshot (see
+    // [rememberSearchGroups]). The ViewModel owns the search and the
+    // totals; the list itself lives here.
+    val pagingItems = viewModel.pagingData.collectAsLazyPagingItems()
+    val groups = rememberSearchGroups(pagingItems, state)
     var showSheet by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     // Session 121 (P-12): submitting a search, or scrolling the results, dismisses
@@ -231,8 +240,8 @@ fun SearchScreen(
     // the grid paints art, not shimmer. Capped; the helper dedupes, and
     // never runs on metered data the viewer never granted.
     val prefetchContext = LocalContext.current
-    LaunchedEffect(state.groups) {
-        val urls = searchPrefetchUrls(state.groups)
+    LaunchedEffect(groups) {
+        val urls = searchPrefetchUrls(groups)
         if (urls.isNotEmpty()) prefetchPosterArt(prefetchContext, urls)
     }
 
@@ -315,7 +324,7 @@ fun SearchScreen(
             }
             // The rail stays up whatever is pasted: a link replaces the
             // results, never the whole search UI.
-            FilterRail(state = state, onSelectType = viewModel::selectType, onOpenFilters = { showSheet = true })
+            FilterRail(state = state, groups = groups, onSelectType = viewModel::selectType, onOpenFilters = { showSheet = true })
 
             if (pasted is PastedText.NotAUrl) {
                 // Type-ahead titles for what is being typed. A tap searches for
@@ -355,16 +364,15 @@ fun SearchScreen(
 
                 SearchContent(
                     state = state,
+                    pagingItems = pagingItems,
+                    groups = groups,
                     onRunQuery = viewModel::runRecent,
                     onRemoveRecent = viewModel::removeRecent,
-                    onSubmitCurrentQuery = viewModel::submitCurrentQuery,
                     onResetFilters = viewModel::resetFilters,
                     onQueryChanged = viewModel::onQueryChanged,
                     onShowCloseMatches = viewModel::showCloseMatches,
                     onShowExactOnly = viewModel::showExactOnly,
                     onRunSuggestion = viewModel::runSuggestion,
-                    onLoadMore = viewModel::loadMore,
-                    onShowAll = viewModel::showAll,
                     onPostClick = onPostClick,
                     onSeeAllTrending = { onBrowse(browseTypeForSeeAll(state.filters.type)) },
                     onSeeAllRecommended = { onBrowse(browseTypeForSeeAll(state.filters.type)) },
@@ -523,7 +531,12 @@ private fun DirectVideoRow(url: String, title: String, onPlay: () -> Unit) {
  * left, under the shared [ScrollingChipRow] fade.
  */
 @Composable
-internal fun FilterRail(state: SearchUiState, onSelectType: (String?) -> Unit, onOpenFilters: () -> Unit) {
+internal fun FilterRail(
+    state: SearchUiState,
+    groups: List<TypeGroup> = emptyList(),
+    onSelectType: (String?) -> Unit,
+    onOpenFilters: () -> Unit,
+) {
     // Robo #7: the last chip ("Complete series") was cut off at the right edge — and when it
     // was the SELECTED chip it stayed cut off ("Comp…"), because nothing ever scrolled the
     // rail to it. The rail already scrolls (LazyRow) with end padding (Session 121 P-29);
@@ -534,8 +547,11 @@ internal fun FilterRail(state: SearchUiState, onSelectType: (String?) -> Unit, o
     // type filter set, a search that answers with a single section is that
     // section's type — "All" stays selected only while more than one section
     // (or none yet) is showing. The reveal scroll follows the same chip, so
-    // an aligned selection is never itself clipped off-screen.
-    val effectiveType = effectiveTypeChip(state.filters.type, state.groups)
+    // an aligned selection is never itself clipped off-screen. The groups
+    // arrive as a parameter now (S6): the ViewModel no longer owns the list,
+    // so the screen derives them from the PagingData's snapshot and hands
+    // them down.
+    val effectiveType = effectiveTypeChip(state.filters.type, groups)
     val listState = rememberLazyListState()
     LaunchedEffect(effectiveType) {
         val selectedIndex = railTypeChips.indexOfFirst { it.second == effectiveType }
@@ -987,20 +1003,52 @@ private fun SeeAllButton(onClick: () -> Unit, tag: String) {
     }
 }
 
+/**
+ * Feel-instant S6: the results groups, derived from the PagingData's loaded
+ * snapshot. The ViewModel no longer owns the list, so the grouping lives
+ * here, next to the snapshot: the year range filters the loaded rows, then
+ * [groupSearchResults] files them into type rails — the same two steps the
+ * old `recompute()` ran over the accumulated rows. Moving the range
+ * re-groups what is on screen without a refetch, exactly as before.
+ *
+ * The last loaded rows stay on screen while a fresh search refreshes
+ * (S3a): a new PagingData starts empty, and without the hold the previous
+ * results would vanish into the full skeleton on every keystroke and
+ * filter tap. The hold releases the moment the refresh lands — with rows,
+ * or with none (then the empty state shows, not the stale list).
+ */
+@Composable
+private fun rememberSearchGroups(
+    pagingItems: LazyPagingItems<Post>,
+    state: SearchUiState,
+): List<TypeGroup> {
+    val snapshotItems = pagingItems.itemSnapshotList.items.filterNotNull()
+    var lastLoaded by remember { mutableStateOf<List<Post>>(emptyList()) }
+    if (snapshotItems.isNotEmpty()) lastLoaded = snapshotItems
+    val isRefreshing = pagingItems.loadState.refresh is LoadState.Loading
+    val displayItems = when {
+        snapshotItems.isNotEmpty() -> snapshotItems
+        isRefreshing -> lastLoaded
+        else -> emptyList()
+    }
+    return remember(displayItems, state.sort, state.filters) {
+        groupSearchResults(filterByYearRange(displayItems, state.filters), state.sort)
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun SearchContent(
     state: SearchUiState,
+    pagingItems: LazyPagingItems<Post>,
+    groups: List<TypeGroup>,
     onRunQuery: (String) -> Unit,
     onRemoveRecent: (String) -> Unit,
-    onSubmitCurrentQuery: () -> Unit,
     onResetFilters: () -> Unit,
     onQueryChanged: (String) -> Unit,
     onShowCloseMatches: () -> Unit,
     onShowExactOnly: () -> Unit,
     onRunSuggestion: (String) -> Unit,
-    onLoadMore: () -> Unit,
-    onShowAll: () -> Unit = {},
     onPostClick: (Post) -> Unit,
     onSeeAllTrending: () -> Unit = {},
     onSeeAllRecommended: () -> Unit = {},
@@ -1016,6 +1064,18 @@ internal fun SearchContent(
             focusManager.clearFocus()
         }
     }
+    // Feel-instant S6: the list states come from the PagingData's loadState
+    // now, not a ViewModel list. The "Load more" / "Show all" footer is
+    // gone — the list pages itself as the viewer scrolls, and the tail of
+    // the list is skeleton rows while the next page loads, with an inline
+    // retry when a page fails.
+    val refreshState = pagingItems.loadState.refresh
+    val appendState = pagingItems.loadState.append
+    val isRefreshing = refreshState is LoadState.Loading
+    val loadedCount = groups.sumOf { it.items.size }
+    val appendEndReached =
+        (appendState as? LoadState.NotLoading)?.endOfPaginationReached == true
+    val hasMore = !appendEndReached
     when {
         !state.hasSearchIntent -> {
             SearchDiscoveryContent(
@@ -1027,7 +1087,7 @@ internal fun SearchContent(
                 onSeeAllRecommended = onSeeAllRecommended,
             )
         }
-        state.isLoading && state.groups.isEmpty() && !state.hasLocalResults -> SearchResultsSkeleton(
+        isRefreshing && groups.isEmpty() && !state.hasLocalResults -> SearchResultsSkeleton(
             // The results arrive as a summary line, a group header and a
             // 2-wide grid — the bare grid skeleton let the summary and the
             // header appear out of nowhere and push every row down.
@@ -1035,20 +1095,24 @@ internal fun SearchContent(
             // for this query, those rows are the loading state — a skeleton
             // over them would hide the instant answer.
         )
-        state.error != null && state.groups.isEmpty() && !state.hasLocalResults -> ErrorState(title = "Couldn't search", message = state.error ?: "Search failed.", onRetry = onSubmitCurrentQuery)
+        refreshState is LoadState.Error && groups.isEmpty() && !state.hasLocalResults -> ErrorState(
+            title = "Couldn't search",
+            message = friendlyNetworkError(refreshState.error, "Search failed. Check the server connection."),
+            onRetry = { pagingItems.retry() },
+        )
         // Feel-instant S3a/S3c: the instant local answer — titles this
         // device already knows, painted while the server search is still
         // out (or after it failed: a dead connection still answers from
         // the device). A tap runs the server search for that title; the
         // index carries no id to open.
-        state.hasLocalResults && state.groups.isEmpty() -> LocalSearchResults(
+        state.hasLocalResults && groups.isEmpty() -> LocalSearchResults(
             results = state.localResults,
             onRunSuggestion = onRunSuggestion,
         )
         // Audit #36: "No matches" only after a completed search returns zero
         // rows — never while a search is still in flight (the skeleton owns
         // that window), and never before the first search.
-        state.groups.isEmpty() && state.hasSearched && !state.isLoading -> EmptyState(
+        groups.isEmpty() && state.hasSearched && !isRefreshing -> EmptyState(
             title = "No matches",
             message = when {
                 state.query.isNotBlank() && state.hasActiveFilters ->
@@ -1084,7 +1148,7 @@ internal fun SearchContent(
             // fresh search runs — and this one skeleton row on top is the
             // signal that they are refreshing, so the stale count below it
             // is never mistaken for the new answer.
-            if (state.isLoading) {
+            if (isRefreshing) {
                 item {
                     SkeletonBox(
                         Modifier.fillMaxWidth(0.55f).height(20.dp).padding(vertical = 8.dp)
@@ -1098,7 +1162,7 @@ internal fun SearchContent(
                 // the "Filtered" pill) opens the sheet. The header keeps only
                 // the count; a second "Sort" door to the same sheet is gone.
                 Text(
-                    text = resultsSummary(state.resultCount, state.serverTotal, state.hasMore, state.totalCapped),
+                    text = resultsSummary(loadedCount, state.serverTotal, hasMore, state.totalCapped),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
@@ -1135,7 +1199,7 @@ internal fun SearchContent(
                 }
             }
 
-            state.groups.forEach { group ->
+            groups.forEach { group ->
                 item {
                     // A4-F4: the header names the section, nothing more — the
                     // summary line above is the one count on this screen. The
@@ -1176,42 +1240,48 @@ internal fun SearchContent(
                 }
             }
 
-            if (state.hasMore) {
-                item {
-                    Column(
-                        Modifier.fillMaxWidth().padding(vertical = 16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        OutlinedButton(onClick = onLoadMore, enabled = !state.isLoadingMore) {
-                            Text(if (state.isLoadingMore) "Loading…" else "Load more")
-                        }
-                        // A4-F4: a capped list can be expanded to the full
-                        // count in one tap — "Load more" pages 100 rows at a
-                        // time, "Show all" loads every page the server will
-                        // serve (at most 1,000 rows), so the count line above
-                        // stops being a promise the list cannot keep without
-                        // repeated taps. The label names the server total,
-                        // with a "+" while the total itself is capped.
-                        TextButton(
-                            onClick = onShowAll,
-                            enabled = !state.isLoadingMore,
-                            modifier = Modifier.testTag(ShowAllResultsTag).heightIn(min = 48.dp),
-                        ) {
-                            Text(showAllLabel(state.serverTotal, state.totalCapped))
+            // Feel-instant S6: the next page arrives as the viewer scrolls,
+            // and while it is out the tail of the list is skeleton rows —
+            // the S5 geometry-matched cells, two rows of two, so the grid
+            // never jumps when the page lands. A failed page used to be
+            // invisible: the retry path was reachable only when every group
+            // was empty, so a search that died on page 3 looked like a
+            // catalog that simply had three pages. The retry is inline now.
+            when (appendState) {
+                is LoadState.Loading -> {
+                    repeat(SEARCH_APPEND_SKELETON_ROWS) { row ->
+                        item(key = "search-append-skeleton-$row") {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                PosterCellSkeleton(
+                                    Modifier.weight(1f).testTag("searchAppendSkeleton"),
+                                )
+                                PosterCellSkeleton(
+                                    Modifier.weight(1f).testTag("searchAppendSkeleton"),
+                                )
+                            }
+                            Spacer(Modifier.height(12.dp))
                         }
                     }
                 }
-            }
-
-            // A failed next page used to be invisible: the retry path was reachable only when
-            // every group was empty, so a search that died on page 3 looked like a catalog that
-            // simply had three pages.
-            state.error?.let { failure ->
-                item { InlineLoadFailure(message = failure, onRetry = onLoadMore) }
+                is LoadState.Error -> {
+                    item {
+                        InlineLoadFailure(
+                            message = friendlyNetworkError(appendState.error, "Could not load more."),
+                            onRetry = { pagingItems.retry() },
+                        )
+                    }
+                }
+                else -> {}
             }
         }
     }
 }
+
+/** Skeleton rows the search list stands in with while the next page loads — two rows of two cells. */
+private const val SEARCH_APPEND_SKELETON_ROWS = 2
 
 @Composable
 private fun FilterSheetContent(

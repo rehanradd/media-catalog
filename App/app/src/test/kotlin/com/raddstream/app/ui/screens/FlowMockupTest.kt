@@ -16,6 +16,12 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.paging.LoadState
+import androidx.paging.LoadStates
+import androidx.paging.PagingData
+import androidx.paging.compose.collectAsLazyPagingItems
+import kotlinx.coroutines.flow.MutableStateFlow
+import java.io.IOException
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.SetupUiState
@@ -67,20 +73,37 @@ class FlowMockupTest {
         }
     }
 
+    // S6: BrowsePosterGrid reads the PagingData now — the mockup tests
+    // feed it a static PagingData through a StateFlow, the way the Paging
+    // test guide drives load states in isolation.
+    private fun browsePagingDataFlow(
+        posts: List<Post>,
+        append: LoadState = LoadState.NotLoading(endOfPaginationReached = false),
+    ): MutableStateFlow<PagingData<Post>> {
+        val idle = LoadState.NotLoading(endOfPaginationReached = false)
+        return MutableStateFlow(
+            PagingData.from(
+                data = posts,
+                sourceLoadStates = LoadStates(refresh = idle, prepend = idle, append = append),
+            ),
+        )
+    }
+
     @Test
     fun browsePosterGridShowsTitleAndMeta() {
+        val pagingDataFlow = browsePagingDataFlow(
+            listOf(
+                post(1, "Apex Horizon", 2024, "movie"),
+                post(2, "Shadow Protocol", 2023, "series"),
+            ),
+        )
         compose.setContent {
             RaddStreamTheme {
+                val pagingItems = pagingDataFlow.collectAsLazyPagingItems()
                 BrowsePosterGrid(
-                    items = listOf(
-                        post(1, "Apex Horizon", 2024, "movie"),
-                        post(2, "Shadow Protocol", 2023, "series"),
-                    ),
-                    loadingMore = false,
-                    error = null,
+                    pagingItems = pagingItems,
                     gridState = rememberLazyGridState(),
                     onPostClick = {},
-                    onRetryLoadMore = {},
                 )
             }
         }
@@ -99,15 +122,14 @@ class FlowMockupTest {
     @Test
     fun browsePosterGridTapReportsThePost() {
         var tapped: Post? = null
+        val pagingDataFlow = browsePagingDataFlow(listOf(post(1, "Apex Horizon", 2024, "movie")))
         compose.setContent {
             RaddStreamTheme {
+                val pagingItems = pagingDataFlow.collectAsLazyPagingItems()
                 BrowsePosterGrid(
-                    items = listOf(post(1, "Apex Horizon", 2024, "movie")),
-                    loadingMore = false,
-                    error = null,
+                    pagingItems = pagingItems,
                     gridState = rememberLazyGridState(),
                     onPostClick = { tapped = it },
-                    onRetryLoadMore = {},
                 )
             }
         }
@@ -117,22 +139,29 @@ class FlowMockupTest {
 
     @Test
     fun browsePosterGridLoadFailureRetries() {
-        var retried = 0
+        // S6: the retry is Paging's now — there is no callback left to
+        // count. What this pins is the row itself: the friendly message
+        // and a Retry button that re-collects the page without crashing
+        // the grid (the static flow re-emits the same failed page, so
+        // the row is still there after the tap).
+        val pagingDataFlow = browsePagingDataFlow(
+            listOf(post(1, "Apex Horizon", 2024, "movie")),
+            append = LoadState.Error(IOException("Next page failed")),
+        )
         compose.setContent {
             RaddStreamTheme {
+                val pagingItems = pagingDataFlow.collectAsLazyPagingItems()
                 BrowsePosterGrid(
-                    items = listOf(post(1, "Apex Horizon", 2024, "movie")),
-                    loadingMore = false,
-                    error = "Next page failed",
+                    pagingItems = pagingItems,
                     gridState = rememberLazyGridState(),
                     onPostClick = {},
-                    onRetryLoadMore = { retried++ },
                 )
             }
         }
-        compose.onNodeWithText("Next page failed").assertIsDisplayed()
+        compose.onNodeWithText("Could not load more.").assertIsDisplayed()
         compose.onNodeWithText("Retry").performScrollTo().performClick()
-        assertEquals(1, retried)
+        compose.onNodeWithText("Apex Horizon").assertIsDisplayed()
+        compose.onNodeWithText("Could not load more.").assertIsDisplayed()
     }
 
     @Test

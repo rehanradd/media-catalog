@@ -162,9 +162,11 @@ class SearchFilterRailTest {
             RaddStreamTheme {
                 Box(Modifier.size(width = 360.dp, height = 120.dp)) {
                     FilterRail(
-                        state = SearchUiState(
-                            groups = listOf(TypeGroup(label = "Series", typeKey = "series", items = emptyList())),
-                        ),
+                        state = SearchUiState(),
+                        // S6: the groups arrive as a parameter now — the
+                        // ViewModel no longer owns the list, so the screen
+                        // derives them from the PagingData's snapshot.
+                        groups = listOf(TypeGroup(label = "Series", typeKey = "series", items = emptyList())),
                         onSelectType = {},
                         onOpenFilters = {},
                     )
@@ -184,11 +186,10 @@ class SearchFilterRailTest {
             RaddStreamTheme {
                 Box(Modifier.size(width = 360.dp, height = 120.dp)) {
                     FilterRail(
-                        state = SearchUiState(
-                            groups = listOf(
-                                TypeGroup(label = "Movies", typeKey = "movie", items = emptyList()),
-                                TypeGroup(label = "Series", typeKey = "series", items = emptyList()),
-                            ),
+                        state = SearchUiState(),
+                        groups = listOf(
+                            TypeGroup(label = "Movies", typeKey = "movie", items = emptyList()),
+                            TypeGroup(label = "Series", typeKey = "series", items = emptyList()),
                         ),
                         onSelectType = {},
                         onOpenFilters = {},
