@@ -12,6 +12,9 @@ Usage:
 """
 
 from __future__ import annotations
+import base64
+import binascii
+import hashlib
 import sys
 import json
 import sqlite3
@@ -2934,7 +2937,7 @@ PUBLIC_LANDING_HTML = """<!DOCTYPE html>
       interface it reads.</div>
     <ul>
       <li><a href="/client">__PROJECT_NAME__ Web client</a></li>
-      <li><code>GET /api/v1/posts?q=&amp;type=&amp;page=&amp;limit=</code></li>
+      <li><code>GET /api/v1/posts?q=&amp;type=&amp;page=&amp;limit=&amp;cursor=</code></li>
       <li><code>GET /api/v1/search/by-media?q=&amp;duration_s=&amp;resolution=&amp;language=</code></li>
       <li><code>GET /api/v1/posts/{id}</code></li>
       <li><code>GET /api/v1/stream?id=&amp;redirect=1</code></li>
@@ -3500,23 +3503,30 @@ def _dedupe_page_rows(rows):
     return [r for r in rows if int(r["id"]) in keep]
 
 
-def _dedupe_search_page(conn, where_sql, params, step1_order, page, limit):
-    """(page_ids, deduped_total): one representative id per work.
+def _dedupe_search_page(conn, where_sql, params, step1_order, page, limit,
+                        after_id=None):
+    """(page_ids, deduped_total, has_more, last_rep): one representative id per work.
 
     Audit #38: the same film filed by eight sites is one search row, not
     eight. The candidates are fetched id-only (bounded by the cap), grouped
     by work in Python, and paginated over groups — so the page keeps the
     search's own order (a group's position is its earliest member's) and
     `total` counts works, not rows. The representative is the row with the
-    most prints, then mirrors, then the newest id.
+    most prints, then mirrors, then the newest id. `last_rep` is that
+    representative's row (it carries `imdb_rating` so the caller can mint
+    the next cursor's keys from it), or None when the page is the last.
+    A cursor page passes `after_id`: the groups up to and including the
+    group holding that row are already on screen, so the page starts
+    after it. A cursor row whose group is gone (a merge re-filed it)
+    answers the empty page rather than a wrong one.
     """
     rows = conn.execute(
-        "SELECT p.id, p.clean_title, p.title, p.year, p.content_type"
-        " FROM posts p "
+        "SELECT p.id, p.clean_title, p.title, p.year, p.content_type,"
+        " p.imdb_rating FROM posts p "
         f"WHERE {where_sql} ORDER BY {step1_order}",
         params).fetchall()
     if not rows:
-        return [], 0
+        return [], 0, False, None
     ids = [int(r["id"]) for r in rows]
     counts: dict[int, tuple[int, int]] = {}
     marks = ",".join("?" * len(ids))
@@ -3532,6 +3542,7 @@ def _dedupe_search_page(conn, where_sql, params, step1_order, page, limit):
         "id": int(r["id"]), "clean_title": r["clean_title"],
         "title": r["title"], "year": r["year"],
         "content_type": r["content_type"],
+        "imdb_rating": r["imdb_rating"],
         "release_count": counts.get(int(r["id"]), (0, 0))[0],
         "source_count": counts.get(int(r["id"]), (0, 0))[1],
     } for r in rows]
@@ -3540,9 +3551,26 @@ def _dedupe_search_page(conn, where_sql, params, step1_order, page, limit):
     # earliest row sat in the id scan.
     groups.sort(key=lambda g: min(position[int(c["id"])] for c in g))
     total = len(groups)
-    start = max(0, (page - 1) * limit)
-    page_groups = groups[start:start + limit]
-    return [int(title_clean.representative(g)["id"]) for g in page_groups], total
+    if after_id is not None:
+        cut = None
+        for index, group in enumerate(groups):
+            if any(int(c["id"]) == int(after_id) for c in group):
+                cut = index
+                break
+        if cut is None:
+            return [], total, False, None
+        groups = groups[cut + 1:]
+        page_groups = groups[:limit]
+        has_more = len(groups) > limit
+    else:
+        start = max(0, (page - 1) * limit)
+        page_groups = groups[start:start + limit]
+        has_more = start + limit < total
+    if not page_groups:
+        return [], total, False, None
+    last_rep = title_clean.representative(page_groups[-1])
+    return ([int(title_clean.representative(g)["id"]) for g in page_groups],
+            total, has_more, last_rep)
 
 
 def _facet_filter_clauses(*, content_type: str = "", industry: str = "",
@@ -4102,11 +4130,166 @@ def _trending_cached_page(conn, where_sql, params, content_type,
     return page_ids, total
 
 
+class InvalidPostsCursor(ValueError):
+    """A `cursor=` the posts list cannot honour: garbage, or minted for
+    a different sort / filter set. The handler maps it to 400
+    `invalid_cursor`; the function layer never answers a wrong page
+    for a stale token."""
+
+
+def _posts_cursor_fingerprint(*, query, content_type, industry, genre,
+                              language, quality, sort, free_only,
+                              work_ref, region) -> str:
+    """12 hex chars over the inputs that decide the page's rows — the
+    same job `catalog_api._fingerprint` does for the v2 listing, so a
+    cursor minted under one filter set can never silently page
+    another. The operator hides are deliberately NOT in it: a row
+    hidden after the cursor was minted simply stops appearing, and
+    the keyset (sort key + id) still advances past it."""
+    payload = json.dumps({
+        "q": query, "type": content_type, "industry": industry,
+        "genre": genre, "language": language, "quality": quality,
+        "sort": sort, "free_only": bool(free_only), "work_ref": work_ref,
+        "region": region,
+    }, sort_keys=True, default=str)
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:12]
+
+
+def _encode_posts_cursor(*, sort, values, post_id, page, fingerprint) -> str:
+    """Opaque posts cursor: the last row's sort keys + id, the sort,
+    the page number it was minted for, and the filter fingerprint.
+    Same shape as `catalog_api.encode_cursor` (base64url JSON, no
+    padding) so one decoder habit covers both listings."""
+    raw = json.dumps({"s": sort, "v": list(values), "id": int(post_id),
+                      "p": int(page), "f": fingerprint}, sort_keys=True)
+    return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii").rstrip("=")
+
+
+def _decode_posts_cursor(cursor) -> dict | None:
+    """Opaque posts cursor -> dict, or None when the caller handed us garbage."""
+    if not cursor:
+        return None
+    text = str(cursor).strip()
+    padded = text + "=" * (-len(text) % 4)
+    try:
+        raw = base64.urlsafe_b64decode(padded.encode("ascii"))
+        data = json.loads(raw.decode("utf-8"))
+    except (ValueError, TypeError, binascii.Error, UnicodeDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    if not isinstance(data.get("s"), str) or not isinstance(data.get("v"), list):
+        return None
+    if not isinstance(data.get("id"), int) or isinstance(data.get("id"), bool):
+        return None
+    if not isinstance(data.get("p"), int) or isinstance(data.get("p"), bool):
+        return None
+    if not isinstance(data.get("f"), str):
+        return None
+    # A key value may be NULL: the rating key is CAST(... AS REAL),
+    # which is NULL for a NULL rating — the keyset spells that case
+    # out, so the token must be allowed to carry it.
+    if any(v is not None
+           and (isinstance(v, bool) or not isinstance(v, (int, float, str)))
+           for v in data["v"]):
+        return None
+    return data
+
+
+#: The keyset SQL per sort, as (key expressions, keyset fragment, arity).
+#: Every fragment is written against the same ORDER BY the offset path
+#: uses, so a cursor page and the offset page it replaces answer the
+#: same rows in the same order — and the keyset is a seek (the sort key
+#: is resolved from `posts` alone in step 1), never a full scan + skip.
+#: The `p.id` tiebreak is DESC in every order, so "after" is always
+#: `p.id < :id` once the sort keys are equal. Rating's second key is
+#: `CAST(... AS REAL)`, which is NULL for a NULL rating and 0.0 for an
+#: empty one — and in DESC order a NULL sorts AFTER 0.0 (NULL is the
+#: smallest value, so DESC puts it last), so the keyset spells the
+#: NULL cases out instead of trusting `= ?` on a NULL: a NULL row
+#: follows every non-NULL cast, and NULL rows tiebreak by id among
+#: themselves.
+#: `newest`'s key is the clamped year (`_NEWEST_YEAR_SQL`); `title`'s
+#: is the folded title key; `trending`'s is the grouped copy count,
+#: which lives in HAVING, not WHERE, because the count only exists
+#: after the GROUP BY.
+_POSTS_CURSOR_KEYS = {
+    "newest": (
+        [_NEWEST_YEAR_SQL],
+        f"({_NEWEST_YEAR_SQL} < ? OR ({_NEWEST_YEAR_SQL} = ? AND p.id < ?))",
+    ),
+    "title": (
+        ["lower(COALESCE(NULLIF(TRIM(p.clean_title), ''), p.title))"],
+        "(lower(COALESCE(NULLIF(TRIM(p.clean_title), ''), p.title)) > ?"
+        " OR (lower(COALESCE(NULLIF(TRIM(p.clean_title), ''), p.title)) = ?"
+        " AND p.id < ?))",
+    ),
+    "rating": (
+        ["(p.imdb_rating IS NULL OR TRIM(p.imdb_rating) = '')",
+         "CAST(p.imdb_rating AS REAL)"],
+        "((p.imdb_rating IS NULL OR TRIM(p.imdb_rating) = '') > ?"
+        " OR ((p.imdb_rating IS NULL OR TRIM(p.imdb_rating) = '') = ?"
+        " AND CAST(p.imdb_rating AS REAL) < ?)"
+        " OR ((p.imdb_rating IS NULL OR TRIM(p.imdb_rating) = '') = ?"
+        " AND ? IS NOT NULL AND CAST(p.imdb_rating AS REAL) IS NULL)"
+        " OR ((p.imdb_rating IS NULL OR TRIM(p.imdb_rating) = '') = ?"
+        " AND ((CAST(p.imdb_rating AS REAL) IS NULL AND ? IS NULL)"
+        " OR (CAST(p.imdb_rating AS REAL) = ? AND ? IS NOT NULL))"
+        " AND p.id < ?))",
+    ),
+}
+
+
+def _posts_cursor_keyset_params(sort_key: str, values: list, post_id: int) -> list:
+    """The `?` params for the keyset fragment above, in fragment order."""
+    if sort_key == "rating":
+        flag, rating = values
+        return [flag, flag, rating, flag, rating, flag, rating, rating,
+                rating, post_id]
+    return [values[0], values[0], post_id]
+
+
+def _posts_key_values_from_row(sort_key: str, row) -> list:
+    """A deduped representative's sort keys, recomputed in Python.
+
+    The dedupe path groups in Python, so its rows never pass through
+    the step-1 SELECT that mints keys for the other paths — the values
+    here must be the same ones the SQL expressions would produce for
+    the same row (`_NEWEST_YEAR_SQL`'s clamp, the title fold, the
+    rating flag + CAST). `row` is the representative dict
+    `_dedupe_search_page` returns, which carries `imdb_rating` for
+    exactly this reason. `strftime('%Y', 'now')` is UTC, so the clamp
+    reads the UTC year here too."""
+    if sort_key == "title":
+        clean = str(row.get("clean_title") or "").strip()
+        title = clean if clean else str(row.get("title") or "")
+        return [title.lower()]
+    if sort_key == "rating":
+        raw = row.get("imdb_rating")
+        if raw is None:
+            return [1, None]
+        if str(raw).strip() == "":
+            return [1, 0.0]
+        try:
+            return [0, float(str(raw))]
+        except (TypeError, ValueError):
+            # CAST('abc' AS REAL) is 0.0, not NULL, in SQLite.
+            return [0, 0.0]
+    year = row.get("year")
+    try:
+        year_int = int(year)
+    except (TypeError, ValueError):
+        return [0]
+    current_year = time.gmtime().tm_year
+    return [year_int if 1900 <= year_int <= current_year + 1 else 0]
+
+
 def api_v1_get_posts(query: str = "", content_type: str = "", page: int = 1,
                      limit: int = 20, full: bool = False,
                      base_url: str = "", industry: str = "", genre: str = "",
                      quality: str = "", sort: str = "", free_only: bool = False,
-                     work_ref: str = "", language: str = "", region: str = "") -> dict:
+                     work_ref: str = "", language: str = "", region: str = "",
+                     cursor: str = "") -> dict:
     _ensure_schema()
     try:
         limit = int(limit)
@@ -4117,6 +4300,17 @@ def api_v1_get_posts(query: str = "", content_type: str = "", page: int = 1,
     # for an unbounded page (Session 125).
     limit = max(1, min(100, limit))
     offset = max(0, (page - 1) * limit)
+    # Cursor (keyset) pagination: `cursor` names the last row of the
+    # previous page, and `page` is ignored for row selection while one
+    # is present — the offset window's 10,000-row cap does not apply to
+    # a seek. The shape is validated here, before any DB work; the
+    # sort + filter match is validated below, once `sort_key` exists.
+    # The envelope's `page` keeps counting across cursor pages: it is
+    # the number the cursor was minted for.
+    cursor_decoded = _decode_posts_cursor(cursor)
+    if cursor and cursor_decoded is None:
+        raise InvalidPostsCursor("not a posts cursor")
+    answer_page = int(cursor_decoded["p"]) if cursor_decoded else page
     with get_db() as conn:
         # Deadline: a slow query must not hold a worker thread past the
         # nginx read timeout. The handler fires every 1000 VM instructions
@@ -4151,13 +4345,15 @@ def api_v1_get_posts(query: str = "", content_type: str = "", page: int = 1,
             post_id = _resolve_work_ref(conn, work_ref)
             if post_id is None:
                 return {
-                    "page": page,
+                    "page": answer_page,
                     "limit": limit,
                     "total": 0,
                     "total_pages": 1,
                     "results": [],
                     "fuzzy": False,
                     "suggestion": None,
+                    "next_cursor": None,
+                    "has_more": False,
                 }
             where_clauses.append("p.id = ?")
             params.append(post_id)
@@ -4248,6 +4444,12 @@ def api_v1_get_posts(query: str = "", content_type: str = "", page: int = 1,
         # `most_copies` is the honest alias for the same order; `trending`
         # stays as the back-compatible name.
         sort_key = sort.strip().lower()
+        if sort_key == "":
+            # The default sort is newest; normalize once here so the
+            # cursor keys, the fingerprint and the validation below all
+            # see one name for it — `""` and `"newest"` are the same
+            # order and must mint interchangeable cursors.
+            sort_key = "newest"
         if sort_key == "rating":
             order_sql = ("(p.imdb_rating IS NULL OR TRIM(p.imdb_rating) = '') ASC,"
                          " CAST(p.imdb_rating AS REAL) DESC, p.id DESC")
@@ -4256,7 +4458,7 @@ def api_v1_get_posts(query: str = "", content_type: str = "", page: int = 1,
                          " p.id DESC")
         elif sort_key in ("trending", "most_copies"):
             order_sql = "(release_count + source_count) DESC, p.id DESC"
-        elif sort_key in ("", "newest"):
+        elif sort_key == "newest":
             # Newest-first is the default: the list walks down through time.
             # `None` marks the two-step path below — a one-query ORDER BY
             # year over the joined, grouped page must group all ~135k public
@@ -4265,6 +4467,28 @@ def api_v1_get_posts(query: str = "", content_type: str = "", page: int = 1,
             order_sql = None
         else:
             order_sql = "p.id DESC"
+
+        # A cursor is bound to the sort and the filter set that minted
+        # it: another sort's keys would seek the wrong order, and
+        # another filter set would silently skip or repeat rows. Reject
+        # instead of obeying — the client re-lists from the top. The
+        # fingerprint is computed on every page, not only when one
+        # arrives to validate: an offset page mints the next cursor
+        # with it, and a token minted with `f: null` would fail its
+        # own decode on the very next call.
+        fingerprint = _posts_cursor_fingerprint(
+            query=query, content_type=content_type,
+            industry=industry, genre=genre, language=language,
+            quality=quality, sort=sort_key, free_only=free_only,
+            work_ref=work_ref, region=region)
+        if cursor_decoded is not None:
+            expected_keys = {"newest": 1, "title": 1, "rating": 2,
+                             "trending": 1, "most_copies": 1}.get(sort_key, 0)
+            if (cursor_decoded["s"] != sort_key
+                    or len(cursor_decoded["v"]) != expected_keys
+                    or cursor_decoded["f"] != fingerprint):
+                raise InvalidPostsCursor(
+                    "cursor belongs to a different sort or filter set")
 
         where_sql = " AND ".join(where_clauses)
         # A work the operator hid in the panel stays hidden on every list,
@@ -4283,15 +4507,18 @@ def api_v1_get_posts(query: str = "", content_type: str = "", page: int = 1,
         # trending shape — no query, no work handle, no facet filter
         # beyond the type, public mode — answers its page from the
         # cached order instead of paying the full-catalog grouping on
-        # every hit. Anything else (a search, a facet, `full`) falls
-        # through to the uncached path below, unchanged.
+        # every hit. Anything else (a search, a facet, `full`, a cursor)
+        # falls through to the uncached path below, unchanged. A cursor
+        # page takes the grouped keyset path instead of the cached
+        # order: the cache is an offset window, and a keyset over it
+        # would need the cached counts it does not store.
         _trending_ids = None
         _trending_total = None
         if (not full and sort_key in ("trending", "most_copies")
                 and not query and not work_ref
                 and not industry.strip() and not region.strip()
                 and not genre and not language and not quality
-                and not free_only):
+                and not free_only and cursor_decoded is None):
             _trending_ids, _trending_total = _trending_cached_page(
                 conn, where_sql, params, content_type, limit,
                 offset, hidden)
@@ -4407,6 +4634,11 @@ def api_v1_get_posts(query: str = "", content_type: str = "", page: int = 1,
         # covering releases(post_id, quality) index is the fix instead.
         page_ids = _trending_ids
         two_step = order_sql is None or sort_key in ("title", "rating")
+        # Keyset continuation, minted by the branch that served the
+        # page: None on an offset page (the client pages by number),
+        # the next token once a page was actually served.
+        next_cursor = None
+        has_more = False
         if query and not work_ref and two_step and 0 < total <= _SEARCH_DEDUPE_CAP:
             # Audit #38: one row per film. The dedupe runs on the same
             # where-clause the count above used (adult clause, hides, all
@@ -4414,11 +4646,19 @@ def api_v1_get_posts(query: str = "", content_type: str = "", page: int = 1,
             # below is skipped and step 2 fetches exactly these ids.
             step1_order = (f"{_NEWEST_YEAR_SQL} DESC, p.id DESC"
                            if order_sql is None else order_sql)
-            page_ids, total = _dedupe_search_page(
-                conn, where_sql, params, step1_order, page, limit)
+            page_ids, total, dedupe_has_more, last_rep = _dedupe_search_page(
+                conn, where_sql, params, step1_order, page, limit,
+                after_id=cursor_decoded["id"] if cursor_decoded else None)
+            has_more = dedupe_has_more
+            if has_more and last_rep is not None:
+                next_cursor = _encode_posts_cursor(
+                    sort=sort_key,
+                    values=_posts_key_values_from_row(sort_key, last_rep),
+                    post_id=int(last_rep["id"]), page=answer_page + 1,
+                    fingerprint=fingerprint)
             if not page_ids:
                 return {
-                    "page": page,
+                    "page": answer_page,
                     "limit": limit,
                     "total": total,
                     "total_pages": max(1, (total + limit - 1) // limit),
@@ -4428,6 +4668,8 @@ def api_v1_get_posts(query: str = "", content_type: str = "", page: int = 1,
                     "mood_genres": mood_genres,
                     "did_you_mean": did_you_mean_query,
                     "suggestion": did_you_mean_query,
+                    "next_cursor": None,
+                    "has_more": False,
                 }
         if two_step and page_ids is None:
             step1_order = (f"{_NEWEST_YEAR_SQL} DESC, p.id DESC"
@@ -4437,14 +4679,48 @@ def api_v1_get_posts(query: str = "", content_type: str = "", page: int = 1,
             # join is needed here; measured ~0.34s on the live catalog
             # (page 1, title+720p) against ~2.2s for the one-query shape,
             # and no new index is needed.
-            page_rows = conn.execute(
-                f"SELECT p.id FROM posts p WHERE {where_sql} "
-                f"ORDER BY {step1_order} LIMIT ? OFFSET ?",
-                params + [limit + 1, offset]).fetchall()
-            page_ids = [int(r["id"]) for r in page_rows[:limit]]
+            #
+            # The key columns ride along on BOTH paths: the offset path
+            # already fetched limit + 1 rows to know a next page exists,
+            # so minting the next cursor from the last kept row costs
+            # nothing — and an offset page 1 is how a client adopts
+            # cursors without a separate first call.
+            key_exprs, keyset_sql = _POSTS_CURSOR_KEYS[sort_key]
+            key_select = ", ".join(
+                f"{expr} AS __k{index}"
+                for index, expr in enumerate(key_exprs))
+            if cursor_decoded is not None:
+                # Keyset seek: the sort keys of the last row served, plus
+                # its id — no OFFSET, so a page deep in the list costs
+                # the same as page 1 and cannot repeat or skip a row a
+                # merge inserted above it. The keys are minted from the
+                # database's own values, never recomputed in Python.
+                key_params = _posts_cursor_keyset_params(
+                    sort_key, cursor_decoded["v"], int(cursor_decoded["id"]))
+                page_rows = conn.execute(
+                    f"SELECT p.id, {key_select} FROM posts p"
+                    f" WHERE {where_sql} AND {keyset_sql}"
+                    f" ORDER BY {step1_order} LIMIT ?",
+                    params + key_params + [limit + 1]).fetchall()
+            else:
+                page_rows = conn.execute(
+                    f"SELECT p.id, {key_select} FROM posts p WHERE {where_sql} "
+                    f"ORDER BY {step1_order} LIMIT ? OFFSET ?",
+                    params + [limit + 1, offset]).fetchall()
+            has_more = len(page_rows) > limit
+            kept = page_rows[:limit]
+            page_ids = [int(r["id"]) for r in kept]
+            if has_more and kept:
+                last = kept[-1]
+                values = [last[f"__k{index}"]
+                          for index in range(len(key_exprs))]
+                next_cursor = _encode_posts_cursor(
+                    sort=sort_key, values=values,
+                    post_id=int(last["id"]), page=answer_page + 1,
+                    fingerprint=fingerprint)
             if not page_ids:
                 answer = {
-                    "page": page,
+                    "page": answer_page,
                     "limit": limit,
                     "total": total,
                     "total_pages": max(1, (total + limit - 1) // limit),
@@ -4454,6 +4730,8 @@ def api_v1_get_posts(query: str = "", content_type: str = "", page: int = 1,
                     "mood_genres": mood_genres,
                     "did_you_mean": did_you_mean_query,
                     "suggestion": did_you_mean_query,
+                    "next_cursor": None,
+                    "has_more": False,
                 }
                 if suggestions is not None:
                     answer["suggestions"] = suggestions
@@ -4467,7 +4745,7 @@ def api_v1_get_posts(query: str = "", content_type: str = "", page: int = 1,
             # must return here, because the step-2 query below builds
             # `p.id IN (...)` from the list, which is empty.)
             answer = {
-                "page": page,
+                "page": answer_page,
                 "limit": limit,
                 "total": total,
                 "total_pages": max(1, (total + limit - 1) // limit),
@@ -4477,6 +4755,8 @@ def api_v1_get_posts(query: str = "", content_type: str = "", page: int = 1,
                 "mood_genres": mood_genres,
                 "did_you_mean": did_you_mean_query,
                 "suggestion": did_you_mean_query,
+                "next_cursor": None,
+                "has_more": False,
             }
             if suggestions is not None:
                 answer["suggestions"] = suggestions
@@ -4504,10 +4784,69 @@ def api_v1_get_posts(query: str = "", content_type: str = "", page: int = 1,
             sql = (select_sql + f" WHERE {where_sql} AND p.id IN ("
                    + ", ".join("?" for _ in page_ids) + ") GROUP BY p.id")
             rows = conn.execute(sql, params + page_ids).fetchall()
+        elif cursor_decoded is not None and sort_key in ("trending", "most_copies"):
+            # Cursor page over the grouped order: the copy count only
+            # exists after the GROUP BY, so the keyset lives in HAVING.
+            # The cached order is an offset window and is not consulted
+            # here — this page pays the grouped scan, exactly like an
+            # uncached offset page, and no more.
+            count_sql = "(COUNT(DISTINCT r.id) + COUNT(DISTINCT s.id))"
+            having = (f"({count_sql} < ? OR ({count_sql} = ?"
+                      " AND p.id < ?))")
+            key_params = [cursor_decoded["v"][0], cursor_decoded["v"][0],
+                          int(cursor_decoded["id"])]
+            sql = (select_sql + f" WHERE {where_sql} GROUP BY p.id"
+                   f" HAVING {having}"
+                   f" ORDER BY {order_sql} LIMIT ?")
+            rows = conn.execute(
+                sql, params + key_params + [limit + 1]).fetchall()
+            has_more = len(rows) > limit
+            kept = rows[:limit]
+            if has_more and kept:
+                last = kept[-1]
+                count = int(last["release_count"]) + int(last["source_count"])
+                next_cursor = _encode_posts_cursor(
+                    sort=sort_key, values=[count],
+                    post_id=int(last["id"]), page=answer_page + 1,
+                    fingerprint=fingerprint)
+            rows = kept
+        elif cursor_decoded is not None:
+            # Unknown sort: `p.id DESC`, so the keyset is the id alone.
+            sql = (select_sql + f" WHERE {where_sql} AND p.id < ?"
+                   f" GROUP BY p.id ORDER BY {order_sql} LIMIT ?")
+            rows = conn.execute(
+                sql, params + [int(cursor_decoded["id"]), limit + 1]).fetchall()
+            has_more = len(rows) > limit
+            kept = rows[:limit]
+            if has_more and kept:
+                next_cursor = _encode_posts_cursor(
+                    sort=sort_key, values=[],
+                    post_id=int(kept[-1]["id"]), page=answer_page + 1,
+                    fingerprint=fingerprint)
+            rows = kept
         else:
             sql = (select_sql + f" WHERE {where_sql} GROUP BY p.id"
                    f" ORDER BY {order_sql} LIMIT ? OFFSET ?")
-            rows = conn.execute(sql, params + [limit, offset]).fetchall()
+            rows = conn.execute(sql, params + [limit + 1, offset]).fetchall()
+            # An offset page mints its successor too: the extra row is
+            # the has_more probe the two-step path already fetched, and
+            # the client adopts cursors from page 1 without a separate
+            # first call.
+            has_more = len(rows) > limit
+            kept = rows[:limit]
+            if has_more and kept:
+                last = kept[-1]
+                if sort_key in ("trending", "most_copies"):
+                    count = (int(last["release_count"])
+                             + int(last["source_count"]))
+                    values = [count]
+                else:
+                    values = []
+                next_cursor = _encode_posts_cursor(
+                    sort=sort_key, values=values,
+                    post_id=int(last["id"]), page=answer_page + 1,
+                    fingerprint=fingerprint)
+            rows = kept
         if sort_key in ("trending", "most_copies"):
             # Audit #17: the trending rail is the one-query path, so the
             # search dedupe above never runs on it — collapse the page
@@ -4515,6 +4854,10 @@ def api_v1_get_posts(query: str = "", content_type: str = "", page: int = 1,
             # rows (see _dedupe_page_rows). `most_copies` is the same
             # order under its honest name, so it dedupes identically —
             # the two sorts must answer the same page.
+            # The cursor, when one was minted above, was taken from the
+            # last RAW row before this collapse: the dropped rows are
+            # duplicate prints of works already on the page, so the
+            # next page starts after them without skipping a work.
             rows = _dedupe_page_rows(rows)
         if full:
             results = [dict(r) for r in rows]
@@ -4546,9 +4889,30 @@ def api_v1_get_posts(query: str = "", content_type: str = "", page: int = 1,
                       for item in results]
             if works.is_poor_match(query, titles):
                 did_you_mean_query = _poor_match_correction(conn, query, titles)
+        if (next_cursor is None and not has_more and page_ids is not None
+                and sort_key in ("trending", "most_copies")
+                and cursor_decoded is None and results):
+            # Cached trending offset page: the one path that never
+            # minted above, because its ids came from the cached order
+            # rather than a step-1 or grouped read. Mint from the last
+            # row actually served (post-dedupe): its copy count is the
+            # keyset value the grouped path continues from, and the
+            # dropped rows behind it are duplicate prints of works
+            # already on the page, so nothing is skipped. `total` is
+            # the cached COUNT(*), so the offset window knows whether
+            # more rows exist.
+            if offset + len(page_ids) < total:
+                last = results[-1]
+                count = (int(last.get("release_count") or 0)
+                         + int(last.get("source_count") or 0))
+                next_cursor = _encode_posts_cursor(
+                    sort=sort_key, values=[count],
+                    post_id=int(last["id"]), page=answer_page + 1,
+                    fingerprint=fingerprint)
+                has_more = True
         total_pages = max(1, (total + limit - 1) // limit)
         answer = {
-            "page": page,
+            "page": answer_page,
             "limit": limit,
             "total": total,
             "total_pages": total_pages,
@@ -4558,6 +4922,8 @@ def api_v1_get_posts(query: str = "", content_type: str = "", page: int = 1,
             "mood_genres": mood_genres,
             "did_you_mean": did_you_mean_query,
             "suggestion": did_you_mean_query,
+            "next_cursor": next_cursor,
+            "has_more": has_more,
         }
         if suggestions is not None:
             answer["suggestions"] = suggestions
@@ -4565,7 +4931,8 @@ def api_v1_get_posts(query: str = "", content_type: str = "", page: int = 1,
 
 
 def api_v1_get_trending(page: int = 1, limit: int = 20,
-                        content_type: str = "", base_url: str = "") -> dict:
+                        content_type: str = "", base_url: str = "",
+                        cursor: str = "") -> dict:
     """GET /api/v1/trending — the \"Most Sources\" rail as its own route.
 
     The order already exists as sort=trending on /api/v1/posts (most prints
@@ -4578,7 +4945,7 @@ def api_v1_get_trending(page: int = 1, limit: int = 20,
     is the same order under its honest name).
     """
     answer = api_v1_get_posts(page=page, limit=limit, content_type=content_type,
-                              sort="trending", base_url=base_url)
+                              sort="trending", base_url=base_url, cursor=cursor)
     answer["basis"] = "most_copies"
     answer["label"] = "Most copies"
     return answer
@@ -7510,7 +7877,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
                      or query_params.get("type", [""])[0])
             page = bounded_int(query_params, "page", 1, 1, 1_000_000)
             limit = bounded_int(query_params, "limit", 20, 1, 100)
-            if (page - 1) * limit > POSTS_MAX_OFFSET:
+            # A cursor page is a seek, not an offset: the 10,000-row
+            # offset window does not bound it, and `page` is only the
+            # number the envelope echoes. Without a cursor the offset
+            # window still applies exactly as before.
+            cursor = query_params.get("cursor", [""])[0]
+            if not cursor and (page - 1) * limit > POSTS_MAX_OFFSET:
                 # The offset window is the exposure; the two numbers above are not.
                 self.send_json({"success": False, "error": "page_beyond_range",
                                 "max_offset": POSTS_MAX_OFFSET}, status=400)
@@ -7527,7 +7899,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     free_only=query_params.get("free_only", [""])[0] == "1",
                     work_ref=query_params.get("work_ref", [""])[0],
                     region=query_params.get("region", [""])[0],
+                    cursor=cursor,
                 )
+            except InvalidPostsCursor:
+                # Garbage, or minted for another sort / filter set: the
+                # client re-lists from the top instead of paging a
+                # wrong list.
+                self.send_json({"success": False, "error": "invalid_cursor"},
+                               status=400)
+                return
             except sqlite3.OperationalError as exc:
                 # The query ran past the 10 s search deadline: the progress
                 # handler aborted it, which surfaces as "interrupted" (a
@@ -7598,7 +7978,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             # The "Most Sources" rail as its own route (see api_v1_get_trending).
             page = bounded_int(query_params, "page", 1, 1, 1_000_000)
             limit = bounded_int(query_params, "limit", 20, 1, 100)
-            if (page - 1) * limit > POSTS_MAX_OFFSET:
+            # Same as /api/v1/posts: a cursor page is a seek, not an
+            # offset, so the offset window does not bound it.
+            cursor = query_params.get("cursor", [""])[0]
+            if not cursor and (page - 1) * limit > POSTS_MAX_OFFSET:
                 self.send_json({"success": False, "error": "page_beyond_range",
                                 "max_offset": POSTS_MAX_OFFSET}, status=400)
                 return
@@ -7609,7 +7992,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     # `type` is the legacy alias the app sends.
                     content_type=(query_params.get("content_type", [""])[0]
                                   or query_params.get("type", [""])[0]),
-                    base_url=base_url)
+                    base_url=base_url, cursor=cursor)
+            except InvalidPostsCursor:
+                self.send_json({"success": False, "error": "invalid_cursor"},
+                               status=400)
+                return
             except sqlite3.OperationalError as exc:
                 if str(exc) != "interrupted":
                     raise

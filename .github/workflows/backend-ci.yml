@@ -345,6 +345,15 @@ jobs:
       - name: 🧪 test_catalog_api.py
         run: python3 -S Fast_Fetch/test_catalog_api.py
 
+      # B1: cursor (keyset) pagination on v1 /api/v1/posts — two
+      # consecutive cursor pages are disjoint, in stable order, with no
+      # duplicates or skips, and cursor + offset return the same first
+      # page — plus the v2 listing's cursor walk and the band-aware
+      # play walk (best band first, verified still beats band).
+      # Offline — temp DB, no network, no catalog read.
+      - name: 🧪 test_cursor_pagination.py
+        run: python3 -S Fast_Fetch/test_cursor_pagination.py
+
       # Session 111: a v2 bundle handle names a ledger row, never the
       # projected cat id — the bundle's own handle pressed through a real
       # /api/v1/stream socket server (loopback media file, real resolver),

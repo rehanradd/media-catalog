@@ -2392,6 +2392,53 @@ def _bundle_is_gated(conn, bundle: dict, *, is_vip: bool, operator: bool) -> boo
     return band in GATED_QUALITY_BANDS
 
 
+def _band_order(conn, release_ids):
+    """Order candidate prints best-band first (B1 cursor pagination).
+
+    `quality_score` is a composite prior — resolution ladder plus
+    source tag plus HDR/codec/official/subs/audio/edition bonuses —
+    so a kitted-out 720p BluRay outscores a bare 1080p print, and
+    score order is NOT band order. The walk tries the best band
+    first; inside a band the score still decides, then id for
+    stability. A print the projection never described (no row) sorts
+    last, never first. This only orders the TRIES: the verified
+    preference in `_play_first_playable` is untouched — a verified
+    lower-band print still wins over an unverified higher-band one —
+    and the banked-resolution semantics never change. (R1 measured
+    liveness ranking layers here later: it becomes a key between
+    band and score.)
+    """
+    ids = [int(r) for r in (release_ids or [])]
+    if not ids:
+        return []
+    # No projection, no bands: a caller that walks prints without a
+    # projected catalog (the verified-preference tests build the
+    # ledger only) keeps exactly the order it handed in, so the old
+    # behaviour survives where there is nothing to order by.
+    has_table = conn.execute(
+        "SELECT 1 FROM sqlite_master"
+        " WHERE type = 'table' AND name = 'cat_releases'").fetchone()
+    if has_table is None:
+        return list(ids)
+    marks = ", ".join("?" for _ in ids)
+    rows = conn.execute(
+        f"SELECT id, quality_label, codec, resolution, quality_score"
+        f" FROM cat_releases WHERE id IN ({marks})",
+        ids).fetchall()
+    info = {int(r["id"]): r for r in rows}
+
+    def key(rid):
+        row = info.get(int(rid))
+        if row is None:
+            return (len(tiers.BANDS) + 1, 0, int(rid))
+        band = tiers.band_of(row["quality_label"], row["codec"],
+                             row["resolution"])
+        return (tiers.band_rank(band),
+                -int(row["quality_score"] or 0), int(rid))
+
+    return sorted(ids, key=key)
+
+
 def _play_first_playable(conn, release_ids, *, episode_id, include_adult,
                          is_vip=False, operator=False):
     """Session 109: walk a work/episode's prints, best first, cat ids only.
@@ -2401,6 +2448,13 @@ def _play_first_playable(conn, release_ids, *, episode_id, include_adult,
     answer is exactly today's, on the print the caller would have got
     before the walk existed. `legacy_release_id=False` throughout: every
     id here was resolved by the route itself (Session 108).
+
+    "Best" is band-first (B1): the highest quality band is tried
+    before any lower band, whatever the projection-time score says —
+    a 720p BluRay's bonuses must not let it jump a 1080p print. Inside
+    a band the score still decides. The first entry is therefore the
+    best-band print, not the highest-score print; the fallback when
+    nothing plays is that print's bundle, same rule as before.
 
     Session 113: "playable" here is cache-verified, not just static — a
     print whose copies all carry a fresh negative-cache failure does not
@@ -2420,6 +2474,7 @@ def _play_first_playable(conn, release_ids, *, episode_id, include_adult,
     (first unfailed, non-gated bundle), so a cold title never 409s for
     want of a warm-up.
     """
+    release_ids = _band_order(conn, release_ids)
     first = None
     first_acceptable = None
     for release_id in release_ids:
@@ -2579,12 +2634,15 @@ def route_play(handler, conn, body: dict, *, rid: str, path: str, operator: bool
             if needs_walk:
                 # Player Fix v2: prefer a VERIFIED sibling when one exists
                 # (a copy with a fresh banked resolution); otherwise the
-                # first acceptable sibling, exactly as before — a cold
-                # title never loses its named print for want of a warm-up.
+                # first acceptable sibling — best band first (B1), not
+                # highest projection score — exactly as the derived-target
+                # walk orders them. A cold title never loses its named
+                # print for want of a warm-up.
                 acceptable = None
                 verified = None
-                for sibling_id in _same_coverage_sibling_prints(
-                        conn, int(named_cat_id), operator=operator):
+                for sibling_id in _band_order(
+                        conn, _same_coverage_sibling_prints(
+                            conn, int(named_cat_id), operator=operator)):
                     sibling_bundle = catalog_api.play_bundle(
                         conn, release_id=sibling_id, episode_id=episode_id,
                         include_adult=bool(operator), legacy_release_id=False)
