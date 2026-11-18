@@ -46,6 +46,54 @@ try:
 except Exception:  # pragma: no cover - panel_feed is always importable in-repo
     panel_feed = None
 
+try:
+    import host_registry  # download-host registry (self-healing, 2026-11-18)
+except ImportError:
+    try:
+        from Fast_Fetch import host_registry  # package-style import
+    except ImportError:
+        # A checkout without the registry still serves: every use below
+        # degrades to the stored URL. The registry is never load-bearing.
+        host_registry = None
+
+
+def _rewrite_host(url: str) -> str:
+    """Serve-time host rewrite through the host registry (no-op when the
+    registry is unavailable). Never raises."""
+    if host_registry is None:
+        return url
+    try:
+        return host_registry.rewrite_url(url)
+    except Exception:
+        return url
+
+
+def _host_base(old_host: str, fallback: str) -> str:
+    """``https://<current domain for old_host>``, or ``fallback`` when the
+    registry has nothing. Minting helpers use this so new rows are born
+    on the live domain, not the retired one. Never raises."""
+    if host_registry is not None:
+        try:
+            current = host_registry.current_domain_for(old_host)
+            if current:
+                return "https://" + current
+        except Exception:
+            pass
+    return fallback
+
+
+def _host_is_dead(url: str) -> bool:
+    """True when the registry records the URL's host dead with no
+    successor. Callers skip the host instead of paying timeouts against
+    it. Never raises."""
+    if host_registry is None:
+        return False
+    try:
+        host = (urllib.parse.urlsplit(url).hostname or "").lower()
+        return bool(host) and host_registry.is_dead_host(host)
+    except Exception:
+        return False
+
 
 def _tuning_knob(name, default):
     """One operator tuning knob, or `default` when the panel cannot answer.
@@ -302,6 +350,24 @@ def get_domains() -> dict[str, str]:
             if (key.startswith(name + "_") and key.endswith("_sitemap")) or \
                (name == "vegamovies" and key == "sitemap"):
                 domains[key] = _swap_host(domains[key], base)
+    # Self-healing host registry (2026-11-18): download-host moves apply
+    # LAST, like the site registry above. A domains key whose URL sits on
+    # a moved host is re-pointed at the current domain (path/query are
+    # untouched — _swap_host only swaps scheme://host). A dead host has no
+    # current domain, so its key keeps the literal: the unwrapper guards
+    # (unwrap_mobilejsr) skip it instead of guessing.
+    if host_registry is not None:
+        try:
+            for old_host, current in host_registry.live_domains().items():
+                for key in list(domains):
+                    try:
+                        host = (urllib.parse.urlsplit(domains[key]).hostname or "").lower()
+                    except ValueError:
+                        continue
+                    if host == old_host or host == "www." + old_host:
+                        domains[key] = _swap_host(domains[key], "https://" + current)
+        except Exception:
+            pass
     return domains
 
 
@@ -3824,17 +3890,24 @@ def fetch_kmhd_bridge(file_id: str, token: str = "") -> list[dict]:
             upload_links = data.get("upload_links", {})
             hub_res = upload_links.get("hubdrive_res")
             if hub_res and hub_res != "None":
-                hub_url = f"https://hubcloud.ist/drive/{hub_res}"
+                # Host registry (2026-11-18): mint on the CURRENT hubcloud
+                # domain (hubcloud.mov), not the retired .ist literal.
+                hub_url = (_host_base("hubcloud.ist", "https://hubcloud.ist").rstrip("/")
+                           + f"/drive/{hub_res}")
                 results.extend(unwrap_hubcloud_drive(hub_url))
 
             gd_res = upload_links.get("gdflix_res")
             if gd_res and gd_res != "None":
+                # Host registry: mint on the current gdflix domain
+                # (new10.gdflix.io), falling back to the stored literal
+                # when the registry has nothing yet.
+                _gd_base = _host_base("new5.gdflix.io", "https://new5.gdflix.io")
                 results.append({
                     "source_name": "⚡ GDFlix [KatMirror]",
                     "service": "gdflix",
                     "resource_id": gd_res,
-                    "source_url": f"https://new5.gdflix.io/file/{gd_res}",
-                    "final_url": f"https://new5.gdflix.io/file/{gd_res}",
+                    "source_url": f"{_gd_base}/file/{gd_res}",
+                    "final_url": f"{_gd_base}/file/{gd_res}",
                     "is_temporary": 0,
                 })
 
@@ -3888,6 +3961,20 @@ def unwrap_mobilejsr(jsr_url: str) -> list[dict]:
     Unwraps 7StarHD / 10xflix MobileJSR bridge URL.
     Uses session cookie and CSRF token negotiation to unlock all direct streaming mirrors.
     """
+    # Host registry (2026-11-18): mobilejsr.com is dead with no successor
+    # (audit 2026-11-18). Skip the bridge entirely instead of paying two
+    # 12s timeouts against a dead domain on every press — the caller
+    # (resolve_live_source) falls through to sibling failover. The
+    # returned row is the same bridge row the no-html path below yields.
+    if _host_is_dead(jsr_url):
+        return [{
+            "source_name": "MobileJSR Bridge",
+            "service": "mobilejsr",
+            "resource_id": jsr_url.rstrip("/").split("/")[-1],
+            "source_url": jsr_url,
+            "final_url": jsr_url,
+            "is_temporary": 0,
+        }]
     results = []
     html = ""
     try:
@@ -7285,12 +7372,16 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                                           src.get("source_url") or "")
             if _cached_backend in ("streamhg", "vidrift", "vidbolt", "vidly",
                                    "vibuxer", "pixeldrain", "fastdl-beer"):
+                # Host registry (2026-11-18): classify on the ORIGINAL
+                # stored address (the backend map knows the old names),
+                # but probe and serve the rewritten one.
+                _cached_live = _rewrite_host(src["final_url"])
                 _hint = ("playlist" if src["final_url"].split("?")[0]
                          .endswith(".m3u8") else "file")
-                _verdict = _ch_probe(src["final_url"], None, _hint)
+                _verdict = _ch_probe(_cached_live, None, _hint)
                 if not _verdict.get("ok") and _is_transport_verdict(_verdict):
                     # Session 107: one retry on a transport error (HTTP 0).
-                    _verdict = _ch_probe(src["final_url"], None, _hint)
+                    _verdict = _ch_probe(_cached_live, None, _hint)
                 if _verdict.get("ok"):
                     _measured = [(c, v) for c, v in (
                         ("mime_type", _verdict.get("mime")),
@@ -7313,7 +7404,7 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                     return {
                         "success": True,
                         "id": src["id"],
-                        "url": src["final_url"],
+                        "url": _cached_live,
                         "cached": True,
                         "refreshed": False,
                         "service": src["service"],
@@ -7326,7 +7417,7 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                     }
                 # The Stage-1 probe just failed on this exact address; the
                 # fall-through must not pay to probe it again (see below).
-                _cached_probe_failed_url = src.get("final_url")
+                _cached_probe_failed_url = _cached_live
                 needs_refresh = True
                 _last_failure_verdict = _verdict
                 if not _is_transport_verdict(_verdict):
@@ -7342,7 +7433,10 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
     # file_size_bytes keeps its stored value); a failing probe, or a
     # playlist for a download caller, forces the fresh re-resolve below.
     if not needs_refresh and src.get("final_url"):
-        _cached_verdict = _stage2_probe(src["final_url"])
+        # Host registry (2026-11-18): probe and serve the rewritten
+        # address; the stored row keeps the old host until the remap gate.
+        _cached_live = _rewrite_host(src["final_url"])
+        _cached_verdict = _stage2_probe(_cached_live)
         if _stage2_accept(_cached_verdict, want):
             _measured = [(c, v) for c, v in (
                 ("mime_type", _cached_verdict.get("mime")),
@@ -7367,7 +7461,7 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
             return {
                 "success": True,
                 "id": src["id"],
-                "url": src["final_url"],
+                "url": _cached_live,
                 "cached": True,
                 "refreshed": False,
                 "stage2_probed": True,
@@ -7381,7 +7475,7 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
             }
         # Same address the Stage-2 probe just failed on: remember it so
         # the fall-through does not probe it a second time.
-        _cached_probe_failed_url = src.get("final_url")
+        _cached_probe_failed_url = _cached_live
         needs_refresh = True
         _last_failure_verdict = _cached_verdict
         if not _is_transport_verdict(_cached_verdict):
@@ -7446,11 +7540,15 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
         """
         low_source = source_u.lower()
         low_cached = cached_u.lower()
+        # Host registry (2026-11-18): dispatch still reads the ORIGINAL
+        # stored addresses (the branches match on the old names), but the
+        # address handed to the unwrapper is rewritten to the service's
+        # current domain, so the fetch lands where the files live now.
         if marker in low_source:
-            return source_u
+            return _rewrite_host(source_u)
         if marker in low_cached:
-            return cached_u
-        return source_u
+            return _rewrite_host(cached_u)
+        return _rewrite_host(source_u)
 
     def embed_from_verdict(verdict) -> str | None:
         """A packer's answer is a stream only when it says so itself.
@@ -7492,7 +7590,7 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
         stage1_tried = _hit_backend in ("streamhg", "modiplay", "vidrift",
                                         "vidbolt", "vidly", "vibuxer",
                                         "pixeldrain", "fastdl-beer")
-        _cached_probe_failed_url = src.get("final_url") or source_u
+        _cached_probe_failed_url = _rewrite_host(src.get("final_url") or source_u)
     else:
         try:
             hr = _embed_resolvers()
@@ -7635,6 +7733,9 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                 # matcher sees it (the embed host 302s to mxdrop.click either
                 # way; the fetch follows).
                 embed = cached_u if hr.is_mxdrop_embed(cached_u) else source_u
+                # Host registry: the embed handed to the unwrapper is the
+                # rewritten address (dispatch above still read the original).
+                embed = _rewrite_host(embed)
                 if not hr.is_mxdrop_embed(embed):
                     _file_page = re.match(
                         r"^(https?://[^/]+)/f/([A-Za-z0-9_-]+)/?$", embed)
@@ -8162,6 +8263,12 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
     if fresh_url and is_bridge_url(fresh_url) and not is_direct_media_url(fresh_url):
         fresh_url = None
 
+    # Host registry (2026-11-18): an unwrapper that built its answer on a
+    # retired host is re-pointed before the gate probe, so the probe tests
+    # the address that will actually be served.
+    if fresh_url:
+        fresh_url = _rewrite_host(fresh_url)
+
     # Stage-2: a freshly unwrapped address is a claim, not media, until
     # a capped probe proves it. This covers every legacy branch above
     # exactly as the cached branch is covered: a failing probe, or a
@@ -8629,7 +8736,7 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                 )
     except Exception:
         pass
-    stale_url = src.get("final_url") or src.get("source_url")
+    stale_url = _rewrite_host(src.get("final_url") or src.get("source_url"))
     bridge_stale = bool(stale_url) and is_bridge_url(stale_url)
     if v2 or bridge_stale:
         # v1 keeps its frozen stale-URL behaviour for a real media address, but a

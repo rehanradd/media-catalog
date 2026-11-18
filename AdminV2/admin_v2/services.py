@@ -156,7 +156,8 @@ class Service:
                  live_catalog_path=None, live_ledger_path=None,
                  live_registry_path=None, live_status_dir=None,
                  live_cert_path=None, live_fleet_base_dir=None,
-                 live_fleet_runner=None, live=None):
+                 live_fleet_runner=None, live=None,
+                 live_host_registry_path=None):
         import os
         self.base_dir = base_dir
         os.makedirs(base_dir, exist_ok=True)
@@ -177,13 +178,14 @@ class Service:
             self.live = live
         elif any((live_catalog_path, live_ledger_path, live_registry_path,
                   live_status_dir, live_cert_path, live_fleet_base_dir,
-                  live_fleet_runner)):
+                  live_fleet_runner, live_host_registry_path)):
             self.live = LiveStores(
                 catalog_path=live_catalog_path, ledger_path=live_ledger_path,
                 registry_path=live_registry_path, status_dir=live_status_dir,
                 cert_path=live_cert_path,
                 fleet_base_dir=live_fleet_base_dir or "/opt/radd-stream/Fast_Fetch",
-                fleet_runner=live_fleet_runner)
+                fleet_runner=live_fleet_runner,
+                host_registry_path=live_host_registry_path)
         else:
             self.live = None
         self._bg_stop = None
@@ -2977,6 +2979,84 @@ class Service:
             "SELECT * FROM domain_health_checks WHERE site_key=? ORDER BY id DESC LIMIT 50",
             (site_key,)).fetchall()
         return {"items": [_row(r) for r in rows]}
+
+    # -- hosts (download-host registry) -------------------------------------
+    def list_hosts(self, actor):
+        """Download-host mappings from host_registry.json. The JSON is
+        the source of truth — no admin-DB table: the prober and the
+        resolver read the same file, so a panel edit takes effect on
+        the next resolve with no restart."""
+        self.require_role(actor, write=False)
+        if self.live is None:
+            raise LiveUnavailable("No host registry file is configured here.")
+        return self.live.list_host_mappings()
+
+    def get_host(self, actor, old_host):
+        self.require_role(actor, write=False)
+        if self.live is None:
+            raise LiveUnavailable("No host registry file is configured here.")
+        data = self.live.load_host_registry()
+        entry = data.get("hosts", {}).get((old_host or "").strip().lower())
+        if not entry:
+            raise not_found("That host has no mapping in the registry.")
+        return {
+            "old_host": (old_host or "").strip().lower(),
+            "current_domain": entry.get("current_domain") or "",
+            "status": entry.get("status") or "active",
+            "evidence": entry.get("evidence") or "",
+            "last_verified": entry.get("last_verified") or "",
+            "verified_by": entry.get("verified_by") or "",
+            "rows_affected": entry.get("rows_affected") or 0,
+            "dead_rows": entry.get("dead_rows") or 0,
+            "known_mirrors": entry.get("known_mirrors") or [],
+            "rotation_history": entry.get("rotation_history") or [],
+        }
+
+    def validate_host(self, actor, old_host, body, checker=None, ip=""):
+        """Dry-run only: never writes anything. checker is injected
+        (tests) or wired in run.py as live_stores.check_host_move —
+        the audit's own check (old-root redirect, then a rewritten
+        file URL 200, then the new root 200; a WAF refusal is
+        blocked, never dead)."""
+        self.require_role(actor, write=True)
+        self._validate_body(body or {}, {"new_host"})
+        old_host = (old_host or "").strip().lower()
+        new_host = str(body.get("new_host") or "").strip().lower()
+        if not valid_domain(new_host):
+            raise bad("Domain only: no scheme, path, query, or token.")
+        if old_host == new_host:
+            raise bad("The new host is the same as the old host.")
+        if checker is None:
+            return {"old_host": old_host, "new_host": new_host, "ok": False,
+                    "method": None,
+                    "detail": "no checker wired: validation cannot pass "
+                              "in this workspace build"}
+        result = checker(old_host, new_host)
+        return {"old_host": old_host, "new_host": new_host, **result}
+
+    def apply_host(self, actor, old_host, body, checker=None, ip=""):
+        """Add or edit one host mapping (operator). The new host is
+        validated the audit way first; a failed check refuses unless
+        force is set, in which case the entry is recorded unverified
+        and is NOT applied at serve time. old_host comes from the
+        path (edit) or from the body (add)."""
+        self.require_role(actor, write=True)
+        body = body or {}
+        self._validate_body(body, {"old_host", "new_host", "force"})
+        old_host = (old_host or body.get("old_host") or "").strip().lower()
+        if not valid_domain(old_host):
+            raise bad("Old host is required (domain only).")
+        if self.live is None:
+            raise LiveUnavailable("No host registry file is configured here.")
+        before = self.live.load_host_registry().get("hosts", {}).get(old_host, {})
+        result = self.live.apply_host_mapping(
+            old_host, body.get("new_host"), checker=checker,
+            force=_coerce_bool(body.get("force", False), False))
+        self.audit(actor["id"], "host.apply", "host_registry", old_host,
+                   {"current_domain": before.get("current_domain")},
+                   {"current_domain": result["current_domain"],
+                    "status": result["status"]}, ip)
+        return result
 
     def resolve_domain(self, site_key):
         """Registry lookup with a 10-minute cache (OD-10). Manual

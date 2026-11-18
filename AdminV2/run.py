@@ -12,6 +12,8 @@ backup before first live use — see the Phase 2 handoff):
     RADD_CATALOG_DB      merged catalog DB (posts, app_remote_config, ...)
     RADD_USER_STATE_DB   user_state.db (accounts + payment ledger)
     RADD_DOMAIN_REGISTRY domain_registry.json
+    RADD_HOST_REGISTRY   host_registry.json (download hosts; default is
+                         next to the domain registry, else the fleet dir)
     RADD_STATUS_DIR      directory of <site>_status.json files
     RADD_CERT_PATH       fullchain.pem for the cert-expiry read
     RADD_FLEET_DIR       Fast_Fetch dir (crawler scripts)
@@ -28,7 +30,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from admin_v2.domain_check import check_domain
-from admin_v2.live_stores import check_stream_url
+from admin_v2.live_stores import check_host_move, check_stream_url
 from admin_v2.server import serve
 from admin_v2.services import Service
 
@@ -63,14 +65,20 @@ def main():
         live_catalog_path=os.environ.get("RADD_CATALOG_DB"),
         live_ledger_path=os.environ.get("RADD_USER_STATE_DB"),
         live_registry_path=os.environ.get("RADD_DOMAIN_REGISTRY"),
+        live_host_registry_path=os.environ.get("RADD_HOST_REGISTRY"),
         live_status_dir=os.environ.get("RADD_STATUS_DIR"),
         live_cert_path=os.environ.get("RADD_CERT_PATH"),
         live_fleet_base_dir=os.environ.get("RADD_FLEET_DIR"),
     )
     if args.background_jobs:
         svc.start_background_jobs(domain_checker=check_domain)
+    host_checker = lambda old, new: check_host_move(
+        old, new,
+        fleet_base_dir=os.environ.get("RADD_FLEET_DIR")
+        or "/opt/radd-stream/Fast_Fetch")
     serve(svc, host=args.host, port=args.port, strict_host=args.strict_host,
-          domain_checker=check_domain, stream_checker=check_stream_url)
+          domain_checker=check_domain, stream_checker=check_stream_url,
+          host_checker=host_checker)
 
 
 if __name__ == "__main__":

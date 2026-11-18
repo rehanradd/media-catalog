@@ -304,6 +304,12 @@ jobs:
       - name: 🧪 test_fast_probe.py
         run: python3 -S Fast_Fetch/test_fast_probe.py
 
+      # The self-healing download-host registry (2026-11-18): seeded
+      # audit pairs, host-only rewrite, redirect-threshold learning.
+      # Offline, stdlib, fake fetchers, temp files, no network.
+      - name: 🧪 test_host_registry.py
+        run: python3 -S Fast_Fetch/test_host_registry.py
+
       # The work grouping shared by v1 and v2 search dedup (Session 152).
       - name: 🧪 test_title_clean.py
         run: python3 -S Fast_Fetch/test_title_clean.py

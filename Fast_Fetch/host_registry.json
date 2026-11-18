@@ -1,0 +1,621 @@
+{
+  "version": "2.0",
+  "updated_at": "2026-11-18T13:48:56Z",
+  "hosts": {
+    "hubcloud.ist": {
+      "current_domain": "hubcloud.mov",
+      "evidence": "audit-confirmed",
+      "status": "active",
+      "last_verified": "2026-11-18T13:17:00Z",
+      "verified_by": "audit-20261118",
+      "rows_affected": 167866,
+      "known_mirrors": [
+        "https://hubcloud.mov"
+      ],
+      "rotation_history": [
+        {
+          "domain": "hubcloud.ist",
+          "seen_until": "2026-11-18"
+        },
+        {
+          "domain": "hubcloud.mov",
+          "seen_from": "2026-11-18"
+        }
+      ],
+      "dead_rows": 929
+    },
+    "hubcloud.pw": {
+      "current_domain": "hubcloud.mov",
+      "evidence": "audit-confirmed",
+      "status": "active",
+      "last_verified": "2026-11-18T13:17:00Z",
+      "verified_by": "audit-20261118",
+      "rows_affected": 38796,
+      "known_mirrors": [
+        "https://hubcloud.mov"
+      ],
+      "rotation_history": [
+        {
+          "domain": "hubcloud.pw",
+          "seen_until": "2026-11-18"
+        },
+        {
+          "domain": "hubcloud.mov",
+          "seen_from": "2026-11-18"
+        }
+      ],
+      "dead_rows": 0
+    },
+    "hubdrive.bar": {
+      "current_domain": "hubdrive.blog",
+      "evidence": "audit-confirmed",
+      "status": "active",
+      "last_verified": "2026-11-18T13:17:00Z",
+      "verified_by": "audit-20261118",
+      "rows_affected": 34374,
+      "known_mirrors": [
+        "https://hubdrive.blog"
+      ],
+      "rotation_history": [
+        {
+          "domain": "hubdrive.bar",
+          "seen_until": "2026-11-18"
+        },
+        {
+          "domain": "hubdrive.blog",
+          "seen_from": "2026-11-18"
+        }
+      ],
+      "dead_rows": 0
+    },
+    "hubdrive.pics": {
+      "current_domain": "hubdrive.blog",
+      "evidence": "audit-confirmed",
+      "status": "active",
+      "last_verified": "2026-11-18T13:17:00Z",
+      "verified_by": "audit-20261118",
+      "rows_affected": 36370,
+      "known_mirrors": [
+        "https://hubdrive.blog"
+      ],
+      "rotation_history": [
+        {
+          "domain": "hubdrive.pics",
+          "seen_until": "2026-11-18"
+        },
+        {
+          "domain": "hubdrive.blog",
+          "seen_from": "2026-11-18"
+        }
+      ],
+      "dead_rows": 0
+    },
+    "hubdrive.space": {
+      "current_domain": "hubdrive.tips",
+      "evidence": "audit-confirmed",
+      "status": "active",
+      "last_verified": "2026-11-18T13:17:00Z",
+      "verified_by": "audit-20261118",
+      "rows_affected": 17167,
+      "known_mirrors": [
+        "https://hubdrive.tips"
+      ],
+      "rotation_history": [
+        {
+          "domain": "hubdrive.space",
+          "seen_until": "2026-11-18"
+        },
+        {
+          "domain": "hubdrive.tips",
+          "seen_from": "2026-11-18"
+        }
+      ],
+      "dead_rows": 0
+    },
+    "mixdrop.top": {
+      "current_domain": "mxdrop.click",
+      "evidence": "audit-confirmed",
+      "status": "active",
+      "last_verified": "2026-11-18T13:17:00Z",
+      "verified_by": "audit-20261118",
+      "rows_affected": 1432,
+      "known_mirrors": [
+        "https://mxdrop.click"
+      ],
+      "rotation_history": [
+        {
+          "domain": "mixdrop.top",
+          "seen_until": "2026-11-18"
+        },
+        {
+          "domain": "mxdrop.click",
+          "seen_from": "2026-11-18"
+        }
+      ],
+      "dead_rows": 0
+    },
+    "mxdrop.to": {
+      "current_domain": "mxdrop.click",
+      "evidence": "audit-confirmed",
+      "status": "active",
+      "last_verified": "2026-11-18T13:17:00Z",
+      "verified_by": "audit-20261118",
+      "rows_affected": 20537,
+      "known_mirrors": [
+        "https://mxdrop.click"
+      ],
+      "rotation_history": [
+        {
+          "domain": "mxdrop.to",
+          "seen_until": "2026-11-18"
+        },
+        {
+          "domain": "mxdrop.click",
+          "seen_from": "2026-11-18"
+        }
+      ],
+      "dead_rows": 0
+    },
+    "embed.filmu.in": {
+      "current_domain": "vidly.pro",
+      "evidence": "audit-confirmed",
+      "status": "active",
+      "last_verified": "2026-11-18T13:17:00Z",
+      "verified_by": "audit-20261118",
+      "rows_affected": 69283,
+      "known_mirrors": [
+        "https://vidly.pro"
+      ],
+      "rotation_history": [
+        {
+          "domain": "embed.filmu.in",
+          "seen_until": "2026-11-18"
+        },
+        {
+          "domain": "vidly.pro",
+          "seen_from": "2026-11-18"
+        }
+      ],
+      "dead_rows": 0
+    },
+    "dl.uploadflix.com": {
+      "current_domain": "1uploadflix.net",
+      "evidence": "audit-confirmed",
+      "status": "active",
+      "last_verified": "2026-11-18T13:17:00Z",
+      "verified_by": "audit-20261118",
+      "rows_affected": 66270,
+      "known_mirrors": [
+        "https://1uploadflix.net"
+      ],
+      "rotation_history": [
+        {
+          "domain": "dl.uploadflix.com",
+          "seen_until": "2026-11-18"
+        },
+        {
+          "domain": "1uploadflix.net",
+          "seen_from": "2026-11-18"
+        }
+      ],
+      "dead_rows": 0
+    },
+    "www.mp4moviez.deal": {
+      "current_domain": "www.mp4moviez.computer",
+      "evidence": "audit-confirmed",
+      "status": "active",
+      "last_verified": "2026-11-18T13:17:00Z",
+      "verified_by": "audit-20261118",
+      "rows_affected": 53096,
+      "known_mirrors": [
+        "https://www.mp4moviez.computer"
+      ],
+      "rotation_history": [
+        {
+          "domain": "www.mp4moviez.deal",
+          "seen_until": "2026-11-18"
+        },
+        {
+          "domain": "www.mp4moviez.computer",
+          "seen_from": "2026-11-18"
+        }
+      ],
+      "dead_rows": 0
+    },
+    "greenmotors.club": {
+      "current_domain": "greenmotors.cc",
+      "evidence": "audit-confirmed",
+      "status": "active",
+      "last_verified": "2026-11-18T13:17:00Z",
+      "verified_by": "audit-20261118",
+      "rows_affected": 42765,
+      "known_mirrors": [
+        "https://greenmotors.cc"
+      ],
+      "rotation_history": [
+        {
+          "domain": "greenmotors.club",
+          "seen_until": "2026-11-18"
+        },
+        {
+          "domain": "greenmotors.cc",
+          "seen_from": "2026-11-18"
+        }
+      ],
+      "dead_rows": 60
+    },
+    "vd.1xplayer.com": {
+      "current_domain": "geffe448mik.com",
+      "evidence": "audit-confirmed",
+      "status": "active",
+      "last_verified": "2026-11-18T13:17:00Z",
+      "verified_by": "audit-20261118",
+      "rows_affected": 31077,
+      "known_mirrors": [
+        "https://geffe448mik.com"
+      ],
+      "rotation_history": [
+        {
+          "domain": "vd.1xplayer.com",
+          "seen_until": "2026-11-18"
+        },
+        {
+          "domain": "geffe448mik.com",
+          "seen_from": "2026-11-18"
+        }
+      ],
+      "dead_rows": 2
+    },
+    "dl.direct-cloud.top": {
+      "current_domain": "storage.direct-cloud.org",
+      "evidence": "audit-confirmed",
+      "status": "active",
+      "last_verified": "2026-11-18T13:17:00Z",
+      "verified_by": "audit-20261118",
+      "rows_affected": 25953,
+      "known_mirrors": [
+        "https://storage.direct-cloud.org"
+      ],
+      "rotation_history": [
+        {
+          "domain": "dl.direct-cloud.top",
+          "seen_until": "2026-11-18"
+        },
+        {
+          "domain": "storage.direct-cloud.org",
+          "seen_from": "2026-11-18"
+        }
+      ],
+      "dead_rows": 3
+    },
+    "kmhd.eu": {
+      "current_domain": "kmhd.me",
+      "evidence": "audit-confirmed",
+      "status": "active",
+      "last_verified": "2026-11-18T13:17:00Z",
+      "verified_by": "audit-20261118",
+      "rows_affected": 21390,
+      "known_mirrors": [
+        "https://kmhd.me"
+      ],
+      "rotation_history": [
+        {
+          "domain": "kmhd.eu",
+          "seen_until": "2026-11-18"
+        },
+        {
+          "domain": "kmhd.me",
+          "seen_from": "2026-11-18"
+        }
+      ],
+      "dead_rows": 0
+    },
+    "filesforever.link": {
+      "current_domain": "pro.iqsmartgames.com",
+      "evidence": "audit-confirmed",
+      "status": "active",
+      "last_verified": "2026-11-18T13:17:00Z",
+      "verified_by": "audit-20261118",
+      "rows_affected": 18475,
+      "known_mirrors": [
+        "https://pro.iqsmartgames.com"
+      ],
+      "rotation_history": [
+        {
+          "domain": "filesforever.link",
+          "seen_until": "2026-11-18"
+        },
+        {
+          "domain": "pro.iqsmartgames.com",
+          "seen_from": "2026-11-18"
+        }
+      ],
+      "dead_rows": 0
+    },
+    "filebee.xyz": {
+      "current_domain": "filebee.top",
+      "evidence": "audit-unconfirmed",
+      "status": "active",
+      "last_verified": "2026-11-18T13:17:00Z",
+      "verified_by": "audit-20261118",
+      "rows_affected": 90736,
+      "known_mirrors": [
+        "https://filebee.top"
+      ],
+      "rotation_history": [
+        {
+          "domain": "filebee.xyz",
+          "seen_until": "2026-11-18"
+        },
+        {
+          "domain": "filebee.top",
+          "seen_from": "2026-11-18"
+        }
+      ],
+      "dead_rows": 0
+    },
+    "thefilmyzilla.in": {
+      "current_domain": "filmdb.in",
+      "evidence": "audit-unconfirmed",
+      "status": "active",
+      "last_verified": "2026-11-18T13:17:00Z",
+      "verified_by": "audit-20261118",
+      "rows_affected": 66516,
+      "known_mirrors": [
+        "https://filmdb.in"
+      ],
+      "rotation_history": [
+        {
+          "domain": "thefilmyzilla.in",
+          "seen_until": "2026-11-18"
+        },
+        {
+          "domain": "filmdb.in",
+          "seen_from": "2026-11-18"
+        }
+      ],
+      "dead_rows": 0
+    },
+    "new3.gdflix.io": {
+      "current_domain": "new10.gdflix.io",
+      "evidence": "audit-unconfirmed",
+      "status": "active",
+      "last_verified": "2026-11-18T13:17:00Z",
+      "verified_by": "audit-20261118",
+      "rows_affected": 39482,
+      "known_mirrors": [
+        "https://new10.gdflix.io"
+      ],
+      "rotation_history": [
+        {
+          "domain": "new3.gdflix.io",
+          "seen_until": "2026-11-18"
+        },
+        {
+          "domain": "new10.gdflix.io",
+          "seen_from": "2026-11-18"
+        }
+      ],
+      "dead_rows": 0
+    },
+    "gdflix.vip": {
+      "current_domain": "new10.gdflix.io",
+      "evidence": "audit-unconfirmed",
+      "status": "active",
+      "last_verified": "2026-11-18T13:17:00Z",
+      "verified_by": "audit-20261118",
+      "rows_affected": 32167,
+      "known_mirrors": [
+        "https://new10.gdflix.io"
+      ],
+      "rotation_history": [
+        {
+          "domain": "gdflix.vip",
+          "seen_until": "2026-11-18"
+        },
+        {
+          "domain": "new10.gdflix.io",
+          "seen_from": "2026-11-18"
+        }
+      ],
+      "dead_rows": 0
+    },
+    "dl6.indishare.info": {
+      "current_domain": "files.indi-share.com",
+      "evidence": "audit-unconfirmed",
+      "status": "active",
+      "last_verified": "2026-11-18T13:17:00Z",
+      "verified_by": "audit-20261118",
+      "rows_affected": 30186,
+      "known_mirrors": [
+        "https://files.indi-share.com"
+      ],
+      "rotation_history": [
+        {
+          "domain": "dl6.indishare.info",
+          "seen_until": "2026-11-18"
+        },
+        {
+          "domain": "files.indi-share.com",
+          "seen_from": "2026-11-18"
+        }
+      ],
+      "dead_rows": 128
+    },
+    "do7go.com": {
+      "current_domain": "playmogo.com",
+      "evidence": "audit-unconfirmed",
+      "status": "active",
+      "last_verified": "2026-11-18T13:17:00Z",
+      "verified_by": "audit-20261118",
+      "rows_affected": 20869,
+      "known_mirrors": [
+        "https://playmogo.com"
+      ],
+      "rotation_history": [
+        {
+          "domain": "do7go.com",
+          "seen_until": "2026-11-18"
+        },
+        {
+          "domain": "playmogo.com",
+          "seen_from": "2026-11-18"
+        }
+      ],
+      "dead_rows": 0
+    },
+    "new5.gdflix.io": {
+      "current_domain": "new10.gdflix.io",
+      "evidence": "audit-unconfirmed",
+      "status": "active",
+      "last_verified": "2026-11-18T13:17:00Z",
+      "verified_by": "audit-20261118",
+      "rows_affected": 6901,
+      "known_mirrors": [
+        "https://new10.gdflix.io"
+      ],
+      "rotation_history": [
+        {
+          "domain": "new5.gdflix.io",
+          "seen_until": "2026-11-18"
+        },
+        {
+          "domain": "new10.gdflix.io",
+          "seen_from": "2026-11-18"
+        }
+      ],
+      "dead_rows": 0
+    },
+    "gdflix.dev": {
+      "current_domain": "new10.gdflix.io",
+      "evidence": "audit-unconfirmed",
+      "status": "active",
+      "last_verified": "2026-11-18T13:17:00Z",
+      "verified_by": "audit-20261118",
+      "rows_affected": 2430,
+      "known_mirrors": [
+        "https://new10.gdflix.io"
+      ],
+      "rotation_history": [
+        {
+          "domain": "gdflix.dev",
+          "seen_until": "2026-11-18"
+        },
+        {
+          "domain": "new10.gdflix.io",
+          "seen_from": "2026-11-18"
+        }
+      ],
+      "dead_rows": 0
+    },
+    "new4.filepress.baby": {
+      "current_domain": "fpgo.xyz",
+      "evidence": "audit-unconfirmed",
+      "status": "active",
+      "last_verified": "2026-11-18T13:17:00Z",
+      "verified_by": "audit-20261118",
+      "rows_affected": 652,
+      "known_mirrors": [
+        "https://fpgo.xyz"
+      ],
+      "rotation_history": [
+        {
+          "domain": "new4.filepress.baby",
+          "seen_until": "2026-11-18"
+        },
+        {
+          "domain": "fpgo.xyz",
+          "seen_from": "2026-11-18"
+        }
+      ],
+      "dead_rows": 0
+    },
+    "frdl.io": {
+      "current_domain": "frdl.hk",
+      "evidence": "audit-dead-sample",
+      "status": "active",
+      "last_verified": "2026-11-18T13:17:00Z",
+      "verified_by": "audit-20261118",
+      "rows_affected": 16872,
+      "known_mirrors": [
+        "https://frdl.hk"
+      ],
+      "rotation_history": [
+        {
+          "domain": "frdl.io",
+          "seen_until": "2026-11-18"
+        },
+        {
+          "domain": "frdl.hk",
+          "seen_from": "2026-11-18"
+        }
+      ],
+      "dead_rows": 122
+    },
+    "player.jiofiles.pics": {
+      "current_domain": "movienestbd.click",
+      "evidence": "audit-dead-sample",
+      "status": "active",
+      "last_verified": "2026-11-18T13:17:00Z",
+      "verified_by": "audit-20261118",
+      "rows_affected": 15539,
+      "known_mirrors": [
+        "https://movienestbd.click"
+      ],
+      "rotation_history": [
+        {
+          "domain": "player.jiofiles.pics",
+          "seen_until": "2026-11-18"
+        },
+        {
+          "domain": "movienestbd.click",
+          "seen_from": "2026-11-18"
+        }
+      ],
+      "dead_rows": 70
+    },
+    "embed.jiofiles.pics": {
+      "current_domain": "movienestbd.click",
+      "evidence": "audit-dead-sample",
+      "status": "active",
+      "last_verified": "2026-11-18T13:17:00Z",
+      "verified_by": "audit-20261118",
+      "rows_affected": 43158,
+      "known_mirrors": [
+        "https://movienestbd.click"
+      ],
+      "rotation_history": [
+        {
+          "domain": "embed.jiofiles.pics",
+          "seen_until": "2026-11-18"
+        },
+        {
+          "domain": "movienestbd.click",
+          "seen_from": "2026-11-18"
+        }
+      ],
+      "dead_rows": 72
+    },
+    "mobilejsr.com": {
+      "current_domain": "",
+      "evidence": "audit-dead",
+      "status": "dead",
+      "last_verified": "2026-11-18T13:17:00Z",
+      "verified_by": "audit-20261118",
+      "rows_affected": 110092,
+      "known_mirrors": [],
+      "rotation_history": [],
+      "dead_rows": 1961
+    },
+    "uploadhub.dad": {
+      "current_domain": "",
+      "evidence": "audit-dead",
+      "status": "dead",
+      "last_verified": "2026-11-18T13:17:00Z",
+      "verified_by": "audit-20261118",
+      "rows_affected": 22853,
+      "known_mirrors": [],
+      "rotation_history": []
+    }
+  }
+}

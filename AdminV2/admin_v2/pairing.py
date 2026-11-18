@@ -75,6 +75,14 @@ MATRIX = {
     "domain_apply": ("POST", "/admin/api/v2/domains/{site_key}/apply", "domain_registry.active_domain", "domain_lookup"),
     "domain_rollback": ("POST", "/admin/api/v2/domains/{site_key}/rollback", "domain_history", "domain_lookup"),
     "domain_auto_failover": ("POST", "/admin/api/v2/domains/{site_key}/auto-failover", "domain_registry.auto_failover", "domain_lookup"),
+    # Download-host registry (host_registry.json, 2026-11-18): the
+    # same file the prober and the resolver read; the field name is
+    # the registry file, mirroring live_tv_registry above.
+    "list_hosts": ("GET", "/admin/api/v2/hosts", "host_registry.current_domain", "domain_lookup"),
+    "host_detail": ("GET", "/admin/api/v2/hosts/{old_host}", "host_registry.current_domain", "domain_lookup"),
+    "host_add": ("POST", "/admin/api/v2/hosts", "host_registry.current_domain", "domain_lookup"),
+    "host_validate": ("POST", "/admin/api/v2/hosts/{old_host}/validate", "host_registry.current_domain", "domain_lookup"),
+    "host_apply": ("POST", "/admin/api/v2/hosts/{old_host}/apply", "host_registry.current_domain", "domain_lookup"),
     "fleet_list": ("GET", "/admin/api/v2/fleet", "fleet_crawlers.status", "fleet_list"),
     "fleet_run": ("POST", "/admin/api/v2/fleet/run", "fleet_runs.status", "fleet_list"),
     "evidence_refold": ("POST", "/admin/api/v2/links/{id}/evidence", "admin_audit_log", "audit_browser"),

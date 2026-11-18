@@ -63,6 +63,11 @@ radd-stream-data/
 # Runtime crawler tallies and the agent chat archive: regenerated every minute by
 # the scrapers and auto_chat_sync.py, so they are working state, not product.
 Fast_Fetch/*_status.json
+# The host-registry redirect observations are runtime learning state
+# (written by the prober and the root checker), as is its lock file;
+# the registry itself (host_registry.json) stays tracked.
+Fast_Fetch/host_redirect_observations.json
+Fast_Fetch/host_registry.json.lock
 Fast_Fetch/CHAT_HISTORY.md
 
 # Credential / secret files — never track these

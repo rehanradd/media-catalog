@@ -296,6 +296,7 @@ NAV_ITEMS = [
     ("live", "/admin/live", "Live", "live"),
     ("live-tv", "/admin/live-tv", "Live TV", "live"),
     ("domains", "/admin/domains", "Domains", "globe"),
+    ("hosts", "/admin/hosts", "Hosts", "globe"),
     ("fleet", "/admin/fleet", "Fleet", "server"),
     ("analytics", "/admin/analytics", "Analytics", "chart"),
     ("usage", "/admin/usage", "Usage", "activity"),
@@ -318,7 +319,7 @@ BOTTOM_ACTIVE = {
     "sections": "content",
     "inbox": "more", "requests": "more", "reports": "more", "broadcasts": "more", "live": "more",
     "live-tv": "more",
-    "domains": "more", "fleet": "more", "analytics": "more", "usage": "more",
+    "domains": "more", "hosts": "more", "fleet": "more", "analytics": "more", "usage": "more",
     "tuning": "more", "monetization": "more", "data-health": "more",
     "settings": "more", "search": "more",
 }

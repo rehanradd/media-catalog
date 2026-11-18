@@ -56,11 +56,12 @@ def parse_cookies(header):
 class AdminApp:
     """Testable core: routes + auth, without the socket layer."""
 
-    def __init__(self, service, strict_host=False, domain_checker=None, stream_checker=None):
+    def __init__(self, service, strict_host=False, domain_checker=None, stream_checker=None, host_checker=None):
         self.service = service
         self.strict_host = strict_host
         self.domain_checker = domain_checker
         self.stream_checker = stream_checker
+        self.host_checker = host_checker
         self.limiter = RateLimiter()
 
     # -- request handling -------------------------------------------------
@@ -152,6 +153,7 @@ class AdminApp:
             "/admin/live": ("live", self._page_live),
             "/admin/live-tv": ("live-tv", self._page_live_tv),
             "/admin/domains": ("domains", self._page_domains),
+            "/admin/hosts": ("hosts", self._page_hosts),
             "/admin/fleet": ("fleet", self._page_fleet),
             "/admin/analytics": ("analytics", self._page_analytics),
             "/admin/usage": ("usage", self._page_usage),
@@ -376,6 +378,13 @@ def _api(self, method, path, query, headers, body_bytes):
     R(("POST", r"^/admin/api/v2/domains/([^/]+)/apply$", lambda u, _ip: svc.apply_domain(u, _last2(path), body, checker=self.domain_checker, idempotency_key=idem, ip=_ip), True))
     R(("POST", r"^/admin/api/v2/domains/([^/]+)/rollback$", lambda u, _ip: svc.rollback_domain(u, _last2(path), body, checker=self.domain_checker, ip=_ip), True))
     R(("POST", r"^/admin/api/v2/domains/([^/]+)/auto-failover$", lambda u, _ip: svc.set_auto_failover(u, _last2(path), body, ip=_ip), True))
+    # Download-host registry (host_registry.json, 2026-11-18): the
+    # panel edits the same file the prober and resolver read.
+    R(("GET", r"^/admin/api/v2/hosts$", lambda u, _ip: svc.list_hosts(u), False))
+    R(("GET", r"^/admin/api/v2/hosts/([^/]+)$", lambda u, _ip: svc.get_host(u, _last(path)), False))
+    R(("POST", r"^/admin/api/v2/hosts$", lambda u, _ip: svc.apply_host(u, None, body, checker=self.host_checker, ip=_ip), True))
+    R(("POST", r"^/admin/api/v2/hosts/([^/]+)/validate$", lambda u, _ip: svc.validate_host(u, _last2(path), body, checker=self.host_checker, ip=_ip), True))
+    R(("POST", r"^/admin/api/v2/hosts/([^/]+)/apply$", lambda u, _ip: svc.apply_host(u, _last2(path), body, checker=self.host_checker, ip=_ip), True))
     R(("GET", r"^/admin/api/v2/fleet$", lambda u, _ip: svc.list_fleet(u), False))
     R(("POST", r"^/admin/api/v2/fleet/run$", lambda u, _ip: svc.run_fleet(u, body, ip=_ip), True))
     R(("GET", r"^/admin/api/v2/requests$", lambda u, _ip: svc.list_requests(u), False))
@@ -1111,6 +1120,57 @@ def _page_domains(self, user, sess, query):
     return templates.layout("Domains", body, active="domains")
 
 
+def _page_hosts(self, user, sess, query):
+    """Download-host mappings: view, validate, apply, add.
+
+    Reads and writes host_registry.json through the live store — the
+    same file the prober and the resolver read, so a change takes
+    effect on the next resolve with no restart. A mapping applies at
+    serve time only when its status is active; a force-saved entry
+    is recorded unverified and never rewrites a URL."""
+    hid = templates.form_hidden(sess.get("csrf_token"), "/admin/hosts")
+    try:
+        res = self.service.list_hosts(user)
+        hosts = res["hosts"]
+    except Exception as exc:
+        body = ('<div class="card"><h3>Hosts</h3>'
+                '<p>Host registry is not available: %s</p></div>') % templates.esc(str(exc))
+        return templates.layout("Hosts", body, active="hosts")
+    rows = [[h["old_host"], h["current_domain"] or "—",
+             templates.Raw(templates.badge(h["status"])),
+             h["evidence"] or "—",
+             templates.fmt_mixed_datetime(h.get("last_verified")),
+             str(h.get("rows_affected") or 0)] for h in hosts]
+    body = templates.table(["Old host", "Current domain", "Status", "Evidence", "Last verified", "Rows"], rows, "No host mappings yet")
+    body += ("<p>Applies write host_registry.json (a backup is taken before the first live write). "
+             "Only active mappings rewrite a URL at serve time; validate before apply. "
+             "A force-saved mapping is recorded unverified and is never applied.</p>")
+    # Add a new mapping (old host not yet in the registry).
+    body += """<div class="card"><h3>Add a mapping</h3>
+<form method="post" action="/admin/api/v2/hosts">%s
+<label for="host-add-old">Old host (domain only, no scheme or path)</label>
+<input id="host-add-old" name="old_host" required>
+<label for="host-add-new">New host (domain only, no scheme or path)</label>
+<input id="host-add-new" name="new_host" required>
+<label class="check"><input type="checkbox" name="force"> <span>Force: record unverified without validation</span></label>
+<div class="stickybar"><button type="submit">Add mapping</button></div></form></div>""" % hid
+    for h in hosts:
+        old = templates.esc(h["old_host"])
+        cur = templates.esc(h["current_domain"] or "")
+        body += """<div class="card"><h3>%s</h3>
+<form method="post" action="/admin/api/v2/hosts/%s/validate">%s
+<label for="host-validate-%s">New host to validate (domain only, no scheme or path)</label>
+<input id="host-validate-%s" name="new_host" value="%s" required>
+<div class="stickybar"><button type="submit" class="secondary">Validate host</button></div></form>
+<form method="post" action="/admin/api/v2/hosts/%s/apply">%s
+<label for="host-apply-%s">New host to apply (must already be validated)</label>
+<input id="host-apply-%s" name="new_host" value="%s" required>
+<label class="check"><input type="checkbox" name="force"> <span>Force: record unverified without validation</span></label>
+<div class="stickybar"><button type="submit">Apply host</button></div></form></div>""" % (
+            old, old, hid, old, old, cur, old, hid, old, old, cur)
+    return templates.layout("Hosts", body, active="hosts")
+
+
 def _page_fleet(self, user, sess, query):
     fleet = self.service.list_fleet(user)["items"]
     rows = [[f["site_key"], templates.Raw(templates.badge(f["status"])), f["progress"],
@@ -1631,7 +1691,7 @@ def _page_more(self, user, sess, query):
              ("/admin/money", "Money"), ("/admin/inbox", "Inbox"),
              ("/admin/requests", "Requests"), ("/admin/reports", "Reports"),
              ("/admin/broadcasts", "Broadcasts"), ("/admin/live", "Live"),
-             ("/admin/domains", "Domains"), ("/admin/fleet", "Fleet"),
+             ("/admin/domains", "Domains"), ("/admin/hosts", "Hosts"), ("/admin/fleet", "Fleet"),
              ("/admin/analytics", "Analytics"), ("/admin/usage", "Usage"),
              ("/admin/tuning", "Tuning"), ("/admin/monetization", "Monetization"),
              ("/admin/data-health", "Data health"),
@@ -1705,8 +1765,8 @@ class Handler(BaseHTTPRequestHandler):
         self._run("DELETE")
 
 
-def serve(service, host="127.0.0.1", port=8080, strict_host=False, domain_checker=None, stream_checker=None):
-    app = AdminApp(service, strict_host=strict_host, domain_checker=domain_checker, stream_checker=stream_checker)
+def serve(service, host="127.0.0.1", port=8080, strict_host=False, domain_checker=None, stream_checker=None, host_checker=None):
+    app = AdminApp(service, strict_host=strict_host, domain_checker=domain_checker, stream_checker=stream_checker, host_checker=host_checker)
     Handler.app = app
     server = ThreadingHTTPServer((host, port), Handler)
     print("Admin Panel v2 (workspace build) on %s:%d — not a live deploy" % (host, port))

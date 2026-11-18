@@ -37,7 +37,7 @@ KNOWN_TABLES = {
     "admin_fleet_audit", "cat_link_evidence", "cat_review_queue",
     "cat_projection_meta", "movie_requests", "coin_ledger",
     "usage_device", "usage_metric", "usage_dim_metric",
-    "live_tv_registry",
+    "live_tv_registry", "host_registry",
 }
 HELPER_ROUTES = {
     ("POST", "/admin/api/v2/auth/logout"),

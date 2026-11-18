@@ -56,6 +56,7 @@ import shutil
 import sqlite3
 import ssl
 import subprocess
+import sys
 import threading
 import socket
 import time
@@ -64,6 +65,7 @@ import urllib.request
 from datetime import datetime, timezone
 
 from .errors import ApiError, bad, conflict, not_found
+from .security import valid_domain
 from .store import COIN_REDEEM_FIELDS, FLEET_SITES
 
 HINT_SALT = "radd-payment-hint:v1:"
@@ -400,6 +402,24 @@ def _usage_revenue_estimate(*, metrics, users, days):
 STREAM_CHECK_TIMEOUT = 10
 
 
+def check_host_move(old_host, new_host, fleet_base_dir=None):
+    """Validate a download-host move the audit way, by reusing
+    Fast_Fetch/host_registry.py (old-root redirect, then a rewritten
+    file URL 200, then the new root 200; a WAF refusal is blocked,
+    never dead). Returns its {"ok", "method", "detail"} dict.
+    Raises LiveUnavailable when the fleet module cannot be imported
+    (a workspace build with no fleet dir)."""
+    base = fleet_base_dir or "/opt/radd-stream/Fast_Fetch"
+    if base not in sys.path:
+        sys.path.insert(0, base)
+    try:
+        import host_registry
+    except ImportError:
+        raise LiveUnavailable(
+            "host_registry.py is not importable from %s" % base)
+    return host_registry.validate_host_move(old_host, new_host)
+
+
 def check_stream_url(url, timeout=STREAM_CHECK_TIMEOUT):
     """Probe one stream URL without downloading it.
 
@@ -450,7 +470,8 @@ class LiveStores:
     def __init__(self, catalog_path=None, ledger_path=None,
                  registry_path=None, status_dir=None, cert_path=None,
                  fleet_base_dir="/opt/radd-stream/Fast_Fetch",
-                 fleet_log_dir=None, fleet_runner=None):
+                 fleet_log_dir=None, fleet_runner=None,
+                 host_registry_path=None):
         self.catalog_path = catalog_path
         self.ledger_path = ledger_path
         self.registry_path = registry_path
@@ -458,6 +479,10 @@ class LiveStores:
         self.cert_path = cert_path or CERT_PATH_DEFAULT
         self.fleet_base_dir = fleet_base_dir
         self.fleet_log_dir = fleet_log_dir or fleet_base_dir
+        # Explicit host-registry path (RADD_HOST_REGISTRY); None means
+        # the property below derives it from the domain registry's
+        # directory, else the fleet dir.
+        self._host_registry_path = host_registry_path
         # fleet_runner(cmd, cwd, log_path) -> pid-like int. Injected in
         # tests so no real crawler is ever spawned there.
         self.fleet_runner = fleet_runner or self._default_runner
@@ -1728,6 +1753,136 @@ class LiveStores:
             fh.write("\n")
         os.replace(tmp, self.registry_path)
         return {"site_key": site_key, "domain": domain, "backup": backup}
+
+    # -- host registry (download hosts) -------------------------------------
+    @property
+    def host_registry_path(self):
+        """host_registry.json: the explicit path (RADD_HOST_REGISTRY),
+        else next to domain_registry.json, else next to the fleet
+        scripts. The panel and the resolver read the same file."""
+        if self._host_registry_path:
+            return self._host_registry_path
+        if self.registry_path:
+            return os.path.join(os.path.dirname(self.registry_path),
+                                "host_registry.json")
+        return os.path.join(self.fleet_base_dir, "host_registry.json")
+
+    def _host_registry_backup_path(self):
+        """Backup of the host registry before the first live write.
+
+        Creates <path>.bak-<timestamp> only if no backup exists yet;
+        otherwise reuses the existing backup path. Returns the path
+        (None when the file does not exist yet — a first write seeds
+        it)."""
+        path = self.host_registry_path
+        if not os.path.exists(path):
+            return None
+        existing = sorted(glob.glob(path + ".bak-*"))
+        if existing:
+            return existing[0]
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        backup = "%s.bak-%s" % (path, stamp)
+        shutil.copy2(path, backup)
+        return backup
+
+    def load_host_registry(self):
+        """Parse host_registry.json. Returns the full data dict; a
+        missing file reads as an empty registry (the panel can seed
+        it), while a malformed one raises LiveUnavailable — a
+        half-loaded mapping list must never be served."""
+        path = self.host_registry_path
+        if not os.path.exists(path):
+            return {"version": "2.0", "updated_at": None, "hosts": {}}
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (ValueError, OSError) as exc:
+            raise LiveUnavailable("Host registry is not readable: %s" % exc)
+        if not isinstance(data, dict) or not isinstance(data.get("hosts"), dict):
+            raise LiveUnavailable("Host registry has no host map.")
+        return data
+
+    def list_host_mappings(self):
+        """Download-host mappings, sorted by old host (read-only)."""
+        data = self.load_host_registry()
+        out = []
+        for old_host in sorted(data["hosts"]):
+            entry = data["hosts"][old_host] or {}
+            out.append({
+                "old_host": old_host,
+                "current_domain": entry.get("current_domain") or "",
+                "status": entry.get("status") or "active",
+                "evidence": entry.get("evidence") or "",
+                "last_verified": entry.get("last_verified") or "",
+                "verified_by": entry.get("verified_by") or "",
+                "rows_affected": entry.get("rows_affected") or 0,
+                "dead_rows": entry.get("dead_rows") or 0,
+            })
+        return {"hosts": out, "count": len(out),
+                "version": data.get("version")}
+
+    def apply_host_mapping(self, old_host, new_host, *, checker=None,
+                           force=False):
+        """Write one host mapping to host_registry.json, atomically,
+        after taking the backup (see _host_registry_backup_path).
+        When a checker is given it must return {"ok": ...} the audit
+        way; a failed check refuses unless force is set, in which
+        case the entry is recorded as unverified — and an unverified
+        entry is NEVER applied at serve time (the resolver only
+        rewrites status == active). Without a checker and without
+        force the write refuses: an unvalidated move must be an
+        explicit operator choice, not a silent default. WRITE path:
+        live use only after that backup exists; tests use a temp
+        copy."""
+        old_host = (old_host or "").strip().lower().rstrip(".")
+        new_host = (new_host or "").strip().lower().rstrip(".")
+        if not valid_domain(old_host) or not valid_domain(new_host):
+            raise bad("Host only: no scheme, path, query, or token.")
+        if old_host == new_host:
+            raise bad("The new host is the same as the old host.")
+        validation = None
+        if checker is not None:
+            validation = checker(old_host, new_host)
+            if not validation.get("ok") and not force:
+                raise bad("Host move did not validate: %s"
+                          % validation.get("detail"))
+        elif not force:
+            raise bad("No host checker is wired here, so the move "
+                      "cannot be validated; tick force to record it "
+                      "unverified.")
+        now = datetime.now(timezone.utc).isoformat() + "Z"
+        if validation is not None and not validation.get("ok"):
+            status, evidence = "unverified", "manual-unverified"
+        else:
+            status, evidence = "active", "manual"
+        backup = self._host_registry_backup_path()
+        data = self.load_host_registry()
+        hosts = data.setdefault("hosts", {})
+        entry = hosts.setdefault(old_host, {})
+        previous = entry.get("current_domain") or ""
+        entry["current_domain"] = new_host
+        entry["evidence"] = evidence
+        entry["status"] = status
+        entry["last_verified"] = now
+        entry["verified_by"] = "panel-force" if status == "unverified" else "panel"
+        mirrors = entry.setdefault("known_mirrors", [])
+        if "https://%s" % new_host not in mirrors:
+            mirrors.append("https://%s" % new_host)
+        history = entry.setdefault("rotation_history", [])
+        history.append({"domain": new_host, "first_seen": now,
+                        "last_seen": now, "status": status,
+                        "evidence": evidence})
+        data["updated_at"] = now
+        path = self.host_registry_path
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2)
+            fh.write("\n")
+        os.replace(tmp, path)
+        return {"old_host": old_host, "current_domain": new_host,
+                "previous_domain": previous, "status": status,
+                "evidence": evidence, "validation": validation,
+                "backup": backup}
 
     # -- live tv ------------------------------------------------------------
     @property

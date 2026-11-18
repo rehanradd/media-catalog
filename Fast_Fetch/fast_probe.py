@@ -29,6 +29,13 @@ What this module changes (and what it deliberately does NOT change)
   Per-host politeness is unchanged: still 1-at-a-time, still 1.0s spacing,
   zero added 429 risk. The parallelism comes from probing *different* hosts
   at once, not from hammering one host harder.
+* **Move learning.** A HEAD chain that lands on a different host is one
+  observation of a domain move (``host_registry.record_redirect``): only
+  a host-only redirect (same path + query) counts, and 20 distinct
+  observations of one old->new pair update the registry itself. The
+  observation is recorded IN ADDITION to the verdict — the verdict
+  policy, the writer and the locking are untouched, and a registry
+  failure never breaks a probe.
 * **Dedup.** Rows are grouped by probe-target URL; each distinct URL is
   probed ONCE and the verdict is applied to every row sharing it (-17%).
 * **Keep-alive.** One ``http.client`` connection per host for the whole run
@@ -122,6 +129,16 @@ except ImportError:  # running from inside Fast_Fetch/ (the documented way)
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import link_health  # type: ignore
     import link_state  # type: ignore
+
+try:
+    from Fast_Fetch import host_registry
+except ImportError:  # running from inside Fast_Fetch/ (the documented way)
+    try:
+        import host_registry  # type: ignore
+    except ImportError:
+        # The registry is optional: a checkout without it still probes,
+        # it just cannot learn moves. The verdict path never depends on it.
+        host_registry = None  # type: ignore
 
 __all__ = [
     "payload_for_head",
@@ -675,6 +692,7 @@ def _probe_host(host: str, groups: list[dict], *, session_factory=None,
     session = HostSession(connection_factory=session_factory, timeout=timeout)
     stats: dict = {"host": host, "probed": 0, "verdicts": 0, "by_status": {},
                    "no_verdict": 0, "blocked": 0, "reconnects": 0,
+                   "redirects_seen": 0, "moves_applied": 0,
                    "results": {} if out_queue is None else None}
     for group in groups:
         url = group["url"]
@@ -685,6 +703,20 @@ def _probe_host(host: str, groups: list[dict], *, session_factory=None,
             continue
         status, error, _final = head_chain(url, session, base_headers=headers,
                                            timeout=timeout, spacing_s=spacing_s)
+        # Self-healing host registry (2026-11-18): a HEAD chain that lands
+        # on a different host is one observation of a domain move. The
+        # observation is recorded IN ADDITION to the verdict below — the
+        # verdict policy is untouched, and a registry failure never breaks
+        # a probe (record_redirect never raises; this try is belt-and-braces).
+        if host_registry is not None and not error and _final and _final != url:
+            try:
+                _obs = host_registry.record_redirect(url, _final)
+                if _obs.get("count"):
+                    stats["redirects_seen"] += 1
+                if _obs.get("applied"):
+                    stats["moves_applied"] += 1
+            except Exception:
+                pass
         checked_at = time.time()
         stats["probed"] += 1
         verdict = head_verdict(status, error, checked_at)
@@ -706,7 +738,8 @@ def _probe_host(host: str, groups: list[dict], *, session_factory=None,
 
 def _merge_stats(stats_list: list[dict]) -> dict:
     merged: dict = {"hosts": 0, "probed": 0, "verdicts": 0, "by_status": {},
-                    "no_verdict": 0, "blocked": 0, "reconnects": 0}
+                    "no_verdict": 0, "blocked": 0, "reconnects": 0,
+                    "redirects_seen": 0, "moves_applied": 0}
     for stats in stats_list:
         merged["hosts"] += 1
         merged["probed"] += stats["probed"]
@@ -714,6 +747,8 @@ def _merge_stats(stats_list: list[dict]) -> dict:
         merged["no_verdict"] += stats["no_verdict"]
         merged["blocked"] += stats["blocked"]
         merged["reconnects"] += stats["reconnects"]
+        merged["redirects_seen"] += stats.get("redirects_seen", 0)
+        merged["moves_applied"] += stats.get("moves_applied", 0)
         for status, count in stats["by_status"].items():
             merged["by_status"][status] = merged["by_status"].get(status, 0) + count
     return merged
