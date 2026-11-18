@@ -247,21 +247,22 @@ data class PlaybackRendition(
     /**
      * Display label used everywhere the player must say *what settled* — quality and bitrate
      * language only ("1080p · High bitrate · Fast direct"), because that is all the viewer can
-     * act on and all the server is willing to say.
+     * act on and all the server is willing to say. When the print names no quality at all the
+     * label is "Standard quality": a rank number is never printed (dev-cleanup, Nov 2026).
      */
     fun displayLabel(): String {
         val quality = print.qualityLine().ifBlank { print.summary() }
         return listOfNotNull(
             quality.takeIf { it.isNotBlank() },
             playback.label?.takeIf { it.isNotBlank() },
-        ).distinct().joinToString(" · ").ifBlank { "Rank #$rank" }
+        ).distinct().joinToString(" · ").ifBlank { "Standard quality" }
     }
 }
 
 /**
  * Session 121 (P-7): does this label name a quality rung, or is it something else (a title,
- * a rank) that must never be printed after "Quality:"? A label counts as quality language
- * when any of its words is a rung or a codec word; "Rank #1" and a film title have none.
+ * a fallback) that must never be printed after "Quality:"? A label counts as quality language
+ * when any of its words is a rung or a codec word; "Standard quality" and a film title have none.
  * Used to gate the start notice's "Quality:" line and the top-bar subtitle.
  */
 internal fun looksLikeQualityLabel(label: String): Boolean {

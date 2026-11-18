@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.net.Uri
 import android.os.SystemClock
+import android.util.Log
 import androidx.annotation.OptIn
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
@@ -17,6 +18,7 @@ import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import com.raddstream.app.R
 import com.raddstream.app.brand.Brand
 import com.raddstream.app.player.AbRepeat
 import com.raddstream.app.player.AspectMode
@@ -518,9 +520,12 @@ class PlayerViewModel @Inject constructor(
                 _ui.update { it.copy(connected = true) }
                 startTicker()
             } catch (t: Throwable) {
+                // Dev-cleanup (Nov 2026, E1): the card shows one fixed sentence — the
+                // exception's own words are logcat-only, never viewer copy.
+                Log.e("PlayerViewModel", "MediaController bind failed", t)
                 _ui.update {
                     it.copy(
-                        connectionError = "Playback service unavailable: ${t.message}",
+                        connectionError = appContext.getString(R.string.player_service_unavailable),
                         // PL-3: a bind failure with no network is the offline card, not the
                         // generic service error — the viewer can act on the first, not the second.
                         isOffline = connectivityProbe.current() == NetworkClass.NONE,

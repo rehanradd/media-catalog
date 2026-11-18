@@ -30,7 +30,7 @@ class PlaybackRenditionLabelTest {
     }
 
     @Test
-    fun `the display label is quality language or a rank, never the title`() {
+    fun `the display label is quality language or a standard-quality fallback, never the title`() {
         val titleOnly = PlaybackRendition(
             rank = 1,
             releaseId = 7,
@@ -39,8 +39,10 @@ class PlaybackRenditionLabelTest {
         )
         assertEquals("Fast direct", titleOnly.displayLabel())
 
+        // Dev-cleanup (Nov 2026, F2): a print that names no quality falls back to
+        // "Standard quality" — a rank number is never printed as a row title.
         val noLabel = titleOnly.copy(playback = PlaybackInfo())
-        assertEquals("Rank #1", noLabel.displayLabel())
+        assertEquals("Standard quality", noLabel.displayLabel())
 
         val known = PlaybackRendition(
             rank = 1,
@@ -60,7 +62,7 @@ class PlaybackRenditionLabelTest {
         assertTrue(looksLikeQualityLabel("1080p · High bitrate · Fast direct"))
         assertTrue(looksLikeQualityLabel("4K Ultra HD"))
 
-        assertFalse(looksLikeQualityLabel("Rank #1"))
+        assertFalse(looksLikeQualityLabel("Standard quality"))
         assertFalse(looksLikeQualityLabel("Ali Baba aur 40 Bhoot"))
         assertFalse(looksLikeQualityLabel("Fast direct"))
         assertFalse(looksLikeQualityLabel(""))

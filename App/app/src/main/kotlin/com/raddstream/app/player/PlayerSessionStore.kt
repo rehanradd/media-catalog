@@ -179,11 +179,10 @@ class PlayerSessionStore(
         _activeRenditionIndex.value = index
         if (announceSettled) {
             val r = activeRendition()
-            val died = _failoverLog.value.count { it.action != "skipped" }
-            _settledBanner.value = r?.displayLabel()?.let { label ->
-                if (died > 0) "Playing: $label (after $died failed candidate${if (died == 1) "" else "s"})"
-                else "Playing: $label"
-            }
+            // Dev-cleanup (Nov 2026): the banner names what is playing and nothing else —
+            // the failover count is operator history, not viewer copy; it lives in the
+            // failover log only.
+            _settledBanner.value = r?.displayLabel()?.let { label -> "Playing: $label" }
         }
     }
 

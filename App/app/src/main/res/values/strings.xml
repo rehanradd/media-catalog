@@ -27,7 +27,6 @@
     <string name="player_time_of">%1$s / %2$s</string>
     <string name="player_boost_badge">Boosting speed</string>
     <string name="player_back">Back</string>
-    <string name="player_tag_expiring">expiring link</string>
     <string name="player_tag_auto">Auto: %1$s</string>
     <string name="player_sleep_remaining">Sleep in %1$s</string>
     <string name="player_speed_short">%1$s×</string>
@@ -84,8 +83,8 @@
          share a moment (SC.24), data saver (26), auto-PiP (PL-10), progress story (26). -->
     <string name="player_offline_title">You’re offline</string>
     <string name="player_offline_body">Check your connection and try again — nothing will play until the network is back.</string>
-    <string name="player_giveup_expired">This shared link has expired</string>
-    <string name="player_giveup_expired_body">The link was only good for a while. Ask whoever shared it for a fresh one, or go back home and find the title again.</string>
+    <string name="player_giveup_expired">This version is no longer available</string>
+    <string name="player_giveup_expired_body">Go back and pick another version.</string>
     <string name="player_giveup_gate_refused">This quality needs VIP</string>
     <string name="player_giveup_gate_refused_body">The best quality for this title is for VIP members. Go back to the title and pick a lower quality, or upgrade to VIP.</string>
     <string name="player_giveup_rate_limited">The server asked us to slow down</string>
@@ -99,7 +98,7 @@
     <string name="player_step_finding">Finding the best version</string>
     <string name="player_step_warming">Finding your video…</string>
     <string name="player_step_buffering">Buffering</string>
-    <string name="player_finding_note">Trying the best source first</string>
+    <string name="player_finding_note">Trying the best version first</string>
     <string name="player_volume_boost">Volume boost</string>
     <string name="player_seek">Seek: %1$s of %2$s</string>
     <string name="player_seek_chapter">, %1$s</string>
@@ -130,8 +129,8 @@
     <string name="detail_truncated_releases">Showing the first %1$s of %2$s releases</string>
     <string name="player_start_slow">Taking longer than usual</string>
     <string name="player_start_try_another">Try another version</string>
-    <string name="player_attempt_counter">Trying copy %1$d of %2$d</string>
-    <string name="player_start_giveup_message">This copy did not start within 30 seconds.</string>
+    <string name="player_attempt_counter">Trying another version…</string>
+    <string name="player_start_giveup_message">This version didn\'t start in time.</string>
     <string name="player_first_frame">Started in %1$s</string>
     <string name="player_open_external">Open with another player</string>
     <string name="player_close">Close</string>
@@ -190,7 +189,7 @@
     <string name="player_audio_only_on">Audio-only mode: ON (screen decoder off)</string>
     <string name="player_audio_only_off">Audio-only mode: off</string>
     <string name="player_audio_level">Audio level</string>
-    <string name="player_prints_title">Switch source</string>
+    <string name="player_prints_title">Switch version</string>
     <string name="player_chapters_title">Chapters</string>
     <string name="player_chapter_row">"%1$s  ·  %2$s"</string>
     <string name="player_failover_log">Failover log</string>
@@ -200,10 +199,13 @@
     <string name="player_play_from_row">Play from a position…</string>
     <string name="player_change_quality">Change quality (%1$s)</string>
     <string name="player_calibrate_row">Mark current position as an episode start…</string>
-    <string name="player_retry_row">Retry current candidates</string>
+    <string name="player_retry_row">Retry this version</string>
     <string name="player_open_external_row">Open in external player</string>
-    <string name="player_pip_refused">PiP refused by the system: %1$s</string>
+    <string name="player_pip_refused">Picture-in-picture isn\'t available right now.</string>
     <string name="player_pip_unsupported">Picture-in-picture needs Android 8.0+</string>
+    <!-- Dev-cleanup (Nov 2026): the service-bind failure shows this one fixed
+         sentence — the exception's own words go to logcat only (E1). -->
+    <string name="player_service_unavailable">Couldn\'t open the player. Try again.</string>
     <string name="player_chooser">Play with…</string>
     <string name="player_no_external_player">No external video player found</string>
     <!-- ═══ PROVIDER PAGE ═══
@@ -211,7 +213,7 @@
          file. Copy the viewer reads while watching somebody else's player. -->
     <string name="embed_loading">Opening the page…</string>
     <string name="embed_hosted_notice">This source is hosted by the provider, in their player and under their conditions. We show their page; we do not take their video out of it.</string>
-    <string name="embed_blocked_scheme">The page tried to open %1$s — not a web address, so it stayed here.</string>
+    <string name="embed_blocked_scheme">This page can\'t be opened here. Try another version.</string>
     <string name="embed_retry">Try again</string>
     <string name="embed_open_in_browser">Open in browser</string>
     <string name="embed_page_title">Provider page</string>
@@ -221,8 +223,7 @@
          implementation words. Named languages_*/search_* so they stay
          outside the player_* copy rules in PlayerChromeCopyTest. -->
     <string name="search_filters_help">Filters narrow the whole catalog — only the year range applies to the titles already loaded.</string>
-    <string name="embed_load_failed">The page did not load: %1$s</string>
-    <string name="embed_load_failed_unknown">The page did not load</string>
+    <string name="embed_load_failed_unknown">This page couldn\'t be opened. Try another version.</string>
     <!-- ═══ MY LIST (review, 2026-11-16) ═══
          The starter rail's old title ("Most copies" / "Well-stocked catalog
          picks") read like warehouse inventory, not a streaming shelf; the

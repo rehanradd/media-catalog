@@ -67,13 +67,13 @@ class PlayerControlSemanticsTest {
             "the live progress row is back — the mockup's seek bar must not be copied",
             source.contains("LiveProgressRow"),
         )
-        // H17: no HLS jargon anywhere on screen, and the sheet is Switch source.
+        // H17: no HLS jargon anywhere on screen, and the sheet is Switch version.
         assertFalse("an HLS tag is still printed", source.contains("player_tag_hls"))
         assertFalse(
             "the sheet still says Versions & failover",
             stringsSource.contains("Versions &amp; failover"),
         )
-        assertTrue("the sheet must be Switch source", stringsSource.contains("Switch source"))
+        assertTrue("the sheet must be Switch version", stringsSource.contains("Switch version"))
         assertFalse("an HLS string still exists", stringsSource.contains(">HLS<"))
         // H12: the print sheet's rows switch the source.
         assertTrue("rendition rows must call the switch", source.contains("vm.switchRendition(r)"))
@@ -123,7 +123,7 @@ class PlayerControlSemanticsTest {
         assertFalse("the resume chip is back at the bottom", resume.contains("Alignment.BottomCenter"))
         assertTrue("the resume title needs its question mark", stringsSource.contains("Resume from %1\$s?"))
         // Finding: a jade spinner ring, a bold headline, the "Trying the
-        // best source first" line while finding, a dark Try-another pill,
+        // best version first" line while finding, a dark Try-another pill,
         // and no logo mark on the card.
         val finding = functionBody("private fun StartNoticeCard(")
         assertTrue("the finding card needs its subtitle", finding.contains("player_finding_note"))
@@ -150,7 +150,7 @@ class PlayerControlSemanticsTest {
         assertTrue("the sleep sheet must put Off first", offAt >= 0 && offAt < presetsAt && presetsAt < endAt)
         assertTrue("the sleep sheet must read its four presets", sleep.contains("SHEET_PRESETS_MS"))
         assertTrue("the sleep note must stay", sleep.contains("player_sleep_note"))
-        // Switch source: rows with size + Playing pill, a footer that
+        // Switch version: rows with size + Playing pill, a footer that
         // switching keeps the viewer's place, and an X on the title.
         val switch = functionBody("private fun PrintLogSheet(")
         assertTrue("the source rows must be SwitchSourceRows", switch.contains("SwitchSourceRow("))
@@ -502,16 +502,19 @@ class PlayerControlSemanticsTest {
     }
 
     @Test
-    fun `the print sheet shows how fast the start was`() {
+    fun `the start timing is a debug line, not viewer copy`() {
         val start = source.indexOf("private fun PrintLogSheet(")
         assertTrue("PlayerScreen.kt no longer declares PrintLogSheet", start >= 0)
         val end = source.indexOf("\n@Composable", start)
         assertTrue("cannot find the end of PrintLogSheet", end >= 0)
         val sheet = source.substring(start, end)
-        assertTrue(
-            "the print sheet must show the measured first-frame time",
-            sheet.contains("R.string.player_first_frame"),
-        )
+        val frameAt = sheet.indexOf("R.string.player_first_frame")
+        assertTrue("the print sheet lost its first-frame line", frameAt >= 0)
+        // Dev-cleanup (Nov 2026, F1): the measured first-frame time stays in the
+        // sheet, but only behind the long-press debug gate — a start-timing stat
+        // is an owner diagnostic, not viewer copy.
+        val gateAt = sheet.lastIndexOf("if (debugVisible)", frameAt)
+        assertTrue("the first-frame line must sit behind the debug gate", gateAt >= 0)
         assertTrue(
             "the timing must come from the ViewModel's measurement, not a guess",
             sheet.contains("state.lastFirstFrameMs"),

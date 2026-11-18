@@ -11,6 +11,7 @@ import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import android.util.Log
 import android.view.TextureView
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -892,17 +893,15 @@ private fun PlayerScreenContent(
         ) {
             val actions = state.startDeadlineStage == StartDeadlineStage.ACTIONS
             // Session 121 (P-36): the 30-second wait showed no progress at all. When
-            // the bundle has more than one copy, say which one is being tried — the
-            // active rendition's place in the bundle is the attempt number, and the
-            // bundle's size is the total. One copy needs no counter.
+            // the bundle has more than one version, say another one is being tried —
+            // no counter, no internal vocabulary (dev-cleanup, Nov 2026, D3).
+            // One version needs no label at all.
             val attemptLabel = run {
                 val renditions = state.bundle?.renditions.orEmpty()
                 if (renditions.size <= 1) {
                     null
                 } else {
-                    val index = state.activeRendition?.let { renditions.indexOf(it) }
-                        ?.takeIf { it >= 0 } ?: 0
-                    stringResource(R.string.player_attempt_counter, index + 1, renditions.size)
+                    stringResource(R.string.player_attempt_counter)
                 }
             }
             StartNoticeCard(
@@ -1635,16 +1634,16 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
                 overflow = TextOverflow.Ellipsis,
             )
             if (print != null) {
-                val expiringTag = stringResource(R.string.player_tag_expiring)
                 val autoTag = state.autoQualityBand?.let { band -> stringResource(R.string.player_tag_auto, band) }
-                // D-37: the subtitle is metadata — year · quality · source — never
+                // D-37: the subtitle is metadata — year · quality · Auto — never
                 // the title again. The year comes from the staged title metadata;
-                // the quality is the rung label; the "source" half is the playback
-                // kind (expiring / Auto), never a host name or a raw link.
+                // the quality is the rung label. The "expiring link" tag is gone
+                // (dev-cleanup, Nov 2026, D6): expiry handling stays silent.
                 // Session 121 (P-7): when the quality is unknown the display label
-                // is a rank ("Rank #1"), not a rung — printing it would repeat the
-                // title's job badly. The tags are still worth showing on their own,
-                // and the line is dropped entirely when there is nothing to say.
+                // falls back to "Standard quality", not a rung — printing it would
+                // repeat the title's job badly. The Auto tag is still worth showing
+                // on its own, and the line is dropped entirely when there is
+                // nothing to say.
                 // Review fix (16 Nov): a live channel has no subtitle at all — the
                 // single live mark rides the bottom row, and a live picture has
                 // no year or rung to print. The title centres vertically on its own.
@@ -1658,10 +1657,6 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
                         print.displayLabel().takeIf { looksLikeQualityLabel(it) }?.let {
                             if (isNotEmpty()) append(" · ")
                             append(it)
-                        }
-                        if (print.playback.ephemeral) {
-                            if (isNotEmpty()) append(" · ")
-                            append(expiringTag)
                         }
                         // Says out loud that the rung shown is Auto's current choice, so a
                         // quality that moves on its own is never mistaken for a hand-picked one.
@@ -3323,7 +3318,7 @@ private fun GiveUpCard(
                     HandoffWhy.DOWNLOAD_ONLY -> stringResource(R.string.player_giveup_download_only)
                     HandoffWhy.NO_CANDIDATE_LEFT -> stringResource(R.string.player_giveup_no_candidate)
                     HandoffWhy.START_TIMEOUT -> stringResource(R.string.player_giveup_timeout)
-                    // NAV-4: an expired shared link is not a generic error — it
+                    // NAV-4: an expired version is not a generic error — it
                     // says so, plainly, in the title.
                     HandoffWhy.EXPIRED_LINK -> stringResource(R.string.player_giveup_expired)
                     // Salaar: a rung the server refused is VIP-only — say so,
@@ -4438,16 +4433,21 @@ private fun PrintLogSheet(state: PlayerUiState, vm: PlayerViewModel) {
             // The start budget's proof (§5 P5): route-open → first-frame, measured on this
             // device. Absent until the first start lands — a switch mid-scene must not
             // overwrite it, so the ViewModel only records genuine starts.
-            state.lastFirstFrameMs?.let { firstFrameMs ->
-                Text(
-                    stringResource(
-                        R.string.player_first_frame,
-                        StartDeadline.formatSeconds(firstFrameMs),
-                    ),
-                    color = Color.White.copy(alpha = 0.6f),
-                    fontSize = brandSp(12),
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                )
+            // Dev-cleanup (Nov 2026, F1): a start-timing stat is an owner diagnostic, not
+            // viewer copy — it shows only behind the same long-press gate as the
+            // failover log below.
+            if (debugVisible) {
+                state.lastFirstFrameMs?.let { firstFrameMs ->
+                    Text(
+                        stringResource(
+                            R.string.player_first_frame,
+                            StartDeadline.formatSeconds(firstFrameMs),
+                        ),
+                        color = Color.White.copy(alpha = 0.6f),
+                        fontSize = brandSp(12),
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                    )
+                }
             }
             state.bundle?.renditions?.forEach { r ->
                 val active = r.rank == state.activeRendition?.rank
@@ -4705,7 +4705,10 @@ private fun rememberPipLauncher(aspectRatio: Float? = null, sourceRect: androidx
                 }.build()
                 activity.enterPictureInPictureMode(params)
             } catch (t: Throwable) {
-                Toast.makeText(context, context.getString(R.string.player_pip_refused, t.message), Toast.LENGTH_SHORT).show()
+                // Dev-cleanup (Nov 2026, E2): the toast is one fixed line — the
+                // exception's own words are logcat-only, never viewer copy.
+                Log.w("PlayerScreen", "enterPictureInPictureMode failed", t)
+                Toast.makeText(context, context.getString(R.string.player_pip_refused), Toast.LENGTH_SHORT).show()
             }
         } else {
             Toast.makeText(context, context.getString(R.string.player_pip_unsupported), Toast.LENGTH_SHORT).show()

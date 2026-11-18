@@ -4,6 +4,7 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.PermissionRequest
@@ -95,8 +96,11 @@ fun EmbedWebViewScreen(
 
     var webView by remember { mutableStateOf<WebView?>(null) }
     var loadedUrl by remember { mutableStateOf<String?>(null) }
-    var loadFailure by remember { mutableStateOf<String?>(null) }
-    var blockedScheme by remember { mutableStateOf<String?>(null) }
+    // Dev-cleanup (Nov 2026, E3): both failure states are flags, not text — the raw
+    // WebView description and the raw scheme are logcat-only, so no raw error text
+    // can ever reach the screen.
+    var loadFailure by remember { mutableStateOf(false) }
+    var blockedScheme by remember { mutableStateOf(false) }
     var progress by remember { mutableIntStateOf(0) }
     var customView by remember { mutableStateOf<View?>(null) }
     var exitCustomView by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -194,33 +198,28 @@ fun EmbedWebViewScreen(
                                 modifier = Modifier.fillMaxWidth(),
                             )
                         }
-                        blockedScheme?.let { scheme ->
+                        if (blockedScheme) {
                             Text(
-                                text = stringResource(R.string.embed_blocked_scheme, scheme),
+                                text = stringResource(R.string.embed_blocked_scheme),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.error,
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
                             )
                         }
-                        loadFailure?.let { reason ->
+                        if (loadFailure) {
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(horizontal = 16.dp, vertical = 6.dp),
                             ) {
-                                val line = if (reason.isBlank()) {
-                                    stringResource(R.string.embed_load_failed_unknown)
-                                } else {
-                                    stringResource(R.string.embed_load_failed, reason)
-                                }
                                 Text(
-                                    text = line,
+                                    text = stringResource(R.string.embed_load_failed_unknown),
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.error,
                                 )
                                 OutlinedButton(
                                     onClick = {
-                                        loadFailure = null
+                                        loadFailure = false
                                         loadedUrl = null
                                     },
                                 ) {
@@ -237,10 +236,8 @@ fun EmbedWebViewScreen(
                                     configureAsProviderView()
                                     webViewClient = providerWebViewClient(
                                         onProgress = { progress = it },
-                                        onFail = { reason ->
-                                            loadFailure = reason?.trim().orEmpty()
-                                        },
-                                        onBlocked = { scheme -> blockedScheme = scheme },
+                                        onFail = { loadFailure = true },
+                                        onBlocked = { blockedScheme = true },
                                     )
                                     webChromeClient = providerChromeClient(
                                         onProgress = { progress = it },
@@ -259,8 +256,8 @@ fun EmbedWebViewScreen(
                                 val target = state.url
                                 if (loadedUrl != target) {
                                     loadedUrl = target
-                                    loadFailure = null
-                                    blockedScheme = null
+                                    loadFailure = false
+                                    blockedScheme = false
                                     // Session 126: the VIP pass rides the initial
                                     // redirector request as a header — never in the
                                     // URL, never in history. Empty for guests.
@@ -335,8 +332,8 @@ private fun WebView.configureAsProviderView() {
  */
 private fun providerWebViewClient(
     onProgress: (Int) -> Unit,
-    onFail: (String?) -> Unit,
-    onBlocked: (String) -> Unit,
+    onFail: () -> Unit,
+    onBlocked: () -> Unit,
 ): WebViewClient = object : WebViewClient() {
     override fun shouldOverrideUrlLoading(
         view: WebView?,
@@ -346,7 +343,10 @@ private fun providerWebViewClient(
         return if (scheme == "http" || scheme == "https" || scheme == "about") {
             false
         } else {
-            onBlocked(scheme ?: "non-web")
+            // Dev-cleanup (Nov 2026, E3): the scheme is logcat-only — the screen
+            // shows one fixed sentence, never the raw scheme.
+            Log.w("EmbedWebView", "blocked non-web scheme: ${scheme ?: "non-web"}")
+            onBlocked()
             true
         }
     }
@@ -359,10 +359,12 @@ private fun providerWebViewClient(
         failingUrl: String?,
     ) {
         // `failingUrl` is never read: it can name a hoster, and this screen has no business
-        // displaying that. The behaviour word is the whole message. This overload is also the only
+        // displaying that. The description is logcat-only too: the screen shows one fixed
+        // sentence (dev-cleanup, Nov 2026, E3). This overload is also the only
         // main-frame error callback that reaches API 21 and 22; on newer levels the framework
         // routes the newer one here through the base class.
-        onFail(description)
+        Log.w("EmbedWebView", "page load failed: code=$errorCode desc=$description")
+        onFail()
     }
 
     override fun onPageFinished(view: WebView?, url: String?) {
