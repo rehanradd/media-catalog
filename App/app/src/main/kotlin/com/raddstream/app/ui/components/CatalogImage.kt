@@ -4,8 +4,10 @@ import android.content.Context
 import android.graphics.Bitmap
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
@@ -23,6 +25,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -130,6 +133,14 @@ fun CatalogImage(
      * the shimmer everywhere else.
      */
     loadingContent: (@Composable () -> Unit)? = null,
+    /**
+     * A4-F1 (Nov 2026): the short monogram ("DP") a wide, short plate
+     * paints instead of the full label — a channel name plus a 48dp mark
+     * never fit the 60%-of-16:9 logo box, so the Robo capture showed the
+     * mark with no text at all. Null keeps the full label (posters); see
+     * [channelMonogram] for the derivation. Only the logo plate passes one.
+     */
+    monogram: String? = null,
 ) {
     val context = LocalContext.current
     val holder = remember(context) { imageSizingHolder(context) }
@@ -178,6 +189,7 @@ fun CatalogImage(
     if (request == null) {
         ImageFallbackCard(
             label = fallbackLabel,
+            monogram = monogram,
             modifier = modifier,
             tone = fallbackTone,
             large = fallbackLarge,
@@ -200,10 +212,26 @@ fun CatalogImage(
         contentDescription = contentDescription,
         modifier = modifier.then(if (loaded) Modifier else Modifier.clearAndSetSemantics { }),
         contentScale = contentScale,
-        // A real request in flight gets the moving shimmer — or the caller's
-        // branded frame, when it passed one (the hero); a gated or blank URL never
-        // reaches this slot, so the surface behind the card stays the truth in that case.
-        loading = { loadingContent?.invoke() ?: ShimmerBox(Modifier.fillMaxSize()) },
+        // A real request in flight paints the branded fallback tile first and
+        // sweeps the band-only shimmer over it — or the caller's branded
+        // frame, when it passed one (the hero). Loading, error and null-URL
+        // all show the same tile, so a slow or hung /api/v1/art proxy fetch
+        // never leaves a naked void: the old bare shimmer read as a flat
+        // #20282A plate (Robo: Fan Letter, Kesariya@100) whenever the band
+        // was off-frame. A gated or blank URL never reaches this slot, so
+        // the surface behind the card stays the truth in that case.
+        loading = {
+            loadingContent?.invoke() ?: Box(Modifier.fillMaxSize()) {
+                ImageFallbackCard(
+                    label = fallbackLabel,
+                    monogram = monogram,
+                    modifier = Modifier.fillMaxSize(),
+                    tone = fallbackTone,
+                    large = fallbackLarge,
+                )
+                ShimmerBox(Modifier.fillMaxSize(), bandOnly = true)
+            }
+        },
         // A failed load shows the branded fallback — and the fallback is
         // tappable to try again, because a tile that failed once must not
         // stay failed for the whole visit when the URL itself is alive.
@@ -215,6 +243,7 @@ fun CatalogImage(
             ) {
                 ImageFallbackCard(
                     label = fallbackLabel,
+                    monogram = monogram,
                     modifier = Modifier.fillMaxSize(),
                     tone = fallbackTone,
                     large = fallbackLarge,
@@ -252,6 +281,27 @@ internal fun shouldAutoRetryImage(attempt: Int, maxAutoRetries: Int = MAX_IMAGE_
     attempt < maxAutoRetries
 
 /**
+ * A4-F1: the short monogram a wide, short logo plate paints instead of the
+ * full channel name — "Discover Pakistan" -> "DP", "Aaj Tak HD" -> "AT".
+ * Two or more words give the first letter of each of the first two; one
+ * word gives its first two letters; a name with no letter or digit in it
+ * gives null, so the plate falls back to the mark alone. Pure so the
+ * derivation is testable without Compose.
+ */
+fun channelMonogram(name: String?): String? {
+    if (name.isNullOrBlank()) return null
+    val words = name.trim().split(Regex("\\s+"))
+        .map { word -> word.filter { it.isLetterOrDigit() } }
+        .filter { it.isNotEmpty() }
+    if (words.isEmpty()) return null
+    return if (words.size == 1) {
+        words[0].take(2).uppercase()
+    } else {
+        words.take(2).joinToString("") { it.first().toString() }.uppercase()
+    }
+}
+
+/**
  * Which surface the fallback paints for. A poster tile is small, so the
  * near-black tile gradient reads as a designed tile; the full-bleed hero
  * is the one surface big enough that the same gradient reads as an empty
@@ -271,6 +321,15 @@ fun ImageFallbackCard(
     label: String? = null,
     tone: FallbackTone = FallbackTone.Tile,
     large: Boolean = false,
+    /**
+     * A4-F1 (Nov 2026): the short monogram ("DP") a wide, short plate
+     * paints beside the mark instead of the full label — a channel name
+     * plus a 48dp mark never fit the 60%-of-16:9 logo box, so the Robo
+     * capture showed the mark with no text at all. Null keeps the mark +
+     * full label column (posters); see [channelMonogram] for the
+     * derivation. Only the logo plate passes one.
+     */
+    monogram: String? = null,
 ) {
     Box(
         modifier = modifier
@@ -289,6 +348,31 @@ fun ImageFallbackCard(
             ),
         contentAlignment = Alignment.Center,
     ) {
+        // A4-F1: on a wide, short plate the monogram sits beside the mark
+        // in a Row — the full name under a 48dp mark overflowed the
+        // ~64dp-tall plate, so the label never painted at all. The card
+        // below already prints the channel name; the Row only needs the
+        // two letters. Everywhere else the mark + label column stands.
+        if (large && monogram != null) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(8.dp),
+            ) {
+                RaddStreamMark(
+                    diameter = 48.dp,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    text = monogram,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                )
+            }
+            return@Box
+        }
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.padding(8.dp),
