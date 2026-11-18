@@ -220,13 +220,47 @@ internal fun filteredPillLabel(filters: SearchFilters): String {
 internal fun resultsSummary(loaded: Int, serverTotal: Int, hasMore: Boolean, totalCapped: Boolean = false): String = when {
     // F5d (Batch A): relabel only — the two numbers count different populations
     // (loaded posts vs the server's total for the query), so the partial line now
-    // says "results" like the complete line does, and the group subtitle keeps
-    // saying "titles". The numbers are NOT forced to agree; they never will.
+    // says "results" like the complete line does. A4-F4: this is the ONE count
+    // line on the results screen — the per-group subtitles ("18 titles") are
+    // gone, because they counted a third population (loaded works in one
+    // section) and read as a competing total next to this line. The numbers
+    // here are NOT forced to agree; they never will.
     // 2026-11-15, search speed: a capped total prints with a "+" — the server
     // counts at most 1000 matches for a search, so the real total is larger.
     hasMore || loaded < serverTotal -> if (totalCapped) "Showing $loaded of $serverTotal+ results" else "Showing $loaded of $serverTotal results"
     else -> "$loaded result" + if (loaded == 1) "" else "s"
 }
+
+/**
+ * A4-F4: the type chip the rail shows as active. The filter itself is the
+ * authority whenever the viewer set one — but with no type filter, a search
+ * that answers with a single section (one group) is that section's type, not
+ * "All": "All" active over a lone Series rail claims a breadth the list
+ * does not have (Robo OR-05: "All" filled while only Movies showed, next
+ * to "Showing 34 of 52 results"). Display only — the filter stays unset
+ * until the viewer taps the chip, so clearing the query never leaves a
+ * stale type behind. A group with no rail chip (Seasons, Other) aligns to
+ * nothing, so "All" stays the honest answer there.
+ */
+internal fun effectiveTypeChip(selectedType: String?, groups: List<TypeGroup>): String? {
+    if (selectedType != null) return selectedType
+    if (groups.size != 1) return null
+    return when (groups.single().typeKey) {
+        "movie", "series", "anime" -> groups.single().typeKey
+        else -> null
+    }
+}
+
+/**
+ * A4-F4: the "Show all" affordance at the end of a capped list — one tap
+ * loads every page the server will serve, so the count line above it stops
+ * being a promise the list cannot keep without repeated "Load more" taps.
+ * A capped total keeps its "+" (the server counts at most 1000 matches,
+ * so the real total is larger — same "+" [resultsSummary] prints).
+ */
+internal fun showAllLabel(serverTotal: Int, totalCapped: Boolean = false): String =
+    if (totalCapped) "Show all $serverTotal+ results"
+    else "Show all $serverTotal result" + if (serverTotal == 1) "" else "s"
 
 /**
  * Mockup (Nov 2026): the type the server actually receives. "kpop" is a
@@ -566,70 +600,123 @@ class SearchViewModel @Inject constructor(
         val generation = searchGeneration
         moreJob = viewModelScope.launch {
             _uiState.update { it.copy(isLoadingMore = true, error = null) }
-            val next = state.page + 1
             try {
-                if (onV2) {
-                    val page = catalogRepository.searchWorksV2(
-                        query = state.query.trim(),
-                        sort = state.sort.wireValue,
-                        limit = PAGE_SIZE,
-                        cursor = v2Cursor,
-                        type = effectiveSearchType(state.filters.type),
-                        genres = state.filters.genre.wireValue?.let { listOf(it) },
-                        industries = state.filters.industry.wireValues.takeIf { it.isNotEmpty() },
-                        qualities = state.filters.quality.wireValue?.let { listOf(it) },
-                    )
-                    if (generation != searchGeneration) return@launch
-                    if (page != null) {
-                        v2Cursor = page.nextCursor
-                        rawResults = (rawResults + page.posts).distinctById()
-                        _uiState.update {
-                            it.copy(
-                                page = next,
-                                serverTotal = page.totalEstimate ?: rawResults.size,
-                                totalCapped = page.totalCapped,
-                                hasMore = page.hasMore,
-                                isFuzzy = false,
-                            )
-                        }
-                        recompute()
-                        return@launch
-                    }
-                    throw IllegalStateException("The catalog could not serve the next page.")
-                }
-                val resp = catalogRepository.getPosts(
-                    query = state.query.trim(),
-                    type = effectiveSearchType(state.filters.type),
-                    industry = state.filters.industry.wireValue,
-                    genre = state.filters.genre.wireValue,
-                    language = state.filters.language.wireValue,
-                    quality = state.filters.quality.wireValue,
-                    sort = state.sort.wireValue,
-                    freeOnly = state.filters.includedOnly.takeIf { it },
-                    page = next,
-                    limit = PAGE_SIZE,
-                )
-                if (generation != searchGeneration) return@launch
-                rawResults = (rawResults + resp.results).distinctById()
-                _uiState.update {
-                    it.copy(
-                        page = next,
-                        serverTotal = resp.total,
-                        totalCapped = false,
-                        hasMore = resp.results.size >= PAGE_SIZE && next < resp.totalPages,
-                        isFuzzy = resp.fuzzy,
-                    )
-                }
-                recompute()
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Exception) {
-                if (generation == searchGeneration) {
-                    _uiState.update { it.copy(error = friendlyNetworkError(error, "Could not load more.")) }
+                fetchNextPage(generation)
+            } finally {
+                _uiState.update { it.copy(isLoadingMore = false) }
+            }
+        }
+    }
+
+    /**
+     * A4-F4: load every remaining page in one tap — "Load more" pages 100
+     * rows at a time, so a 52-result answer still takes repeated taps to
+     * reach the count the summary line already promises. The server counts
+     * at most 1000 matches for a search and a page holds 100, so 9 more
+     * pages is every row the server will ever hand over; the loop cannot
+     * run past the cap. A fresh search cancels the job (scheduleSearch
+     * cancels moreJob) and the generation guard stops the loop, so a page
+     * never lands on a newer search's list (Issue 6, same class as
+     * loadMore). The button hides once hasMore clears, so this is a
+     * no-op when the list is already whole.
+     */
+    fun showAll() {
+        val state = _uiState.value
+        if (!state.hasMore || state.isLoadingMore || !state.hasSearchIntent) return
+        moreJob?.cancel()
+        val generation = searchGeneration
+        moreJob = viewModelScope.launch {
+            _uiState.update { it.copy(isLoadingMore = true, error = null) }
+            try {
+                var pagesFetched = 0
+                while (_uiState.value.hasMore && pagesFetched < MAX_SHOW_ALL_EXTRA_PAGES &&
+                    generation == searchGeneration
+                ) {
+                    if (!fetchNextPage(generation)) break
+                    pagesFetched++
                 }
             } finally {
                 _uiState.update { it.copy(isLoadingMore = false) }
             }
+        }
+    }
+
+    /**
+     * One more page of the current search, appended onto [rawResults] and
+     * re-grouped — the fetch half of [loadMore], shared with [showAll] so
+     * the two doors cannot drift apart. Reads the current page from state
+     * on every call, so a loop sees each page land before asking for the
+     * next. Returns whether more pages remain afterwards; false also
+     * covers a superseded fetch (its rows must never land) and a failed
+     * fetch (the error is on screen for the retry). The loading flag is
+     * the caller's: loadMore owns one page, showAll owns the whole loop.
+     */
+    private suspend fun fetchNextPage(generation: Int): Boolean {
+        val state = _uiState.value
+        val next = state.page + 1
+        try {
+            if (onV2) {
+                val page = catalogRepository.searchWorksV2(
+                    query = state.query.trim(),
+                    sort = state.sort.wireValue,
+                    limit = PAGE_SIZE,
+                    cursor = v2Cursor,
+                    type = effectiveSearchType(state.filters.type),
+                    genres = state.filters.genre.wireValue?.let { listOf(it) },
+                    industries = state.filters.industry.wireValues.takeIf { it.isNotEmpty() },
+                    qualities = state.filters.quality.wireValue?.let { listOf(it) },
+                )
+                if (generation != searchGeneration) return false
+                if (page != null) {
+                    v2Cursor = page.nextCursor
+                    rawResults = (rawResults + page.posts).distinctById()
+                    _uiState.update {
+                        it.copy(
+                            page = next,
+                            serverTotal = page.totalEstimate ?: rawResults.size,
+                            totalCapped = page.totalCapped,
+                            hasMore = page.hasMore,
+                            isFuzzy = false,
+                        )
+                    }
+                    recompute()
+                    return page.hasMore
+                }
+                throw IllegalStateException("The catalog could not serve the next page.")
+            }
+            val resp = catalogRepository.getPosts(
+                query = state.query.trim(),
+                type = effectiveSearchType(state.filters.type),
+                industry = state.filters.industry.wireValue,
+                genre = state.filters.genre.wireValue,
+                language = state.filters.language.wireValue,
+                quality = state.filters.quality.wireValue,
+                sort = state.sort.wireValue,
+                freeOnly = state.filters.includedOnly.takeIf { it },
+                page = next,
+                limit = PAGE_SIZE,
+            )
+            if (generation != searchGeneration) return false
+            rawResults = (rawResults + resp.results).distinctById()
+            val more = resp.results.size >= PAGE_SIZE && next < resp.totalPages
+            _uiState.update {
+                it.copy(
+                    page = next,
+                    serverTotal = resp.total,
+                    totalCapped = false,
+                    hasMore = more,
+                    isFuzzy = resp.fuzzy,
+                )
+            }
+            recompute()
+            return more
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            if (generation == searchGeneration) {
+                _uiState.update { it.copy(error = friendlyNetworkError(error, "Could not load more.")) }
+            }
+            return false
         }
     }
 
@@ -891,6 +978,12 @@ class SearchViewModel @Inject constructor(
     private companion object {
         const val DEBOUNCE_MS = 300L
         const val PAGE_SIZE = 100
+        /**
+         * A4-F4: the server counts at most 1000 matches for a search and a
+         * page holds 100, so a "Show all" from page 1 needs at most 9 more
+         * pages to hold every row the server will ever serve.
+         */
+        const val MAX_SHOW_ALL_EXTRA_PAGES = 9
     }
 }
 

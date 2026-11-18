@@ -171,4 +171,38 @@ class CatalogHelpersTest {
     fun `the kpop preset names itself in the filter summary`() {
         assertEquals(listOf("K-pop"), activeFilterSummary(SearchFilters(type = "kpop")))
     }
+
+    // A4-F4: the rail shows the section that is actually on screen — with no
+    // type filter, a search that answers with a single section is that
+    // section's type, not "All" (Robo OR-05: "All" filled while only Movies
+    // showed, next to "Showing 34 of 52 results").
+    @Test
+    fun `a lone section aligns its chip while All stays honest otherwise`() {
+        val seriesOnly = listOf(TypeGroup(label = "Series", typeKey = "series", items = emptyList()))
+        assertEquals("series", effectiveTypeChip(null, seriesOnly))
+        assertEquals("movie", effectiveTypeChip(null, listOf(TypeGroup("Movies", "movie", emptyList()))))
+        assertEquals("anime", effectiveTypeChip(null, listOf(TypeGroup("Anime", "anime", emptyList()))))
+        // Two sections showing is genuinely "All" — the filter is not narrowed.
+        val twoGroups = seriesOnly + TypeGroup(label = "Movies", typeKey = "movie", items = emptyList())
+        assertNull(effectiveTypeChip(null, twoGroups))
+        // Nothing loaded yet is "All" too — there is no section to align to.
+        assertNull(effectiveTypeChip(null, emptyList()))
+        // A group with no rail chip (Seasons, Other) aligns to nothing.
+        assertNull(effectiveTypeChip(null, listOf(TypeGroup("Seasons", "complete_season", emptyList()))))
+        assertNull(effectiveTypeChip(null, listOf(TypeGroup("Other", "", emptyList()))))
+        // An explicit filter always wins over the visible section.
+        assertEquals("movie", effectiveTypeChip("movie", seriesOnly))
+        assertEquals("kpop", effectiveTypeChip("kpop", seriesOnly))
+    }
+
+    // A4-F4: the "Show all" affordance at the end of a capped list names the
+    // server total — the count the summary line already promises — with a "+"
+    // while the total itself is the server's 1000 cap.
+    @Test
+    fun `show all names the full count`() {
+        assertEquals("Show all 52 results", showAllLabel(serverTotal = 52))
+        assertEquals("Show all 1 result", showAllLabel(serverTotal = 1))
+        assertEquals("Show all 1000+ results", showAllLabel(serverTotal = 1000, totalCapped = true))
+        assertEquals("Show all 1000 results", showAllLabel(serverTotal = 1000))
+    }
 }

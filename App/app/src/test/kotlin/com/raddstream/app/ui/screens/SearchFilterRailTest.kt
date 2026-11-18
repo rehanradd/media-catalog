@@ -7,6 +7,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -16,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.SearchFilters
 import com.raddstream.app.viewmodel.SearchUiState
+import com.raddstream.app.viewmodel.TypeGroup
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -147,6 +150,56 @@ class SearchFilterRailTest {
         compose.waitForIdle()
         compose.onNodeWithText("All").assertIsDisplayed()
         compose.onNodeWithText("Movies").assertIsDisplayed()
+    }
+
+    @Test
+    fun singleSectionAlignsItsChip() {
+        // A4-F4 (Robo OR-05): "All" filled while only one section showed —
+        // the chip claimed a breadth the list did not have. With no type
+        // filter and a lone Series section, Series reads as the active chip
+        // and "All" does not.
+        compose.setContent {
+            RaddStreamTheme {
+                Box(Modifier.size(width = 360.dp, height = 120.dp)) {
+                    FilterRail(
+                        state = SearchUiState(
+                            groups = listOf(TypeGroup(label = "Series", typeKey = "series", items = emptyList())),
+                        ),
+                        onSelectType = {},
+                        onOpenFilters = {},
+                    )
+                }
+            }
+        }
+        compose.waitForIdle()
+        compose.onNodeWithText("Series").assertIsSelected()
+        compose.onNodeWithText("All").assertIsNotSelected()
+    }
+
+    @Test
+    fun twoSectionsKeepAllActive() {
+        // A4-F4: alignment only fires on a lone section — two sections
+        // showing is genuinely "All", so the filter is not narrowed.
+        compose.setContent {
+            RaddStreamTheme {
+                Box(Modifier.size(width = 360.dp, height = 120.dp)) {
+                    FilterRail(
+                        state = SearchUiState(
+                            groups = listOf(
+                                TypeGroup(label = "Movies", typeKey = "movie", items = emptyList()),
+                                TypeGroup(label = "Series", typeKey = "series", items = emptyList()),
+                            ),
+                        ),
+                        onSelectType = {},
+                        onOpenFilters = {},
+                    )
+                }
+            }
+        }
+        compose.waitForIdle()
+        compose.onNodeWithText("All").assertIsSelected()
+        compose.onNodeWithText("Movies").assertIsNotSelected()
+        compose.onNodeWithText("Series").assertIsNotSelected()
     }
 
     @Test

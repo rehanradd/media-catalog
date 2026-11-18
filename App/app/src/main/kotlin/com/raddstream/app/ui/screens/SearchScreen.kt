@@ -115,7 +115,9 @@ import com.raddstream.app.viewmodel.SearchSort
 import com.raddstream.app.viewmodel.SearchUiState
 import com.raddstream.app.viewmodel.SearchViewModel
 import com.raddstream.app.viewmodel.displayLanguageName
+import com.raddstream.app.viewmodel.effectiveTypeChip
 import com.raddstream.app.viewmodel.resultsSummary
+import com.raddstream.app.viewmodel.showAllLabel
 
 private val typeChips = listOf(
     "All" to null,
@@ -148,6 +150,9 @@ internal const val SeeAllRecommendedTag = "see-all-recommended"
 
 /** Test tag on the filter rail's right-edge fade mask. */
 internal const val FilterRailFadeTag = "filter-rail-fade"
+
+/** Test tag on the "Show all N results" affordance at the end of a capped list. */
+internal const val ShowAllResultsTag = "show-all-results"
 
 /**
  * The Browse route's type for a "See all" tap: the rail's type values are
@@ -351,6 +356,7 @@ fun SearchScreen(
                     onShowExactOnly = viewModel::showExactOnly,
                     onRunSuggestion = viewModel::runSuggestion,
                     onLoadMore = viewModel::loadMore,
+                    onShowAll = viewModel::showAll,
                     onPostClick = onPostClick,
                     onSeeAllTrending = { onBrowse(browseTypeForSeeAll(state.filters.type)) },
                     onSeeAllRecommended = { onBrowse(browseTypeForSeeAll(state.filters.type)) },
@@ -516,9 +522,15 @@ internal fun FilterRail(state: SearchUiState, onSelectType: (String?) -> Unit, o
     // what it never did was reveal its own selection. When the selected type changes, scroll
     // just enough to bring that chip fully into view — nothing when it is already visible,
     // so tapping a visible chip never moves the row.
+    // A4-F4: the rail shows the section that is actually on screen. With no
+    // type filter set, a search that answers with a single section is that
+    // section's type — "All" stays selected only while more than one section
+    // (or none yet) is showing. The reveal scroll follows the same chip, so
+    // an aligned selection is never itself clipped off-screen.
+    val effectiveType = effectiveTypeChip(state.filters.type, state.groups)
     val listState = rememberLazyListState()
-    LaunchedEffect(state.filters.type) {
-        val selectedIndex = railTypeChips.indexOfFirst { it.second == state.filters.type }
+    LaunchedEffect(effectiveType) {
+        val selectedIndex = railTypeChips.indexOfFirst { it.second == effectiveType }
         if (selectedIndex < 0) return@LaunchedEffect
         // The effect launches before the row's first layout pass, so wait a frame:
         // layoutInfo is empty until the row is measured.
@@ -601,7 +613,7 @@ internal fun FilterRail(state: SearchUiState, onSelectType: (String?) -> Unit, o
             fadeTestTag = FilterRailFadeTag,
         ) {
             items(railTypeChips) { (label, value) ->
-                val selected = state.filters.type == value
+                val selected = effectiveType == value
                 RaddChip(
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
@@ -920,6 +932,7 @@ internal fun SearchContent(
     onShowExactOnly: () -> Unit,
     onRunSuggestion: (String) -> Unit,
     onLoadMore: () -> Unit,
+    onShowAll: () -> Unit = {},
     onPostClick: (Post) -> Unit,
     onSeeAllTrending: () -> Unit = {},
     onSeeAllRecommended: () -> Unit = {},
@@ -1031,9 +1044,13 @@ internal fun SearchContent(
 
             state.groups.forEach { group ->
                 item {
+                    // A4-F4: the header names the section, nothing more — the
+                    // summary line above is the one count on this screen. The
+                    // old "N titles" subtitle counted a third population
+                    // (loaded works in this section) and read as a competing
+                    // total next to "Showing 34 of 52 results".
                     SectionHeader(
                         title = group.label,
-                        subtitle = "${group.items.size} ${if (group.items.size == 1) "title" else "titles"}",
                         modifier = Modifier.padding(horizontal = 0.dp),
                     )
                 }
@@ -1068,9 +1085,26 @@ internal fun SearchContent(
 
             if (state.hasMore) {
                 item {
-                    Box(Modifier.fillMaxWidth().padding(vertical = 16.dp), contentAlignment = Alignment.Center) {
+                    Column(
+                        Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
                         OutlinedButton(onClick = onLoadMore, enabled = !state.isLoadingMore) {
                             Text(if (state.isLoadingMore) "Loading…" else "Load more")
+                        }
+                        // A4-F4: a capped list can be expanded to the full
+                        // count in one tap — "Load more" pages 100 rows at a
+                        // time, "Show all" loads every page the server will
+                        // serve (at most 1,000 rows), so the count line above
+                        // stops being a promise the list cannot keep without
+                        // repeated taps. The label names the server total,
+                        // with a "+" while the total itself is capped.
+                        TextButton(
+                            onClick = onShowAll,
+                            enabled = !state.isLoadingMore,
+                            modifier = Modifier.testTag(ShowAllResultsTag).heightIn(min = 48.dp),
+                        ) {
+                            Text(showAllLabel(state.serverTotal, state.totalCapped))
                         }
                     }
                 }
