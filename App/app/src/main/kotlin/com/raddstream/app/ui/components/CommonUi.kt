@@ -310,16 +310,29 @@ fun SectionHeader(
  * calm sweep for small tiles, and a caller whose placeholder fills the
  * screen (the hero skeleton) may ask for a stronger band so the wait reads
  * as loading instead of a blank grey box (Samsung RTL v1.1.2, Issue 3).
+ *
+ * [bandOnly] is the A4-F1 overlay mode: the band sweeps over content the
+ * caller already painted instead of over a dim base of its own — [CatalogImage]
+ * paints the branded fallback tile first and sweeps this band over it, so a
+ * load that never resolves still shows gradient + mark + title instead of a
+ * bare surfaceVariant box. With reduced motion the band does not move, so a
+ * band-only shimmer paints nothing at all rather than covering the tile
+ * with a static block.
  */
 @Composable
 fun ShimmerBox(
     modifier: Modifier = Modifier,
     shape: Shape = RectangleShape,
     highlightAlpha: Float = SHIMMER_HIGHLIGHT_ALPHA,
+    bandOnly: Boolean = false,
 ) {
     val reduceMotion = rememberReduceMotion()
     val base = MaterialTheme.colorScheme.surfaceVariant
     if (reduceMotion) {
+        if (bandOnly) {
+            Box(modifier.clearAndSetSemantics { })
+            return
+        }
         Box(modifier.clip(shape).background(base.copy(alpha = 0.5f)).clearAndSetSemantics { })
         return
     }
@@ -336,7 +349,7 @@ fun ShimmerBox(
     Box(
         modifier
             .clip(shape)
-            .background(base)
+            .then(if (bandOnly) Modifier else Modifier.background(base))
             .drawWithContent {
                 drawContent()
                 val band = size.width * 0.55f
