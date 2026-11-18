@@ -23,23 +23,32 @@
 # MX idea #1 (2026-11-18): the Radd Stream app needs only the FFmpeg
 # SOFTWARE AUDIO decoders (AC-3, E-AC-3, DTS, TrueHD, MLP), and ships only
 # arm64-v8a + armeabi-v7a. The upstream script builds four ABIs (armv7a,
-# arm64, x86, x86_64); this copy keeps the two ARM blocks verbatim and
-# drops the x86/x86_64 blocks, so the build is half the work and the AAR
-# carries only the two ABIs the app ships. Everything else — the common
-# configure options, the toolchain checks, the decoder loop — is upstream,
-# unchanged, except for ONE deliberate deviation (see below).
+# arm64, x86, x86_64); this copy keeps the two ARM blocks and drops the
+# x86/x86_64 blocks, so the build is half the work and the AAR carries only
+# the two ABIs the app ships. Everything else — the common configure
+# options, the toolchain checks, the decoder loop — is upstream, except
+# for the two deliberate deviations below.
 #
-# DEVIATION — --disable-x86asm (added to COMMON_OPTIONS): FFmpeg 6.0's
+# DEVIATION 1 — --disable-x86asm (added to COMMON_OPTIONS): FFmpeg 6.0's
 # configure probes for nasm/yasm even for ARM targets (x86asm is enabled
-# by default) and DIES if neither is installed — proven by Android CI
-# 44377426180, which failed 1.5 s into the first configure with
-# "nasm/yasm not found or too old. Use --disable-x86asm for a crippled
-# build." The GitHub ubuntu-24.04 runner ships no nasm. For an ARM-only
-# build this is not a cripple at all: there is no x86 assembly in an ARM
-# library, and the ARM (NEON) assembly is unaffected. Upstream's script
-# does not pass it because Media3's environment has nasm; ours does not.
-# Do not edit the configure lines by hand: if Media3 moves, re-trim from
-# the new upstream file and keep this header in sync.
+# by default) and DIES if neither is installed — the GitHub ubuntu-24.04
+# runner ships no nasm. For an ARM-only build this is not a cripple at
+# all: there is no x86 assembly in an ARM library, and the ARM (NEON)
+# assembly is unaffected. Upstream's script does not pass it because
+# Media3's environment has nasm; ours does not.
+#
+# DEVIATION 2 — no blank lines inside the ./configure invocations: the
+# upstream file is rendered with blank lines between the \-continued
+# option lines, but a truly blank line after a \ continuation TERMINATES
+# the command in bash (proven: a ./configure followed by a blank line
+# runs with NO arguments). With no arguments configure defaults to the
+# HOST arch (x86_64), enables x86, and dies on the nasm probe — which is
+# exactly what Android CI 44377426180 and 44380041485 showed (the
+# "nasm/yasm not found" failure was never about nasm at all; the
+# configure never received --arch=arm). So the two configure blocks here
+# are reflowed with no blank lines. The blank lines elsewhere in this
+# file (inside the quoted COMMON_OPTIONS string, the for loop, the if
+# blocks) are harmless and kept.
 #
 # Usage (called by build-ffmpeg-aar.sh, not by hand):
 #   build-ffmpeg.sh FFMPEG_MODULE_PATH NDK_PATH HOST_PLATFORM ANDROID_ABI ENABLED_DECODERS...
@@ -163,27 +172,16 @@ fi
 cd "${FFMPEG_MODULE_PATH}/jni/ffmpeg"
 
 ./configure \
-
     --libdir=android-libs/armeabi-v7a \
-
     --arch=arm \
-
     --cpu=armv7-a \
-
     --cross-prefix="${TOOLCHAIN_PREFIX}/armv7a-linux-androideabi${ANDROID_ABI}-" \
-
     --nm="${TOOLCHAIN_PREFIX}/llvm-nm" \
-
     --ar="${TOOLCHAIN_PREFIX}/llvm-ar" \
-
     --ranlib="${TOOLCHAIN_PREFIX}/llvm-ranlib" \
-
     --strip="${TOOLCHAIN_PREFIX}/llvm-strip" \
-
     --extra-cflags="-march=armv7-a -mfloat-abi=softfp" \
-
     --extra-ldflags="-Wl,--fix-cortex-a8" \
-
     ${COMMON_OPTIONS}
 
 make -j$JOBS
@@ -193,23 +191,14 @@ make install-libs
 make clean
 
 ./configure \
-
     --libdir=android-libs/arm64-v8a \
-
     --arch=aarch64 \
-
     --cpu=armv8-a \
-
     --cross-prefix="${TOOLCHAIN_PREFIX}/aarch64-linux-android${ANDROID_ABI_64BIT}-" \
-
     --nm="${TOOLCHAIN_PREFIX}/llvm-nm" \
-
     --ar="${TOOLCHAIN_PREFIX}/llvm-ar" \
-
     --ranlib="${TOOLCHAIN_PREFIX}/llvm-ranlib" \
-
     --strip="${TOOLCHAIN_PREFIX}/llvm-strip" \
-
     ${COMMON_OPTIONS}
 
 make -j$JOBS
