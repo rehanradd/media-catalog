@@ -43,6 +43,12 @@ class EnhancementAudioProcessorTest {
         assertEquals(C.ENCODING_PCM_FLOAT, outputFormat.encoding)
         assertEquals(channels, outputFormat.channelCount)
         assertEquals(sampleRate, outputFormat.sampleRate)
+        // configure() only STAGES the formats — BaseAudioProcessor applies
+        // them in flush() (inputAudioFormat/outputAudioFormat are set
+        // there, not in configure). The sink does this after every
+        // configure; without it queueInput sees NOT_SET and consumes the
+        // input without producing output. Same contract Sonic follows.
+        processor.flush()
         assertTrue(processor.isActive)
         return processor
     }

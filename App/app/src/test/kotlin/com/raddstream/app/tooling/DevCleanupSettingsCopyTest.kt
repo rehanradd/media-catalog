@@ -277,6 +277,9 @@ class DevCleanupSettingsCopyTest {
         assertTrue(profileScreen.contains("Last opened:"))
         assertTrue(profileScreen.contains("an account is just an account code"))
         assertTrue(syncContract.contains("takeLast(4)"))
-        assertTrue(bridge.contains("Louder than the player can play"))
+        // MX idea #8: the ceiling sentence is gone on purpose — the
+        // software gain stage applies the excess now, so the caption
+        // states the applied total instead of pointing at the device volume.
+        assertTrue(bridge.contains("Volume \${appliedTotalPercent(level, userVolume)}%"))
     }
 }
