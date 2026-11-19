@@ -146,7 +146,13 @@ class EnhancementAudioProcessorTest {
     @Test
     fun `plus 6 dB at the band centre doubles the tone`() {
         val eq = EqState(enabled = true, presetId = EqState.CUSTOM_ID, gainsDb = listOf(0f, 0f, 6f, 0f, 0f))
-        val processor = processor(settings = AudioEnhancementSettings(dspGain = 1f, eq = eq))
+        // Float in: the samples below are floats, so the processor must be
+        // configured for float too — a 16-bit configure would read each
+        // float's bytes as two 16-bit samples (that was the 1.78× failure).
+        val processor = processor(
+            encoding = C.ENCODING_PCM_FLOAT,
+            settings = AudioEnhancementSettings(dspGain = 1f, eq = eq),
+        )
         // 100 ms of a 910 Hz sine; the filter settles in the first few ms,
         // so the RMS of the second half measures the steady-state gain.
         val samples = (0 until 4_800).map { n ->
