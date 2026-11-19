@@ -166,8 +166,6 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.SubtitleView
-import androidx.mediarouter.app.MediaRouteButton
-import com.google.android.gms.cast.framework.CastButtonFactory
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
@@ -2052,16 +2050,11 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
         // Session 121 (P-35): the keep chip lived here and squeezed the title to a
         // stub ("Ali Baba …") on a narrow phone. It now rides its own row above
         // the scrubber in BottomControls, where it cannot crowd anything.
-        // MX #9 — Cast: the standard route-picker button, composed only
-        // when a receiver is discoverable and the player is unlocked. The
-        // framework owns the picker dialog and hides the button itself
-        // when the routes vanish; composing it only on castAvailable keeps
-        // the MX #6 slim bar from taking a permanent slot for a button
-        // that is usually absent. While casting, tapping it opens the
-        // picker to switch or disconnect.
-        if (state.castAvailable && !state.locked) {
-            CastButton()
-        }
+        // Cinema (Nov 2026): the Cast button is gone from this bar — nobody
+        // opens the player to cast, they are here to watch the video. The
+        // Cast machinery (CastTransferManager, CastPlayer, the transfer
+        // rules, the server flag, state.castAvailable) stays in the
+        // codebase; Cast moves to the Detail page in a later slice.
         IconButton(onClick = onLock) {
             Icon(
                 painter = painterResource(R.drawable.ic_player_lock),
@@ -2098,33 +2091,6 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
         )
         }
     }
-}
-
-/**
- * MX #9 — Cast: the standard route-picker button, as an AndroidView.
- *
- * `MediaRouteButton` is a View, not a composable — and the framework is
- * the one that knows how to show it: [CastButtonFactory.setUpMediaRouteButton]
- * wires discovery, the picker dialog, and the button's own connected /
- * connecting states. The button is a plain View (not an ImageView), so
- * there is no tint call to make — its icon follows the app theme's
- * control colour, which is light on this dark bar; device verify
- * confirms it reads on a real phone. The button is 48dp, the same slot
- * as the lock button beside it. No prose of its own: the description
- * comes from `player_cast` in strings.xml.
- */
-@Composable
-private fun CastButton() {
-    val description = stringResource(R.string.player_cast)
-    AndroidView(
-        factory = { context ->
-            MediaRouteButton(context).apply {
-                CastButtonFactory.setUpMediaRouteButton(context, this)
-                contentDescription = description
-            }
-        },
-        modifier = Modifier.size(48.dp),
-    )
 }
 
 /**

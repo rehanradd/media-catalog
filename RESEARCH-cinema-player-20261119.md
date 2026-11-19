@@ -103,3 +103,21 @@ visibly-changed goldens after pixel-compare + visual read.
 - The codec-pack hunt (decoders are built in; see MX #1).
 - Ghost mode (`EdgeHud`) already exists as the chrome-less option — this slice
   is about the normal chrome, not a second Ghost mode.
+
+## Cast button removal + pop-up audit (19 Nov, user direction)
+
+- Cast button OUT of the TopBar (user: nobody opens the player to cast).
+  Removed: the `CastButton()` composition + its `MediaRouteButton` /
+  `CastButtonFactory` wiring + the `player_cast` string (the copy test
+  requires every `player_*` string to be painted, so the string goes with
+  the button). Kept: CastTransferManager, CastPlayer, CastTransfer rules,
+  the server chromecast flag, `state.castAvailable` (still set by the VM)
+  and the store's cast banners — Cast moves to the Detail page later.
+- Audit of every other player pop-up/overlay (all layers + all More rows):
+  NOTHING else comes out. Everything is either user-invoked (sheets,
+  dialogs, Play-from, Calibrate), an error/start narration (give-up,
+  connection error, offline, start notice, buffering %), a 5s transient
+  confirmation of something the viewer just did (settled banner), or a
+  locked-state indicator (UnlockFab, LockedTimeChip). The PrintLogSheet's
+  debug content is already long-press gated (dev-cleanup F1). No dead
+  composable exists in PlayerScreen.kt (every private fun has a call site).
