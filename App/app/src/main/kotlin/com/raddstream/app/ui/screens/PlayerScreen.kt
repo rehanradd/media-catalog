@@ -24,10 +24,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -67,6 +65,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.BrightnessMedium
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
@@ -82,6 +81,7 @@ import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.AlertDialog
@@ -526,7 +526,7 @@ private fun PlayerScreenContent(
     // HUD + settled banner fades.
     LaunchedEffect(hud) {
         if (hud != null) {
-            delay(800)
+            delay(CinemaChrome.HUD_LIFETIME_MS)
             hud = null
         }
     }
@@ -1118,7 +1118,10 @@ private fun PlayerScreenContent(
                         shape = MaterialTheme.shapes.small,
                         modifier = Modifier
                             .padding(horizontal = 24.dp)
-                            .padding(bottom = 100.dp),
+                            // Cinema (Nov 2026): 100 → 112dp — the seat clears
+                            // the slimmer bottom bar (104dp) instead of sitting
+                            // 4dp into the scrubber row.
+                            .padding(bottom = 112.dp),
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -1649,6 +1652,49 @@ internal sealed class Hud {
 }
 
 /**
+ * Cinema player (Nov 2026): the chrome budget, in one place, so the 95/5 rule is
+ * a number, not a feeling. TopBar 56dp + BottomControls 104dp = 160dp of chrome
+ * on a 411dp-tall landscape phone — 61% of the picture stays video while the
+ * chrome is up, 100% once the 3.0s auto-hide fires. The 48dp press target never
+ * shrinks; only the visible glyphs do.
+ */
+internal object CinemaChrome {
+    const val TOP_BAR_MIN_DP = 56
+    const val BOTTOM_BAR_MIN_DP = 104
+    const val HUD_LIFETIME_MS = 800L
+    const val MIN_TOUCH_TARGET_DP = 48
+
+    /** Share of the picture that stays video while the chrome is up, on a screen
+     *  [screenHeightDp] tall in landscape. */
+    fun videoSharePercent(screenHeightDp: Int): Float {
+        if (screenHeightDp <= 0) return 0f
+        val chrome = TOP_BAR_MIN_DP + BOTTOM_BAR_MIN_DP
+        return (screenHeightDp - chrome).coerceAtLeast(0) / screenHeightDp.toFloat()
+    }
+}
+
+/** Which screen edge a gesture readout rides. Brightness is the left half's
+ *  gesture, volume the right half's — the indicator sits on the same side. */
+internal enum class EdgeSide { LEFT, RIGHT }
+
+internal enum class EdgeKind { BRIGHTNESS, VOLUME, BOOST }
+
+/** The paint-only shape of the edge indicator: side, level, kind. The subtitle
+ *  readout is a centred pill, never an edge line, so it maps to null. */
+internal data class EdgeIndicatorSpec(
+    val side: EdgeSide,
+    val fraction: Float,
+    val kind: EdgeKind,
+)
+
+internal fun edgeIndicatorSpec(hud: Hud): EdgeIndicatorSpec? = when (hud) {
+    is Hud.Brightness -> EdgeIndicatorSpec(EdgeSide.LEFT, hud.value.coerceIn(0f, 1f), EdgeKind.BRIGHTNESS)
+    is Hud.Volume -> EdgeIndicatorSpec(EdgeSide.RIGHT, hud.value.coerceIn(0f, 1f), EdgeKind.VOLUME)
+    is Hud.Boost -> EdgeIndicatorSpec(EdgeSide.RIGHT, 1f, EdgeKind.BOOST)
+    is Hud.Subtitle -> null
+}
+
+/**
  * What a subtitle gesture changed — a value, not a sentence. The lanes report these and the
  * pill formats them, the same split the brightness/volume edge lines already use.
  */
@@ -1663,47 +1709,48 @@ internal sealed interface SubtitleHudValue {
  * Gesture feedback as a slim line on the screen edge — never a card in the middle of the
  * picture. Brightness rides the LEFT edge, volume the RIGHT (the gesture halves); the
  * long-press speed boost rides the right edge in jade. The 800 ms lifetime lives in the
- * caller's `LaunchedEffect(hud)`, so this is paint only: a 4 dp vertical track and a small
- * percent, nothing else to read while a movie is playing.
+ * caller's `LaunchedEffect(hud)`, so this is paint only: a tiny 16dp icon over a 3dp
+ * vertical track, nothing else to read while a movie is playing. Cinema (Nov 2026):
+ * the old 12sp text label is gone — the bar is the level, the icon says which one.
  */
 @Composable
 internal fun EdgeFeedbackLine(hud: Hud) {
     // The subtitle readout is a centred pill (SubtitleToast), not an edge line.
-    if (hud is Hud.Subtitle) return
-    val isLeft = hud is Hud.Brightness
-    val fraction = when (hud) {
-        is Hud.Brightness -> hud.value
-        is Hud.Volume -> hud.value
-        is Hud.Boost -> 1f
-        is Hud.Subtitle -> 0f // unreachable: returned above; the when must stay exhaustive
-    }
+    val spec = edgeIndicatorSpec(hud) ?: return
     val label = when (hud) {
         is Hud.Brightness -> stringResource(R.string.player_brightness, (hud.value * 100).toInt())
         is Hud.Volume -> stringResource(R.string.player_volume, (hud.value * 100).toInt())
         is Hud.Boost -> "2×"
-        is Hud.Subtitle -> "" // unreachable: returned above
+        is Hud.Subtitle -> "" // unreachable: the spec is null above; the when must stay exhaustive
     }
-    val trackColor = if (hud is Hud.Boost) RaddCurrent500 else Color.White
+    val icon = when (spec.kind) {
+        EdgeKind.BRIGHTNESS -> Icons.Default.BrightnessMedium
+        EdgeKind.VOLUME -> Icons.Default.VolumeUp
+        EdgeKind.BOOST -> Icons.Default.FastForward
+    }
+    val trackColor = if (spec.kind == EdgeKind.BOOST) RaddCurrent500 else Color.White
     Box(
         Modifier.fillMaxSize(),
-        contentAlignment = if (isLeft) Alignment.CenterStart else Alignment.CenterEnd,
+        contentAlignment = if (spec.side == EdgeSide.LEFT) Alignment.CenterStart else Alignment.CenterEnd,
     ) {
         Column(
-            Modifier.padding(horizontal = 16.dp),
+            Modifier.padding(horizontal = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text(label, color = Color.White, fontSize = brandSp(12), fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(8.dp))
+            // The spoken label stays as the content description so the string is
+            // still used and a screen reader can name the indicator.
+            Icon(icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.height(6.dp))
             Box(
                 Modifier
-                    .width(4.dp)
-                    .height(120.dp)
+                    .width(3.dp)
+                    .height(96.dp)
                     .background(Color.White.copy(alpha = 0.25f)),
             ) {
                 Box(
                     Modifier
                         .fillMaxWidth()
-                        .fillMaxHeight(fraction.coerceIn(0f, 1f))
+                        .fillMaxHeight(spec.fraction)
                         .align(Alignment.BottomCenter)
                         .background(trackColor),
                 )
@@ -1722,7 +1769,9 @@ private fun ScrubToast(
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(bottom = 130.dp),
+            // Cinema (Nov 2026): the seat clears the slimmer bottom bar (104dp)
+            // with the same 12dp of air the old 130dp seat left over the 136dp bar.
+            modifier = Modifier.padding(bottom = 116.dp),
         ) {
             // The thumbnail: the preview player's live TextureView, shown only
             // once the target has settled (showThumbnail). Until then the frame
@@ -1750,8 +1799,8 @@ private fun ScrubToast(
                 Text(
                     stringResource(R.string.player_time_of, target.formatTime(), durationMs.formatTime()),
                     color = Color.White,
-                    fontSize = brandSp(14),
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                    fontSize = brandSp(12),
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                 )
             }
         }
@@ -1780,13 +1829,15 @@ private fun SubtitleToast(value: SubtitleHudValue) {
         Surface(
             color = RaddHudToast,
             shape = MaterialTheme.shapes.small,
-            modifier = Modifier.padding(bottom = 130.dp),
+            // Cinema (Nov 2026): same 116dp seat as the scrub toast — above the
+            // slimmer bottom bar, not floating mid-picture.
+            modifier = Modifier.padding(bottom = 116.dp),
         ) {
             Text(
                 text,
                 color = Color.White,
-                fontSize = brandSp(14),
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                fontSize = brandSp(12),
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
             )
         }
     }
@@ -1798,10 +1849,11 @@ private fun BoostBadge() {
         Surface(
             color = RaddCurrent500,
             shape = MaterialTheme.shapes.small,
-            modifier = Modifier.padding(top = 92.dp),
+            // Cinema (Nov 2026): the seat clears the slimmer top bar (56dp).
+            modifier = Modifier.padding(top = 64.dp),
         ) {
-            Row(Modifier.padding(horizontal = 10.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.FastForward, null, tint = Color.Black, modifier = Modifier.size(16.dp))
+            Row(Modifier.padding(horizontal = 8.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.FastForward, null, tint = Color.Black, modifier = Modifier.size(14.dp))
                 Spacer(Modifier.width(4.dp))
                 Text(stringResource(R.string.player_boost_badge), color = Color.Black, fontSize = brandSp(12), fontWeight = FontWeight.Bold)
             }
@@ -1823,15 +1875,17 @@ internal fun SkipSegmentButton(segment: MediaSegment, onSkip: () -> Unit) {
         Surface(
             color = RaddCurrent500,
             shape = MaterialTheme.shapes.small,
-            modifier = Modifier.padding(end = 16.dp, bottom = 130.dp),
+            // Cinema (Nov 2026): same 116dp seat as the toasts — above the
+            // slimmer bottom bar.
+            modifier = Modifier.padding(end = 16.dp, bottom = 116.dp),
         ) {
             Row(
                 Modifier
                     .clickableNoRipple { onSkip() }
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(Icons.Default.FastForward, null, tint = Color.Black, modifier = Modifier.size(16.dp))
+                Icon(Icons.Default.FastForward, null, tint = Color.Black, modifier = Modifier.size(14.dp))
                 Spacer(Modifier.width(8.dp))
                 Text(
                     stringResource(
@@ -1842,7 +1896,7 @@ internal fun SkipSegmentButton(segment: MediaSegment, onSkip: () -> Unit) {
                             MediaSegmentType.PREVIEW -> R.string.player_skip_preview
                         },
                     ),
-                    color = Color.Black, fontSize = brandSp(14), fontWeight = FontWeight.Bold,
+                    color = Color.Black, fontSize = brandSp(12), fontWeight = FontWeight.Bold,
                 )
             }
         }
@@ -1890,8 +1944,10 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
             // the immersive frame is untouched.
             .statusBarsPadding()
             .background(topGradient)
-            .heightIn(min = 80.dp)
-            .padding(start = rail, end = rail, top = 4.dp, bottom = 8.dp),
+            // Cinema (Nov 2026): 56dp — the 48dp icon row + 6dp of padding.
+            // The press targets stay 48dp; only the bar gets shorter.
+            .heightIn(min = CinemaChrome.TOP_BAR_MIN_DP.dp)
+            .padding(start = rail, end = rail, top = 2.dp, bottom = 4.dp),
     ) {
     Row(
         modifier = Modifier
@@ -1903,6 +1959,9 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
                 painter = painterResource(R.drawable.ic_player_back),
                 contentDescription = stringResource(R.string.player_back),
                 tint = Color.White,
+                // Cinema (Nov 2026): the glyph shrinks to 20dp; the IconButton
+                // press target stays 48dp.
+                modifier = Modifier.size(20.dp),
             )
         }
         Spacer(Modifier.width(6.dp))
@@ -2008,6 +2067,9 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
                 painter = painterResource(R.drawable.ic_player_lock),
                 contentDescription = stringResource(R.string.player_lock),
                 tint = Color.White,
+                // Cinema (Nov 2026): the glyph shrinks to 20dp; the IconButton
+                // press target stays 48dp.
+                modifier = Modifier.size(20.dp),
             )
         }
         // MX #6 (chrome diet): the print-switch button is gone from this bar —
@@ -2120,7 +2182,10 @@ internal fun CenterPlayPause(
                 color = Color.Black.copy(alpha = 0.55f),
                 shape = CircleShape,
                 modifier = Modifier
-                    .size(88.dp)
+                    // Cinema (Nov 2026): 88 → 72dp — the frosted circle is an
+                    // affordance, not a poster; the 72dp press target still
+                    // clears the 48dp floor.
+                    .size(72.dp)
                     .clickable(
                         onClick = {
                             val now = System.nanoTime()
@@ -2138,7 +2203,7 @@ internal fun CenterPlayPause(
                         painter = painterResource(R.drawable.ic_player_play),
                         contentDescription = null,
                         tint = Color.White,
-                        modifier = Modifier.size(40.dp),
+                        modifier = Modifier.size(32.dp),
                     )
                 }
             }
@@ -2153,7 +2218,7 @@ internal fun CenterPlayPause(
     }
 }
 
-/** One ±10s flank of the centre transport: a 56dp frosted circle, same chrome. */
+/** One ±10s flank of the centre transport: a 48dp frosted circle, same chrome. */
 @Composable
 private fun CentreSkipButton(
     icon: ImageVector,
@@ -2164,12 +2229,12 @@ private fun CentreSkipButton(
         color = Color.Black.copy(alpha = 0.55f),
         shape = CircleShape,
         modifier = Modifier
-            .size(56.dp)
+            .size(48.dp)
             .clickable(onClick = onClick, role = Role.Button)
             .semantics { contentDescription = label },
     ) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(28.dp))
+            Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
         }
     }
 }
@@ -2416,7 +2481,10 @@ internal fun BottomControls(
             Modifier
                 .fillMaxWidth()
                 .background(bottomGradient)
-                .heightIn(min = 136.dp)
+                // Cinema (Nov 2026): 136 → 104dp — scrubber 48 + controls 48 +
+                // 8dp of bottom padding. The press targets stay 48dp; only the
+                // bar gets shorter.
+                .heightIn(min = CinemaChrome.BOTTOM_BAR_MIN_DP.dp)
                 .padding(start = rail, end = rail, bottom = 8.dp),
         ) {
             // SC §3: pause is discovery — the cast strip. Tapping an actor
@@ -2450,7 +2518,7 @@ internal fun BottomControls(
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .padding(top = 8.dp),
+                        .padding(top = 4.dp),
                 ) {
                     KeepChip(state, onKeepCurrent)
                 }
@@ -2494,11 +2562,12 @@ internal fun BottomControls(
                     Text(
                         text = state.positionMs.formatTime(),
                         color = Color.White,
-                        style = MaterialTheme.typography.labelMedium,
+                        // Cinema (Nov 2026): the time reads at 11sp, not 12sp.
+                        style = MaterialTheme.typography.labelSmall,
                     )
                     if (statusWord != null) {
                         Spacer(Modifier.width(8.dp))
-                        Text(statusWord, color = Color.White.copy(alpha = 0.85f), style = MaterialTheme.typography.labelMedium)
+                        Text(statusWord, color = Color.White.copy(alpha = 0.85f), style = MaterialTheme.typography.labelSmall)
                     }
                     Scrubber(
                         modifier = Modifier
@@ -2518,7 +2587,8 @@ internal fun BottomControls(
                     Text(
                         state.durationMs.takeIf { it > 0 }?.formatTime() ?: "--:--",
                         color = Color.White,
-                        style = MaterialTheme.typography.labelMedium,
+                        // Cinema (Nov 2026): the time reads at 11sp, not 12sp.
+                        style = MaterialTheme.typography.labelSmall,
                     )
                 }
             } else if (state.isLive) {
@@ -2533,8 +2603,7 @@ internal fun BottomControls(
             // left, tools on the right — the way every rival lays them out.
             Row(
                 Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 2.dp),
+                    .fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 val subtitleWord = subtitleStatusLabel(state, stringResource(R.string.player_off))
@@ -2552,7 +2621,9 @@ internal fun BottomControls(
                     PlayerControlButton(
                         { if (state.isEnded) onPlayFromStart() else onTogglePlayPause() },
                         if (state.isPlaying) stringResource(R.string.player_pause) else stringResource(R.string.player_play),
-                        iconSize = 40.dp,
+                        // Cinema (Nov 2026): the primary glyph is 36dp; the
+                        // 48dp press target stays.
+                        iconSize = 36.dp,
                     ) {
                         Icon(
                             painter = if (state.isPlaying) painterResource(R.drawable.ic_player_pause) else painterResource(R.drawable.ic_player_play),
@@ -2772,10 +2843,12 @@ private fun PlayerControlButton(
     // The redesign removed the visible label under the icon (D-43): the bar is
     // one thin icon row now, and the spoken label on the button still says
     // what each glyph does. The icon box grows for the play/pause primary
-    // (40dp) while the 48dp press target stays.
+    // (36dp) while the 48dp press target stays.
     selected: Boolean = false,
     enabled: Boolean = true,
-    iconSize: Dp = 26.dp,
+    // Cinema (Nov 2026): the glyph is 22dp; the 48dp press target in
+    // ControlTarget stays.
+    iconSize: Dp = 22.dp,
     content: @Composable () -> Unit,
 ) {
     ControlTarget(label = label, onClick = onClick, onLongClick = onLongClick, selected = selected, enabled = enabled) {
@@ -2804,12 +2877,12 @@ private fun QualityPill(
     val context = LocalContext.current
     val label = stringResource(R.string.player_quality_label, state.qualityLabel)
     val textColor = if (!state.qualityAuto) RaddCurrent500 else Color.White
-    val borderColor = if (!state.qualityAuto) RaddCurrent500 else Color.White.copy(alpha = 0.4f)
     Box(
         modifier = Modifier
             .heightIn(min = MinControlTarget)
             .clip(RoundedCornerShape(8.dp))
-            .border(1.dp, borderColor, RoundedCornerShape(8.dp))
+            // Cinema (Nov 2026): no outline — the rung is plain bold text on a
+            // translucent solid fill; the border was the outline this slice removes.
             .background(Color.Black.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
             .clickable(
                 onClick = {
@@ -2819,7 +2892,7 @@ private fun QualityPill(
                 role = Role.Button,
             )
             .semantics { contentDescription = label }
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = 10.dp, vertical = 6.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
@@ -2866,7 +2939,7 @@ private fun Scrubber(
             .fillMaxWidth()
             // Hate-audit H6: 24dp of track + 12dp of padding each side = a
             // 48dp touch height, the floor the 44dp row missed. The thumb
-            // stays 16dp at rest (20dp dragging); only the grab area grows.
+            // stays 14dp at rest (18dp dragging); only the grab area grows.
             // Review fix (16 Nov): no horizontal padding of its own — the
             // column's shared rail is the left/right edge now.
             .padding(vertical = 12.dp)
@@ -2894,21 +2967,22 @@ private fun Scrubber(
             Modifier
                 .align(Alignment.CenterStart)
                 .fillMaxWidth()
-                .height(4.dp)
+                // Cinema (Nov 2026): a 3dp track, not 4dp.
+                .height(3.dp)
                 .background(Color.White.copy(alpha = 0.28f)),
         )
         Box(
             Modifier
                 .align(Alignment.CenterStart)
                 .fillMaxWidth(bufFraction)
-                .height(4.dp)
+                .height(3.dp)
                 .background(Color.White.copy(alpha = 0.5f)),
         )
         Box(
             Modifier
                 .align(Alignment.CenterStart)
                 .fillMaxWidth(posFraction)
-                .height(4.dp)
+                .height(3.dp)
                 .background(chrome.played),
         )
         // One short white mark per chapter, straddling the track. Tapping one seeks —
@@ -2925,17 +2999,16 @@ private fun Scrubber(
             )
         }
         val isDragging = draggingTargetMs != null
-        val thumbSize = if (isDragging) 20.dp else 16.dp
-        // Mockup: the thumb carries its white ring at rest, not only while
-        // dragging — the ring is what separates the jade dot from the jade
-        // line underneath it.
+        val thumbSize = if (isDragging) 18.dp else 14.dp
+        // Cinema (Nov 2026): the thumb is a solid white dot — the old 2dp
+        // white ring separated a jade dot from the jade track, and white on
+        // jade reads without it. No outline, like every other glyph now.
         Box(
             Modifier
                 .align(Alignment.CenterStart)
-                .offset(x = (maxWidth * posFraction.coerceIn(0f, 0.98f)) - (thumbSize - 16.dp) / 2)
+                .offset(x = (maxWidth * posFraction.coerceIn(0f, 0.98f)) - (thumbSize - 14.dp) / 2)
                 .size(thumbSize)
-                .border(2.dp, Color.White, CircleShape)
-                .background(chrome.played, shape = CircleShape),
+                .background(Color.White, shape = CircleShape),
         )
         if (enabled && durationMs > 0) {
             Box(
@@ -2992,7 +3065,7 @@ private fun UnlockFab(onUnlock: () -> Unit) {
             shape = RoundedCornerShape(percent = 50),
             modifier = Modifier
                 .padding(bottom = 48.dp)
-                .border(1.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(percent = 50))
+                // Cinema (Nov 2026): no outline — the solid fill is the pill.
                 .clickable(onClick = onUnlock, role = Role.Button)
                 .semantics { contentDescription = hint },
         ) {
@@ -3157,7 +3230,9 @@ private fun AutoplayCountdownCard(
             shape = RoundedCornerShape(16.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 16.dp, end = 16.dp, bottom = 120.dp),
+                // Cinema (Nov 2026): 120 → 116dp — the same seat as the
+                // toasts, above the slimmer bottom bar (104dp).
+                .padding(start = 16.dp, end = 16.dp, bottom = 116.dp),
         ) {
             Column(Modifier.padding(16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -3310,13 +3385,11 @@ private fun OfflineCard(onRetry: () -> Unit) {
 private fun LockedTimeChip(positionMs: Long, durationMs: Long, lowRam: Boolean, modifier: Modifier = Modifier) {
     val spec = PlayerGlass.spec(lowRam)
     // GlassSpec carries alphas, not ready-made modifiers: the tint is a dark
-    // chip at tintAlpha (opaque when solid), the edge is 1dp white at
-    // borderAlpha (invisible when solid). Same frosted/solid split as the
-    // other glass bars, built from the fields the spec actually has.
+    // chip at tintAlpha (opaque when solid). Cinema (Nov 2026): the 1dp white
+    // edge at borderAlpha is gone — the solid tint is the chip, no outline.
     Box(
         modifier
             .background(Color.Black.copy(alpha = spec.tintAlpha), RoundedCornerShape(8.dp))
-            .border(1.dp, Color.White.copy(alpha = spec.borderAlpha), RoundedCornerShape(8.dp))
             .padding(horizontal = 10.dp, vertical = 6.dp),
     ) {
         Text(
@@ -3361,7 +3434,7 @@ private fun LiveMark(paused: Boolean = false, modifier: Modifier = Modifier) {
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(percent = 50))
-            .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(percent = 50))
+            // Cinema (Nov 2026): no outline — the solid 80% black fill is the pill.
             .background(Color.Black.copy(alpha = 0.80f), RoundedCornerShape(percent = 50))
             .padding(horizontal = 10.dp, vertical = 4.dp)
             .heightIn(min = 26.dp),
@@ -3451,7 +3524,6 @@ private fun StartNoticeCard(
         Surface(
             color = RaddPlayerStage,
             shape = RoundedCornerShape(24.dp),
-            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
             modifier = Modifier
                 .padding(horizontal = 24.dp, vertical = 16.dp)
                 .widthIn(max = 420.dp),
@@ -3632,13 +3704,8 @@ private fun GiveUpCard(
             dismissOnBackPress = false,
             dismissOnClickOutside = false,
         ),
-        // D-48: the dialog reads as a surface, not a slab on black — a 1dp
-        // outline in the dialog's own shape, over the tonal container.
-        modifier = Modifier.border(
-            1.dp,
-            MaterialTheme.colorScheme.outlineVariant,
-            MaterialTheme.shapes.extraLarge,
-        ),
+        // Cinema (Nov 2026): the dialog reads as a surface, not a slab on
+        // black — the tonal container is the surface; the 1dp outline is gone.
         containerColor = RaddPlayerDialog,
         icon = {
             // Session 121 (P-34): the logo-mark is the brand loader's job, not an
@@ -3971,14 +4038,7 @@ private fun SubtitleColourSwatch(colour: SubtitleColor, selected: Boolean, onSel
             Box(
                 modifier = Modifier
                     .size(20.dp)
-                    .background(paint, CircleShape)
-                    .then(
-                        if (selected) {
-                            Modifier.border(2.dp, Color.White, CircleShape)
-                        } else {
-                            Modifier.border(1.dp, Color.White.copy(alpha = 0.35f), CircleShape)
-                        },
-                    ),
+                    .background(paint, CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
                 if (selected) {
@@ -4080,7 +4140,6 @@ private fun ResumeChip(offerMs: Long, onResume: () -> Unit, onStartOver: () -> U
         Surface(
             color = RaddPlayerStage,
             shape = RoundedCornerShape(24.dp),
-            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
             modifier = Modifier
                 .padding(horizontal = 24.dp)
                 .widthIn(max = 420.dp)
