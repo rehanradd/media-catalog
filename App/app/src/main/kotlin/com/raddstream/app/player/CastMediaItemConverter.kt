@@ -55,8 +55,10 @@ class CastMediaItemConverter : MediaItemConverter {
     }
 
     override fun toMediaItem(mediaQueueItem: MediaQueueItem): MediaItem {
-        // The GMS accessor is getMedia(), not getMediaInfo().
-        val info = mediaQueueItem.media
+        // The GMS accessor is getMedia(), not getMediaInfo() — and it is
+        // @Nullable, so a queue item with no MediaInfo converts to the
+        // empty item rather than crashing the timeline read.
+        val info = mediaQueueItem.media ?: return MediaItem.EMPTY
         val metadata = MediaMetadata.Builder().apply {
             info.metadata?.title?.let { setTitle(it) }
         }.build()
