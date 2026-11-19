@@ -1,7 +1,6 @@
 package com.raddstream.app.player
 
 import androidx.annotation.OptIn
-import androidx.media3.cast.DefaultMediaItemConverter
 import androidx.media3.cast.MediaItemConverter
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
@@ -26,14 +25,14 @@ import com.google.android.gms.cast.MediaQueueItem
  * exist here. The queue item carries no autoplay or preload flags — the
  * defaults are the receiver's own.
  *
- * The reverse trip is Media3's own [DefaultMediaItemConverter], not a
- * second composer of ours: UniversalSourceTest pins exactly one
- * `MediaItem.Builder` in this codebase (PlaybackMediaItemFactory), and
- * delegating keeps it that way. The default preserves the address, the
- * title, and the declared type — a round trip of our own queue item
- * loads exactly as the original would (see CastMediaItemConverterTest).
- * A queue item with no MediaInfo converts to the empty item rather than
- * crashing the timeline read.
+ * The reverse trip is composed by [PlaybackMediaItemFactory], the one
+ * place that composes MediaItems — UniversalSourceTest pins the census
+ * to that file alone — mirroring the forward mapping (address, declared
+ * type, title) instead of Media3's own default converter: in 1.3.1 the
+ * default throws a NullPointerException on the queue item our forward
+ * conversion builds (MOVIE metadata carrying KEY_TITLE, x-mpegurl,
+ * STREAM_TYPE_BUFFERED). A queue item with no MediaInfo converts to the
+ * empty item rather than crashing the timeline read.
  *
  * Not carried, deliberately (same limits as the spike): subtitles (the
  * Default Receiver would need text tracks in the MediaInfo — a follow-up),
@@ -65,7 +64,7 @@ class CastMediaItemConverter : MediaItemConverter {
     }
 
     override fun toMediaItem(mediaQueueItem: MediaQueueItem): MediaItem {
-        if (mediaQueueItem.media == null) return MediaItem.EMPTY
-        return DefaultMediaItemConverter().toMediaItem(mediaQueueItem)
+        val info = mediaQueueItem.media ?: return MediaItem.EMPTY
+        return PlaybackMediaItemFactory.fromCastMediaInfo(info)
     }
 }

@@ -7,6 +7,8 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
+import com.google.android.gms.cast.MediaInfo
+import com.google.android.gms.cast.MediaMetadata as CastMediaMetadata
 
 /** An external subtitle the user picked (SAF file or bundle-provided URL). */
 data class ExternalSubtitle(
@@ -88,6 +90,36 @@ object PlaybackMediaItemFactory {
             .setUri(rendition.playback.playUrl)
         // A manifest must be told what it is before the reader is chosen: see manifestMimeType.
         manifestMimeType(rendition.playback)?.let { builder.setMimeType(it) }
+        return builder.build()
+    }
+
+    /**
+     * MX #9 — Cast: rebuild a MediaItem from a receiver queue item's
+     * MediaInfo, mirroring the forward mapping ([castContentType] +
+     * [buildCastMediaInfo]) — the redirector address as the URI, the
+     * declared content type back to the manifest declaration, the title
+     * back into the metadata.
+     *
+     * This lives here, not in the converter, because this file is the one
+     * place that composes MediaItems (UniversalSourceTest pins the census
+     * to this file alone). It also cannot delegate to Media3's own
+     * DefaultMediaItemConverter: in 1.3.1 the default throws a
+     * NullPointerException on the queue item our forward conversion builds
+     * (MOVIE metadata carrying KEY_TITLE, x-mpegurl, STREAM_TYPE_BUFFERED)
+     * — the one failure Android CI 44521482438 reported.
+     */
+    fun fromCastMediaInfo(info: MediaInfo): MediaItem {
+        val mimeType = when (info.contentType?.lowercase()?.trim()?.substringBefore(';')?.trim()) {
+            "application/x-mpegurl" -> MimeTypes.APPLICATION_M3U8
+            "application/dash+xml" -> MimeTypes.APPLICATION_MPD
+            else -> null
+        }
+        val builder = MediaItem.Builder().setUri(info.contentId)
+        mimeType?.let { builder.setMimeType(it) }
+        val title = info.metadata?.getString(CastMediaMetadata.KEY_TITLE)
+        if (title != null) {
+            builder.setMediaMetadata(MediaMetadata.Builder().setTitle(title).build())
+        }
         return builder.build()
     }
 
