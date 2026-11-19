@@ -1,13 +1,19 @@
 # Phase C — GDFlix host crack (2026-11-20)
 
 Branch: `muse/phase-c-gdflix-20261120`, base main `8f7948d2` (H4 R8; rebased
-to `44631e10` H4 R9 as `bd8b959a`). Worktree
+to `44631e10` H4 R9 as `bd8b959a`, then to `c27890db` H4 R10). Worktree
 `~/workspace/phase-c-gdflix-20261120`. No merge, no deploy, no live writes.
 
 Local verification (post-rebase): `test_gdflix_unwrap.py` 21/21,
 `test_ci_manifest.py` 10/10, `test_resolver_probes.py` (H4 R9) 18/18,
 `test_docs_invariants.py` 22/22, `test_database.py` 239 tests OK
-(skipped=1); gate suites 126 (`grep -c 'name: 🧪'`).
+(skipped=1); gate suites 127 (`grep -c 'name: 🧪'`).
+
+CI round 1 (run 44626718329, tip `0b360e7b`): FAILED on
+`test_ci_manifest.py` only — `test_manifest_is_never_a_subset_of_trunks`:
+main had moved to `c27890db` (H4 R10, `test_network_intercept.py`) under
+the branch. Fixed by rebasing onto `c27890db` (kept both suites in
+`backend-ci.yml` + `MANDATORY_RUN`); re-pushed for round 2.
 
 ## Verdict (02:5x PKT 20 Nov)
 
@@ -135,7 +141,8 @@ only, not live play):
 - `Fast_Fetch/test_gdflix_unwrap.py`: offline mocked tests for the chain
   (Instant DL, legacy buttons, DriveBot, onload wrapper, dead page, challenge
   page, no-button page). Registered in `backend-ci.yml` gate step +
-  `test_ci_manifest.py` MANDATORY_RUN (gate step 126).
+  `test_ci_manifest.py` MANDATORY_RUN (gate step 127 after the H4 R10
+  rebase).
 - Existing `test_database.py` gdflix tests still pass (3 targeted + full
   module 239 tests OK, skipped=1, post-rebase).
 
