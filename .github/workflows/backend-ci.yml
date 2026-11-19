@@ -910,6 +910,13 @@ jobs:
       - name: 🧪 test_backfill_hubcdn.py
         run: python3 -S Fast_Fetch/test_backfill_hubcdn.py
 
+      # Phase C lane E (hubcdn): the probe-gate magic sniff
+      # (current_hosts.classify_probe) — a 206 application/octet-stream on
+      # an extension-less URL passes when the bytes prove a video
+      # container. Offline, FetchResult fixtures, no network.
+      - name: 🧪 test_probe_classify.py
+        run: python3 -S Fast_Fetch/test_probe_classify.py
+
       # XprimeHub (Session 104): the 19th site, 18+ adult catalog — scrape only.
       # The flag is the feature: every row is_18_plus = 1 by site authority, and the
       # registry entry records scrape-only / never publish. Offline — temp SQLite files.

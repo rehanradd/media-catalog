@@ -7123,7 +7123,12 @@ RESOLVE_FAILURE_CLASSES = ("probe_failed", "no_unwrapper", "unwrap_failed")
 #: instead of "unknown", cineverse chains through the vidrift iframe the
 #: proxy now publishes, and doodstream has an unwrapper for the first
 #: time — every one of those rows deserves one fresh press.
-RESOLVER_VERSION = 5
+#: 6 — Phase C lane E (hubcdn, 2026-11-20): the Stage-2 gate now reads
+#: the container magic, so a 206 application/octet-stream on an
+#: extension-less URL with EBML/ftyp/AVI bytes passes instead of failing
+#: "unverified" — hubcdn R2 assets failed under v5 exactly that way, and
+#: the rows deserve one fresh press now that the bytes are read.
+RESOLVER_VERSION = 6
 
 
 def _is_transport_verdict(verdict) -> bool:
