@@ -91,6 +91,7 @@ MANDATORY_RUN = (
     "test_stream_resolvers.py",
     "test_hubcdn_unwrap.py",
     "test_backfill_hubcdn.py",
+    "test_probe_classify.py",
     # Phase C multiup (2026-11-20): mirror-hub unwrap, verified offline green
     # on the lane (18 tests) before it became a step.
     "test_multiup_unwrap.py",

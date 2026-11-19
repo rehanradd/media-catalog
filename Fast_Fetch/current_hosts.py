@@ -187,6 +187,30 @@ def _is_video_mime(content_type: str) -> bool:
     return ct.startswith("video/") or ct.startswith("audio/")
 
 
+def _video_mime_from_magic(body: bytes) -> str | None:
+    """Container mime sniffed from the first bytes, or None.
+
+    R2 (and other object stores) serve an upload with the content type
+    the uploader set — the hubcdn R2 assets are often plain
+    ``application/octet-stream`` on an extension-less URL, so neither the
+    mime nor the suffix proves a video. The bytes do: EBML (Matroska/WebM),
+    an ftyp box (MP4), or a RIFF/AVI header. Measured 2026-11-20 on live
+    hubcdn R2 assets (ids 6169709, 6169755, 290696): 206, octet-stream,
+    EBML magic ``1a45dfa3`` — the gate called them ``unverified`` and the
+    press failed with ``no_playable_source`` until the magic was read.
+    """
+    data = body or b""
+    if data[:4] == b"\x1a\x45\xdf\xa3":
+        # EBML shell: Matroska, and WebM shares the shell — the catalog's
+        # hubcdn assets are .mkv, so the Matroska mime is reported.
+        return "video/x-matroska"
+    if len(data) >= 8 and data[4:8] == b"ftyp":
+        return "video/mp4"
+    if data[:4] == b"RIFF" and len(data) >= 12 and data[8:12] == b"AVI ":
+        return "video/x-msvideo"
+    return None
+
+
 def classify_probe(result: FetchResult, url: str = "") -> dict:
     """Turn one probe exchange into an honest verdict (never a guess).
 
@@ -248,13 +272,19 @@ def classify_probe(result: FetchResult, url: str = "") -> dict:
                 "resumable": False, "renditions": [],
                 "failure": "empty_playlist"}
 
+    magic_mime = _video_mime_from_magic(body)
     if status in (200, 206) and (_is_video_mime(ct) or
                                  (ct == "application/octet-stream" and
-                                  urllib.parse.urlsplit(url).path.lower().endswith(_MEDIA_SUFFIXES))):
+                                  (urllib.parse.urlsplit(url).path.lower().endswith(_MEDIA_SUFFIXES)
+                                   or magic_mime is not None))):
         ranges = (headers.get("accept-ranges") or "").lower()
         resumable = status == 206 or "bytes" in ranges
         return {"ok": True, "kind": "file",
-                "mime": ct or None, "size": size, "resumable": resumable,
+                # The bytes proved the container where the content type did
+                # not: report the container mime so the tier ranking reads
+                # the copy as video (H4 R6), not as an unknown octet-stream.
+                "mime": (ct if _is_video_mime(ct) else (magic_mime or ct)) or None,
+                "size": size, "resumable": resumable,
                 "renditions": [], "failure": None}
 
     if status == 200 and ("text/html" in ct or "<html" in text.lower()[:2048]):

@@ -944,6 +944,13 @@ jobs:
       - name: 🧪 test_backfill_hubcdn.py
         run: python3 -S Fast_Fetch/test_backfill_hubcdn.py
 
+      # Phase C lane E (hubcdn): the probe-gate magic sniff
+      # (current_hosts.classify_probe) — a 206 application/octet-stream on
+      # an extension-less URL passes when the bytes prove a video
+      # container. Offline, FetchResult fixtures, no network.
+      - name: 🧪 test_probe_classify.py
+        run: python3 -S Fast_Fetch/test_probe_classify.py
+
       # Multiup mirror hub (Phase C, 2026-11-20): GET download page, POST its
       # CSRF token to /en/mirror/<id>, unwrap the best mirror (gofile, then
       # mixdrop). Offline — canned pages via the _http seam, stub resolvers.
