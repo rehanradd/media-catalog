@@ -23,7 +23,14 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        minSdk = 21
+        // minSdk 23, not the app's 21: benchmark-macro-junit4 1.4.1
+        // declares minSdk 23, and the manifest merger refuses a module
+        // lower than its library (proven by Android CI 44426842277).
+        // This module never ships in the app — it is a test APK that runs
+        // on the generation device only — so its floor does not move the
+        // app's 21, and generation already needs a rooted device or
+        // API 33+ anyway.
+        minSdk = 23
         targetSdk = 35
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

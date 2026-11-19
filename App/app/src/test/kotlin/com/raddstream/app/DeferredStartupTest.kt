@@ -42,28 +42,36 @@ class DeferredStartupTest {
     @Test
     fun `a throwing step does not stop the steps after it`() {
         val seen = mutableListOf<String>()
+        val failures = mutableListOf<Throwable>()
         val deferred = DeferredStartup(
             listOf(
                 { seen += "before" },
                 { throw IllegalStateException("boom") },
                 { seen += "after" },
             ),
+            // The handler is injected (not android.util.Log): Log.w is a
+            // native stub on the JVM test classpath and throws
+            // UnsatisfiedLinkError there (proven by CI 44426842277).
+            onStepFailure = { failures += it },
         )
 
-        // Must not throw: the failure is logged, the rest still runs.
+        // Must not throw: the failure is reported, the rest still runs.
         deferred.start()
 
         assertEquals(listOf("before", "after"), seen)
+        assertEquals(listOf("boom"), failures.map { it.message })
     }
 
     @Test
     fun `a throwing step still counts as started`() {
         var runs = 0
+        val failures = mutableListOf<Throwable>()
         val deferred = DeferredStartup(
             listOf(
                 { throw IllegalStateException("boom") },
                 { runs++ },
             ),
+            onStepFailure = { failures += it },
         )
 
         deferred.start()
@@ -72,6 +80,7 @@ class DeferredStartupTest {
         // The second start is a no-op even though the first one failed a
         // step: "exactly once" is about the attempt, not about success.
         assertEquals(1, runs)
+        assertEquals(listOf("boom"), failures.map { it.message })
     }
 
     @Test

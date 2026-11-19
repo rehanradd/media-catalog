@@ -21,9 +21,15 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Fault isolation is the second half: a step that throws must not take the
  * rest down with it. `onCreate` used to call these starts in sequence with
  * no guard, so one throwing start could crash the launch and starve the
- * steps after it. Here a failing step is logged and the next one still
- * runs — a cache engine that cannot start must not also kill the LAN
- * socket, the membership read, or the download resume.
+ * steps after it. Here a failing step is reported through [onStepFailure]
+ * and the next one still runs — a cache engine that cannot start must not
+ * also kill the LAN socket, the membership read, or the download resume.
+ *
+ * [onStepFailure] defaults to a logcat line; it is a constructor parameter
+ * (not a direct `Log` call) so the unit tests stay plain JVM: `Log.w` is a
+ * native stub on the JVM test classpath and throws `UnsatisfiedLinkError`
+ * there (proven by Android CI 44426842277), so a test that exercises the
+ * failure path must be able to pass its own handler.
  *
  * Unit-tested (see `DeferredStartupTest`): exactly-once, order, and the
  * throw-does-not-stop-the-rest rule. The wiring — who calls [start] and
@@ -33,6 +39,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 class DeferredStartup(
     private val steps: List<() -> Unit>,
+    private val onStepFailure: (Throwable) -> Unit = { error ->
+        Log.w(TAG, "deferred startup step failed, continuing: ${error.message}")
+    },
 ) {
     private val started = AtomicBoolean(false)
 
@@ -40,9 +49,7 @@ class DeferredStartup(
     fun start() {
         if (!started.compareAndSet(false, true)) return
         for (step in steps) {
-            runCatching { step() }.onFailure { error ->
-                Log.w(TAG, "deferred startup step failed, continuing: ${error.message}")
-            }
+            runCatching { step() }.onFailure { error -> onStepFailure(error) }
         }
     }
 
