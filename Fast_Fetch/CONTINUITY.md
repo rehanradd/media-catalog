@@ -7,7 +7,7 @@
 
 ## ✅ Open items — index (q3, 2026-10-30; pointers only)
 
-1. **This file is a pointer, not a history** 131 session files (128 dated + 3 undated) cover
+1. **This file is a pointer, not a history** 132 session files (129 dated + 3 undated) cover
 
    every one of them verbatim: [`checkpoints/README.md`](checkpoints/README.md). Nothing was
    deleted, reworded, or summarized. The count is `ls Fast_Fetch/checkpoints/*.md` minus `README.md`,
@@ -71,6 +71,7 @@
 ## Rotated session history
 
 The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete index.
+- [2026-11-20 — Phase C SexTB importer: NO IMPORTER](checkpoints/20261120-phasec-sextb-importer.md): sextb.net alive but geo/IP-walled from all server egress (homepage/sitemap/video URL all 403 "Access Restricted"); no fetchable surface, so no importer built — hollow importers forbidden. Unblocks: real-browser HAR from an allowed region, WARP egress test, or earned clearance.
 - [B2 episode_guide — 2026-11-19](checkpoints/20261119-b2-episode-guide.md)
 - MX #4 Skip Intro (2026-11-19, muse/mx-skip-intro-20261119): TheIntroDB v3 segments — cat_media_segments + lookups, backfill_segments.py (staging SQL only), play_bundle "segments" (pack-offset shift/omit); CI green: backend 44467838435, Android 44468545737 attempt 2 (2,544 tests); tip 6afe9d9f ready to merge.
 - [2026-11-19 — H4 R5 shared streaming cache](checkpoints/20261119-h4-shared-cache.md): demand ledger + sibling-band warm + prefetch --demand; 33 tests green locally, Backend CI pending.
@@ -79,8 +80,6 @@ The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete i
 - [Session 2026-11-12 — self-check `[LIVE-TV-503]`](checkpoints/20261112-selfcheck-live-tv-503-logos.md)
 - [2026-11-20 — Phase C GDFlix button-flow resolver](checkpoints/20261120-phase-c-gdflix.md): real button-flow resolver (Instant DL chain + legacy buttons + DriveBot); 21 tests green locally, Backend CI pending; NOT cracked — Oracle egress gets a Cloudflare managed challenge, chain proven to the signed Google URL from hatch egress only.
 - [2026-11-20 — H4 R10 network-intercept fallback](checkpoints/20261120-h4-r10-network-intercept.md): network failures (transport / intermediary block) retried through a bounded alternate route before any dead verdict; WIP, Backend CI pending.
-- [2026-11-20 — H4 R9 resolver probes](checkpoints/20261120-h4-r9-resolver-probes.md): serve-time re-probe of an aging banked row before it is 302'd — fresh rows serve unprobed, a verifying probe refreshes the row, an endpoint-answered failure reads as a cache miss (live resolver fails over), a no-answer probe serves fail-open; 18 tests, merged 44631e10.
-- [2026-11-20 — H4 R8 clearance-cookie reuse](checkpoints/20261120-h4-r8-clearance-cookie.md): per-host clearance store + probe/resolver wiring; 43 tests, merged 8f7948d2.
 
 ## Moved out (reference prose, verbatim)
 
