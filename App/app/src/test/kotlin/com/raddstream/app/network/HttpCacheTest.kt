@@ -90,6 +90,8 @@ class HttpCacheTest {
         assertEquals(60, httpCacheMaxAgeSeconds(HttpCacheClass.SEARCH))
         assertEquals(86_400, httpOfflineMaxStaleSeconds(HttpCacheClass.BROWSE))
         assertEquals(3_600, httpOfflineMaxStaleSeconds(HttpCacheClass.SEARCH))
+        assertEquals(1_800, httpStaleWindowSeconds(HttpCacheClass.BROWSE))
+        assertEquals(300, httpStaleWindowSeconds(HttpCacheClass.SEARCH))
     }
 
     // ── network interceptor: force max-age when the server sent none ──
@@ -126,12 +128,12 @@ class HttpCacheTest {
         assertNull(CacheControlNetworkInterceptor().intercept(config).header("Cache-Control"))
     }
 
-    // ── offline interceptor: serve stale instead of failing ──────────
+    // ── freshness interceptor: serve stale instead of failing ────────
 
     @Test
     fun `offline interceptor rewrites a browse get to only-if-cached`() {
         val chain = FakeChain("https://api.example.test/api/v1/posts")
-        OfflineCacheInterceptor(isOffline = { true }).intercept(chain)
+        CacheFreshnessInterceptor(isOffline = { true }).intercept(chain)
         assertEquals(
             "only-if-cached, max-stale=86400",
             chain.capturedRequest?.header("Cache-Control"),
@@ -141,7 +143,7 @@ class HttpCacheTest {
     @Test
     fun `offline interceptor rewrites a search get with the shorter stale window`() {
         val chain = FakeChain("https://api.example.test/api/v2/search?q=love")
-        OfflineCacheInterceptor(isOffline = { true }).intercept(chain)
+        CacheFreshnessInterceptor(isOffline = { true }).intercept(chain)
         assertEquals(
             "only-if-cached, max-stale=3600",
             chain.capturedRequest?.header("Cache-Control"),
@@ -149,19 +151,50 @@ class HttpCacheTest {
     }
 
     @Test
-    fun `online requests pass through untouched`() {
+    fun `online browse get carries the thirty minute stale window`() {
+        // Preload + caches (Nov 2026): the client half of
+        // stale-while-revalidate — a repeat visit inside the window serves
+        // from disk with no round trip. OkHttp 4.12 reads max-stale only
+        // from the request, so this header is the mechanism.
         val chain = FakeChain("https://api.example.test/api/v1/posts")
-        OfflineCacheInterceptor(isOffline = { false }).intercept(chain)
-        assertNull(chain.capturedRequest?.header("Cache-Control"))
+        CacheFreshnessInterceptor(isOffline = { false }).intercept(chain)
+        assertEquals("max-stale=1800", chain.capturedRequest?.header("Cache-Control"))
+    }
+
+    @Test
+    fun `online search get carries the five minute stale window`() {
+        val chain = FakeChain("https://api.example.test/api/v2/search?q=love")
+        CacheFreshnessInterceptor(isOffline = { false }).intercept(chain)
+        assertEquals("max-stale=300", chain.capturedRequest?.header("Cache-Control"))
+    }
+
+    @Test
+    fun `online request with its own cache control is left alone`() {
+        val chain = FakeChain(
+            "https://api.example.test/api/v1/posts",
+            requestHeaders = mapOf("Cache-Control" to "no-cache"),
+        )
+        CacheFreshnessInterceptor(isOffline = { false }).intercept(chain)
+        assertEquals("no-cache", chain.capturedRequest?.header("Cache-Control"))
     }
 
     @Test
     fun `offline posts and panel calls pass through untouched`() {
         val play = FakeChain("https://api.example.test/api/v2/play", method = "POST")
-        OfflineCacheInterceptor(isOffline = { true }).intercept(play)
+        CacheFreshnessInterceptor(isOffline = { true }).intercept(play)
         assertNull(play.capturedRequest?.header("Cache-Control"))
         val config = FakeChain("https://api.example.test/api/v1/app/remote-config")
-        OfflineCacheInterceptor(isOffline = { true }).intercept(config)
+        CacheFreshnessInterceptor(isOffline = { true }).intercept(config)
+        assertNull(config.capturedRequest?.header("Cache-Control"))
+    }
+
+    @Test
+    fun `online posts and panel calls pass through untouched`() {
+        val play = FakeChain("https://api.example.test/api/v2/play", method = "POST")
+        CacheFreshnessInterceptor(isOffline = { false }).intercept(play)
+        assertNull(play.capturedRequest?.header("Cache-Control"))
+        val config = FakeChain("https://api.example.test/api/v1/app/remote-config")
+        CacheFreshnessInterceptor(isOffline = { false }).intercept(config)
         assertNull(config.capturedRequest?.header("Cache-Control"))
     }
 
@@ -174,10 +207,12 @@ class HttpCacheTest {
         url: String,
         private val method: String = "GET",
         private val responseHeaders: Map<String, String> = emptyMap(),
+        private val requestHeaders: Map<String, String> = emptyMap(),
     ) : Interceptor.Chain {
 
         private val request = Request.Builder().url(url).apply {
             if (method == "POST") post("".toRequestBody()) else get()
+            requestHeaders.forEach { (name, value) -> header(name, value) }
         }.build()
         var capturedRequest: Request? = null
             private set

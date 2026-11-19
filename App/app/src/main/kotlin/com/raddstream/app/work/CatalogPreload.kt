@@ -22,6 +22,15 @@ internal const val SYNC_PAGE_LIMIT: Int = 20
 internal const val SYNC_MAX_TITLES_PER_RUN: Int = 5_000
 
 /**
+ * Posters per sync run — the first 100 trending titles' art, in popularity
+ * order. A tile-sized poster is ~30–60 KB, so 100 posters are ~3–6 MB on
+ * the overnight unmetered window, and the morning's first offline search
+ * hit shows art, not shimmer. The titles are banked first either way; the
+ * posters are the warm on top of the index.
+ */
+internal const val SYNC_POSTER_WARM_MAX: Int = 100
+
+/**
  * The overnight window, shared by both preload workers: unmetered network
  * only (never mobile data), charging, idle, battery not low, storage not
  * low. The trade-off is stated, not hidden: a phone that is rarely

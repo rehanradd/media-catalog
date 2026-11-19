@@ -30,11 +30,20 @@ import kotlinx.coroutines.flow.first
 /** Home rails: first two posters per visible rail, capped. */
 internal const val HOME_RAIL_PREFETCH_MAX: Int = 20
 
-/** Search: first page's posters, capped. */
-internal const val SEARCH_PREFETCH_MAX: Int = 12
+/** Search: one page's posters per results landing, capped. */
+internal const val SEARCH_PREFETCH_MAX: Int = 20
 
 /** Detail: backdrop + similar-rail posters, capped. */
 internal const val DETAIL_PREFETCH_MAX: Int = 8
+
+/**
+ * Paged grids (Browse, Search): how far past the last visible row the
+ * scroll-ahead prefetch reaches — one screen of a two-column grid.
+ */
+internal const val SCROLL_AHEAD_PREFETCH_LOOKAHEAD: Int = 12
+
+/** Paged grids: the most posters one scroll tick warms — visible + ahead. */
+internal const val SCROLL_AHEAD_PREFETCH_MAX: Int = 24
 
 /**
  * Warm up to [max] poster URLs with the hero's guards. Blanks dropped,
@@ -82,18 +91,49 @@ internal fun homeRailPrefetchUrls(
         .take(max)
 
 /**
- * Search: the first page's posters across the result groups, in group
- * order. Pure, so the selection is assertable without Coil.
+ * Search: the next posters in load order that this query has not warmed
+ * yet — the first page on the first landing, then one page per landing
+ * after that, so the warm keeps pace with the data instead of re-warming
+ * the first page on every page. The caller keeps [alreadyPrefetched] (one
+ * set per query) and adds what comes back. Pure, so the selection is
+ * assertable without Coil.
  */
-internal fun searchPrefetchUrls(
+internal fun searchNextPrefetchUrls(
     groups: List<TypeGroup>,
+    alreadyPrefetched: Set<String>,
     max: Int = SEARCH_PREFETCH_MAX,
 ): List<String> =
     groups.flatMap { group ->
         group.items.mapNotNull { it.posterUrl?.takeIf { url -> url.isNotBlank() } }
     }
         .distinct()
+        .filter { it !in alreadyPrefetched }
         .take(max)
+
+/**
+ * Paged grids: the posters for the rows from [firstVisibleIndex] through
+ * [lookahead] rows past [lastVisibleIndex] — the visible screen plus one
+ * screen ahead of it — in list order. Placeholders (`null`) have no art
+ * yet, blanks and duplicates drop out, and the window is clamped to the
+ * loaded snapshot, so a footer index or a short tail can never overrun
+ * it. Pure, so the selection is assertable without Coil.
+ */
+internal fun scrollAheadPrefetchUrls(
+    items: List<Post?>,
+    firstVisibleIndex: Int,
+    lastVisibleIndex: Int,
+    lookahead: Int = SCROLL_AHEAD_PREFETCH_LOOKAHEAD,
+    max: Int = SCROLL_AHEAD_PREFETCH_MAX,
+): List<String> {
+    if (items.isEmpty() || firstVisibleIndex >= items.size) return emptyList()
+    val start = firstVisibleIndex.coerceAtLeast(0)
+    val end = minOf(lastVisibleIndex + lookahead, items.size - 1)
+    if (end < start) return emptyList()
+    return items.subList(start, end + 1)
+        .mapNotNull { it?.posterUrl?.takeIf { url -> url.isNotBlank() } }
+        .distinct()
+        .take(max)
+}
 
 /**
  * Detail: the title's own art first — widest backdrop, else poster — then

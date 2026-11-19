@@ -6,6 +6,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkerParameters
 import com.raddstream.app.network.models.Post
+import com.raddstream.app.ui.components.prefetchPosterArt
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import java.util.concurrent.TimeUnit
@@ -18,7 +19,10 @@ import kotlinx.coroutines.ensureActive
  * trending list (popularity order — the same ranking the FTS index orders
  * by) and lets each page upsert itself into the index through the
  * repository's own `cachePosts`, until the per-run cap, a short page, or a
- * page the server cannot serve.
+ * page the server cannot serve. The first 100 titles' posters are warmed
+ * through the S2 helper as well, so a title found offline in the morning
+ * already has its art on disk (Nov 2026: the index knew the titles, but
+ * their posters still downloaded on demand).
  *
  * The dedicated catalog-index endpoint (§5.2) does not exist yet — when it
  * lands, this loop's fetcher swaps to it and the 20k tier opens; the cap,
@@ -40,7 +44,7 @@ class CatalogIndexSyncWorker @AssistedInject constructor(
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result = runCatching {
-        syncCatalogIndex(catalog)
+        syncCatalogIndex(catalog, prefetchPosters = { urls -> prefetchPosterArt(applicationContext, urls) })
     }.fold(
         onSuccess = { Result.success() },
         onFailure = { Result.success() },
@@ -62,6 +66,12 @@ class CatalogIndexSyncWorker @AssistedInject constructor(
  * short page, or a page the server cannot serve. Returns the titles banked
  * this run.
  *
+ * The first [posterWarmMax] banked titles' posters are handed to
+ * [prefetchPosters] once, at the end, in popularity order — the run's
+ * hottest titles, so their art is on disk before the morning. A run that
+ * stops halfway still warms what it banked; a run that banks nothing
+ * warms nothing.
+ *
  * A v2 that answers null on the first page means an old server: the run
  * falls back to the v1 trending list, page-numbered, for the whole run. A
  * v2 that dies mid-run stops the run instead of switching mid-stream — a
@@ -73,11 +83,14 @@ class CatalogIndexSyncWorker @AssistedInject constructor(
 suspend fun syncCatalogIndex(
     catalog: CatalogPreloadCatalog,
     maxTitles: Int = SYNC_MAX_TITLES_PER_RUN,
+    prefetchPosters: suspend (List<String>) -> Unit = {},
+    posterWarmMax: Int = SYNC_POSTER_WARM_MAX,
 ): Int {
     var banked = 0
     var cursor: String? = null
     var v1Page = 1
     var useV1 = false
+    val posterUrls = linkedSetOf<String>()
     while (banked < maxTitles) {
         currentCoroutineContext().ensureActive()
         val posts: List<Post> = runCatching {
@@ -103,8 +116,15 @@ suspend fun syncCatalogIndex(
         }.getOrNull() ?: break
         if (posts.isEmpty()) break
         banked += posts.size
+        if (posterUrls.size < posterWarmMax) {
+            for (post in posts) {
+                if (posterUrls.size >= posterWarmMax) break
+                post.posterUrl?.takeIf { it.isNotBlank() }?.let { posterUrls += it }
+            }
+        }
         val lastPage = if (useV1) posts.size < SYNC_PAGE_LIMIT else cursor == null
         if (lastPage) break
     }
+    if (posterUrls.isNotEmpty()) prefetchPosters(posterUrls.toList())
     return banked
 }

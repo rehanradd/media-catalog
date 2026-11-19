@@ -65,6 +65,15 @@ class CatalogIndexSyncWorkerTest {
     private fun posts(prefix: String, count: Int, startId: Int = 0): List<Post> =
         (1..count).map { Post(id = startId + it, title = "$prefix $it") }
 
+    private fun posters(prefix: String, count: Int, startId: Int = 0): List<Post> =
+        (1..count).map {
+            Post(
+                id = startId + it,
+                title = "$prefix $it",
+                posterUrl = "https://example.test/$prefix-$it.jpg",
+            )
+        }
+
     @Test
     fun `sync pages the v2 list and stops on the last page`() = runBlocking {
         val catalog = FakeCatalog(
@@ -121,6 +130,50 @@ class CatalogIndexSyncWorkerTest {
         val banked = syncCatalogIndex(catalog)
         assertEquals(20, banked)
         assertEquals(1, catalog.calls)
+    }
+
+    @Test
+    fun `sync warms the posters of the banked titles in popularity order`() = runBlocking {
+        val catalog = FakeCatalog(
+            v2Pages = listOf(posters("a", 20), posters("b", 20), posters("c", 5)),
+        )
+        val warmed = mutableListOf<List<String>>()
+        val banked = syncCatalogIndex(catalog, prefetchPosters = { warmed += it })
+        assertEquals(45, banked)
+        assertEquals(1, warmed.size)
+        assertEquals(45, warmed.single().size)
+        assertEquals("https://example.test/a-1.jpg", warmed.single().first())
+        assertEquals("https://example.test/c-5.jpg", warmed.single().last())
+    }
+
+    @Test
+    fun `sync warms at most one hundred posters`() = runBlocking {
+        val catalog = FakeCatalog(v2Pages = List(10) { posters("p$it", 20, startId = it * 20) })
+        val warmed = mutableListOf<List<String>>()
+        val banked = syncCatalogIndex(catalog, prefetchPosters = { warmed += it })
+        assertEquals(200, banked)
+        assertEquals(100, warmed.single().size)
+    }
+
+    @Test
+    fun `sync warms nothing when nothing is banked`() = runBlocking {
+        var calls = 0
+        val banked = syncCatalogIndex(FakeCatalog(), prefetchPosters = { calls++ })
+        assertEquals(0, banked)
+        assertEquals(0, calls)
+    }
+
+    @Test
+    fun `sync warms what it banked when v2 dies mid-run`() = runBlocking {
+        val catalog = FakeCatalog(
+            v2Pages = listOf(posters("a", 20), posters("b", 20), posters("c", 20)),
+            failV2At = 3,
+        )
+        val warmed = mutableListOf<List<String>>()
+        val banked = syncCatalogIndex(catalog, prefetchPosters = { warmed += it })
+        assertEquals(40, banked)
+        assertEquals(40, warmed.single().size)
+        assertEquals("https://example.test/b-20.jpg", warmed.single().last())
     }
 
     // The Hilt factory pin: the same shape CacheSweepWorkerTest pins. If

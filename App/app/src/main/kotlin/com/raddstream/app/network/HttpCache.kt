@@ -41,6 +41,17 @@ import okhttp3.Response
  *   `only-if-cached, max-stale=…` (24 h browse, 1 h search) so a stale copy
  *   serves instead of failing. No cached copy means the same failure as
  *   before — a 504 from OkHttp, never a fabricated answer.
+ * - Online, the same interceptor adds a request-side `max-stale` to a
+ *   cacheable GET (30 min browse, 5 min search), so a repeat visit inside
+ *   the window serves from disk with no network round trip at all. This
+ *   is the client half of stale-while-revalidate: OkHttp 4.12.0 does NOT
+ *   honour a response `stale-while-revalidate` (its `CacheStrategy`
+ *   reads `max-stale` only from the *request* — `CacheStrategy.kt`,
+ *   `computeCandidate`, parent-4.12.0), so a header forced onto the
+ *   response would do nothing. The request header is what makes a stale
+ *   copy serve, and it is also what the offline rewrite already relies
+ *   on. A request that already carries a `Cache-Control` of its own is
+ *   left alone, so an explicit refresh still bypasses the cache.
  */
 
 /** The disk cache budget for catalog GETs — 50 MB under `cacheDir/http`. */
@@ -59,6 +70,18 @@ const val BROWSE_OFFLINE_MAX_STALE_SECONDS: Int = 86_400
 
 /** Offline, a search answer may serve stale for up to 1 hour. */
 const val SEARCH_OFFLINE_MAX_STALE_SECONDS: Int = 3_600
+
+/**
+ * Online, a browse/rails answer may serve stale for up to 30 minutes past
+ * its 5-minute freshness — a repeat visit inside the window is a disk
+ * read, not a network round trip. Rails change slowly (new titles land
+ * over hours), so the staleness is bounded and the gain is a repeat open
+ * with no wait.
+ */
+const val BROWSE_STALE_WINDOW_SECONDS: Int = 1_800
+
+/** Online, a search answer may serve stale for up to 5 minutes past its 1-minute freshness. */
+const val SEARCH_STALE_WINDOW_SECONDS: Int = 300
 
 /** Which cache bucket a catalog read belongs to — the freshness it gets. */
 internal enum class HttpCacheClass {
@@ -104,6 +127,12 @@ internal fun httpOfflineMaxStaleSeconds(cacheClass: HttpCacheClass): Int = when 
     HttpCacheClass.SEARCH -> SEARCH_OFFLINE_MAX_STALE_SECONDS
 }
 
+/** The online `max-stale` window for a bucket, in seconds. */
+internal fun httpStaleWindowSeconds(cacheClass: HttpCacheClass): Int = when (cacheClass) {
+    HttpCacheClass.BROWSE -> BROWSE_STALE_WINDOW_SECONDS
+    HttpCacheClass.SEARCH -> SEARCH_STALE_WINDOW_SECONDS
+}
+
 /**
  * Network interceptor: force a `Cache-Control: public, max-age=…` onto a
  * cacheable GET response that carries no cache headers of its own, so the
@@ -126,27 +155,39 @@ class CacheControlNetworkInterceptor : Interceptor {
 }
 
 /**
- * Application interceptor: when there is no connectivity, serve a cacheable
- * GET stale instead of failing. The request is rewritten to
- * `only-if-cached, max-stale=…`, so OkHttp answers from the disk cache
- * without touching the network — and 504s when nothing is cached, exactly
- * as an offline request without a cache would fail.
+ * Application interceptor: the request-side half of the cache. When there
+ * is no connectivity it rewrites a cacheable GET to `only-if-cached,
+ * max-stale=…`, so OkHttp answers from the disk cache without touching
+ * the network — and 504s when nothing is cached, exactly as an offline
+ * request without a cache would fail. When there IS connectivity it adds
+ * `max-stale=…` to a cacheable GET that carries no `Cache-Control` of its
+ * own, so a repeat visit inside the stale window serves from disk with no
+ * round trip — the client half of stale-while-revalidate (see the file
+ * KDoc for why the response header would not work on OkHttp 4.12.0). A
+ * request that already carries a `Cache-Control` is left alone, so an
+ * explicit refresh still bypasses the cache.
  */
-class OfflineCacheInterceptor(
+class CacheFreshnessInterceptor(
     private val isOffline: () -> Boolean,
 ) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
-        if (!isOffline()) return chain.proceed(request)
         val cacheClass = httpCacheClassFor(request.url, request.method)
             ?: return chain.proceed(request)
-        val staleRequest = request.newBuilder()
-            .header(
-                "Cache-Control",
-                "only-if-cached, max-stale=${httpOfflineMaxStaleSeconds(cacheClass)}",
-            )
+        if (isOffline()) {
+            val staleRequest = request.newBuilder()
+                .header(
+                    "Cache-Control",
+                    "only-if-cached, max-stale=${httpOfflineMaxStaleSeconds(cacheClass)}",
+                )
+                .build()
+            return chain.proceed(staleRequest)
+        }
+        if (request.header("Cache-Control") != null) return chain.proceed(request)
+        val freshRequest = request.newBuilder()
+            .header("Cache-Control", "max-stale=${httpStaleWindowSeconds(cacheClass)}")
             .build()
-        return chain.proceed(staleRequest)
+        return chain.proceed(freshRequest)
     }
 }
 
@@ -163,16 +204,16 @@ object HttpCacheModule {
     fun provideHttpCache(@ApplicationContext context: Context): Cache = httpCache(context)
 
     /**
-     * The offline interceptor, wired to the platform's own connectivity
+     * The cache-freshness interceptor, wired to the platform's own connectivity
      * verdict. [ConnectivityProbe.current] fails OPEN to MOBILE (not NONE)
      * when the platform refuses the query, so a probe failure means a
      * normal network attempt, never a stale serve on a live connection.
      */
     @Provides
     @Singleton
-    fun provideOfflineCacheInterceptor(
+    fun provideCacheFreshnessInterceptor(
         @ApplicationContext context: Context,
-    ): OfflineCacheInterceptor = OfflineCacheInterceptor(
+    ): CacheFreshnessInterceptor = CacheFreshnessInterceptor(
         isOffline = { ConnectivityProbe.current(context) == NetworkClass.NONE },
     )
 }

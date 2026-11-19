@@ -28,6 +28,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -44,6 +45,8 @@ import com.raddstream.app.ui.components.InlineLoadFailure
 import com.raddstream.app.ui.components.PosterCard
 import com.raddstream.app.ui.components.PosterCellSkeleton
 import com.raddstream.app.ui.components.PosterGridSkeleton
+import com.raddstream.app.ui.components.prefetchPosterArt
+import com.raddstream.app.ui.components.scrollAheadPrefetchUrls
 import com.raddstream.app.viewmodel.BrowseViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -67,11 +70,36 @@ fun BrowseScreen(
     // renders no row at all.
     val firstVisibleItem = gridState.firstVisibleItemIndex
     var lastReportedItem by remember { mutableStateOf(0) }
-    LaunchedEffect(firstVisibleItem) {
+    // Feel-instant S6: the list states come from the PagingData's loadState
+    // now, not a ViewModel list. `itemCount` counts the placeholders too,
+    // so the loaded count reads the loaded snapshot.
+    val loadedCount = pagingItems.itemSnapshotList.count { it != null }
+    // Preload + caches (Nov 2026): scroll-ahead poster prefetch. Browse was
+    // the one paged list that never warmed anything — Home warms its rails
+    // on open, Search warms its pages as they land — so every Browse poster
+    // downloaded only when its tile composed. The same scroll tick that
+    // reports to the feed-card governor now warms the visible screen plus
+    // one screen ahead of it, from the loaded snapshot; a remembered set
+    // keeps a URL from being enqueued twice, and the helper's metered gate
+    // still applies. Keyed on the scroll index and the loaded count, so the
+    // first page warms when it lands and a new page warms as it arrives.
+    val prefetchedUrls = remember { mutableSetOf<String>() }
+    val prefetchContext = LocalContext.current
+    LaunchedEffect(firstVisibleItem, loadedCount) {
         val delta = firstVisibleItem - lastReportedItem
         if (delta > 0) {
             lastReportedItem = firstVisibleItem
             viewModel.onPostersScrolled(delta)
+        }
+        val lastVisible = gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: firstVisibleItem
+        val ahead = scrollAheadPrefetchUrls(
+            pagingItems.itemSnapshotList.items,
+            firstVisibleIndex = firstVisibleItem,
+            lastVisibleIndex = lastVisible,
+        ).filter { it !in prefetchedUrls }
+        if (ahead.isNotEmpty()) {
+            prefetchedUrls += ahead
+            prefetchPosterArt(prefetchContext, ahead)
         }
     }
 
@@ -100,13 +128,9 @@ fun BrowseScreen(
             )
         },
     ) { contentPadding ->
-        // Feel-instant S6: the list states come from the PagingData's
-        // loadState now, not a ViewModel list. `itemCount` counts the
-        // placeholders too, so the empty check reads the loaded snapshot:
-        // a category with rows on the way still has an empty snapshot
+        // A category with rows on the way still has an empty snapshot
         // while the first page is out.
         val refreshState = pagingItems.loadState.refresh
-        val loadedCount = pagingItems.itemSnapshotList.count { it != null }
         when {
             refreshState is LoadState.Loading && loadedCount == 0 -> PosterGridSkeleton(
                 modifier = Modifier.fillMaxSize().padding(contentPadding),

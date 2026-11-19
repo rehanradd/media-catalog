@@ -69,31 +69,137 @@ class PosterPrefetchTest {
     // ── Search ───────────────────────────────────────────────────────
 
     @Test
-    fun `search flattens groups in order and caps at twelve`() {
+    fun `search flattens groups in order and caps at twenty`() {
         val groups = (1..3).map { g ->
             TypeGroup(
                 label = "Group $g",
                 typeKey = null,
-                items = (1..5).map { n -> post(g * 10 + n, "https://example.test/g$g-$n.jpg") },
+                items = (1..8).map { n -> post(g * 10 + n, "https://example.test/g$g-$n.jpg") },
             )
         }
-        val urls = searchPrefetchUrls(groups)
-        assertEquals(12, urls.size)
+        val urls = searchNextPrefetchUrls(groups, emptySet())
+        assertEquals(20, urls.size)
         assertEquals("https://example.test/g1-1.jpg", urls.first())
-        assertEquals("https://example.test/g3-2.jpg", urls.last())
+        assertEquals("https://example.test/g3-4.jpg", urls.last())
     }
 
     @Test
     fun `search drops blanks and duplicates`() {
         assertEquals(
             listOf("https://example.test/a.jpg"),
-            searchPrefetchUrls(
+            searchNextPrefetchUrls(
                 listOf(
                     TypeGroup("Movies", "movie", listOf(post(1, "https://example.test/a.jpg"), post(2, "  "))),
                     TypeGroup("Series", "series", listOf(post(3, "https://example.test/a.jpg"))),
                 ),
+                emptySet(),
             ),
         )
+    }
+
+    @Test
+    fun `search skips posters already warmed`() {
+        val groups = listOf(
+            TypeGroup(
+                "Movies",
+                "movie",
+                (1..5).map { n -> post(n, "https://example.test/p$n.jpg") },
+            ),
+        )
+        val urls = searchNextPrefetchUrls(
+            groups,
+            setOf("https://example.test/p1.jpg", "https://example.test/p2.jpg"),
+        )
+        assertEquals(
+            listOf(
+                "https://example.test/p3.jpg",
+                "https://example.test/p4.jpg",
+                "https://example.test/p5.jpg",
+            ),
+            urls,
+        )
+    }
+
+    @Test
+    fun `search warms one page per landing`() {
+        val groups = (1..3).map { g ->
+            TypeGroup(
+                label = "Group $g",
+                typeKey = null,
+                items = (1..15).map { n -> post(g * 100 + n, "https://example.test/g$g-$n.jpg") },
+            )
+        }
+        val first = searchNextPrefetchUrls(groups, emptySet())
+        assertEquals(20, first.size)
+        assertEquals("https://example.test/g1-1.jpg", first.first())
+        assertEquals("https://example.test/g2-5.jpg", first.last())
+        val second = searchNextPrefetchUrls(groups, first.toSet())
+        assertEquals(20, second.size)
+        assertEquals("https://example.test/g2-6.jpg", second.first())
+        assertEquals("https://example.test/g3-10.jpg", second.last())
+    }
+
+    // ── Scroll-ahead (paged grids) ───────────────────────────────────
+
+    private fun gridPosts(count: Int): List<Post?> =
+        (1..count).map { post(it, "https://example.test/p$it.jpg") }
+
+    @Test
+    fun `scroll ahead warms the visible screen plus one screen ahead`() {
+        val urls = scrollAheadPrefetchUrls(gridPosts(50), firstVisibleIndex = 0, lastVisibleIndex = 11)
+        assertEquals(24, urls.size)
+        assertEquals("https://example.test/p1.jpg", urls.first())
+        assertEquals("https://example.test/p24.jpg", urls.last())
+    }
+
+    @Test
+    fun `scroll ahead slides with the viewport`() {
+        val urls = scrollAheadPrefetchUrls(gridPosts(50), firstVisibleIndex = 12, lastVisibleIndex = 23)
+        assertEquals("https://example.test/p13.jpg", urls.first())
+        assertEquals("https://example.test/p36.jpg", urls.last())
+    }
+
+    @Test
+    fun `scroll ahead skips placeholders and blanks`() {
+        val items: List<Post?> = listOf(
+            post(1, "https://example.test/a.jpg"),
+            null,
+            post(2, "  "),
+            post(3, "https://example.test/a.jpg"),
+            post(4, "https://example.test/b.jpg"),
+        )
+        assertEquals(
+            listOf("https://example.test/a.jpg", "https://example.test/b.jpg"),
+            scrollAheadPrefetchUrls(items, firstVisibleIndex = 0, lastVisibleIndex = 2),
+        )
+    }
+
+    @Test
+    fun `scroll ahead clamps at the tail`() {
+        val urls = scrollAheadPrefetchUrls(gridPosts(10), firstVisibleIndex = 8, lastVisibleIndex = 9)
+        assertEquals(
+            listOf("https://example.test/p9.jpg", "https://example.test/p10.jpg"),
+            urls,
+        )
+    }
+
+    @Test
+    fun `scroll ahead returns nothing past the end`() {
+        assertEquals(
+            emptyList<String>(),
+            scrollAheadPrefetchUrls(gridPosts(50), firstVisibleIndex = 50, lastVisibleIndex = 60),
+        )
+        assertEquals(
+            emptyList<String>(),
+            scrollAheadPrefetchUrls(emptyList(), firstVisibleIndex = 0, lastVisibleIndex = 11),
+        )
+    }
+
+    @Test
+    fun `scroll ahead caps at twenty-four`() {
+        val urls = scrollAheadPrefetchUrls(gridPosts(100), firstVisibleIndex = 0, lastVisibleIndex = 50)
+        assertEquals(24, urls.size)
+        assertEquals("https://example.test/p24.jpg", urls.last())
     }
 
     // ── Detail ───────────────────────────────────────────────────────

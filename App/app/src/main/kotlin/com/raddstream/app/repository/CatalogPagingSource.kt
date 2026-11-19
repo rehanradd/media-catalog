@@ -10,19 +10,27 @@ import kotlinx.coroutines.CancellationException
 /**
  * Feel-instant S6: the one PagingConfig for the catalog's paged lists —
  * browse and search both page the network in 20s (the spec's 20–30), look
- * five rows ahead, keep placeholders on so the S5 skeletons stand in for
+ * ten rows ahead, keep placeholders on so the S5 skeletons stand in for
  * rows not yet loaded, and fetch 50 on the first load so the first screen
  * is full. The 100-row server calls are gone from the UI: the paging layer
  * asks for `loadSize` rows per call and the server answers that many.
+ *
+ * The lookahead was five rows (Nov 2026): a normal scroller outran it and
+ * hit placeholders on a slow page fetch, so it is ten now — half a page of
+ * head start, inside the research's ~1/3-of-initial-load guidance. The
+ * `maxSize` of 200 bounds the in-memory pages at ten pages: a long session
+ * used to keep every loaded page forever, and a page dropped far behind
+ * reloads from the S1 disk cache on scroll-back instead of living in RAM.
  *
  * RemoteMediator + Room as source of truth comes after S3c, NOT in this
  * slice: this is a network-only source.
  */
 internal val CATALOG_PAGING_CONFIG = PagingConfig(
     pageSize = 20,
-    prefetchDistance = 5,
+    prefetchDistance = 10,
     enablePlaceholders = true,
     initialLoadSize = 50,
+    maxSize = 200,
 )
 
 /**

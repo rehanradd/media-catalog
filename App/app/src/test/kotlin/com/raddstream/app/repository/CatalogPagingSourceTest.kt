@@ -366,4 +366,17 @@ class CatalogPagingSourceTest {
             source.getRefreshKey(state),
         )
     }
+
+    @Test
+    fun `paging config looks ten rows ahead and bounds memory at two hundred`() {
+        // Preload + caches (Nov 2026): five rows of head start was not
+        // enough on a slow page fetch, and a long session kept every page
+        // in memory. Ten rows is half a page ahead; 200 rows is ten pages
+        // held, and a page dropped far behind reloads from the disk cache.
+        assertEquals(20, CATALOG_PAGING_CONFIG.pageSize)
+        assertEquals(10, CATALOG_PAGING_CONFIG.prefetchDistance)
+        assertEquals(50, CATALOG_PAGING_CONFIG.initialLoadSize)
+        assertEquals(200, CATALOG_PAGING_CONFIG.maxSize)
+        assertTrue(CATALOG_PAGING_CONFIG.enablePlaceholders)
+    }
 }

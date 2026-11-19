@@ -112,7 +112,7 @@ import com.raddstream.app.ui.components.SearchResultsSkeleton
 import com.raddstream.app.ui.components.SectionHeader
 import com.raddstream.app.ui.components.SkeletonBox
 import com.raddstream.app.ui.components.prefetchPosterArt
-import com.raddstream.app.ui.components.searchPrefetchUrls
+import com.raddstream.app.ui.components.searchNextPrefetchUrls
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.components.RaddChip
 import com.raddstream.app.ui.components.ScrollingChipRow
@@ -236,13 +236,22 @@ fun SearchScreen(
         }
     }
 
-    // Feel-instant S2: warm the first page's posters when results land, so
-    // the grid paints art, not shimmer. Capped; the helper dedupes, and
-    // never runs on metered data the viewer never granted.
+    // Feel-instant S2, extended (Nov 2026): warm the posters of the pages
+    // as they land, not just the first page. The selector takes the next
+    // page in load order that this query has not warmed yet, so a second
+    // page arriving warms its own posters instead of re-warming the first
+    // page's — the warm keeps pace with the data, one page per landing.
+    // The set resets with the query: a new search warms its own first
+    // page. Capped; the helper dedupes, and never runs on metered data the
+    // viewer never granted.
     val prefetchContext = LocalContext.current
+    val prefetchedUrls = remember(state.query) { mutableSetOf<String>() }
     LaunchedEffect(groups) {
-        val urls = searchPrefetchUrls(groups)
-        if (urls.isNotEmpty()) prefetchPosterArt(prefetchContext, urls)
+        val urls = searchNextPrefetchUrls(groups, prefetchedUrls)
+        if (urls.isNotEmpty()) {
+            prefetchedUrls += urls
+            prefetchPosterArt(prefetchContext, urls)
+        }
     }
 
     Scaffold(
