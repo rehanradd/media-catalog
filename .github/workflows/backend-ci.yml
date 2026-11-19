@@ -355,6 +355,11 @@ jobs:
       - name: 🧪 test_tiers.py
         run: python3 -S Fast_Fetch/test_tiers.py
 
+      # H4 R6: direct-file preference — measured mime corrects the ingest
+      # label in the ladder, the failover SQL, and the verify pass.
+      - name: 🧪 test_direct_file.py
+        run: python3 -S Fast_Fetch/test_direct_file.py
+
       - name: 🧪 test_detail_projection.py
         run: python3 -S Fast_Fetch/test_detail_projection.py
 

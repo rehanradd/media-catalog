@@ -589,6 +589,15 @@ def request_is_vip(headers, query_params, *, now=None, secret=None) -> bool:
 #: catalog.
 GATED_QUALITY_BANDS = ("1080p", "2160p")
 
+#: H4 R6: the banked-kind nudge in `_verify_option_tiers`. A candidate whose
+#: FRESH banked resolution proves it is a direct file earns this much on top
+#: of its measured host rank when the verify pass orders candidates: file-ness
+#: breaks near-ties, host reliability still dominates large gaps (a 0.95-host
+#: playlist still beats a 0.50-host file). A playlist, a stale/missing banked
+#: row, or any lookup fault earns 0.0 — the nudge only ever promotes proven
+#: bytes, never demotes an unmeasured candidate.
+_BANKED_FILE_BONUS = 0.10
+
 
 def quality_gate_block_reason(source_id, headers, query_params):
     """The error name this request must be refused with, or None to serve it.
@@ -6647,11 +6656,37 @@ def _verify_option_tiers(tier_rows, *, timeout: float = 10.0,
             host = ""
         return serve_verify.host_rank_score(conn, host)
 
+    def _banked_file_bonus(link) -> float:
+        """H4 R6: +0.10 when a FRESH banked resolution proves this candidate
+        is a direct file, else 0.0. One indexed cache lookup per candidate —
+        the same cost class as `_source_host`'s SELECT above — and it reuses
+        `resolved_cache.lookup_cache`'s exact freshness law (`reverify_after`,
+        fail count, IP-bound), so a stale or viewer-kind row earns nothing.
+        A lookup fault is neutral, never an error: the verify probe still
+        decides the candidate on its own evidence."""
+        if conn is None:
+            return 0.0
+        try:
+            source_id = redact.parse_token(link.get("stream_id") or "",
+                                           signing_secret(), signed_only=True)
+            if not source_id:
+                return 0.0
+            import resolved_cache
+            hit = resolved_cache.lookup_cache(conn, int(source_id),
+                                              want="either")
+        except Exception:      # noqa: BLE001 — a cache fault is neutral
+            return 0.0
+        if hit is None:
+            return 0.0
+        return _BANKED_FILE_BONUS if hit.get("kind") == "file" else 0.0
+
     by_tier = []
     for tier in tier_rows:
         candidates = _candidates(tier)
         ranked = sorted(enumerate(candidates),
-                        key=lambda pair: (-_host_score(pair[1]), pair[0]))
+                        key=lambda pair: (-(_host_score(pair[1])
+                                           + _banked_file_bonus(pair[1])),
+                                         pair[0]))
         by_tier.append([link for _index, link in ranked])
     jobs = [(tier_index, rank, link)
             for tier_index, candidates in enumerate(by_tier)

@@ -40,6 +40,38 @@ UNSPECIFIED = "unspecified"
 #: one CDN refusing us, and it is still a silent list the user never sees.
 BACKUP_LIMIT = 2
 
+#: Measured media types — what a probe actually saw the endpoint serve.
+#: The prober writes these onto the row (link_state verdicts, or the
+#: resolver's banked mime); the v2 projection carries them as
+#: ``content_type``. Only these three shapes correct the ingest label:
+#: video bytes, a playlist, or a page. Everything else (octet-stream,
+#: unknown, unprobed) is neutral — a generic binary fallback is not proof
+#: of video, and an unmeasured link keeps its label.
+_VIDEO_MIME_PREFIX = "video/"
+_PLAYLIST_MIMES = ("application/vnd.apple.mpegurl", "application/x-mpegurl",
+                   "audio/mpegurl", "application/dash+xml")
+
+
+def _measured_kind(row) -> str | None:
+    """The kind the endpoint MEASURED as, or None (unmeasured/neutral).
+
+    Reads ``mime_type`` (v1/raw rows) or ``content_type`` (v2 projected
+    links). 'direct' = the URL itself serves video bytes; 'url' = it serves
+    a playlist (a stream, not a file); 'page' = it serves a page (a bridge
+    landing, never bytes)."""
+    mime = str(row.get("mime_type") or row.get("content_type") or "").lower()
+    mime = mime.split(";")[0].strip()
+    if not mime:
+        return None
+    if mime.startswith(_VIDEO_MIME_PREFIX):
+        return "direct"
+    if mime in _PLAYLIST_MIMES or "mpegurl" in mime or "dash+xml" in mime:
+        return "url"
+    if mime.startswith("text/"):
+        return "page"
+    return None
+
+
 #: Weight of each playback kind. A direct file needs nothing from us; a page link
 #: needs our resolver; a download is not playable here; an embed is not playable
 #: at all and is therefore not a candidate for the play ladder. Both vocabularies
@@ -134,6 +166,17 @@ def candidate_order_sql(alias: str = "", band: str | None = None) -> str:
     order leads and the global SERVER_PREFERENCE orders everything
     else; without it the global preference is the whole order, exactly
     as before.
+
+    H4 R6: the first key is the MEASURED kind, not the ingest label — the
+    same correction ``score()`` applies in Python. A ``direct`` row whose
+    measured mime is a page (``text/*``) or a playlist (``mpegurl`` /
+    ``dash+xml``) ranks as a link that must be resolved (2); a ``url`` /
+    ``resolve`` row whose measured mime is ``video/*`` ranks as a direct
+    file (1). A bridge page is ``text/html`` by definition, so a ``url``
+    row with a page mime is NOT demoted — only a ``direct`` label is
+    contradicted by one. Unprobed rows (``mime_type`` NULL) keep the old
+    label order. SQLite LIKE is ASCII case-insensitive, so ``Video/MP4``
+    matches.
     """
     prefix = f"{alias}." if alias else ""
     if band is not None:
@@ -143,9 +186,20 @@ def candidate_order_sql(alias: str = "", band: str | None = None) -> str:
     else:
         ordered = list(SERVER_PREFERENCE)
     return f"""
-    CASE {prefix}playback_type
-        WHEN 'direct' THEN 1 WHEN 'url' THEN 2
-        WHEN 'download' THEN 3 WHEN 'iframe' THEN 4 ELSE 5 END ASC,
+    CASE
+        WHEN {prefix}playback_type = 'direct'
+             AND COALESCE({prefix}mime_type, '') LIKE 'video/%' THEN 1
+        WHEN {prefix}playback_type IN ('url', 'resolve')
+             AND COALESCE({prefix}mime_type, '') LIKE 'video/%' THEN 1
+        WHEN {prefix}playback_type = 'direct'
+             AND COALESCE({prefix}mime_type, '') LIKE 'text/%' THEN 2
+        WHEN {prefix}playback_type = 'direct'
+             AND (COALESCE({prefix}mime_type, '') LIKE '%mpegurl%'
+                  OR COALESCE({prefix}mime_type, '') LIKE '%dash+xml%') THEN 2
+        WHEN {prefix}playback_type = 'direct' THEN 1
+        WHEN {prefix}playback_type IN ('url', 'resolve') THEN 2
+        WHEN {prefix}playback_type = 'download' THEN 3
+        WHEN {prefix}playback_type = 'iframe' THEN 4 ELSE 5 END ASC,
     CASE {prefix}status WHEN 'active' THEN 0 WHEN 'dead' THEN 9
     WHEN 'quarantined' THEN 9 ELSE 5 END ASC,
     CASE {prefix}service""" + "".join(
@@ -324,6 +378,21 @@ def score(link, band: str = UNSPECIFIED, priority_key: str | None = None) -> int
     row = link if isinstance(link, dict) else dict(link)
     kind = str(row.get("kind") or row.get("playback_type") or "").lower()
     value = KIND_WEIGHT.get(kind, 40)
+    # H4 R6: measured evidence corrects the ingest label, in both directions
+    # and only there. A "direct" label on a URL that serves a page is a
+    # mislabelled bridge (the hubcloud fail-open shape: the unwrap hands back
+    # the HTML landing page) — it ranks as a link that must be resolved. A
+    # "url" label on a URL that serves video bytes IS a direct file — it ranks
+    # as one. A playlist is a stream either way, so a "direct" playlist ranks
+    # as a link. The correction REPLACES the kind weight, so it can never
+    # exceed the 30-point kind gap the service bonus is sized against;
+    # download and iframe weights are untouched (playability is not this
+    # slice's to overturn), and an unmeasured link keeps its label.
+    measured = _measured_kind(row)
+    if measured == "direct" and kind in ("url", "resolve"):
+        value = KIND_WEIGHT["direct"]
+    elif measured in ("url", "page") and kind == "direct":
+        value = KIND_WEIGHT["url"]
     state = str(row.get("status") or row.get("state") or "").lower()
     if state in ("active", "live", "ok"):
         value += 40
