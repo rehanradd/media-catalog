@@ -436,6 +436,107 @@ def verify_final_url(url: str, *, prober=None,
     return True, "ok", fields
 
 
+def recheck_banked(hit: dict, *, want: str = "watch", conn=None,
+                   now: float | None = None, prober=None) -> dict:
+    """Re-probe an aging banked row before it is served (H4 R9).
+
+    The resolver probes every candidate before it is *banked*, but the
+    stream/download routes serve a banked URL on a clock horizon alone —
+    up to 24 h for a permanent direct file — with no liveness evidence
+    after the probe that banked it. A banked winner that dies inside its
+    window keeps being served until ``reverify_after``. This is the
+    serve-time half of the probe: one capped re-probe of a row older than
+    the fresh-verdict window, before the 302.
+
+    Returns ``{"serve": bool, "reason": str, "refreshed": bool}``:
+
+    * age <= ``VERIFIED_FRESHNESS_S`` (600 s): serve at once, no probe —
+      the instant 302 for repeat presses is preserved, and the
+      press-banking law is untouched;
+    * older + the probe verifies (playable protocol, non-HTML, non-empty;
+      a download additionally needs a single file, not a playlist):
+      serve, and refresh the row (``resolved_at = now``,
+      ``reverify_after`` recomputed from the same measured-expiry /
+      category law) so the next press is instant again;
+    * older + the probe fails with endpoint-answered evidence (an HTTP
+      status, an expired URL, a page, an empty file): do NOT serve — the
+      caller treats the row as a cache miss and the live resolver
+      re-resolves, probes, and fails over to the next verified candidate.
+      This function records nothing itself; the resolver's own evidence
+      path records once, so a dead row is never double-counted;
+    * older + the probe fails with no HTTP answer at all (transport,
+      timeout, DNS, TLS — ``NO_ANSWER_REASONS``): serve the banked row
+      anyway and do NOT refresh it. A network blip says nothing about
+      the link (Session-107 principle), and the next press re-probes.
+
+    ``hit`` is a ``resolved_cache.lookup_cache`` row (it carries
+    ``resolved_at`` / ``expires_at`` / ``category`` / ``kind`` / ``url``).
+    ``conn`` is the caller's connection when one is open: the refresh
+    rides it, and the ledger's ``is_temporary`` is read off it by PK so
+    the recomputed horizon uses the row's real temporariness. With no
+    connection the verdict is the same, only the refresh is skipped.
+    Never raises: a fault anywhere reads as "no answer", i.e. serve.
+    """
+    moment = time.time() if now is None else float(now)
+    resolved_at = _epoch_of(hit.get("resolved_at"))
+    if resolved_at is None or not str(hit.get("url") or ""):
+        # A row with no timestamp is not evidence of anything, and a row
+        # with no URL cannot be served at all — but neither is a probe
+        # verdict: the no-URL row is refused, the unaged row is served
+        # as-is and the next bank overwrites it.
+        if not str(hit.get("url") or ""):
+            return {"serve": False, "reason": "no_url", "refreshed": False}
+        return {"serve": True, "reason": "unaged", "refreshed": False}
+    if moment - resolved_at <= VERIFIED_FRESHNESS_S:
+        return {"serve": True, "reason": "fresh", "refreshed": False}
+    try:
+        verified, reason, fields = verify_final_url(
+            str(hit.get("url") or ""), prober=prober,
+            timeout=PROBE_TIMEOUT_S, now=moment)
+    except Exception:      # noqa: BLE001 — a prober fault is "no answer"
+        return {"serve": True, "reason": "transport", "refreshed": False}
+    if not verified:
+        status = int(fields.get("http_status") or 0)
+        if status != 0 or reason in ("expired_url", "webview",
+                                     "empty_file") \
+                or str(reason).startswith("http_"):
+            # Endpoint-answered evidence about the link: do not serve.
+            return {"serve": False, "reason": str(reason or "probe_failed"),
+                    "refreshed": False}
+        # No HTTP answer at all: fail open, do not refresh.
+        return {"serve": True, "reason": "transport", "refreshed": False}
+    if want == "download" and str(fields.get("protocol") or "") \
+            != "progressive":
+        # A playlist is segments, not a file — the stage-2 download rule.
+        return {"serve": False, "reason": "playlist_for_download",
+                "refreshed": False}
+    refreshed = False
+    if conn is not None:
+        try:
+            import resolved_cache
+            is_temporary = (str(hit.get("category") or "") == "B")
+            try:
+                ledger = conn.execute(
+                    "SELECT is_temporary FROM download_sources WHERE id = ?",
+                    (int(hit["link_id"]),)).fetchone()
+                if ledger is not None and ledger[0] is not None:
+                    is_temporary = bool(ledger[0])
+            except Exception:      # noqa: BLE001 — category fallback
+                pass
+            reverify_after = resolved_cache._compute_reverify_after(
+                resolved_at=moment, expires_at=_epoch_of(hit.get("expires_at")),
+                category=str(hit.get("category") or "A"),
+                is_temporary=is_temporary, now=moment)
+            conn.execute(
+                "UPDATE resolved_cache SET resolved_at = ?, "
+                "reverify_after = ? WHERE link_id = ?",
+                (moment, reverify_after, int(hit["link_id"])))
+            refreshed = True
+        except Exception:      # noqa: BLE001 — a refresh fault never blocks a serve
+            refreshed = False
+    return {"serve": True, "reason": "reprobed", "refreshed": refreshed}
+
+
 # ── host circuit breaker ─────────────────────────────────────────────────
 
 _HOST_HEALTH_DDL = """

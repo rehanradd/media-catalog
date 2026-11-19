@@ -507,9 +507,12 @@ class TestViewerRouteContract(unittest.TestCase):
     """These tests pin the SECURITY ORDERING of the two HTTP routes that read
     the cache. The invariants are properties of viewer.py's request path:
 
-      * ``redact.link_is_adult`` must run BEFORE any ``lookup_cache`` call —
-        a hidden title must stay hidden from the cache exactly as it is from
-        the resolver, so a cached row can never answer for an adult link;
+      * ``redact.link_is_adult`` must run BEFORE any ``_servable_banked_hit``
+        call — a hidden title must stay hidden from the cache exactly as it
+        is from the resolver, so a cached row can never answer for an adult
+        link (the helper does the lookup plus the H4 R9 aging-row re-probe);
+      * the cache path is public-port-only (guarded by ``not full``) — the
+        operator port must keep seeing live resolver diagnostics;
       * the cache path is public-port-only (guarded by ``not full``) — the
         operator port must keep seeing live resolver diagnostics;
       * the download route asks for ``want="download"`` and re-checks
@@ -536,8 +539,10 @@ class TestViewerRouteContract(unittest.TestCase):
 
     @classmethod
     def _lookup_at(cls, body: str) -> int:
-        # the call site, not the prose that mentions it in a comment
-        return body.index("resolved_cache.lookup_cache(")
+        # the call site, not the prose that mentions it in a comment: the
+        # routes consult the cache through _servable_banked_hit (lookup +
+        # the H4 R9 aging-row re-probe), never a bare lookup_cache call.
+        return body.index("_servable_banked_hit(")
 
     def test_adult_gate_precedes_cache_lookup(self):
         for route in ("/api/v1/stream", "/api/v1/download"):

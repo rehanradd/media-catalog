@@ -6965,6 +6965,39 @@ def _preresolve_is_warm(source_id: int, conn=None) -> bool | None:
         return False
 
 
+def _servable_banked_hit(conn, source_id, *, want="watch", now=None,
+                         prober=None):
+    """The banked row servable right now, or None (H4 R9).
+
+    ``resolved_cache.lookup_cache`` plus the serve-time re-probe: a fresh
+    row (banked within ``VERIFIED_FRESHNESS_S``) is served at once; an
+    aging row is re-probed and served only when the probe verifies it, so
+    a dead banked winner never reaches the 302. A refused row reads as a
+    cache miss — the caller falls through to the live resolver, which
+    re-resolves and fails over to the next verified candidate.
+
+    ``prober`` is test-only injection (the production probe is
+    ``serve_verify``'s default, capped at 5 s, ranged, clearance-aware).
+    A fault anywhere here is fail-open: a cache problem must never break
+    playback, so the row is served and the press path decides.
+    """
+    try:
+        import resolved_cache
+        hit = resolved_cache.lookup_cache(conn, int(source_id), want=want,
+                                          now=now)
+    except Exception:      # noqa: BLE001 — a cache fault is a miss
+        return None
+    if hit is None:
+        return None
+    try:
+        import serve_verify
+        check = serve_verify.recheck_banked(hit, want=want, conn=conn,
+                                            now=now, prober=prober)
+    except Exception:      # noqa: BLE001 — a recheck fault serves the row
+        return hit
+    return hit if check.get("serve") else None
+
+
 @contextmanager
 def _shared_warm_conn():
     """One connection for the whole preresolve warm pass, or None.
@@ -8473,8 +8506,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 try:
                     import resolved_cache
                     with get_db() as conn:
-                        hit = resolved_cache.lookup_cache(conn, int(source_id),
-                                                          want="watch")
+                        # H4 R9: lookup + the aging-row re-probe in one
+                        # call — a refused row reads as a cache miss, so
+                        # the live resolver below re-resolves and fails
+                        # over instead of 302-ing a dead winner.
+                        hit = _servable_banked_hit(conn, int(source_id),
+                                                   want="watch")
                         if hit is not None:
                             # Fill-hit measurement (play-fast §2 (j)):
                             # one aggregate counter bump per served press
@@ -8663,8 +8700,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 try:
                     import resolved_cache
                     with get_db() as conn:
-                        hit = resolved_cache.lookup_cache(
-                            conn, int(source_id), want="download")
+                        # H4 R9: lookup + the aging-row re-probe in one
+                        # call — a refused row reads as a cache miss and
+                        # the live resolver below takes over, so a dead
+                        # banked file is never handed to a downloader.
+                        hit = _servable_banked_hit(conn, int(source_id),
+                                                   want="download")
                         if hit is not None and hit.get("kind") == "file":
                             # Fill-hit measurement (play-fast §2 (j)): one
                             # aggregate counter bump per served download

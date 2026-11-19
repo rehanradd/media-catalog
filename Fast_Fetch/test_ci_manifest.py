@@ -74,6 +74,7 @@ MANDATORY_RUN = (
     "test_direct_file.py",
     "test_per_segment_retry.py",
     "test_host_clearance.py",
+    "test_resolver_probes.py",
     "test_host_classifier.py",
     "test_catalog_exporter.py",
     "test_domain_resolver.py",

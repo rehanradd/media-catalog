@@ -483,6 +483,15 @@ jobs:
       - name: 🧪 test_host_clearance.py
         run: python3 -S Fast_Fetch/test_host_clearance.py
 
+      # H4 R9 (resolver probes): the serve-time re-probe of an aging banked
+      # row before it is 302'd — fresh rows serve unprobed, a verifying
+      # probe refreshes the row, an endpoint-answered failure reads as a
+      # cache miss (the live resolver re-resolves and fails over), a
+      # no-answer probe serves fail-open without refreshing. Offline,
+      # stdlib, in-memory/scratch fixtures, no network.
+      - name: 🧪 test_resolver_probes.py
+        run: python3 -S Fast_Fetch/test_resolver_probes.py
+
       # Gap A7 (prefetch run mode): the worker + its systemd timer/service +
       # runbook, tested offline against a scratch DB with a stubbed resolver.
       # Offline, stdlib, in-memory/scratch fixtures, no network.
