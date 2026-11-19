@@ -153,6 +153,19 @@ leak through a public handle).
   removed (file back to 11,974 B / 92 lines); the session entry indexed in
   `checkpoints/README.md` (newest first) instead, which is where long
   entries live. `test_docs_invariants.py` 22/22 green locally after the fix.
+- Commit `74383a17` pushed; Backend CI run **44623468368** FAILED (~02:58 PKT)
+  on `test_ci_manifest.py::test_manifest_is_never_a_subset_of_trunks`:
+  `['Fast_Fetch/test_resolver_probes.py'] != []` — NOT my code: H4 R9 had
+  merged to main (`44631e10`) while this lane worked, adding that gate step
+  to trunk, and my branch (based on `8f7948d2`) lacked it.
+- Fix: merged main `44631e10` into the branch (merge commit `7e043911`,
+  no rebase — the branch was already pushed and force-push is banned);
+  the merge auto-resolved cleanly (both README entries kept, mega first).
+  The merged tree holds 124 checkpoint files, so the count claim was
+  corrected again to "124 session files (121 dated + 3 undated)"
+  (CONTINUITY 11,992 B / 90 lines, still under budget). Local after merge:
+  `test_docs_invariants` 22/22, `test_ci_manifest` 10/10,
+  `test_host_resolvers` 303/303.
 
 ## Files changed
 
