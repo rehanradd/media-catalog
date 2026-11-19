@@ -540,6 +540,17 @@ class ServerSettingsRepository @Inject constructor(
     }
 
     /**
+     * MX #9 — operator switch for Cast; on unless the server says otherwise.
+     * Mirrored from `flags.chromecast` by [RemoteConfigWatcher], the
+     * pureCinema pattern exactly. When off, the player hides the Cast
+     * button and a session live at the time ends (see the service's
+     * castAllowed collection).
+     */
+    val castFeatureEnabled: Flow<Boolean> = dataStore.data.map { preferences ->
+        preferences[FEATURE_CAST_KEY] ?: true
+    }
+
+    /**
      * The four feature switches as one snapshot, for anything that has to hide or allow several
      * entry points at once. See [RemoteFeatures] for why the board travels as one object.
      */
@@ -548,12 +559,14 @@ class ServerSettingsRepository @Inject constructor(
         sharingFeatureEnabled,
         searchFeatureEnabled,
         pureCinemaFeatureEnabled,
-    ) { downloads, sharing, search, pureCinema ->
+        castFeatureEnabled,
+    ) { downloads, sharing, search, pureCinema, cast ->
         RemoteFeatures(
             downloads = downloads,
             sharing = sharing,
             search = search,
             pureCinema = pureCinema,
+            cast = cast,
         )
     }
 
@@ -597,6 +610,7 @@ class ServerSettingsRepository @Inject constructor(
         pureCinemaEnabled: Boolean,
         qualityGateEnabled: Boolean,
         adsEnabled: Boolean,
+        castEnabled: Boolean,
     ) {
         dataStore.edit { preferences ->
             preferences[MAINTENANCE_MODE_KEY] = maintenanceMode
@@ -606,6 +620,7 @@ class ServerSettingsRepository @Inject constructor(
             preferences[FEATURE_PURE_CINEMA_KEY] = pureCinemaEnabled
             preferences[FEATURE_QUALITY_GATE_KEY] = qualityGateEnabled
             preferences[FEATURE_ADS_KEY] = adsEnabled
+            preferences[FEATURE_CAST_KEY] = castEnabled
         }
     }
 
@@ -1194,6 +1209,8 @@ class ServerSettingsRepository @Inject constructor(
         private val FEATURE_SHARING_KEY = booleanPreferencesKey("feature_sharing")
         private val FEATURE_SEARCH_KEY = booleanPreferencesKey("feature_search")
         private val FEATURE_PURE_CINEMA_KEY = booleanPreferencesKey("feature_pure_cinema")
+        // MX #9 — the server's chromecast switch, mirrored by RemoteConfigWatcher.
+        private val FEATURE_CAST_KEY = booleanPreferencesKey("feature_cast")
         private val FEATURE_QUALITY_GATE_KEY = booleanPreferencesKey("feature_quality_gate")
         private val FEATURE_ADS_KEY = booleanPreferencesKey("feature_ads")
         private val THEME_MODE_KEY = stringPreferencesKey("theme_mode")

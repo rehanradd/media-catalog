@@ -35,6 +35,9 @@
     <string name="player_decoder_sw">SW</string>
     <string name="player_decoder_switch_to_hardware">Switch to hardware decoding</string>
     <string name="player_decoder_switch_to_software">Switch to software decoding</string>
+    <!-- MX #9: the Cast button's description — the framework manages the
+         picker's own words; this is the button's own label. -->
+    <string name="player_cast">Cast</string>
     <string name="player_pause">Pause</string>
     <!-- CL-5: the centre pause control announces this instead of bare "Pause",
          so it does not collide with the bottom-bar pause button. -->

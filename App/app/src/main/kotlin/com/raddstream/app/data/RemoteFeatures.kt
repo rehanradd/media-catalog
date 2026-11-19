@@ -20,4 +20,7 @@ data class RemoteFeatures(
     val sharing: Boolean = true,
     val search: Boolean = true,
     val pureCinema: Boolean = true,
+    // MX #9 — the server's chromecast switch, mirrored since the cast
+    // button exists. On unless the server says otherwise, like the rest.
+    val cast: Boolean = true,
 )

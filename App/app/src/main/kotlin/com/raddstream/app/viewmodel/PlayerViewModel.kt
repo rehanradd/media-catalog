@@ -40,6 +40,7 @@ import com.raddstream.app.player.CacheEngineHolder
 import com.raddstream.app.player.CacheSnapshot
 import com.raddstream.app.player.CacheState
 import com.raddstream.app.player.CalibrationState
+import com.raddstream.app.player.CastAvailabilityTracker
 import com.raddstream.app.player.DataSaver
 import com.raddstream.app.player.DecoderMode
 import com.raddstream.app.player.DeferredOffsetReporter
@@ -161,6 +162,27 @@ class PlayerViewModel @Inject constructor(
 ) : ViewModel() {
 
     private val store: PlayerSessionStore = PlayerSessionStore.Instance
+
+    // MX #9 — Cast: the server's chromecast switch and the network's
+    // discoverable receivers, as the ViewModel last saw them. The button
+    // needs both plus an unlocked player; the store's gate needs the
+    // switch plus the lock only (a session cannot exist without a device).
+    private var castFeatureEnabled: Boolean = true
+    private var castDevicesAvailable: Boolean = false
+    private val castAvailabilityTracker = CastAvailabilityTracker(appContext)
+
+    /**
+     * MX #9 — recompute the Cast gate after any input moves: the server
+     * switch, a receiver appearing or vanishing, or the lock changing.
+     * The store's answer is what the service enforces (it ends a live
+     * session the moment the lock lands); the UI's answer additionally
+     * needs a receiver to exist at all.
+     */
+    private fun recomputeCastAllowed() {
+        val allowed = castFeatureEnabled && !_ui.value.locked
+        store.setCastAllowed(allowed)
+        _ui.update { it.copy(castAvailable = castDevicesAvailable && allowed) }
+    }
 
     private var controller: MediaController? = null
     private var tickerJob: Job? = null
@@ -506,6 +528,33 @@ class PlayerViewModel @Inject constructor(
                 _ui.update { it.copy(pureCinemaAllowed = allowed) }
             }
         }
+        // MX #9 — Cast: the server's chromecast switch, a receiver
+        // appearing or vanishing on this network, and the session state
+        // the service publishes. Collected, not sampled, so a receiver
+        // appearing mid-play offers the button, and a switch flipped off
+        // takes it away without a relaunch.
+        viewModelScope.launch {
+            settingsRepository.castFeatureEnabled.collect { enabled ->
+                castFeatureEnabled = enabled
+                recomputeCastAllowed()
+            }
+        }
+        viewModelScope.launch {
+            castAvailabilityTracker.devicesAvailable.collect { available ->
+                castDevicesAvailable = available
+                recomputeCastAllowed()
+            }
+        }
+        viewModelScope.launch {
+            store.castIsCasting.collect { casting ->
+                _ui.update { it.copy(isCasting = casting) }
+            }
+        }
+        viewModelScope.launch {
+            store.castDeviceName.collect { name ->
+                _ui.update { it.copy(castDeviceName = name) }
+            }
+        }
         // The board's downloads switch, which decides whether the keep chip is offered at all.
         // Re-asking the keep state is what makes a refresh take the chip away mid-play instead
         // of leaving a button that can no longer write a file.
@@ -550,6 +599,7 @@ class PlayerViewModel @Inject constructor(
                 if (active && store.bundle.value != null) {
                     kidsUnlockGranted = false
                     _ui.update { it.copy(locked = true) }
+                    recomputeCastAllowed()
                 }
             }
         }
@@ -686,6 +736,7 @@ class PlayerViewModel @Inject constructor(
                     if (b != null && kidsMode) {
                         kidsUnlockGranted = false
                         _ui.update { it.copy(locked = true) }
+                        recomputeCastAllowed()
                     }
                 }
             }
@@ -2269,6 +2320,10 @@ class PlayerViewModel @Inject constructor(
             return
         }
         _ui.update { it.copy(locked = locked) }
+        // MX #9 — the lock is a Cast input: locking takes the button away
+        // and ends a live session (the service enforces the store's
+        // answer); unlocking offers it again.
+        recomputeCastAllowed()
     }
 
     /**
@@ -2279,6 +2334,8 @@ class PlayerViewModel @Inject constructor(
     fun unlockWithKidsPin() {
         kidsUnlockGranted = true
         _ui.update { it.copy(locked = false) }
+        // MX #9 — the PIN's success offers Cast again (see setLocked).
+        recomputeCastAllowed()
     }
 
     /**

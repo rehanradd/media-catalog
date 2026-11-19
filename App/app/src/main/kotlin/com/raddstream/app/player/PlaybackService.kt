@@ -65,6 +65,12 @@ import kotlinx.coroutines.launch
  *    [AdaptiveQualitySwitcher] through the shared [PlayerSessionStore.autoQuality]
  *    director, and a rung change is applied as a same-position handle swap on our own
  *    redirector — see [evaluateAutoQuality].
+ *  - **Cast (MX #9)**: when a Cast session opens, the [MediaSession] player swaps to the
+ *    receiver's [CastPlayer] ([CastTransferManager]) at the local position, and swaps
+ *    back at the remote position when the session ends — the controller, the
+ *    notification and the lock screen never rebind. While casting, Auto quality, the
+ *    playhead pump and the start watchdog are paused (the phone measures nothing),
+ *    and a decoder-mode change is deferred to the return ([pendingDecoderMode]).
  *
  * The UI-side commands arrive through the shared [PlayerSessionStore] (same process) — no
  * Intent serialization. Which container a link is gets declared per item by
@@ -128,6 +134,28 @@ class PlaybackService : MediaSessionService() {
      */
     private var lastLoadedWasLocalCopy = false
 
+    /**
+     * MX #9 — the Cast transfer manager, or null when this device cannot
+     * initialise Cast (no Play Services). Built in [onCreate]; the session
+     * callbacks below are the only entries that touch it.
+     */
+    private var castTransferManager: CastTransferManager? = null
+
+    /**
+     * MX #9 — a decoder-mode change asked for while casting. Rebuilding
+     * the local player mid-cast would reload the rendition on the
+     * receiver for no reason, so the request waits here and lands in
+     * [onCastSessionUnavailable], on the player that will use it.
+     */
+    private var pendingDecoderMode: DecoderMode? = null
+
+    /**
+     * MX #9 — the return from Cast was caused by a remote error, not a
+     * clean disconnect. The return path reads this so the banner says the
+     * TV failed instead of the plain "back on this device".
+     */
+    private var castReturnFailed = false
+
     /** Thermal listener (API 29+), removed in onDestroy; null on older phones. */
     private var thermalListener: PowerManager.OnThermalStatusChangedListener? = null
 
@@ -148,6 +176,25 @@ class PlaybackService : MediaSessionService() {
 
         scope.launch {
             store.decoderMode.collect { mode -> rebuildPlayer(mode) }
+        }
+        // MX #9 — the Cast transfer manager. The callbacks are the service's
+        // own transfer methods: the manager owns the remote player, the
+        // service owns what plays on it and where it resumes.
+        castTransferManager = CastTransferManager(
+            this,
+            onSessionAvailable = { onCastSessionAvailable() },
+            onSessionUnavailable = { onCastSessionUnavailable() },
+        )
+        // MX #9 — Kids Lock, enforced from the service side too: the
+        // ViewModel clears castAllowed when the player locks, and a
+        // session live at that moment ends at once — the return path
+        // below brings playback home, then the lock applies.
+        scope.launch {
+            store.castAllowed.collect { allowed ->
+                if (!allowed && store.castIsCasting.value) {
+                    castTransferManager?.endSession()
+                }
+            }
         }
         // MX idea #8: the mix, applied live. The processor reads these
         // volatiles on its next queued buffer — a slider move, a preset
@@ -322,12 +369,22 @@ class PlaybackService : MediaSessionService() {
      * Nothing is reloaded before the first load: a rebuild with no bundle
      * just swaps the idle player.
      */
-    private fun rebuildPlayer(mode: DecoderMode) {
+    private fun rebuildPlayer(mode: DecoderMode, resumeOverrideMs: Long? = null) {
         if (mode == currentDecoderMode) return
         val old = player ?: return
+        // MX #9 — a rebuild asked for while casting waits: the local player
+        // is paused and unused, and rebuilding it would reload the
+        // rendition on the receiver for no reason. The request lands in
+        // [onCastSessionUnavailable], on the player that will use it.
+        if (store.castIsCasting.value) {
+            pendingDecoderMode = mode
+            return
+        }
         // An ended player reports the duration as its position; reloading
         // there would end again at once, so a toggle at the end restarts.
-        val resumeMs = if (old.playbackState == Player.STATE_ENDED) {
+        // A return from Cast hands its own resume in: the remote position,
+        // which the paused local player cannot know.
+        val resumeMs = resumeOverrideMs ?: if (old.playbackState == Player.STATE_ENDED) {
             0L
         } else {
             runCatching { old.currentPosition }.getOrDefault(0L).coerceAtLeast(0L)
@@ -352,6 +409,112 @@ class PlaybackService : MediaSessionService() {
         loadRenditionOf(bundle, rendition, countAsAttempt = false)
         // loadRenditionOf always starts playing; a paused viewer stays paused.
         exo.playWhenReady = wasPlaying
+    }
+
+    // ── Cast (MX #9) ─────────────────────────────────────────────────────
+
+    /**
+     * The player carrying playback right now: the receiver's CastPlayer
+     * while casting, else the local ExoPlayer. Every position, seek and
+     * state read that must follow a hop goes through here — never through
+     * the `player` field directly, which is the local player even while
+     * the TV is playing.
+     */
+    private fun activePlayer(): Player? =
+        if (store.castIsCasting.value) castTransferManager?.castPlayer ?: player else player
+
+    /**
+     * A Cast session just opened — the viewer picked a receiver in the
+     * picker's dialog. The local player pauses and the receiver takes over
+     * the active rendition at the local position, through the same
+     * MediaSession the controller already talks to: play, pause, seek and
+     * volume keep working from our controls, the notification and the lock
+     * screen follow the session, and nothing rebinds.
+     *
+     * A refusal never leaves the session open: an idle TV beside a phone
+     * still playing is the confusion the spike's silent failure mode
+     * already showed. Ending the session fires
+     * [onCastSessionUnavailable], which resumes locally at the same
+     * position — a no-op hop, not a restart.
+     */
+    private fun onCastSessionAvailable() {
+        val manager = castTransferManager ?: return
+        if (!manager.isSessionAvailable()) return
+        val bundle = store.bundle.value ?: return
+        val rendition = store.activeRendition() ?: return
+        val local = player ?: return
+        if (local.mediaItemCount == 0) return
+        when (val decision = decideCastStart(
+            playback = rendition.playback,
+            allowed = store.castAllowed.value,
+            sessionAvailable = true,
+            nowEpochMillis = System.currentTimeMillis(),
+        )) {
+            is CastTransferDecision.Refuse -> {
+                store.announceCastRefused(decision.reason)
+                manager.endSession()
+                return
+            }
+            is CastTransferDecision.Proceed -> Unit
+        }
+        val castPlayer = manager.castPlayer ?: return
+        val positionMs = castResumePosition(
+            runCatching { local.currentPosition }.getOrDefault(0L),
+            runCatching { local.duration }.getOrDefault(0L),
+        )
+        val wasPlaying = local.playWhenReady
+        local.pause()
+        // The listener moves to the remote player: its errors, its end and
+        // its ready are the ones that matter now.
+        local.removeListener(playerListener)
+        castPlayer.addListener(playerListener)
+        lastKnownPositionMs = positionMs
+        pendingResumeMs = null
+        store.setCastState(casting = true, deviceName = manager.deviceName())
+        mediaSession?.setPlayer(castPlayer)
+        disarmStartWatchdog()
+        val item = PlaybackMediaItemFactory.build(
+            rendition, bundle.target, titleHint,
+            externalSubtitles = PlaybackMediaItemFactory.externalsFromTracks(rendition.tracks),
+        )
+        manager.transferToCast(item, positionMs, wasPlaying)
+        store.announceCastStarted(manager.deviceName())
+    }
+
+    /**
+     * The session went away — the viewer disconnected, the receiver was
+     * lost, or the service ended it (a refusal, a remote error, Kids Lock).
+     * Playback comes home at the receiver's last known position, on the
+     * local player, with no restart of the stream where the player
+     * supports it: the rendition reloads at the remote position, and a
+     * decoder-mode change deferred during the cast lands first.
+     */
+    private fun onCastSessionUnavailable() {
+        val manager = castTransferManager ?: return
+        val local = player ?: return
+        val remotePositionMs = manager.remotePositionMs()
+        manager.stopRemote()
+        manager.castPlayer?.removeListener(playerListener)
+        local.addListener(playerListener)
+        store.setCastState(casting = false, deviceName = null)
+        mediaSession?.setPlayer(local)
+        if (castReturnFailed) {
+            castReturnFailed = false
+            store.announceCastFailed()
+        } else {
+            store.announceCastEnded()
+        }
+        val bundle = store.bundle.value ?: return
+        val rendition = store.activeRendition() ?: return
+        lastKnownPositionMs = remotePositionMs
+        pendingResumeMs = remotePositionMs.takeIf { it > 0 }
+        val pendingMode = pendingDecoderMode
+        pendingDecoderMode = null
+        if (pendingMode != null && pendingMode != currentDecoderMode) {
+            rebuildPlayer(pendingMode, resumeOverrideMs = remotePositionMs)
+        } else {
+            loadRenditionOf(bundle, rendition, countAsAttempt = false)
+        }
     }
 
     /**
@@ -601,6 +764,36 @@ class PlaybackService : MediaSessionService() {
         // early returns, so a load that never reached Media3 leaves the
         // previous load's answer untouched.
         lastLoadedWasLocalCopy = isLocalCopy
+        if (store.castIsCasting.value) {
+            // MX #9 — playback is on the receiver, so the load goes there:
+            // a next episode, a manual rung change, or a hop lands on the
+            // TV at the pending position, not on the paused local player.
+            // A kept copy is a loopback address the receiver can never
+            // fetch: cast the rendition's live redirector URL instead (the
+            // store's rendition still holds it — the copy only ever
+            // rewrote the load's own address). No preview is seeded and no
+            // watchdog is armed: the phone downloads nothing while casting,
+            // and the local player's state says nothing about the remote
+            // load. The beacon keeps the session: the title is being
+            // watched, on the TV.
+            val manager = castTransferManager ?: return
+            val castRendition = if (isLocalCopy) store.activeRendition() ?: rendition else rendition
+            val castItem = if (isLocalCopy) {
+                PlaybackMediaItemFactory.build(
+                    castRendition, bundle.target, titleHint,
+                    externalSubtitles = PlaybackMediaItemFactory.externalsFromTracks(castRendition.tracks),
+                )
+            } else {
+                item
+            }
+            val positionMs = pendingResumeMs ?: lastKnownPositionMs
+            pendingResumeMs = null
+            lastKnownPositionMs = positionMs
+            lastLoadedWasLocalCopy = false
+            manager.transferToCast(castItem, positionMs, playWhenReady = true)
+            beginBeaconFor(castRendition, isLocalCopy = false)
+            return
+        }
         exo.setMediaItem(item)
         exo.prepare()
         exo.playWhenReady = true
@@ -639,11 +832,16 @@ class PlaybackService : MediaSessionService() {
      * 429-as-pause path to catch.
      */
     private fun armStartWatchdog(bundle: PlaybackBundle, rendition: PlaybackRendition) {
+        // MX #9 — the watchdog watches the local player, whose state says
+        // nothing about a remote load. While casting there is no local
+        // start to time out.
+        if (store.castIsCasting.value) return
         watchdogJob?.cancel()
         val generation = ++watchdogGeneration
         watchdogJob = scope.launch {
             delay(StartDeadline.START_WATCHDOG_MS)
             if (generation != watchdogGeneration) return@launch
+            if (store.castIsCasting.value) return@launch
             val exo = player ?: return@launch
             if (StartDeadline.hasFirstFrame(exo.playbackState)) return@launch
             val machine = failover ?: return@launch
@@ -867,6 +1065,11 @@ class PlaybackService : MediaSessionService() {
             var lastReportedMs = -1L
             while (true) {
                 delay(PLAYHEAD_PUMP_MS)
+                // MX #9 — while casting the phone downloads nothing, so
+                // there is no ahead-pass to extend; the local position is
+                // stale besides. The return path reads the remote position
+                // from the CastPlayer instead.
+                if (store.castIsCasting.value) continue
                 val exo = player ?: continue
                 // A paused player has no forward edge to anticipate; a seek still moves the
                 // position, and that is reported on the next tick exactly like playback does.
@@ -922,6 +1125,11 @@ class PlaybackService : MediaSessionService() {
      * switch would be a guess.
      */
     private fun evaluateAutoQuality() {
+        // MX #9 — while casting the receiver fetches the bytes, so the
+        // phone measures nothing and the director must not move a rung on
+        // a guess. A manual rung change still goes through [switchRungTo]
+        // and lands on the receiver through [loadRenditionOf].
+        if (store.castIsCasting.value) return
         val director = store.autoQuality
         if (!director.isEnabled()) return
         val exo = player ?: return
@@ -1012,7 +1220,9 @@ class PlaybackService : MediaSessionService() {
                 ),
             ),
         )
-        pendingResumeMs = lastKnownPositionMs.takeIf { it > 0 }
+        pendingResumeMs = (activePlayer()?.let {
+            runCatching { it.currentPosition }.getOrDefault(lastKnownPositionMs)
+        } ?: lastKnownPositionMs).takeIf { it > 0 }
         loadRenditionOf(updated, swapped, countAsAttempt = false)
     }
 
@@ -1040,7 +1250,11 @@ class PlaybackService : MediaSessionService() {
                     // later give-up must not report a stale start failure.
                     store.clearStartError()
                     pendingResumeMs?.let { pos ->
-                        player?.seekTo(pos)
+                        // MX #9 — the player that just became ready, local
+                        // or remote: a resume belongs to the load that
+                        // landed, not to the field that happens to hold the
+                        // local player.
+                        activePlayer()?.seekTo(pos)
                         pendingResumeMs = null
                     }
                 }
@@ -1090,6 +1304,18 @@ class PlaybackService : MediaSessionService() {
             }
             val bundle = store.bundle.value ?: return
             lastKnownPositionMs = maxOf(lastKnownPositionMs, errorGetMs())
+            // MX #9 — an error on the receiver is not a local failover:
+            // the failover machine's hops are local loads, and running one
+            // would start the phone playing under a TV showing an error.
+            // The receiver failed — come home, reload locally at the remote
+            // position, and let the local player's own error path judge
+            // the link there. The banner says the TV failed; the viewer
+            // keeps watching, on this phone.
+            if (store.castIsCasting.value) {
+                castReturnFailed = true
+                castTransferManager?.endSession()
+                return
+            }
             val machine = failover ?: return
             // Session 121 (P-6): the raw ExoPlayer code is written to logcat here and
             // nowhere else — the failover machine translates it to human words before
@@ -1160,7 +1386,7 @@ class PlaybackService : MediaSessionService() {
             applyDecision(bundle, decision, preservePositionMs = lastKnownPositionMs)
         }
 
-        private fun errorGetMs(): Long = runCatching { player?.currentPosition ?: 0L }.getOrDefault(0L)
+        private fun errorGetMs(): Long = runCatching { activePlayer()?.currentPosition ?: 0L }.getOrDefault(0L)
 
         private fun summarize(e: PlaybackException): String {
             val causeName = e.errorCodeName
@@ -1173,7 +1399,10 @@ class PlaybackService : MediaSessionService() {
     private fun handleEnded() {
         val bundle = store.bundle.value ?: return
         val active = store.activeRendition() ?: return
-        val exo = player ?: return
+        // MX #9 — the player that ended, local or remote: an in-file seek
+        // belongs to the player carrying playback, and a next-episode load
+        // lands on it through [loadRenditionOf]'s cast branch.
+        val exo = activePlayer() ?: return
         val action = EpisodeProgression.computeNext(
             bundle = bundle,
             rendition = active,
@@ -1205,6 +1434,14 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
+        // MX #9 — swiping the app away while casting must not kill the TV:
+        // the receiver keeps playing after the phone app dies, which is
+        // the normal Cast behaviour. The service stays alive while the
+        // session is live and ends with it.
+        if (store.castIsCasting.value) {
+            super.onTaskRemoved(rootIntent)
+            return
+        }
         val p = player
         if (p == null || !p.playWhenReady || p.mediaItemCount == 0) {
             stopSelf()

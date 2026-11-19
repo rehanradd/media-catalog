@@ -152,6 +152,76 @@ class PlayerSessionStore(
         }
     }
 
+    // ── MX #9 (Cast) ─────────────────────────────────────────────────────
+
+    // True while playback is on a Cast receiver. The service is the writer:
+    // it flips this when the session hands playback over and back.
+    private val _castIsCasting = MutableStateFlow(false)
+    val castIsCasting: StateFlow<Boolean> = _castIsCasting.asStateFlow()
+
+    // The receiver's friendly name while casting, null otherwise — the
+    // banner names the TV, never a device id.
+    private val _castDeviceName = MutableStateFlow<String?>(null)
+    val castDeviceName: StateFlow<String?> = _castDeviceName.asStateFlow()
+
+    // Whether casting is allowed right now: the server's chromecast flag
+    // AND the player not being locked. The ViewModel is the writer — it
+    // recomputes this on every lock change and every flag change, so a
+    // locked player never offers Cast and a parent turning Kids Lock on
+    // mid-cast pulls playback home.
+    private val _castAllowed = MutableStateFlow(false)
+    val castAllowed: StateFlow<Boolean> = _castAllowed.asStateFlow()
+
+    /** MX #9 — the service records the transfer state after each hop. */
+    fun setCastState(casting: Boolean, deviceName: String?) {
+        _castIsCasting.value = casting
+        _castDeviceName.value = if (casting) deviceName else null
+    }
+
+    /** MX #9 — the ViewModel's answer for whether the button may show. */
+    fun setCastAllowed(allowed: Boolean) {
+        _castAllowed.value = allowed
+    }
+
+    /**
+     * MX #9 — the banner that says playback moved to the TV. A raw string,
+     * like [announceDecoderFallback]: the settled banner is the one place
+     * that may hold a composed sentence (the copy test ratchets
+     * PlayerScreen.kt, not the store).
+     */
+    fun announceCastStarted(deviceName: String?) {
+        val target = deviceName?.takeIf { it.isNotBlank() } ?: "TV"
+        _settledBanner.value = "Casting to $target"
+    }
+
+    /** MX #9 — the banner that says playback is back on this phone. */
+    fun announceCastEnded() {
+        _settledBanner.value = "Back on this device"
+    }
+
+    /**
+     * MX #9 — the banner that says the receiver failed and playback came
+     * home. The why is unknowable from the sender side (CORS, a dead host,
+     * a receiver error all surface the same way), so the sentence says
+     * what happened and where playback is now, nothing more.
+     */
+    fun announceCastFailed() {
+        _settledBanner.value = "Couldn't play on TV — playing here"
+    }
+
+    /**
+     * MX #9 — the banner that says the transfer was refused and why.
+     * Refusals never become errors: the viewer stays local, watching.
+     */
+    fun announceCastRefused(reason: CastRefusalReason) {
+        _settledBanner.value = when (reason) {
+            CastRefusalReason.NOT_ALLOWED -> "Casting is not available while locked"
+            CastRefusalReason.NO_SESSION -> "No Cast device found"
+            CastRefusalReason.NO_PLAY_URL -> "This title cannot be cast"
+            CastRefusalReason.EXPIRED_LINK -> "This link expired — try playing it again"
+        }
+    }
+
     /**
      * The viewer's live subtitle sync in milliseconds; positive = text later. Written by the
      * screen on every slider step and read on the playback thread by the decoder wrapper the

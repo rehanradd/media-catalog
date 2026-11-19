@@ -583,6 +583,10 @@ dependencies {
     // CastContext / Default Media Receiver wiring only — no cast button UI
     // yet (see App/docs/CAST_SPIKE_20261118.md). 21.4.0 keeps minSdk 21.
     implementation(libs.play.services.cast.framework)
+    // MX #9 Cast: the real feature — media3-cast (pre-1.9 CastPlayer) for
+    // the remote player, mediarouter for the route-picker button.
+    implementation(libs.media3.cast)
+    implementation(libs.androidx.mediarouter)
 
     // ── Tests ─────────────────────────────────────────────────────────────────
     testImplementation(libs.junit)

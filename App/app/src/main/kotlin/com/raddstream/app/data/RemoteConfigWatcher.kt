@@ -97,8 +97,10 @@ class RemoteConfigWatcher @Inject constructor(
         // operator's real values with defaults — the fail-open the server's
         // own docstring warns about. Keep the last good config instead.
         if (config.settingsUnavailable) return
-        // `flags.chromecast` is deliberately not mirrored: this build has no cast UI at all, so
-        // there is no feature for that switch to take away. Storing it would be a dead key.
+        // MX #9 — `flags.chromecast` IS mirrored now: the cast button exists,
+        // so the switch has a feature to take away. The pureCinema pattern
+        // exactly: the watcher writes the server's answer, the player reads
+        // it live, and a failed poll leaves the last good answer in place.
         val flags = config.featureFlags
         settings.saveRemoteFlags(
             maintenanceMode = config.maintenanceMode,
@@ -108,6 +110,7 @@ class RemoteConfigWatcher @Inject constructor(
             pureCinemaEnabled = flags.pureCinema,
             qualityGateEnabled = flags.qualityGate,
             adsEnabled = config.ads.enabled,
+            castEnabled = flags.chromecast,
         )
         // The theme rides the same successful body: a failed poll leaves the
         // last good theme in place, exactly like the switches above.

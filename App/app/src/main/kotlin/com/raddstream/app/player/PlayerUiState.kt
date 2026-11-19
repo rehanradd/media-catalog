@@ -346,6 +346,19 @@ data class PlayerUiState(
      * comes back on restores the frame they last asked for instead of having overwritten it.
      */
     val pureCinemaAllowed: Boolean = true,
+    /**
+     * MX #9 — Cast: whether a receiver is discoverable on this network AND
+     * the server's chromecast switch is on. The button is composed only
+     * when this is true and the player is not locked — the framework hides
+     * the button itself when the routes vanish, but the screen needs its
+     * own answer so the MX #6 slim bar takes no slot at all when there is
+     * nothing to cast to.
+     */
+    val castAvailable: Boolean = false,
+    /** MX #9 — true while playback is on the receiver. */
+    val isCasting: Boolean = false,
+    /** MX #9 — the receiver's friendly name while casting, null otherwise. */
+    val castDeviceName: String? = null,
     val audioOnly: Boolean = false,
     val stereoOnly: Boolean = false,
     // failover narration (§5: which print settled, why the others died)
