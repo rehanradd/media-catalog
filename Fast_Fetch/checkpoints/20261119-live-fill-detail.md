@@ -135,9 +135,9 @@ Worktree `~/workspace/live-fill-detail-20261119`. Never merge / push main / depl
 - [x] `test_redact` local green (116/116)
 - [x] App: wire models + repository + ViewModel trigger/merge
 - [x] App tests (CI is the gate — never `./gradlew` locally)
-- [ ] Session logs (this file, CONTINUITY count bump, App SESSION_HISTORY)
-- [ ] Commit + push branch, CI green (fix + re-push; re-run flakes once)
-- [ ] Report tip + files + test counts + CI run id + verdict
+- [x] Session logs (this file, CONTINUITY count bump, App SESSION_HISTORY)
+- [x] Commit + push branch, CI green (fix + re-push; re-run flakes once)
+- [x] Report tip + files + test counts + CI run id + verdict
 
 ## Hard safety (standing)
 
@@ -236,3 +236,13 @@ Worktree `~/workspace/live-fill-detail-20261119`. Never merge / push main / depl
   (The V2DetailRepositoryTest fake is the pattern; I wrote the fake
   from the summary's "interface" shorthand instead of reading the
   class.) Fixup pushed; CI verdict owed.
+
+- Android attempt 2 FAILED at `:app:compileDebugUnitTestKotlin` — the
+  REAL error above. Fixup eb7ea027 pushed.
+- Fixup tip eb7ea027: Backend 44528705881 SUCCESS (4,200 tests, 0
+  failures); Android 44528705724 SUCCESS (2,646 tests, 0 failures, 0
+  errors — from the ci-reports-1107 artifact; DetailLiveFillTest 7,
+  LiveFillRepositoryTest 7, ModelsTest 54 incl. the 3 new). Paparazzi
+  verify gate green, lint green, debug APK app-debug-1107. Branch tip
+  ready for the parent to merge; no merge by this lane. No local
+  Gradle — CI was the gate.
