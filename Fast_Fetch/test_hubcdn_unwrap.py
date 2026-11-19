@@ -267,6 +267,36 @@ class UnwrapTests(unittest.TestCase):
         res, _rec = self.unwrap(happy_hops(), buttons=[])
         self.assertEqual(res["error"], "no_dl_trigger_buttons")
 
+    def test_preparing_page_names_its_filesdl_target(self):
+        # Second gateway shape (measured live 2026-11-20): a "Preparing
+        # Download" countdown page with no buttons and a filesdl target.
+        # The target is evidence, never an asset: filesdl is JS-challenged.
+        page = ('<html><head><title>Preparing Download - HubCDN</title></head>'
+                '<body><script>var targetUrl="https://new1.filesdl.in/'
+                'drive/nm27vVUjJT";</script></body></html>')
+        res = fast_fetch.unwrap_hubcdn(
+            "https://hubcdn.io/cloud/abc",
+            _fetch=lambda u: (page, ""), _hop=HopRecorder({}))
+        self.assertFalse(res["ok"])
+        self.assertEqual(res["error"], "preparing_download")
+        self.assertEqual(res["preparing_target"],
+                         "https://new1.filesdl.in/drive/nm27vVUjJT")
+
+    def test_preparing_target_parses_without_buttons(self):
+        self.assertEqual(
+            hc.hubcdn_preparing_target(
+                'var targetUrl="https://new1.filesdl.in/drive/abc";'),
+            "https://new1.filesdl.in/drive/abc")
+        self.assertEqual(
+            hc.hubcdn_preparing_target(
+                "var targetUrl='https://new1.filesdl.in/drive/abc';"),
+            "https://new1.filesdl.in/drive/abc")
+
+    def test_preparing_target_is_absent_on_a_normal_page(self):
+        self.assertIsNone(hc.hubcdn_preparing_target(
+            gateway_page(HAPPY_BUTTONS)))
+        self.assertIsNone(hc.hubcdn_preparing_target(""))
+
     def test_absent_cookies_send_no_cookie_header_at_all(self):
         # An empty `Cookie: ` header is a different request from none; the
         # gateway must not see one it never got.

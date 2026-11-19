@@ -4065,7 +4065,10 @@ def unwrap_hubcdn(cloud_url: str, timeout: int = 8, *, _fetch=None,
     failure. ``r2_url`` is the public Cloudflare R2 bucket (Category A, tier 1,
     streamable); ``google_url`` is the Google Cloud CDN front (Category A, tier
     1, the 10Gbps download). Both are durable byte URLs, so the caller does not
-    need a token window for them.
+    need a token window for them. A "Preparing Download" page answers
+    ``error == "preparing_download"`` with ``preparing_target`` attached —
+    the asset lives on filesdl behind a JS challenge, so it is counted,
+    never served.
 
     ``_fetch`` / ``_hop`` are the two network edges, injectable so the parsing
     and the trust decision are testable offline. Every target is judged by
@@ -4108,7 +4111,18 @@ def unwrap_hubcdn(cloud_url: str, timeout: int = 8, *, _fetch=None,
 
     buttons = _hc.hubcdn_page_buttons(page)
     if not buttons:
-        out["error"] = "no_dl_trigger_buttons"
+        # Second gateway shape (measured live 2026-11-20): a "Preparing
+        # Download" countdown page whose asset lives on filesdl, not on
+        # R2/Google. Name it, with its target as evidence — a generic
+        # "no buttons" error would hide a whole population behind a
+        # broken-page verdict, and the target is never a playable address
+        # (filesdl is Cloudflare-JS-challenged; see host_classifier).
+        preparing = _hc.hubcdn_preparing_target(page)
+        if preparing:
+            out["error"] = "preparing_download"
+            out["preparing_target"] = preparing
+        else:
+            out["error"] = "no_dl_trigger_buttons"
         return out
 
     headers = {"User-Agent": USER_AGENT, "Referer": cloud_url}

@@ -938,6 +938,12 @@ jobs:
       - name: 🧪 test_hubcdn_unwrap.py
         run: python3 -S Fast_Fetch/test_hubcdn_unwrap.py
 
+      # Phase C lane E (hubcdn): the backfill that cracks the stored bridges
+      # (backfill_hubcdn.py) — offline, injected unwrap/probe seams, no
+      # network. Runs right after the unwrap suite it depends on.
+      - name: 🧪 test_backfill_hubcdn.py
+        run: python3 -S Fast_Fetch/test_backfill_hubcdn.py
+
       # Multiup mirror hub (Phase C, 2026-11-20): GET download page, POST its
       # CSRF token to /en/mirror/<id>, unwrap the best mirror (gofile, then
       # mixdrop). Offline — canned pages via the _http seam, stub resolvers.
