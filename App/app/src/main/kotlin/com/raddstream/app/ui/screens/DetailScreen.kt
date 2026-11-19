@@ -50,8 +50,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Favorite
@@ -65,7 +63,6 @@ import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
@@ -74,7 +71,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -117,6 +113,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.mediarouter.app.MediaRouteButton
+import com.google.android.gms.cast.framework.CastButtonFactory
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.raddstream.app.R
@@ -153,7 +152,6 @@ import com.raddstream.app.ui.components.audioBadgeText
 import com.raddstream.app.ui.components.hdrBadgeText
 import com.raddstream.app.ui.components.prefetchPosterArt
 import com.raddstream.app.ui.components.raddFilterChipColors
-import com.raddstream.app.ui.components.RaddChip
 import com.raddstream.app.ui.components.ScrollingChipRow
 import com.raddstream.app.ui.components.sourceBadgeText
 import com.raddstream.app.ui.components.subtitleBadgeText
@@ -167,8 +165,6 @@ import com.raddstream.app.ui.theme.pressScale
 import com.raddstream.app.ui.theme.rememberArtworkAccent
 import com.raddstream.app.viewmodel.DetailNavigationEvent
 import com.raddstream.app.viewmodel.DetailViewModel
-import com.raddstream.app.viewmodel.EpisodeGroup
-import com.raddstream.app.viewmodel.EpisodeProgress
 import com.raddstream.app.viewmodel.PendingKeep
 import com.raddstream.app.viewmodel.PendingSeasonKeep
 import com.raddstream.app.viewmodel.RankedPrint
@@ -187,6 +183,8 @@ fun DetailScreen(
     /** A link the server calls a page: show the provider's own page rather than fail quietly. */
     onOpenProviderPage: (streamId: String, title: String) -> Unit = { _, _ -> },
     onOpenDownloads: () -> Unit = {},
+    /** Detail redesign (Nov 2026): a season row opens its sub-page. */
+    onOpenSeason: (Int) -> Unit = {},
     /** An actor chip in the cast row: open that actor's titles in Search. */
     onActorClick: (String) -> Unit = {},
     /** F18: tap on a tile in the Similar titles rail. */
@@ -357,6 +355,17 @@ fun DetailScreen(
                 },
                 actions = {
                     if (!state.isLoading) {
+                        // Detail redesign (Nov 2026): Cast lives here now,
+                        // not in the player — the player is for watching,
+                        // this page is for choosing. The icon shows only
+                        // when a receiver is actually found and the server
+                        // switch is on (state.castAvailable); most viewers
+                        // never see it at all. Tapping it opens the
+                        // framework's picker; the pick itself is a session,
+                        // and Play then hands the title to the TV.
+                        if (state.castAvailable) {
+                            DetailCastButton()
+                        }
                         // Detail redesign (Nov 2026): no competitor puts
                         // a report affordance in the top bar of a title
                         // page. The function stays — it lives in the More
@@ -546,20 +555,17 @@ fun DetailScreen(
                 onPlayResume = viewModel::playResume,
                 /** Phase 7 (D1): "Start over" — forget where viewing stopped. */
                 onStartOver = viewModel::removeProgress,
-                episodeProgress = state.episodeProgress,
                 includedPill = state.includedPill,
                 deadEndReason = state.deadEndReason,
                 // MX #7 — Kids Lock: the dead-end Download button stays out
                 // of kids mode — downloads are a locked surface.
                 deadEndKeepPrint = state.deadEndKeepPrint.takeIf { !state.kidsMode },
-                downloadedHandles = state.downloadedHandles,
-                downloadingHandles = state.downloadingHandles,
-                selectedSeason = state.selectedSeason,
-                onSelectSeason = viewModel::selectSeason,
                 onPlayPrint = { print -> viewModel.playPrint(print, external = false) },
                 onOpenExternal = { print -> viewModel.playPrint(print, external = true) },
                 onKeep = { print -> downloadWithStoragePermission { viewModel.keepPrint(print) } },
-                onKeepSeason = { season -> viewModel.requestKeepSeason(season) },
+                // Detail redesign (Nov 2026): a season row opens its
+                // sub-page — the episode list no longer lives here.
+                onOpenSeason = onOpenSeason,
                 rungs = RungActions(
                     ladder = state.ladder,
                     selectedBand = state.selectedBand,
@@ -570,9 +576,6 @@ fun DetailScreen(
                     // Audit #32: the card leads with the viewer's own audio.
                     preferredAudio = preferredAudioLanguages(state.region),
                 ),
-                ladderScope = rungScopeLabel(state.ladderSeason, state.ladderEpisode),
-                onAskRungs = viewModel::showRungsFor,
-                hasRungs = { season, episode -> !viewModel.ladderFor(season, episode).isEmpty },
                 onActorClick = onActorClick,
                 similarTitles = state.similarTitles,
                 similarLoading = state.similarLoading,
@@ -842,14 +845,6 @@ internal data class RungActions(
     val preferredAudio: Set<String> = emptySet(),
 )
 
-/** Which scope a ladder belongs to, in the viewer's words. Null means the whole work. */
-private fun rungScopeLabel(season: Int?, episode: Int?): String? = when {
-    season != null && episode != null -> "Season $season · Episode $episode"
-    episode != null -> "Episode $episode"
-    season != null -> "Season $season"
-    else -> null
-}
-
 /**
  * The detail page's content padding, safe for landscape (Samsung RTL
  * v1.1.2, Issue 9). The page is a single portrait column, and in
@@ -1001,8 +996,6 @@ internal fun DetailContent(
     onPlayResume: () -> Unit,
     /** Phase 7 (D1): "Start over" — forget where viewing stopped, on the server and locally. */
     onStartOver: () -> Unit = {},
-    /** Per-episode progress, keyed by (season, episode). */
-    episodeProgress: Map<Pair<Int, Int>, EpisodeProgress>,
     /** What this viewer can watch of this title, as a pill — null when it has no prints. */
     includedPill: String?,
     /** Why this title cannot be played, in the viewer's words — null when it can. */
@@ -1015,28 +1008,17 @@ internal fun DetailContent(
      * to target — a null here never falls back to the best-ranked print.
      */
     deadEndKeepPrint: RankedPrint? = null,
-    /** Handles of downloads already on this device (READY rows only). */
-    downloadedHandles: Set<String> = emptySet(),
-    /**
-     * Detail review (Nov 2026, P1): handles of downloads moving on this
-     * device right now — an episode row says "Downloading" while its
-     * keep runs, so the viewer does not tap Download again on a copy
-     * already coming.
-     */
-    downloadingHandles: Set<String> = emptySet(),
-    selectedSeason: Int?,
-    onSelectSeason: (Int) -> Unit,
     onPlayPrint: (RankedPrint) -> Unit,
     onOpenExternal: (RankedPrint) -> Unit,
     onKeep: (RankedPrint) -> Unit,
-    /** One best copy per episode, for the whole season — asks first, downloads on Confirm. */
-    onKeepSeason: (SeasonGroup) -> Unit = {},
-    /** The quality switch and the download card, as one bundle the rows can reuse. */
+    /**
+     * Detail redesign (Nov 2026): a season row opens that season's
+     * sub-page, where the episodes live as plain numbered tiles. The
+     * episode list no longer lives on this page at all.
+     */
+    onOpenSeason: (Int) -> Unit,
+    /** The quality switch and the download card, as one bundle the movie card can reuse. */
     rungs: RungActions,
-    /** "Season 2 · Episode 5", or null when these rungs are the whole work's. */
-    ladderScope: String?,
-    onAskRungs: (season: Int?, episode: Int?) -> Unit,
-    hasRungs: (season: Int?, episode: Int?) -> Boolean,
     /** An actor chip in the cast row: open that actor's titles in Search. */
     onActorClick: (String) -> Unit = {},
     similarTitles: List<Post> = emptyList(),
@@ -1079,10 +1061,6 @@ internal fun DetailContent(
     // It only renders when the quality ladder cannot fold the title at all
     // (no option groups from the server) — the ladder is the choice then.
     var showAllFiles by remember { mutableStateOf(false) }
-    // Detail review (Nov 2026, P2): the series quality sheet — the rung
-    // card in a bottom sheet instead of inline.
-    var showQualitySheet by remember { mutableStateOf(false) }
-    val qualitySheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     // The dead end's way out: the similar rail is the last item on the
     // page, and the requester is what scrolls it into view from the
     // actions above. Owned here, so the button and the rail agree.
@@ -1222,10 +1200,10 @@ internal fun DetailContent(
         // Detail review (Nov 2026, P1): the server caps the detail at
         // 1,000 releases — the list below is the first of many, not the
         // whole work. One honest line, before the viewer assumes the
-        // episode/file list is complete. The per-season episode counts
+        // season/episode list is complete. The per-season episode counts
         // ARE corrected now (B2): the v2 `episode_guide` carries the true
-        // total per season, and the season headers read it — but the
-        // episode rows below are still only the capped releases, so the
+        // total per season, and the season rows read it — but the episodes
+        // behind those rows are still only the capped releases, so the
         // line stays as the disclosure for the list itself.
         if (post.isTruncated) {
             item(contentType = "truncation-note") {
@@ -1242,97 +1220,47 @@ internal fun DetailContent(
             }
         }
 
-        // Detail review (Nov 2026, P2): seasons and episodes come
-        // before the quality choice — the viewer picks what to watch
-        // first, then the picture it plays in. The work-level ladder
-        // below folds into a chip for a series (the sheet), so the
-        // episodes are the page, not a preface to a second long card.
+        // Detail redesign (Nov 2026): a series shows only its seasons
+        // here — one simple row each, "Season 1 — 12 episodes ›". The
+        // episodes live on the season's own sub-page, as plain numbered
+        // tiles; the episode rows and their print lists are gone from
+        // this page. The per-season counts ARE corrected (B2): the v2
+        // `episode_guide` carries the true total per season, and the rows
+        // read it — but the sub-page tiles are still only the capped
+        // releases, so the truncation line above stays as the disclosure
+        // for the list itself.
         if (isSeries) {
-            if (seasons.size > 5) {
-                item { Box(pageSides) { SeasonDropdown(seasons = seasons, selectedSeason = selectedSeason, onSelect = onSelectSeason) } }
-            } else if (seasons.size > 1) {
-                item { Box(pageSides) { SeasonChips(seasons = seasons, selectedSeason = selectedSeason, onSelect = onSelectSeason) } }
-            }
-            val season = seasons.firstOrNull { it.number == selectedSeason } ?: seasons.firstOrNull()
-            if (season != null) {
-                item { Box(pageSides) { SeasonHeader(season = season, onKeepSeason = onKeepSeason) } }
-                if (season.packedPrints.isNotEmpty()) {
-                    item {
-                        Box(pageSides) {
-                            PackedSeasonBanner(
-                                season = season,
-                                onPlay = onPlayPrint,
-                                onKeep = onKeep,
-                            )
-                        }
-                    }
+            item(contentType = "seasons-header") {
+                Box(pageSides) {
+                    SectionHeader(title = "Seasons", modifier = Modifier.padding(horizontal = 0.dp))
                 }
-                items(season.episodes, key = { "ep-${season.number}-${it.numberWithinSeason}" }) { episode ->
-                    // A packed season is one file: its ladder is the season's, not an episode's.
-                    val episodeKey = if (episode.onlyPacked) null else episode.numberWithinSeason
-                    val scopeLabel = rungScopeLabel(season.number, episodeKey)
-                    Box(pageSides) {
-                        EpisodeRow(
-                            episode = episode,
-                            progress = episodeProgress[season.number to episode.numberWithinSeason],
-                            isDownloaded = episode.prints.any { print ->
-                                print.links.any { link ->
-                                    link.streamId.isNotBlank() && link.streamId in downloadedHandles
-                                }
-                            },
-                            isDownloading = episode.prints.any { print ->
-                                print.links.any { link ->
-                                    link.streamId.isNotBlank() && link.streamId in downloadingHandles
-                                }
-                            },
-                            onPlayPrint = onPlayPrint,
-                            onOpenExternal = onOpenExternal,
-                            onKeep = onKeep,
-                            scopeLabel = scopeLabel,
-                            canChooseQuality = hasRungs(season.number, episodeKey),
-                            showQuality = ladderScope == scopeLabel && !rungs.ladder.isEmpty,
-                            onChooseQuality = {
-                                onAskRungs(season.number, episodeKey)
-                            },
-                            rungs = rungs,
-                        )
-                    }
+            }
+            items(seasons, key = { "season-${it.number}" }) { season ->
+                Box(pageSides) {
+                    SeasonRow(
+                        season = season,
+                        onClick = { onOpenSeason(season.number) },
+                    )
                 }
             }
         }
 
         // One row per quality band, exactly as the server collapsed the copies of this
         // title: the viewer picks a picture, never a server, and never a list of links.
-        // An episode's rungs belong under that episode, not up here.
-        if (!rungs.ladder.isEmpty && ladderScope == null) {
-            if (isSeries) {
-                item {
-                    Row(modifier = pageSides.fillMaxWidth()) {
-                        FilterChip(
-                            selected = false,
-                            onClick = { showQualitySheet = true },
-                            label = { Text(qualityChipLabel(rungs.ladder)) },
-                            trailingIcon = {
-                                Icon(Icons.Default.ArrowDropDown, contentDescription = null)
-                            },
-                            colors = raddFilterChipColors(),
-                            modifier = Modifier.heightIn(min = 48.dp),
-                        )
-                    }
-                }
-            } else {
-                item {
-                    QualityRungCard(
-                        modifier = pageSides,
-                        ladder = rungs.ladder,
-                        selectedBand = rungs.selectedBand,
-                        onPlayRung = rungs.onPlay,
-                        onKeepRung = rungs.onKeep,
-                        tierLabel = rungs.tierLabel,
-                        isLocked = rungs.isLocked,
-                        preferredAudio = rungs.preferredAudio,
-                    )
-                }
+        // Detail redesign (Nov 2026): a series has no quality card on this page any
+        // more — its picture is picked in the player. A movie keeps its card here.
+        if (!isSeries && !rungs.ladder.isEmpty) {
+            item {
+                QualityRungCard(
+                    modifier = pageSides,
+                    ladder = rungs.ladder,
+                    selectedBand = rungs.selectedBand,
+                    onPlayRung = rungs.onPlay,
+                    onKeepRung = rungs.onKeep,
+                    tierLabel = rungs.tierLabel,
+                    isLocked = rungs.isLocked,
+                    preferredAudio = rungs.preferredAudio,
+                )
             }
         }
 
@@ -1456,35 +1384,6 @@ internal fun DetailContent(
                         )
                     }
                 }
-            }
-        }
-    }
-
-    // Detail review (Nov 2026, P2): the series quality sheet — the same
-    // rung card as the movie page, in a bottom sheet instead of inline,
-    // so the seasons and episodes stay the page. The sheet's own
-    // rememberModalBottomSheetState lives above (skipPartiallyExpanded),
-    // the same shape as the report dialog.
-    if (showQualitySheet) {
-        ModalBottomSheet(
-            onDismissRequest = { showQualitySheet = false },
-            sheetState = qualitySheetState,
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-            ) {
-                QualityRungCard(
-                    ladder = rungs.ladder,
-                    selectedBand = rungs.selectedBand,
-                    onPlayRung = rungs.onPlay,
-                    onKeepRung = rungs.onKeep,
-                    tierLabel = rungs.tierLabel,
-                    isLocked = rungs.isLocked,
-                    preferredAudio = rungs.preferredAudio,
-                )
             }
         }
     }
@@ -1813,6 +1712,39 @@ private fun DetailTopBarTarget(
 }
 
 /**
+ * Detail redesign (Nov 2026): the Cast button, on this page instead of in
+ * the player. The same standard route-picker the player used — a
+ * `MediaRouteButton` is a View, not a composable, and the framework owns
+ * the picker dialog plus the button's own connected / connecting states
+ * ([CastButtonFactory.setUpMediaRouteButton]). It rides the same 48dp
+ * translucent circle as back and More, so it reads over any artwork; the
+ * button is composed only when a receiver is actually there (the
+ * ViewModel's `castAvailable`), so the bar stays clean for everyone else.
+ * No prose of its own: the description comes from `detail_cast`.
+ */
+@Composable
+private fun DetailCastButton() {
+    val description = stringResource(R.string.detail_cast)
+    Box(
+        modifier = Modifier
+            .size(48.dp)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.6f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        AndroidView(
+            factory = { context ->
+                MediaRouteButton(context).apply {
+                    CastButtonFactory.setUpMediaRouteButton(context, this)
+                    contentDescription = description
+                }
+            },
+            modifier = Modifier.size(48.dp),
+        )
+    }
+}
+
+/**
  * Detail review (Nov 2026, P0): the hero's Play target — the best print
  * that can actually start here, or null when none can. The best-ranked
  * print is not the answer: on a gated title it can be a 4K print this
@@ -1822,24 +1754,6 @@ private fun DetailTopBarTarget(
  */
 internal fun heroPlayablePrint(prints: List<RankedPrint>): RankedPrint? =
     prints.filter { it.playableHere }.maxByOrNull { it.rankKey }
-
-/**
- * Detail review (Nov 2026, P2): the series quality chip's label — the
- * Auto band the ladder would play, or the download-only state when no
- * rung plays here. The Auto band itself may not play (a locked top
- * rung); then the first rung that does play names the quality. Pure so
- * DetailQualityChipTest pins it.
- */
-internal fun qualityChipLabel(ladder: LadderForScope): String {
-    val playableBand = ladder.effectiveAutoBand?.takeIf { band ->
-        ladder.options.any { it.band == band && it.playsHere }
-    } ?: ladder.options.firstOrNull { it.playsHere }?.band
-    return if (playableBand != null) {
-        "Quality: Auto ($playableBand)"
-    } else {
-        "Quality: Download only"
-    }
-}
 
 @Composable
 private fun PrimaryActions(
@@ -2194,503 +2108,49 @@ private fun CastSection(cast: List<String>, onActorClick: (String) -> Unit) {
     }
 }
 
+/**
+ * Detail redesign (Nov 2026): one season, one row — "Season 1 — 12
+ * episodes ›". The episodes live on the season's own sub-page, so this
+ * row only says how many there are (the B2 guide total when the server
+ * named one, "Full season" for a whole-season file) and where the tap
+ * goes. A whole row, 48dp tall, so the target is a thumb, not a word.
+ */
 @Composable
-private fun SeasonChips(seasons: List<SeasonGroup>, selectedSeason: Int?, onSelect: (Int) -> Unit) {
-    Column {
-        SectionHeader(title = "Seasons", modifier = Modifier.padding(horizontal = 0.dp))
-        // A4-F3: rides ScrollingChipRow + RaddChip now — the fade and the
-        // row are the shared component, not a hand-rolled copy. The season
-        // strip gains the fade the other rows already had.
-        ScrollingChipRow(
-            contentPadding = PaddingValues(end = 16.dp),
-        ) {
-            items(seasons) { s ->
-                RaddChip(
-                    colors = raddFilterChipColors(),
-                    selected = selectedSeason == s.number,
-                    onClick = { onSelect(s.number) },
-                    label = { Text("Season ${s.number} · ${s.episodeCountNumber}") },
-                    leadingIcon = { SeasonThumbnail(season = s, modifier = Modifier.size(24.dp)) },
-                )
-            }
-        }
-    }
-}
-
-/** A season's own artwork at chip size. Null art is answered by the branded gradient, not a hole. */
-@Composable
-private fun SeasonThumbnail(season: SeasonGroup, modifier: Modifier = Modifier) {
-    Box(
+private fun SeasonRow(
+    season: SeasonGroup,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
         modifier = modifier
-            .clip(RoundedCornerShape(4.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant),
-    ) {
-        val art = season.artworkUrl
-        if (art != null) {
-            CatalogImage(
-                url = art,
-                contentDescription = null,
-                modifier = Modifier.fillMaxSize(),
-                fallbackLabel = "S${season.number}",
-            )
-        } else {
-            ImageFallbackCard(modifier = Modifier.fillMaxSize())
-        }
-    }
-}
-
-/**
- * The season picker past five seasons: a dropdown, not a tab strip —
- * the Netflix pattern, which scales where a horizontal chip strip
- * stops being a picker and starts being a scroll. Five or fewer seasons
- * keep the chip strip ([SeasonChips]); above that the strip would hide
- * most seasons off the right edge.
- */
-@Composable
-private fun SeasonDropdown(
-    seasons: List<SeasonGroup>,
-    selectedSeason: Int?,
-    onSelect: (Int) -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    val selected = seasons.firstOrNull { it.number == selectedSeason } ?: seasons.firstOrNull()
-    Column {
-        SectionHeader(title = "Seasons", modifier = Modifier.padding(horizontal = 0.dp))
-        Box {
-            OutlinedButton(
-                onClick = { expanded = true },
-                modifier = Modifier.heightIn(min = 48.dp),
-            ) {
-                Text(
-                    text = selected?.let { "Season ${it.number} · ${it.episodeCountLabel}" }
-                        ?: "Season",
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.width(8.dp))
-                // Detail review (Nov 2026, P1): a real chevron icon, not
-                // the "▾" text glyph — the glyph renders inconsistently
-                // across fonts and reads as a stray character.
-                Icon(Icons.Default.ArrowDropDown, contentDescription = null)
-            }
-            DropdownMenu(
-                expanded = expanded,
-                onDismissRequest = { expanded = false },
-            ) {
-                seasons.forEach { season ->
-                    DropdownMenuItem(
-                        text = { Text("Season ${season.number} · ${season.episodeCountLabel}") },
-                        onClick = {
-                            expanded = false
-                            onSelect(season.number)
-                        },
-                    )
-                }
-            }
-        }
-    }
-}
-
-/**
- * The selected season's header. Its image is the season's slice of the work's wide art, so a
- * multi-season show never presents the same root poster above every season's episode list.
- */
-@Composable
-private fun SeasonHeader(season: SeasonGroup, onKeepSeason: (SeasonGroup) -> Unit = {}) {
-    Box(
-        modifier = Modifier
             .fillMaxWidth()
-            .aspectRatio(CardGeometry.SEASON_ART_ASPECT)
-            .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant),
-    ) {
-        val art = season.artworkUrl
-        if (art != null) {
-            CatalogImage(
-                url = art,
-                contentDescription = "Season ${season.number} artwork",
-                modifier = Modifier.fillMaxSize(),
-                fallbackLabel = "S${season.number}",
-            )
-        } else {
-            ImageFallbackCard(modifier = Modifier.fillMaxSize(), label = "S${season.number}")
-        }
-        Box(
-            Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        listOf(
-                            Color.Transparent,
-                            MaterialTheme.colorScheme.scrim.copy(alpha = 0.85f),
-                        )
-                    )
-                )
-        )
-        Column(
-            modifier = Modifier.align(Alignment.BottomStart).padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            Text(
-                text = "Season ${season.number}",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onBackground,
-            )
-            Text(
-                // B2: the true total from the v2 episode_guide when the
-                // server sent one ("Full season" for a pack-only season),
-                // else the rows on screen as before.
-                text = season.episodeCountLabel,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onBackground,
-            )
-        }
-        // Download the whole season from its header: one best copy per
-        // episode, asked first and downloaded on Confirm — the Prime /
-        // MovieBox pattern. The packed-season banner below keeps its own
-        // download for the one-file season.
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(10.dp)
-                .size(48.dp)
-                .clip(RoundedCornerShape(24.dp))
-                .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.6f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            IconButton(onClick = { onKeepSeason(season) }, modifier = Modifier.size(48.dp)) {
-                Icon(
-                    Icons.Default.Download,
-                    contentDescription = "Download Season ${season.number}",
-                    tint = MaterialTheme.colorScheme.onBackground,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun PackedSeasonBanner(season: SeasonGroup, onPlay: (RankedPrint) -> Unit, onKeep: (RankedPrint) -> Unit) {
-    val pack = season.packedPrints.maxByOrNull { it.rankKey } ?: return
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Text(
-            pack.qualityLabel?.let { "This season is offered as one file ($it)." }
-                ?: "This season is offered as one file.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-        Text(
-            "Playing a packed season starts the whole-season video — pick a specific episode below for per-episode files when available.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            // Detail review (Nov 2026, P1): the 48dp touch-target floor —
-            // a Material 3 button's own min height is 40dp.
-            Button(
-                onClick = { onPlay(pack) },
-                modifier = Modifier.heightIn(min = 48.dp),
-            ) {
-                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Play season")
-            }
-            OutlinedButton(
-                onClick = { onKeep(pack) },
-                modifier = Modifier.heightIn(min = 48.dp),
-            ) {
-                Icon(Icons.Default.Download, contentDescription = "Download season")
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-internal fun EpisodeRow(
-    episode: EpisodeGroup,
-    /** This episode's progress on this device — null when never watched. */
-    progress: EpisodeProgress?,
-    /** True when a READY download on this device covers one of this episode's prints. */
-    isDownloaded: Boolean = false,
-    /**
-     * Detail review (Nov 2026, P1): true when a download on this device
-     * is still moving for one of this episode's prints — the row says
-     * "Downloading" while its keep runs.
-     */
-    isDownloading: Boolean = false,
-    onPlayPrint: (RankedPrint) -> Unit,
-    onOpenExternal: (RankedPrint) -> Unit,
-    onKeep: (RankedPrint) -> Unit,
-    /** "Season 1 · Episode 5" — the card the row opens has to say what it is the ladder of. */
-    scopeLabel: String?,
-    canChooseQuality: Boolean,
-    showQuality: Boolean,
-    onChooseQuality: () -> Unit,
-    rungs: RungActions,
-) {
-    var expanded by remember(episode.absoluteNumber) { mutableStateOf(false) }
-    val best = episode.bestPrint
-    // The only copy this row can start: a download-only episode has a best
-    // print but no playable one, so the triangle must not pretend otherwise.
-    val playableBest = best?.takeIf { it.canStart }
-    // A row that looks tappable must do something: open the episode's quality
-    // ladder when it has one, else play its playable copy. A download-only
-    // episode has neither — the "Download only" label below says so instead
-    // of a dead tap.
-    val rowAction: (() -> Unit)? = when {
-        canChooseQuality -> onChooseQuality
-        playableBest != null -> { { onPlayPrint(playableBest) } }
-        else -> null
-    }
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
+            .heightIn(min = 48.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.surface)
-            .then(if (rowAction != null) Modifier.clickable(onClick = rowAction) else Modifier)
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+            .clickable(onClick = onClick, role = Role.Button)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Box(
-                modifier = Modifier
-                    .width(88.dp)
-                    .aspectRatio(CardGeometry.WIDE_ART_ASPECT)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-                contentAlignment = Alignment.Center,
-            ) {
-                val still = episode.stillUrl
-                if (still != null) {
-                    CatalogImage(
-                        url = still,
-                        contentDescription = "Episode ${episode.numberWithinSeason} preview",
-                        modifier = Modifier.fillMaxSize(),
-                        fallbackLabel = "E${episode.numberWithinSeason}",
-                    )
-                } else {
-                    ImageFallbackCard(modifier = Modifier.fillMaxSize())
-                }
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(3.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.75f))
-                        .padding(horizontal = 4.dp, vertical = 1.dp),
-                ) {
-                    Text(
-                        text = "${episode.absoluteNumber}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onBackground,
-                    )
-                }
-            }
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = episode.title ?: "Episode ${episode.numberWithinSeason}",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                val suffix = if (episode.onlyPacked) " · packed in season file" else
-                    if (episode.prints.size > 1) " · ${episode.prints.size} files" else ""
-                if (best != null) {
-                    // The same three axes the print card leads with, condensed for the row:
-                    // quality, HDR and audio. Subtitles stay on the expanded print card.
-                    // Robo run 2: the same "Picture quality 720p" badge repeated on
-                    // every episode row. Paint-only here: the facts are spoken once,
-                    // on the Play button below — but only while a Play button exists
-                    // to carry them; a download-only episode keeps its badges, its
-                    // only spoken quality signal.
-                    // Dev-cleanup (Nov 2026): when the best print carries no
-                    // quality data at all there is no badge row — the old
-                    // "No quality info" label narrated the absence of
-                    // metadata, and the row already has its title plus
-                    // Play/Download. Each badge also hides itself when it
-                    // has nothing to say, so the row can end up empty.
-                    FlowRow(
-                        modifier = if (playableBest != null) Modifier.clearAndSetSemantics { } else Modifier,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        PrintQualityBadge(print = best)
-                        HdrBadge(print = best)
-                        AudioBadge(print = best)
-                    }
-                }
-                if (suffix.isNotBlank()) {
-                    Text(
-                        text = suffix.trim().removePrefix("·").trim(),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                // A download already on this device is worth one jade
-                // check and the word itself — the viewer should not have
-                // to open the episode to learn it is already theirs.
-                if (isDownloaded) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.CheckCircle,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(14.dp),
-                        )
-                        Text(
-                            text = "Downloaded",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                    }
-                }
-                // A download in flight is worth the same honesty as a
-                // finished one: the row says it is moving, so the viewer
-                // does not tap Download again on a copy already coming.
-                if (isDownloading && !isDownloaded) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Download,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(14.dp),
-                        )
-                        Text(
-                            text = "Downloading",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
-            // The row's badge facts, spoken once on the Play button (the badge
-            // row above is paint-only while this button exists): quality, HDR,
-            // audio. A download-only episode has no Play button, so its badges
-            // stay spoken — see the FlowRow modifier above.
-            val episodeFacts = playableBest?.let { bestPrint ->
-                listOfNotNull(
-                    hdrBadgeText(bestPrint.hdr)?.let { "High dynamic range $it" },
-                    audioBadgeText(bestPrint.dualAudio, bestPrint.languages)?.let { "Audio $it" },
-                ).joinToString(prefix = ", ", separator = ", ").ifBlank { "" }
-            } ?: ""
-            if (playableBest != null) {
-                IconButton(
-                    onClick = { onPlayPrint(playableBest) },
-                    modifier = Modifier.size(48.dp),
-                ) {
-                    Icon(Icons.Default.PlayArrow, contentDescription = "Play episode ${episode.numberWithinSeason}${playableBest.qualityLabel?.let { ", $it" } ?: ""}$episodeFacts", tint = MaterialTheme.colorScheme.primary)
-                }
-            } else if (best != null) {
-                // No playable copy on this episode: the button that would have
-                // pretended to play becomes the honest word instead.
-                Text(
-                    text = "Download only",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            if (canChooseQuality) {
-                IconButton(
-                    onClick = onChooseQuality,
-                    modifier = Modifier.size(48.dp),
-                ) {
-                    Icon(
-                        Icons.Default.Tune,
-                        contentDescription = "Choose quality for episode ${episode.numberWithinSeason}",
-                        tint = if (showQuality) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
-
-        if (episode.onlyPacked) {
-            Pill(text = "Whole season in one file", backgroundColor = MaterialTheme.colorScheme.surfaceVariant, contentColor = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        // The mark this device left: a bar and what is left, or "Watched"
-        // when it ran to the end. A row never watched shows nothing — no
-        // bar, no guess — because an empty bar would claim a position
-        // nobody has.
-        progress?.let { p ->
-            if (p.watched) {
-                Text(
-                    text = "Watched",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            } else if (p.fraction != null) {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    LinearProgressIndicator(
-                        progress = { p.fraction },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    p.remainingLabel?.let { label ->
-                        Text(
-                            text = label,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
-        }
-        // The collapsed ladder replaces the print list wherever the server could fold one
-        // best copy per band; a ledger that cannot is still shown as before, not hidden.
-        // Its extra files read as "files", not "versions" — the viewer is
-        // opening files to watch, and the word matches the movie branch's
-        // expander.
-        if (episode.prints.size > 1 && !canChooseQuality) {
-            TextButton(
-                onClick = { expanded = !expanded },
-                // Detail review (Nov 2026, P1): the 48dp touch-target floor.
-                modifier = Modifier.heightIn(min = 48.dp),
-                contentPadding = PaddingValues(0.dp),
-            ) {
-                Text(if (expanded) "Hide files" else "Show all ${episode.prints.size} files")
-            }
-        }
-        if (expanded) {
-            val episodeCopies = copyNumbers(episode.prints)
-            episode.prints.forEach { print ->
-                PrintCard(
-                    print = print,
-                    onPlayPrint = onPlayPrint,
-                    onOpenExternal = onOpenExternal,
-                    onKeep = onKeep,
-                    copyIndex = episodeCopies[print.releaseId]?.first ?: 1,
-                    copyTotal = episodeCopies[print.releaseId]?.second ?: 1,
-                )
-            }
-        }
-        if (showQuality) {
-            QualityRungCard(
-                ladder = rungs.ladder,
-                selectedBand = rungs.selectedBand,
-                onPlayRung = rungs.onPlay,
-                onKeepRung = rungs.onKeep,
-                scopeTitle = scopeLabel,
-                tierLabel = rungs.tierLabel,
-                isLocked = rungs.isLocked,
-                preferredAudio = rungs.preferredAudio,
-            )
-        }
+        Text(
+            text = "Season ${season.number}",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        Text(
+            text = season.episodeCountLabel,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(
+            Icons.Default.ChevronRight,
+            contentDescription = null,
+            modifier = Modifier.size(20.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -2936,7 +2396,7 @@ private fun shareTitle(context: Context, post: PostDetail, onShared: () -> Unit 
     }
 }
 
-private fun openInExternalPlayer(context: Context, url: String) {
+internal fun openInExternalPlayer(context: Context, url: String) {
     try {
         val intent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(Uri.parse(url), "video/*")

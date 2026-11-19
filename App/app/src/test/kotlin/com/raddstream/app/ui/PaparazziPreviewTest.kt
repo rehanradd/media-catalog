@@ -43,7 +43,9 @@ import com.raddstream.app.player.QualityOption
 import com.raddstream.app.ui.components.PosterCard
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.screens.DetailContent
-import com.raddstream.app.ui.screens.EpisodeRow
+import com.raddstream.app.ui.screens.EpisodeTile
+import com.raddstream.app.ui.screens.SeasonPackRow
+import com.raddstream.app.ui.screens.SeasonTile
 import com.raddstream.app.ui.screens.FilterRail
 import com.raddstream.app.ui.screens.FilterSheetBody
 import com.raddstream.app.ui.screens.CenterPlayPause
@@ -59,7 +61,6 @@ import com.raddstream.app.ui.screens.SearchContent
 import com.raddstream.app.ui.screens.RungActions
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.EpisodeGroup
-import com.raddstream.app.viewmodel.EpisodeProgress
 import com.raddstream.app.viewmodel.HomeSection
 import com.raddstream.app.viewmodel.GenreFilter
 import com.raddstream.app.viewmodel.HomeUiState
@@ -518,17 +519,12 @@ class PaparazziPreviewTest {
                     isSeries = false,
                     resume = null,
                     onPlayResume = {},
-                    episodeProgress = emptyMap(),
                     includedPill = "VIP",
-                    selectedSeason = null,
-                    onSelectSeason = {},
+                    onOpenSeason = {},
                     onPlayPrint = {},
                     onOpenExternal = {},
                     onKeep = {},
                     rungs = movieRungs,
-                    ladderScope = null,
-                    onAskRungs = { _, _ -> },
-                    hasRungs = { _, _ -> false },
                     similarTitles = listOf(salaars, mclintock),
                     reloadError = null,
                     onRetryReload = {},
@@ -553,17 +549,12 @@ class PaparazziPreviewTest {
                     isSeries = false,
                     resume = null,
                     onPlayResume = {},
-                    episodeProgress = emptyMap(),
                     includedPill = "VIP",
-                    selectedSeason = null,
-                    onSelectSeason = {},
+                    onOpenSeason = {},
                     onPlayPrint = {},
                     onOpenExternal = {},
                     onKeep = {},
                     rungs = movieRungs,
-                    ladderScope = null,
-                    onAskRungs = { _, _ -> },
-                    hasRungs = { _, _ -> false },
                     similarTitles = listOf(salaars, mclintock),
                     reloadError = "Could not refresh this title.",
                     onRetryReload = {},
@@ -649,20 +640,12 @@ class PaparazziPreviewTest {
                     isSeries = true,
                     resume = ResumePoint(season = 1, episode = 2, positionMs = 1_200_000L, durationMs = 3_000_000L),
                     onPlayResume = {},
-                    episodeProgress = mapOf(
-                        (1 to 1) to EpisodeProgress(fraction = 1.0f, watched = true, remainingLabel = null),
-                        (1 to 2) to EpisodeProgress(fraction = 0.4f, watched = false, remainingLabel = "20 min left"),
-                    ),
                     includedPill = "Free · up to 720p",
-                    selectedSeason = 1,
-                    onSelectSeason = {},
+                    onOpenSeason = {},
                     onPlayPrint = {},
                     onOpenExternal = {},
                     onKeep = {},
                     rungs = movieRungs,
-                    ladderScope = null,
-                    onAskRungs = { _, _ -> },
-                    hasRungs = { _, _ -> true },
                     similarTitles = listOf(jawan, mclintock),
                     reloadError = null,
                     onRetryReload = {},
@@ -679,62 +662,53 @@ class PaparazziPreviewTest {
     // LazyColumn only composes the viewport), so they get their own shot:
     // a watched episode, one in progress, and one never started.
     @Test
-    fun detailSeriesEpisodes() {
-        val season1 = seriesSeasons.first()
+    fun detailSeasonTiles() {
+        // Detail redesign (Nov 2026): the season sub-page is plain
+        // numbered tiles — the next episode filled jade, a watched one
+        // with a small jade tick, a number with no playable file dimmed
+        // and never hidden — and a whole-season file gets one row, not
+        // fake numbers. The page lays the tiles out as rows of six in a
+        // LazyColumn; the shot renders one row of tiles plus the pack row
+        // so the golden pins the tile visuals without the list's
+        // unbounded-height measurement.
         paparazzi.snapshot {
             themed {
                 Column(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    EpisodeRow(
-                        episode = season1.episodes[0],
-                        progress = EpisodeProgress(fraction = 1.0f, watched = true, remainingLabel = null),
-                        onPlayPrint = {},
-                        onOpenExternal = {},
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        EpisodeTile(
+                            tile = SeasonTile(number = 1, playable = true, watched = true, isNext = false),
+                            onClick = {},
+                            modifier = Modifier.weight(1f),
+                        )
+                        EpisodeTile(
+                            tile = SeasonTile(number = 2, playable = true, watched = false, isNext = true),
+                            onClick = {},
+                            modifier = Modifier.weight(1f),
+                        )
+                        EpisodeTile(
+                            tile = SeasonTile(number = 3, playable = false, watched = false, isNext = false),
+                            onClick = {},
+                            modifier = Modifier.weight(1f),
+                        )
+                        EpisodeTile(
+                            tile = SeasonTile(number = 4, playable = true, watched = false, isNext = false),
+                            onClick = {},
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    SeasonPackRow(
+                        season = seriesSeasons.first(),
+                        onPlay = {},
                         onKeep = {},
-                        scopeLabel = "Season 1 · Episode 1",
-                        canChooseQuality = true,
-                        showQuality = false,
-                        onChooseQuality = {},
-                        rungs = movieRungs,
-                    )
-                    EpisodeRow(
-                        episode = season1.episodes[1],
-                        progress = EpisodeProgress(fraction = 0.4f, watched = false, remainingLabel = "20 min left"),
-                        onPlayPrint = {},
-                        onOpenExternal = {},
-                        onKeep = {},
-                        scopeLabel = "Season 1 · Episode 2",
-                        canChooseQuality = true,
-                        showQuality = false,
-                        onChooseQuality = {},
-                        rungs = movieRungs,
-                    )
-                    EpisodeRow(
-                        episode = EpisodeGroup(
-                            season = 1,
-                            numberWithinSeason = 3,
-                            absoluteNumber = 3,
-                            title = "Part 3",
-                            prints = listOf(
-                                fakePrint(206, "Money Heist S01E03 1080p WEB-DL", "1080p", season = 1),
-                            ),
-                        ),
-                        progress = null,
-                        onPlayPrint = {},
-                        onOpenExternal = {},
-                        onKeep = {},
-                        scopeLabel = "Season 1 · Episode 3",
-                        canChooseQuality = false,
-                        showQuality = false,
-                        onChooseQuality = {},
-                        rungs = movieRungs,
                     )
                 }
             }
         }
     }
+
     // Search: SearchContent is the body below the rail — the discovery page,
     // the results grid, and the loading / error / empty states all live here.
     // FilterRail and FilterSheetBody are shot on their own: the rail lives in

@@ -342,7 +342,6 @@ class NestedScrollCrashTest {
     private fun detailContent(
         isSeries: Boolean = false,
         seasons: List<SeasonGroup> = emptyList(),
-        selectedSeason: Int? = null,
         deadEndReason: String? = null,
     ) {
         compose.setContent {
@@ -355,18 +354,13 @@ class NestedScrollCrashTest {
                     isSeries = isSeries,
                     resume = null,
                     onPlayResume = {},
-                    episodeProgress = emptyMap(),
                     includedPill = null,
                     deadEndReason = deadEndReason,
-                    selectedSeason = selectedSeason,
-                    onSelectSeason = {},
+                    onOpenSeason = {},
                     onPlayPrint = {},
                     onOpenExternal = {},
                     onKeep = {},
                     rungs = detailRungs(),
-                    ladderScope = null,
-                    onAskRungs = { _, _ -> },
-                    hasRungs = { _, _ -> false },
                     onActorClick = {},
                     similarTitles = samplePosts("", 71, listOf("Pathaan", "Animal", "Salaar")),
                     onPostClick = {},
@@ -406,7 +400,6 @@ class NestedScrollCrashTest {
                     packedPrints = emptyList(),
                 ),
             ),
-            selectedSeason = 1,
         )
         compose.onRoot().assertExists()
     }

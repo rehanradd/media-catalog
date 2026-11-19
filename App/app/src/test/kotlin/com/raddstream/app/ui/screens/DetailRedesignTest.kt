@@ -40,12 +40,13 @@ import org.robolectric.RobolectricTestRunner
 /**
  * Detail redesign (Nov 2026): the synopsis moves directly under the Play
  * actions with the quality ladder below it, the version list and its
- * summary are gone, the similar rail is "More Like This", a series with
- * more than five seasons gets a dropdown instead of a chip strip, and a
- * title with nothing to play gets its reason in plain words plus a way
- * out. The overflow menu itself (Report moved out of the top bar) is
- * covered by the Paparazzi detailMovie golden, not here — the top bar
- * lives in DetailScreen, above the DetailContent this file can render.
+ * summary are gone, the similar rail is "More Like This", a series shows
+ * one simple row per season ("Season 1 — 12 episodes ›") that opens the
+ * season's own numbered-tile sub-page, and a title with nothing to play
+ * gets its reason in plain words plus a way out. The overflow menu itself
+ * (Report moved out of the top bar) is covered by the Paparazzi
+ * detailMovie golden, not here — the top bar lives in DetailScreen,
+ * above the DetailContent this file can render.
  */
 @RunWith(RobolectricTestRunner::class)
 class DetailRedesignTest {
@@ -122,16 +123,15 @@ class DetailRedesignTest {
     private fun content(
         isSeries: Boolean = false,
         seasons: List<SeasonGroup> = emptyList(),
-        selectedSeason: Int? = null,
         similarTitles: List<Post> = emptyList(),
         deadEndReason: String? = null,
         postDetail: PostDetail = post,
         workPrints: List<RankedPrint> = emptyList(),
         ladder: LadderForScope? = null,
         similarLoading: Boolean = false,
-        downloadingHandles: Set<String> = emptySet(),
         deadEndKeepPrint: RankedPrint? = null,
         onKeep: (RankedPrint) -> Unit = {},
+        onOpenSeason: (Int) -> Unit = {},
     ) {
         compose.setContent {
             RaddStreamTheme {
@@ -143,13 +143,10 @@ class DetailRedesignTest {
                     isSeries = isSeries,
                     resume = null,
                     onPlayResume = {},
-                    episodeProgress = emptyMap(),
                     includedPill = null,
                     deadEndReason = deadEndReason,
                     deadEndKeepPrint = deadEndKeepPrint,
-                    downloadingHandles = downloadingHandles,
-                    selectedSeason = selectedSeason,
-                    onSelectSeason = {},
+                    onOpenSeason = onOpenSeason,
                     onPlayPrint = {},
                     onOpenExternal = {},
                     onKeep = onKeep,
@@ -164,9 +161,6 @@ class DetailRedesignTest {
                         onKeep = {},
                         tierLabel = { "Standard" },
                     ),
-                    ladderScope = null,
-                    onAskRungs = { _, _ -> },
-                    hasRungs = { _, _ -> false },
                     onActorClick = {},
                     similarTitles = similarTitles,
                     similarLoading = similarLoading,
@@ -209,7 +203,11 @@ class DetailRedesignTest {
     }
 
     @Test
-    fun seasonDropdownReplacesChipsPastFiveSeasons() {
+    fun seasonsAreSimpleRowsThatOpenTheirSubPage() {
+        // Detail redesign (Nov 2026): a series shows one simple row per
+        // season — "Season 1 — 1 episode ›" — and tapping a row opens
+        // that season's sub-page. No chips, no dropdown, no episode list
+        // on this page: six seasons read as six rows.
         val seasons = (1..6).map { number ->
             SeasonGroup(
                 number = number,
@@ -225,21 +223,21 @@ class DetailRedesignTest {
                 packedPrints = emptyList(),
             )
         }
-        content(isSeries = true, seasons = seasons, selectedSeason = 1)
-        // The dropdown sits below the fold in the test window, so like
-        // the similar rail it may not even be composed yet — swipe until
-        // it appears, then bring it fully into view.
+        var opened: Int? = null
+        content(isSeries = true, seasons = seasons, onOpenSeason = { opened = it })
+        // The rows sit below the fold in the test window, so like the
+        // similar rail they may not even be composed yet — swipe until
+        // they appear, then bring them fully into view.
         for (i in 0 until 5) {
-            if (compose.onAllNodesWithText("Season 1 · 1 episode").fetchSemanticsNodes().isNotEmpty()) break
+            if (compose.onAllNodesWithText("Season 6").fetchSemanticsNodes().isNotEmpty()) break
             compose.onRoot().performTouchInput { swipeUp() }
         }
-        compose.onNodeWithText("Season 1 · 1 episode").performScrollTo().assertIsDisplayed()
-        // The chip strip would paint a bare "Season 2" chip; the dropdown
-        // keeps the other seasons behind its closed menu.
-        compose.onNodeWithText("Season 2").assertDoesNotExist()
-        // Detail review (Nov 2026, P1): the dropdown's chevron is a real
-        // ArrowDropDown icon, not the "▾" text glyph.
-        compose.onNodeWithText("▾").assertDoesNotExist()
+        compose.onNodeWithText("Season 1").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Season 6").performScrollTo().assertIsDisplayed()
+        // The old dropdown's combined label is gone with it.
+        compose.onNodeWithText("Season 1 · 1 episode").assertDoesNotExist()
+        compose.onNodeWithText("Season 2").performScrollTo().performClick()
+        assertEquals(2, opened)
     }
 
     @Test
@@ -316,40 +314,6 @@ class DetailRedesignTest {
     }
 
     @Test
-    fun episodeRowSaysDownloadingWhileItsKeepRuns() {
-        // Detail review (Nov 2026, P1): an episode whose keep is still
-        // moving says "Downloading" on the row, so the viewer does not
-        // tap Download again on a copy already coming.
-        val seasons = listOf(
-            SeasonGroup(
-                number = 1,
-                episodes = listOf(
-                    EpisodeGroup(
-                        season = 1,
-                        numberWithinSeason = 1,
-                        absoluteNumber = 1,
-                        title = "Pilot",
-                        prints = listOf(fakePrint(201, "1080p")),
-                    ),
-                ),
-                packedPrints = emptyList(),
-            ),
-        )
-        content(
-            isSeries = true,
-            seasons = seasons,
-            selectedSeason = 1,
-            downloadingHandles = setOf("h-201"),
-        )
-        for (i in 0 until 5) {
-            if (compose.onAllNodesWithText("Downloading").fetchSemanticsNodes().isNotEmpty()) break
-            compose.onRoot().performTouchInput { swipeUp() }
-        }
-        compose.onNodeWithText("Downloading").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Downloaded").assertDoesNotExist()
-    }
-
-    @Test
     fun deadEndDownloadTargetsTheBestKeepablePrint() {
         // Detail review (Nov 2026, P1): the dead end's Download targets
         // the 720p copy this viewer may keep, not the best-ranked 4K
@@ -408,59 +372,4 @@ class DetailRedesignTest {
         compose.onNodeWithText("Similar").assertIsDisplayed()
     }
 
-    private fun oneSeason() = listOf(
-        SeasonGroup(
-            number = 1,
-            episodes = listOf(
-                EpisodeGroup(
-                    season = 1,
-                    numberWithinSeason = 1,
-                    absoluteNumber = 1,
-                    title = "Pilot",
-                    prints = emptyList(),
-                ),
-            ),
-            packedPrints = emptyList(),
-        ),
-    )
-
-    @Test
-    fun seriesEpisodesSitAboveTheQualityChip() {
-        // Detail review (Nov 2026, P2): seasons and episodes come
-        // before the quality choice — the viewer picks what to watch
-        // first, then the picture it plays in. The chip is below the
-        // fold at first, so swipe until it composes (the same shape
-        // as similarRailIsCalledMoreLikeThis), then compare the
-        // unclipped positions — boundsInRoot clips to the visible
-        // window, so it cannot order two nodes on different sides of
-        // the fold.
-        content(isSeries = true, seasons = oneSeason(), selectedSeason = 1)
-        for (i in 0 until 5) {
-            if (compose.onAllNodesWithText("Quality: Auto (720p)").fetchSemanticsNodes().isNotEmpty()) break
-            compose.onRoot().performTouchInput { swipeUp() }
-        }
-        compose.onNodeWithText("Quality: Auto (720p)").performScrollTo()
-        val seasonTop = compose.onNodeWithText("Season 1")
-            .fetchSemanticsNode().positionInRoot.y
-        val chipTop = compose.onNodeWithText("Quality: Auto (720p)")
-            .fetchSemanticsNode().positionInRoot.y
-        assertTrue(seasonTop < chipTop)
-    }
-
-    @Test
-    fun seriesQualityChipOpensTheRungSheet() {
-        // Detail review (Nov 2026, P2): a series folds the work-level
-        // ladder into a chip; tapping it opens the same rung card in a
-        // bottom sheet. Before the tap the card's "Quality" header is
-        // nowhere on the page. The chip is below the fold at first,
-        // so swipe until it composes before tapping it.
-        content(isSeries = true, seasons = oneSeason(), selectedSeason = 1)
-        compose.onNodeWithText("Quality").assertDoesNotExist()
-        for (i in 0 until 5) {
-            if (compose.onAllNodesWithText("Quality: Auto (720p)").fetchSemanticsNodes().isNotEmpty()) break
-            compose.onRoot().performTouchInput { swipeUp() }
-        }
-        compose.onNodeWithText("Quality: Auto (720p)").performScrollTo().performClick()
-        compose.onNodeWithText("Quality").assertIsDisplayed()
-    }
 }

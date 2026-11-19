@@ -133,6 +133,10 @@
     <string name="detail_download_only">Download only — this copy can\'t play here.</string>
     <string name="detail_quality_auto_plays">Auto plays the best picture your plan can hold.</string>
     <string name="detail_quality_select_download">Select download quality</string>
+    <!-- Detail redesign (Nov 2026): Cast lives on the Detail page now — the
+         button's description. Named detail_*, not player_*: the player copy
+         test owns the player_* vocabulary and scans PlayerScreen only. -->
+    <string name="detail_cast">Cast</string>
     <!-- R3: notification channel name for the Media3 HLS keep service. -->
     <string name="media_download_channel_name">Media downloads</string>
     <string name="media_download_channel_description">Notifications for videos saved on this device</string>

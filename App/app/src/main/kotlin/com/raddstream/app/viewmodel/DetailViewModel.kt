@@ -1,5 +1,6 @@
 package com.raddstream.app.viewmodel
 
+import android.content.Context
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -27,6 +28,7 @@ import com.raddstream.app.player.AdoptRequest
 import com.raddstream.app.player.CacheAffordance
 import com.raddstream.app.player.CacheEngineHolder
 import com.raddstream.app.player.CacheSessionKey
+import com.raddstream.app.player.CastAvailabilityTracker
 import com.raddstream.app.player.DataSaver
 import com.raddstream.app.player.KeepResult
 import com.raddstream.app.player.LadderForScope
@@ -45,6 +47,7 @@ import com.raddstream.app.sync.SyncAccountRepository
 import com.raddstream.app.ui.components.UserWords
 import com.raddstream.app.ui.navigation.Screen
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -83,7 +86,15 @@ data class DetailUiState(
      */
     val optimisticDetail: PostDetail? = null,
     val layout: ReleaseLayout? = null,
-    val selectedSeason: Int? = null,
+    /**
+     * Detail redesign (Nov 2026): Cast lives on this page now, not in the
+     * player — the icon shows only when a receiver is actually found AND
+     * the server's chromecast switch is on, the same two facts the player
+     * gated its button on. Most viewers (no TV nearby) never see it at
+     * all, which is the whole point of the move. Pure via
+     * [castAvailableFor] so a test can pin the gate without a ViewModel.
+     */
+    val castAvailable: Boolean = false,
     val isLoading: Boolean = true,
     val isFavorite: Boolean = false,
     /**
@@ -116,9 +127,9 @@ data class DetailUiState(
      * [UserRegion.DEFAULT] until DataStore answers.
      */
     val region: String = UserRegion.DEFAULT,
-    /** The scope [ladder] belongs to. Both null = the whole work; the card says which. */
-    val ladderSeason: Int? = null,
-    val ladderEpisode: Int? = null,
+    /** The ladder is always the whole work's now: the per-episode quality
+     * cards left with the episode rows (detail redesign, Nov 2026), and a
+     * series picks its picture in the player. */
     /** null / [LadderForScope.AUTO] = let the ladder's own pointer choose the rung. */
     val selectedBand: String? = LadderForScope.AUTO,
     /** The ledger's answer, mirrored so the quality gate and its upsell read one fact. */
@@ -436,6 +447,7 @@ internal fun optimisticDetailFromPost(post: Post): PostDetail = PostDetail(
 @HiltViewModel
 class DetailViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
+    @ApplicationContext appContext: Context,
     private val catalogRepository: CatalogRepository,
     private val favoritesRepository: FavoritesRepository,
     private val followedSeriesRepository: FollowedSeriesRepository,
@@ -468,6 +480,36 @@ class DetailViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(DetailUiState())
     val uiState = _uiState.asStateFlow()
 
+    // Detail redesign (Nov 2026) — Cast: the server's chromecast switch
+    // and the network's discoverable receivers, as the ViewModel last saw
+    // them. The same two facts the player gated its button on, minus the
+    // lock (this page has no player lock to honour — the service still
+    // enforces its own gate at transfer time).
+    private var castFeatureEnabled: Boolean = true
+    private var castDevicesAvailable: Boolean = false
+    private val castAvailabilityTracker = CastAvailabilityTracker(appContext)
+
+    private fun recomputeCastAvailable() {
+        _uiState.update {
+            it.copy(castAvailable = castAvailableFor(castDevicesAvailable, castFeatureEnabled))
+        }
+    }
+
+    private fun observeCastAvailable() {
+        viewModelScope.launch {
+            settingsRepository.castFeatureEnabled.collect { enabled ->
+                castFeatureEnabled = enabled
+                recomputeCastAvailable()
+            }
+        }
+        viewModelScope.launch {
+            castAvailabilityTracker.devicesAvailable.collect { available ->
+                castDevicesAvailable = available
+                recomputeCastAvailable()
+            }
+        }
+    }
+
     private val _navEvents = MutableSharedFlow<DetailNavigationEvent>()
     val navEvents: SharedFlow<DetailNavigationEvent> = _navEvents.asSharedFlow()
 
@@ -483,6 +525,7 @@ class DetailViewModel @Inject constructor(
         observeFavorite()
         observeEntitlement()
         observeDownloads()
+        observeCastAvailable()
     }
 
     /**
@@ -652,10 +695,13 @@ class DetailViewModel @Inject constructor(
             episodeGuide = detail.episodeGuide,
         )
         val state = _uiState.value
+        // Detail redesign (Nov 2026): the ladder is the whole work's —
+        // the per-episode quality cards left with the episode rows, and a
+        // series picks its picture in the player.
         val scope = QualityLadder.forNumberedScope(
             detail.optionGroups,
-            state.ladderSeason,
-            state.ladderEpisode,
+            null,
+            null,
         )
         val premiumLocked = qualityGateEnabled && !serverVip && (
             VipQualityGate.hasPlayablePremiumPrints(full, freeQualityCap) ||
@@ -945,11 +991,6 @@ class DetailViewModel @Inject constructor(
                     _uiState.update {
                         it.copy(
                             post = detail,
-                            // B2: the guide can add seasons whose prints fell
-                            // past the cap — land on the newest season that
-                            // actually has something to watch, not an empty one.
-                            selectedSeason = layout.seasons.firstOrNull { it.hasAnyPrint }?.number
-                                ?: layout.seasons.firstOrNull()?.number,
                             isLoading = false,
                             // The real detail is on screen now; the
                             // optimistic header has done its job.
@@ -1046,13 +1087,6 @@ class DetailViewModel @Inject constructor(
         }
     }
 
-    fun selectSeason(season: Int) {
-        _uiState.update { it.copy(selectedSeason = season) }
-        // A season that ships as one packed file has a season-level ladder; a season of
-        // separate episode releases does not, and the card goes away until an episode asks.
-        showRungsFor(season, null)
-    }
-
     fun toggleFavorite() {
         val currentPost = _uiState.value.post ?: return
         // Phase 7 (M1): a v2 detail whose work_ref bridge found no v1 post
@@ -1103,87 +1137,6 @@ class DetailViewModel @Inject constructor(
 
     fun clearActionMessage() {
         _uiState.update { it.copy(actionMessage = null) }
-    }
-
-    /**
-     * The server's one-row-per-band ladder for one scope. A movie is a single null/null
-     * group; a series asks per episode. An unmatched episode gets NOTHING rather than
-     * another episode's links, and a ledger that has exactly one group is treated as the
-     * whole title, because that is what a movie's payload looks like.
-     */
-    fun ladderFor(season: Int?, episode: Int?): LadderForScope =
-        VipQualityGate.gate(
-            QualityLadder.forNumberedScope(
-                _uiState.value.post?.optionGroups.orEmpty(),
-                season,
-                episode,
-            ),
-            premiumAccess,
-            freeQualityCap,
-        )
-
-    /**
-     * Point the quality card at one scope. A series has a ladder per episode — offering
-     * S02E05's 1080p copy while the viewer is looking at S01E01 would be a lie about what
-     * they are about to get — so an episode row asks for its own rung list and the card
-     * says which scope it belongs to. A season with no packed file has no season-level
-     * ladder, and the card correctly disappears.
-     */
-    fun showRungsFor(season: Int?, episode: Int?) {
-        val ladder = VipQualityGate.gate(
-            QualityLadder.forNumberedScope(
-                _uiState.value.post?.optionGroups.orEmpty(),
-                season,
-                episode,
-            ),
-            premiumAccess,
-            freeQualityCap,
-        )
-        _uiState.update {
-            it.copy(
-                ladder = ladder,
-                ladderSeason = season,
-                ladderEpisode = episode,
-                selectedBand = LadderForScope.AUTO,
-            )
-        }
-        // Gap A2 follow-up: the viewer just opened this scope's quality card,
-        // so this is the episode they are about to play — warm its Auto link
-        // now, while they are still choosing, instead of at the Play press.
-        warmScopeLink(ladder)
-    }
-
-    private var scopeWarmJob: Job? = null
-    private var lastScopeWarmHandle: String? = null
-
-    /**
-     * Gap A2 follow-up — warm one scope's Auto link in the background.
-     *
-     * The detail-open warm covers only the title's best print and the server
-     * warms only the first scope, so an episode Play tap otherwise pays its
-     * 5-11 s live resolve inside the player. This ask is metadata only
-     * (`GET /api/v1/stream?redirect=0`): on a cache miss the server
-     * live-resolves the link and banks the answer, so the Play press 302s
-     * from cache instead. One warm in flight, cancelled when the viewer
-     * opens another scope; a warm that fails is silent — Play still works,
-     * it just waits on the first bytes again. A handle warmed successfully
-     * once is not warmed again: the banked answer lives for hours, and
-     * re-asking on every card open would spend the server's resolve budget
-     * for nothing. A warm that FAILS marks nothing, so reopening the card
-     * retries the link it still needs.
-     */
-    private fun warmScopeLink(ladder: LadderForScope) {
-        // Salaar (2026-11-13): the warm resolves Auto for this viewer — a
-        // free viewer warms the best free rung, never a gated one.
-        val handle = scopeWarmHandle(ladder, premiumAccess, freeQualityCap) ?: return
-        if (handle == lastScopeWarmHandle) return
-        scopeWarmJob?.cancel()
-        scopeWarmJob = viewModelScope.launch {
-            val warmed = runCatching {
-                withTimeout(30_000) { catalogRepository.resolveStream(handle) }
-            }.isSuccess
-            if (warmed) lastScopeWarmHandle = handle
-        }
     }
 
     /** A rung this app cannot present is downloaded, and the row says so — no hidden failure. */
@@ -1736,8 +1689,11 @@ class DetailViewModel @Inject constructor(
         stageAutoLadder(effective)
         stageSyncScope(
             streamId = effective.streamId,
-            season = _uiState.value.ladderSeason,
-            episode = _uiState.value.ladderEpisode,
+            // Detail redesign (Nov 2026): the rung card is the movie's —
+            // a series has no card on this page any more, so the scope is
+            // always the whole work.
+            season = null,
+            episode = null,
             // Every rung of this scope's ladder plus each rung's runner-ups: Auto moves
             // playback onto another address without coming back through this screen, and a
             // resume point belongs to the episode, not to whichever address served it.
@@ -1929,6 +1885,24 @@ class DetailViewModel @Inject constructor(
     }
 
     /**
+     * Detail redesign (Nov 2026): a number tile on the season sub-page.
+     * Plays the episode's best print that can actually start here — the
+     * same rule the hero's Play button applies to the whole work. The
+     * print's own season / episode ride along, so the resume point
+     * belongs to the episode, not the address that served it. A tile with
+     * nothing playable is dimmed and never calls this; a call that still
+     * finds nothing says so instead of navigating anywhere.
+     */
+    fun playEpisode(season: Int, episode: Int) {
+        val print = episodePlayPrint(_uiState.value.layout, season, episode)
+        if (print == null) {
+            _uiState.update { it.copy(actionMessage = "Nothing playable on this episode yet.") }
+            return
+        }
+        playPrint(print)
+    }
+
+    /**
      * Play the server's own bundle for this print (plan §5 step 13). The winner is
      * the server's best copy — ranked from its probes, not our formula — so it is
      * the handle that plays. Its runner-ups stage as the silent failover and its
@@ -2035,8 +2009,8 @@ class DetailViewModel @Inject constructor(
         }
         val scope = stageSyncScope(
             link.streamId,
-            season ?: _uiState.value.ladderSeason,
-            episode ?: _uiState.value.ladderEpisode,
+            season,
+            episode,
         )
         rememberWatchStart(scope)
         viewModelScope.launch {
@@ -2259,6 +2233,32 @@ fun resumePrintFor(layout: ReleaseLayout, resume: ResumePoint?): RankedPrint? {
         layout.workPrints.maxByOrNull { it.rankKey }
     }
 }
+
+/**
+ * Detail redesign (Nov 2026): the Cast icon's gate — a receiver is
+ * discoverable on this network AND the server's chromecast switch is on.
+ * Either fact alone shows nothing: a switch with no TV is a dead button,
+ * and a TV with the switch off is a promise the server will refuse.
+ * Pure so a test can pin the gate without a ViewModel.
+ */
+internal fun castAvailableFor(devicesAvailable: Boolean, featureEnabled: Boolean): Boolean =
+    devicesAvailable && featureEnabled
+
+/**
+ * Detail redesign (Nov 2026): the print a season-page tile plays — the
+ * episode's best print that can actually start here (plays on this
+ * device, or opens the provider's own page), highest rank first. The
+ * layout is already the gated one, so a VIP-locked copy never wins for
+ * a free viewer. Null when the episode has no such print: the tile
+ * shows dimmed and never calls play. Pure so a test can pin it without
+ * a ViewModel.
+ */
+internal fun episodePlayPrint(layout: ReleaseLayout?, season: Int, episode: Int): RankedPrint? =
+    layout?.seasons
+        ?.firstOrNull { it.number == season }
+        ?.episodes?.firstOrNull { it.numberWithinSeason == episode }
+        ?.prints?.filter { it.playableHere || it.opensProviderPage }
+        ?.maxByOrNull { it.rankKey }
 
 /** "2 h 10 m", "1 h 40 m", "96 min" — null when the server sent no runtime. */
 fun formatRuntimeMinutes(minutes: Int?): String? {

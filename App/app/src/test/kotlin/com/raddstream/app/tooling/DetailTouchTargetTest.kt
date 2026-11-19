@@ -40,20 +40,23 @@ class DetailTouchTargetTest {
     }
 
     @Test
-    fun `top-bar targets are 48dp circles and packed-banner buttons carry the floor`() {
+    fun `top-bar targets are 48dp circles and pack-row buttons carry the floor`() {
         val detail = detailSource()
         // The top bar is two 48dp circles, not a heightIn — the size is
         // the floor there, and the 40dp circle it replaces is gone.
         assertTrue("the 40dp top-bar circle must be gone", !detail.contains(".size(40.dp)"))
-        // The packed banner's Play/Download buttons are Material 3
-        // buttons (40dp own min), so they carry the floor explicitly.
-        val bannerStart = detail.indexOf("private fun PackedSeasonBanner(")
-        assertTrue("must find PackedSeasonBanner", bannerStart >= 0)
-        val banner = detail.substring(bannerStart, minOf(detail.length, bannerStart + 2_000))
+        // Detail redesign (Nov 2026): the packed banner is gone — the
+        // whole-season file lives on the season sub-page now, as a pack
+        // row whose Play/Download buttons are Material 3 buttons (40dp
+        // own min), so they carry the floor explicitly.
+        val season = File("src/main/kotlin/com/raddstream/app/ui/screens/SeasonScreen.kt").readText()
+        val rowStart = season.indexOf("internal fun SeasonPackRow(")
+        assertTrue("must find SeasonPackRow", rowStart >= 0)
+        val row = season.substring(rowStart, minOf(season.length, rowStart + 2_500))
         assertEquals(
-            "both packed-banner buttons must carry heightIn(min = 48.dp)",
+            "both pack-row buttons must carry heightIn(min = 48.dp)",
             2,
-            Regex("""heightIn\(min = 48\.dp\)""").findAll(banner).count(),
+            Regex("""heightIn\(min = 48\.dp\)""").findAll(row).count(),
         )
     }
 }

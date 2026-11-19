@@ -44,7 +44,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Media3 `MediaSessionService` owning the single app-wide [ExoPlayer].
@@ -424,6 +426,55 @@ class PlaybackService : MediaSessionService() {
         if (store.castIsCasting.value) castTransferManager?.castPlayer ?: player else player
 
     /**
+     * Detail-first Cast (Nov 2026): hand this rendition to the receiver at
+     * [positionMs]. The gate is [decideCastStart] — allowed, session live,
+     * URL present and fresh — and the caller decides what a refusal means:
+     * the mid-play path ends the session (an idle TV beside a playing
+     * phone is the confusion the spike showed), the load-time path just
+     * plays locally. Returns the decision, so both callers read the same
+     * answer the service acted on.
+     */
+    private fun tryTransferToCast(
+        bundle: PlaybackBundle,
+        rendition: PlaybackRendition,
+        positionMs: Long,
+        playWhenReady: Boolean,
+    ): CastTransferDecision {
+        val manager = castTransferManager ?: return CastTransferDecision.Refuse(CastRefusalReason.NO_SESSION)
+        if (!manager.isSessionAvailable()) return CastTransferDecision.Refuse(CastRefusalReason.NO_SESSION)
+        val decision = decideCastStart(
+            playback = rendition.playback,
+            allowed = store.castAllowed.value,
+            sessionAvailable = true,
+            nowEpochMillis = System.currentTimeMillis(),
+        )
+        if (decision !is CastTransferDecision.Proceed) return decision
+        val castPlayer = manager.castPlayer ?: return CastTransferDecision.Refuse(CastRefusalReason.NO_SESSION)
+        val local = player
+        val safePositionMs = castResumePosition(
+            positionMs,
+            runCatching { local?.duration ?: 0L }.getOrDefault(0L),
+        )
+        local?.pause()
+        // The listener moves to the remote player: its errors, its end and
+        // its ready are the ones that matter now.
+        local?.removeListener(playerListener)
+        castPlayer.addListener(playerListener)
+        lastKnownPositionMs = safePositionMs
+        pendingResumeMs = null
+        store.setCastState(casting = true, deviceName = manager.deviceName())
+        mediaSession?.setPlayer(castPlayer)
+        disarmStartWatchdog()
+        val item = PlaybackMediaItemFactory.build(
+            rendition, bundle.target, titleHint,
+            externalSubtitles = PlaybackMediaItemFactory.externalsFromTracks(rendition.tracks),
+        )
+        manager.transferToCast(item, safePositionMs, playWhenReady)
+        store.announceCastStarted(manager.deviceName())
+        return decision
+    }
+
+    /**
      * A Cast session just opened — the viewer picked a receiver in the
      * picker's dialog. The local player pauses and the receiver takes over
      * the active rendition at the local position, through the same
@@ -444,11 +495,11 @@ class PlaybackService : MediaSessionService() {
         val rendition = store.activeRendition() ?: return
         val local = player ?: return
         if (local.mediaItemCount == 0) return
-        when (val decision = decideCastStart(
-            playback = rendition.playback,
-            allowed = store.castAllowed.value,
-            sessionAvailable = true,
-            nowEpochMillis = System.currentTimeMillis(),
+        when (val decision = tryTransferToCast(
+            bundle = bundle,
+            rendition = rendition,
+            positionMs = runCatching { local.currentPosition }.getOrDefault(0L),
+            playWhenReady = local.playWhenReady,
         )) {
             is CastTransferDecision.Refuse -> {
                 store.announceCastRefused(decision.reason)
@@ -457,28 +508,6 @@ class PlaybackService : MediaSessionService() {
             }
             is CastTransferDecision.Proceed -> Unit
         }
-        val castPlayer = manager.castPlayer ?: return
-        val positionMs = castResumePosition(
-            runCatching { local.currentPosition }.getOrDefault(0L),
-            runCatching { local.duration }.getOrDefault(0L),
-        )
-        val wasPlaying = local.playWhenReady
-        local.pause()
-        // The listener moves to the remote player: its errors, its end and
-        // its ready are the ones that matter now.
-        local.removeListener(playerListener)
-        castPlayer.addListener(playerListener)
-        lastKnownPositionMs = positionMs
-        pendingResumeMs = null
-        store.setCastState(casting = true, deviceName = manager.deviceName())
-        mediaSession?.setPlayer(castPlayer)
-        disarmStartWatchdog()
-        val item = PlaybackMediaItemFactory.build(
-            rendition, bundle.target, titleHint,
-            externalSubtitles = PlaybackMediaItemFactory.externalsFromTracks(rendition.tracks),
-        )
-        manager.transferToCast(item, positionMs, wasPlaying)
-        store.announceCastStarted(manager.deviceName())
     }
 
     /**
@@ -605,6 +634,27 @@ class PlaybackService : MediaSessionService() {
         lastKnownPositionMs = pendingResumeMs ?: 0L
         store.setActiveIndex(start)
         armAutoQuality(bundle, start)
+        // Detail-first Cast (Nov 2026): the viewer may have picked a TV on
+        // the detail page before pressing Play — the session is already live
+        // and no bundle was loaded when it opened, so the session callback
+        // below had nothing to transfer. Check here, at load time, on the
+        // live link (never a kept loopback copy — a loopback address can
+        // never play on a receiver). The flag the gate reads lands from the
+        // ViewModel's settings collect, which the load request can beat by
+        // milliseconds, so wait up to a second for it before deciding; a
+        // refusal here only plays locally, it never ends the session the
+        // viewer just picked.
+        val initialRendition = bundle.renditions.getOrNull(start)
+        if (initialRendition != null && castTransferManager?.isSessionAvailable() == true) {
+            withTimeoutOrNull(1_000L) { store.castAllowed.first { it } }
+            val decision = tryTransferToCast(
+                bundle = bundle,
+                rendition = initialRendition,
+                positionMs = pendingResumeMs ?: 0L,
+                playWhenReady = true,
+            )
+            if (decision is CastTransferDecision.Proceed) return
+        }
         // A kept copy is always the better source, offline or not: no CDN, no redirect, and the
         // bytes are already on this device. Ask before touching the network, and never let a
         // local read failure block the remote one — the failover machine still holds the bundle's

@@ -306,8 +306,8 @@ internal fun scopeWarmHandle(ladder: LadderForScope): String? =
  * lives for hours; re-asking on every tap would spend the server's
  * resolve budget for nothing). A warm that FAILED marks nothing, so the
  * caller retries the link it still needs. Pure so a test can pin it
- * without a ViewModel; the same rule [DetailViewModel.warmScopeLink]
- * applies inline.
+ * without a ViewModel; the same rule the ViewModel's play path applies
+ * inline when it warms a scope's handle.
  */
 internal fun shouldWarmHandle(handle: String, lastWarmedHandle: String?): Boolean =
     handle.isNotBlank() && handle != lastWarmedHandle

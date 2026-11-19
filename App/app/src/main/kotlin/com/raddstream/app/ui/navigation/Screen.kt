@@ -113,6 +113,24 @@ sealed class Screen(val route: String) {
             "detail/0?autoplay=$autoplay&workId=$workId"
     }
     /**
+     * Detail redesign (Nov 2026): one season's episodes, as plain
+     * numbered tiles on their own sub-page. The season number is a path
+     * segment, not a query — a season is a place, not a filter. The
+     * work id rides along exactly as on [Detail], for the same reason:
+     * a v2 row has no v1 post id. The page shares Detail's ViewModel
+     * (same back-stack entry), so it reads the same layout and progress
+     * without refetching.
+     */
+    object DetailSeason : Screen("detail/{postId}/season/{season}?workId={workId}") {
+        const val ARG_POST_ID = "postId"
+        const val ARG_SEASON = "season"
+        const val ARG_WORK_ID = "workId"
+        fun createRoute(postId: Int, season: Int, workId: Long = -1L): String =
+            "detail/$postId/season/$season?workId=$workId"
+        fun createRouteForWork(workId: Long, season: Int): String =
+            "detail/0/season/$season?workId=$workId"
+    }
+    /**
      * The player is addressed by the server's OPAQUE STREAM HANDLE, never by a URL: a route
      * argument lands in the back stack, in saved state and in a deep link, so an address in
      * here is an address that leaves the app. The handle resolves against our own

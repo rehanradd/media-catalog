@@ -87,6 +87,7 @@ import com.raddstream.app.ui.screens.PlayerScreen
 import com.raddstream.app.ui.screens.ProfileScreen
 import com.raddstream.app.ui.screens.RegionSelectionScreen
 import com.raddstream.app.ui.screens.SearchScreen
+import com.raddstream.app.ui.screens.SeasonScreen
 import com.raddstream.app.ui.screens.SettingsScreen
 import com.raddstream.app.ui.screens.SetupScreen
 import com.raddstream.app.ui.screens.VipUpgradeScreen
@@ -858,11 +859,64 @@ fun RaddStreamNavGraph(
                         }
                     },
                     onOpenDownloads = { navController.navigate(Screen.Downloads.route) },
+                    // Detail redesign (Nov 2026): a season row opens the
+                    // season's own sub-page. The work id rides along for
+                    // a v2 row, exactly as on this route.
+                    onOpenSeason = { season ->
+                        val postId = backStackEntry.arguments?.getInt(Screen.Detail.ARG_POST_ID) ?: 0
+                        val workId = backStackEntry.arguments?.getLong(Screen.Detail.ARG_WORK_ID) ?: -1L
+                        val route = if (workId != -1L) {
+                            Screen.DetailSeason.createRouteForWork(workId, season)
+                        } else {
+                            Screen.DetailSeason.createRoute(postId, season, workId)
+                        }
+                        navController.navigate(route)
+                    },
                     onActorClick = { actor ->
                         navController.navigate(Screen.Search.createRoute(actor))
                     },
                     onPostClick = { similar -> navController.navigateToPost(similar) },
                     onOpenLanguages = { navController.navigate(Screen.Languages.route) },
+                )
+            }
+
+            /**
+             * Detail redesign (Nov 2026): one season's episodes, as plain
+             * numbered tiles. The page shares Detail's ViewModel through
+             * the parent back-stack entry — same layout, same progress,
+             * same Kids Lock filtering, no refetch. A season the layout
+             * does not carry reads as "not available" on the page itself.
+             */
+            composable(
+                route = Screen.DetailSeason.route,
+                arguments = listOf(
+                    navArgument(Screen.DetailSeason.ARG_POST_ID) { type = NavType.IntType },
+                    navArgument(Screen.DetailSeason.ARG_SEASON) { type = NavType.IntType },
+                    navArgument(Screen.DetailSeason.ARG_WORK_ID) {
+                        type = NavType.LongType
+                        defaultValue = -1L
+                    },
+                ),
+            ) { backStackEntry ->
+                val parentEntry = remember(backStackEntry) {
+                    navController.getBackStackEntry(Screen.Detail.route)
+                }
+                val seasonNumber = backStackEntry.arguments?.getInt(Screen.DetailSeason.ARG_SEASON) ?: 1
+                SeasonScreen(
+                    seasonNumber = seasonNumber,
+                    onBackClick = { navController.popBackStack() },
+                    onPlayStream = { streamId, title ->
+                        navController.navigate(Screen.Player.createRoute(streamId, title)) {
+                            launchSingleTop = true
+                        }
+                    },
+                    onOpenProviderPage = { streamId, title ->
+                        navController.navigate(Screen.Embed.createRoute(streamId, title)) {
+                            launchSingleTop = true
+                        }
+                    },
+                    onOpenDownloads = { navController.navigate(Screen.Downloads.route) },
+                    viewModel = hiltViewModel(parentEntry),
                 )
             }
 

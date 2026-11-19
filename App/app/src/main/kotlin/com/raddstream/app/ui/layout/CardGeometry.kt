@@ -59,4 +59,11 @@ object CardGeometry {
 
     /** Episode stills and backdrops — the 16:9 class, including the hero. */
     const val WIDE_ART_ASPECT: Float = 16f / 9f
+
+    /**
+     * Season tiles: plain numbered squares — one number per tile, no
+     * artwork. A square reads as a number, not a poster, and six of
+     * them fit a 360 dp phone at 48 dp each.
+     */
+    const val SEASON_TILE_ASPECT: Float = 1f
 }
