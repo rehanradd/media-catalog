@@ -215,6 +215,16 @@ class MainActivity : ComponentActivity() {
             }
             val autoplayPreviews by autoplayPreviewsPreference.collectAsState(initial = true)
 
+            // MX #7 — Kids Lock: whether Kids Mode is on. Seeded off, so a
+            // cold start paints the app it always painted; a store that
+            // cannot answer takes nobody into kids mode by accident. The
+            // graph reads it to shrink the bar and gate Settings; the
+            // ViewModels read the same flow to filter what lists.
+            val kidsModePreference: Flow<Boolean> = remember(serverSettingsRepository) {
+                serverSettingsRepository.kidsModeActive.catch { emit(false) }
+            }
+            val kidsModeActive by kidsModePreference.collectAsState(initial = false)
+
             // The operator's disclaimer, mirrored into DataStore by RemoteConfigWatcher,
             // and the version this install has already accepted. The stored value is
             // the panel value; `effective()` resolves the shipped default when the
@@ -372,6 +382,7 @@ class MainActivity : ComponentActivity() {
                             tabs = operatorTabs,
                             theme = operatorTheme,
                             autoplayPreviews = autoplayPreviews,
+                            kidsMode = kidsModeActive,
                             openRequest = pendingLocalOpen,
                             onOpenConsumed = { pendingLocalOpen = null },
                             deepLinkRequest = pendingDeepLink,

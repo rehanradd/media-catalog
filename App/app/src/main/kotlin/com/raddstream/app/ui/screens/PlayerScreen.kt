@@ -110,6 +110,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -228,6 +229,7 @@ import com.raddstream.app.player.subtitleRetimeSteps
 import com.raddstream.app.player.subtitleSizeDelta
 import com.raddstream.app.player.qualityCostPerHour
 import com.raddstream.app.ui.components.CatalogImage
+import com.raddstream.app.ui.components.PinPadDialog
 import com.raddstream.app.ui.components.RaddDialogTitle
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.components.RaddChip
@@ -255,10 +257,13 @@ import com.raddstream.app.ui.theme.RaddTokens
 import com.raddstream.app.ui.theme.RaddWhisperOnInk
 import com.raddstream.app.ui.theme.brandSp
 import com.raddstream.app.ui.theme.paint
+import com.raddstream.app.viewmodel.KidsLockViewModel
+import com.raddstream.app.viewmodel.KidsPinOutcome
 import com.raddstream.app.viewmodel.PlayerEvent
 import com.raddstream.app.viewmodel.PlayerViewModel
 import com.raddstream.app.viewmodel.formatTime
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 /**
@@ -338,9 +343,17 @@ private fun PlayerScreenContent(
     onPlayNextEpisode: (workKey: String?, postId: Int?, season: Int, episode: Int) -> Unit,
     onActorClick: (String) -> Unit = {},
     onHomeClick: (() -> Unit)? = null,
+    /** MX #7 — Kids Lock: the PIN's owner for the unlock pad below. */
+    kidsLockViewModel: KidsLockViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
+    // MX #7 — Kids Lock: the unlock pad, raised when the VM answers an
+    // unlock tap in kids mode with RequestKidsPin. The error and lockout
+    // lines ride the dialog's own params, as the Settings gate does.
+    var kidsPinRequested by remember { mutableStateOf(false) }
+    var kidsPinError by remember { mutableStateOf<String?>(null) }
+    val kidsScope = rememberCoroutineScope()
     // The chrome theme this device wears: resolved once here and handed to the
     // transient overlays that take no state of their own; the stateful chrome
     // pieces resolve it from `state.playerTheme` themselves.
@@ -394,6 +407,8 @@ private fun PlayerScreenContent(
         vm, context, onPlayNextEpisode,
         onMessage = { snackbar = PlayerSnackbar(it) },
         onMessageWithUndo = { snackbar = PlayerSnackbar(it, showUndo = true) },
+        // MX #7 — Kids Lock: the VM's answer to an unlock tap in kids mode.
+        onRequestKidsPin = { kidsPinRequested = true },
     )
 
     // PL-10: opt-in auto-enter PiP — when the switch is on and the title is playing,
@@ -773,6 +788,36 @@ private fun PlayerScreenContent(
         }
         if (state.locked) {
             UnlockFab(onUnlock = { vm.setLocked(false) })
+        }
+
+        // MX #7 — Kids Lock: the unlock pad. A right PIN unlocks through
+        // the VM's grant (this title only — the next episode re-locks); a
+        // wrong one leaves the pad open with its message. The pad sits
+        // above the chrome, so it opens even with the controls hidden.
+        if (kidsPinRequested) {
+            PinPadDialog(
+                title = stringResource(R.string.kids_pin_title),
+                subtitle = stringResource(R.string.kids_pin_player_subtitle),
+                error = kidsPinError,
+                lockedOutSeconds = (kidsLockViewModel.lockoutRemainingMs() / 1_000).toInt(),
+                onPinComplete = { pin ->
+                    kidsScope.launch {
+                        when (kidsLockViewModel.verifyPin(pin)) {
+                            KidsPinOutcome.Success -> {
+                                vm.unlockWithKidsPin()
+                                kidsPinRequested = false
+                            }
+                            KidsPinOutcome.WrongPin -> kidsPinError = context.getString(R.string.kids_pin_wrong)
+                            KidsPinOutcome.InvalidFormat -> kidsPinError = context.getString(R.string.kids_pin_incomplete)
+                            KidsPinOutcome.Mismatch -> kidsPinError = context.getString(R.string.kids_pin_wrong)
+                            // LockedOut clears the error — the dialog's own
+                            // countdown line says it.
+                            KidsPinOutcome.LockedOut -> kidsPinError = null
+                        }
+                    }
+                },
+                onDismiss = { kidsPinRequested = false },
+            )
         }
 
         // 6 — narration cards
@@ -5109,6 +5154,8 @@ private fun PlayerEventWatcher(
     onPlayNextEpisode: (workKey: String?, postId: Int?, season: Int, episode: Int) -> Unit,
     onMessage: (String) -> Unit,
     onMessageWithUndo: (String) -> Unit = onMessage,
+    /** MX #7 — Kids Lock: the unlock FAB was tapped while kids mode is on. */
+    onRequestKidsPin: () -> Unit = {},
 ) {
     LaunchedEffect(vm) {
         vm.events.collect { event ->
@@ -5121,6 +5168,8 @@ private fun PlayerEventWatcher(
                 // SC.24: share a moment — the VM built the text (title, time,
                 // deep link); the screen only opens the system chooser for it.
                 is PlayerEvent.ShareMoment -> shareMoment(context, event.text)
+                // MX #7 — Kids Lock: raise the PIN pad.
+                is PlayerEvent.RequestKidsPin -> onRequestKidsPin()
             }
         }
     }

@@ -58,6 +58,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsActive
@@ -427,6 +428,49 @@ fun DetailScreen(
                 DetailBodySkeleton()
             }
             state.isLoading -> DetailSkeleton(Modifier.padding(detailPadding))
+            // MX #7 — Kids Lock: the refused title. No title, no poster, no
+            // Play, no retry — only the words and the way back. A retry
+            // would only block again, so there is none.
+            state.kidsBlocked -> Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(detailPadding),
+            ) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Column(
+                        modifier = Modifier.verticalScroll(rememberScrollState()),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(48.dp),
+                        )
+                        Spacer(Modifier.height(16.dp))
+                        Text(
+                            text = "Not available in Kids Mode",
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            textAlign = TextAlign.Center,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = "This title isn't in the kids' collection. Ask a parent to turn Kids Mode off to watch it.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                        )
+                        Spacer(Modifier.height(24.dp))
+                        OutlinedButton(onClick = onBackClick) {
+                            Text("Back to browse")
+                        }
+                    }
+                }
+            }
             state.error != null && post == null -> Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -505,7 +549,9 @@ fun DetailScreen(
                 episodeProgress = state.episodeProgress,
                 includedPill = state.includedPill,
                 deadEndReason = state.deadEndReason,
-                deadEndKeepPrint = state.deadEndKeepPrint,
+                // MX #7 — Kids Lock: the dead-end Download button stays out
+                // of kids mode — downloads are a locked surface.
+                deadEndKeepPrint = state.deadEndKeepPrint.takeIf { !state.kidsMode },
                 downloadedHandles = state.downloadedHandles,
                 downloadingHandles = state.downloadingHandles,
                 selectedSeason = state.selectedSeason,

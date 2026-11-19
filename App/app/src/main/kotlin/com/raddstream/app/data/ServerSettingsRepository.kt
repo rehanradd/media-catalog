@@ -1023,6 +1023,75 @@ class ServerSettingsRepository @Inject constructor(
         dataStore.edit { preferences -> preferences[DECODER_MODE_KEY] = safe }
     }
 
+    // ── MX idea #7: Kids Lock ─────────────────────────────────────────────
+    //
+    // The parent's 4-digit PIN, stored only as a salted SHA-256 hash —
+    // never plaintext, never in a log. The salt is a random UUID minted
+    // at setup and stored beside the hash, so two installs with the same
+    // PIN store different hashes. There is no recovery without clearing
+    // app data: this app has no account to prove ownership to, and a
+    // reset question a child can answer is not a lock. The setup screen
+    // says so out loud. See [com.raddstream.app.viewmodel.KidsLock].
+
+    /** The salted hash of the parent PIN, or null when no PIN is set. */
+    val kidsLockPinHash: Flow<String?> = dataStore.data.map { preferences ->
+        preferences[KIDS_LOCK_PIN_HASH_KEY]?.takeIf { it.isNotBlank() }
+    }
+
+    /** The salt the hash above was minted with, or null when no PIN is set. */
+    val kidsLockSalt: Flow<String?> = dataStore.data.map { preferences ->
+        preferences[KIDS_LOCK_SALT_KEY]?.takeIf { it.isNotBlank() }
+    }
+
+    /** True once a PIN exists — the setup flow's "already set up" answer. */
+    val kidsLockPinSet: Flow<Boolean> = dataStore.data.map { preferences ->
+        !preferences[KIDS_LOCK_PIN_HASH_KEY].isNullOrBlank() &&
+            !preferences[KIDS_LOCK_SALT_KEY].isNullOrBlank()
+    }
+
+    /**
+     * Whether Kids Mode is on right now. False until the parent turns it
+     * on — a build that never sets a PIN behaves exactly as before.
+     * The mode survives a restart by design (a lock that drops on reboot
+     * is a suggestion), and only the PIN turns it off.
+     */
+    val kidsModeActive: Flow<Boolean> = dataStore.data.map { preferences ->
+        preferences[KIDS_MODE_ACTIVE_KEY] ?: false
+    }
+
+    /** Set a new PIN (minting a fresh salt), replacing any PIN before it. */
+    suspend fun saveKidsLockPin(pin: String) {
+        val salt = java.util.UUID.randomUUID().toString()
+        val hash = com.raddstream.app.viewmodel.KidsLock.hashPin(pin, salt)
+        dataStore.edit { preferences ->
+            preferences[KIDS_LOCK_SALT_KEY] = salt
+            preferences[KIDS_LOCK_PIN_HASH_KEY] = hash
+        }
+    }
+
+    /** Forget the PIN entirely. Kids Mode, if on, goes off with it. */
+    suspend fun clearKidsLockPin() {
+        dataStore.edit { preferences ->
+            preferences.remove(KIDS_LOCK_SALT_KEY)
+            preferences.remove(KIDS_LOCK_PIN_HASH_KEY)
+            preferences.remove(KIDS_MODE_ACTIVE_KEY)
+        }
+    }
+
+    /** Whether [pin] is the PIN on file. False when no PIN was ever set. */
+    suspend fun verifyKidsPin(pin: String): Boolean {
+        val salt = kidsLockSalt.first()
+        val hash = kidsLockPinHash.first()
+        return com.raddstream.app.viewmodel.KidsLock.verifyPin(pin, salt, hash)
+    }
+
+    /** Turn Kids Mode on or off. The caller proves the PIN first. */
+    suspend fun setKidsModeActive(active: Boolean) {
+        dataStore.edit { preferences ->
+            preferences[KIDS_MODE_ACTIVE_KEY] = active
+        }
+    }
+
     /**
      * The VIP payment reference the viewer entered, or null when nothing is awaiting
      * verification. This deployment has no endpoint that receives a transaction id, so
@@ -1164,6 +1233,9 @@ class ServerSettingsRepository @Inject constructor(
         private val DYNAMIC_COLOR_KEY = booleanPreferencesKey("dynamic_color")
         private val VIEW_MODE_KEY = stringPreferencesKey("view_mode")
         private val DECODER_MODE_KEY = stringPreferencesKey("player_decoder_mode")
+        private val KIDS_LOCK_PIN_HASH_KEY = stringPreferencesKey("kids_lock_pin_hash")
+        private val KIDS_LOCK_SALT_KEY = stringPreferencesKey("kids_lock_salt")
+        private val KIDS_MODE_ACTIVE_KEY = booleanPreferencesKey("kids_mode_active")
         private val VIP_PENDING_TID_KEY = stringPreferencesKey("vip_pending_tid")
         private val VIP_PENDING_PLAN_KEY = stringPreferencesKey("vip_pending_plan")
         private val VIP_PENDING_METHOD_KEY = stringPreferencesKey("vip_pending_method")

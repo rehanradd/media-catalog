@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.paging.Pager
 import androidx.paging.PagingData
 import androidx.paging.cachedIn
+import androidx.paging.filter
 import com.raddstream.app.data.ServerSettingsRepository
 import com.raddstream.app.data.local.CatalogFtsDao
 import com.raddstream.app.data.local.buildFtsPrefixQuery
@@ -26,8 +27,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -333,7 +336,29 @@ data class SearchUiState(
      * state — not a second server call.
      */
     val showExactOnly: Boolean = false,
+    /**
+     * MX #7 — Kids Lock: when on, the screen reads through the `visible*`
+     * getters below instead of the raw lists. The raw lists stay whole
+     * underneath, so turning the mode off restores the full Search with no
+     * re-fetch — only the Pager (the filtered results list itself) rebuilds
+     * when the flag flips.
+     */
+    val kidsMode: Boolean = false,
 ) {
+    /**
+     * MX #7 — Kids Lock: recents, suggestions, local rows, trending and
+     * recommended are all unvetted for a kid — a recent can name an adult
+     * title, a suggestion chip can carry one, a local FTS row has no genre
+     * to judge by, and the discovery rails are the raw catalog feed. In
+     * kids mode every one of them reads empty, so the screen shows the
+     * search box and the filtered results only. The typed results list is
+     * filtered separately, in the Pager.
+     */
+    val visibleRecents: List<String> get() = if (!kidsMode) recents else emptyList()
+    val visibleSuggestions: List<SuggestItem> get() = if (!kidsMode) suggestions else emptyList()
+    val visibleLocalResults: List<LocalSearchResult> get() = if (!kidsMode) localResults else emptyList()
+    val visibleTrending: List<Post> get() = if (!kidsMode) trending else emptyList()
+    val visibleRecommended: List<Post> get() = if (!kidsMode) recommended else emptyList()
     /** A blank query is still a search when a server facet is selected. */
     val hasSearchIntent: Boolean
         get() = query.isNotBlank() || filters.anyServerFilterActive
@@ -345,7 +370,7 @@ data class SearchUiState(
      * stale list can never sit under a newer query.
      */
     val hasLocalResults: Boolean
-        get() = localResults.isNotEmpty() && localResultsQuery == query.trim()
+        get() = visibleLocalResults.isNotEmpty() && localResultsQuery == query.trim()
 
     val hasActiveFilters: Boolean
         get() = filters.type != null || filters.anyServerFilterActive ||
@@ -399,9 +424,14 @@ class SearchViewModel @Inject constructor(
      * Each params value builds its own Pager (cached in this scope, so a
      * rotation resumes the loaded pages instead of re-fetching them).
      */
-    val pagingData: Flow<PagingData<Post>> = searchParams
-        .filterNotNull()
-        .flatMapLatest { params ->
+    val pagingData: Flow<PagingData<Post>> = combine(
+        searchParams.filterNotNull(),
+        // MX #7 — Kids Lock: the mode rides the Pager, so flipping it
+        // rebuilds the results from page 1 with the filter on — a search
+        // in progress never keeps serving unfiltered rows.
+        settingsRepository.kidsModeActive,
+    ) { params, kids -> params to kids }
+        .flatMapLatest { (params, kids) ->
             Pager(
                 config = CATALOG_PAGING_CONFIG,
                 pagingSourceFactory = {
@@ -453,7 +483,13 @@ class SearchViewModel @Inject constructor(
                         onFirstPageError = { onFirstPageError(generation) },
                     )
                 },
-            ).flow.cachedIn(viewModelScope)
+            ).flow
+                // MX #7 — Kids Lock: the page filter. The source still pages
+                // the server's list; only kid-appropriate rows reach the
+                // screen. The server already hides flagged rows on fresh
+                // reads, so this is the second layer — the genre rule.
+                .map { data -> if (kids) data.filter { KidsLock.isKidAppropriate(it) } else data }
+                .cachedIn(viewModelScope)
         }
 
     /**
@@ -500,6 +536,15 @@ class SearchViewModel @Inject constructor(
         viewModelScope.launch {
             settingsRepository.searchRecents.collect { stored ->
                 _uiState.update { it.copy(recents = stored) }
+            }
+        }
+        // MX #7 — Kids Lock: one flag from DataStore. Flipping it only
+        // flips the flag — the raw lists stay whole underneath, so the
+        // screen re-reads through the `visible*` getters with no re-fetch,
+        // while the Pager above rebuilds with the filter on.
+        viewModelScope.launch {
+            settingsRepository.kidsModeActive.collect { active ->
+                _uiState.update { it.copy(kidsMode = active) }
             }
         }
         viewModelScope.launch {
@@ -956,6 +1001,9 @@ class SearchViewModel @Inject constructor(
         if (lastServerSuggestionsQuery == query) lastServerSuggestions else emptyList()
 
     private fun recordRecent(query: String) {
+        // MX #7 — Kids Lock: a kid's searches never join the shared recents
+        // rail — they would name titles for the next adult to read.
+        if (_uiState.value.kidsMode) return
         val trimmed = query.trim()
         if (trimmed.isBlank()) return
         val next = normalizeSearchRecents(listOf(trimmed) + _uiState.value.recents)

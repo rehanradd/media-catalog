@@ -330,7 +330,7 @@ fun SearchScreen(
                 // Type-ahead titles for what is being typed. A tap searches for
                 // that title — it never opens a page, because a suggestion names
                 // a work, not a post.
-                if (state.suggestions.isNotEmpty()) {
+                if (state.visibleSuggestions.isNotEmpty()) {
                     // A4-F3: rides ScrollingChipRow now — the fade and the
                     // row are the shared component, not a hand-rolled copy.
                     ScrollingChipRow(
@@ -339,7 +339,7 @@ fun SearchScreen(
                         // right edge — the row needs the same end padding the rail gets.
                         contentPadding = PaddingValues(start = 0.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
                     ) {
-                        items(state.suggestions, key = { it.id }) { suggestion ->
+                        items(state.visibleSuggestions, key = { it.id }) { suggestion ->
                             RaddChip(
                                 colors = raddFilterChipColors(),
                                 selected = false,
@@ -377,7 +377,7 @@ fun SearchScreen(
                     onSeeAllTrending = { onBrowse(browseTypeForSeeAll(state.filters.type)) },
                     onSeeAllRecommended = { onBrowse(browseTypeForSeeAll(state.filters.type)) },
                 )
-            } else if (state.recents.isNotEmpty()) {
+            } else if (state.visibleRecents.isNotEmpty()) {
                 // A pasted link replaces the results, not the history: the
                 // recents stay reachable so the viewer is never stranded on
                 // a link row with nowhere to go.
@@ -684,7 +684,7 @@ internal const val RemoveRecentTagPrefix = "remove-recent:"
 @Composable
 internal fun RecentsSection(state: SearchUiState, onRunRecent: (String) -> Unit, onRemoveRecent: (String) -> Unit) {
     RecentsList(
-        recents = state.recents,
+        recents = state.visibleRecents,
         onRunRecent = onRunRecent,
         onRemoveRecent = onRemoveRecent,
     )
@@ -892,7 +892,7 @@ internal fun SearchDiscoveryContent(
     // instead; the hint waits for the settle, so it only ever means "the
     // catalog really has nothing to show". A section that already has data
     // (recents are local and land first) shows its data, never the skeleton.
-    if (state.discoveryLoading && state.trending.isEmpty() && state.recents.isEmpty() && state.recommended.isEmpty()) {
+    if (state.discoveryLoading && state.visibleTrending.isEmpty() && state.visibleRecents.isEmpty() && state.visibleRecommended.isEmpty()) {
         SearchDiscoverySkeleton(modifier)
         return
     }
@@ -905,7 +905,7 @@ internal fun SearchDiscoveryContent(
         // chips and "Browse by genre" are gone: the mockup has neither, and
         // the genre filter still lives in the sheet. Each section hides
         // when its data is empty, so a fresh install shows the hint only.
-        if (state.trending.isNotEmpty()) {
+        if (state.visibleTrending.isNotEmpty()) {
             SectionHeader(
                 title = "Trending now",
                 modifier = Modifier.padding(top = 16.dp),
@@ -915,25 +915,25 @@ internal fun SearchDiscoveryContent(
             // The outer column already pads 16dp: the rail starts at 0 and
             // keeps 16dp at the end, so the last card never sits flush
             // against the screen edge when fully scrolled.
-            MediaRail(items = state.trending, key = { it.id }, contentPadding = PaddingValues(start = 0.dp, end = 16.dp)) { post ->
+            MediaRail(items = state.visibleTrending, key = { it.id }, contentPadding = PaddingValues(start = 0.dp, end = 16.dp)) { post ->
                 PosterCard(post = post, onClick = { onPostClick(post) })
             }
         }
-        if (state.recents.isNotEmpty()) {
+        if (state.visibleRecents.isNotEmpty()) {
             RecentsList(
-                recents = state.recents,
+                recents = state.visibleRecents,
                 onRunRecent = onRunQuery,
                 onRemoveRecent = onRemoveRecent,
             )
         }
-        if (state.recommended.isNotEmpty()) {
+        if (state.visibleRecommended.isNotEmpty()) {
             SectionHeader(
                 title = "Recommended for you",
                 modifier = Modifier.padding(top = 20.dp),
                 action = { SeeAllButton(onClick = onSeeAllRecommended, tag = SeeAllRecommendedTag) },
             )
             Spacer(Modifier.height(8.dp))
-            state.recommended.chunked(3).forEach { trio ->
+            state.visibleRecommended.chunked(3).forEach { trio ->
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -948,7 +948,7 @@ internal fun SearchDiscoveryContent(
                 Spacer(Modifier.height(12.dp))
             }
         }
-        if (state.trending.isEmpty() && state.recents.isEmpty() && state.recommended.isEmpty()) {
+        if (state.visibleTrending.isEmpty() && state.visibleRecents.isEmpty() && state.visibleRecommended.isEmpty()) {
             Spacer(Modifier.height(28.dp))
             Icon(
                 Icons.Default.Search,
@@ -1106,7 +1106,7 @@ internal fun SearchContent(
         // the device). A tap runs the server search for that title; the
         // index carries no id to open.
         state.hasLocalResults && groups.isEmpty() -> LocalSearchResults(
-            results = state.localResults,
+            results = state.visibleLocalResults,
             onRunSuggestion = onRunSuggestion,
         )
         // Audit #36: "No matches" only after a completed search returns zero

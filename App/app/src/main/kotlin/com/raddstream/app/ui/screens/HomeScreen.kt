@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -157,6 +158,11 @@ fun HomeScreen(
     /** Samsung RTL (v1.1.2, Issue 3): 8 s, not 5 — the operator's panel value
      *  still wins when published; this is the default when it has not been. */
     heroIntervalMs: Long = 8_000L,
+    /** MX #7 — Kids Lock: when on, Home shows only kid-appropriate rows
+     *  (the state carries the filtered view) and wears the exit banner. */
+    kidsMode: Boolean = false,
+    /** MX #7: the banner's Exit — the graph raises the PIN dialog. */
+    onExitKidsMode: () -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -228,6 +234,8 @@ fun HomeScreen(
             onSetupServerClick = onSetupServerClick,
             onOpenLocalFiles = onOpenLocalFiles,
             onOpenDownloads = onOpenDownloads,
+            kidsMode = kidsMode,
+            onExitKidsMode = onExitKidsMode,
             onRefresh = viewModel::refresh,
             onRetrySection = viewModel::retrySection,
             onDismissBroadcast = { viewModel.dismissBroadcast(it) },
@@ -304,6 +312,10 @@ internal fun HomeContent(
     onSetupServerClick: () -> Unit = {},
     onOpenLocalFiles: () -> Unit = {},
     onOpenDownloads: () -> Unit = {},
+    /** MX #7 — Kids Lock: the banner and the filtered view ride this flag. */
+    kidsMode: Boolean = false,
+    /** MX #7: the banner's Exit — the graph raises the PIN dialog. */
+    onExitKidsMode: () -> Unit = {},
     onRefresh: () -> Unit = {},
     onRetrySection: (String) -> Unit = {},
     onDismissBroadcast: (Int) -> Unit = {},
@@ -335,6 +347,12 @@ internal fun HomeContent(
             .then(modifier),
     ) {
         HomeHeader(scrolled = scrollState.value > 0)
+        // MX #7 — Kids Lock: the slim banner that says the mode is on and
+        // offers the PIN-guarded way out. It sits above the scroll, next to
+        // the header, so it is always in reach and never scrolls away.
+        if (kidsMode) {
+            KidsModeBanner(onExitKidsMode = onExitKidsMode)
+        }
         Column(
             modifier = Modifier
                 .weight(1f)
@@ -378,7 +396,7 @@ internal fun HomeContent(
         }
 
         // Fatal error only when *every* rail failed and none has data to show.
-        val anyVisible = state.sections.any { it.visible }
+        val anyVisible = state.visibleSections.any { it.visible }
         if (state.fatal != null && !anyVisible) {
             ErrorState(
                 message = state.fatal ?: "Couldn't reach the catalog.",
@@ -399,8 +417,8 @@ internal fun HomeContent(
             // is there. The rows live below the hero now; with rows they
             // are the real rows, and without rows they are a "Start watching"
             // placeholder whose CTA opens Browse.
-            val shownRows = visibleHomeRows(state.sections, state.continueWatching.isNotEmpty())
-            val hasSaved = state.continueWatching.isNotEmpty() || anyVisible
+            val shownRows = visibleHomeRows(state.visibleSections, state.visibleContinueWatching.isNotEmpty())
+            val hasSaved = state.visibleContinueWatching.isNotEmpty() || anyVisible
             if (state.isOffline && hasSaved) {
                 OfflineBanner()
                 Spacer(Modifier.height(8.dp))
@@ -415,7 +433,7 @@ internal fun HomeContent(
             // HO-1: the hero IS that rail's presentation, so its posters are
             // de-duplicated out of the rail below — the same six titles must
             // not appear twice on one screen.
-            val heroSection = if (heroMax > 0) selectHeroSection(state.sections, currentCalendarYear()) else null
+            val heroSection = if (heroMax > 0) selectHeroSection(state.visibleSections, currentCalendarYear()) else null
             val heroItems = heroSection?.items.orEmpty().take(heroMax)
             // Hero (Nov 2026): warm the hero art the moment the hero items are
             // known, so first paint has art, not placeholders. The helper is a
@@ -428,8 +446,8 @@ internal fun HomeContent(
             // so scrolling into a rail finds posters, not shimmer — first two
             // posters per visible rail, capped. The helper dedupes, and never
             // runs on metered data the viewer never granted.
-            LaunchedEffect(state.sections) {
-                val urls = homeRailPrefetchUrls(state.sections)
+            LaunchedEffect(state.visibleSections) {
+                val urls = homeRailPrefetchUrls(state.visibleSections)
                 if (urls.isNotEmpty()) prefetchPosterArt(prefetchContext, urls)
             }
             if (heroMax > 0) {
@@ -450,7 +468,7 @@ internal fun HomeContent(
                     // gap between the dots and the next row was the second
                     // dead gap in the hero stack.
                     Spacer(Modifier.height(6.dp))
-                } else if (state.sections.any { it.loading }) {
+                } else if (state.visibleSections.any { it.loading }) {
                     // Hold the hero's footprint while the first rail lands, so the page
                     // never flashes a bare background and then jumps when it fills in.
                     HeroSkeleton()
@@ -469,7 +487,7 @@ internal fun HomeContent(
             // matrix-12l8h97dvq326) — Pick 3 onboards a new viewer instead.
             // A viewer who finished everything (or removed every row) still
             // gets the line: for them "no active shows" is true, not a bug.
-            if (state.continueWatching.isNotEmpty()) {
+            if (state.visibleContinueWatching.isNotEmpty()) {
                 Column {
                     SectionHeader(
                         title = "Continue watching",
@@ -480,7 +498,7 @@ internal fun HomeContent(
                     // at most: the section is a resume list, not a catalog.
                     // Keyed on the scope, not the work: two rows of the same
                     // series are two different episodes.
-                    state.continueWatching.take(3).forEach { tile ->
+                    state.visibleContinueWatching.take(3).forEach { tile ->
                         ContinueWatchingRow(
                             tile = tile,
                             onClick = { onPostClick(tile.post) },
@@ -548,7 +566,7 @@ internal fun HomeContent(
             // own rail) is now a special case of the same rule, by work
             // identity — not by row id, because one film filed twice has
             // two row ids.
-            var seenWorks = state.continueWatching
+            var seenWorks = state.visibleContinueWatching
                 .map { UserWords.workKey(it.post.workRef, it.post.displayTitle, it.post.year) }
                 .toSet() + heroItems.map { UserWords.workKey(it.workRef, it.displayTitle, it.year) }
             // Mockup (Nov 2026): the filter chips hide non-matching rails in
@@ -589,7 +607,7 @@ internal fun HomeContent(
             // This never fires while a rail is still loading: an empty filter
             // on a half-loaded feed would blame the filter for the network.
             if (filter != HomeFilter.All && renderedRows.isEmpty() &&
-                state.sections.none { it.loading } && state.fatal == null
+                state.visibleSections.none { it.loading } && state.fatal == null
             ) {
                 EmptyState(
                     title = filter.emptyMessage,
@@ -605,8 +623,8 @@ internal fun HomeContent(
             // error, nothing to tap. Say so, and point at the one fix the
             // viewer can do — a different address. Only when no filter is
             // active: a filtered empty feed has its own message above.
-            if (filter == HomeFilter.All && renderedRows.isEmpty() && state.continueWatching.isEmpty() &&
-                state.sections.none { it.loading } && state.fatal == null
+            if (filter == HomeFilter.All && renderedRows.isEmpty() && state.visibleContinueWatching.isEmpty() &&
+                state.visibleSections.none { it.loading } && state.fatal == null
             ) {
                 EmptyState(
                     title = "Nothing here yet",
@@ -620,7 +638,10 @@ internal fun HomeContent(
             }
             // Mockup (Nov 2026): Your Library rides BELOW the rails now, at
             // the bottom of the feed — the phone's own videos, and downloads.
-            if (searchEnabled) {
+            // MX #7 — Kids Lock: the whole strip stays out of kids mode.
+            // The phone's own videos are unrated files, and downloads are a
+            // locked surface — neither belongs on a kid's Home.
+            if (searchEnabled && !kidsMode) {
                 LibraryStrip(
                     onOpenLocalFiles = onOpenLocalFiles,
                     onOpenDownloads = onOpenDownloads,
@@ -1104,6 +1125,47 @@ internal fun AppUpdateDialog(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
             )
+        }
+    }
+}
+
+/**
+ * MX #7 — Kids Lock: the slim banner that says Kids Mode is on and offers
+ * the way out. One row, pinned above the feed: a lock, the words, and an
+ * Exit button that raises the PIN dialog — the mode never ends on a tap
+ * alone. The jade accent is the same one the player uses for its own
+ * locked state, so a locked screen reads locked everywhere.
+ */
+@Composable
+private fun KidsModeBanner(
+    onExitKidsMode: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .background(
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = MaterialTheme.shapes.medium,
+            )
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(
+            imageVector = Icons.Default.Lock,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(18.dp),
+        )
+        Text(
+            text = "Kids Mode is on",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(onClick = onExitKidsMode) {
+            Text("Exit")
         }
     }
 }

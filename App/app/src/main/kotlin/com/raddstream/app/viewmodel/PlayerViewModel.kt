@@ -341,6 +341,13 @@ class PlayerViewModel @Inject constructor(
     private var wifiOnlyDownloads: Boolean = true
     /** Delete a watched download to free the space — on by default (Session 123: series episodes too). */
     private var autoDeleteWatched: Boolean = true
+    /**
+     * MX #7 — Kids Lock: the mode in force, mirrored from DataStore.
+     * [kidsUnlockGranted] is the PIN's grant for THIS title only — a new
+     * episode re-locks, and turning the mode off clears it.
+     */
+    private var kidsMode: Boolean = false
+    private var kidsUnlockGranted: Boolean = false
 
     /** A confirmed member, or everyone while the operator has not turned gating on. */
     private val premiumAccess: Boolean get() = VipQualityGate.premiumAccess(qualityGateEnabled, syncEntitled)
@@ -516,6 +523,24 @@ class PlayerViewModel @Inject constructor(
                 _ui.update { it.copy(playerTheme = theme) }
             }
         }
+        // MX #7 — Kids Lock: the mode, collected not sampled, so a parent
+        // turning it on reaches a player that is already running — the next
+        // episode locks, and the state flag tells the screen the unlock
+        // needs the PIN. Turning it off clears the grant with the mode.
+        // Turning it on also locks a bundle already playing: the DataStore
+        // read can land after the first bundle, and a player opened in
+        // kids mode must never start unlocked on that race.
+        viewModelScope.launch {
+            settingsRepository.kidsModeActive.collect { active ->
+                kidsMode = active
+                if (!active) kidsUnlockGranted = false
+                _ui.update { it.copy(kidsMode = active) }
+                if (active && store.bundle.value != null) {
+                    kidsUnlockGranted = false
+                    _ui.update { it.copy(locked = true) }
+                }
+            }
+        }
     }
 
     // ── Service connection ───────────────────────────────────────────────────────
@@ -642,6 +667,14 @@ class PlayerViewModel @Inject constructor(
                     bingeResolveJob?.cancel()
                     bingePrefetchJob?.cancel()
                     if (b != null) prepareBingePrefetch(b)
+                    // MX #7 — Kids Lock: a new episode starts locked — the
+                    // kid watches, the controls stay put until a parent
+                    // unlocks them with the PIN. A rung switch is not a new
+                    // episode (same key), so it never re-locks mid-play.
+                    if (b != null && kidsMode) {
+                        kidsUnlockGranted = false
+                        _ui.update { it.copy(locked = true) }
+                    }
                 }
             }
         }
@@ -2169,7 +2202,26 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun setLocked(locked: Boolean) {
+        // MX #7 — Kids Lock: unlocking in kids mode asks for the PIN first.
+        // The screen raises the pad on the event this emits, and the PIN's
+        // success calls [unlockWithKidsPin] instead of coming back here —
+        // so a kid hammering the unlock button only ever gets the pad.
+        // Locking always works: a kid may lock, never unlock.
+        if (!locked && kidsMode && !kidsUnlockGranted) {
+            viewModelScope.launch { _events.emit(PlayerEvent.RequestKidsPin) }
+            return
+        }
         _ui.update { it.copy(locked = locked) }
+    }
+
+    /**
+     * MX #7 — Kids Lock: the PIN's success path — unlocks the player and
+     * records the grant for this title only. A new episode re-locks (the
+     * bundle collector below), and turning the mode off clears the grant.
+     */
+    fun unlockWithKidsPin() {
+        kidsUnlockGranted = true
+        _ui.update { it.copy(locked = false) }
     }
 
     /**
@@ -3040,6 +3092,12 @@ sealed class PlayerEvent {
     data class OpenExternalPlayer(val url: String) : PlayerEvent()
     /** SC.24: share-a-moment text for the system share sheet. */
     data class ShareMoment(val text: String) : PlayerEvent()
+    /**
+     * MX #7 — Kids Lock: the unlock FAB was tapped while kids mode is on.
+     * The screen raises the PIN pad on this; the PIN's success unlocks
+     * through [PlayerViewModel.unlockWithKidsPin].
+     */
+    data object RequestKidsPin : PlayerEvent()
 }
 
 @OptIn(UnstableApi::class)

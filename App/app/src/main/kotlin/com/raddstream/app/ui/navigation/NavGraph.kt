@@ -30,6 +30,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -45,6 +49,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -61,7 +66,11 @@ import com.raddstream.app.network.models.Post
 import com.raddstream.app.player.PlayerSessionStore
 import com.raddstream.app.resolve.PressTestScreen
 import com.raddstream.app.resolve.ResolveTestScreen
+import com.raddstream.app.ui.components.PinPadDialog
 import com.raddstream.app.ui.components.rememberReduceMotion
+import com.raddstream.app.viewmodel.KidsLockViewModel
+import com.raddstream.app.viewmodel.KidsPinOutcome
+import kotlinx.coroutines.launch
 import com.raddstream.app.ui.screens.BrowseScreen
 import com.raddstream.app.ui.screens.DashboardScreen
 import com.raddstream.app.ui.screens.DeadLinkScreen
@@ -312,9 +321,33 @@ fun RaddStreamNavGraph(
     onDeepLinkConsumed: () -> Unit = {},
     unknownDeepLink: String? = null,
     onUnknownDeepLinkConsumed: () -> Unit = {},
+    /** MX #7 — Kids Lock: when on, the bottom bar shrinks to Home / Search /
+     *  Settings, My List and Live TV leave the bar (their rows are
+     *  unfiltered), Settings opens only behind the PIN, and the Home banner
+     *  offers the PIN-guarded exit. Off, every route below is exactly the
+     *  app it was — the flag changes nothing. */
+    kidsMode: Boolean = false,
+    kidsLockViewModel: KidsLockViewModel = hiltViewModel(),
 ) {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
+
+    // MX #7 — Kids Lock: the session-scoped adult unlock. Settings is the
+    // one door that stays reachable in kids mode, and it opens only after
+    // this flips true — once per kids session, never persisted, and it
+    // resets the moment kids mode turns off, so handing the phone back
+    // never hands the Settings open with it.
+    var adultUnlocked by remember { mutableStateOf(false) }
+    LaunchedEffect(kidsMode) {
+        if (!kidsMode) adultUnlocked = false
+    }
+    // Entering kids mode pops everything above Home: My List, Settings and
+    // Downloads cannot linger on the stack for a kid to reach with Back.
+    LaunchedEffect(kidsMode) {
+        if (kidsMode) navController.popBackStack(Screen.Home.route, false)
+    }
+    // The exit-PIN dialog, raised by the Home banner. Null means no dialog.
+    var exitPinRequested by remember { mutableStateOf(false) }
 
     // Exactly once per request: the nonce is what makes the same file tapped twice a second
     // request, and clearing it here is what stops a later recomposition from pushing a duplicate
@@ -369,7 +402,13 @@ fun RaddStreamNavGraph(
     // has no such attr; the NavigationBarItem tint is the only tint). The
     // vectors are stroke-black; Icon's tint recolours them to the bar's
     // selected/unselected colours, exactly as the Material icons did.
-    val bottomNavItems = PanelTabs.resolve(tabs, features.search).map { id ->
+    val bottomNavItems = PanelTabs.resolve(tabs, features.search)
+        // MX #7 — Kids Lock: My List and Live TV leave the bar. Their rows
+        // are unfiltered — a kid's own saves can hold adult titles, and a
+        // live channel carries no rating at all — so they are not reachable
+        // in kids mode at all. Home, Search and Settings stay.
+        .filterNot { kidsMode && (it == "my_list" || it == "live_tv") }
+        .map { id ->
         when (id) {
             "live_tv" -> BottomNavItem("Live TV", Screen.LiveTv.route, ImageVector.vectorResource(R.drawable.ic_tab_live_tv))
             "search" -> BottomNavItem("Search", Screen.Search.route, ImageVector.vectorResource(R.drawable.ic_tab_search), navigateRoute = Screen.Search.PLAIN_ROUTE)
@@ -552,6 +591,10 @@ fun RaddStreamNavGraph(
                     heroMax = theme.heroMax,
                     heroAutoplay = theme.heroAutoplay && autoplayPreviews,
                     heroIntervalMs = theme.heroIntervalS * 1_000L,
+                    // MX #7 — Kids Lock: the banner's Exit raises the PIN
+                    // dialog below; the mode itself rides the ViewModels.
+                    kidsMode = kidsMode,
+                    onExitKidsMode = { exitPinRequested = true },
                 )
             }
 
@@ -658,7 +701,21 @@ fun RaddStreamNavGraph(
                     },
                 ),
             ) { backStackEntry ->
-                SettingsScreen(
+                // MX #7 — Kids Lock: Settings in kids mode opens only behind
+                // the PIN, and the gate renders over an EMPTY screen — the
+                // Settings content itself never composes behind the dialog,
+                // so nothing (account, downloads, VIP) leaks through the dim.
+                if (kidsMode && !adultUnlocked) {
+                    KidsPinGateDialog(
+                        title = "Enter PIN",
+                        subtitle = "Settings is locked in Kids Mode.",
+                        viewModel = kidsLockViewModel,
+                        verify = { pin -> kidsLockViewModel.verifyPin(pin) },
+                        onSuccess = { adultUnlocked = true },
+                        onDismiss = { navController.popBackStack() },
+                    )
+                } else {
+                    SettingsScreen(
                     features = features,
                     onOpenDownloads = { navController.navigate(Screen.Downloads.route) },
                     onOpenVipUpgrade = { navController.navigate(Screen.VipUpgrade.route) },
@@ -671,7 +728,8 @@ fun RaddStreamNavGraph(
                     onOpenResolveTest = { navController.navigate(Screen.ResolveTest.route) },
                     onOpenPressTest = { navController.navigate(Screen.PressTest.route) },
                     scrollToContact = backStackEntry.arguments?.getString(Screen.Settings.ARG_SCROLL_TO) == Screen.Settings.SCROLL_TO_CONTACT,
-                )
+                    )
+                }
             }
 
             // Debug-only field-test harness (plan §8): the entry exists only
@@ -917,5 +975,61 @@ fun RaddStreamNavGraph(
                 )
             }
         }
+
+        // MX #7 — Kids Lock: the exit PIN, raised by the Home banner. It
+        // sits above the NavHost, so it opens wherever the banner is, and
+        // dismissing it leaves kids mode exactly where it was.
+        if (exitPinRequested) {
+            KidsPinGateDialog(
+                title = "Enter PIN",
+                subtitle = "Kids Mode is on — enter the PIN to exit.",
+                viewModel = kidsLockViewModel,
+                verify = { pin -> kidsLockViewModel.exitKidsMode(pin) },
+                onSuccess = { exitPinRequested = false },
+                onDismiss = { exitPinRequested = false },
+            )
+        }
     }
+}
+
+/**
+ * MX #7 — Kids Lock: one PIN gate for both doors that need it — opening
+ * Settings in kids mode and exiting kids mode from the Home banner. The
+ * dialog owns the error line and the lockout countdown (from the VM's
+ * remaining milliseconds); the caller only supplies the check ([verify])
+ * and what a right PIN unlocks ([onSuccess]). A wrong PIN leaves the
+ * dialog open with its message; the throttle lives in the ViewModel, so
+ * five wrong tries lock the pad for 30 seconds.
+ */
+@Composable
+private fun KidsPinGateDialog(
+    title: String,
+    subtitle: String,
+    viewModel: KidsLockViewModel,
+    verify: suspend (String) -> KidsPinOutcome,
+    onSuccess: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    PinPadDialog(
+        title = title,
+        subtitle = subtitle,
+        error = error,
+        lockedOutSeconds = (viewModel.lockoutRemainingMs() / 1_000).toInt(),
+        onPinComplete = { pin ->
+            scope.launch {
+                when (verify(pin)) {
+                    KidsPinOutcome.Success -> onSuccess()
+                    KidsPinOutcome.WrongPin -> error = "Wrong PIN — try again"
+                    KidsPinOutcome.InvalidFormat -> error = "Enter all 4 digits"
+                    KidsPinOutcome.Mismatch -> error = "Wrong PIN — try again"
+                    // LockedOut clears the error — the dialog's own
+                    // countdown line (from lockedOutSeconds above) says it.
+                    KidsPinOutcome.LockedOut -> error = null
+                }
+            }
+        },
+        onDismiss = onDismiss,
+    )
 }

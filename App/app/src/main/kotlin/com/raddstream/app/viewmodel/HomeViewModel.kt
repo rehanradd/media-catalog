@@ -258,7 +258,31 @@ data class HomeUiState(
      * language filter to land on, so the group waits for one.
      */
     val facets: FacetsResponse? = null,
+    /**
+     * MX #7 — Kids Lock: when on, the screen reads through [visibleSections]
+     * and [visibleContinueWatching] instead of the raw lists — the raw
+     * lists stay whole underneath, so turning the mode off restores the
+     * full Home with no re-fetch. The ViewModel flips this one flag from
+     * the DataStore flow; the filtering itself is a pure function of it.
+     */
+    val kidsMode: Boolean = false,
 ) {
+    /**
+     * MX #7 — Kids Lock: the rails a kid sees. Each rail keeps only
+     * kid-appropriate rows; a rail left empty by the filter drops out,
+     * exactly as an empty rail does in adult mode. A rail still loading or
+     * carrying an error stays — the loading skeletons and the error row
+     * are the same in kids mode, only the rows inside are filtered.
+     */
+    val visibleSections: List<HomeSection>
+        get() = if (!kidsMode) sections else sections
+            .map { section -> section.copy(items = section.items.filter { KidsLock.isKidAppropriate(it) }) }
+            .filter { it.visible || it.loading || it.error != null }
+
+    /** MX #7 — Kids Lock: Continue Watching with only the rows a kid may see. */
+    val visibleContinueWatching: List<ResumeTile>
+        get() = if (!kidsMode) continueWatching else continueWatching
+            .filter { KidsLock.isKidAppropriate(it.post) }
     /**
      * Pick 3 (home review, Nov 2026): the three titles the redesigned card
      * offers — the first rail with at least three rows AFTER the hero's own
@@ -306,7 +330,7 @@ data class HomeUiState(
      * flag then keeps the card away.
      */
     val showPickThree: Boolean
-        get() = !pickThreeDone && (pickThreeShownThisVisit ||
+        get() = !kidsMode && !pickThreeDone && (pickThreeShownThisVisit ||
             (!pickThreeShown && firstBrowseDone && continueWatching.isEmpty() &&
                 favoriteIds.isEmpty() && pickThreeCandidates.size >= 3))
 
@@ -618,6 +642,7 @@ class HomeViewModel @Inject constructor(
         observePickThreeDone()
         observePickThreeShown()
         observeFirstBrowseDone()
+        observeKidsMode()
         _uiState.update { it.copy(sections = initialHomeSections() + regionalHomeSections()) }
         // Feel-instant S8: warm the connection at Home first paint, once
         // per process — the first search or detail tap then never pays TLS
@@ -805,6 +830,20 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             settingsRepository.firstBrowseDone.collect { done ->
                 _uiState.update { it.copy(firstBrowseDone = done) }
+            }
+        }
+    }
+
+    /**
+     * MX #7 — Kids Lock: one flag from DataStore. Flipping it only flips
+     * the flag — the raw lists stay whole underneath, so the screen
+     * re-filters in place and turning the mode off restores the full Home
+     * with no re-fetch.
+     */
+    private fun observeKidsMode() {
+        viewModelScope.launch {
+            settingsRepository.kidsModeActive.collect { active ->
+                _uiState.update { it.copy(kidsMode = active) }
             }
         }
     }

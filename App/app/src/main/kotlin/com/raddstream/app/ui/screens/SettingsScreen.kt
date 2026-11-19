@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Help
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Public
@@ -67,6 +68,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -101,6 +103,7 @@ import com.raddstream.app.network.models.DEFAULT_DISCLAIMER_EMAIL
 import com.raddstream.app.player.AudioBoost
 import com.raddstream.app.player.AudioBoostUi
 import com.raddstream.app.share.LanShareStatus
+import com.raddstream.app.ui.components.PinPadDialog
 import com.raddstream.app.ui.components.RaddDialogTitle
 import com.raddstream.app.ui.theme.RaddChipBorderSoft
 import com.raddstream.app.ui.theme.RaddChipLabelSoft
@@ -113,8 +116,11 @@ import com.raddstream.app.viewmodel.AccountCardCopy
 import com.raddstream.app.viewmodel.AccountUiState
 import com.raddstream.app.viewmodel.ImageQuality
 import com.raddstream.app.viewmodel.KeepTtl
+import com.raddstream.app.viewmodel.KidsLockViewModel
+import com.raddstream.app.viewmodel.KidsPinOutcome
 import com.raddstream.app.viewmodel.MembershipCardCopy
 import com.raddstream.app.viewmodel.SettingsViewModel
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 /** The subtitle chips, in the order the row shows them. Readable by the region test, which
@@ -185,6 +191,8 @@ fun SettingsScreen(
      */
     scrollToContact: Boolean = false,
     viewModel: SettingsViewModel = hiltViewModel(),
+    /** MX #7: the PIN + mode controller. The card below is its screen. */
+    kidsLockViewModel: KidsLockViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
 
@@ -598,6 +606,12 @@ fun SettingsScreen(
                     style = settingsHelperStyle,
                 )
             }
+
+            // MX #7 — Kids Lock: the parent PIN + mode. Its card owns the
+            // whole flow (setup, enter, exit, change, remove); the pad is
+            // PinPadDialog, the decisions are KidsLockViewModel's.
+            SettingsSectionHeading("Family")
+            KidsLockCard(viewModel = kidsLockViewModel)
 
             SettingsSectionHeading("Downloads")
             // ── Downloads entry ────────────────────────────────────────
@@ -1275,6 +1289,205 @@ private fun SettingsCard(
             }
         }
         content()
+    }
+}
+
+/**
+ * MX #7 — Kids Lock: one step of the PIN flow the card is in. Setup is
+ * two entries (first, confirm); change is three (current, new,
+ * confirm); enter, exit and remove are one. The card holds the step +
+ * the entries typed so far; the ViewModel decides each one.
+ */
+private enum class KidsLockStep {
+    SETUP_FIRST, SETUP_CONFIRM, ENTER, EXIT, CHANGE_CURRENT, CHANGE_NEW, CHANGE_CONFIRM, REMOVE
+}
+
+/**
+ * MX #7 — Kids Lock: the card in Settings.
+ *
+ * Three states, three button sets: no PIN yet → set one up; PIN set,
+ * mode off → enter the mode, change the PIN, or remove the lock; mode
+ * on → exit the mode or change the PIN. Every transition is PIN-gated
+ * through [KidsLockViewModel] — the card never compares a PIN itself,
+ * and the pad ([PinPadDialog]) is the only place digits are entered.
+ * The no-reset warning is on the card, not buried in a dialog: a
+ * forgotten PIN is only reset by clearing the app's data, because this
+ * app has no account to prove ownership to.
+ */
+@Composable
+private fun KidsLockCard(viewModel: KidsLockViewModel) {
+    val pinSet by viewModel.pinSet.collectAsState(initial = false)
+    val modeActive by viewModel.modeActive.collectAsState(initial = false)
+    var step by remember { mutableStateOf<KidsLockStep?>(null) }
+    var firstPin by remember { mutableStateOf<String?>(null) }
+    var currentPin by remember { mutableStateOf<String?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    SettingsCard(title = "Kids Lock", icon = Icons.Default.Lock) {
+        Text(
+            when {
+                modeActive -> "Kids Mode is ON — only family-friendly titles show, and Settings, Downloads and purchases stay locked behind your PIN."
+                pinSet -> "Kids Lock is set up. Kids Mode is off — the full catalog shows."
+                else -> "Hand the phone to a child without handing them the catalog: Kids Mode shows only family-friendly titles and locks Settings, Downloads and purchases behind a 4-digit PIN."
+            },
+            style = settingsHelperStyle,
+        )
+        Text(
+            "If you forget your PIN, the only reset is clearing the app's data — write it down.",
+            style = settingsHelperStyle,
+        )
+        Spacer(Modifier.height(10.dp))
+        if (!pinSet) {
+            OutlinedButton(
+                onClick = { step = KidsLockStep.SETUP_FIRST; error = null },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            ) {
+                Text("Set up Kids Lock")
+            }
+        } else if (!modeActive) {
+            OutlinedButton(
+                onClick = { step = KidsLockStep.ENTER; error = null },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            ) {
+                Text("Enter Kids Mode")
+            }
+            OutlinedButton(
+                onClick = { step = KidsLockStep.CHANGE_CURRENT; error = null },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            ) {
+                Text("Change PIN")
+            }
+            OutlinedButton(
+                onClick = { step = KidsLockStep.REMOVE; error = null },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            ) {
+                Text("Remove Kids Lock")
+            }
+        } else {
+            OutlinedButton(
+                onClick = { step = KidsLockStep.EXIT; error = null },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            ) {
+                Text("Exit Kids Mode")
+            }
+            OutlinedButton(
+                onClick = { step = KidsLockStep.CHANGE_CURRENT; error = null },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            ) {
+                Text("Change PIN")
+            }
+        }
+    }
+
+    val activeStep = step
+    if (activeStep != null) {
+        val (title, subtitle) = when (activeStep) {
+            KidsLockStep.SETUP_FIRST -> "Set up Kids Lock" to
+                "Choose a 4-digit PIN. Only you will know it — it opens Kids Mode and turns it off."
+            KidsLockStep.SETUP_CONFIRM -> "Confirm your PIN" to
+                "Enter the same 4-digit PIN again."
+            KidsLockStep.ENTER -> "Enter Kids Mode" to
+                "Enter your PIN to switch on Kids Mode."
+            KidsLockStep.EXIT -> "Exit Kids Mode" to
+                "Enter your PIN to switch Kids Mode off."
+            KidsLockStep.CHANGE_CURRENT -> "Change PIN" to
+                "Enter your current PIN first."
+            KidsLockStep.CHANGE_NEW -> "Change PIN" to
+                "Choose a new 4-digit PIN."
+            KidsLockStep.CHANGE_CONFIRM -> "Change PIN" to
+                "Enter the new PIN again."
+            KidsLockStep.REMOVE -> "Remove Kids Lock" to
+                "Enter your PIN to remove Kids Lock and its PIN."
+        }
+        PinPadDialog(
+            title = title,
+            subtitle = subtitle,
+            error = error,
+            lockedOutSeconds = (viewModel.lockoutRemainingMs() / 1_000).toInt(),
+            onPinComplete = { pin ->
+                scope.launch {
+                    when (activeStep) {
+                        KidsLockStep.SETUP_FIRST -> {
+                            firstPin = pin
+                            step = KidsLockStep.SETUP_CONFIRM
+                            error = null
+                        }
+                        KidsLockStep.SETUP_CONFIRM -> when (viewModel.setupPin(firstPin ?: "", pin)) {
+                            KidsPinOutcome.Success -> {
+                                step = null; firstPin = null; error = null
+                            }
+                            KidsPinOutcome.Mismatch -> {
+                                error = "The two PINs did not match — start again."
+                                step = KidsLockStep.SETUP_FIRST; firstPin = null
+                            }
+                            KidsPinOutcome.InvalidFormat -> {
+                                error = "Enter four digits."
+                                step = KidsLockStep.SETUP_FIRST; firstPin = null
+                            }
+                            else -> error = "Something went wrong — try again."
+                        }
+                        KidsLockStep.ENTER -> when (viewModel.enterKidsMode(pin)) {
+                            KidsPinOutcome.Success -> { step = null; error = null }
+                            KidsPinOutcome.WrongPin -> error = "Wrong PIN — try again."
+                            KidsPinOutcome.LockedOut -> error = null
+                            else -> error = "Enter four digits."
+                        }
+                        KidsLockStep.EXIT -> when (viewModel.exitKidsMode(pin)) {
+                            KidsPinOutcome.Success -> { step = null; error = null }
+                            KidsPinOutcome.WrongPin -> error = "Wrong PIN — try again."
+                            KidsPinOutcome.LockedOut -> error = null
+                            else -> error = "Enter four digits."
+                        }
+                        KidsLockStep.CHANGE_CURRENT -> when (viewModel.verifyPin(pin)) {
+                            KidsPinOutcome.Success -> {
+                                currentPin = pin
+                                step = KidsLockStep.CHANGE_NEW
+                                error = null
+                            }
+                            KidsPinOutcome.WrongPin -> error = "Wrong PIN — try again."
+                            KidsPinOutcome.LockedOut -> error = null
+                            else -> error = "Enter four digits."
+                        }
+                        KidsLockStep.CHANGE_NEW -> {
+                            firstPin = pin
+                            step = KidsLockStep.CHANGE_CONFIRM
+                            error = null
+                        }
+                        KidsLockStep.CHANGE_CONFIRM -> when (
+                            viewModel.changePin(currentPin ?: "", firstPin ?: "", pin)
+                        ) {
+                            KidsPinOutcome.Success -> {
+                                step = null; firstPin = null; currentPin = null; error = null
+                            }
+                            KidsPinOutcome.Mismatch -> {
+                                error = "The two PINs did not match — start again."
+                                step = KidsLockStep.CHANGE_NEW; firstPin = null
+                            }
+                            KidsPinOutcome.WrongPin -> {
+                                error = "Wrong PIN — try again."
+                                step = KidsLockStep.CHANGE_CURRENT
+                                currentPin = null; firstPin = null
+                            }
+                            KidsPinOutcome.InvalidFormat -> {
+                                error = "Enter four digits."
+                                step = KidsLockStep.CHANGE_NEW; firstPin = null
+                            }
+                            else -> error = "Something went wrong — try again."
+                        }
+                        KidsLockStep.REMOVE -> when (viewModel.removeKidsLock(pin)) {
+                            KidsPinOutcome.Success -> { step = null; error = null }
+                            KidsPinOutcome.WrongPin -> error = "Wrong PIN — try again."
+                            KidsPinOutcome.LockedOut -> error = null
+                            else -> error = "Enter four digits."
+                        }
+                    }
+                }
+            },
+            onDismiss = {
+                step = null; firstPin = null; currentPin = null; error = null
+            },
+        )
     }
 }
 

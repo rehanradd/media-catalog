@@ -310,6 +310,13 @@ data class PlayerUiState(
     val frameRate: Float? = null,
     // lock + display
     val locked: Boolean = false,
+    /**
+     * MX #7 — Kids Lock: when on, the player starts locked on every new
+     * episode, and unlocking asks for the PIN — the lock the kid cannot
+     * open. The screen reads this to decide whether the unlock FAB's tap
+     * needs the pad.
+     */
+    val kidsMode: Boolean = false,
     val aspect: AspectMode = AspectMode.FIT,
     val orientation: PlayerOrientation = PlayerOrientation.LANDSCAPE,
     /** Immersive fullscreen (system bars hidden) or normal (system bars shown). */

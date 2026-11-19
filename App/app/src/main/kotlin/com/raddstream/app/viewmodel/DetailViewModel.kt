@@ -54,6 +54,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
@@ -94,6 +95,18 @@ data class DetailUiState(
      */
     val isFollowed: Boolean = false,
     val error: String? = null,
+    /**
+     * MX #7 — Kids Lock: when on, this detail shows only kid-appropriate
+     * titles — the ViewModel refuses the rest (see [DetailViewModel]) and
+     * the screen renders the blocked branch instead of the title.
+     */
+    val kidsMode: Boolean = false,
+    /**
+     * MX #7 — Kids Lock: true when the loaded title is not kid-appropriate.
+     * The screen shows "Not available in Kids Mode" with a way back — no
+     * title, no poster, no Play, no retry.
+     */
+    val kidsBlocked: Boolean = false,
     val actionMessage: String? = null,
     /** One row per quality band, as the server collapsed them. Empty until it has any. */
     val ladder: LadderForScope = LadderForScope.EMPTY,
@@ -551,6 +564,24 @@ class DetailViewModel @Inject constructor(
                 downloadsEnabled = enabled
             }
         }
+        // MX #7 — Kids Lock: the live flag. Turning it on while a detail
+        // is open re-checks the title on screen — a non-appropriate one
+        // blocks at once instead of waiting for a reload. Turning it off
+        // while blocked reloads the title the mode had hidden.
+        viewModelScope.launch {
+            settingsRepository.kidsModeActive.collect { active ->
+                val wasBlocked = _uiState.value.kidsBlocked
+                _uiState.update { it.copy(kidsMode = active) }
+                if (active) {
+                    val current = rawDetail
+                    if (current != null && !KidsLock.isKidAppropriate(current)) {
+                        blockDetail()
+                    }
+                } else if (wasBlocked) {
+                    loadDetail()
+                }
+            }
+        }
     }
 
     private var serverVip: Boolean = false
@@ -827,12 +858,40 @@ class DetailViewModel @Inject constructor(
         }
     }
 
+    /**
+     * MX #7 — Kids Lock: refuse a title. Everything that names it leaves
+     * the state — post, optimistic header, fallback row, similar titles,
+     * layout — so the screen's blocked branch has nothing to leak through.
+     * The error stays null: a blocked title is not a failed load, and the
+     * screen must not offer a retry that can only block again.
+     */
+    private fun blockDetail() {
+        _uiState.update {
+            it.copy(
+                post = null,
+                optimisticDetail = null,
+                fallbackPost = null,
+                similarTitles = emptyList(),
+                layout = null,
+                isLoading = false,
+                error = null,
+                kidsBlocked = true,
+            )
+        }
+    }
+
     fun loadDetail() {
         if (postId < 0 && workId < 0) {
             _uiState.update { it.copy(isLoading = false, error = "This title could not be opened.") }
             return
         }
         viewModelScope.launch {
+            // MX #7 — Kids Lock: read the mode up front, from the store, not
+            // the state — the collector above may not have delivered yet, and
+            // the optimistic header below must not flash a title the mode
+            // forbids while the fetch is in flight.
+            val kidsOn = settingsRepository.kidsModeActive.first()
+            _uiState.update { it.copy(kidsMode = kidsOn) }
             // Feel-instant S4: paint the header at once, from the list row
             // this process already holds — the tap answers within a frame,
             // and the warm + fetch below only ever fill the body. A row the
@@ -840,10 +899,14 @@ class DetailViewModel @Inject constructor(
             // detail) paints the skeleton exactly as before.
             val optimistic = catalogRepository.cachedPost(postId, workId)
                 ?.let(::optimisticDetailFromPost)
+                ?.takeIf { !kidsOn || KidsLock.isKidAppropriate(it) }
             _uiState.update {
                 it.copy(
                     isLoading = true, error = null, fallbackPost = null,
                     optimisticDetail = optimistic,
+                    // MX #7: a reload after the mode turned off clears the
+                    // block — the title is loading again, not still refused.
+                    kidsBlocked = false,
                 )
             }
             try {
@@ -858,6 +921,13 @@ class DetailViewModel @Inject constructor(
                 withTimeoutOrNull(3_000) { catalogRepository.warmConnectionIfNeeded() }
                 val detail = fetchDetailWithRetry()
                 if (detail != null) {
+                    // MX #7 — Kids Lock: the fetch is the backstop — a title
+                    // that fails the rule never reaches the screen, however
+                    // it was opened (deep link, stale row, cold start).
+                    if (kidsOn && !KidsLock.isKidAppropriate(detail)) {
+                        blockDetail()
+                        return@launch
+                    }
                     // Wide art only: a portrait poster cropped into a 16:9 still looks broken,
                     // so it is used just when the catalog has no backdrop at all.
                     val artwork = detail.backdropList.ifEmpty {
@@ -954,7 +1024,10 @@ class DetailViewModel @Inject constructor(
             _uiState.update { it.copy(similarLoading = true) }
             val items = try {
                 val resp = catalogRepository.getRelated(workId = seedPostId, page = 1, limit = 18)
-                filterSimilarTitles(resp.results, current)
+                // MX #7 — Kids Lock: similar titles pass the same rule —
+                // a related row is still a row on the screen.
+                val filtered = filterSimilarTitles(resp.results, current)
+                if (_uiState.value.kidsMode) filtered.filter { KidsLock.isKidAppropriate(it) } else filtered
             } catch (ex: CancellationException) {
                 throw ex
             } catch (_: Exception) {
@@ -1106,6 +1179,12 @@ class DetailViewModel @Inject constructor(
 
     /** A rung this app cannot present is downloaded, and the row says so — no hidden failure. */
     fun keepRung(option: QualityOption) {
+        // MX #7 — Kids Lock: downloads are a locked surface — a kid taps
+        // nothing that starts a file landing on the device.
+        if (_uiState.value.kidsMode) {
+            _uiState.update { it.copy(actionMessage = "Downloads are locked in Kids Mode.") }
+            return
+        }
         if (isLocked(option)) {
             _uiState.update { it.copy(actionMessage = VipQualityGate.lockedMessage(freeQualityCap)) }
             return
@@ -1251,6 +1330,11 @@ class DetailViewModel @Inject constructor(
      * says so instead of opening an empty dialog.
      */
     fun requestKeepSeason(season: SeasonGroup) {
+        // MX #7 — Kids Lock: downloads are a locked surface.
+        if (_uiState.value.kidsMode) {
+            _uiState.update { it.copy(actionMessage = "Downloads are locked in Kids Mode.") }
+            return
+        }
         val plan = seasonKeepPlan(season, premiumAccess, freeQualityCap)
         if (plan.items.isEmpty()) {
             _uiState.update { it.copy(actionMessage = "Nothing to download in this season yet.") }
@@ -1953,6 +2037,11 @@ class DetailViewModel @Inject constructor(
     }
 
     fun keepPrint(print: RankedPrint) {
+        // MX #7 — Kids Lock: downloads are a locked surface.
+        if (_uiState.value.kidsMode) {
+            _uiState.update { it.copy(actionMessage = "Downloads are locked in Kids Mode.") }
+            return
+        }
         if (!VipQualityGate.allowsResolution(print.resolution, premiumAccess)) {
             _uiState.update { it.copy(actionMessage = VipQualityGate.lockedMessage(freeQualityCap)) }
             return

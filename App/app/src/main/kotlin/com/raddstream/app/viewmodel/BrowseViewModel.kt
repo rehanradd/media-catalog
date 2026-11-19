@@ -6,6 +6,8 @@ import androidx.lifecycle.viewModelScope
 import androidx.paging.Pager
 import androidx.paging.PagingData
 import androidx.paging.cachedIn
+import androidx.paging.filter
+import com.raddstream.app.data.ServerSettingsRepository
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.player.AdCadenceGovernor
 import com.raddstream.app.player.AdSurface
@@ -17,6 +19,8 @@ import javax.inject.Inject
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /**
@@ -47,6 +51,7 @@ class BrowseViewModel @Inject constructor(
     private val catalogRepository: CatalogRepository,
     private val adCadence: AdCadenceGovernor,
     private val adFreeReader: AdFreeReader,
+    private val settingsRepository: ServerSettingsRepository,
 ) : ViewModel() {
 
     private val type: String? = (savedStateHandle.get<String>(ARG_TYPE))?.takeIf { it.isNotBlank() && it != "all" }
@@ -59,20 +64,27 @@ class BrowseViewModel @Inject constructor(
      * whole visit (cached in this scope, so a rotation resumes the loaded
      * pages instead of re-fetching them). The screen retries through the
      * PagingData (`retry()` / `refresh()`); there is no `load()` to call.
+     * MX #7 — Kids Lock: the mode rides the Pager — flipping it rebuilds
+     * the grid from page 1 with the filter on, exactly as Search does.
      */
-    val pagingData: Flow<PagingData<Post>> = Pager(
-        config = CATALOG_PAGING_CONFIG,
-        pagingSourceFactory = {
-            CatalogPagingSource(
-                loadV2 = { cursor, limit ->
-                    catalogRepository.browseWorksV2(type = type, sort = "trending", limit = limit, cursor = cursor)
+    val pagingData: Flow<PagingData<Post>> = settingsRepository.kidsModeActive
+        .flatMapLatest { kids ->
+            Pager(
+                config = CATALOG_PAGING_CONFIG,
+                pagingSourceFactory = {
+                    CatalogPagingSource(
+                        loadV2 = { cursor, limit ->
+                            catalogRepository.browseWorksV2(type = type, sort = "trending", limit = limit, cursor = cursor)
+                        },
+                        loadV1 = { page, limit ->
+                            catalogRepository.getPosts(type = type, page = page, limit = limit)
+                        },
+                    )
                 },
-                loadV1 = { page, limit ->
-                    catalogRepository.getPosts(type = type, page = page, limit = limit)
-                },
-            )
-        },
-    ).flow.cachedIn(viewModelScope)
+            ).flow
+                .map { data -> if (kids) data.filter { KidsLock.isKidAppropriate(it) } else data }
+                .cachedIn(viewModelScope)
+        }
 
     /**
      * How many posters the viewer has passed since last time. The grid's scroll index is the only
