@@ -2732,6 +2732,69 @@ def episode_manifest(conn, *, work_id=None, work_key=None, slug=None, season=Non
 
 # ── play bundle ──────────────────────────────────────────────────────────────
 
+# Skip Intro / Skip Recap (MX #4, 2026-11-19): the segment types TheIntroDB
+# serves, and the only ones `play_bundle` ever emits. Anything else a row
+# carries is ignored at serve time, never shown to a viewer.
+_SEGMENT_TYPES = ("intro", "recap", "credits", "preview")
+# Coverage types whose file holds more than one episode, so an episode's
+# window inside the file is only known once its offset is calibrated.
+# (`whole_work` is multi-episode for a show; for a movie the episode
+# branch never runs.) Deliberately wider than the `needs_offset_calibration`
+# flag, which only names season_pack/parts: an episode_range file with an
+# unknown offset misplaces a window exactly the same way.
+_MULTI_EPISODE_COVERAGE = ("season_pack", "episode_range", "parts", "whole_work")
+# Movies have no season/episode; the segments table stores them under this
+# sentinel (see the `cat_media_segments` DDL in catalog_v2.py) because NULL
+# would defeat the UNIQUE constraint and 0 is a real season (specials).
+_MOVIE_SEASON = -1
+_MOVIE_EPISODE = -1
+
+
+def _segments_for_play(conn, *, work_id, season, episode, is_movie, coverage_type,
+                       offset_seconds) -> list:
+    """TheIntroDB segments for one play, shifted into file coordinates.
+
+    Timings are per-episode, but a multi-episode file starts at its own
+    beginning, so every window shifts by the episode's `offset_seconds`
+    inside the file. When the file holds more than one episode and that
+    offset is unknown the segments are omitted outright — a wrongly
+    placed Skip button is worse than none. A target with no episode is
+    only servable for a movie (one file, one set of windows); a pack
+    with no episode chosen has no meaningful window at all. `end_ms`
+    None survives as None: credits usually run to the end of the file,
+    and the client treats that as "to the end". The wire carries only
+    type + window — no source/provenance: the client never needs to
+    know where a timing came from, only where it is.
+    """
+    if episode is not None:
+        season_no, episode_no = season, episode
+        # The episode branch only: a movie's "whole_work" file is one
+        # file with one set of windows, so the multi-episode omit below
+        # must not apply to it.
+        if str(coverage_type or "") in _MULTI_EPISODE_COVERAGE and offset_seconds is None:
+            return []
+    elif is_movie:
+        season_no, episode_no = _MOVIE_SEASON, _MOVIE_EPISODE
+    else:
+        return []
+    shift_ms = int(offset_seconds or 0) * 1000
+    rows = conn.execute(
+        "SELECT segment_type, start_ms, end_ms FROM cat_media_segments"
+        " WHERE work_id = ? AND season_number = ? AND episode_number = ?"
+        " ORDER BY start_ms",
+        (int(work_id), season_no, episode_no)).fetchall()
+    out = []
+    for row in rows:
+        seg_type = str(row["segment_type"])
+        if seg_type not in _SEGMENT_TYPES:
+            continue
+        end = row["end_ms"]
+        out.append({"type": seg_type,
+                    "start_ms": int(row["start_ms"]) + shift_ms,
+                    "end_ms": (int(end) + shift_ms) if end is not None else None})
+    return out
+
+
 @public_edge
 def play_bundle(conn, *, release_id, episode_id=None, include_adult=False,
                 legacy_release_id=True) -> dict:
@@ -2865,6 +2928,17 @@ def play_bundle(conn, *, release_id, episode_id=None, include_adult=False,
         backups = tier.pop("backups", None) or []
         tier["backup_handles"] = [str(item["stream_id"]) for item in backups
                                   if item.get("stream_id")]
+    # MX #4 (Skip Intro, 2026-11-19): segments for the episode (or the movie)
+    # being played, shifted into this file's coordinates — see
+    # `_segments_for_play`. Empty when nothing is stored: the app shows no
+    # Skip button rather than a guessed one.
+    segments = _segments_for_play(
+        conn, work_id=int(work["id"]),
+        season=target.get("season"), episode=target.get("episode"),
+        is_movie=str(work.get("work_type") or "").lower() == "movie",
+        coverage_type=coverage.get("type"),
+        offset_seconds=offset_block.get("offset_seconds"),
+    )
     return {
         "ok": True,
         "target": target,
@@ -2875,6 +2949,7 @@ def play_bundle(conn, *, release_id, episode_id=None, include_adult=False,
         "tiers": ladder["tiers"],
         "auto": ladder["auto"],
         "coverage": {**coverage, **offset_block},
+        "segments": segments,
         "candidates": candidates,
         "stream_candidates": stream_candidates,
         "alternates": alternates,

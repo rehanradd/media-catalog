@@ -430,6 +430,13 @@ jobs:
       - name: 🧪 test_metadata_backfill.py
         run: python3 -S Fast_Fetch/test_metadata_backfill.py
 
+      # Skip Intro / Skip Recap segments (MX #4): TheIntroDB v3 parsing,
+      # the segments backfill (fake HTTP client, staging SQL only), and
+      # the `play_bundle` wire with the pack-offset shift/omit rules.
+      # Offline, stdlib, temp-file/in-memory DB, no network.
+      - name: 🧪 test_media_segments.py
+        run: python3 -S Fast_Fetch/test_media_segments.py
+
       # The resolved-link cache (Session 123, scale plan B2): lazy-first
       # freshness reads over the ledger row + the top-200 eager warmer.
       # Offline, stdlib, in-memory fixture, no network.

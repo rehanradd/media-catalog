@@ -486,6 +486,53 @@ CREATE TABLE IF NOT EXISTS cat_review_resolutions (
     PRIMARY KEY (kind, work_key, signature)
 );
 
+-- Skip Intro / Skip Recap segments (MX #4, 2026-11-19): community-verified
+-- intro / recap / credits / preview windows from TheIntroDB
+-- (https://api.theintrodb.org/v3/media?tmdb_id=...&season=..&episode=..).
+-- One row per (work, season, episode, type); `end_ms` NULL means "to the
+-- end of the file" (credits usually have no end). Movies carry
+-- season_number = episode_number = -1 (the "not applicable" sentinel:
+-- NULL would defeat the UNIQUE constraint, and 0 is a real season for
+-- specials). Populated by `backfill_segments.py`, never by the projection
+-- — durable like `cat_offsets`, never in `_reset()`. Timings are
+-- per-episode: a season-pack file starts at the pack's beginning, so
+-- `play_bundle` shifts every window by the episode's `offset_seconds`
+-- inside the pack and omits segments entirely when that offset is
+-- unknown — a wrongly placed Skip button is worse than none.
+CREATE TABLE IF NOT EXISTS cat_media_segments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    work_id INTEGER NOT NULL,
+    tmdb_id INTEGER,
+    media_type TEXT NOT NULL DEFAULT 'tv',
+    season_number INTEGER,
+    episode_number INTEGER,
+    segment_type TEXT NOT NULL,
+    start_ms INTEGER NOT NULL,
+    end_ms INTEGER,
+    source TEXT NOT NULL DEFAULT 'theintrodb',
+    fetched_at REAL NOT NULL,
+    UNIQUE (work_id, season_number, episode_number, segment_type)
+);
+
+-- One row per (tmdb_id, season, episode) the backfill has asked TheIntroDB
+-- about, so a 404 (`not_found`) is not re-queried on every run — only
+-- re-checked after `--recheck-days` (default 30). `found` rows are only a
+-- receipt; the segments themselves live in `cat_media_segments`. Movies
+-- use the same -1 sentinel as the segments table.
+CREATE TABLE IF NOT EXISTS cat_media_segment_lookups (
+    tmdb_id INTEGER NOT NULL,
+    season_number INTEGER,
+    episode_number INTEGER,
+    status TEXT NOT NULL,
+    fetched_at REAL NOT NULL,
+    PRIMARY KEY (tmdb_id, season_number, episode_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cat_media_segments_work
+    ON cat_media_segments(work_id, season_number, episode_number);
+CREATE INDEX IF NOT EXISTS idx_cat_media_segments_tmdb
+    ON cat_media_segments(tmdb_id, season_number, episode_number);
+
 CREATE INDEX IF NOT EXISTS idx_cat_works_title ON cat_works(title, year);
 CREATE INDEX IF NOT EXISTS idx_cat_works_type ON cat_works(work_type, is_18_plus);
 CREATE INDEX IF NOT EXISTS idx_cat_works_browse ON cat_works(updated_at DESC);
