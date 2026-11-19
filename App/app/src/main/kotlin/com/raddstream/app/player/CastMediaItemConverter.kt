@@ -4,6 +4,7 @@ import androidx.media3.cast.MediaItemConverter
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
+import com.google.android.gms.cast.MediaMetadata as CastMediaMetadata
 import com.google.android.gms.cast.MediaQueueItem
 
 /**
@@ -59,8 +60,11 @@ class CastMediaItemConverter : MediaItemConverter {
         // @Nullable, so a queue item with no MediaInfo converts to the
         // empty item rather than crashing the timeline read.
         val info = mediaQueueItem.media ?: return MediaItem.EMPTY
+        // GMS MediaMetadata is a key-value store, not a title property:
+        // the title reads back through KEY_TITLE, the same key the spike
+        // writes it under.
         val metadata = MediaMetadata.Builder().apply {
-            info.metadata?.title?.let { setTitle(it) }
+            info.metadata?.getString(CastMediaMetadata.KEY_TITLE)?.let { setTitle(it) }
         }.build()
         return MediaItem.Builder()
             .setUri(info.contentId)

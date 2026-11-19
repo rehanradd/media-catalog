@@ -3,6 +3,7 @@ package com.raddstream.app.player
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
+import com.google.android.gms.cast.MediaMetadata as CastMediaMetadata
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -40,7 +41,7 @@ class CastMediaItemConverterTest {
         val info = converter.toMediaQueueItem(item(redirector, MimeTypes.APPLICATION_M3U8, "One Piece")).media
         assertEquals(redirector, info.contentId)
         assertEquals("application/x-mpegurl", info.contentType)
-        assertEquals("One Piece", info.metadata?.title.toString())
+        assertEquals("One Piece", info.metadata?.getString(CastMediaMetadata.KEY_TITLE))
     }
 
     @Test
@@ -60,7 +61,7 @@ class CastMediaItemConverterTest {
     @Test
     fun `an item without a title carries no title`() {
         val info = converter.toMediaQueueItem(item(redirector, MimeTypes.APPLICATION_M3U8, null)).media
-        assertNull(info.metadata?.title)
+        assertNull(info.metadata?.getString(CastMediaMetadata.KEY_TITLE))
     }
 
     @Test
