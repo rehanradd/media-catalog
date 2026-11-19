@@ -6,6 +6,8 @@ import androidx.work.Configuration
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import coil.ImageLoader
+import coil.ImageLoaderFactory
 import com.raddstream.app.brand.Brand
 import com.raddstream.app.data.CrashReporting
 import com.raddstream.app.data.DeviceIdentity
@@ -37,7 +39,7 @@ import kotlinx.coroutines.launch
  * Referenced in AndroidManifest.xml as android:name=".RaddStreamApplication"
  */
 @HiltAndroidApp
-class RaddStreamApplication : Application(), Configuration.Provider {
+class RaddStreamApplication : Application(), Configuration.Provider, ImageLoaderFactory {
 
     @Inject
     lateinit var cacheEngineRunner: CacheEngineRunner
@@ -65,6 +67,23 @@ class RaddStreamApplication : Application(), Configuration.Provider {
 
     @Inject
     lateinit var workerFactory: HiltWorkerFactory
+
+    /**
+     * Feel-instant S9 — Coil tuning: the Hilt-provided singleton image
+     * loader ([com.raddstream.app.di.ImageLoaderModule]). Coil's singleton
+     * is whatever this factory returns, so [newImageLoader] is what makes
+     * every `SubcomposeAsyncImage` and the S2 prefetch's
+     * `context.imageLoader` actually use the tuned caches instead of
+     * Coil's defaults — a `@Provides @Singleton` alone would have left a
+     * second, untuned loader serving every poster. Hilt injects this field
+     * in `onCreate` before `super.onCreate()` returns, and Coil only asks
+     * for the loader lazily on the first image load, so the field is set
+     * long before the factory is ever called.
+     */
+    @Inject
+    lateinit var imageLoader: ImageLoader
+
+    override fun newImageLoader(): ImageLoader = imageLoader
 
     /**
      * Feel-instant S7 — Startup diet: the scope the fallback timer below
