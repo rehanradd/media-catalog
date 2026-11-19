@@ -28,7 +28,7 @@ import com.google.android.gms.cast.MediaQueueItem
  *
  * The reverse trip is Media3's own [DefaultMediaItemConverter], not a
  * second composer of ours: UniversalSourceTest pins exactly one
- * `MediaItem.Builder()` in this codebase (PlaybackMediaItemFactory), and
+ * `MediaItem.Builder` in this codebase (PlaybackMediaItemFactory), and
  * delegating keeps it that way. The default preserves the address, the
  * title, and the declared type — a round trip of our own queue item
  * loads exactly as the original would (see CastMediaItemConverterTest).
