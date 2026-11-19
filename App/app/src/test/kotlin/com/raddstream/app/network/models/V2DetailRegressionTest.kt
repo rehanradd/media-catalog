@@ -47,6 +47,9 @@ class V2DetailRegressionTest {
         assertEquals("gQAPsqIZYTeW_R879MZlhsEF7pIXJQ", detail.workRef)
         assertEquals(82, detail.releases.size)
         assertTrue(detail.optionGroups.isNotEmpty())
+        // B2: these fixtures predate the guide — an old payload decodes
+        // to an empty guide, never null, and the layout is unchanged.
+        assertTrue(detail.episodeGuide.isEmpty())
         val layout = ReleaseLayoutBuilder.build(
             detail.contentType, detail.releases, detail.backdropList, detail.seasonArtwork,
         )
@@ -61,6 +64,9 @@ class V2DetailRegressionTest {
         assertEquals("gQAPsqIZYTeW_R86981mh8UHCNRnpQ", detail.workRef)
         assertEquals(126, detail.releases.size)
         assertTrue(detail.optionGroups.isNotEmpty())
+        // B2: these fixtures predate the guide — an old payload decodes
+        // to an empty guide, never null, and the layout is unchanged.
+        assertTrue(detail.episodeGuide.isEmpty())
         val layout = ReleaseLayoutBuilder.build(
             detail.contentType, detail.releases, detail.backdropList, detail.seasonArtwork,
         )

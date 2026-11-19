@@ -891,6 +891,7 @@ class WorkDetailTests(CatalogApiTestCase):
         self.assertEqual(missing, leaked, "an adult work must be indistinguishable")
         self.assertEqual(leaked["error"]["code"], "not_found")
         self.assertNotIn("is_18_plus", json.dumps(leaked))
+        self.assertNotIn("episode_guide", json.dumps(leaked))
 
     def test_adult_work_is_only_reachable_through_the_admin_opt_in(self):
         result = catalog_api.work_detail(self.conn, work_id=self.work["Adult Diary"]["id"],
@@ -933,6 +934,90 @@ class WorkDetailTests(CatalogApiTestCase):
         self.assertEqual(seasons[2]["episodes"], [])
         self.assertTrue(seasons[2]["pack_only"])
         self.assertGreater(len(seasons[2]["print_ids"]), 0)
+
+    def test_episode_guide_lists_every_season_with_true_counts(self):
+        # B2: the totals-only view of `seasons` — the per-season counts the
+        # capped release list gets wrong, as data instead of grouping.
+        detail = self.detail("Campus Beats")
+        # Purely additive: every key the old payload carried is still there.
+        for key in ("work", "identity", "seasons", "parts", "prints", "print_groups",
+                    "availability", "entitlements", "flags", "identity_suspect",
+                    "review_queue", "scope_unresolved_prints"):
+            self.assertIn(key, detail)
+        self.assertEqual(detail["episode_guide"], [
+            {"season": 1, "episode_count": 7, "enumerated_episode_count": 7,
+             "pack_only": False},
+            {"season": 2, "episode_count": 0, "enumerated_episode_count": 0,
+             "pack_only": True},
+        ])
+        self.assertEqual(detail["work"]["season_count"], len(detail["episode_guide"]))
+
+    def test_episode_guide_mirrors_seasons_even_for_a_movie(self):
+        # Dune is a film, but the projector still files its whole-work
+        # prints under a season-0 row — the guide mirrors `seasons`
+        # exactly (one row, season 0); it neither invents nor drops rows.
+        # The app only reads the guide for series-like titles, so the
+        # phantom row is inert there.
+        detail = self.detail("Dune")
+        self.assertEqual(detail["episode_guide"], [
+            {"season": 0, "episode_count": 0, "enumerated_episode_count": 0,
+             "pack_only": False},
+        ])
+        self.assertEqual(detail["work"]["season_count"], 1)
+
+    def test_episode_guide_survives_the_print_cap(self):
+        # One Piece in miniature: 5 releases over 3 seasons, detail asked
+        # with max_prints=2 so the cap bites. The prints are cut to 2 and
+        # the work still reports its true 3 seasons with true totals.
+        self.add_post("site-long", "https://long.test/long-runner-show/",
+                      clean_title="Long Runner Show", year=2018, content_type="series",
+                      releases=[
+                          {"release_title": "Long Runner Show S01 EP(01-06) 720p",
+                           "season": "1", "episode": "1-6", "quality": "720p",
+                           "sources": [cdn("LR-R16")]},
+                          {"release_title": "Long Runner Show S01E07 720p",
+                           "season": "1", "episode": "7", "quality": "720p",
+                           "sources": [cdn("LR-E7")]},
+                          {"release_title": "Long Runner Show S02 Complete 720p",
+                           "season": "2", "episode": "Batch", "quality": "720p",
+                           "sources": [cdn("LR-S2PACK")]},
+                          {"release_title": "Long Runner Show S03E01 1080p",
+                           "season": "3", "episode": "1", "quality": "1080p",
+                           "sources": [cdn("LR-S3E1")]},
+                          {"release_title": "Long Runner Show S03E02 1080p",
+                           "season": "3", "episode": "2", "quality": "1080p",
+                           "sources": [cdn("LR-S3E2")]},
+                      ])
+        self.project()
+        work_id = self.work["Long Runner Show"]["id"]
+        capped = catalog_api.work_detail(self.conn, work_id=work_id, max_prints=2)
+        self.assertTrue(capped["ok"])
+        self.assertTrue(capped["prints_truncated"])
+        self.assertEqual(len(capped["prints"]), 2)
+        self.assertEqual(capped["print_total"], 5)
+        self.assertEqual(capped["work"]["season_count"], 3)
+        guide = capped["episode_guide"]
+        self.assertEqual([g["season"] for g in guide], [1, 2, 3])
+        self.assertEqual([g["episode_count"] for g in guide], [7, 0, 2])
+        self.assertEqual([g["enumerated_episode_count"] for g in guide], [7, 0, 2])
+        self.assertEqual([g["pack_only"] for g in guide], [False, True, False])
+        # The cap changes nothing about the guide: uncapped, same rows.
+        whole = catalog_api.work_detail(self.conn, work_id=work_id)
+        self.assertFalse(whole.get("prints_truncated", False))
+        self.assertEqual(whole["episode_guide"], guide)
+        # And the guide is the seasons array in totals-only form.
+        self.assertEqual(
+            [(s["number"], s["episode_count"], s["enumerated_episode_count"])
+             for s in capped["seasons"]],
+            [(g["season"], g["episode_count"], g["enumerated_episode_count"])
+             for g in guide])
+        # The degenerate cap proves the guide reads the release list, not
+        # the capped prints: with no prints served at all, the seasons
+        # array cannot see the S02 pack — but the guide still can.
+        bare = catalog_api.work_detail(self.conn, work_id=work_id, max_prints=0)
+        self.assertEqual(bare["prints"], [])
+        self.assertFalse(bare["seasons"][1]["pack_only"])
+        self.assertTrue(bare["episode_guide"][1]["pack_only"])
 
     def test_episode_quality_options_come_from_the_prints_that_really_cover_it(self):
         detail = self.detail("Campus Beats")

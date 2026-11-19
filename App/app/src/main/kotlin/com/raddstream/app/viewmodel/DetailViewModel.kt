@@ -618,6 +618,7 @@ class DetailViewModel @Inject constructor(
             artwork,
             detail.seasonArtwork,
             region = userRegion,
+            episodeGuide = detail.episodeGuide,
         )
         val state = _uiState.value
         val scope = QualityLadder.forNumberedScope(
@@ -637,7 +638,7 @@ class DetailViewModel @Inject constructor(
         // reads the cap. The free cap is the operator's, so the pill
         // names it rather than a hardcoded 720p.
         val hasPrints = full.workPrints.isNotEmpty() ||
-            full.seasons.any { it.episodes.isNotEmpty() || it.packedPrints.isNotEmpty() }
+            full.seasons.any { it.hasAnyPrint }
         val includedPill = if (!hasPrints) {
             null
         } else if (serverVip || premiumLocked) {
@@ -868,12 +869,17 @@ class DetailViewModel @Inject constructor(
                         artwork,
                         detail.seasonArtwork,
                         region = userRegion,
+                        episodeGuide = detail.episodeGuide,
                     )
                     rawDetail = detail
                     _uiState.update {
                         it.copy(
                             post = detail,
-                            selectedSeason = layout.seasons.firstOrNull()?.number,
+                            // B2: the guide can add seasons whose prints fell
+                            // past the cap — land on the newest season that
+                            // actually has something to watch, not an empty one.
+                            selectedSeason = layout.seasons.firstOrNull { it.hasAnyPrint }?.number
+                                ?: layout.seasons.firstOrNull()?.number,
                             isLoading = false,
                             // The real detail is on screen now; the
                             // optimistic header has done its job.

@@ -2,6 +2,7 @@ package com.raddstream.app.viewmodel
 
 import com.raddstream.app.network.models.Codec
 import com.raddstream.app.network.models.CoverageType
+import com.raddstream.app.network.models.EpisodeGuideEntry
 import com.raddstream.app.network.models.HdrFormat
 import com.raddstream.app.network.models.LinkState
 import com.raddstream.app.network.models.ReleaseDetail
@@ -610,5 +611,99 @@ class ReleaseLayoutBuilderTest {
         )
         assertEquals("Hindi", print.detailLine)
         assertFalse(print.detailLine.contains("Unknown"))
+    }
+
+    // ── B2: episode_guide ──────────────────────────────────────────────
+
+    @Test
+    fun `guide lists seasons the capped releases never mention`() {
+        // One Piece in miniature: the capped list only has S01 prints,
+        // but the guide names all three seasons with true totals.
+        val layout = ReleaseLayoutBuilder.build(
+            contentType = "series",
+            releases = listOf(
+                release(id = 1, releaseTitle = "Show S01E01 1080p", season = "S01", episode = "E01"),
+                release(id = 2, releaseTitle = "Show S01E02 1080p", season = "S01", episode = "E02"),
+            ),
+            episodeGuide = listOf(
+                EpisodeGuideEntry(season = 1, episodeCount = 7),
+                EpisodeGuideEntry(season = 2, episodeCount = 0, packOnly = true),
+                EpisodeGuideEntry(season = 3, episodeCount = 1),
+            ),
+        )
+        assertTrue(layout.isSeriesLike)
+        // Display order is newest first; the seasons themselves are all here.
+        assertEquals(listOf(3, 2, 1), layout.seasons.map { it.number })
+        val s1 = layout.seasons.first { it.number == 1 }
+        assertEquals(7, s1.totalEpisodes)
+        assertEquals("7 episodes", s1.episodeCountLabel)
+        // Only 2 episode rows exist (the capped prints), but the header
+        // still reads the true total of 7.
+        assertEquals(2, s1.episodeCount)
+        val s2 = layout.seasons.first { it.number == 2 }
+        assertEquals(0, s2.totalEpisodes)
+        assertTrue(s2.packOnly)
+        assertEquals(0, s2.episodeCount)
+        assertEquals("Full season", s2.episodeCountLabel)
+        val s3 = layout.seasons.first { it.number == 3 }
+        assertEquals(1, s3.totalEpisodes)
+        assertEquals("1 episode", s3.episodeCountLabel)
+        assertEquals(0, s3.episodeCount)
+    }
+
+    @Test
+    fun `uncapped title is unchanged by its guide except for the totals`() {
+        val releases = listOf(
+            release(id = 1, releaseTitle = "Show S01E01 1080p", season = "S01", episode = "E01"),
+            release(id = 2, releaseTitle = "Show S01E02 1080p", season = "S01", episode = "E02"),
+            release(id = 3, releaseTitle = "Show S02 Complete 720p", season = "S02", episode = "Batch"),
+        )
+        val withoutGuide = ReleaseLayoutBuilder.build(contentType = "series", releases = releases)
+        val withGuide = ReleaseLayoutBuilder.build(
+            contentType = "series",
+            releases = releases,
+            episodeGuide = listOf(
+                EpisodeGuideEntry(season = 1, episodeCount = 2),
+                EpisodeGuideEntry(season = 2, episodeCount = 0, packOnly = true),
+            ),
+        )
+        // Same seasons, same episode rows, same prints — the guide only
+        // adds the totals the capped list already implied.
+        assertEquals(
+            withoutGuide.seasons.map { it.number to it.episodes.map { e -> e.numberWithinSeason } },
+            withGuide.seasons.map { it.number to it.episodes.map { e -> e.numberWithinSeason } },
+        )
+        assertEquals(withoutGuide.totalPrints, withGuide.totalPrints)
+        assertEquals(2, withGuide.seasons.first { it.number == 1 }.totalEpisodes)
+        assertEquals(0, withGuide.seasons.first { it.number == 2 }.totalEpisodes)
+        // The pack-only season reads "Full season" now, not "0 episodes".
+        assertEquals("Full season", withGuide.seasons.first { it.number == 2 }.episodeCountLabel)
+    }
+
+    @Test
+    fun `a print season the guide missed is not dropped`() {
+        // Defensive union: a print-derived season the guide somehow
+        // missed is not dropped — the guide only adds seasons.
+        val layout = ReleaseLayoutBuilder.build(
+            contentType = "series",
+            releases = listOf(
+                release(id = 1, releaseTitle = "Show S04E01 1080p", season = "S04", episode = "E01"),
+            ),
+            episodeGuide = listOf(EpisodeGuideEntry(season = 1, episodeCount = 7)),
+        )
+        assertEquals(listOf(4, 1), layout.seasons.map { it.number })
+        assertEquals(7, layout.seasons.first { it.number == 1 }.totalEpisodes)
+        assertNull(layout.seasons.first { it.number == 4 }.totalEpisodes)
+    }
+
+    @Test
+    fun `a guide never turns a movie into a series`() {
+        val layout = ReleaseLayoutBuilder.build(
+            contentType = "movie",
+            releases = listOf(release(id = 1, releaseTitle = "Movie 1080p WEB-DL", quality = "1080p")),
+            episodeGuide = listOf(EpisodeGuideEntry(season = 1, episodeCount = 7)),
+        )
+        assertFalse(layout.isSeriesLike)
+        assertTrue(layout.seasons.isEmpty())
     }
 }

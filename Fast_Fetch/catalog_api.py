@@ -2041,10 +2041,13 @@ def work_detail(conn, *, work_id=None, work_key=None, slug=None, url=None,
 
     Shape: identity (imdb/tmdb/tvdb + aliases), seasons -> episodes
     (each with `absolute_number`, `best_release_id`, `quality_options`, covering
-    prints), parts (from `cat_parts` when the projector fills it, otherwise inferred
-    from print labels and explicitly marked `inferred`), `print_groups` with
-    `coverage_type` and every print's links ordered by `rank_score`, entitlement,
-    availability, and flags (`identity_suspect` is surfaced, never silently merged).
+    prints), `episode_guide` (one totals-only row per season — season number
+    + episode total, from `cat_episodes`, never an enumeration past the
+    120-episode guard), parts (from `cat_parts` when the projector fills it,
+    otherwise inferred from print labels and explicitly marked `inferred`),
+    `print_groups` with `coverage_type` and every print's links ordered by
+    `rank_score`, entitlement, availability, and flags (`identity_suspect` is
+    surfaced, never silently merged).
 
     Which site a title came from, and the page it was scraped from, are not part of
     this shape: `include_provenance=True` (operator port only) puts them back under
@@ -2148,6 +2151,33 @@ def work_detail(conn, *, work_id=None, work_key=None, slug=None, url=None,
                 and p["coverage"]["type"] in ("season_pack", "episode_range") for p in prints),
         })
 
+    # B2 (2026-11-19): the per-season guide — a totals-only projection of
+    # `seasons` above, one row per season: its number and its episode total
+    # from `cat_episodes`. The detail caps prints at `max_prints` (1,000)
+    # but never seasons, so a capped title's later seasons are already in
+    # `seasons` — the guide is the light view of them the app renders
+    # from, so the screen shows the true season count and true per-season
+    # totals instead of whatever the first 1,000 releases imply. The
+    # total is a number, never an enumeration: spans past
+    # MAX_ENUMERATED_EPISODES materialise nothing, so such a season
+    # reports 0 with `pack_only` true and its pack print still stands for
+    # it. Purely additive — no existing key changes shape.
+    #
+    # `pack_only` here reads the whole release list, not the capped
+    # `prints` the `seasons[]` entry reads: a season whose pack fell past
+    # the cap is still a pack season, and the guide is the one place that
+    # must say so (the app renders it as "Full season", not "0 episodes").
+    pack_seasons = {row[0] for row in conn.execute(
+        "SELECT DISTINCT season_number FROM cat_releases WHERE work_id = ?"
+        " AND coverage_type IN ('season_pack', 'episode_range')"
+        " AND season_number IS NOT NULL", (wid,)).fetchall()}
+    episode_guide = [{
+        "season": season["number"],
+        "episode_count": season.get("episode_count") or 0,
+        "enumerated_episode_count": season.get("enumerated_episode_count") or 0,
+        "pack_only": (not season["episodes"]) and season["number"] in pack_seasons,
+    } for season in seasons]
+
     parts = _parts_for_work(conn, work, prints)
     alias_rows = conn.execute(
         "SELECT alias, locale, source_site, kind FROM cat_work_aliases WHERE work_id = ?"
@@ -2208,6 +2238,7 @@ def work_detail(conn, *, work_id=None, work_key=None, slug=None, url=None,
             "title_variants": aliases,
         },
         "seasons": seasons,
+        "episode_guide": episode_guide,
         "parts": parts,
         "prints": prints,
         "print_groups": _group_prints(prints, parts, seasons),

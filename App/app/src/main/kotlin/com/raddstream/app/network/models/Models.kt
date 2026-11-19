@@ -318,6 +318,14 @@ data class PostDetail(
      */
     @SerializedName("season_artwork")
     val seasonArtworkRows: List<SeasonArtwork>? = null,
+    /**
+     * B2 (Nov 2026): the v2 `episode_guide`, one totals-only row per
+     * season. The raw list is nullable because Gson does not run Kotlin
+     * default initialisers for a missing key (the v1 detail never sends
+     * it); [episodeGuide] is the only form callers should read.
+     */
+    @SerializedName("episode_guide")
+    val episodeGuideRows: List<EpisodeGuideEntry>? = null,
 ) {
     val yearLabel: String? get() = displayYearLabel(year, currentCalendarYear())
     /** Same rule as [Post.typeLabel], so the detail header cannot disagree with its tile. */
@@ -325,6 +333,8 @@ data class PostDetail(
     val genreList: List<String> get() = WireText.listOf(genres).filter { WireText.isKnownGenre(it) }
     val backdropList: List<String> get() = WireText.listOf(backdropUrls)
     val seasonArtwork: List<SeasonArtwork> get() = seasonArtworkRows.orEmpty()
+    /** The per-season totals — empty when the server sent no guide (v1 detail, or an old v2). */
+    val episodeGuide: List<EpisodeGuideEntry> get() = episodeGuideRows.orEmpty()
     /** True when the server cut this detail's release list at its cap. */
     val isTruncated: Boolean get() = releasesTruncated == true
     /** The work's true release count — the capped list's size when untruncated. */
@@ -344,6 +354,20 @@ data class SeasonArtwork(
     val season: Int = 0,
     val episode: Int = 0,
     val url: String? = null,
+)
+
+/**
+ * One row of the v2 `episode_guide` (see [PostDetail.episodeGuide]): a
+ * season's totals only — its number and its episode total from the
+ * server's `cat_episodes`, never an enumeration. Built in Kotlin by
+ * `WireWorkDetailResponse.toPostDetail`, never deserialised from JSON
+ * directly, so its fields are plain non-null defaults.
+ */
+data class EpisodeGuideEntry(
+    val season: Int = 0,
+    val episodeCount: Int = 0,
+    val enumeratedEpisodeCount: Int = 0,
+    val packOnly: Boolean = false,
 )
 
 /**

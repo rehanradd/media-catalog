@@ -247,6 +247,27 @@ data class WireDetailSeason(
     val packOnly: Boolean? = null,
 )
 
+/**
+ * One row of the v2 detail's `episode_guide`: a season's totals only —
+ * its number and its episode total from `cat_episodes`, never an
+ * enumeration. The guide is the light view of [WireDetailSeason] the
+ * detail screen renders from when the print list is capped at 1,000:
+ * a season whose prints fell past the cap still has its row here, so
+ * the screen shows the true season count. `episode_count` 0 with
+ * `pack_only` true is a season offered as one whole-season file (its
+ * span past the 120-episode enumeration guard materialised nothing),
+ * not an empty season.
+ */
+data class WireEpisodeGuideEntry(
+    val season: Int? = null,
+    @SerializedName("episode_count")
+    val episodeCount: Int? = null,
+    @SerializedName("enumerated_episode_count")
+    val enumeratedEpisodeCount: Int? = null,
+    @SerializedName("pack_only")
+    val packOnly: Boolean? = null,
+)
+
 /** A print's coverage block (`_print_view.coverage`). */
 data class WireDetailCoverage(
     val type: String? = null,
@@ -491,6 +512,13 @@ data class WireWorkDetailResponse(
     val work: WireDetailWork? = null,
     val identity: WireDetailIdentity? = null,
     val seasons: List<WireDetailSeason> = emptyList(),
+    /**
+     * B2 (Nov 2026): the per-season totals. Old servers never send it,
+     * so it decodes empty there and the screen keeps grouping the
+     * releases it has — the guide only ever ADDS seasons, never removes.
+     */
+    @SerializedName("episode_guide")
+    val episodeGuide: List<WireEpisodeGuideEntry> = emptyList(),
     val prints: List<WireDetailPrint> = emptyList(),
     val availability: WireAvailability? = null,
     val entitlements: List<WireEntitlement> = emptyList(),
@@ -566,6 +594,20 @@ data class WireWorkDetailResponse(
             releases = releases,
             releaseTotal = printTotal,
             releasesTruncated = printsTruncated,
+            // B2: the guide rides through to the detail screen, which
+            // renders its seasons from it when the release list is
+            // capped. Entries without a season number carry nothing the
+            // screen can file, so they are dropped, never defaulted to 0.
+            episodeGuideRows = episodeGuide.mapNotNull { entry ->
+                val season = entry.season ?: return@mapNotNull null
+                EpisodeGuideEntry(
+                    season = season,
+                    episodeCount = entry.episodeCount ?: 0,
+                    enumeratedEpisodeCount = entry.enumeratedEpisodeCount
+                        ?: entry.episodeCount ?: 0,
+                    packOnly = entry.packOnly ?: false,
+                )
+            },
             optionGroups = buildOptionGroups(prints, baseUrl),
             workRef = detailWork.workRef,
             seasonArtworkRows = seasonArtwork.ifEmpty { null },

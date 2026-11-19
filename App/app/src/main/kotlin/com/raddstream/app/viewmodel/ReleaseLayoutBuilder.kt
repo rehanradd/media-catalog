@@ -4,6 +4,7 @@ import com.raddstream.app.data.UserRegion
 import com.raddstream.app.network.models.Codec
 import com.raddstream.app.network.models.CoverageType
 import com.raddstream.app.network.models.Edition
+import com.raddstream.app.network.models.EpisodeGuideEntry
 import com.raddstream.app.network.models.HdrFormat
 import com.raddstream.app.network.models.LinkClassification
 import com.raddstream.app.network.models.LinkState
@@ -282,9 +283,40 @@ data class SeasonGroup(
      * than one wide image. Null means the caller should draw the branded fallback.
      */
     val artworkUrl: String? = null,
+    /**
+     * B2 (Nov 2026): the season's true episode total from the v2
+     * `episode_guide` (`cat_episodes`, never the capped release list).
+     * Null when no guide was served — the screen then reads [episodeCount]
+     * (the rows on screen) exactly as before.
+     */
+    val totalEpisodes: Int? = null,
+    /**
+     * B2: the guide said this season is offered as one whole-season file
+     * (its span past the 120-episode enumeration guard materialised
+     * nothing), so its total is not a number. False when no guide was
+     * served; [isPackOnly] still derives it from the prints then.
+     */
+    val packOnly: Boolean = false,
 ) {
     val episodeCount: Int get() = episodes.size
     val bestPrint: RankedPrint? get() = (episodes.flatMap { it.prints } + packedPrints).maxByOrNull { it.rankKey }
+    /** The guide total when it names a real count — 0 is "unknown", never a total. */
+    val guideTotal: Int? get() = totalEpisodes?.takeIf { it > 0 }
+    /** True when this season is one whole-season file with no episode rows. */
+    val isPackOnly: Boolean get() = packOnly || (episodes.isEmpty() && packedPrints.isNotEmpty())
+    /** True when this season has anything the viewer can play or keep. */
+    val hasAnyPrint: Boolean get() = episodes.isNotEmpty() || packedPrints.isNotEmpty()
+    /**
+     * What the header, chips and dropdown print for this season: the
+     * guide total when the server named one, "Full season" for a pack-only
+     * season (its total is not a number), else the rows on screen.
+     */
+    val episodeCountLabel: String
+        get() = when {
+            guideTotal != null -> "$guideTotal episode${if (guideTotal == 1) "" else "s"}"
+            isPackOnly -> "Full season"
+            else -> "$episodeCount episode${if (episodeCount == 1) "" else "s"}"
+        }
 }
 
 /** Everything the detail screen can show honestly about one title's releases. */
@@ -308,8 +340,12 @@ data class ReleaseLayout(
  */
 object ReleaseLayoutBuilder {
 
-    fun build(contentType: String?, releases: List<ReleaseDetail>): ReleaseLayout =
-        build(contentType, null, releases, emptyList(), emptyList())
+    fun build(
+        contentType: String?,
+        releases: List<ReleaseDetail>,
+        episodeGuide: List<EpisodeGuideEntry> = emptyList(),
+    ): ReleaseLayout =
+        build(contentType, null, releases, emptyList(), emptyList(), episodeGuide = episodeGuide)
 
     fun build(
         contentType: String?,
@@ -317,7 +353,8 @@ object ReleaseLayoutBuilder {
         artwork: List<String>,
         seasonArtwork: List<SeasonArtwork> = emptyList(),
         region: String = UserRegion.DEFAULT,
-    ): ReleaseLayout = build(contentType, null, releases, artwork, seasonArtwork, region)
+        episodeGuide: List<EpisodeGuideEntry> = emptyList(),
+    ): ReleaseLayout = build(contentType, null, releases, artwork, seasonArtwork, region, episodeGuide)
 
     /**
      * [artwork] is the work's wide art pool, best first (backdrops, then poster).
@@ -328,6 +365,13 @@ object ReleaseLayoutBuilder {
      *
      * [region] is the viewer's regional-dub preference ([UserRegion]); it re-partitions the
      * print lists the detail screen renders but never filters them.
+     *
+     * [episodeGuide] is the v2 detail's per-season totals (B2). When it is
+     * non-empty the season list comes from it — every season the work
+     * has, including ones whose prints fell past the 1,000-release cap —
+     * and each season carries its true total in [SeasonGroup.totalEpisodes].
+     * Empty (v1 detail, or an old server) means the old behaviour: seasons
+     * grouped from the releases on hand, nothing else.
      */
     fun build(
         contentType: String?,
@@ -336,6 +380,7 @@ object ReleaseLayoutBuilder {
         artwork: List<String> = emptyList(),
         seasonArtwork: List<SeasonArtwork> = emptyList(),
         region: String = UserRegion.DEFAULT,
+        episodeGuide: List<EpisodeGuideEntry> = emptyList(),
     ): ReleaseLayout {
         val pool = artwork.filter { it.isNotBlank() }.distinct()
         val publishedPosters = seasonArtwork
@@ -365,7 +410,21 @@ object ReleaseLayoutBuilder {
         }
 
         val bySeason = prints.groupBy { it.season ?: 1 }
-        val seasons = bySeason.toSortedMap().entries.mapIndexed { seasonIndex, (seasonNum, seasonPrints) ->
+        // B2: when the server sent its per-season guide, the season list
+        // comes from it — every season the work has, including ones whose
+        // prints fell past the 1,000-release cap and never appear below.
+        // The union keeps any print-derived season the guide somehow
+        // missed, so a guide can only ADD seasons, never remove one the
+        // releases already showed. Without a guide this is exactly the
+        // old grouping: the print seasons, nothing else.
+        val guideBySeason = episodeGuide.associate { it.season to it }
+        val seasonNumbers = if (episodeGuide.isEmpty()) {
+            bySeason.keys.sorted()
+        } else {
+            (episodeGuide.map { it.season }.toSet() + bySeason.keys).sorted()
+        }
+        val seasons = seasonNumbers.mapIndexed { seasonIndex, seasonNum ->
+            val seasonPrints = bySeason[seasonNum].orEmpty()
             val packed = seasonPrints.filter { it.isPacked }
             val perEpisode = seasonPrints.filterNot { it.isPacked }
             val epNumbers = sortedSetOf<Int>()
@@ -397,6 +456,8 @@ object ReleaseLayoutBuilder {
                 packedPrints = orderPrints(packed, region),
                 artworkUrl = publishedPosters[seasonNum]
                     ?: artworkAt(pool, seasonIndex),
+                totalEpisodes = guideBySeason[seasonNum]?.episodeCount,
+                packOnly = guideBySeason[seasonNum]?.packOnly ?: false,
             )
         }
         // Recompute show-wide absolute numbering across seasons, in

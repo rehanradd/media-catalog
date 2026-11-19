@@ -183,6 +183,70 @@ class V2CatalogWireTest {
     }
 
     @Test
+    fun `episode guide decodes per-season totals and maps to the detail`() {
+        // B2: a capped series — 8,316 prints, only the guide says how
+        // many seasons and episodes the work really has.
+        val json = """
+            {"ok": true,
+             "work": {"id": 7701, "work_ref": "tmdb:12345", "title": "Long Runner Show",
+                      "original_title": "Long Runner Show", "year": 2018, "work_type": "series",
+                      "animated": false, "synopsis": "A very long show.",
+                      "genres": ["Drama"], "languages": ["English"], "country": "US",
+                      "industry": "hollywood", "rating": "8.1", "runtime_minutes": 24,
+                      "images": {"poster": {"src": "https://image.tmdb.org/t/p/w500/abc.jpg", "kind": "poster", "index": 0},
+                                 "backdrops": []},
+                      "site_count": 2, "print_count": 8316, "episode_count": 10, "season_count": 3,
+                      "quality_max": "1080p", "best_quality_score": 820},
+             "identity": {"imdb_id": null, "tmdb_id": 12345, "tvdb_id": null, "work_type": "series"},
+             "seasons": [{"id": 1, "number": 1, "season_type": "regular", "title": null,
+                          "episode_count": 7, "enumerated_episode_count": 7,
+                          "episodes": [{"id": 1, "number": 1, "absolute_number": 1, "season_number": 1,
+                                        "title": null, "air_date": null, "runtime_minutes": null,
+                                        "best_release_id": 9001, "print_ids": [9001], "print_labels": [],
+                                        "quality_options": ["720p"], "print_count": 1}],
+                          "print_ids": [9001], "pack_only": false},
+                         {"id": 2, "number": 2, "season_type": "regular", "title": null,
+                          "episode_count": 0, "enumerated_episode_count": 0, "episodes": [],
+                          "print_ids": [], "pack_only": true},
+                         {"id": 3, "number": 3, "season_type": "regular", "title": null,
+                          "episode_count": 2, "enumerated_episode_count": 2, "episodes": [],
+                          "print_ids": [], "pack_only": false}],
+             "episode_guide": [{"season": 1, "episode_count": 7, "enumerated_episode_count": 7, "pack_only": false},
+                               {"season": 2, "episode_count": 0, "enumerated_episode_count": 0, "pack_only": true},
+                               {"season": 3, "episode_count": 2, "enumerated_episode_count": 2, "pack_only": false}],
+             "prints": [],
+             "availability": {"stream": true, "download": true, "any": true, "state": "available"},
+             "entitlements": [], "flags": [], "identity_suspect": false,
+             "print_total": 8316, "prints_truncated": true}
+        """.trimIndent()
+        val resp = gson.fromJson(json, WireWorkDetailResponse::class.java)
+        assertTrue(resp.ok)
+        assertEquals(
+            listOf(
+                WireEpisodeGuideEntry(season = 1, episodeCount = 7, enumeratedEpisodeCount = 7, packOnly = false),
+                WireEpisodeGuideEntry(season = 2, episodeCount = 0, enumeratedEpisodeCount = 0, packOnly = true),
+                WireEpisodeGuideEntry(season = 3, episodeCount = 2, enumeratedEpisodeCount = 2, packOnly = false),
+            ),
+            resp.episodeGuide,
+        )
+        val detail = resp.toPostDetail(baseUrl, v1PostId = 7701)
+        assertNotNull(detail)
+        detail!!
+        // The guide rides through to the v1-shaped detail, so the screen
+        // can render seasons the capped print list never mentions.
+        assertEquals(
+            listOf(
+                EpisodeGuideEntry(season = 1, episodeCount = 7, enumeratedEpisodeCount = 7, packOnly = false),
+                EpisodeGuideEntry(season = 2, episodeCount = 0, enumeratedEpisodeCount = 0, packOnly = true),
+                EpisodeGuideEntry(season = 3, episodeCount = 2, enumeratedEpisodeCount = 2, packOnly = false),
+            ),
+            detail.episodeGuide,
+        )
+        assertTrue(detail.isTruncated)
+        assertEquals(8316, detail.totalReleases)
+    }
+
+    @Test
     fun `a link with no ledger id is not playable even though it is not dead`() {
         val link = gson.fromJson(
             """{"link_id": 9, "stream_id": "s.deadbeef", "playability": "stream",
@@ -202,6 +266,7 @@ class V2CatalogWireTest {
         assertNull(resp.toPostDetail(baseUrl))
         assertTrue(resp.prints.isEmpty())
         assertTrue(resp.seasons.isEmpty())
+        assertTrue(resp.episodeGuide.isEmpty())
         val empty = gson.fromJson("""{}""", WireDetailPrint::class.java)
         assertTrue(empty.links.isEmpty())
         assertTrue(empty.hdr.isEmpty())

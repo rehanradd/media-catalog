@@ -1177,10 +1177,10 @@ internal fun DetailContent(
         // 1,000 releases — the list below is the first of many, not the
         // whole work. One honest line, before the viewer assumes the
         // episode/file list is complete. The per-season episode counts
-        // cannot be corrected from this signal (releases are not
-        // episodes, and the v1 payload carries no per-season total), so
-        // the line is the disclosure; plumbing the v2 season
-        // episode_count through is a follow-up.
+        // ARE corrected now (B2): the v2 `episode_guide` carries the true
+        // total per season, and the season headers read it — but the
+        // episode rows below are still only the capped releases, so the
+        // line stays as the disclosure for the list itself.
         if (post.isTruncated) {
             item(contentType = "truncation-note") {
                 Text(
@@ -2163,7 +2163,7 @@ private fun SeasonChips(seasons: List<SeasonGroup>, selectedSeason: Int?, onSele
                     colors = raddFilterChipColors(),
                     selected = selectedSeason == s.number,
                     onClick = { onSelect(s.number) },
-                    label = { Text("Season ${s.number} · ${s.episodeCount}") },
+                    label = { Text("Season ${s.number} · ${s.episodeCountLabel}") },
                     leadingIcon = { SeasonThumbnail(season = s, modifier = Modifier.size(24.dp)) },
                 )
             }
@@ -2216,7 +2216,7 @@ private fun SeasonDropdown(
                 modifier = Modifier.heightIn(min = 48.dp),
             ) {
                 Text(
-                    text = selected?.let { "Season ${it.number} · ${it.episodeCount} episode${if (it.episodeCount == 1) "" else "s"}" }
+                    text = selected?.let { "Season ${it.number} · ${it.episodeCountLabel}" }
                         ?: "Season",
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -2233,7 +2233,7 @@ private fun SeasonDropdown(
             ) {
                 seasons.forEach { season ->
                     DropdownMenuItem(
-                        text = { Text("Season ${season.number} · ${season.episodeCount} episode${if (season.episodeCount == 1) "" else "s"}") },
+                        text = { Text("Season ${season.number} · ${season.episodeCountLabel}") },
                         onClick = {
                             expanded = false
                             onSelect(season.number)
@@ -2292,7 +2292,10 @@ private fun SeasonHeader(season: SeasonGroup, onKeepSeason: (SeasonGroup) -> Uni
                 color = MaterialTheme.colorScheme.onBackground,
             )
             Text(
-                text = "${season.episodeCount} episode${if (season.episodeCount == 1) "" else "s"}",
+                // B2: the true total from the v2 episode_guide when the
+                // server sent one ("Full season" for a pack-only season),
+                // else the rows on screen as before.
+                text = season.episodeCountLabel,
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onBackground,
             )
