@@ -209,6 +209,7 @@ import com.raddstream.app.player.StartPhase
 import com.raddstream.app.player.SubtitleColor
 import com.raddstream.app.player.SubtitleEdge
 import com.raddstream.app.player.SubtitleFont
+import com.raddstream.app.player.SubtitleUiSettings
 import com.raddstream.app.player.TapCommand
 import com.raddstream.app.player.isInSubtitleZone
 import com.raddstream.app.player.isSubtitleFling
@@ -3712,6 +3713,10 @@ private fun SubtitleOverlay(state: PlayerUiState, vm: PlayerViewModel) {
     val s = state.subtitle
     val fontFamily = s.font.toFontFamily()
     BoxWithConstraints(Modifier.fillMaxSize()) {
+        // The scope receiver is lost inside the forEach below, so the pane size is
+        // captured here, once, and the cue loop reads the plain values.
+        val paneWidth = maxWidth
+        val paneHeight = maxHeight
         // \pos is absolute on the PlayRes canvas: the offset is measured from the cue's own
         // alignment anchor, so a bottom-centre line at \pos(192,240) sits with its bottom
         // centre at that point, exactly as libass places it.
@@ -3745,11 +3750,11 @@ private fun SubtitleOverlay(state: PlayerUiState, vm: PlayerViewModel) {
                 // The seat: the viewer's bottom fraction, plus the style's own margin. A
                 // top-aligned cue is pushed down from the top instead, and a middle cue
                 // keeps its centre (a margin on a centred line has nowhere honest to go).
-                val seatPadding = maxHeight * (s.bottomFraction + cue.marginVFraction)
+                val seatPadding = paneHeight * (s.bottomFraction + cue.marginVFraction)
                 val posOffset = cue.position?.let { pos ->
                     DpOffset(
-                        x = maxWidth * (pos.xFraction - anchorX(cue.alignment)),
-                        y = maxHeight * (pos.yFraction - anchorY(cue.alignment)),
+                        x = paneWidth * (pos.xFraction - anchorX(cue.alignment)),
+                        y = paneHeight * (pos.yFraction - anchorY(cue.alignment)),
                     )
                 }
                 val plate = if (s.textBackground) {
