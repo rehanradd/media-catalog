@@ -2805,21 +2805,42 @@ def unwrap_gofile(url: str, fetch=None, verify: bool = True) -> dict:
 # Tokens are stable per file for 10+ minutes. Filenames with spaces or
 # brackets MUST be percent-encoded or HTTP clients reject the URL.
 #
-# Measured limits, 2026-11-13 (must be re-measured before trusting):
-#   - The API base MUST be new3.filepress.lat with a matching Referer.
-#     new2 301s to new3 and filebee.xyz 301s to filebee.top (unreachable);
-#     a mismatched Referer turns the answer into INVALID_REQUEST.
+# Measured limits — re-measured 2026-11-20 (Phase C lane A, filepress):
+#   - The family rotates its live mirror: new3.filepress.lat 301s to
+#     new4.filepress.lat for both the page and the API (Nov 2026). The
+#     unwrapper therefore posts to the PAGE URL's own origin and follows
+#     301/302/307/308 by re-POSTing the same body, updating the Referer
+#     to the redirect target's origin; a mismatched Referer still turns
+#     the answer into INVALID_REQUEST. FILEPRESS_API_BASE (new4) is only
+#     the fallback for a bare id with no page origin.
+#   - Stored rows span many mirrors (filepress .lat/.baby/.cloud/.today/
+#     .live/.wiki/.top/.cfd/.click/.fun/.lol/.online/.rest/.sbs/.icu/.ink/
+#     .shop, filebee.xyz, new1-new8): the API index is PER MIRROR — a
+#     file whose page is new3.filepress.baby answers METHOD_HIDDEN from
+#     new4.filepress.lat (the method is accepted; the file is simply not
+#     in that mirror's index). METHOD_HIDDEN is "unknown", never "dead":
+#     the file may mint fine from its own mirror.
+#   - The Oracle VM egress (92.4.95.252) is 403-challenged ("Just a
+#     moment...") on the page AND the API of every mirror tried, from
+#     both urllib and curl — IP reputation, not a TLS fingerprint. Via a
+#     free VPN Gate tunnel (Tokyo egress, no signup, no card) the same
+#     calls answer real JSON (new3 301 -> new4 200 application/json).
+#     The tunnel is a probe route only, not production infrastructure.
 #   - The download origin aws.flapdoodle.cyou answered HTTP 522 on EVERY
-#     /download/* path for ~50 min from BOTH egresses, so no minted link
-#     has yet played. The unwrapper is built and gated so a dead origin can
-#     never be served: verify=True Range-probes the minted link and only an
-#     "active" verdict reaches the player.
-#   - The Oracle VM egress is 403-challenged on the API itself
-#     (cf-mitigated: challenge), so this resolver cannot run in production
-#     from the Oracle VM as-is. The unwrapper is still worth landing: it is
-#     the proven chain, it mints correctly, and it will serve the moment the
-#     API/origin answers from the production egress again.
-FILEPRESS_API_BASE = "https://new3.filepress.lat"
+#     /download/* path for ~50 min from BOTH egresses on 2026-11-13, and
+#     no longer resolves at all from the VM's DNS on 2026-11-20, so no
+#     minted link has yet played. The unwrapper is built and gated so a
+#     dead origin can never be served: verify=True Range-probes the
+#     minted link and only an "active" verdict reaches the player.
+#   - No filepress link plays from production yet: the chain is wired
+#     and the API answers JSON through an alternate egress, and it will
+#     serve the moment the API answers from the production egress again
+#     (or a clearance/VPN egress is adopted as infrastructure — an owner
+#     decision, not this lane's). A live token mint on the current
+#     mirrors is still unproven (5 ids tried, all METHOD_HIDDEN — the
+#     per-mirror index above); see the lane checkpoint for the full
+#     probe log.
+FILEPRESS_API_BASE = "https://new4.filepress.lat"
 FILEPRESS_METHOD = "indexDownlaod"
 FILEPRESS_TIMEOUT = 15
 _FILEPRESS_ID_RE = re.compile(r"^[0-9a-f]{24}$")
@@ -2852,49 +2873,104 @@ def _filepress_encode_filename(url: str) -> str:
         urllib.parse.unquote(tail), safe=".-_~")
 
 
-def _filepress_api_call(fetch, endpoint: str, payload_id: str):
+def _filepress_location(headers) -> str:
+    """The Location of a redirect response, or "".
+
+    http_request lowercases header names; a test fake may not, so the
+    lookup is case-insensitive over a dict and falls back to .get().
+    """
+    if not headers:
+        return ""
+    try:
+        if isinstance(headers, dict):
+            for key, value in headers.items():
+                if str(key).lower() == "location":
+                    return str(value or "").strip()
+            return ""
+        return str(headers.get("Location") or headers.get("location") or "").strip()
+    except Exception:
+        return ""
+
+
+def _filepress_origin(url: str) -> str:
+    """The https origin of a URL, or "" when it has none."""
+    try:
+        parts = urllib.parse.urlsplit((url or "").strip())
+    except Exception:
+        return ""
+    if not parts.netloc:
+        return ""
+    return "https://%s" % parts.netloc.lower()
+
+
+def _filepress_api_call(fetch, endpoint: str, payload_id: str,
+                       base: str = FILEPRESS_API_BASE):
     """One FileBee API POST. Returns (ok, data_or_error_note).
 
     ok=True  -> data is the parsed "data" field (token str, or [link]).
     ok=False -> data is a short machine-readable note for the verdict.
+
+    The family rotates its live mirror (new3 301s to new4): a 301/302/
+    307/308 is followed by re-POSTing the same body to the Location, with
+    the Referer updated to the redirect target's origin (a mismatched
+    Referer turns the answer into INVALID_REQUEST). At most 3 hops; a
+    redirect with no usable Location is "http:<status>", and a 4th
+    redirect in a row is "redirect_loop". `base` is the page URL's own
+    origin — the API index is per mirror — and FILEPRESS_API_BASE is
+    only the fallback for a bare id.
     """
     body = json.dumps({
         "id": payload_id,
         "method": FILEPRESS_METHOD,
         "captchaValue": None,
     }).encode("utf-8")
-    headers = {
-        "Content-Type": "application/json",
-        "Referer": FILEPRESS_API_BASE,
-        "User-Agent": USER_AGENT,
-    }
-    try:
-        status, raw, _hdrs, _url = fetch(
-            FILEPRESS_API_BASE + endpoint,
-            headers=headers, timeout=FILEPRESS_TIMEOUT,
-            method="POST", follow=False, data=body,
-        )
-    except Exception as exc:  # network-level failure: unknown, not dead
-        return False, "fetch_error:%s" % type(exc).__name__
-    if status in (403, 429):
-        return False, "blocked:%d" % status
-    if status in (404, 410):
-        return False, "dead:%d" % status
-    if status != 200:
-        return False, "http:%d" % status
-    try:
-        parsed = json.loads(raw.decode("utf-8", "replace"))
-    except Exception:
-        return False, "bad_json"
-    if not isinstance(parsed, dict):
-        return False, "bad_json"
-    if parsed.get("status") is not True:
-        # The API's own error vocabulary, verbatim:
-        #   METHOD_NOT_FOUND / METHOD_HIDDEN / INDEX_CLONE_FAILED /
-        #   INVALID_REQUEST. METHOD_HIDDEN is misleading — it means the
-        #   FILE is not in this mirror's index, not that the method is bad.
-        return False, str(parsed.get("data") or parsed.get("message") or "api_error")
-    return True, parsed.get("data")
+    current = base or FILEPRESS_API_BASE
+    for _hop in range(4):
+        headers = {
+            "Content-Type": "application/json",
+            "Referer": current,
+            "User-Agent": USER_AGENT,
+        }
+        try:
+            status, raw, resp_headers, _url = fetch(
+                current + endpoint,
+                headers=headers, timeout=FILEPRESS_TIMEOUT,
+                method="POST", follow=False, data=body,
+            )
+        except Exception as exc:  # network-level failure: unknown, not dead
+            return False, "fetch_error:%s" % type(exc).__name__
+        if status in (301, 302, 307, 308):
+            target = _filepress_location(resp_headers)
+            parts = urllib.parse.urlsplit(target or "")
+            if not target or (parts.scheme
+                             and parts.scheme not in ("http", "https")):
+                return False, "http:%d" % status
+            if parts.netloc:
+                current = "%s://%s" % (parts.scheme or "https",
+                                       parts.netloc.lower())
+            if parts.path:
+                endpoint = parts.path
+            continue
+        if status in (403, 429):
+            return False, "blocked:%d" % status
+        if status in (404, 410):
+            return False, "dead:%d" % status
+        if status != 200:
+            return False, "http:%d" % status
+        try:
+            parsed = json.loads(raw.decode("utf-8", "replace"))
+        except Exception:
+            return False, "bad_json"
+        if not isinstance(parsed, dict):
+            return False, "bad_json"
+        if parsed.get("status") is not True:
+            # The API's own error vocabulary, verbatim:
+            #   METHOD_NOT_FOUND / METHOD_HIDDEN / INDEX_CLONE_FAILED /
+            #   INVALID_REQUEST. METHOD_HIDDEN is misleading — it means the
+            #   FILE is not in this mirror's index, not that the method is bad.
+            return False, str(parsed.get("data") or parsed.get("message") or "api_error")
+        return True, parsed.get("data")
+    return False, "redirect_loop"
 
 
 def unwrap_filepress(url, fetch=None, verify=True):
@@ -2904,7 +2980,10 @@ def unwrap_filepress(url, fetch=None, verify=True):
     the two-POST FileBee API sequence above; with verify=True the minted
     link is Range-probed and only a 206 with real video bytes is "active".
     A dead download origin (522, timeout) is "error"/"unknown" — never
-    "dead" on one probe, and never served.
+    "dead" on one probe, and never served. The API is called on the page
+    URL's own origin (the index is per mirror) and follows the family's
+    mirror-rotation redirects; the minted link is fetched fresh on every
+    resolve and never stored — a stored presigned URL is never served.
     """
     fetch = fetch or http_request
     result = _new_result(SERVICE_FILEPRESS, url)
@@ -2914,7 +2993,8 @@ def unwrap_filepress(url, fetch=None, verify=True):
         result["notes"].append("no file id in url")
         return result
 
-    ok, token = _filepress_api_call(fetch, "/api/file/downlaod/", file_id)
+    base = _filepress_origin(url) or FILEPRESS_API_BASE
+    ok, token = _filepress_api_call(fetch, "/api/file/downlaod/", file_id, base)
     if not ok:
         note = "downlaod: %s" % token
         if isinstance(token, str) and token.startswith("blocked:"):
@@ -2930,7 +3010,7 @@ def unwrap_filepress(url, fetch=None, verify=True):
         result["notes"].append("downlaod: empty token")
         return result
 
-    ok, links = _filepress_api_call(fetch, "/api/file/downlaod2/", token)
+    ok, links = _filepress_api_call(fetch, "/api/file/downlaod2/", token, base)
     if not ok:
         note = "downlaod2: %s" % links
         if isinstance(links, str) and links.startswith("blocked:"):
@@ -2951,6 +3031,28 @@ def unwrap_filepress(url, fetch=None, verify=True):
     result["status"] = "active"
     result["notes"].append("minted via FileBee downlaod/downlaod2")
     return _finish_media(result, fetch, verify)
+
+
+def is_filepress_page(url: str) -> bool:
+    """A filepress/filebee page URL carrying a 24-hex file id.
+
+    The family spans many TLDs (filepress .lat/.baby/.cloud/.today/.live/
+    .wiki/.top/..., filebee.xyz) and subdomains (new1-new8), so the host
+    test is a label, not a suffix list — and the id test is what keeps
+    id-less index URLs (filepress.click/file, filepress.rest/file/) out
+    of this chain: they fall through to the mxdrop catch-all instead.
+    """
+    if not url or not isinstance(url, str):
+        return False
+    try:
+        host = (urllib.parse.urlsplit(url).netloc or "").lower()
+    except Exception:
+        return False
+    host = host.split("@")[-1].split(":")[0]
+    labels = host.split(".")
+    if "filepress" not in labels and "filebee" not in labels:
+        return False
+    return bool(_filepress_extract_id(url))
 
 
 # ---------------------------------------------------------------------------
@@ -4386,6 +4488,7 @@ SERVICE_RESOLVERS = (
     (SERVICE_ANIMAHD, is_animahd_player, unwrap_animahd),
     (SERVICE_CASTLE, is_castle_page, unwrap_castle),
     (SERVICE_HUBCLOUD, _is_hubcloud_page, unwrap_hubcloud),
+    (SERVICE_FILEPRESS, is_filepress_page, unwrap_filepress),
     (SERVICE_MXDROP, lambda url: True, unwrap_mxdrop),
 )
 
@@ -4400,6 +4503,7 @@ RESOLVER_BY_SERVICE = {
     SERVICE_GDRIVE: unwrap_gdrive,
     SERVICE_ANIMAHD: unwrap_animahd,
     SERVICE_GOFILE: unwrap_gofile,
+    SERVICE_FILEPRESS: unwrap_filepress,
     SERVICE_STREAMTAPE: unwrap_streamtape,
     SERVICE_STREAM: lambda url, verify=True: unwrap_packer_hls(
         url, SERVICE_STREAM, verify=verify),

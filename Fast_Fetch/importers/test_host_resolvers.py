@@ -2797,6 +2797,7 @@ class TestDispatcher(unittest.TestCase):
             "gdrive": hr.unwrap_gdrive,
             "animahd-player": hr.unwrap_animahd,
             "gofile": hr.unwrap_gofile,
+            "filepress": hr.unwrap_filepress,
             "streamtape": hr.unwrap_streamtape,
             "streamwish": hr.unwrap_streamwish,
             "voe": hr.unwrap_voe,
@@ -2854,6 +2855,14 @@ class TestDispatcher(unittest.TestCase):
         with mock.patch.object(hr, "http_request", fetch):
             verdict = hr.resolve_url("https://vidout.pages.dev/movie/tt12683756")
         self.assertEqual(verdict["service"], "vidout")
+        self.assertEqual(verdict["status"], "active")
+
+    def test_resolve_url_routes_filepress(self):
+        fetch = _fp_mint_script()
+        with mock.patch.object(hr, "http_request", fetch):
+            verdict = hr.resolve_url(
+                "https://new4.filepress.lat/file/" + FP_ID)
+        self.assertEqual(verdict["service"], "filepress")
         self.assertEqual(verdict["status"], "active")
 
     def test_resolve_url_routes_streamwish(self):
@@ -3459,6 +3468,307 @@ class TestUnwrapHubcloud(unittest.TestCase):
                          "fslv2")
         self.assertEqual(hr._hubcloud_dispatch({}, "Watch Online"), "")
         self.assertEqual(hr._hubcloud_dispatch({}, "Telegram"), "")
+
+
+# Phase C lane A (filepress, 2026-11-20): the FileBee downlaod/downlaod2
+# chain, its dispatcher wiring, and the mirror-rotation redirect follow.
+# The fixtures are the live API's own shapes (13 Nov proof + 20 Nov
+# re-measurement): a 24-hex token, a direct .mkv link with a raw filename,
+# METHOD_HIDDEN for a file outside the mirror's index.
+FP_ID = "6ad7ecde69b577b115172142"
+FP_TOKEN = "bbbbbbbbbbbbbbbbbbbbbbbb"
+FP_LINK = ("https://aws.flapdoodle.cyou/download/abc123/"
+           "Film (2024) [1080p].mkv")
+FP_MKV_HEAD = b"\x1a\x45\xdf\xa3" + b"\x00" * 508
+
+
+def _fp_mint_script():
+    """downlaod mints FP_TOKEN, downlaod2 swaps it for FP_LINK, and the
+    Range probe of the minted link is a 206 video/x-matroska.
+
+    The two API keys cannot collide in scripted_fetch's substring match:
+    "api/file/downlaod/" (trailing slash) is not a substring of the
+    downlaod2 URL, so either dict order answers correctly.
+    """
+    return scripted_fetch({
+        "api/file/downlaod2/": (200, json.dumps(
+            {"status": True, "statusCode": 200,
+             "data": [FP_LINK]}).encode(),
+            {"content-type": "application/json"}),
+        "api/file/downlaod/": (200, json.dumps(
+            {"status": True, "statusCode": 200,
+             "data": FP_TOKEN}).encode(),
+            {"content-type": "application/json"}),
+        "flapdoodle.cyou/download/": (206, FP_MKV_HEAD,
+                                       {"content-type": "video/x-matroska",
+                                        "content-range":
+                                            "bytes 0-511/1800000000"}),
+    })
+
+
+class TestFilepressRecognition(unittest.TestCase):
+    def test_page_shapes_across_the_family(self):
+        for url in (
+            "https://new1.filepress.lat/file/" + FP_ID,
+            "https://new2.filepress.lat/file/" + FP_ID + "/",
+            "https://new3.filepress.lat/file/" + FP_ID,
+            "https://new4.filepress.lat/file/" + FP_ID,
+            "https://new3.filepress.baby/file/" + FP_ID,
+            "https://new5.filepress.today/file/" + FP_ID,
+            "https://filebee.xyz/file/" + FP_ID,
+            "https://NEW4.FILEPRESS.LAT/file/" + FP_ID,
+        ):
+            self.assertTrue(hr.is_filepress_page(url), url)
+
+    def test_no_id_or_wrong_host_is_not_a_filepress_page(self):
+        for url in (
+            "https://new3.filepress.lat/",
+            "https://filepress.click/file",
+            "https://filepress.rest/file/",
+            "https://example.com/file/" + FP_ID,
+            "https://new2.filepress.lat/file/abcdef",
+            "https://new2.filepress.lat/file/" + FP_ID[:23] + "g",
+            "not a url",
+            "",
+            None,
+        ):
+            self.assertFalse(hr.is_filepress_page(url), url)
+
+    def test_extract_id_accepts_path_or_bare_id(self):
+        self.assertEqual(
+            hr._filepress_extract_id(
+                "https://new2.filepress.lat/file/" + FP_ID + "/"), FP_ID)
+        self.assertEqual(
+            hr._filepress_extract_id("https://x.example/" + FP_ID + "?a=1"),
+            FP_ID)
+        self.assertEqual(hr._filepress_extract_id(FP_ID), FP_ID)
+        self.assertEqual(hr._filepress_extract_id(
+            "https://new2.filepress.lat/file/abcdef"), "")
+        self.assertEqual(hr._filepress_extract_id(
+            "https://new2.filepress.lat/file/" + FP_ID.upper()), "")
+        self.assertEqual(hr._filepress_extract_id(""), "")
+
+
+class TestUnwrapFilepress(unittest.TestCase):
+    def test_mint_then_probe_is_active_with_encoded_filename(self):
+        fetch = _fp_mint_script()
+        verdict = hr.unwrap_filepress(
+            "https://new3.filepress.lat/file/" + FP_ID + "/",
+            fetch=fetch)
+        self.assertEqual(verdict["status"], "active", verdict)
+        self.assertEqual(verdict["service"], "filepress")
+        self.assertEqual(verdict["final_url"],
+                         "https://aws.flapdoodle.cyou/download/abc123/"
+                         "Film%20%282024%29%20%5B1080p%5D.mkv")
+        self.assertEqual(verdict["content_type"], "video/x-matroska")
+        self.assertEqual(verdict["http_status"], 206)
+        first_post = fetch.calls[0]
+        self.assertTrue(first_post[0].endswith("/api/file/downlaod/"))
+        self.assertEqual(first_post[1].get("Referer"),
+                         "https://new3.filepress.lat")
+
+    def test_mirror_rotation_redirect_is_followed_with_new_referer(self):
+        # new3 301s to new4 (Nov 2026): the same POST is re-sent to the
+        # new origin with the Referer updated to match it.
+        fetch = scripted_fetch({
+            "new4.filepress.lat/api/file/downlaod2/": (200, json.dumps(
+                {"status": True, "statusCode": 200,
+                 "data": [FP_LINK]}).encode(),
+                {"content-type": "application/json"}),
+            "new4.filepress.lat/api/file/downlaod/": (200, json.dumps(
+                {"status": True, "statusCode": 200,
+                 "data": FP_TOKEN}).encode(),
+                {"content-type": "application/json"}),
+            "new3.filepress.lat/api/file/downlaod2/": (301, b"",
+                {"location":
+                 "https://new4.filepress.lat/api/file/downlaod2/"}),
+            "new3.filepress.lat/api/file/downlaod/": (301, b"",
+                {"location":
+                 "https://new4.filepress.lat/api/file/downlaod/"}),
+            "flapdoodle.cyou/download/": (206, FP_MKV_HEAD,
+                                           {"content-type": "video/x-matroska",
+                                            "content-range":
+                                                "bytes 0-511/1800000000"}),
+        })
+        verdict = hr.unwrap_filepress(
+            "https://new3.filepress.lat/file/" + FP_ID, fetch=fetch)
+        self.assertEqual(verdict["status"], "active", verdict)
+        self.assertEqual(fetch.calls[0][0],
+                         "https://new3.filepress.lat/api/file/downlaod/")
+        self.assertEqual(fetch.calls[0][1].get("Referer"),
+                         "https://new3.filepress.lat")
+        self.assertEqual(fetch.calls[1][0],
+                         "https://new4.filepress.lat/api/file/downlaod/")
+        self.assertEqual(fetch.calls[1][1].get("Referer"),
+                         "https://new4.filepress.lat")
+        # The second call starts at the page's own origin too and follows
+        # its own redirect, with the Referer updated the same way.
+        self.assertEqual(fetch.calls[2][0],
+                         "https://new3.filepress.lat/api/file/downlaod2/")
+        self.assertEqual(fetch.calls[3][0],
+                         "https://new4.filepress.lat/api/file/downlaod2/")
+        self.assertEqual(fetch.calls[3][1].get("Referer"),
+                         "https://new4.filepress.lat")
+
+    def test_relative_redirect_stays_on_the_same_origin(self):
+        seen = []
+
+        def fetch(url, headers=None, timeout=None, method="GET",
+                  follow=True, data=None):
+            seen.append(url)
+            if url.endswith("/api/file/downlaod/") and method == "POST":
+                if len([u for u in seen
+                        if u.endswith("/api/file/downlaod/")]) == 1:
+                    return (301, b"", {"location": "/api/file/downlaod/"},
+                            url)
+                return (200, json.dumps(
+                    {"status": True, "statusCode": 200,
+                     "data": FP_TOKEN}).encode(),
+                    {"content-type": "application/json"}, url)
+            if url.endswith("/api/file/downlaod2/"):
+                return (200, json.dumps(
+                    {"status": True, "statusCode": 200,
+                     "data": [FP_LINK]}).encode(),
+                    {"content-type": "application/json"}, url)
+            return (206, FP_MKV_HEAD,
+                    {"content-type": "video/x-matroska",
+                     "content-range": "bytes 0-511/1800000000"}, url)
+
+        verdict = hr.unwrap_filepress(
+            "https://new4.filepress.lat/file/" + FP_ID, fetch=fetch)
+        self.assertEqual(verdict["status"], "active", verdict)
+        self.assertEqual(
+            [u for u in seen if u.endswith("/api/file/downlaod/")],
+            ["https://new4.filepress.lat/api/file/downlaod/"] * 2)
+
+    def test_redirect_loop_is_unknown_never_dead(self):
+        fetch = scripted_fetch({
+            "api/file/downlaod/": (301, b"",
+                {"location":
+                 "https://new3.filepress.lat/api/file/downlaod/"}),
+        })
+        verdict = hr.unwrap_filepress(
+            "https://new3.filepress.lat/file/" + FP_ID, fetch=fetch)
+        self.assertEqual(verdict["status"], "unknown", verdict)
+        self.assertIn("redirect_loop", " ".join(verdict["notes"]))
+
+    def test_method_hidden_is_unknown_never_dead(self):
+        # METHOD_HIDDEN is the API's misleading name for "this file is
+        # not in this mirror's index" — the file may mint fine from its
+        # own mirror, so the verdict must stay unknown.
+        fetch = scripted_fetch({
+            "api/file/downlaod/": (200, json.dumps(
+                {"status": False, "statusCode": 400,
+                 "data": "METHOD_HIDDEN"}).encode(),
+                {"content-type": "application/json"}),
+        })
+        verdict = hr.unwrap_filepress(
+            "https://new4.filepress.lat/file/" + FP_ID, fetch=fetch)
+        self.assertEqual(verdict["status"], "unknown", verdict)
+        self.assertIn("METHOD_HIDDEN", " ".join(verdict["notes"]))
+
+    def test_blocked_api_is_blocked_and_dead_api_is_dead(self):
+        blocked = scripted_fetch({
+            "api/file/downlaod/": (403, b"challenge",
+                                    {"content-type": "text/html"}),
+        })
+        verdict = hr.unwrap_filepress(
+            "https://new4.filepress.lat/file/" + FP_ID, fetch=blocked)
+        self.assertEqual(verdict["status"], "blocked", verdict)
+        self.assertIn("blocked:403", " ".join(verdict["notes"]))
+        dead = scripted_fetch({
+            "api/file/downlaod/": (404, b"", {"content-type": "text/html"}),
+        })
+        verdict = hr.unwrap_filepress(
+            "https://new4.filepress.lat/file/" + FP_ID, fetch=dead)
+        self.assertEqual(verdict["status"], "dead", verdict)
+
+    def test_empty_token_and_empty_link_list_are_unknown(self):
+        empty_token = scripted_fetch({
+            "api/file/downlaod/": (200, json.dumps(
+                {"status": True, "statusCode": 200,
+                 "data": ""}).encode(),
+                {"content-type": "application/json"}),
+        })
+        verdict = hr.unwrap_filepress(
+            "https://new4.filepress.lat/file/" + FP_ID, fetch=empty_token)
+        self.assertEqual(verdict["status"], "unknown", verdict)
+        empty_links = scripted_fetch({
+            "api/file/downlaod2/": (200, json.dumps(
+                {"status": True, "statusCode": 200,
+                 "data": []}).encode(),
+                {"content-type": "application/json"}),
+            "api/file/downlaod/": (200, json.dumps(
+                {"status": True, "statusCode": 200,
+                 "data": FP_TOKEN}).encode(),
+                {"content-type": "application/json"}),
+        })
+        verdict = hr.unwrap_filepress(
+            "https://new4.filepress.lat/file/" + FP_ID, fetch=empty_links)
+        self.assertEqual(verdict["status"], "unknown", verdict)
+        self.assertIn("empty link list", " ".join(verdict["notes"]))
+
+    def test_no_file_id_never_calls_the_api(self):
+        def boom(*a, **k):
+            raise AssertionError("fetch must not be called without an id")
+
+        verdict = hr.unwrap_filepress("https://new3.filepress.lat/",
+                                      fetch=boom)
+        self.assertEqual(verdict["status"], "unknown", verdict)
+        self.assertIn("no file id", " ".join(verdict["notes"]))
+
+    def test_bare_id_falls_back_to_the_canonical_base(self):
+        fetch = _fp_mint_script()
+        verdict = hr.unwrap_filepress(FP_ID, fetch=fetch)
+        self.assertEqual(verdict["status"], "active", verdict)
+        self.assertTrue(fetch.calls[0][0].startswith(
+            "https://new4.filepress.lat/api/file/downlaod/"))
+        self.assertEqual(fetch.calls[0][1].get("Referer"),
+                         "https://new4.filepress.lat")
+
+    def test_resolve_url_mints_fresh_every_time(self):
+        # No stored presigned URL is ever reused: two resolves mint two
+        # different links, and the second resolve serves the second one.
+        seen = []
+
+        def fetch(url, headers=None, timeout=None, method="GET",
+                  follow=True, data=None):
+            seen.append(url)
+            if "downlaod2/" in url:
+                n = len([u for u in seen if "downlaod2/" in u])
+                link = ("https://origin.example/d/1/Film One.mkv"
+                        if n == 1 else
+                        "https://origin.example/d/2/Film Two.mkv")
+                return (200, json.dumps(
+                    {"status": True, "statusCode": 200,
+                     "data": [link]}).encode(),
+                    {"content-type": "application/json"}, url)
+            if "downlaod/" in url:
+                n = len([u for u in seen
+                         if "downlaod/" in u and "downlaod2/" not in u])
+                return (200, json.dumps(
+                    {"status": True, "statusCode": 200,
+                     "data": "a" * 24 if n == 1 else "b" * 24}).encode(),
+                    {"content-type": "application/json"}, url)
+            return (206, FP_MKV_HEAD,
+                    {"content-type": "video/x-matroska",
+                     "content-range": "bytes 0-511/900000000"}, url)
+
+        with mock.patch.object(hr, "http_request", fetch):
+            first = hr.resolve_url(
+                "https://new4.filepress.lat/file/" + FP_ID)
+            second = hr.resolve_url(
+                "https://new4.filepress.lat/file/" + FP_ID)
+        self.assertEqual(first["status"], "active", first)
+        self.assertEqual(second["status"], "active", second)
+        self.assertEqual(first["service"], "filepress")
+        self.assertIn("Film%20One.mkv", first["final_url"])
+        self.assertIn("Film%20Two.mkv", second["final_url"])
+        self.assertNotEqual(first["final_url"], second["final_url"])
+        # Both API posts per resolve ("downlaod" without the trailing
+        # slash matches downlaod2 too — "downlaod/" does not).
+        self.assertEqual(
+            len([u for u in seen if "/api/file/downlaod" in u]), 4)
 
 
 if __name__ == "__main__":

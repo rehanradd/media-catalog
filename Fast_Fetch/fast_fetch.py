@@ -3302,10 +3302,28 @@ def unwrap_vegadrive(vegadrive_url: str) -> tuple[str, str, int]:
 
 def unwrap_filepress(filepress_url: str) -> tuple[str, str, int]:
     """
-    Extracts canonical file ID from FileBee / FilePress URL.
+    Import-time file-ID extractor for FileBee / FilePress page URLs.
+
+    NOT the live resolver: that is host_resolvers.unwrap_filepress (the
+    downlaod/downlaod2 API chain, wired into RESOLVER_BY_SERVICE and
+    SERVICE_RESOLVERS there and called at play time from
+    resolve_live_source). This one only pulls the canonical id out of a
+    stored page URL for the importers, so a scrape never pays a network
+    call. The id rule lives in host_resolvers._filepress_extract_id (the
+    strict 24-hex rule); the loose last-segment fallback below is only
+    for the odd stored URL that carries no 24-hex id, and preserves the
+    old return shape exactly.
     """
-    m = re.search(r"/file/([A-Za-z0-9_-]+)", filepress_url)
-    res_id = m.group(1) if m else filepress_url.split("/")[-1]
+    res_id = ""
+    hr = _embed_resolvers()
+    if hr is not None:
+        try:
+            res_id = hr._filepress_extract_id(filepress_url)
+        except Exception:
+            res_id = ""
+    if not res_id:
+        m = re.search(r"/file/([A-Za-z0-9_-]+)", filepress_url)
+        res_id = m.group(1) if m else filepress_url.split("/")[-1]
     return filepress_url, res_id, 0
 
 
@@ -8024,14 +8042,16 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                          or "filebee" in source_u.lower()
                          or "filebee" in cached_u.lower()):
                 # Filepress cracked 2026-11-13 (FileBee downlaod/downlaod2
-                # API chain, no browser, no captcha — see host_resolvers).
+                # API chain, no browser, no captcha — see host_resolvers;
+                # wired into its dispatcher 2026-11-20, Phase C lane A).
                 # The unwrapper's Range probe IS the gate evidence: only a
-                # 206 with real video bytes is "active". Measured limits:
-                # the download origin aws.flapdoodle.cyou answers 522 on
-                # every /download/* path (both egresses, ~50 min), and the
-                # Oracle VM egress is 403-challenged on the API itself, so
-                # no filepress link plays from production yet — this branch
-                # mints correctly and serves the moment the origin/API
+                # 206 with real video bytes is "active". Measured limits,
+                # re-measured 2026-11-20: new3 301s to new4 (the unwrapper
+                # posts to the page's own origin and follows the redirect),
+                # the download origin aws.flapdoodle.cyou no longer
+                # resolves, and the Oracle VM egress is 403-challenged on
+                # the API itself, so no filepress link plays from
+                # production yet — this branch serves the moment the API
                 # answers from the production egress again.
                 _unwrap_branch_taken = True
                 verdict = hr.unwrap_filepress(hoster_input("filepress"),
