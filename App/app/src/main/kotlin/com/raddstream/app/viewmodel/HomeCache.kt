@@ -13,7 +13,10 @@ import com.raddstream.app.network.models.Post
  * and the network load proceeds, so a corrupt cache can never blank Home.
  * Panel-managed sections are never cached ([cachedSectionsOf] drops them):
  * their rows come with the remote config, and a restored copy would be
- * loaded through the posts route as if it were a built-in rail.
+ * loaded through the posts route as if it were a built-in rail. The
+ * "For you" row is dropped for the same reason: its rows are computed
+ * from this device's history, and a restored copy would be loaded
+ * through the posts route as if it were a built-in rail.
  */
 internal data class CachedHomeSection(
     val key: String,
@@ -33,7 +36,7 @@ internal data class CachedHomePayload(
 private val homeCacheGson = Gson()
 
 internal fun cachedSectionsOf(sections: List<HomeSection>): List<CachedHomeSection> =
-    sections.filterNot { it.panelManaged }.map { section ->
+    sections.filterNot { it.panelManaged || it.forYou }.map { section ->
         CachedHomeSection(
             key = section.key,
             title = section.title,

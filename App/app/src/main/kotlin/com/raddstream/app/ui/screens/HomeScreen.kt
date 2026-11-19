@@ -1419,6 +1419,10 @@ private fun HomeRailSection(
                 SectionHeader(
                     title = section.title,
                     modifier = Modifier.padding(horizontal = 16.dp),
+                    // E2 "For you": the reason line under the rail title
+                    // ("Because you watched One Piece"). Ordinary rails
+                    // carry no subtitle, so nothing else moves.
+                    subtitle = section.subtitle,
                     // Robo run 6: every rail's "See all" announced identically.
                     // The button speaks its section, so Movies and Series are
                     // distinct; the painted text stays the short "See all".

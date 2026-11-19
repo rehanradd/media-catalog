@@ -7,6 +7,7 @@ import com.raddstream.app.data.ServerSettingsRepository
 import com.raddstream.app.data.UserRegion
 import com.raddstream.app.data.cache.ConnectivityProbe
 import com.raddstream.app.data.cache.NetworkClass
+import com.raddstream.app.data.local.FavoritePost
 import com.raddstream.app.data.local.SyncedProgressDao
 import com.raddstream.app.data.local.WatchHistoryDao
 import com.raddstream.app.data.local.WatchHistoryEntity
@@ -24,6 +25,7 @@ import com.raddstream.app.player.AdCadenceGovernor
 import com.raddstream.app.player.AdSurface
 import com.raddstream.app.repository.CatalogRepository
 import com.raddstream.app.repository.FavoritesRepository
+import com.raddstream.app.repository.FollowedSeriesRepository
 import com.raddstream.app.sync.DeviceTrial
 import com.raddstream.app.sync.SyncAccountRepository
 import com.raddstream.app.ui.navigation.BroadcastTargeting
@@ -152,6 +154,22 @@ data class HomeSection(
     val panelManaged: Boolean = false,
     /** Server `industry=` filter (`bollywood`, `south_indian`, etc.), or null when unfiltered. */
     val industry: String? = null,
+    /**
+     * E2 "For you" (Nov 2026): the reason line under the rail title
+     * ("Because you watched One Piece"), or null for an ordinary rail.
+     * Only the "For you" row sets one: it names the single anchor the
+     * row's picks were scored against, so the reason is true of every
+     * pick in the row, not a summary of a blended profile.
+     */
+    val subtitle: String? = null,
+    /**
+     * E2 "For you" (Nov 2026): true for the on-device personalised row.
+     * It is computed from this device's history, never loaded through
+     * [HomeViewModel.loadSection] and never cached — a restored copy
+     * would be loaded through the posts route as if it were a built-in
+     * rail, the exact hazard [cachedSectionsOf] guards against.
+     */
+    val forYou: Boolean = false,
 ) {
     val visible: Boolean get() = items.isNotEmpty() && error == null
 
@@ -160,9 +178,11 @@ data class HomeSection(
      * but no sort, so a rail ordered by a server sort has no "See all": the
      * Browse page would silently re-sort it to freshest-first. A related
      * rail has no Browse equivalent either — Browse cannot reproduce a
-     * seed's neighbours.
+     * seed's neighbours. A "For you" rail has none either: Browse cannot
+     * reproduce a taste-ranked order, so its "See all" would silently
+     * re-sort the picks to freshest-first.
      */
-    val browseEquivalent: Boolean get() = sort == null && relatedWorkId == null
+    val browseEquivalent: Boolean get() = sort == null && relatedWorkId == null && !forYou
 
     /**
      * A rail that already has rows and whose newest refresh came back empty-handed. Without
@@ -414,7 +434,7 @@ private const val RESERVE_NOTE = """
 """
 
 /** The key of the "Because you watch" rail, inserted after "Recently added". */
-private const val BECAUSE_YOU_WATCH_KEY = "because_you_watch"
+internal const val BECAUSE_YOU_WATCH_KEY = "because_you_watch"
 
 /**
  * The rails Home actually renders, in order. Pure, so the test can pin the
@@ -619,6 +639,7 @@ class HomeViewModel @Inject constructor(
     private val watchHistoryDao: WatchHistoryDao,
     private val syncedProgressDao: SyncedProgressDao,
     private val favoritesRepository: FavoritesRepository,
+    private val followedSeriesRepository: FollowedSeriesRepository,
     private val adCadence: AdCadenceGovernor,
     private val adFreeReader: AdFreeReader,
     private val settingsRepository: ServerSettingsRepository,
@@ -665,6 +686,14 @@ class HomeViewModel @Inject constructor(
 
     /** The seed post id the "Because you watch" rail is loaded for, or null when no rail is loaded. */
     private var relatedSeedId: Int? = null
+
+    /**
+     * E2 "For you": the favourites the row's anchor can be drawn from.
+     * The state only keeps the ids ([HomeUiState.favoriteIds]), so the
+     * full rows live here — updated by [observeFavorites], read by
+     * [refreshForYou]. Never leaves this ViewModel.
+     */
+    private var latestFavorites: List<FavoritePost> = emptyList()
 
     /**
      * The app-open surface, asked once per Home entry and capped at one impression per four hours
@@ -724,6 +753,7 @@ class HomeViewModel @Inject constructor(
                     val items = rows.mapNotNull { ResumeTile.of(it) }
                     _uiState.update { it.copy(continueWatching = items, hasWatchHistory = hasHistory) }
                     syncBecauseYouWatch(items.firstOrNull()?.post?.id)
+                    refreshForYou()
                 }
         }
     }
@@ -788,18 +818,92 @@ class HomeViewModel @Inject constructor(
     }
 
     /**
+     * E2 "For you": re-pick the personalised row from this device's own
+     * history. The pool is every rail's items; the exclusions are
+     * everything the viewer already has (watched, saved, followed) plus
+     * the hero and every rail above the row's slot, so the row never
+     * repeats a title and render-time dedupe never eats it. The followed
+     * list is a one-shot Room read (there is no Flow for it) — a failure
+     * reads as "nothing followed", never a failed Home. A recompute that
+     * lands on the row already on screen is a no-op: the observers that
+     * call this fire on every position write while a title plays, and a
+     * no-op update must not recompose the page for nothing. There is no
+     * loop here: nothing that reads `sections` calls this back.
+     */
+    private fun refreshForYou() {
+        viewModelScope.launch {
+            val followed = runCatching { followedSeriesRepository.getAllFollowed() }
+                .getOrDefault(emptyList())
+            val state = _uiState.value
+            val sections = state.sections
+            val index = forYouInsertIndex(sections)
+            val excluded = buildList {
+                sections.take(index).forEach { section ->
+                    section.items.forEach { post ->
+                        add(ForYouWork(post.workRef, post.displayTitle, post.year, post.id))
+                    }
+                }
+                selectHeroSection(sections, currentCalendarYear())?.items.orEmpty()
+                    .forEach { post ->
+                        add(ForYouWork(post.workRef, post.displayTitle, post.year, post.id))
+                    }
+                state.continueWatching.forEach { tile ->
+                    add(ForYouWork(tile.workRef, tile.post.displayTitle, tile.post.year, tile.post.id))
+                }
+                latestFavorites.forEach { favorite ->
+                    add(
+                        ForYouWork(
+                            favorite.workRef,
+                            favorite.cleanTitle?.takeIf { it.isNotBlank() } ?: favorite.title,
+                            favorite.year?.toIntOrNull(),
+                            favorite.id,
+                        ),
+                    )
+                }
+                followed.forEach { series ->
+                    add(
+                        ForYouWork(
+                            series.workRef,
+                            series.cleanTitle?.takeIf { it.isNotBlank() } ?: series.title,
+                            null,
+                        ),
+                    )
+                }
+            }
+            val fresh = selectForYou(
+                watched = state.continueWatching,
+                favorites = latestFavorites,
+                followed = followed,
+                pool = sections.flatMap { it.items },
+                excluded = excluded,
+                kidsMode = state.kidsMode,
+            )
+            _uiState.update { current ->
+                val existing = current.sections.firstOrNull { it.key == FOR_YOU_KEY }
+                if (existing == fresh) {
+                    current
+                } else {
+                    current.copy(sections = insertForYouSection(current.sections, fresh))
+                }
+            }
+        }
+    }
+
+    /**
      * Session 121 (P-26): the hero's My List toggle reads live — a favorite added
      * on the details page flips the hero's button without a reload, and vice versa.
      */
     private fun observeFavorites() {
         viewModelScope.launch {
             favoritesRepository.getAllFavorites().collect { favorites ->
+                latestFavorites = favorites
                 _uiState.update {
                     it.copy(
                         favoriteIds = favorites.map { fav -> fav.id }.toSet(),
                         favoriteWorkRefs = favorites.mapNotNull { fav -> fav.workRef }.toSet(),
                     )
                 }
+                refreshForYou()
                 // Gap A6: the third pick completes the card — the viewer has
                 // a My List now, so the first-run card retires itself instead
                 // of asking for a fourth pick.
@@ -844,6 +948,7 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             settingsRepository.kidsModeActive.collect { active ->
                 _uiState.update { it.copy(kidsMode = active) }
+                refreshForYou()
             }
         }
     }
@@ -1114,6 +1219,9 @@ class HomeViewModel @Inject constructor(
                 )
                 state.copy(sections = sections, broadcasts = broadcasts, updateNotice = notice)
             }
+            // A panel change re-deals the candidate pool (and the rails
+            // above "For you"), so the row is re-picked, not left stale.
+            refreshForYou()
         }
     }
 
@@ -1121,8 +1229,10 @@ class HomeViewModel @Inject constructor(
         val section = _uiState.value.sections.firstOrNull { it.key == key } ?: return
         // A panel rail has nothing to retry: its rows come with the config, and the
         // next refresh re-fetches them. Retrying through the posts route would
-        // overwrite the operator's rail with a generic list.
-        if (section.panelManaged) return
+        // overwrite the operator's rail with a generic list. A "For you" rail
+        // has nothing to retry either: its rows are computed, not loaded, and
+        // the next history change re-picks them.
+        if (section.panelManaged || section.forYou) return
         // loadSection is suspend (it hits the repository); run it on the ViewModel's scope.
         viewModelScope.launch { loadSection(section) }
     }
@@ -1142,11 +1252,14 @@ class HomeViewModel @Inject constructor(
             try {
                 coroutineScope {
                     _uiState.value.sections
-                        .filter { !it.panelManaged && (it.items.isEmpty() || force) }
+                        .filter { !it.panelManaged && !it.forYou && (it.items.isEmpty() || force) }
                         .map { async { loadSection(it) } }
                         .awaitAll()
                 }
                 _uiState.update { it.copy(isRefreshing = false) }
+                // The rails just re-dealt the candidate pool, so the
+                // personalised row is re-picked from the fresh rows.
+                refreshForYou()
                 val changed = _uiState.value.sections.any { it.items != beforeItems[it.key] }
                 if (changed) saveHomeCacheIfWorthwhile()
             } catch (cancelled: CancellationException) {
@@ -1164,6 +1277,11 @@ class HomeViewModel @Inject constructor(
 
     private suspend fun loadSection(section: HomeSection) {
         if (section.panelManaged) return
+        // "For you" is computed from history, never loaded: a posts call
+        // here would overwrite the picks with a generic freshest-first
+        // list. The guard is the belt to the braces in [loadAll], which
+        // never hands this section over in the first place.
+        if (section.forYou) return
         markSection(section.key) { it.copy(loading = true, error = null) }
         try {
             val results = when {

@@ -24,6 +24,13 @@ class FollowedSeriesRepository @Inject constructor(
 
     fun isFollowed(workRef: String): Flow<Boolean> = followedDao.isFollowed(workRef)
 
+    /**
+     * Every followed series, newest first — the Home "For you" row reads
+     * this once per refresh to draw its anchor from. A failure there reads
+     * as "nothing followed", never a failed Home.
+     */
+    suspend fun getAllFollowed(): List<FollowedSeries> = followedDao.followedOnce()
+
     /** Follow, seeding last-seen from the detail in front of the viewer. Returns true. */
     suspend fun follow(detail: PostDetail): Boolean {
         val workRef = detail.workRef?.takeIf { it.isNotBlank() } ?: return false
