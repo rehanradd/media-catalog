@@ -43,7 +43,11 @@ fun localVideoFolderPath(relativePath: String?, dataPath: String?): String {
  * honest fallback, never blank.
  */
 fun localFolderDisplayName(folderPath: String): String {
-    val name = folderPath.trim().trimEnd('/').substringAfterLast('/', "")
+    // The one-argument substringAfterLast returns the whole string when
+    // there is no '/' — a top-level folder ("Movies") is its own name.
+    // The two-argument form with "" would answer "" there and this would
+    // fall back to "On this phone" for every top-level folder.
+    val name = folderPath.trim().trimEnd('/').substringAfterLast('/')
     return name.ifEmpty { "On this phone" }
 }
 
@@ -105,5 +109,8 @@ fun groupVideosIntoFolders(videos: List<LocalVideoFile>): List<LocalVideoFolder>
 private fun parentSegment(folderPath: String): String? {
     val trimmed = folderPath.trim().trimEnd('/')
     val parent = trimmed.substringBeforeLast('/', "")
-    return parent.substringAfterLast('/', "").takeIf { it.isNotEmpty() }
+    if (parent.isEmpty()) return null
+    // One-argument substringAfterLast: a top-level parent ("Movies") is
+    // its own last segment; the two-argument form with "" answers "" there.
+    return parent.substringAfterLast('/')
 }

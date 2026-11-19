@@ -71,6 +71,11 @@ class LocalLibraryTest {
         assertEquals("RaddStream", localFolderDisplayName("Movies/RaddStream"))
         assertEquals("Camera", localFolderDisplayName("DCIM/Camera"))
         assertEquals("Movies", localFolderDisplayName("/storage/emulated/0/Movies"))
+        // A top-level folder has no '/' — it is its own name, not the
+        // "On this phone" fallback (regression: the two-argument
+        // substringAfterLast with "" answered "" here).
+        assertEquals("Movies", localFolderDisplayName("Movies"))
+        assertEquals("Download", localFolderDisplayName("Download"))
     }
 
     @Test
@@ -86,7 +91,10 @@ class LocalLibraryTest {
         val (selection, args) = localLibrarySelection()
         assertFalse(selection.contains("relative_path"))
         assertFalse(selection.contains("_data"))
-        assertFalse(selection.contains("LIKE"))
+        // The extension clause still uses LIKE (_display_name LIKE ?) —
+        // what must be absent is any folder restriction, not LIKE itself.
+        assertFalse(selection.contains("Movies"))
+        assertFalse(selection.contains("Download"))
         assertTrue(selection.contains("mime_type IN (?, ?, ?)"))
         assertEquals("video/mp4", args[0])
         assertEquals("video/x-matroska", args[1])
