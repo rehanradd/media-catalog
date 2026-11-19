@@ -10,7 +10,7 @@
 // API 33+) the operator provides — see the generator's KDoc for the
 // prerequisites and the exact command. CI never runs the generator
 // (instrumented tests need a device); CI compiles + packages it via
-// `:baselineprofile:assembleDebug` in `.github/workflows/ci.yml`, which
+// `:baselineprofile:assemble` in `.github/workflows/ci.yml`, which
 // is the gate that keeps a typo in the generator from landing silently.
 plugins {
     id("com.android.test")
