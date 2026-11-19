@@ -7,7 +7,7 @@
 
 ## ✅ Open items — index (q3, 2026-10-30; pointers only)
 
-1. **This file is a pointer, not a history** 124 session files (121 dated + 3 undated) cover
+1. **This file is a pointer, not a history** 125 session files (122 dated + 3 undated) cover
 
    every one of them verbatim: [`checkpoints/README.md`](checkpoints/README.md). Nothing was
    deleted, reworded, or summarized. The count is `ls Fast_Fetch/checkpoints/*.md` minus `README.md`,
@@ -66,8 +66,6 @@
 | 6 | `nice -n 19 python3 -S Fast_Fetch/importers/test_dub_collision_census.py --census > /tmp/q2_census_20261031.json` | 1–3 min estimated; nearest comparable measured 12.0 s at load 0.91 | fills the three headline numbers in the census checkpoint; the script exits 2 above `LOAD_CEILING = 4.0` |
 
 ---
-- **Project Quick Summary** → [`checkpoints/20261116-project-quick-summary.md`](checkpoints/20261116-project-quick-summary.md)
-
 ## Rotated session history
 
 The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete index.
@@ -76,10 +74,10 @@ The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete i
 - [2026-11-19 — H4 R5 shared streaming cache](checkpoints/20261119-h4-shared-cache.md): demand ledger + sibling-band warm + prefetch --demand; 33 tests green locally, Backend CI pending.
 - [2026-11-19 — H4 R6 direct-file preference](checkpoints/20261119-h4-direct-file.md): measured mime corrects the ingest label in tiers.score, candidate_order_sql, and the verify pass (+0.10 fresh banked-file nudge); 17 tests green locally, Backend CI pending.
 - [2026-11-20 — H4 R7 per-segment retry](checkpoints/20261120-h4-r7-per-segment-retry.md): dead_handle report strikes both ledgers (resolved_cache circuit + negative cache) and the banked winner is refused on the next lookup; other classes record evidence only; report route now resolves the handle in the LEDGER universe; 13 server + 15 app tests green locally, CI pending.
-- [Session 2026-11-12 — self-check `[LIVE-TV-503]`](checkpoints/20261112-selfcheck-live-tv-503-logos.md)
 - [2026-11-20 — H4 R8 clearance-cookie reuse](checkpoints/20261120-h4-r8-clearance-cookie.md): per-host clearance store + probe/resolver wiring; 43 tests, merged 8f7948d2.
 - [2026-11-20 — H4 R9 resolver probes](checkpoints/20261120-h4-r9-resolver-probes.md): serve-time re-probe of an aging banked row before it is 302'd — fresh rows serve unprobed, a verifying probe refreshes the row, an endpoint-answered failure reads as a cache miss (live resolver fails over), a no-answer probe serves fail-open; 18 tests, merged 44631e10.
-- [2026-11-20 — H4 R10 network-intercept fallback](checkpoints/20261120-h4-r10-network-intercept.md): network failures (transport / intermediary block) retried through a bounded alternate route before any dead verdict; WIP, Backend CI pending.
+- [2026-11-20 — H4 R10 network-intercept fallback](checkpoints/20261120-h4-r10-network-intercept.md): network failures (transport / intermediary block) retried through a bounded alternate route before any dead verdict; merged c27890db, Backend CI 44625202961 SUCCESS.
+- [2026-11-20 — Phase C lane E (hubcdn)](checkpoints/20261120-phasec-hubcdn.md): the Stage-2 gate refused octet-stream R2 assets on extension-less URLs — `classify_probe` now reads the container magic (EBML/ftyp/AVI → video mime), `RESOLVER_VERSION` 6; new `backfill_hubcdn.py` cracks stored bridges (staging 200 rows: 197 direct, 3 Preparing/filesdl left); 18 new tests, gate 128 suites, Backend CI pending.
 
 ## Moved out (reference prose, verbatim)
 
