@@ -243,7 +243,16 @@ Local gate-neighbour results (all `python3 -S`, this box):
 
 ## 5. CI
 
-(TBD — branch push + Backend CI run id + verdict.)
+Backend CI run **44625202961** — **SUCCESS** (conclusion `success`,
+status `completed`). Push event, branch
+`muse/h4-r10-network-intercept-20261120`, head SHA `7c2c959d`,
+workflow "🐍 Backend CI — Stdlib Python Tests". First attempt, no
+failures, no re-run needed. The new `🧪 test_network_intercept.py`
+step (126 suites total) ran as part of that green run.
+
+Commit: `7c2c959d` on branch `muse/h4-r10-network-intercept-20261120`
+(pushed to origin; verified with `git ls-remote`). NOT merged — the
+main chat merges.
 
 ## 6. Owed (live verification at gate time)
 
