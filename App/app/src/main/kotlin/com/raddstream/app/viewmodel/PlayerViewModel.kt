@@ -36,6 +36,7 @@ import com.raddstream.app.player.CacheSnapshot
 import com.raddstream.app.player.CacheState
 import com.raddstream.app.player.CalibrationState
 import com.raddstream.app.player.DataSaver
+import com.raddstream.app.player.DecoderMode
 import com.raddstream.app.player.DeferredOffsetReporter
 import com.raddstream.app.player.directVideoIsHls
 import com.raddstream.app.player.directVideoMime
@@ -331,6 +332,8 @@ class PlayerViewModel @Inject constructor(
     private var freeQualityCap: String = "720p"
     /** Data Saver — on by default, so mobile-data titles start at 480p. */
     private var dataSaver: Boolean = true
+    /** MX idea #3: the decoder mode in force, mirrored from the store so a tap reads the live value, not a stale echo. */
+    private var decoderMode: DecoderMode = DecoderMode.HARDWARE
     /** Wi-Fi-only downloads — on by default; the Keep button honours it (Session 123). */
     private var wifiOnlyDownloads: Boolean = true
     /** Delete a watched download to free the space — on by default (Session 123: series episodes too). */
@@ -454,6 +457,15 @@ class PlayerViewModel @Inject constructor(
         viewModelScope.launch {
             settingsRepository.viewModeChoice.collect { name ->
                 _ui.update { it.copy(viewMode = ViewMode.fromName(name)) }
+            }
+        }
+        // MX idea #3: the persisted decoder mode — the store is the
+        // in-process truth the service builds its player from, so the
+        // stored choice lands there (the service rebuilds if it already
+        // built the other mode, before the first play).
+        viewModelScope.launch {
+            settingsRepository.decoderMode.collect { name ->
+                store.setDecoderMode(DecoderMode.fromName(name))
             }
         }
         // The stored subtitle look. Nothing is written back: the sync offset belongs to this
@@ -639,6 +651,15 @@ class PlayerViewModel @Inject constructor(
         }
         viewModelScope.launch {
             store.autoBand.collect { band -> _ui.update { it.copy(autoQualityBand = band) } }
+        }
+        viewModelScope.launch {
+            // MX idea #3: the store is the in-process truth for the decoder
+            // mode — a tap, a persisted load, or a failover all land here —
+            // so the chip reads it, never a second copy.
+            store.decoderMode.collect { mode ->
+                decoderMode = mode
+                _ui.update { it.copy(decoderMode = mode) }
+            }
         }
         viewModelScope.launch {
             store.failoverLog.collect { log -> _ui.update { it.copy(failoverLog = log) } }
@@ -1223,6 +1244,20 @@ class PlayerViewModel @Inject constructor(
     /** The Quality sheet's Data Saver row (Session 126): one tap, persisted, felt at once. */
     fun toggleDataSaver() {
         viewModelScope.launch { settingsRepository.saveDataSaver(!dataSaver) }
+    }
+
+    /**
+     * MX idea #3: one tap on the top-bar HW/SW chip. The store is the
+     * in-process truth — the service rebuilds the player in the new mode
+     * at once, keeping the position — and the choice is persisted for the
+     * next play. The mirror is written synchronously so a double-tap
+     * reads the live value, not the collection's echo.
+     */
+    fun toggleDecoderMode() {
+        val next = decoderMode.other()
+        decoderMode = next
+        store.setDecoderMode(next)
+        viewModelScope.launch { settingsRepository.saveDecoderMode(next.name) }
     }
 
     /**

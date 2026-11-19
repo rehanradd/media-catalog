@@ -30,6 +30,11 @@
     <string name="player_tag_auto">Auto: %1$s</string>
     <string name="player_sleep_remaining">Sleep in %1$s</string>
     <string name="player_speed_short">%1$s×</string>
+    <!-- MX idea #3: the decoder chip — one tap, HW ↔ SW, far right of the top bar. -->
+    <string name="player_decoder_hw">HW</string>
+    <string name="player_decoder_sw">SW</string>
+    <string name="player_decoder_switch_to_hardware">Switch to hardware decoding</string>
+    <string name="player_decoder_switch_to_software">Switch to software decoding</string>
     <string name="player_pause">Pause</string>
     <!-- CL-5: the centre pause control announces this instead of bare "Pause",
          so it does not collide with the bottom-bar pause button. -->

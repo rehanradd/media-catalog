@@ -63,15 +63,29 @@ class FfmpegSoftwareRetryTest {
     }
 
     @Test
-    fun `a decode failure before the first frame hops when no software decoder exists`() {
+    fun `a decode failure before the first frame falls back to the other decoder mode when no software decoder exists`() {
         val subject = machine(
             rung(1, "h-a", backups = listOf("b-a1")),
             rung(2, "h-b"),
         )
         assertEquals(0, subject.selectInitial())
 
-        // The flag alone changes nothing: without the FFmpeg library there is
-        // no software decoder to retry with, so the ordinary S2 hop applies.
+        // MX idea #3: without the FFmpeg library #1 has nothing to retry
+        // with — but the software MediaCodec decoders are a different axis
+        // from the FFmpeg audio decoder, so the first decode failure falls
+        // back to the other video decoder instead of hopping at once.
+        val fallback = subject.onFailure(
+            "ERROR_CODE_DECODING_FAILED ...",
+            beforeFirstFrame = true,
+            isDecodingFailed = true,
+            isSoftwareDecoderAvailable = false,
+        )
+        fallback as FailoverDecision.RetryWithOtherDecoderMode
+        assertEquals(DecoderMode.SOFTWARE, fallback.targetMode)
+
+        // The other mode failed on this file too: one fallback was the whole
+        // budget, so the machine hops instead of looping on the same
+        // rendition forever.
         val hop = subject.onFailure(
             "ERROR_CODE_DECODING_FAILED ...",
             beforeFirstFrame = true,
@@ -83,7 +97,7 @@ class FfmpegSoftwareRetryTest {
     }
 
     @Test
-    fun `a second decode failure after the software retry was spent hops to the backup`() {
+    fun `a second decode failure after the software retry was spent falls back to the other decoder mode`() {
         val subject = machine(
             rung(1, "h-a", backups = listOf("b-a1")),
             rung(2, "h-b"),
@@ -98,9 +112,19 @@ class FfmpegSoftwareRetryTest {
         )
         assertTrue(first is FailoverDecision.RetryWithSoftwareDecoder)
 
-        // The software decoder also failed on this file: one retry was the
-        // whole budget, so the machine hops instead of looping on the same
-        // rendition forever.
+        // The software decoder also failed on this file: MX idea #3 gives
+        // the other video decoder one shot before the machine hops.
+        val second = subject.onFailure(
+            "ERROR_CODE_DECODING_FAILED ...",
+            beforeFirstFrame = true,
+            isDecodingFailed = true,
+            isSoftwareDecoderAvailable = true,
+        )
+        second as FailoverDecision.RetryWithOtherDecoderMode
+        assertEquals(DecoderMode.SOFTWARE, second.targetMode)
+
+        // Both decoder retries are spent: the machine hops instead of
+        // looping on the same rendition forever.
         val hop = subject.onFailure(
             "ERROR_CODE_DECODING_FAILED ...",
             beforeFirstFrame = true,
@@ -112,7 +136,7 @@ class FfmpegSoftwareRetryTest {
     }
 
     @Test
-    fun `a decode failure on the last rank retries once with software, then hands off`() {
+    fun `a decode failure on the last rank retries with software, then the other decoder mode, then hands off`() {
         val subject = machine(rung(1, "h-a"))
         assertEquals(0, subject.selectInitial())
 
@@ -124,14 +148,24 @@ class FfmpegSoftwareRetryTest {
         )
         assertTrue(first is FailoverDecision.RetryWithSoftwareDecoder)
 
+        // MX idea #3: the other video decoder gets its one shot before the
+        // machine gives up on the only rank.
         val second = subject.onFailure(
             "ERROR_CODE_DECODING_FAILED ...",
             beforeFirstFrame = true,
             isDecodingFailed = true,
             isSoftwareDecoderAvailable = true,
         )
-        second as FailoverDecision.Handoff
-        assertEquals(HandoffWhy.NO_CANDIDATE_LEFT, second.why)
+        assertTrue(second is FailoverDecision.RetryWithOtherDecoderMode)
+
+        val third = subject.onFailure(
+            "ERROR_CODE_DECODING_FAILED ...",
+            beforeFirstFrame = true,
+            isDecodingFailed = true,
+            isSoftwareDecoderAvailable = true,
+        )
+        third as FailoverDecision.Handoff
+        assertEquals(HandoffWhy.NO_CANDIDATE_LEFT, third.why)
     }
 
     @Test

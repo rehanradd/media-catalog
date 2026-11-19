@@ -996,6 +996,25 @@ class ServerSettingsRepository @Inject constructor(
     }
 
     /**
+     * MX idea #3: the decoder mode the viewer chose — [com.raddstream.app.player.DecoderMode]
+     * enum name, `HARDWARE` unless they tapped the top-bar chip to software. Persisted for
+     * the same reason as the chrome mode above — a viewer who watches in software every
+     * night should not have to re-tap it for every episode, and a player that forgets it
+     * is a control that lies. An unreadable stored name is [DEFAULT_DECODER_MODE], never a
+     * guess. The automatic failover never writes here: a fallback is ephemeral, and the
+     * next title starts in the mode the viewer chose.
+     */
+    val decoderMode: Flow<String> = dataStore.data.map { preferences ->
+        preferences[DECODER_MODE_KEY]?.takeIf { it == DECODER_MODE_HARDWARE || it == DECODER_MODE_SOFTWARE }
+            ?: DEFAULT_DECODER_MODE
+    }
+
+    suspend fun saveDecoderMode(name: String) {
+        val safe = if (name == DECODER_MODE_SOFTWARE) DECODER_MODE_SOFTWARE else DECODER_MODE_HARDWARE
+        dataStore.edit { preferences -> preferences[DECODER_MODE_KEY] = safe }
+    }
+
+    /**
      * The VIP payment reference the viewer entered, or null when nothing is awaiting
      * verification. This deployment has no endpoint that receives a transaction id, so
      * the reference is kept HERE — on the device that typed it — and the screen says
@@ -1132,6 +1151,7 @@ class ServerSettingsRepository @Inject constructor(
         private val SUBTITLE_COLOUR_KEY = stringPreferencesKey("subtitle_colour")
         private val DYNAMIC_COLOR_KEY = booleanPreferencesKey("dynamic_color")
         private val VIEW_MODE_KEY = stringPreferencesKey("view_mode")
+        private val DECODER_MODE_KEY = stringPreferencesKey("player_decoder_mode")
         private val VIP_PENDING_TID_KEY = stringPreferencesKey("vip_pending_tid")
         private val VIP_PENDING_PLAN_KEY = stringPreferencesKey("vip_pending_plan")
         private val VIP_PENDING_METHOD_KEY = stringPreferencesKey("vip_pending_method")
@@ -1158,6 +1178,11 @@ class ServerSettingsRepository @Inject constructor(
         const val VIEW_MODE_STANDARD = "STANDARD"
         const val VIEW_MODE_PURE_CINEMA = "PURE_CINEMA"
         const val DEFAULT_VIEW_MODE = VIEW_MODE_STANDARD
+
+        /** [com.raddstream.app.player.DecoderMode] enum names — the storage contract for the row above. */
+        const val DECODER_MODE_HARDWARE = "HARDWARE"
+        const val DECODER_MODE_SOFTWARE = "SOFTWARE"
+        const val DEFAULT_DECODER_MODE = DECODER_MODE_HARDWARE
     }
 }
 

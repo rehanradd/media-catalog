@@ -173,6 +173,7 @@ import com.raddstream.app.player.initialBrightnessBase
 import com.raddstream.app.player.EpisodeCoverage
 import com.raddstream.app.player.chapterTicks
 import com.raddstream.app.player.CalibrationState
+import com.raddstream.app.player.DecoderMode
 import com.raddstream.app.player.DominantAxis
 import com.raddstream.app.player.DragCommand
 import com.raddstream.app.player.GestureMapper
@@ -689,7 +690,7 @@ private fun PlayerScreenContent(
                     enter = chromeEnter,
                     exit = chromeExit,
                 ) {
-                    TopBar(state = state, onBack = onBackClick, onLock = { vm.setLocked(true) }, onShowPrintSheet = { vm.showPrintSheet() }, onShowSpeedSheet = { vm.showSpeedSheet() })
+                    TopBar(state = state, onBack = onBackClick, onLock = { vm.setLocked(true) }, onShowPrintSheet = { vm.showPrintSheet() }, onShowSpeedSheet = { vm.showSpeedSheet() }, onToggleDecoderMode = { vm.toggleDecoderMode() })
                 }
                 AnimatedVisibility(
                     visible = controlsVisible,
@@ -1589,7 +1590,7 @@ private fun playerChromeRail(): Dp {
 }
 
 @Composable
-internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit, onShowPrintSheet: () -> Unit, onShowSpeedSheet: () -> Unit) {
+internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit, onShowPrintSheet: () -> Unit, onShowSpeedSheet: () -> Unit, onToggleDecoderMode: () -> Unit) {
     val print = state.activeRendition
     val rail = playerChromeRail()
     val topGradient = Brush.verticalGradient(
@@ -1728,6 +1729,26 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
                 tint = Color.White,
             )
         }
+        // MX idea #3: the decoder switch — one tap, HW ↔ SW, far right
+        // where MX puts it. The button IS the chip: it shows the mode the
+        // player is built with right now, and tapping it rebuilds the
+        // player in the other mode at the same position. Same shape as the
+        // speed pill above it: accent text, bold, a button by role.
+        Text(
+            if (state.decoderMode == DecoderMode.SOFTWARE) stringResource(R.string.player_decoder_sw) else stringResource(R.string.player_decoder_hw),
+            color = RaddCurrent500,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier
+                .clickable(
+                    onClick = onToggleDecoderMode,
+                    role = Role.Button,
+                    onClickLabel = stringResource(
+                        if (state.decoderMode == DecoderMode.SOFTWARE) R.string.player_decoder_switch_to_hardware else R.string.player_decoder_switch_to_software,
+                    ),
+                )
+                .padding(horizontal = 8.dp, vertical = 12.dp),
+        )
         }
     }
 }

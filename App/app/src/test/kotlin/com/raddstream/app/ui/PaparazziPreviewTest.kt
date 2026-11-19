@@ -965,6 +965,7 @@ class PaparazziPreviewTest {
                     onLock = {},
                     onShowPrintSheet = {},
                     onShowSpeedSheet = {},
+                    onToggleDecoderMode = {},
                 )
             }
         }
@@ -988,6 +989,7 @@ class PaparazziPreviewTest {
                     onLock = {},
                     onShowPrintSheet = {},
                     onShowSpeedSheet = {},
+                    onToggleDecoderMode = {},
                 )
             }
         }

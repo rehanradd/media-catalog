@@ -163,6 +163,24 @@ sealed class FailoverDecision {
     data class RetryWithSoftwareDecoder(val index: Int, val record: FailoverRecord) : FailoverDecision()
 
     /**
+     * MX idea #3 (2026-11-19): a decode failure is a decoder problem, not a dead copy —
+     * and the #1 audio retry above is either spent or unavailable. Retry the SAME
+     * rendition once with the OTHER video decoder ([targetMode]: hardware ↔ software
+     * MediaCodec) before hopping to another copy. The service rebuilds the player in
+     * the other mode and reloads the same rendition at the same position; it also
+     * tells the viewer, in plain words, that the decoder switched. One per
+     * rendition: a second decode failure falls through to the ordinary hop path.
+     * It does not touch the retry_same budget: a decoder retry and a network retry
+     * are different kinds of second chance. The fallback is ephemeral — it updates
+     * the effective mode in the store, never the viewer's persisted preference.
+     */
+    data class RetryWithOtherDecoderMode(
+        val index: Int,
+        val targetMode: DecoderMode,
+        val record: FailoverRecord,
+    ) : FailoverDecision()
+
+    /**
      * Switch to another copy of the SAME rung, [streamId], at [playUrl] (our own
      * redirector, one handle swapped for another). Silent by contract: same quality,
      * same position, no banner, no dialog — the viewer keeps watching while a
@@ -237,6 +255,8 @@ class FailoverStateMachine(
     private val backupsUsedByIndex = HashMap<Int, Int>()
     /** Renditions whose one software-decoder retry is already spent (MX idea #1). */
     private val softwareRetryUsedByIndex = HashSet<Int>()
+    /** Renditions whose one other-decoder-mode retry is already spent (MX idea #3). */
+    private val modeFallbackUsedByIndex = HashSet<Int>()
     private var ranksBurned = 0
     private val _log = ArrayList<FailoverRecord>()
 
@@ -373,6 +393,18 @@ class FailoverStateMachine(
      * falls through to the ordinary hop path. It does not touch the
      * retry_same budget: a decoder retry and a network retry are
      * different kinds of second chance.
+     *
+     * [currentDecoderMode] is the video decoder the player is built with
+     * (MX idea #3, 2026-11-19). Once the #1 audio retry is spent — or when
+     * it was never available (no FFmpeg AAR) — a decode failure retries the
+     * SAME rendition once with the OTHER video decoder
+     * ([FailoverDecision.RetryWithOtherDecoderMode]), because a video the
+     * hardware decoder chokes on may still play in software, and vice
+     * versa. The audio case pays one wasted retry for it: the error code
+     * alone cannot say whether the audio or the video decoder failed, so a
+     * title whose audio is undecodable in both modes spends the mode
+     * fallback and then hops, exactly as it did before #3. One per
+     * rendition, and it does not touch the retry_same budget either.
      */
     fun onFailure(
         errorSummary: String,
@@ -384,6 +416,7 @@ class FailoverStateMachine(
         isLocalCopyAttempt: Boolean = false,
         isDecodingFailed: Boolean = false,
         isSoftwareDecoderAvailable: Boolean = false,
+        currentDecoderMode: DecoderMode = DecoderMode.HARDWARE,
     ): FailoverDecision {
         // Session 121 (P-6): the summary may be a raw ExoPlayer code; the machine is the
         // single funnel every failure passes through, so translate it here — the Handoff
@@ -441,6 +474,25 @@ class FailoverStateMachine(
             val swRecord = record.copy(action = "retried with the software decoder")
             _log.add(swRecord)
             return FailoverDecision.RetryWithSoftwareDecoder(index, swRecord)
+        }
+
+        if (isDecodingFailed && index !in modeFallbackUsedByIndex) {
+            // MX idea #3 (2026-11-19): the decoder, not the copy, failed —
+            // and the #1 audio retry above is either spent or was never
+            // available (no FFmpeg AAR). One shot at the same file with the
+            // OTHER video decoder before the machine hops: a video the
+            // hardware decoder chokes on may still play in software. One
+            // per rendition, so a second decode failure falls through to
+            // the ordinary hop path below. It does not touch the retry_same
+            // budget — a decoder retry and a network retry are different
+            // kinds of second chance — and it fires before the first frame
+            // and after it, for the same reason #1 does.
+            modeFallbackUsedByIndex.add(index)
+            val targetMode = currentDecoderMode.other()
+            val modeWord = if (targetMode == DecoderMode.SOFTWARE) "software" else "hardware"
+            val modeRecord = record.copy(action = "switched to the $modeWord decoder and retried")
+            _log.add(modeRecord)
+            return FailoverDecision.RetryWithOtherDecoderMode(index, targetMode, modeRecord)
         }
 
         // Read-modify-write instead of `HashMap.merge`: `merge` is a Java 8 default method and

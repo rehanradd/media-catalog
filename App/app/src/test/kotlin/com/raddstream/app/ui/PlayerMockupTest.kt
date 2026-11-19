@@ -12,6 +12,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
 import com.raddstream.app.R
+import com.raddstream.app.player.DecoderMode
 import com.raddstream.app.player.GestureMapper
 import com.raddstream.app.player.KeepUiState
 import com.raddstream.app.player.LadderRung
@@ -137,6 +138,7 @@ class PlayerMockupTest {
                     onLock = {},
                     onShowPrintSheet = {},
                     onShowSpeedSheet = {},
+                    onToggleDecoderMode = {},
                 )
             }
         }
@@ -155,6 +157,7 @@ class PlayerMockupTest {
                     onLock = {},
                     onShowPrintSheet = {},
                     onShowSpeedSheet = {},
+                    onToggleDecoderMode = {},
                 )
             }
         }
@@ -176,11 +179,52 @@ class PlayerMockupTest {
                     onLock = {},
                     onShowPrintSheet = {},
                     onShowSpeedSheet = { opened = true },
+                    onToggleDecoderMode = {},
                 )
             }
         }
         compose.onNodeWithText("1.5×").assertIsDisplayed().performClick()
         assertTrue("tapping the speed pill must open the speed sheet", opened)
+    }
+
+    @Test
+    fun `the decoder chip shows the mode and toggles it`() {
+        // MX idea #3: the top-bar chip IS the switch — HW by default, one
+        // tap to SW. The pill that says the mode is the way to change it,
+        // the same shape as the speed pill above.
+        var toggled = false
+        compose.setContent {
+            RaddStreamTheme {
+                TopBar(
+                    state = vodBase(),
+                    onBack = {},
+                    onLock = {},
+                    onShowPrintSheet = {},
+                    onShowSpeedSheet = {},
+                    onToggleDecoderMode = { toggled = true },
+                )
+            }
+        }
+        compose.onNodeWithText("HW").assertIsDisplayed().performClick()
+        assertTrue("tapping the HW chip must toggle the decoder mode", toggled)
+    }
+
+    @Test
+    fun `the decoder chip shows SW when the player runs in software`() {
+        compose.setContent {
+            RaddStreamTheme {
+                TopBar(
+                    state = vodBase().copy(decoderMode = DecoderMode.SOFTWARE),
+                    onBack = {},
+                    onLock = {},
+                    onShowPrintSheet = {},
+                    onShowSpeedSheet = {},
+                    onToggleDecoderMode = {},
+                )
+            }
+        }
+        compose.onNodeWithText("SW").assertIsDisplayed()
+        compose.onNodeWithText("HW").assertDoesNotExist()
     }
 
     @Test

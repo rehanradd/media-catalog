@@ -277,6 +277,15 @@ data class PlayerUiState(
     /** Ghost mode or the full MX chrome. Persisted, because nobody wants it reset per episode. */
     val viewMode: ViewMode = ViewMode.STANDARD,
     /**
+     * MX idea #3: the video decoder the player is built with — hardware (the device's own
+     * MediaCodec decoders) or software (the platform software decoders). The top-bar chip
+     * shows this and toggles it; the service rebuilds the player from it. Persisted like
+     * [viewMode], because a viewer who watches in software every night should not have to
+     * re-tap it for every episode. An automatic failover to the other mode updates this
+     * for the running service only — the persisted choice is untouched.
+     */
+    val decoderMode: DecoderMode = DecoderMode.HARDWARE,
+    /**
      * Whether the operator's `feature_flags.pure_cinema` currently allows Ghost mode at all.
      * Mirrors the server board; the viewer's saved [viewMode] is left alone, so a switch that
      * comes back on restores the frame they last asked for instead of having overwritten it.

@@ -64,4 +64,21 @@ class PlayerSessionStoreSettledBannerTest {
 
         assertEquals("Playing: Standard quality", store.settledBanner.value)
     }
+
+    @Test
+    fun `a decoder fallback says which decoder failed and that playback continues in the other`() {
+        // MX idea #3: the graceful failure tells the viewer in plain words —
+        // which decoder failed, and that playback continues in the other one.
+        val store = PlayerSessionStore()
+        store.announceDecoderFallback(DecoderMode.SOFTWARE)
+        assertEquals(
+            "Hardware decoding failed — switched to software decoding",
+            store.settledBanner.value,
+        )
+        store.announceDecoderFallback(DecoderMode.HARDWARE)
+        assertEquals(
+            "Software decoding failed — switched to hardware decoding",
+            store.settledBanner.value,
+        )
+    }
 }

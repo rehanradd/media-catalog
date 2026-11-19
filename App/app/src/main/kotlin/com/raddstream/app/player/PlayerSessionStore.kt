@@ -107,6 +107,35 @@ class PlayerSessionStore(
     }
 
     /**
+     * MX idea #3: the video decoder mode the player is built with. The
+     * viewer's persisted choice lands here (the ViewModel loads it), a tap
+     * on the top-bar chip writes here, and a decode failover writes here —
+     * the service builds and rebuilds its player from this one value, so
+     * there is never a second opinion about which decoder is in use.
+     * Hardware is the default: nothing has opted into software yet.
+     */
+    private val _decoderMode = MutableStateFlow(DecoderMode.HARDWARE)
+    val decoderMode: StateFlow<DecoderMode> = _decoderMode.asStateFlow()
+
+    fun setDecoderMode(mode: DecoderMode) {
+        _decoderMode.value = mode
+    }
+
+    /**
+     * MX idea #3: the chosen decoder could not decode this rendition, so
+     * the player fell back to the other mode once. The settled banner is
+     * the screen's own 5s transient — the same one Auto's quality moves
+     * use — and it says what happened in plain words: which decoder
+     * failed, and that playback continues in the other one.
+     */
+    fun announceDecoderFallback(mode: DecoderMode) {
+        _settledBanner.value = when (mode) {
+            DecoderMode.HARDWARE -> "Software decoding failed — switched to hardware decoding"
+            DecoderMode.SOFTWARE -> "Hardware decoding failed — switched to software decoding"
+        }
+    }
+
+    /**
      * The viewer's live subtitle sync in milliseconds; positive = text later. Written by the
      * screen on every slider step and read on the playback thread by the decoder wrapper the
      * service installs ([com.raddstream.app.player.subtitles.OffsetSubtitleDecoderFactory]),

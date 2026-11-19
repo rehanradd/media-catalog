@@ -79,6 +79,14 @@ class PlaybackService : MediaSessionService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var failover: FailoverStateMachine? = null
 
+    /**
+     * MX idea #3: the decoder mode the current player was built with. The
+     * store is the truth the ViewModel and the failover machine write; this
+     * is the mirror the service reads so a rebuild only ever happens when
+     * the requested mode differs from the running player.
+     */
+    private var currentDecoderMode: DecoderMode = DecoderMode.HARDWARE
+
     /** The beacon recorder: one finished session's measurements, per load. */
     private val beaconRecorder = PlaybackBeaconRecorder()
 
@@ -112,6 +120,44 @@ class PlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
+        // MX idea #3: the player starts in the mode the store holds — the
+        // viewer's persisted choice when the ViewModel already loaded it, or
+        // hardware when the service starts cold. The ViewModel's load lands a
+        // moment later and the collection below rebuilds before the first
+        // play, which is cheap: the player holds no media yet.
+        currentDecoderMode = store.decoderMode.value
+        val exo = buildPlayer(currentDecoderMode)
+        exo.addListener(playerListener)
+        exo.addAnalyticsListener(autoQualityListener)
+        player = exo
+
+        mediaSession = MediaSession.Builder(this, exo).build()
+
+        scope.launch {
+            store.decoderMode.collect { mode -> rebuildPlayer(mode) }
+        }
+        scope.launch {
+            store.loadRequest.collect { request ->
+                if (request != null && request.nonce != lastHandledNonce) {
+                    lastHandledNonce = request.nonce
+                    handleLoad(request)
+                }
+            }
+        }
+        startAutoQualityTicker()
+        startPlayheadPump()
+        startThermalListener()
+    }
+
+    /**
+     * One player build, in the given decoder mode — the initial build and
+     * every live rebuild ([rebuildPlayer]) come through here, so the two
+     * players can never drift apart in factories, timeouts, or policies.
+     * The factories are cheap to recreate per build: the HTTP and data
+     * factories hold config only, and the playback cache behind them is
+     * the shared singleton ([MediaDownloadCache.playbackFactory]).
+     */
+    private fun buildPlayer(mode: DecoderMode): ExoPlayer {
         // Cross-protocol redirects ON: resolver 302s are the normal path on this backend.
         // Cleartext: debug builds allow http (app/src/debug/AndroidManifest.xml); the release
         // HTTP-only gap is documented in PLAYER_SPEC.md §3.4 + HANDOFF_appplayer.md.
@@ -176,6 +222,12 @@ class PlaybackService : MediaSessionService() {
         renderersFactory.setExtensionRendererMode(
             DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER,
         )
+        // MX idea #3: the decoder mode is a factory choice. Hardware is
+        // Media3's own default selector; software only offers the platform
+        // software decoders (see SoftwareMediaCodecSelector). The FFmpeg
+        // audio extension stays PREFER in both modes (see the comment
+        // above): this selector moves the VIDEO decoder path only.
+        renderersFactory.setMediaCodecSelector(mediaCodecSelectorFor(mode))
 
         val exo = ExoPlayer.Builder(this)
             .setRenderersFactory(renderersFactory)
@@ -206,23 +258,57 @@ class PlaybackService : MediaSessionService() {
         // landing; nobody scrubs for that. A `val` reassignment would not compile here — ExoPlayer
         // exposes this as a setter whose getter returns a different type.
         exo.setSeekParameters(SeekParameters.CLOSEST_SYNC)
+        return exo
+    }
+
+    /**
+     * MX idea #3: swap the player for one built in [mode], keeping the
+     * position and the play/pause state — this is what a tap on the top-bar
+     * chip does mid-playback, and what the decode failover does when the
+     * other decoder gets its one shot. Media3 has no API to swap a
+     * RenderersFactory on a live player, so the player is rebuilt; the
+     * MediaSession is re-pointed at the new player ([MediaSession.setPlayer]
+     * — the new player must use the same application looper, and both builds
+     * happen here on the main thread), so the MediaController the screen
+     * holds keeps working through the session and never rebinds.
+     *
+     * The old player is released before the new one is built, so only one
+     * decoder set is ever alive. The reload is the active rendition from
+     * the bundle (the live link — a kept copy that was playing reloads from
+     * the server instead; the bytes are the same, only the source changes).
+     * Nothing is reloaded before the first load: a rebuild with no bundle
+     * just swaps the idle player.
+     */
+    private fun rebuildPlayer(mode: DecoderMode) {
+        if (mode == currentDecoderMode) return
+        val old = player ?: return
+        // An ended player reports the duration as its position; reloading
+        // there would end again at once, so a toggle at the end restarts.
+        val resumeMs = if (old.playbackState == Player.STATE_ENDED) {
+            0L
+        } else {
+            runCatching { old.currentPosition }.getOrDefault(0L).coerceAtLeast(0L)
+        }
+        val wasPlaying = old.playWhenReady
+        disarmStartWatchdog()
+        old.removeListener(playerListener)
+        old.removeAnalyticsListener(autoQualityListener)
+        old.release()
+        val exo = buildPlayer(mode)
+        currentDecoderMode = mode
         exo.addListener(playerListener)
         exo.addAnalyticsListener(autoQualityListener)
         player = exo
-
-        mediaSession = MediaSession.Builder(this, exo).build()
-
-        scope.launch {
-            store.loadRequest.collect { request ->
-                if (request != null && request.nonce != lastHandledNonce) {
-                    lastHandledNonce = request.nonce
-                    handleLoad(request)
-                }
-            }
-        }
-        startAutoQualityTicker()
-        startPlayheadPump()
-        startThermalListener()
+        // The session survives the rebuild: the controller never rebinds.
+        mediaSession?.setPlayer(exo)
+        val bundle = store.bundle.value
+        val index = store.activeRenditionIndex.value
+        val rendition = bundle?.renditions?.getOrNull(index) ?: return
+        lastKnownPositionMs = resumeMs
+        pendingResumeMs = resumeMs.takeIf { it > 0 }
+        loadRenditionOf(bundle, rendition, countAsAttempt = false)
+        // loadRenditionOf always starts playing; a paused viewer stays paused.
+        exo.playWhenReady = wasPlaying
     }
 
     /**
@@ -562,6 +648,17 @@ class PlaybackService : MediaSessionService() {
                 store.appendFailover(listOf(decision.record))
                 pendingResumeMs = preservePositionMs.takeIf { it > 0 }
                 loadRendition(bundle, decision.index)
+            }
+            is FailoverDecision.RetryWithOtherDecoderMode -> {
+                // MX idea #3: same rendition, same position, rebuilt player —
+                // no backoff, the decoder is the problem, not the network.
+                // The mode is set in the store and the decoderMode collection
+                // rebuilds the player in it and reloads this rendition at the
+                // saved position. The persisted preference is NOT overwritten:
+                // the next title starts in the mode the viewer chose.
+                store.appendFailover(listOf(decision.record))
+                store.setDecoderMode(decision.targetMode)
+                store.announceDecoderFallback(decision.targetMode)
             }
 
             is FailoverDecision.AdvanceBackup -> {
@@ -1015,6 +1112,7 @@ class PlaybackService : MediaSessionService() {
                 isLocalCopyAttempt = lastLoadedWasLocalCopy,
                 isDecodingFailed = isDecodingFailed,
                 isSoftwareDecoderAvailable = FfmpegSupport.isSoftwareAudioAvailable,
+                currentDecoderMode = currentDecoderMode,
             )
             applyDecision(bundle, decision, preservePositionMs = lastKnownPositionMs)
         }
