@@ -225,7 +225,12 @@ class ClassifyTests(unittest.TestCase):
             (failed("https://a", status=404, error="http_404"), "dead"),
             (failed("https://a", status=410, error="http_410"), "dead"),
             (failed("https://a", status=451, error="http_451"), "dead"),
-            (failed("https://a", status=500, error="http_500"), "dead"),
+            (failed("https://a", status=500, error="http_500"), "expired"),
+            # H4 R10: a 5xx is an intermediary's answer, not the link's death
+            # (the serve side already calls these "flaky") — expired is
+            # re-resolved, never quarantined
+            (failed("https://a", status=502, error="http_502"), "expired"),
+            (failed("https://a", status=522, error="http_522"), "expired"),
             (failed("https://a", status=403, error="http_403"), "expired"),
             (failed("https://a", status=429, error="http_429"), "expired"),
             # transport: our side failed to reach the endpoint, so no verdict
@@ -341,8 +346,10 @@ class PropagationTests(LedgerTestCase):
         own host. Regression for the 2026-11-17 finding (103.5h stale while
         the sweep ran fine every 6h)."""
         summary = self.run_sweep()
+        # H4 R10: late2 answers 502 — an intermediary's answer, so its host
+        # counts as answered (expired), not failed; only the 404 is a failure.
         self.assertEqual(summary["host_health"],
-                         {"hosts": 7, "successes": 5, "failures": 2})
+                         {"hosts": 7, "successes": 6, "failures": 1})
         health = {row["host"]: row for row in self.conn.execute(
             "SELECT * FROM host_health")}
         self.assertEqual(set(health), {
@@ -351,11 +358,12 @@ class PropagationTests(LedgerTestCase):
             "late2.test"})
         # Answered (active or expired) closes the circuit; dead counts a failure.
         for host in ("cdn.example.com", "mirror.example.com",
-                     "token.example.com", "bridge.example.com", "late1.test"):
+                     "token.example.com", "bridge.example.com", "late1.test",
+                     "late2.test"):
             self.assertEqual(health[host]["probes"], 1, host)
             self.assertEqual(health[host]["successes"], 1, host)
             self.assertEqual(health[host]["consecutive_failures"], 0, host)
-        for host in ("gone.example.com", "late2.test"):
+        for host in ("gone.example.com",):
             self.assertEqual(health[host]["probes"], 1, host)
             self.assertEqual(health[host]["successes"], 0, host)
             self.assertEqual(health[host]["consecutive_failures"], 1, host)
@@ -469,8 +477,9 @@ class HonestyStatsTests(LedgerTestCase):
         self.run_sweep()
         stats = link_state.stats_payload(self.conn)
         self.assertEqual(stats["active_sources"], 4)  # 2 cdns + the live bridge page + late1
-        self.assertEqual(stats["dead_sources"], 2, "the 404 plus late2")
-        self.assertEqual(stats["expired_sources"], 1)
+        # H4 R10: late2 answers 502 — expired, not dead; only the 404 is dead.
+        self.assertEqual(stats["dead_sources"], 1, "the 404")
+        self.assertEqual(stats["expired_sources"], 2, "the 403 plus late2")
         self.assertEqual(stats["unverified_sources"], 2, "magnet + blocked, by design")
         self.assertEqual(stats["resumable_sources"], 2,
                          "only the mirror and late1 accept Range; the prober said so")

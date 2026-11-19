@@ -531,9 +531,10 @@ class DefaultProberTests(unittest.TestCase):
 
 
 class FastProbeWiringTests(unittest.TestCase):
-    # A host that is NOT a KNOWN_HEAD_LIAR (vcloud.beer is one): on a liar
-    # a 403 HEAD triggers the ranged-GET fallback, which these tests stub
-    # out — the point here is the clearance attach/invalidate, not the liar.
+    # A host that is NOT a KNOWN_HEAD_LIAR (vcloud.beer is one). H4 R10
+    # triggers the ranged-GET fallback on ANY host's 403/429/5xx HEAD, so
+    # both chains are stubbed here — the point is the clearance
+    # attach/invalidate, not the liar.
     FP_HOST = "probe.example.test"
 
     def test_probe_host_attaches_clearance_and_invalidates_on_403(self):
@@ -548,11 +549,17 @@ class FastProbeWiringTests(unittest.TestCase):
                 seen["headers"] = dict(base_headers)
                 return (403, "", url)
 
+            def fake_get_chain(url, session, base_headers, timeout, spacing_s):
+                # H4 R10: a refused HEAD gets one ranged GET. The challenge
+                # is still there (GET 403 too), so the clearance dies.
+                return (403, "", url)
+
             groups = [{"url": f"https://{self.FP_HOST}/f.mp4", "row_ids": [1]}]
             # The sandbox resolver answers a CGNAT address for every name,
             # so the SSRF guard would block the probe here; CI resolves
             # for real. Stub the guard — the point is the clearance, not DNS.
             with mock.patch.object(fast_probe, "head_chain", fake_head_chain), \
+                    mock.patch.object(fast_probe, "get_chain", fake_get_chain), \
                     mock.patch.object(link_health, "_block_reason", return_value=""):
                 stats = fast_probe._probe_host(
                     self.FP_HOST, groups, timeout=5.0, spacing_s=0.0,
@@ -562,6 +569,36 @@ class FastProbeWiringTests(unittest.TestCase):
             self.assertEqual(seen["headers"]["User-Agent"], UA_A)
             self.assertEqual(store.header_for(self.FP_HOST, now=NOW + 10), (None, None))
             self.assertEqual(stats["verdicts"], 1)
+
+    def test_probe_host_keeps_clearance_when_get_overrules_head_403(self):
+        # H4 R10: HEAD 403 was a method refusal, not a dead clearance —
+        # the ranged GET answers 200 with the same cookie, so the
+        # clearance is kept and the verdict is active.
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "store.db")
+            store = hc.HostClearance(path)
+            store.place(self.FP_HOST, "cf_clearance", "tok-1", user_agent=UA_A, now=NOW)
+
+            def fake_head_chain(url, session, base_headers, timeout, spacing_s):
+                return (403, "", url)
+
+            def fake_get_chain(url, session, base_headers, timeout, spacing_s):
+                return (200, "", url)
+
+            groups = [{"url": f"https://{self.FP_HOST}/f.mp4", "row_ids": [1]}]
+            with mock.patch.object(fast_probe, "head_chain", fake_head_chain), \
+                    mock.patch.object(fast_probe, "get_chain", fake_get_chain), \
+                    mock.patch.object(link_health, "_block_reason", return_value=""):
+                stats = fast_probe._probe_host(
+                    self.FP_HOST, groups, timeout=5.0, spacing_s=0.0,
+                    headers={"User-Agent": link_health.USER_AGENT},
+                    clearance=store)
+            self.assertEqual(store.header_for(self.FP_HOST, now=NOW + 10),
+                             ("cf_clearance=tok-1", UA_A))
+            self.assertEqual(stats["results"][f"https://{self.FP_HOST}/f.mp4"],
+                             ("active", 200, ""))
+            self.assertEqual(stats["get_fallbacks"], 1)
 
     def test_probe_host_without_clearance_is_unchanged(self):
         seen = {}

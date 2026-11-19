@@ -60,7 +60,12 @@ Status mapping (``classify()``, pure and network-free)
     ok                                    -> active
     http_401 / http_403 / http_429        -> expired   (a token or throttle, not a gone file)
     http_404 / http_410 / http_451        -> dead      (the resource is gone)
-    any other 4xx, any 5xx                -> dead
+    any 5xx (500/502/503/504/522/524)    -> expired   (a gateway/intermediary
+                                           answer, not the link's death;
+                                           H4 R10 — the serve side already
+                                           calls these "flaky", and expired
+                                           is re-resolved, never quarantined)
+    any other 4xx                         -> dead
     timeout / dns / tls / conn_reset /
     conn_error                            -> unverified (we never reached an
                                            endpoint, so no verdict is earned;
@@ -303,6 +308,14 @@ def classify(payload) -> str:
         return STATUS_EXPIRED
     if status in (404, 410, 451):
         return STATUS_DEAD
+    if status >= 500:
+        # H4 R10: a 5xx is an intermediary's answer (gateway, Cloudflare
+        # edge, a deploy), not the link's death — the serve side already
+        # calls these "flaky" (serve_verify.classify_failure) and quarantine
+        # needs repeated failures on separate days. Expired is re-resolved,
+        # never quarantined, and the sweep re-probes it when stale, so a
+        # later 200 revives it and a later 404 still kills it.
+        return STATUS_EXPIRED
     if 400 <= status < 600:
         return STATUS_DEAD
     if error in ("not_media",) or (error == "" and status and status < 400):

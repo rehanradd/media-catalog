@@ -154,9 +154,9 @@ class PayloadMappingTests(unittest.TestCase):
         ((404, ""), "dead"),
         ((410, ""), "dead"),
         ((451, ""), "dead"),
-        ((500, ""), "dead"),
-        ((502, ""), "dead"),
-        ((503, ""), "dead"),
+        ((500, ""), "expired"),   # H4 R10: a 5xx is an intermediary's
+        ((502, ""), "expired"),   # answer, not the link's death
+        ((503, ""), "expired"),
         ((0, "timeout"), None),
         ((0, "dns"), None),
         ((0, "tls"), None),

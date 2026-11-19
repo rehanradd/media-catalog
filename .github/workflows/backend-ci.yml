@@ -308,6 +308,12 @@ jobs:
       - name: 🧪 test_fast_probe.py
         run: python3 -S Fast_Fetch/test_fast_probe.py
 
+      # H4 R10 network-intercept fallback (2026-11-20): a 5xx is expired,
+      # never dead; a HEAD refused by an intermediary gets one bounded
+      # ranged GET. Offline, stdlib, loopback stub + fake connections.
+      - name: 🧪 test_network_intercept.py
+        run: python3 -S Fast_Fetch/test_network_intercept.py
+
       # The self-healing download-host registry (2026-11-18): seeded
       # audit pairs, host-only rewrite, redirect-threshold learning.
       # Offline, stdlib, fake fetchers, temp files, no network.

@@ -669,18 +669,27 @@ def probe(url: str, *, final_url: str = "", timeout: float = DEFAULT_TIMEOUT,
     hint_ext = _extension(urllib.parse.urlsplit(final_url).path) if final_url else ""
 
     # ── phase 1: HEAD (cheap), fall through to GET when unsupported
+    # or when an intermediary refuses (H4 R10: a 403/429/5xx HEAD is not a
+    # verdict about the link — one bounded GET gets a second opinion, the
+    # same headers/UA/timeout. vcloud.beer HEAD 403 -> GET 200 is the
+    # proven case; the liar list only names two hosts. A HEAD 404/410/451
+    # stays immediate: the resource is gone, and a GET would only
+    # re-confirm it at full cost.)
     head, head_final, head_err = _chain(url, "HEAD", req_headers, timeout,
                                         0, max_redirects, **spacing_kw)
     latency_ms = head.header_ms if head is not None else 0
     # need_get: HEAD answered nothing useful (405 / 400 / 501 / no HEAD at all)
     need_get = True
     if head is not None and not head_err and head.status not in (400, 405, 501):
-        if head.status >= 400:
+        if head.status < 400:
+            need_get = False
+        elif head.status in (403, 429) or head.status >= 500:
+            need_get = True
+        else:
             return _finalize(url, head, head_final, b"",
                              error=_status_error(head.status),
                              latency_ms=latency_ms, now=now, origin=origin,
                              redirects_to=head_final)
-        need_get = False
     elif head_err:
         # timeout / dns / tls / reset / redirect cycle: a GET only burns the
         # same budget again, so report the transport truth.

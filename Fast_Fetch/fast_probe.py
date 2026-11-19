@@ -616,11 +616,15 @@ def get_chain(url: str, session: HostSession, *, base_headers: dict,
 def _needs_get_fallback(host: str, status: int, error: str, verdict: str | None) -> bool:
     """True when a ranged GET may say something HEAD could not.
 
-    Two triggers, and only these:
+    Three triggers, and only these:
     * HEAD answered but refused the method (400/405/501): the full
       prober falls through to GET there (``link_health.probe``:
       ``need_get``), so a HEAD-only pass would earn no verdict and the
       row would wait for the full prober. Any host.
+    * HEAD was refused by an intermediary (403/429/5xx): the status is
+      not a verdict about the link (H4 R10 — the full prober applies the
+      same rule), so the GET chain judges instead. A HEAD 404 stays
+      immediate: the resource is gone. Any host.
     * The probe target is a known HEAD liar (``KNOWN_HEAD_LIARS``) and
       HEAD did not already prove the link active: the liar's HEAD answer
       (403/404 on a live URL) is not evidence about the link, so the GET
@@ -633,6 +637,8 @@ def _needs_get_fallback(host: str, status: int, error: str, verdict: str | None)
     if error:
         return False
     if int(status or 0) in HEAD_UNSUPPORTED_STATUSES:
+        return True
+    if int(status or 0) in (403, 429) or int(status or 0) >= 500:
         return True
     if verdict != link_state.STATUS_ACTIVE and is_known_head_liar(host):
         return True
