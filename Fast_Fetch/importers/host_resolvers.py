@@ -187,6 +187,56 @@ file is. `filemoon` rows stay `playback_type='iframe'` / `status='unverified'`
 in the catalog: honest evidence that the site published a player, and no claim
 that a client can play it.
 
+MEGA (`mega.nz`) — THE API WORKS, THE BYTES ARE CIPHERTEXT, SO NO PLAYABLE URL EXISTS
+--------------------------------------------------------------------------------------
+Probed live from the Oracle VM egress on 2026-11-20 (full notes:
+`Fast_Fetch/checkpoints/20261120-phase-c-mega.md`). The catalog holds 68,507
+`service='mega'` rows (68,306 unverified / 201 active); the probed sample was
+an active `/file/<id>#<key>` row, a ~901 MB MKV.
+
+    POST https://g.api.mega.co.nz/cs  [{"a":"g","g":1,"p":"<node_id>"}]
+                                        200, no account, no CAPTCHA:
+                                        {"g": "<gfs URL>", "at": "<attrs>",
+                                         "s": 944948612, ...}
+    `at` (URL-safe base64) AES-128-CBC, zero IV
+                                        MEGA{"n": "Scarlet (2025)
+                                        [RareToonsIndia].mkv", ...}
+    GET <gfs URL>  Range: bytes=0-63    206 application/octet-stream,
+                                        64 bytes, random-looking — not ftyp,
+                                        not EBML
+    same 64 bytes, AES-128-CTR with the unmerged link key
+                                        EBML magic 1a45dfa3 + "matroska"
+
+So the whole chain to *bytes* is proven — the link key unmerges (first 16
+bytes XOR second 16 = AES key, next 8 = CTR IV), the attributes decrypt to a
+real filename, the content decrypts to a real MKV — and still nothing here is
+a resolver, because the only URL MEGA will ever hand out serves ciphertext
+and ExoPlayer cannot play AES-CTR bytes. Returning the gfs URL would 302 to
+garbage the player cannot decode: a false crack. Three independent blockers,
+any one of which is enough:
+
+  1. No playable URL exists on this host, by design (client-side encryption;
+     the `#` fragment key is never sent to the server).
+  2. No AES in the Python stdlib, so a server-side decrypting proxy cannot
+     be built under the stdlib-only rule (pure-Python AES is ~1-3 MB/s on a
+     1-vCPU box; ctypes/libcrypto and third-party `cryptography` are outside
+     it).
+  3. The anonymous/free transfer quota is ~5 GB per 6 h per egress IP, and
+     the Oracle VM has ONE egress IP shared by every user — about five plays
+     of a 900 MB file exhausts mega for everyone until reset. Only a paid
+     MEGA Pro account (money, owner-only) raises it server-side.
+
+The viable unblock is client-side, not server-side: the app has AES natively
+and already runs a loopback media proxy, so it could fetch the ciphertext,
+decrypt on device, and serve plaintext to Media3 — with quota then applying
+per user's own IP. That needs a new API contract to deliver the fragment key
+to the app without leaking it through a public play_url (the classifier
+already bars mega from `kind='file'` banking for exactly that reason) plus
+an app-side decryptor: a new app + API feature, not a resolver. Until an
+owner/coordinator decision commissions that, `mega` rows stay
+`download_only` (as the app's golden vectors already classify them) and no
+code here pretends to resolve them.
+
 HUBCLOUD — THE DRIVE PAGE IS A DOOR, NOT A FILE
 -------------------------------------------------
 The catalog's largest gateway family (460,696 links: hubcloud, fsl_r2,
