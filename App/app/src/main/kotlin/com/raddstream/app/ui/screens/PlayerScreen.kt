@@ -1766,6 +1766,7 @@ private fun BoostBadge() {
  * open-ended credits window — through the ViewModel's [skipActiveSegment].
  * Internal (not private) so PlayerMockupTest can compose it directly.
  */
+@Composable
 internal fun SkipSegmentButton(segment: MediaSegment, onSkip: () -> Unit) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomEnd) {
         Surface(
