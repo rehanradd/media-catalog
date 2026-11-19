@@ -24,6 +24,8 @@ import com.raddstream.app.network.models.EpisodeOffsetRequest
 import com.raddstream.app.network.models.LinkReportRequest
 import com.raddstream.app.network.models.WirePlayRequest
 import com.raddstream.app.player.Coverage
+import com.raddstream.app.player.MediaSegment
+import com.raddstream.app.player.toMediaSegment
 import com.raddstream.app.player.toPlayerCoverage
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
@@ -605,7 +607,9 @@ class CatalogRepository @Inject constructor(
             return null
         }
         val coverage = response.coverage?.toPlayerCoverage() ?: Coverage()
-        return V2PlayResult(bundle = response.toDomain(baseUrl), coverage = coverage)
+        val segments = response.segments.mapNotNull { it.toMediaSegment() }
+        return V2PlayResult(bundle = response.toDomain(baseUrl), coverage = coverage,
+                            segments = segments)
     }
 
     /**
@@ -734,13 +738,16 @@ data class DetailProbe(
 
 /**
  * What POST /api/v2/play hands back, as the app uses it: the server-ranked bundle plus
- * the print's coverage (the chapter data). The two ride together because the coverage
- * belongs to the bundle's print, not to any one rung — the detail screen stages both
- * under the winner's handle, and the player reads both back from the same place.
+ * the print's coverage (the chapter data) plus the Skip Intro / Skip Recap windows
+ * (MX #4) for the episode being played. The three ride together because they all
+ * belong to the bundle's print, not to any one rung — the detail screen stages all
+ * three under the winner's handle, and the player reads them back from the same place.
  */
 data class V2PlayResult(
     val bundle: PlayBundle,
     val coverage: Coverage,
+    /** Skip windows for this play, in file coordinates; empty when nothing is stored. */
+    val segments: List<MediaSegment> = emptyList(),
 )
 
 /**

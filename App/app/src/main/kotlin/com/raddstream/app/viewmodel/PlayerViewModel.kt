@@ -22,6 +22,8 @@ import com.raddstream.app.brand.Brand
 import com.raddstream.app.player.AbRepeat
 import com.raddstream.app.player.AspectMode
 import com.raddstream.app.player.AudioBoostUi
+import com.raddstream.app.player.activeSegment
+import com.raddstream.app.player.skipTargetMs
 import com.raddstream.app.player.AudioTrackMatcher
 import com.raddstream.app.player.AudioTrackPolicy
 import com.raddstream.app.player.AudioTrackRow
@@ -624,7 +626,7 @@ class PlayerViewModel @Inject constructor(
                 // A new bundle is a new episode: any countdown belonging to the
                 // ended one is dropped, never carried across.
                 clearAutoplayCountdown()
-                _ui.update { it.copy(bundle = b, activeRendition = store.activeRendition(), endedHasNextEpisode = false) }
+                _ui.update { it.copy(bundle = b, activeRendition = store.activeRendition(), endedHasNextEpisode = false, activeSkipSegment = null) }
                 armQualityChoices()
                 // A rung Auto moved to is the SAME episode in a different address, so the
                 // binge policy must not be re-armed by it; only a new file or a new episode
@@ -704,11 +706,13 @@ class PlayerViewModel @Inject constructor(
                     // duration must not ride along if the flag flips.
                     val live = stagedLiveChannel || c.isCurrentMediaItemLive
                     _ui.update {
+                        val position = c.currentPosition
+                        val duration = if (live) it.durationMs
+                            else if (c.duration > 0) c.duration else it.durationMs
                         it.copy(
-                            positionMs = c.currentPosition,
+                            positionMs = position,
                             bufferedMs = bufferedOf(c),
-                            durationMs = if (live) it.durationMs
-                                else if (c.duration > 0) c.duration else it.durationMs,
+                            durationMs = duration,
                             // F29 (Batch B): the live flag rides the same tick
                             // as the position — a live window stays live for
                             // the whole stream, and a VOD never flips to it.
@@ -722,6 +726,18 @@ class PlayerViewModel @Inject constructor(
                             startRequestElapsedMs = loadRequestedAtMs?.let { requestedAt ->
                                 (SystemClock.elapsedRealtime() - requestedAt).coerceAtLeast(0)
                             } ?: 0,
+                            // MX #4: the Skip button follows the playhead —
+                            // the segment whose window holds this position,
+                            // and only when a jump target is known (an
+                            // open-ended window in a file of unknown
+                            // duration has nowhere to jump to, so the
+                            // button stays hidden instead of seeking
+                            // nowhere). The ticker visits every 200 ms,
+                            // and every window is seconds long, so no
+                            // window is ever missed between ticks.
+                            activeSkipSegment = activeSegment(
+                                it.bundle?.segments.orEmpty(), position,
+                            )?.takeIf { skipTargetMs(it, duration) != null },
                         )
                     }
                     // A-B repeat (§5 P14): the ticker already visits every 200 ms, so
@@ -942,6 +958,7 @@ class PlayerViewModel @Inject constructor(
                 .withStagedTarget(streamId)
                 .withStagedCoverage(streamId)
                 .withStagedTracks(streamId)
+                .withStagedSegments(streamId)
             beginBundle(bundle, title, resumeKey = streamId, overrideMs = startOverrideMs)
         }
     }
@@ -991,6 +1008,18 @@ class PlayerViewModel @Inject constructor(
         if (tracks.isEmpty()) return this
         val first = renditions.firstOrNull() ?: return this
         return copy(renditions = listOf(first.copy(tracks = TracksInfo(subtitles = tracks))) + renditions.drop(1))
+    }
+
+    /**
+     * The Skip Intro / Skip Recap windows (MX #4) the detail screen staged
+     * for this handle, stamped onto the bundle the same way its coverage
+     * is. A handle launched the old way has none staged, so the bundle
+     * keeps the default empty list — no button, exactly as before.
+     */
+    private fun PlaybackBundle.withStagedSegments(streamId: String): PlaybackBundle {
+        val segments = store.peekSegments(streamId)
+        if (segments.isEmpty()) return this
+        return copy(segments = segments)
     }
 
     /**
@@ -1516,6 +1545,20 @@ class PlayerViewModel @Inject constructor(
         val c = controller ?: return
         if (!_ui.value.seekEnabled) return
         c.seekTo(positionMs.coerceAtLeast(0))
+    }
+
+    /**
+     * MX #4: jump past the segment the Skip button is offering — to the
+     * window's end, or to the end of the file for an open-ended credits
+     * window. A tap with no active segment, or no known target, is a
+     * no-op: the button is only ever shown when both exist, so this is
+     * defence, not a path the UI takes. The seek itself is the same
+     * [seekTo] the scrubber uses, so it honours the same enabled gate.
+     */
+    fun skipActiveSegment() {
+        val segment = _ui.value.activeSkipSegment ?: return
+        val target = skipTargetMs(segment, _ui.value.durationMs) ?: return
+        seekTo(target)
     }
 
     /** Double-tap ripple feedback for the screen (side + seconds, animated by nonce). */

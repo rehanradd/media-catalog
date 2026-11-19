@@ -326,6 +326,12 @@ data class PlaybackBundle(
     @SerializedName("renditions") val renditions: List<PlaybackRendition> = emptyList(),
     @SerializedName("download_options") val downloadOptions: List<PlaybackDownloadOption> = emptyList(),
     @SerializedName("failure_policy") val failurePolicy: PlaybackFailurePolicy = PlaybackFailurePolicy(),
+    /**
+     * Skip Intro / Skip Recap windows (MX #4) for the episode (or movie)
+     * being played, in file coordinates, staged from the v2 play bundle.
+     * Empty on every other path: no segments, no button.
+     */
+    @SerializedName("segments") val segments: List<MediaSegment> = emptyList(),
 ) {
     /** Session-level expiry — never persist or replay a bundle beyond its lifetime (§5). */
     fun isStale(nowEpochMillis: Long): Boolean =

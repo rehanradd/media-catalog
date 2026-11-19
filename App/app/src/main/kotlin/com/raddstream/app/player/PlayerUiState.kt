@@ -335,6 +335,14 @@ data class PlayerUiState(
     val stereoOnly: Boolean = false,
     // failover narration (§5: which print settled, why the others died)
     val bundle: PlaybackBundle? = null,
+    /**
+     * MX #4: the Skip Intro / Skip Recap window the playhead is inside
+     * right now, derived by the ticker from `bundle.segments` + position
+     * — and only when a jump target is known, so an open-ended window in
+     * a file of unknown duration never shows a button that seeks nowhere.
+     * Null the rest of the time: no segment, no button, never a guess.
+     */
+    val activeSkipSegment: MediaSegment? = null,
     val activeRendition: PlaybackRendition? = null,
     val failoverLog: List<FailoverRecord> = emptyList(),
     val settledBanner: String? = null,

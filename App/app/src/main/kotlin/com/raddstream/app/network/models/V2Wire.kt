@@ -409,6 +409,13 @@ data class WirePlayResponse(
     val tiers: List<WirePlayTier> = emptyList(),
     val auto: WirePlayAuto? = null,
     val coverage: WirePlayCoverage? = null,
+    /**
+     * Skip Intro / Skip Recap windows (MX #4) for the episode (or movie)
+     * being played, already in file coordinates — the server shifts them
+     * by the episode's pack offset and omits them when that offset is
+     * unknown. Empty when nothing is stored: no segments, no button.
+     */
+    val segments: List<WireMediaSegment> = emptyList(),
     @SerializedName("stream_candidates")
     val streamCandidates: List<WirePlayCandidate> = emptyList(),
     val candidates: List<WirePlayCandidate> = emptyList(),
@@ -682,6 +689,22 @@ data class WirePlayCoverage(
     val needsOffsetCalibration: Boolean? = null,
     @SerializedName("pack_warning")
     val packWarning: String? = null,
+)
+
+/**
+ * One Skip Intro / Skip Recap window (MX #4) as the v2 play bundle serves
+ * it (`catalog_api.play_bundle` `segments[]`): the segment type plus its
+ * window in the file, already shifted by the episode's pack offset
+ * server-side. `end_ms` null means the window runs to the end of the file
+ * (credits). The server stores these from TheIntroDB v3; the app never
+ * invents one. Mapped by [com.raddstream.app.player.toMediaSegment].
+ */
+data class WireMediaSegment(
+    val type: String? = null,
+    @SerializedName("start_ms")
+    val startMs: Long? = null,
+    @SerializedName("end_ms")
+    val endMs: Long? = null,
 )
 
 data class WirePlayEpisode(

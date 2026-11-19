@@ -406,6 +406,30 @@ class PlayerSessionStore(
     fun peekTracks(streamId: String): List<SubtitleTrackInfo> = stagedTracks[streamId].orEmpty()
 
     /**
+     * The Skip Intro / Skip Recap windows (MX #4) the server served for this
+     * print, staged by the detail screen next to the coverage of the
+     * launched rung and read by the player when it opens the handle.
+     *
+     * Same discipline as [stageCoverage]: in memory only, nothing survives
+     * a process death. Only the v2 bundle carries this data, so a playback
+     * launched the old way simply has no segments, exactly as before — no
+     * button, never a guessed jump.
+     */
+    private val stagedSegments = LinkedHashMap<String, List<MediaSegment>>()
+
+    fun stageSegments(streamId: String, segments: List<MediaSegment>) {
+        if (streamId.isBlank()) return
+        stagedSegments.remove(streamId)
+        if (segments.isNotEmpty()) stagedSegments[streamId] = segments
+        while (stagedSegments.size > MAX_STAGED_FAILOVERS) {
+            stagedSegments.remove(stagedSegments.keys.first())
+        }
+    }
+
+    /** Read without consuming: re-opening the same rung still gets its windows. */
+    fun peekSegments(streamId: String): List<MediaSegment> = stagedSegments[streamId].orEmpty()
+
+    /**
      * The rung list Auto may move along, staged by the detail screen next to the runner-ups
      * of the launched rung and read by the service when it arms [autoQuality].
      *

@@ -189,6 +189,8 @@ import com.raddstream.app.player.GestureMapper
 import com.raddstream.app.player.GestureSettings
 import com.raddstream.app.player.HandoffWhy
 import com.raddstream.app.player.KeepUiState
+import com.raddstream.app.player.MediaSegment
+import com.raddstream.app.player.MediaSegmentType
 import com.raddstream.app.player.PlayerGlass
 import com.raddstream.app.player.looksLikeQualityLabel
 import com.raddstream.app.player.PinchCommand
@@ -686,6 +688,19 @@ private fun PlayerScreenContent(
             )
         }
         if (state.boosting) BoostBadge()
+
+        // MX #4 — the Skip button. It lives with the transient layers, not
+        // in the chrome: the chrome auto-hides mid-intro, and a button that
+        // hides with it would take two taps (one to reveal chrome, one to
+        // skip). It sits bottom-right above the controls, the same 130 dp
+        // clearance ScrubToast uses, and only while a segment is active —
+        // the ViewModel only ever sets one when a jump target is known.
+        // Locked or ended: no transport jumps from either state.
+        state.activeSkipSegment?.let { segment ->
+            if (!state.locked && !state.isEnded) {
+                SkipSegmentButton(segment = segment, onSkip = { vm.skipActiveSegment() })
+            }
+        }
 
         // 5 — chrome. Ghost mode paints only the edge strip; everything else keeps the
         // three-zone MX bars, with no centre button and no scrim on the picture.
@@ -1738,6 +1753,45 @@ private fun BoostBadge() {
                 Icon(Icons.Default.FastForward, null, tint = Color.Black, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(4.dp))
                 Text(stringResource(R.string.player_boost_badge), color = Color.Black, fontSize = brandSp(12), fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+/**
+ * MX #4 — the Skip Intro / Skip Recap pill. Bottom-right above the
+ * controls, jade like the boost badge so it reads as a primary action,
+ * with the segment's own label ("Skip Intro", never a generic "Skip").
+ * A tap seeks to the window's end — or to the end of the file for an
+ * open-ended credits window — through the ViewModel's [skipActiveSegment].
+ * Internal (not private) so PlayerMockupTest can compose it directly.
+ */
+internal fun SkipSegmentButton(segment: MediaSegment, onSkip: () -> Unit) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomEnd) {
+        Surface(
+            color = RaddCurrent500,
+            shape = MaterialTheme.shapes.small,
+            modifier = Modifier.padding(end = 16.dp, bottom = 130.dp),
+        ) {
+            Row(
+                Modifier
+                    .clickableNoRipple { onSkip() }
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Default.FastForward, null, tint = Color.Black, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    stringResource(
+                        when (segment.type) {
+                            MediaSegmentType.INTRO -> R.string.player_skip_intro
+                            MediaSegmentType.RECAP -> R.string.player_skip_recap
+                            MediaSegmentType.CREDITS -> R.string.player_skip_credits
+                            MediaSegmentType.PREVIEW -> R.string.player_skip_preview
+                        },
+                    ),
+                    color = Color.Black, fontSize = brandSp(14), fontWeight = FontWeight.Bold,
+                )
             }
         }
     }

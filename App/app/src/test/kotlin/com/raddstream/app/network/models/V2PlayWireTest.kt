@@ -1,6 +1,8 @@
 package com.raddstream.app.network.models
 
 import com.google.gson.Gson
+import com.raddstream.app.player.MediaSegmentType
+import com.raddstream.app.player.toMediaSegment
 import com.raddstream.app.player.toPlayerCoverage
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -253,5 +255,53 @@ class V2PlayWireTest {
         assertEquals(42, response.episodeId)
         assertEquals(2, response.episode)
         assertEquals(1800, response.offsetSeconds)
+    }
+
+    // MX #4 — Skip Intro / Skip Recap segments (one JSON test per new class).
+    // The fixture values are the Breaking Bad S1E1 windows TheIntroDB v3
+    // returned live on 2026-11-19, already shifted into file coordinates
+    // by the server.
+
+    @Test
+    fun `segments decode from the play bundle with a null credits end`() {
+        val response = gson.fromJson(
+            """{"release_id": 555, "playable": true, "available": true,
+                "segments": [
+                  {"type": "intro", "start_ms": 228665, "end_ms": 246498},
+                  {"type": "credits", "start_ms": 3432884, "end_ms": null}],
+                "stream_candidates": [], "candidates": [],
+                "download_options": [], "tiers": []}""".trimIndent(),
+            WirePlayResponse::class.java,
+        )
+        assertEquals(2, response.segments.size)
+        val segments = response.segments.mapNotNull { it.toMediaSegment() }
+        assertEquals(MediaSegmentType.INTRO, segments[0].type)
+        assertEquals(228665L, segments[0].startMs)
+        assertEquals(246498L, segments[0].endMs)
+        assertEquals(MediaSegmentType.CREDITS, segments[1].type)
+        assertEquals(3432884L, segments[1].startMs)
+        assertEquals(null, segments[1].endMs)
+    }
+
+    @Test
+    fun `an unknown segment type is dropped at the edge`() {
+        val response = gson.fromJson(
+            """{"release_id": 555, "playable": true, "available": true,
+                "segments": [
+                  {"type": "commercial", "start_ms": 100, "end_ms": 200},
+                  {"type": "recap", "start_ms": 1000, "end_ms": 2000}],
+                "stream_candidates": [], "candidates": [],
+                "download_options": [], "tiers": []}""".trimIndent(),
+            WirePlayResponse::class.java,
+        )
+        val segments = response.segments.mapNotNull { it.toMediaSegment() }
+        assertEquals(1, segments.size)
+        assertEquals(MediaSegmentType.RECAP, segments[0].type)
+    }
+
+    @Test
+    fun `a play bundle without segments decodes to an empty list`() {
+        val response = gson.fromJson(responseJson, WirePlayResponse::class.java)
+        assertTrue(response.segments.isEmpty())
     }
 }

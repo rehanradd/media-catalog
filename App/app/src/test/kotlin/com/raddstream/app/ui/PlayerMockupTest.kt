@@ -16,6 +16,8 @@ import com.raddstream.app.player.DecoderMode
 import com.raddstream.app.player.GestureMapper
 import com.raddstream.app.player.KeepUiState
 import com.raddstream.app.player.LadderRung
+import com.raddstream.app.player.MediaSegment
+import com.raddstream.app.player.MediaSegmentType
 import com.raddstream.app.player.PlaybackInfo
 import com.raddstream.app.player.PlaybackRendition
 import com.raddstream.app.player.PlayerUiState
@@ -25,6 +27,7 @@ import com.raddstream.app.player.SleepTimerState
 import com.raddstream.app.ui.screens.BottomControls
 import com.raddstream.app.ui.screens.CenterPlayPause
 import com.raddstream.app.ui.screens.KeepChip
+import com.raddstream.app.ui.screens.SkipSegmentButton
 import com.raddstream.app.ui.screens.SwitchSourceRow
 import com.raddstream.app.ui.screens.TopBar
 import com.raddstream.app.ui.screens.subtitleStatusLabel
@@ -444,5 +447,37 @@ class PlayerMockupTest {
             listOf(15L, 30L, 45L, 60L).map { it * 60_000L },
             SleepTimerState.SHEET_PRESETS_MS,
         )
+    }
+
+    @Test
+    fun `the skip pill shows the segment label and fires the skip`() {
+        // MX #4: the pill that says the segment IS the way past it — one
+        // tap seeks to the window's end. The label names the segment
+        // ("Skip Intro"), never a generic "Skip".
+        var skipped = false
+        compose.setContent {
+            RaddStreamTheme {
+                SkipSegmentButton(
+                    segment = MediaSegment(MediaSegmentType.INTRO, 228665L, 246498L),
+                    onSkip = { skipped = true },
+                )
+            }
+        }
+        compose.onNodeWithText("Skip Intro").assertIsDisplayed().performClick()
+        assertTrue("tapping the Skip Intro pill must seek past the intro", skipped)
+    }
+
+    @Test
+    fun `the skip pill labels credits and recap by their own names`() {
+        compose.setContent {
+            RaddStreamTheme {
+                SkipSegmentButton(
+                    segment = MediaSegment(MediaSegmentType.CREDITS, 3432884L, null),
+                    onSkip = {},
+                )
+            }
+        }
+        compose.onNodeWithText("Skip Credits").assertIsDisplayed()
+        compose.onNodeWithText("Skip Intro").assertDoesNotExist()
     }
 }

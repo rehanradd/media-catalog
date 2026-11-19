@@ -1832,6 +1832,11 @@ class DetailViewModel @Inject constructor(
                 )
             },
         )
+        // MX #4: the winner's Skip Intro / Skip Recap windows ride the
+        // handle the same way its coverage does — the player stamps them
+        // onto the bundle when it opens the handle. An empty list stages
+        // nothing: no segments, no button.
+        PlayerSessionStore.Instance.stageSegments(streamId, result.segments)
         val link = RankedLink(
             streamId = streamId,
             linkId = winner.linkId?.toInt(),

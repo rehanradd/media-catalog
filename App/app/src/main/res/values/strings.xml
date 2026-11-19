@@ -46,6 +46,13 @@
     <string name="player_play_centre">Play video</string>
     <string name="player_buffering">Buffering…</string>
     <string name="player_buffering_percent">Buffering… %1$d%%</string>
+    <!-- MX #4 (Skip Intro / Skip Recap): the button's label per segment type.
+         Four distinct values — the player_* duplicate-value test fails two
+         entries that say the same thing, even when both are used. -->
+    <string name="player_skip_intro">Skip Intro</string>
+    <string name="player_skip_recap">Skip Recap</string>
+    <string name="player_skip_credits">Skip Credits</string>
+    <string name="player_skip_preview">Skip Preview</string>
     <!-- F29 (Batch B): the mark in place of the scrubber on a live stream — a
          live picture has no time row, so the viewer still sees what it is. -->
     <string name="player_live">Live</string>
