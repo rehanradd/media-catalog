@@ -1,12 +1,11 @@
 package com.raddstream.app.player
 
 import androidx.annotation.OptIn
+import androidx.media3.cast.DefaultMediaItemConverter
 import androidx.media3.cast.MediaItemConverter
 import androidx.media3.common.MediaItem
-import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
-import com.google.android.gms.cast.MediaMetadata as CastMediaMetadata
 import com.google.android.gms.cast.MediaQueueItem
 
 /**
@@ -25,9 +24,16 @@ import com.google.android.gms.cast.MediaQueueItem
  * direction the CastPlayer reports its remote timeline back in). The
  * newer `toMediaInfo` shape arrived with the 1.9.0 rewrite and does not
  * exist here. The queue item carries no autoplay or preload flags — the
- * defaults are the receiver's own. The reverse trip keeps the address,
- * the title, and the declared HLS/DASH type, so a round-tripped item
- * loads exactly as the original would.
+ * defaults are the receiver's own.
+ *
+ * The reverse trip is Media3's own [DefaultMediaItemConverter], not a
+ * second composer of ours: UniversalSourceTest pins exactly one
+ * `MediaItem.Builder()` in this codebase (PlaybackMediaItemFactory), and
+ * delegating keeps it that way. The default preserves the address, the
+ * title, and the declared type — a round trip of our own queue item
+ * loads exactly as the original would (see CastMediaItemConverterTest).
+ * A queue item with no MediaInfo converts to the empty item rather than
+ * crashing the timeline read.
  *
  * Not carried, deliberately (same limits as the spike): subtitles (the
  * Default Receiver would need text tracks in the MediaInfo — a follow-up),
@@ -59,25 +65,7 @@ class CastMediaItemConverter : MediaItemConverter {
     }
 
     override fun toMediaItem(mediaQueueItem: MediaQueueItem): MediaItem {
-        // The GMS accessor is getMedia(), not getMediaInfo() — and it is
-        // @Nullable, so a queue item with no MediaInfo converts to the
-        // empty item rather than crashing the timeline read.
-        val info = mediaQueueItem.media ?: return MediaItem.EMPTY
-        // GMS MediaMetadata is a key-value store, not a title property:
-        // the title reads back through KEY_TITLE, the same key the spike
-        // writes it under.
-        val metadata = MediaMetadata.Builder().apply {
-            info.metadata?.getString(CastMediaMetadata.KEY_TITLE)?.let { setTitle(it) }
-        }.build()
-        return MediaItem.Builder()
-            .setUri(info.contentId)
-            .apply {
-                when (info.contentType) {
-                    "application/x-mpegurl" -> setMimeType(MimeTypes.APPLICATION_M3U8)
-                    "application/dash+xml" -> setMimeType(MimeTypes.APPLICATION_MPD)
-                }
-            }
-            .setMediaMetadata(metadata)
-            .build()
+        if (mediaQueueItem.media == null) return MediaItem.EMPTY
+        return DefaultMediaItemConverter().toMediaItem(mediaQueueItem)
     }
 }

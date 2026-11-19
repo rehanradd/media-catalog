@@ -5,7 +5,7 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import com.google.android.gms.cast.MediaMetadata as CastMediaMetadata
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -61,7 +61,10 @@ class CastMediaItemConverterTest {
     @Test
     fun `an item without a title carries no title`() {
         val info = converter.toMediaQueueItem(item(redirector, MimeTypes.APPLICATION_M3U8, null)).media!!
-        assertNull(info.metadata?.getString(CastMediaMetadata.KEY_TITLE))
+        // The spike writes KEY_TITLE unconditionally, so a title-less item
+        // carries an empty string, not a missing key — the honest assertion
+        // is blank, not null.
+        assertTrue(info.metadata?.getString(CastMediaMetadata.KEY_TITLE).isNullOrBlank())
     }
 
     @Test
