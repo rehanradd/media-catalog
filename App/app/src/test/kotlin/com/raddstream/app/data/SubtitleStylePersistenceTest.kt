@@ -73,14 +73,20 @@ class SubtitleStylePersistenceTest {
 
     @Test
     fun `each offered font and edge has its own name and its own label`() {
-        listOf(SubtitleFont.entries, SubtitleEdge.entries).forEach { entries ->
-            val names = entries.map { it.wireName }
-            val labels = entries.map { it.label }
+        // The two enums share no interface, so each is reduced to plain name/label pairs
+        // first — a mixed listOf(SubtitleFont.entries, SubtitleEdge.entries) cannot infer
+        // a common element type with a wireName.
+        listOf(
+            SubtitleFont.entries.map { it.wireName to it.label },
+            SubtitleEdge.entries.map { it.wireName to it.label },
+        ).forEach { pairs ->
+            val names = pairs.map { it.first }
+            val labels = pairs.map { it.second }
             assertEquals(names.size, names.distinct().size)
             assertEquals(labels.size, labels.distinct().size)
-            entries.forEach { entry ->
-                assertTrue("${entry.name} has no label", entry.label.isNotBlank())
-                assertTrue("${entry.name} has no wire name", entry.wireName.isNotBlank())
+            pairs.forEach { (name, label) ->
+                assertTrue("entry has no label", label.isNotBlank())
+                assertTrue("entry has no wire name", name.isNotBlank())
             }
         }
     }
