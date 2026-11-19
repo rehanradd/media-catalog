@@ -1,8 +1,13 @@
 # Phase C — GDFlix host crack (2026-11-20)
 
 Branch: `muse/phase-c-gdflix-20261120`, base main `8f7948d2` (H4 R8; rebased
-to `44631e10` H4 R9 before push). Worktree
+to `44631e10` H4 R9 as `bd8b959a`). Worktree
 `~/workspace/phase-c-gdflix-20261120`. No merge, no deploy, no live writes.
+
+Local verification (post-rebase): `test_gdflix_unwrap.py` 21/21,
+`test_ci_manifest.py` 10/10, `test_resolver_probes.py` (H4 R9) 18/18,
+`test_docs_invariants.py` 22/22, `test_database.py` 239 tests OK
+(skipped=1); gate suites 126 (`grep -c 'name: 🧪'`).
 
 ## Verdict (02:5x PKT 20 Nov)
 
@@ -131,8 +136,8 @@ only, not live play):
   (Instant DL, legacy buttons, DriveBot, onload wrapper, dead page, challenge
   page, no-button page). Registered in `backend-ci.yml` gate step +
   `test_ci_manifest.py` MANDATORY_RUN (gate step 126).
-- Existing `test_database.py` gdflix tests still pass (dead-page + embedded
-  Drive-id cases preserved).
+- Existing `test_database.py` gdflix tests still pass (3 targeted + full
+  module 239 tests OK, skipped=1, post-rebase).
 
 ## What would unblock a live crack
 
