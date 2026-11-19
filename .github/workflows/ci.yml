@@ -126,18 +126,27 @@ jobs:
         # --continue: report every task's failures in one run.
         # --no-daemon/--stacktrace per project standard.
         # --console=plain: unadorned file:line Kotlin errors, no ANSI noise.
-        # :baselineprofile:assemble (feel-instant S7): the Baseline
-        # Profile generator is instrumented-only — it never runs in CI, so
-        # compiling + packaging its test APK is the gate that keeps a typo
-        # in the generator from landing silently. It needs no device;
-        # generation itself (`:app:generateBaselineProfile`) is a device
-        # run and stays out of CI. Note the lifecycle task, not
-        # `:baselineprofile:assembleDebug`: a `com.android.test` module
-        # with the producer plugin has no per-build-type assemble task
-        # (Android CI 44425691304 proved it — TaskSelectionException in
-        # 20 s), so `assemble` builds whatever variants the module has.
+        # :baselineprofile:assembleBenchmarkRelease +
+        # :baselineprofile:assembleNonMinifiedRelease (feel-instant S7):
+        # the Baseline Profile generator is instrumented-only — it never
+        # runs in CI, so compiling + packaging its test APKs is the gate
+        # that keeps a typo in the generator from landing silently. It
+        # needs no device; generation itself
+        # (`:app:generateBaselineProfile`) is a device run and stays out
+        # of CI. Note the per-variant tasks, NOT the `assemble` lifecycle
+        # task and NOT `:baselineprofile:assembleDebug`: a
+        # `com.android.test` module with the producer plugin has no
+        # per-build-type assemble task (Android CI 44425691304 proved it
+        # — TaskSelectionException in 20 s), and the `assemble` lifecycle
+        # task pulls in `:baselineprofile:connectedNonMinifiedRelease-
+        # AndroidTest`, which fails on a deviceless runner with "No
+        # connected devices!" (Android CI 44432484757 proved it — both
+        # variant assembles had already succeeded). The two per-variant
+        # tasks build both variants (benchmarkRelease = the minified
+        # release-like build generation runs against, nonMinifiedRelease
+        # = the unminified one) with no connected test in the graph.
         run: |
-          ./gradlew :app:assembleDebug :app:testDebugUnitTest :baselineprofile:assemble \
+          ./gradlew :app:assembleDebug :app:testDebugUnitTest :baselineprofile:assembleBenchmarkRelease :baselineprofile:assembleNonMinifiedRelease \
             --no-daemon --stacktrace --continue --console=plain
 
       - name: "📸 Verify Paparazzi goldens (explicit gate)"

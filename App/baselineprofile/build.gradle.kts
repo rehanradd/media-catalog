@@ -10,8 +10,13 @@
 // API 33+) the operator provides — see the generator's KDoc for the
 // prerequisites and the exact command. CI never runs the generator
 // (instrumented tests need a device); CI compiles + packages it via
-// `:baselineprofile:assemble` in `.github/workflows/ci.yml`, which
-// is the gate that keeps a typo in the generator from landing silently.
+// `:baselineprofile:assembleBenchmarkRelease` +
+// `:baselineprofile:assembleNonMinifiedRelease` in
+// `.github/workflows/ci.yml`, which is the gate that keeps a typo in the
+// generator from landing silently. Note the per-variant tasks, not the
+// `assemble` lifecycle task: `assemble` pulls in
+// `connectedNonMinifiedReleaseAndroidTest`, which fails on a deviceless
+// runner with "No connected devices!" (Android CI 44432484757).
 plugins {
     id("com.android.test")
     alias(libs.plugins.androidx.baselineprofile)
