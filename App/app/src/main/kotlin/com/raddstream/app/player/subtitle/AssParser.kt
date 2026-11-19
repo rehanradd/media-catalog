@@ -307,8 +307,8 @@ private class AssParserImpl(private val content: String) {
     }
 
     /**
-     * Splits dialogue text at override blocks. Style-affecting tags (`\b`, `\i`, `\u`, `\s`,
-     * `\c`, `\fs`) close the current run and open a new one; cue-level tags (`\an`, `\pos`)
+     * Splits dialogue text at override blocks. Style-affecting tags (`\b`, `\i`, underline,
+     * `\s`, `\c`, `\fs`) close the current run and open a new one; cue-level tags (`\an`, `\pos`)
      * set the cue's placement; everything the renderer cannot honour (karaoke, fades, movement,
      * rotation, drawing) is dropped with its text kept.
      */
