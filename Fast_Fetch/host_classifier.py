@@ -360,6 +360,29 @@ def hubcdn_page_buttons(html: str) -> list:
     return out
 
 
+def hubcdn_preparing_target(html: str) -> Optional[str]:
+    """The off-gateway target of a "Preparing Download" page, or None.
+
+    A second gateway shape (measured live 2026-11-20, ~8% of stored rows):
+    instead of ``dl-trigger`` buttons the page counts down 10 s and then
+    reveals ``var targetUrl="https://new1.filesdl.in/drive/<id>"`` — the
+    asset lives on filesdl, not on R2/Google. The URL is returned as
+    *evidence only*: filesdl answers urllib with a Cloudflare JS challenge
+    (202 + ``__CF$cv$params`` slowAES cookie), so no urllib unwrapper can
+    serve it — a real browser is the only route, exactly like VidCore.
+    The caller reports the page as ``preparing_download`` with this target
+    attached, so the population is counted, never mistaken for a broken
+    page and never served as a playable address.
+    """
+    match = re.search(
+        r"""var\s+targetUrl\s*=\s*["'](https?://[^"']+)["']""",
+        str(html or ""))
+    if not match:
+        return None
+    target = _html_unescape(match.group(1)).strip()
+    return target or None
+
+
 def hubcdn_resolve_href(href: str, base: str = HUBCDN_BASE) -> str:
     """Absolute form of a button href, keeping the gateway's own host for
     root-relative ``/l.php?...`` targets."""
