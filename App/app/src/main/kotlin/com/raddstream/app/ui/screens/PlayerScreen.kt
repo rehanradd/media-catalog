@@ -2044,12 +2044,12 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
  * `MediaRouteButton` is a View, not a composable — and the framework is
  * the one that knows how to show it: [CastButtonFactory.setUpMediaRouteButton]
  * wires discovery, the picker dialog, and the button's own connected /
- * connecting states. The icon is a single-colour glyph, so the white
- * colour filter keeps it legible on the dark top bar in every state the
- * framework swaps the drawable through; the filter belongs to the view
- * and survives those swaps. The button is 48dp, the same slot as the
- * lock button beside it. No prose of its own: the description comes from
- * `player_cast` in strings.xml.
+ * connecting states. The button is a plain View (not an ImageView), so
+ * there is no tint call to make — its icon follows the app theme's
+ * control colour, which is light on this dark bar; device verify
+ * confirms it reads on a real phone. The button is 48dp, the same slot
+ * as the lock button beside it. No prose of its own: the description
+ * comes from `player_cast` in strings.xml.
  */
 @Composable
 private fun CastButton() {
@@ -2058,7 +2058,6 @@ private fun CastButton() {
         factory = { context ->
             MediaRouteButton(context).apply {
                 CastButtonFactory.setUpMediaRouteButton(context, this)
-                setColorFilter(android.graphics.Color.WHITE)
                 contentDescription = description
             }
         },

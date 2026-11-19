@@ -2,6 +2,7 @@ package com.raddstream.app.player
 
 import android.content.Context
 import androidx.media3.cast.CastPlayer
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import com.google.android.gms.cast.framework.CastContext
@@ -98,13 +99,26 @@ class CastTransferManager(
     fun remotePositionMs(): Long {
         val player = castPlayer ?: return 0L
         val pos = player.currentPosition
-        if (pos == Player.TIME_UNSET) return 0L
+        if (pos == C.TIME_UNSET) return 0L
         return castResumePosition(pos, player.duration)
     }
 
     /** Stop the remote player after a session ends. Safe to call when no session is live. */
     fun stopRemote() {
         castPlayer?.stop()
+    }
+
+    /**
+     * End the live Cast session — a refusal, a remote error, Kids Lock, or
+     * the viewer disconnecting. The session-unavailable callback runs the
+     * return-to-local path, so ending here is the one call every exit
+     * funnels through.
+     */
+    fun endSession() {
+        runCatching {
+            CastContext.getSharedInstance(appContext)
+                .sessionManager.endCurrentSession(true)
+        }
     }
 }
 

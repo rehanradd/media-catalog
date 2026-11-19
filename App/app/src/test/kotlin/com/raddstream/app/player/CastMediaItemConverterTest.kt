@@ -37,7 +37,7 @@ class CastMediaItemConverterTest {
 
     @Test
     fun `an HLS item converts with the redirector address and the mpegurl type`() {
-        val info = converter.toMediaInfo(item(redirector, MimeTypes.APPLICATION_M3U8, "One Piece"))
+        val info = converter.toMediaQueueItem(item(redirector, MimeTypes.APPLICATION_M3U8, "One Piece")).mediaInfo
         assertEquals(redirector, info.contentId)
         assertEquals("application/x-mpegurl", info.contentType)
         assertEquals("One Piece", info.metadata?.title.toString())
@@ -45,21 +45,21 @@ class CastMediaItemConverterTest {
 
     @Test
     fun `a DASH item converts with the dash type`() {
-        val info = converter.toMediaInfo(item(redirector, MimeTypes.APPLICATION_MPD, "One Piece"))
+        val info = converter.toMediaQueueItem(item(redirector, MimeTypes.APPLICATION_MPD, "One Piece")).mediaInfo
         assertEquals("application/dash+xml", info.contentType)
     }
 
     @Test
     fun `a plain mp4 address converts with the mp4 type`() {
-        val info = converter.toMediaInfo(
+        val info = converter.toMediaQueueItem(
             item("https://cdn.example.com/film.mp4", null, "Film"),
-        )
+        ).mediaInfo
         assertEquals("video/mp4", info.contentType)
     }
 
     @Test
     fun `an item without a title carries no title`() {
-        val info = converter.toMediaInfo(item(redirector, MimeTypes.APPLICATION_M3U8, null))
+        val info = converter.toMediaQueueItem(item(redirector, MimeTypes.APPLICATION_M3U8, null)).mediaInfo
         assertNull(info.metadata?.title)
     }
 }
