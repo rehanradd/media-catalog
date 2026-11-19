@@ -10,6 +10,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import com.raddstream.app.network.models.ContactRequest
 import com.raddstream.app.network.models.FacetsResponse
+import com.raddstream.app.network.models.LiveFillRequest
 import com.raddstream.app.network.models.LiveTvChannelsResponse
 import com.raddstream.app.network.models.PlayBundle
 import com.raddstream.app.network.models.Post
@@ -396,6 +397,51 @@ class CatalogRepository @Inject constructor(
      */
     suspend fun getWorkDetailV2(workId: Long, audio: String? = null): PostDetail? =
         (fetchWorkDetailV2(workId, audio) as? V2DetailResult.Found)?.detail
+
+    /**
+     * POST /api/v2/enrich — fill one title's missing metadata, live.
+     *
+     * The detail screen fires this in the background when a detail shows
+     * blank fields, and patches the screen from the returned `filled`
+     * map (the server's field names: `rating`, `genres`, `synopsis`,
+     * `cast`, `poster`, `backdrop`, …). Exactly one id: a v2 row sends
+     * its work id, a v1 row its post id; neither is a request at all.
+     *
+     * Fail-open, like every other background call on this screen: any
+     * failure — a 404/503 problem body, a dead socket, a client-build
+     * failure — answers null, and the detail simply keeps the blanks it
+     * already shows. A cancelled load is rethrown, never swallowed into
+     * null (Session 155/156).
+     */
+    suspend fun enrichWorkDetail(workId: Long? = null, postId: Int? = null): Map<String, String>? {
+        if (workId == null && postId == null) return null
+        // The server takes exactly one id — a v2 row's work id wins over
+        // its bridge post id, because the work is the canonical identity
+        // and the server resolves the posts from it.
+        val request = if (workId != null) {
+            LiveFillRequest(workId = workId)
+        } else {
+            LiveFillRequest(postId = postId)
+        }
+        val response = try {
+            apiProvider.current().enrichWorkDetail(request)
+        } catch (ex: CancellationException) {
+            throw ex
+        } catch (ex: java.util.concurrent.CancellationException) {
+            throw ex
+        } catch (_: HttpException) {
+            return null
+        } catch (_: IOException) {
+            return null
+        } catch (_: RuntimeException) {
+            return null
+        } catch (ex: Exception) {
+            Log.w("CatalogRepository", "enrich ask failed without a request: ${ex::class.java.simpleName}: ${ex.message}")
+            return null
+        }
+        if (!response.ok) return null
+        return response.filled
+    }
 
     /**
      * Fetches v2 work detail while distinguishing transient network/server errors

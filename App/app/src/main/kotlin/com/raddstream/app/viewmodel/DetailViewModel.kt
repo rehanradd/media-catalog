@@ -967,6 +967,15 @@ class DetailViewModel @Inject constructor(
                     // is still reading the page, so Play does not pay the
                     // `playV2` round trip first.
                     preresolveTopLink()
+                    // Live fill (detail open): the detail is on screen; if
+                    // it still shows blanks, ask the server to fill just
+                    // this title in the background and patch the fields in
+                    // place when it answers. Never blocks the screen, never
+                    // fires twice for one load — the staleness guard in
+                    // maybeLiveFill drops an answer for a detail the viewer
+                    // already left. After the Kids Lock gate above, so a
+                    // blocked title never asks for a fill.
+                    maybeLiveFill(detail)
                     // A row saved before this app had a handle becomes syncable the moment the
                     // catalog finally names its work. Nothing here fabricates a handle: an absent
                     // key is a no-op, and a present one is the server's own. On the v2 path the
@@ -1520,6 +1529,45 @@ class DetailViewModel @Inject constructor(
     private var preresolvedResult: V2PlayResult? = null
     private var preresolvedAtMs: Long? = null
     private var preresolveJob: Job? = null
+    private var liveFillJob: Job? = null
+
+    /**
+     * Live fill (detail open): ask the server to fill just this title's
+     * missing metadata, in the background, and patch the fields in place
+     * when it answers. Fires once per load, only when the detail shows a
+     * blank displayable field, and only after the Kids Lock gate — the
+     * call site sits past it. A v2 row names its work id; a v1 row its
+     * post id (a v2 detail whose bridge found no v1 post still has its
+     * work id). The staleness guard drops an answer for a detail the
+     * viewer already left: only the exact instance this load showed may
+     * be patched, by reference. A failure is silent — the repository
+     * answers null and the detail keeps the blanks it already shows.
+     */
+    private fun maybeLiveFill(detail: PostDetail) {
+        if (!detail.hasMissingDisplayFields()) return
+        // The v2 path names the work; the v1 path names the post. A v2
+        // detail whose bridge found no v1 post still has its work id.
+        // Exactly one id is sent — the server refuses a body with both.
+        val work = workId.takeIf { it >= 0 }
+        val post = if (work == null) {
+            postId.takeIf { it > 0 } ?: detail.id.takeIf { it > 0 }
+        } else {
+            null
+        }
+        if (work == null && post == null) return
+        liveFillJob?.cancel()
+        liveFillJob = viewModelScope.launch {
+            val filled = catalogRepository.enrichWorkDetail(workId = work, postId = post)
+                ?: return@launch
+            if (filled.isEmpty()) return@launch
+            val current = _uiState.value.post ?: return@launch
+            if (current !== detail) return@launch
+            val patched = current.withLiveFill(filled)
+            if (patched == current) return@launch
+            rawDetail = patched
+            _uiState.update { it.copy(post = patched) }
+        }
+    }
 
     /**
      * Pre-resolve better (2026-11-13) — the byte seed's linger gate and the

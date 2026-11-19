@@ -968,5 +968,341 @@ class ResumeIntegrationTests(unittest.TestCase):
             self.assertEqual(report["posts_updated"], 0)
 
 
+class FillOneTests(unittest.TestCase):
+    """The live fill (detail open): one work, same four passes at group
+    scope, writes through the caller's connection. The app fires it in the
+    background and patches the screen from `filled` — so the tests pin
+    both the write and the answer."""
+
+    def _sources(self):
+        cache = mb.ResponseCache(None)
+        return {"tmdb": FakeTmdb(cache), "omdb": FailingSource(cache)}
+
+    def _marco_routes(self):
+        return {
+            "/search/movie": {"results": [
+                {"id": 1, "title": "Marco", "release_date": "2022-01-01",
+                 "original_language": "en", "origin_country": ["US"]},
+                {"id": 2, "title": "Marco", "release_date": "2022-12-25",
+                 "original_language": "ml", "origin_country": ["IN"]},
+            ]},
+            "/movie/1": self._marco_detail(1, ["Tom Cruise"]),
+            "/movie/2": self._marco_detail(2, ["Unni Mukundan"]),
+        }
+
+    @staticmethod
+    def _marco_detail(tmdb_id, cast):
+        return {
+            "id": tmdb_id, "vote_average": 7.0, "overview": "A film.",
+            "poster_path": "/p.jpg", "backdrop_path": "/b.jpg",
+            "release_date": "2022-01-01", "genres": [{"name": "Action"}],
+            "credits": {"cast": [{"name": name} for name in cast],
+                        "crew": [{"name": "D", "job": "Director"}]},
+            "external_ids": {"imdb_id": None},
+            "images": {"backdrops": []},
+        }
+
+    def _tmdb_source(self, routes):
+        cache = mb.ResponseCache(None)
+        source = mb.TmdbSource(cache)
+        source.http = FakeHttp(routes)
+        return {"tmdb": source}
+
+    def test_site_pass_fills_empty_sibling_and_writes_the_db(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = make_db(Path(tmp) / "t.db", fixture_rows())
+            result = mb.fill_one(conn, post_id=2,
+                                 sources=self._sources(),
+                                 cache=mb.ResponseCache(None))
+            self.assertEqual(result["status"], "filled")
+            self.assertEqual(result["filled"]["rating"], "8.6")
+            # Genres reach the screen comma-joined, not as a JSON list.
+            self.assertEqual(result["filled"]["genres"], "Sci-Fi")
+            self.assertEqual(result["sources"]["rating"], "site")
+            self.assertEqual(result["posts_updated"], [2])
+            self.assertEqual(
+                conn.execute("SELECT imdb_rating FROM posts WHERE id = 2")
+                .fetchone()[0], "8.6")
+            conn.close()
+
+    def test_already_complete_when_every_field_is_present(self):
+        rows = [(30, "Full Film", 2021, "movie", "7.7", "A full synopsis.",
+                 "http://x/full.jpg", "Some Actor", "Some Director",
+                 "tt0000030", "123", '["Drama"]', "full-2021", 0, 0)]
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = make_db(Path(tmp) / "t.db", rows)
+            conn.execute("UPDATE posts SET backdrop_urls = ? WHERE id = 30",
+                         ('["http://x/backdrop.jpg"]',))
+            conn.commit()
+            result = mb.fill_one(conn, post_id=30,
+                                 sources=self._sources(),
+                                 cache=mb.ResponseCache(None))
+            self.assertEqual(result["status"], "already_complete")
+            self.assertEqual(result["fields_filled"], 0)
+            self.assertEqual(result["filled"]["backdrop"],
+                             '["http://x/backdrop.jpg"]')
+            conn.close()
+
+    def test_not_found_for_unknown_post_and_unknown_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = make_db(Path(tmp) / "t.db", fixture_rows())
+            cache = mb.ResponseCache(None)
+            self.assertEqual(
+                mb.fill_one(conn, post_id=999, sources=self._sources(),
+                            cache=cache)["status"], "not_found")
+            self.assertEqual(
+                mb.fill_one(conn, work_key="nope-1999",
+                            sources=self._sources(),
+                            cache=cache)["status"], "not_found")
+            conn.close()
+
+    def test_adult_post_and_flagged_sibling_are_skipped(self):
+        rows = fixture_rows() + [
+            (8, "Clean Twin", 2022, "movie", None, None, None, None, None,
+             None, None, None, "twin-2022", 0, 0),
+            (9, "Flagged Twin", 2022, "movie", "9.1", None, None, None, None,
+             None, None, None, "twin-2022", 1, 0),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = make_db(Path(tmp) / "t.db", rows)
+            cache = mb.ResponseCache(None)
+            result = mb.fill_one(conn, post_id=5,
+                                 sources=self._sources(), cache=cache)
+            self.assertEqual(result["status"], "skipped_adult")
+            self.assertEqual(result["fields_filled"], 0)
+            # A flagged sibling blocks the whole group: the clean twin's
+            # donor is never read, so nothing is written for either row.
+            result = mb.fill_one(conn, post_id=8,
+                                 sources=self._sources(), cache=cache)
+            self.assertEqual(result["status"], "skipped_adult")
+            self.assertIsNone(
+                conn.execute("SELECT imdb_rating FROM posts WHERE id = 8")
+                .fetchone()[0])
+            conn.close()
+
+    def test_empty_only_never_overwrites_a_stored_value(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = make_db(Path(tmp) / "t.db", fixture_rows())
+            result = mb.fill_one(conn, post_id=4,
+                                 sources=self._sources(),
+                                 cache=mb.ResponseCache(None))
+            self.assertEqual(
+                conn.execute("SELECT imdb_rating FROM posts WHERE id = 4")
+                .fetchone()[0], "6.1")
+            self.assertNotEqual(result["sources"].get("rating"), "tmdb")
+            conn.close()
+
+    def test_apply_plan_guard_refuses_a_value_written_after_planning(self):
+        """Two detail opens racing: the plan was made when the field was
+        empty, but by write time another writer filled it — the UPDATE's
+        empty-guard must refuse, not overwrite."""
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = make_db(Path(tmp) / "t.db", fixture_rows())
+            plan = mb.Plan()
+            plan.add(2, "rating", "8.6", "site")
+            conn.execute("UPDATE posts SET imdb_rating = '9.9' WHERE id = 2")
+            conn.commit()
+            self.assertEqual(mb._apply_plan(conn, plan), [])
+            self.assertEqual(
+                conn.execute("SELECT imdb_rating FROM posts WHERE id = 2")
+                .fetchone()[0], "9.9")
+            plan2 = mb.Plan()
+            plan2.add(3, "rating", "8.6", "site")
+            self.assertEqual(mb._apply_plan(conn, plan2), [3])
+            conn.close()
+
+    def test_api_fill_for_a_lone_post(self):
+        rows = [(20, "Dune Part Two Hindi Dubbed", 2024, "movie", None, None,
+                 None, None, None, None, None, None, "dune-lone-2024", 0, 0)]
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = make_db(Path(tmp) / "t.db", rows)
+            result = mb.fill_one(conn, post_id=20,
+                                 sources=self._sources(),
+                                 cache=mb.ResponseCache(None))
+            self.assertEqual(result["status"], "filled")
+            self.assertEqual(result["sources"]["rating"], "tmdb")
+            self.assertEqual(
+                conn.execute("SELECT imdb_rating FROM posts WHERE id = 20")
+                .fetchone()[0], "8.6")
+            conn.close()
+
+    def test_donor_echo_without_network(self):
+        """No sources at all: the site pass still fills from the sibling,
+        and nothing can have touched a socket."""
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = make_db(Path(tmp) / "t.db", fixture_rows())
+            result = mb.fill_one(conn, post_id=2, sources={},
+                                 cache=mb.ResponseCache(None))
+            self.assertEqual(result["status"], "filled")
+            self.assertEqual(result["filled"]["rating"], "8.6")
+            conn.close()
+
+    def test_post_ids_union_covers_a_work_spanning_keys(self):
+        """The route resolves a work_id through cat_work_sites; one work
+        can span several canonical keys, and the fill must see all of
+        them as one group."""
+        rows = [
+            (50, "Split Work", 2020, "movie", "9.0", None, None, None, None,
+             None, None, None, "split-a-2020", 0, 0),
+            (51, "Split Work", 2020, "movie", None, None, None, None, None,
+             None, None, None, "split-b-2020", 0, 0),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = make_db(Path(tmp) / "t.db", rows)
+            result = mb.fill_one(conn, post_ids=[50, 51], sources={},
+                                 cache=mb.ResponseCache(None))
+            self.assertEqual(result["status"], "filled")
+            self.assertEqual(
+                conn.execute("SELECT imdb_rating FROM posts WHERE id = 51")
+                .fetchone()[0], "9.0")
+            conn.close()
+
+    def test_fill_one_needs_exactly_one_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = make_db(Path(tmp) / "t.db", fixture_rows())
+            cache = mb.ResponseCache(None)
+            with self.assertRaises(ValueError):
+                mb.fill_one(conn, sources={}, cache=cache)
+            with self.assertRaises(ValueError):
+                mb.fill_one(conn, post_id=1, work_key="dune-2024",
+                            sources={}, cache=cache)
+            conn.close()
+
+    def test_tie_is_ambiguous_and_fills_nothing(self):
+        rows = [(40, "Marco", 2022, "movie", None, None, None, None, None,
+                 None, None, None, "marco-2022", 0, 0)]
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = make_db(Path(tmp) / "t.db", rows)
+            with patch.dict("os.environ", {"TMDB_API_KEY": "test-key"}):
+                result = mb.fill_one(conn, post_id=40,
+                                     sources=self._tmdb_source(
+                                         self._marco_routes()),
+                                     cache=mb.ResponseCache(None))
+            self.assertEqual(result["status"], "ambiguous")
+            self.assertEqual(result["fields_filled"], 0)
+            self.assertEqual(len(result["ambiguous"]), 1)
+            self.assertEqual(len(result["ambiguous"][0]["candidates"]), 2)
+            self.assertEqual(result["ambiguous"][0]["post_id"], 40)
+            self.assertIsNone(
+                conn.execute("SELECT imdb_rating FROM posts WHERE id = 40")
+                .fetchone()[0])
+            conn.close()
+
+    def test_language_wins_for_marco(self):
+        rows = [(41, "Marco", 2022, "movie", None, None, None, None, None,
+                 None, None, None, "marco-2022", 0, 0)]
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = make_db(Path(tmp) / "t.db", rows)
+            conn.execute("UPDATE posts SET language = 'Malayalam',"
+                         " country = 'India' WHERE id = 41")
+            conn.commit()
+            with patch.dict("os.environ", {"TMDB_API_KEY": "test-key"}):
+                result = mb.fill_one(conn, post_id=41,
+                                     sources=self._tmdb_source(
+                                         self._marco_routes()),
+                                     cache=mb.ResponseCache(None))
+            self.assertEqual(result["status"], "filled")
+            self.assertEqual(result["filled"]["cast"], "Unni Mukundan")
+            self.assertEqual(
+                conn.execute("SELECT cast_names FROM posts WHERE id = 41")
+                .fetchone()[0], "Unni Mukundan")
+            conn.close()
+
+    def test_imdb_id_bypasses_disambiguation(self):
+        rows = [(42, "Marco", 2022, "movie", None, None, None, None, None,
+                 "tt1234567", None, None, "marco-2022", 0, 0)]
+        routes = {
+            "/find/tt1234567": {"movie_results": [
+                {"id": 2, "title": "Marco", "release_date": "2022-12-25"}],
+                "tv_results": []},
+            "/movie/2": self._marco_detail(2, ["Unni Mukundan"]),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = make_db(Path(tmp) / "t.db", rows)
+            with patch.dict("os.environ", {"TMDB_API_KEY": "test-key"}):
+                result = mb.fill_one(conn, post_id=42,
+                                     sources=self._tmdb_source(routes),
+                                     cache=mb.ResponseCache(None))
+            self.assertEqual(result["status"], "filled")
+            self.assertEqual(
+                conn.execute("SELECT cast_names FROM posts WHERE id = 42")
+                .fetchone()[0], "Unni Mukundan")
+            conn.close()
+
+    def test_budget_seeds_and_records_a_metered_source(self):
+        """The batch's per-run cap is a per-day file on the live path: the
+        source starts from yesterday's count, not zero, and the file is
+        updated after the fill."""
+
+        class FakeMetered(mb.Source):
+            NAME = "omdb"
+            DAILY_BUDGET = 950
+
+            def lookup(self, query: dict):
+                if self.calls >= self.DAILY_BUDGET:
+                    self.exhausted = True
+                    return None
+                self.calls += 1
+                out = mb.Metadata()
+                out.set("rating", 7.5, "omdb")
+                return out
+
+        rows = [(60, "Metered Film", 2021, "movie", None, None, None, None,
+                 None, "tt0000060", None, None, "metered-2021", 0, 0)]
+        with tempfile.TemporaryDirectory() as tmp:
+            budget_path = Path(tmp) / "budget.json"
+            budget = mb.DailyBudget(budget_path)
+            budget.record("omdb", 5)
+            conn = make_db(Path(tmp) / "t.db", rows)
+            cache = mb.ResponseCache(None)
+            source = FakeMetered(cache)
+            result = mb.fill_one(conn, post_id=60, sources={"omdb": source},
+                                 budget=mb.DailyBudget(budget_path),
+                                 cache=cache)
+            self.assertEqual(result["status"], "filled")
+            self.assertEqual(result["calls"]["omdb"]["calls"], 6)
+            self.assertEqual(mb.DailyBudget(budget_path).count("omdb"), 6)
+            conn.close()
+
+
+class DailyBudgetTests(unittest.TestCase):
+    def test_empty_budget_counts_zero(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(
+                mb.DailyBudget(Path(tmp) / "b.json").count("omdb"), 0)
+
+    def test_record_persists_and_is_monotonic(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "b.json"
+            mb.DailyBudget(path).record("omdb", 3)
+            self.assertEqual(mb.DailyBudget(path).count("omdb"), 3)
+            # A stale lower count never rewinds the file.
+            mb.DailyBudget(path).record("omdb", 2)
+            self.assertEqual(mb.DailyBudget(path).count("omdb"), 3)
+
+    def test_yesterday_rolls_over_to_zero(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "b.json"
+            yesterday = time.strftime(
+                "%Y-%m-%d", time.localtime(time.time() - 86400))
+            path.write_text(json.dumps({"date": yesterday,
+                                        "calls": {"omdb": 900}}),
+                            encoding="utf-8")
+            self.assertEqual(mb.DailyBudget(path).count("omdb"), 0)
+
+    def test_corrupt_file_counts_zero_and_does_not_raise(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "b.json"
+            path.write_text("{not json", encoding="utf-8")
+            self.assertEqual(mb.DailyBudget(path).count("omdb"), 0)
+            mb.DailyBudget(path).record("omdb", 1)
+            self.assertEqual(mb.DailyBudget(path).count("omdb"), 1)
+
+    def test_no_path_is_a_noop(self):
+        budget = mb.DailyBudget(None)
+        budget.record("omdb", 4)
+        self.assertEqual(budget.count("omdb"), 0)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

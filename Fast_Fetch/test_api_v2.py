@@ -2351,6 +2351,125 @@ class V2CursorTests(V2WireFixture):
             {"offset_seconds": 0}).status, 200)
 
 
+# ── 6b. live fill on detail open ─────────────────────────────────────────────
+
+class V2LiveFillTests(V2WireFixture):
+    """POST /api/v2/enrich — one work's missing metadata, filled live.
+
+    The module sets RADD_SKIP_LIVE_ENRICH=1 at import (the kill-switch is
+    on by default in every test module), so every test here except the
+    kill-switch one runs with the switch off and the metadata cache
+    pointed at the test's own tmp dir. The fill comes from a donor
+    sibling, so no upstream is ever called and no keys are needed."""
+
+    def _enrich_env(self):
+        return unittest.mock.patch.dict(os.environ, {
+            "RADD_SKIP_LIVE_ENRICH": "0",
+            "RADD_METADATA_CACHE_DIR": str(Path(self.tmp.name) / "meta-cache"),
+        })
+
+    def _enrich_target(self):
+        """A work with one full donor post and one empty sibling.
+
+        The empty sibling is inserted directly: `save_scraped_data`
+        matches on the canonical title/year key, so a second `add_post`
+        for the same film would merge into the donor row instead of
+        creating the sibling the fill needs."""
+        donor = self.add_post("vegamovies",
+                              "https://new1.vegamovies.lease/enrich-target-2024/",
+                              clean_title="Enrich Target", year=2024)
+        key = self.conn.execute(
+            "SELECT canonical_key FROM posts WHERE id = ?", (donor,)
+            ).fetchone()[0]
+        cur = self.conn.execute(
+            "INSERT INTO posts (url, slug, title, clean_title, year,"
+            " content_type, poster_url, backdrop_urls, imdb_rating, genres,"
+            " synopsis, cast_names, director, is_18_plus, is_animated,"
+            " source_site, industry, country, language, canonical_key)"
+            " VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL,"
+            " NULL, NULL, 0, 0, ?, ?, ?, ?, ?)",
+            ("https://m1.multimovies.courses/enrich-target-2024/",
+             "enrich-target-2024", "Enrich Target (2024)", "Enrich Target",
+             2024, "movie", "multimovies", "Bollywood", "India", "Hindi",
+             key))
+        empty = int(cur.lastrowid)
+        self.conn.commit()
+        self.project(rev=2)
+        work_id = self.conn.execute(
+            "SELECT id FROM cat_works WHERE title = 'Enrich Target'"
+            ).fetchone()[0]
+        return int(work_id), empty
+
+    def test_enrich_fills_a_work_and_persists(self):
+        work_id, empty = self._enrich_target()
+        with self._enrich_env():
+            reply = self.post("/api/v2/enrich", {"work_id": work_id})
+        self.assertEqual(reply.status, 200)
+        self.assertEqual(reply.json["status"], "filled")
+        self.assertEqual(reply.json["filled"]["rating"], "7.4")
+        self.assertEqual(reply.json["filled"]["genres"], "Action")
+        # The donor poster sat on a scraped site: the answer carries one
+        # of our own art handles, never the raw upstream URL.
+        poster = reply.json["filled"]["poster"]
+        self.assertIn("/api/v1/art", poster)
+        self.assertNotIn("vegamovies", poster)
+        self.assert_clean(reply.json, label="enrich")
+        self.assertNotIn("posts_updated", reply.json)
+        self.assertNotIn("post_id", set(deep_keys(reply.json)))
+        row = self.conn.execute(
+            "SELECT imdb_rating FROM posts WHERE id = ?", (empty,)).fetchone()
+        self.assertEqual(row[0], "7.4")
+
+    def test_enrich_by_post_id(self):
+        _work_id, empty = self._enrich_target()
+        with self._enrich_env():
+            reply = self.post("/api/v2/enrich", {"post_id": empty})
+        self.assertEqual(reply.status, 200)
+        self.assertEqual(reply.json["status"], "filled")
+        row = self.conn.execute(
+            "SELECT imdb_rating FROM posts WHERE id = ?", (empty,)).fetchone()
+        self.assertEqual(row[0], "7.4")
+
+    def test_adult_work_id_answers_like_a_missing_id(self):
+        with self._enrich_env():
+            adult = self.post("/api/v2/enrich",
+                              {"work_id": self.adult_work_id})
+            missing = self.post("/api/v2/enrich",
+                                {"work_id": self.missing_work_id})
+        self.assert_problem(adult, code="not_found", status=404,
+                            instance="/api/v2/enrich")
+        self.assert_problem(missing, code="not_found", status=404,
+                            instance="/api/v2/enrich")
+        self.assertEqual(adult.json["detail"], missing.json["detail"])
+
+    def test_unknown_post_id_is_not_found(self):
+        with self._enrich_env():
+            reply = self.post("/api/v2/enrich", {"post_id": 999999})
+        self.assert_problem(reply, code="not_found", status=404,
+                            instance="/api/v2/enrich")
+
+    def test_bad_body_is_invalid_params(self):
+        with self._enrich_env():
+            for body in ({}, {"work_id": 1, "post_id": 2},
+                         {"work_id": "abc"}, {"work_id": 0},
+                         {"post_id": -3}):
+                reply = self.post("/api/v2/enrich", body)
+                self.assert_problem(reply, code="invalid_params", status=400,
+                                    instance="/api/v2/enrich")
+
+    def test_kill_switch_answers_unavailable(self):
+        # The module default: RADD_SKIP_LIVE_ENRICH=1 — no override here.
+        reply = self.post("/api/v2/enrich",
+                          {"work_id": self.public_work_id})
+        self.assert_problem(reply, code="unavailable", status=503,
+                            instance="/api/v2/enrich")
+        self.assertEqual(reply.header("retry-after"), "60")
+
+    def test_enrich_pays_into_the_reports_bucket(self):
+        self.assertEqual(api_v2.bucket_for("/api/v2/enrich", "POST"),
+                         "reports")
+
+
 # ── 7. rate buckets ──────────────────────────────────────────────────────────
 
 class V2RateBucketTests(V2WireFixture):
@@ -2374,6 +2493,7 @@ class V2RateBucketTests(V2WireFixture):
             "POST /api/v2/play": ("POST", "/api/v2/play", "play"),
             "POST /api/v2/links": ("POST", "/api/v2/links/abc/report", "reports"),
             "POST /api/v2/episodes": ("POST", "/api/v2/episodes/7/offset", "reports"),
+            "POST /api/v2/enrich": ("POST", "/api/v2/enrich", "reports"),
         }
         for name, (method, path, bucket) in routes.items():
             with self.subTest(route=name):
@@ -2389,7 +2509,7 @@ class V2RateBucketTests(V2WireFixture):
         # A head only `route_post` answers is still a mapped route: each one has an
         # explicit entry in the table above, and the bucket it pays into exists.
         post_only = handled_heads(api_v2.route_post) - handled_heads(api_v2.route_get)
-        self.assertEqual(post_only, {"links", "play"},
+        self.assertEqual(post_only, {"links", "play", "enrich"},
                          "the POST surface changed; §12 and this suite must change with it")
         mapped_heads = {path.split("/")[3] for method, path, _ in routes.values()
                         if method == "POST"}
@@ -2524,7 +2644,7 @@ class V2SurfaceTests(V2WireFixture):
              "health"},
             "the GET surface changed; §12 and this suite must change with it")
         self.assertEqual(
-            post_heads - get_heads, {"play", "links"},
+            post_heads - get_heads, {"play", "links", "enrich"},
             "the POST surface changed; §12 and this suite must change with it")
         self.assertIn("play", post_heads)
         self.assertIn("episodes", post_heads)
@@ -2790,6 +2910,7 @@ ROUTE_TESTS = {
     "health": ("V2SurfaceTests", "test_health_is_ops_shaped_and_never_cached"),
     "play": ("V2SurfaceTests", "test_prefer_moves_the_ladder_on_the_axis_the_client_asked_for"),
     "links": ("V2OpaqueHandleTests", "test_a_handle_resolves_its_own_link_and_no_other"),
+    "enrich": ("V2LiveFillTests", "test_enrich_fills_a_work_and_persists"),
 }
 
 _TEST_CLASSES = {name: obj for name, obj in list(globals().items())

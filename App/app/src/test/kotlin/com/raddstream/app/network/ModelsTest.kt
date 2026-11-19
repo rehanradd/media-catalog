@@ -28,6 +28,8 @@ import com.raddstream.app.network.models.HdrFormat
 import com.raddstream.app.network.models.LinkClassification
 import com.raddstream.app.network.models.LinkKind
 import com.raddstream.app.network.models.LinkState
+import com.raddstream.app.network.models.LiveFillRequest
+import com.raddstream.app.network.models.LiveFillResponse
 import com.raddstream.app.network.models.LiveTvChannel
 import com.raddstream.app.network.models.LiveTvChannelsResponse
 import com.raddstream.app.network.models.Ownership
@@ -927,5 +929,45 @@ class ModelsTest {
         )
 
         assertNull(response.pass)
+    }
+
+    @Test
+    fun `live fill response decodes and ignores the ambiguous list`() {
+        val response = gson.fromJson(
+            """
+            {
+              "ok": true, "status": "filled", "fields_filled": 2,
+              "filled": {"rating": "8.1", "synopsis": "A story."},
+              "sources": {"rating": "imdb"},
+              "ambiguous": [{"post_id": 9, "title": "Marco", "year": 2024}]
+            }
+            """.trimIndent(),
+            LiveFillResponse::class.java,
+        )
+
+        assertTrue(response.ok)
+        assertEquals("filled", response.status)
+        assertEquals(mapOf("rating" to "8.1", "synopsis" to "A story."), response.filled)
+        assertEquals(mapOf("rating" to "imdb"), response.sources)
+        assertEquals(2, response.fieldsFilled)
+    }
+
+    @Test
+    fun `live fill response without any key carries empty defaults`() {
+        val response = gson.fromJson("{}", LiveFillResponse::class.java)
+
+        assertEquals(false, response.ok)
+        assertNull(response.status)
+        assertEquals(emptyMap<String, String>(), response.filled)
+        assertEquals(0, response.fieldsFilled)
+    }
+
+    @Test
+    fun `live fill request sends exactly one snake_case id`() {
+        val byWork = gson.toJson(LiveFillRequest(workId = 42L))
+        val byPost = gson.toJson(LiveFillRequest(postId = 7))
+
+        assertEquals("""{"work_id":42}""", byWork)
+        assertEquals("""{"post_id":7}""", byPost)
     }
 }

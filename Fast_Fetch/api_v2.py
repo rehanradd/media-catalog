@@ -33,6 +33,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import re
 import sqlite3
 import threading
@@ -219,6 +220,7 @@ ROUTE_BUCKETS = {
     "resolve": "play",
     "report": "reports",
     "offset": "reports",
+    "enrich": "reports",
     "browse": "browse",
     "search": "browse",
     "suggest": "browse",
@@ -243,7 +245,7 @@ ROUTE_ARITY = {
             "sync": (1,), "stats": (1,), "health": (1,), "feed.m3u": (1,),
             "works": (2, 4), "episodes": (2,), "releases": (2,), "resolve": (2,),
             "collections": (1, 2)},
-    "POST": {"play": (1,), "links": (3,), "episodes": (3,)},
+    "POST": {"play": (1,), "links": (3,), "episodes": (3,), "enrich": (1,)},
 }
 
 
@@ -1535,6 +1537,8 @@ def bucket_for(path: str, method: str = "GET", warm: bool = False) -> str:
             return ROUTE_BUCKETS["report"]
         if head == "episodes" and len(segments) == 3 and segments[2] == "offset":
             return ROUTE_BUCKETS["offset"]
+        if head == "enrich":
+            return ROUTE_BUCKETS["enrich"]
         return ROUTE_BUCKETS["browse"]
     if head == "resolve":
         return "warm" if warm else ROUTE_BUCKETS["resolve"]
@@ -1999,6 +2003,11 @@ def route_post(handler, path: str, query: dict, *, db_path, operator: bool,
         if head == "episodes" and len(segments) == 3 and segments[2] == "offset":
             route_offset(handler, conn, body, segments[1], rid=rid, path=path,
                          operator=operator)
+            return True
+
+        if head == "enrich":
+            route_enrich(handler, conn, body, rid=rid, path=path,
+                         operator=operator, base_url=base_url, secret=secret)
             return True
 
     problem(handler, code="not_found", rid=rid, instance=path,
@@ -2574,6 +2583,146 @@ def _play_first_playable(conn, release_ids, *, episode_id, include_adult,
             if _release_has_verified_candidate(conn, int(release_id)):
                 return bundle
     return first_acceptable if first_acceptable is not None else first
+
+
+def _metadata_cache_dir() -> str:
+    """Where the live-fill response cache and daily budget live. The batch
+    takes its cache path on the command line; the live server has no
+    command line, so it reads RADD_METADATA_CACHE_DIR and otherwise uses
+    ~/.cache/radd-stream-metadata."""
+    override = os.environ.get("RADD_METADATA_CACHE_DIR")
+    if override:
+        return override
+    return os.path.join(os.path.expanduser("~"), ".cache",
+                        "radd-stream-metadata")
+
+
+def route_enrich(handler, conn, body: dict, *, rid: str, path: str,
+                 operator: bool, base_url: str, secret: str) -> None:
+    """POST /api/v2/enrich — fill one work's missing metadata, live.
+
+    The detail-open path: the app fires this in the background when a
+    detail shows blank fields, and patches the screen from the `filled`
+    values when it returns — the next projection run carries them into
+    cat_works. The fill itself is metadata_backfill.fill_one (the batch's
+    four passes at group scope, same disambiguation, same guards), writing
+    through this request's session, which commits on success.
+
+    Identity: exactly one of `work_id` (resolved to posts through
+    cat_work_sites) or `post_id` (the post plus its canonical_key
+    siblings). A flagged work, a missing work, and a flagged post all
+    answer the same 404 `not_found` as a missing one — the flag is never
+    named. The wire answer never carries a ledger row id: `posts_updated`
+    stays server-side and the `post_id` is stripped from `ambiguous`
+    entries. Artwork is shaped exactly like the v1 detail
+    (`redact.public_art_value` against the post that holds the art), so a
+    site-hosted image becomes one of our own handles, never a raw upstream
+    URL. RADD_SKIP_LIVE_ENRICH=1 answers 503 `unavailable` (the
+    kill-switch; the app treats it as "no fill")."""
+    import metadata_backfill as mb
+
+    if os.environ.get("RADD_SKIP_LIVE_ENRICH") == "1":
+        problem(handler, code="unavailable", rid=rid, instance=path,
+                detail="Live enrichment is disabled on this server.",
+                headers=[("Retry-After", "60")])
+        return
+    work_id = _int_or_none(body.get("work_id"))
+    post_id = _int_or_none(body.get("post_id"))
+    if ((work_id is None) == (post_id is None)
+            or (work_id is not None and work_id <= 0)
+            or (post_id is not None and post_id <= 0)):
+        problem(handler, code="invalid_params", rid=rid, instance=path,
+                detail="Send exactly one of `work_id`, `post_id`.")
+        return
+    fill_kwargs: dict = {}
+    if work_id is not None:
+        work = conn.execute(
+            "SELECT id, is_18_plus FROM cat_works WHERE id = ?",
+            (work_id,)).fetchone()
+        if work is None or int(work["is_18_plus"] or 0):
+            # A flagged work answers exactly like a missing one.
+            problem(handler, code="not_found", rid=rid, instance=path,
+                    detail="No such work in the catalog.")
+            return
+        try:
+            post_ids = [row[0] for row in conn.execute(
+                "SELECT DISTINCT post_id FROM cat_work_sites WHERE work_id = ?",
+                (work_id,)).fetchall()]
+        except sqlite3.Error:
+            post_ids = []
+        if not post_ids:
+            problem(handler, code="not_found", rid=rid, instance=path,
+                    detail="No such work in the catalog.")
+            return
+        fill_kwargs["post_ids"] = post_ids
+    else:
+        fill_kwargs["post_id"] = post_id
+    cache_dir = _metadata_cache_dir()
+    cache = mb.ResponseCache(os.path.join(cache_dir, "responses.json"))
+    budget = mb.DailyBudget(os.path.join(cache_dir, "live-fill-budget.json"))
+    sources = mb.build_sources(cache, timeout=10.0, min_interval=0.0)
+    result = mb.fill_one(conn, sources=sources, datasets=None,
+                         budget=budget, cache=cache, **fill_kwargs)
+    if result["status"] in ("not_found", "skipped_adult"):
+        # A flagged post answers exactly like a missing one.
+        problem(handler, code="not_found", rid=rid, instance=path,
+                detail="No such work in the catalog.")
+        return
+    # The wire answer never carries a ledger row id.
+    ambiguous = [{k: v for k, v in entry.items() if k != "post_id"}
+                 for entry in result["ambiguous"]]
+    filled = dict(result["filled"])
+    filled_post = result["filled_post"]
+    if "poster" in filled and "poster" in filled_post:
+        shaped = redact.public_art_value(
+            filled["poster"], filled_post["poster"], secret, base_url,
+            "poster", 0)
+        if shaped is not None:
+            filled["poster"] = shaped
+        else:
+            # Nothing shapable: drop the key rather than leak a raw URL.
+            del filled["poster"]
+    if "backdrop" in filled and "backdrop" in filled_post:
+        try:
+            items = json.loads(filled["backdrop"])
+            if isinstance(items, str):
+                items = [items]
+        except ValueError:
+            items = [u.strip() for u in str(filled["backdrop"]).split(",")
+                     if u.strip()]
+        pid = filled_post["backdrop"]
+        shaped_backdrops = [
+            redact.public_art_value(item, pid, secret, base_url,
+                                    "backdrop", i)
+            for i, item in enumerate(items if isinstance(items, list) else [])
+            if str(item or "").strip()
+        ]
+        shaped_backdrops = [s for s in shaped_backdrops if s]
+        if shaped_backdrops:
+            filled["backdrop"] = json.dumps(shaped_backdrops)
+        else:
+            # Nothing shapable: drop the key rather than leak a raw URL.
+            del filled["backdrop"]
+    # Display text is scrubbed at the edge, like the detail route's
+    # catalog_api._text: a synopsis or cast list scraped from a site can
+    # carry the site's name inside it. The stored rows keep the original
+    # text — this is a rendering decision, never a rewrite of the ledger.
+    for field in ("synopsis", "cast", "director", "genres"):
+        if field in filled:
+            filled[field] = redact.scrub_text(filled[field])
+    ambiguous = [{**entry, "title": redact.scrub_text(entry.get("title") or ""),
+                  "candidates": [
+                      {**c, "title": redact.scrub_text(c.get("title") or "")}
+                      for c in entry.get("candidates") or []]}
+                 for entry in ambiguous]
+    json_response(handler, {
+        "ok": True,
+        "status": result["status"],
+        "filled": filled,
+        "sources": result["sources"],
+        "ambiguous": ambiguous,
+        "fields_filled": result["fields_filled"],
+    }, rid=rid, cache=CACHE_NO_STORE, operator=operator)
 
 
 def route_play(handler, conn, body: dict, *, rid: str, path: str, operator: bool,

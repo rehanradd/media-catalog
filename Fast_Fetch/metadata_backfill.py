@@ -70,6 +70,12 @@ Safety (the law for this module)
   batch. ``--resume`` reads the staging SQL (and the progress file when
   present) and skips the posts already written. A staging file without a
   closing ``COMMIT;`` is an interrupted run: resume it, never apply it.
+* Live fill (detail open): ``fill_one`` fills ONE work on demand, for the
+  ``POST /api/v2/enrich`` route — same four passes at group scope, same
+  disambiguation, same guards. It writes through the caller's connection
+  (the api_v2 request session commits); it never opens a connection and
+  never commits. The batch's per-run metered cap becomes a persistent
+  per-day ``DailyBudget`` sidecar, because a live server has no "run".
 * Ratings are stored as one-decimal strings (``"7.5"``), exactly the shape
   ``backfill_tmdb.normalize_rating`` writes and the projection's
   ``valid_rating`` accepts. A 0–100 score (AniList / Kitsu) is divided by 10.
@@ -783,6 +789,55 @@ class ResponseCache:
                        encoding="utf-8")
         tmp.replace(self.path)
         self.dirty = False
+
+
+class DailyBudget:
+    """Persistent per-day call counts for the metered sources (OMDb /
+    MDBList, 950 calls each). The batch's cap is per-run; a live server
+    has no run, so the live-fill path seeds each metered source's
+    ``calls`` from this file before resolving and writes the count back
+    after. A cache hit never consumes budget (``Source.cached`` only
+    counts real fetches). The file is a tiny JSON dict next to the
+    response cache; a new date resets the counts. A lost or corrupt file
+    means "no budget spent" — the cap is a guard, not a quota, and
+    under-counting after a crash is safer than refusing fills."""
+
+    def __init__(self, path: Path | None):
+        self.path = Path(path) if path else None
+        self._lock = threading.Lock()
+        self._date = time.strftime("%Y-%m-%d", time.localtime())
+        self._counts: dict[str, int] = {}
+        if self.path and self.path.exists():
+            try:
+                data = json.loads(self.path.read_text(encoding="utf-8"))
+                if isinstance(data, dict) and data.get("date") == self._date:
+                    counts = data.get("calls") or {}
+                    if isinstance(counts, dict):
+                        self._counts = {k: int(v) for k, v in counts.items()}
+            except (ValueError, OSError, TypeError):
+                self._counts = {}
+
+    def count(self, name: str) -> int:
+        with self._lock:
+            return int(self._counts.get(name, 0))
+
+    def record(self, name: str, calls: int) -> None:
+        """Persist the source's call count for today (monotonic: never lowers)."""
+        if not self.path:
+            return
+        with self._lock:
+            self._counts[name] = max(int(self._counts.get(name, 0)),
+                                     int(calls))
+            self._save()
+
+    def _save(self) -> None:
+        if not self.path:
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
+        tmp.write_text(json.dumps({"date": self._date, "calls": self._counts},
+                                  ensure_ascii=False), encoding="utf-8")
+        tmp.replace(self.path)
 
 
 class HttpClient:
@@ -1786,6 +1841,38 @@ def _field_missing(row, field: str, plan: Plan) -> bool:
     return is_empty_value(row[FIELD_COLUMN[field]])
 
 
+def _donor_values(rows, wanted: list[str], plan: Plan, *,
+                  include_plan_donors: bool = False) -> dict[str, tuple]:
+    """Best stored value per field across a work's rows: the donor for a
+    field is the sibling with the most filled fields (ties: lowest id) —
+    a post that carries a rating usually carries the rest too. With
+    include_plan_donors, values already planned for a sibling (from the
+    datasets or API pass) count as donor values, which is how an API win
+    on one post propagates to the whole work. Shared by the batch site
+    pass and the live fill — one rule, one place."""
+    donors: dict[str, tuple] = {}
+    for field in wanted:
+        best_row = None
+        best_score = -1
+        for row in rows:
+            value = row[FIELD_COLUMN[field]]
+            if is_empty_value(value):
+                continue
+            score = sum(1 for f in wanted
+                        if not is_empty_value(row[FIELD_COLUMN[f]]))
+            if score > best_score:
+                best_score, best_row = score, row
+        if best_row is not None:
+            donors[field] = (best_row[FIELD_COLUMN[field]], "site")
+        elif include_plan_donors:
+            for row in rows:
+                planned = plan.updates.get(row["id"], {}).get(field)
+                if planned is not None:
+                    donors[field] = planned
+                    break
+    return donors
+
+
 def plan_site_pass(conn: sqlite3.Connection, columns: set[str],
                    wanted: list[str], plan: Plan, *,
                    include_plan_donors: bool = False) -> dict:
@@ -1806,26 +1893,8 @@ def plan_site_pass(conn: sqlite3.Connection, columns: set[str],
                if any(not is_empty_value(r[FIELD_COLUMN[field]]) for r in rows)}
         key_had[key] = had
         # Donor values: existing first, then (on the propagation run) planned.
-        donors: dict[str, tuple] = {}
-        for field in wanted:
-            best_row = None
-            best_score = -1
-            for row in rows:
-                value = row[FIELD_COLUMN[field]]
-                if is_empty_value(value):
-                    continue
-                score = sum(1 for f in wanted
-                            if not is_empty_value(row[FIELD_COLUMN[f]]))
-                if score > best_score:
-                    best_score, best_row = score, row
-            if best_row is not None:
-                donors[field] = (best_row[FIELD_COLUMN[field]], "site")
-            elif include_plan_donors:
-                for row in rows:
-                    planned = plan.updates.get(row["id"], {}).get(field)
-                    if planned is not None:
-                        donors[field] = planned
-                        break
+        donors = _donor_values(rows, wanted, plan,
+                               include_plan_donors=include_plan_donors)
         for row in rows:
             for field, (value, source) in donors.items():
                 if _field_missing(row, field, plan):
@@ -1893,25 +1962,7 @@ def _representatives(conn: sqlite3.Connection, columns: set[str],
             missing = [f for f in wanted
                        if force or _field_missing(row, f, plan)]
             if missing:
-                candidates.append({
-                    "id": row["id"], "key": key,
-                    "title": row["title"], "clean_title": row["clean_title"],
-                    "year": row["year"], "content_type": row["content_type"],
-                    "seasons": row["seasons"], "imdb_id": row["imdb_id"],
-                    "tmdb_id": row["tmdb_id"],
-                    "animated": bool(row["is_animated"]) if "is_animated" in row.keys() else False,
-                    # Disambiguation context (site metadata is primary):
-                    # the post's own language/country/industry, plus its
-                    # known cast/director for the overlap tiebreak.
-                    "language": row["language"] if "language" in row.keys() else None,
-                    "country": row["country"] if "country" in row.keys() else None,
-                    "industry": row["industry"] if "industry" in row.keys() else None,
-                    "cast": split_names(row[FIELD_COLUMN["cast"]])
-                            if FIELD_COLUMN["cast"] in row.keys() else [],
-                    "director": split_names(row[FIELD_COLUMN["director"]])
-                            if FIELD_COLUMN["director"] in row.keys() else [],
-                    "missing": missing,
-                })
+                candidates.append(_candidate_from_row(row, key, missing))
         if not candidates:
             continue
         candidates.sort(key=lambda c: (-len(c["missing"]), c["id"]))
@@ -2352,6 +2403,17 @@ def _build_sources(cache: ResponseCache, wanted_sources: list[str],
     return sources
 
 
+def build_sources(cache: ResponseCache, wanted_sources: list[str] | None = None,
+                  *, timeout: float = 10.0, min_interval: float = 0.0) -> dict:
+    """Public entry for the live-fill route (``POST /api/v2/enrich``): one
+    instance per source class, keyed by NAME. A source with a missing key
+    is still built (so the report can name it disabled) but is never
+    called. The batch calls ``_build_sources`` directly with its own
+    pacing; the live route wants the 10 s upstream timeout and no
+    inter-request pacing (the app fires it in the background)."""
+    return _build_sources(cache, wanted_sources or [], timeout, min_interval)
+
+
 def run(conn: sqlite3.Connection, *, wanted: list[str], sources: dict,
         datasets: ImdbDatasets | None, cache: ResponseCache,
         limit: int = 0, after_id: int = 0, workers: int = DEFAULT_WORKERS,
@@ -2419,6 +2481,320 @@ def run(conn: sqlite3.Connection, *, wanted: list[str], sources: dict,
         writer.ambiguous = ambiguous
     cache.flush()
     return plan, stats
+
+
+# ── live fill (one work, on detail open) ─────────────────────────────────────
+
+# SQL literals that mean "empty" — the same set is_empty_value() checks in
+# Python, plus "0": an int 0 is empty in Python, and a stored "0" is never
+# a real value for any fillable field (a 0 rating is unrated, year 0 is
+# invalid, id "0" is no id). A row the plan thinks is empty is still empty
+# when the UPDATE lands, so two detail opens racing each other cannot
+# overwrite.
+_EMPTY_SQL = ("", "[]", "{}", "n/a", "na", "none", "null", "unknown", "unk",
+              "0")
+
+
+def _candidate_from_row(row, key, missing) -> dict:
+    """The API-pass candidate shape for one post row — the same dict
+    _representatives builds, shared so the batch and the live fill ask the
+    APIs about the same post in the same words."""
+    return {
+        "id": row["id"], "key": key,
+        "title": row["title"], "clean_title": row["clean_title"],
+        "year": row["year"], "content_type": row["content_type"],
+        "seasons": row["seasons"], "imdb_id": row["imdb_id"],
+        "tmdb_id": row["tmdb_id"],
+        "animated": bool(row["is_animated"]) if "is_animated" in row.keys() else False,
+        # Disambiguation context (site metadata is primary): the post's own
+        # language/country/industry, plus its known cast/director for the
+        # overlap tiebreak.
+        "language": row["language"] if "language" in row.keys() else None,
+        "country": row["country"] if "country" in row.keys() else None,
+        "industry": row["industry"] if "industry" in row.keys() else None,
+        "cast": split_names(row[FIELD_COLUMN["cast"]])
+                if FIELD_COLUMN["cast"] in row.keys() else [],
+        "director": split_names(row[FIELD_COLUMN["director"]])
+                if FIELD_COLUMN["director"] in row.keys() else [],
+        "missing": missing,
+    }
+
+
+def _row_key(row) -> str:
+    """A post's group key: its canonical_key, or a per-post key when it has
+    none — a keyless post is its own group."""
+    key = row["canonical_key"] if "canonical_key" in row.keys() else None
+    return (key if key and str(key).strip().lower() != "unknown"
+            else f"post:{row['id']}")
+
+
+def _group_rows(conn: sqlite3.Connection, columns: set[str], *,
+                post_id=None, work_key=None, post_ids=None):
+    """Rows for one live-fill group: the post and its siblings under the
+    same canonical_key, or every post sharing a work key, or — for a
+    work_id the route resolved through cat_work_sites — the union of the
+    canonical_key groups of the given posts (one work can span several
+    keys). A keyless post is its own group. Rows carry the same columns
+    _stream_groups yields, so the passes read them the same way."""
+    wanted = [c for c in ROW_COLUMNS if c in columns]
+    fillable = [FIELD_COLUMN[f] for f in FIELDS if FIELD_COLUMN[f] in columns]
+    select = ", ".join(wanted + fillable)
+    conn.row_factory = sqlite3.Row
+    key = work_key
+    if post_id is not None:
+        one = conn.execute(
+            f"SELECT {select} FROM posts WHERE id = ?", (post_id,)).fetchone()
+        if one is None:
+            return []
+        key = one["canonical_key"] if "canonical_key" in one.keys() else None
+        if not key or str(key).strip().lower() == "unknown":
+            return [one]
+    if post_ids is not None:
+        rows = []
+        keys = set()
+        for pid in post_ids:
+            one = conn.execute(
+                f"SELECT {select} FROM posts WHERE id = ?", (pid,)).fetchone()
+            if one is None:
+                continue
+            key = one["canonical_key"] if "canonical_key" in one.keys() else None
+            if not key or str(key).strip().lower() == "unknown":
+                rows.append(one)
+            else:
+                keys.add(key)
+        for key in sorted(keys):
+            rows.extend(conn.execute(
+                f"SELECT {select} FROM posts WHERE canonical_key = ? ORDER BY id",
+                (key,)).fetchall())
+        seen: set[int] = set()
+        out = []
+        for row in sorted(rows, key=lambda r: r["id"]):
+            if row["id"] not in seen:
+                seen.add(row["id"])
+                out.append(row)
+        return out
+    return conn.execute(
+        f"SELECT {select} FROM posts WHERE canonical_key = ? ORDER BY id",
+        (key,)).fetchall()
+
+
+def _display_value(field: str, value) -> str | None:
+    """The value as the detail screen shows it: the stored shape, except
+    genres, which the posts table keeps as a JSON list string while the
+    screen shows a comma-joined list."""
+    if value is None:
+        return None
+    if field == "genres":
+        try:
+            names = json.loads(value) if isinstance(value, str) else value
+        except ValueError:
+            names = None
+        if isinstance(names, list):
+            joined = ", ".join(str(n) for n in names if str(n).strip())
+            return joined or None
+        return str(value)
+    if field == "year":
+        year = parse_year(value)
+        return str(year) if year is not None else None
+    return str(value)
+
+
+def _apply_plan(conn: sqlite3.Connection, plan: Plan) -> list[int]:
+    """Write a plan into the caller's connection, one UPDATE per post, each
+    with a fill-only-empty guard on every column. Returns the post ids
+    actually changed. The caller owns the transaction (the api_v2 request
+    session commits); this function never commits and never opens a
+    connection."""
+    updated: list[int] = []
+    guard = ", ".join("?" for _ in _EMPTY_SQL)
+    for post_id, fields in plan.updates.items():
+        sets: list[str] = []
+        values: list = []
+        guards: list[str] = []
+        guard_params: list = []
+        for field, (value, _source) in fields.items():
+            column = FIELD_COLUMN[field]
+            sets.append(f"{column} = ?")
+            values.append(value)
+            guards.append(f"({column} IS NULL OR "
+                          f"LOWER(TRIM(CAST({column} AS TEXT))) IN ({guard}))")
+            guard_params.extend(_EMPTY_SQL)
+        sql = (f"UPDATE posts SET {', '.join(sets)} WHERE id = ? "
+               f"AND {' AND '.join(guards)}")
+        cur = conn.execute(sql, values + [post_id] + guard_params)
+        if cur.rowcount > 0:
+            updated.append(post_id)
+    return updated
+
+
+def _fill_result(status: str) -> dict:
+    return {"status": status, "filled": {}, "sources": {}, "ambiguous": [],
+            "posts_updated": [], "fields_filled": 0, "calls": {},
+            "filled_post": {}}
+
+
+def fill_one(conn, *, post_id=None, work_key=None, post_ids=None, wanted=None,
+             sources, datasets=None, budget=None, cache=None) -> dict:
+    """Fill the missing metadata of ONE work (or one keyless post), live.
+
+    The detail-open path: the same four passes as run(), at group scope —
+    site siblings, IMDb datasets (the live route passes none: loading the
+    TSVs per request is too heavy; OMDb/TMDb cover ratings anyway), API via
+    _resolve_representative (which runs the v2 choose_candidate — language /
+    industry first, cast/director overlap, still tied = fill NOTHING), then
+    propagation to siblings. The group is named by exactly one of post_id
+    (the post plus its canonical_key siblings), work_key (every post under
+    that key), or post_ids (the union of the canonical_key groups of the
+    given posts — how the route answers a work_id, since one work can span
+    several keys). Writes go through _apply_plan into the caller's
+    connection; this function never commits and never opens a connection.
+    The response carries the work-level value for every fillable field
+    that has one after the attempt — newly filled OR already stored in a
+    sibling post — so the caller can show them at once instead of waiting
+    for the next projection run (which is what carries the values into
+    cat_works). That echo is also what heals a stale projection: the app
+    asks because its cat_works row is blank, and the answer carries the
+    value the posts already hold. The caller merges blanks-only, so
+    values it already shows are harmless. Statuses: filled (the attempt
+    wrote new values) | already_complete (nothing to write) | no_match |
+    ambiguous | not_found | skipped_adult."""
+    given = [x for x in (post_id, work_key, post_ids) if x is not None]
+    if len(given) != 1:
+        raise ValueError(
+            "fill_one needs exactly one of post_id, work_key, post_ids")
+    columns = post_columns(conn)
+    available = [f for f in (wanted or list(FIELDS)) if FIELD_COLUMN[f] in columns]
+    if not available:
+        raise ValueError("posts has none of the fillable columns")
+    rows = _group_rows(conn, columns, post_id=post_id, work_key=work_key,
+                       post_ids=post_ids)
+    if not rows:
+        return _fill_result("not_found")
+    if any("is_18_plus" in row.keys() and int(row["is_18_plus"] or 0)
+           for row in rows):
+        return _fill_result("skipped_adult")
+    # The representative's key: the work key when given, else the first
+    # row's key. plan.post_key is per row — one work can span several
+    # canonical keys, and the report must see each.
+    key = work_key
+    if key is None:
+        key = _row_key(rows[0])
+    plan = Plan()
+    for row in rows:
+        plan.post_key[row["id"]] = _row_key(row)
+    # Work-level missing BEFORE the attempt: the fields the detail shows blank.
+    missing_before = [f for f in available
+                      if all(is_empty_value(r[FIELD_COLUMN[f]]) for r in rows)]
+    # Pass 1 — site siblings.
+    donors = _donor_values(rows, available, plan)
+    for row in rows:
+        for field, (value, source) in donors.items():
+            if _field_missing(row, field, plan):
+                plan.add(row["id"], field, value, source)
+    # Pass 2 — IMDb datasets (live: none, see the docstring).
+    if datasets is not None and (datasets.ratings or datasets.basics
+                                 or datasets.crew):
+        for row in rows:
+            imdb_id = row["imdb_id"]
+            if not imdb_id:
+                continue
+            meta = datasets.metadata_for(imdb_id)
+            if meta.is_empty():
+                continue
+            limited = Metadata()
+            for field in meta.fields:
+                if field not in available:
+                    continue
+                if _field_missing(row, field, plan):
+                    limited.set(field, meta.fields[field],
+                                meta.sources.get(field, "?"))
+            if not limited.is_empty():
+                plan.add_metadata(row["id"], limited, columns)
+    # Pass 3 — API, on the representative (emptiest post first).
+    if sources:
+        if budget is not None:
+            for name, source in sources.items():
+                if source.DAILY_BUDGET is not None:
+                    source.calls = budget.count(name)
+        candidates = []
+        for row in rows:
+            missing = [f for f in available if _field_missing(row, f, plan)]
+            if missing:
+                candidates.append(_candidate_from_row(row, key, missing))
+        if candidates:
+            candidates.sort(key=lambda c: (-len(c["missing"]), c["id"]))
+            rep = {"id": candidates[0]["id"], "key": key,
+                   "candidates": candidates[:3]}
+            winner, meta, _calls = _resolve_representative(
+                rep, sources, plan, columns)
+            if winner is not None and not meta.is_empty():
+                plan.add_metadata(winner, meta, columns)
+        if budget is not None:
+            for name, source in sources.items():
+                if source.DAILY_BUDGET is not None:
+                    budget.record(name, source.calls)
+    # Pass 4 — propagation to siblings.
+    donors = _donor_values(rows, available, plan, include_plan_donors=True)
+    for row in rows:
+        for field, (value, source) in donors.items():
+            if _field_missing(row, field, plan):
+                plan.add(row["id"], field, value, source)
+    updated = _apply_plan(conn, plan)
+    # Work-level values after the attempt, for every fillable field that
+    # has one: the first non-empty value across the rows (id order), stored
+    # or newly planned. filled_post names the post each value was read
+    # from, so the route can mint the artwork handles against the post
+    # that actually holds the art.
+    filled: dict[str, str] = {}
+    filled_sources: dict[str, str] = {}
+    filled_post: dict[str, int] = {}
+    for field in available:
+        for row in rows:
+            stored = row[FIELD_COLUMN[field]]
+            if not is_empty_value(stored):
+                text = _display_value(field, stored)
+                if text is not None:
+                    filled[field] = text
+                    filled_sources[field] = "site"
+                    filled_post[field] = row["id"]
+                break
+            planned = plan.updates.get(row["id"], {}).get(field)
+            if planned is not None:
+                text = _display_value(field, planned[0])
+                if text is not None:
+                    filled[field] = text
+                    filled_sources[field] = planned[1]
+                    filled_post[field] = row["id"]
+                break
+    ambiguous = []
+    group_ids = {row["id"] for row in rows}
+    for source in sources.values():
+        for entry in source.ambiguities:
+            if entry.get("post_id") in group_ids:
+                ambiguous.append(entry)
+    if cache is not None:
+        cache.flush()
+    if plan.count() > 0:
+        status = "filled"
+    elif not missing_before:
+        status = "already_complete"
+    elif ambiguous:
+        status = "ambiguous"
+    else:
+        status = "no_match"
+    return {
+        "status": status,
+        "filled": filled,
+        "sources": filled_sources,
+        "ambiguous": ambiguous,
+        "posts_updated": updated,
+        "fields_filled": plan.count(),
+        "filled_post": filled_post,
+        "calls": {name: {"calls": source.calls,
+                         "cache_hits": source.cache_hits,
+                         "exhausted": source.exhausted}
+                  for name, source in sources.items()},
+    }
 
 
 def build_report(db_path: Path, plan: Plan, stats: dict,

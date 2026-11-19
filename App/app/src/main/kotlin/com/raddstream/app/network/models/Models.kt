@@ -235,6 +235,31 @@ data class PostDetailResponse(
     val error: String? = null,
 )
 
+/** POST /api/v2/enrich — ask the server to fill just this one title, live. Exactly one id. */
+data class LiveFillRequest(
+    @SerializedName("work_id") val workId: Long? = null,
+    @SerializedName("post_id") val postId: Int? = null,
+)
+
+/**
+ * The enrich answer. `filled` carries the work-level value for every
+ * fillable field that has one after the attempt — newly filled or already
+ * stored on a sibling post — keyed by the server's field names
+ * (`rating`, `genres`, `synopsis`, `cast`, `director`, `poster`,
+ * `backdrop`, `year`, `imdb_id`, `tmdb_id`). `poster` is already shaped
+ * like the detail's own art (a public CDN URL, or one of our own
+ * `/api/v1/art` handles); `backdrop` is the same JSON-array string the
+ * detail carries. `ambiguous` is not modelled: the app never shows it
+ * (Gson ignores the unknown key, and the test below proves it).
+ */
+data class LiveFillResponse(
+    val ok: Boolean = false,
+    val status: String? = null,
+    val filled: Map<String, String> = emptyMap(),
+    val sources: Map<String, String> = emptyMap(),
+    @SerializedName("fields_filled") val fieldsFilled: Int = 0,
+)
+
 /** The raw `posts` row as the public may see it, plus its `releases`. */
 data class PostDetail(
     val id: Int,
@@ -340,6 +365,46 @@ data class PostDetail(
     /** The work's true release count — the capped list's size when untruncated. */
     val totalReleases: Int get() = releaseTotal ?: releases.size
     val displayTitle: String get() = cleanTitle?.takeIf { it.isNotBlank() } ?: title
+
+    /**
+     * Live fill (detail open): true when a field the detail screen shows
+     * is still blank, so the ViewModel may ask the server to fill just
+     * this title in the background. A missing backdrop counts — the
+     * server can fill one from TMDb when the title has it.
+     */
+    fun hasMissingDisplayFields(): Boolean =
+        imdbRating.isNullOrBlank() || synopsis.isNullOrBlank() ||
+            posterUrl.isNullOrBlank() || backdropUrls.isNullOrBlank() ||
+            castNames.isNullOrBlank() || genres.isNullOrBlank() ||
+            year == null
+
+    /**
+     * Live fill (detail open): patch this detail's blanks from the
+     * server's one-title fill answer, in place. Only blanks are filled —
+     * a value already on screen is never overwritten by a fill. The
+     * director the server may have filled has no field on this screen,
+     * so it is ignored here (it still lands in the DB for the next
+     * projection run). The keys are the server's field names
+     * (`rating`, `cast`, `poster`, `backdrop`, …), not the wire's.
+     * Pure: the same input always answers the same copy.
+     */
+    fun withLiveFill(filled: Map<String, String>): PostDetail {
+        fun take(key: String, current: String?): String? {
+            val value = filled[key]?.takeIf { it.isNotBlank() } ?: return current
+            return if (current.isNullOrBlank()) value else current
+        }
+        return copy(
+            imdbRating = take("rating", imdbRating),
+            genres = take("genres", genres),
+            synopsis = take("synopsis", synopsis),
+            castNames = take("cast", castNames),
+            posterUrl = take("poster", posterUrl),
+            backdropUrls = take("backdrop", backdropUrls),
+            year = year ?: filled["year"]?.toIntOrNull(),
+            imdbId = take("imdb_id", imdbId),
+            tmdbId = tmdbId ?: filled["tmdb_id"]?.toIntOrNull(),
+        )
+    }
 }
 
 /**

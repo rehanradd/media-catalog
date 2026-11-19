@@ -14,6 +14,8 @@ import com.raddstream.app.network.models.FavoriteWriteResponse
 import com.raddstream.app.network.models.FavoritesResponse
 import com.raddstream.app.network.models.PaymentRequest
 import com.raddstream.app.network.models.PaymentSubmitResponse
+import com.raddstream.app.network.models.LiveFillRequest
+import com.raddstream.app.network.models.LiveFillResponse
 import com.raddstream.app.network.models.LiveTvChannelsResponse
 import com.raddstream.app.network.models.FacetsResponse
 import com.raddstream.app.network.models.PostDetailResponse
@@ -196,6 +198,23 @@ interface RaddStreamApi {
     suspend fun getWorkDetail(
         @Path("id") workId: Long,
     ): WireWorkDetailResponse
+
+    /**
+     * POST /api/v2/enrich — fill one title's missing metadata, live.
+     *
+     * The detail screen fires this in the background when a detail shows
+     * blank fields, and patches the screen from `filled` when it returns.
+     * Exactly one id: a v2 row sends its work id, a v1 row its post id.
+     * The server answers 200 with the work-level values (`filled`, keyed
+     * by its field names) even when nothing was missing, and a 404 problem
+     * body — the same as a missing title — for an unknown or adult-flagged
+     * id. Any failure is the caller's to swallow: the detail keeps the
+     * blanks it already shows.
+     */
+    @POST("api/v2/enrich")
+    suspend fun enrichWorkDetail(
+        @Body request: LiveFillRequest,
+    ): LiveFillResponse
 
     /**
      * GET /api/v2/resolve/{handle} — re-resolve one cat link (Phase 7, M3).
