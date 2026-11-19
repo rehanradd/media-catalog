@@ -33,14 +33,17 @@ import java.lang.reflect.Proxy
 @RunWith(RobolectricTestRunner::class)
 class LiveFillRepositoryTest {
 
-    private class FakeApiProvider(private val api: RaddStreamApi) : ApiProvider {
-        override fun current(): RaddStreamApi = api
+    private class FakeApiProvider(
+        settingsRepository: ServerSettingsRepository,
+        private val api: RaddStreamApi,
+    ) : ApiProvider(settingsRepository) {
+        override suspend fun current(): RaddStreamApi = api
     }
 
     private fun repository(api: RaddStreamApi): CatalogRepository {
         val context = ApplicationProvider.getApplicationContext<Application>()
         val settings = ServerSettingsRepository(context)
-        return CatalogRepository(FakeApiProvider(api), settings)
+        return CatalogRepository(FakeApiProvider(settings, api), settings)
     }
 
     private fun apiAnswering(answer: Any?): RaddStreamApi {

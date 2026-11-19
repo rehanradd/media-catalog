@@ -216,3 +216,23 @@ Worktree `~/workspace/live-fill-detail-20261119`. Never merge / push main / depl
   `POST /api/v2/enrich` (public edge 403s unlisted v2 routes — the app
   treats 403 as "no fill"); the live server env needs the metadata
   keys; cache dir override `RADD_METADATA_CACHE_DIR`.
+
+## CI rounds (19 Nov, tip 2231fe99)
+
+- Backend 44526467477 attempt 1 FAILED at `test_download_endpoint.py`
+  (`test_json_descriptor_has_a_handle_and_no_upstream_address` — the
+  token's expiry-second rolled between mint and check; the known
+  expiry-second flake, unrelated to this change). Re-run `--failed`:
+  attempt 2 SUCCESS, all suites green.
+- Android 44526467258 attempt 1 FAILED at the Gradle step: Maven
+  Central 429 on moshi/wire-runtime/jspecify POMs (the known mass-429
+  flake — no compile error, no test ran). Re-run `--failed`.
+- Android attempt 2 FAILED at `:app:compileDebugUnitTestKotlin` — a
+  REAL error, mine: `LiveFillRepositoryTest.FakeApiProvider` declared
+  `: ApiProvider` with a non-suspend `current()`, but `ApiProvider` is
+  an open class (constructor takes the settings repository) and
+  `current()` is `open suspend`. Fixup: `FakeApiProvider(settings, api)
+  : ApiProvider(settings)` + `override suspend fun current()`.
+  (The V2DetailRepositoryTest fake is the pattern; I wrote the fake
+  from the summary's "interface" shorthand instead of reading the
+  class.) Fixup pushed; CI verdict owed.
