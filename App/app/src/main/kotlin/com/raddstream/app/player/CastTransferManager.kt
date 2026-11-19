@@ -1,10 +1,12 @@
 package com.raddstream.app.player
 
 import android.content.Context
+import androidx.annotation.OptIn
 import androidx.media3.cast.CastPlayer
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import com.google.android.gms.cast.framework.CastContext
 import com.google.android.gms.cast.framework.CastState
 import com.google.android.gms.cast.framework.CastStateListener
@@ -28,6 +30,7 @@ import kotlinx.coroutines.flow.asStateFlow
  * player and no crash — casting is simply unavailable, and the button
  * never appears.
  */
+@OptIn(UnstableApi::class)
 class CastTransferManager(
     context: Context,
     /** The service's answer to "a receiver just became available". */

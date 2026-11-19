@@ -1,9 +1,11 @@
 package com.raddstream.app.player
 
+import androidx.annotation.OptIn
 import androidx.media3.cast.MediaItemConverter
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.util.UnstableApi
 import com.google.android.gms.cast.MediaMetadata as CastMediaMetadata
 import com.google.android.gms.cast.MediaQueueItem
 
@@ -32,6 +34,7 @@ import com.google.android.gms.cast.MediaQueueItem
  * DRM (no catalog title carries a license flow the receiver could use),
  * and per-track audio selection (the receiver plays its own default).
  */
+@OptIn(UnstableApi::class)
 class CastMediaItemConverter : MediaItemConverter {
 
     override fun toMediaQueueItem(mediaItem: MediaItem): MediaQueueItem {
