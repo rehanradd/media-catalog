@@ -35,6 +35,21 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // Mirror the app module's JVM target (17): without this, Java
+    // defaults to 1.8 while Kotlin defaults to the running JDK (17)
+    // and the Kotlin plugin's JVM-target validation fails the build
+    // (proven by Android CI 44428960230:
+    // "Inconsistent JVM-target compatibility ... JavaWithJavac (1.8)
+    // and ...Kotlin (17)").
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
     // Point to the app module, the module the profile is generated for.
     targetProjectPath = ":app"
 }
