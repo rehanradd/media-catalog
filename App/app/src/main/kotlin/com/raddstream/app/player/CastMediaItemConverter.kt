@@ -55,7 +55,8 @@ class CastMediaItemConverter : MediaItemConverter {
     }
 
     override fun toMediaItem(mediaQueueItem: MediaQueueItem): MediaItem {
-        val info = mediaQueueItem.mediaInfo
+        // The GMS accessor is getMedia(), not getMediaInfo().
+        val info = mediaQueueItem.media
         val metadata = MediaMetadata.Builder().apply {
             info.metadata?.title?.let { setTitle(it) }
         }.build()
