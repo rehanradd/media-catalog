@@ -44,6 +44,7 @@ object DatabaseModule {
                 AppDatabase.MIGRATION_8_9,
                 AppDatabase.MIGRATION_9_10,
                 AppDatabase.MIGRATION_10_11,
+                AppDatabase.MIGRATION_11_12,
             )
             // The ladder 1 → 7 is continuous, so this fallback never fires for a known schema;
             // it is a last resort against an unknown future version, and no step may ever be

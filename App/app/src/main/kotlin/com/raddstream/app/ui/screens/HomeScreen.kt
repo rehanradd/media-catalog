@@ -801,6 +801,21 @@ private fun ContinueWatchingRow(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
+                // E2 Ratings (Nov 2026): the rail used to show where viewing
+                // stopped and nothing about the title itself. The rating
+                // rides one small line under the title — "★ 8.6" — and
+                // only when the row actually carries one (rows written
+                // before DB v12, and titles the catalog never rated, paint
+                // nothing rather than a 0.0).
+                UserWords.displayRating(tile.post.imdbRating)?.let { rating ->
+                    Text(
+                        text = "★ $rating",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
                 tile.resumeLabel?.let { label ->
                     Text(
                         text = label,

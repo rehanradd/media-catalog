@@ -993,6 +993,7 @@ class HomeViewModel @Inject constructor(
                         positionMs = tile.positionMs,
                         durationMs = tile.durationMs,
                         updatedAt = System.currentTimeMillis(),
+                        imdbRating = tile.post.imdbRating,
                     ),
                 )
             }

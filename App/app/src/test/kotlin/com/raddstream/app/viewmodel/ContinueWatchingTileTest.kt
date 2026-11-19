@@ -89,11 +89,28 @@ class ContinueWatchingTileTest {
         assertEquals("https://art/CircuitBreaker.jpg", tile.post.posterUrl)
     }
 
+    // E2 Ratings (Nov 2026): the tile carries the catalog rating the row
+    // was written with, raw wire text — the screen's displayRating is the
+    // choke point that decides what paints. A row written before DB v12
+    // carries no rating at all, and the tile must not invent one for it.
+    @Test
+    fun `a tile carries the rating its row was written with`() {
+        val tile = ResumeTile.of(row(season = 0, episode = 0, imdbRating = "8.6"))!!
+        assertEquals("8.6", tile.post.imdbRating)
+    }
+
+    @Test
+    fun `a pre-v12 row carries no rating to show`() {
+        val tile = ResumeTile.of(row(season = 0, episode = 0, imdbRating = null))!!
+        assertNull(tile.post.imdbRating)
+    }
+
     private fun row(
         season: Int,
         episode: Int,
         positionMs: Long = 5_000L,
         durationMs: Long = 60_000L,
+        imdbRating: String? = null,
     ) = WatchHistoryEntity(
         workRef = "wm:4241",
         postId = 4241,
@@ -104,5 +121,6 @@ class ContinueWatchingTileTest {
         positionMs = positionMs,
         durationMs = durationMs,
         updatedAt = 1_730_000_000_000L,
+        imdbRating = imdbRating,
     )
 }

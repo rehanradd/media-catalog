@@ -2042,6 +2042,7 @@ class DetailViewModel @Inject constructor(
                     positionMs = 0L,
                     durationMs = 0L,
                     updatedAt = now,
+                    imdbRating = post.imdbRating,
                 ),
             )
             // A row that already existed keeps its position but still moves to the top and
@@ -2053,6 +2054,7 @@ class DetailViewModel @Inject constructor(
                 postId = post.id,
                 title = title,
                 posterUrl = post.posterUrl?.takeIf { it.isNotBlank() },
+                imdbRating = post.imdbRating,
                 updatedAt = now,
             )
         }

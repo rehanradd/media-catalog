@@ -30,6 +30,7 @@ class HeroCarouselTest {
         seasons: String? = null,
         genres: String? = null,
         year: Int = 2026,
+        imdbRating: String? = null,
     ) = Post(
         id = 1,
         title = "Test Title",
@@ -39,6 +40,7 @@ class HeroCarouselTest {
         posterUrl = null,
         genres = genres,
         seasons = seasons,
+        imdbRating = imdbRating,
     )
 
     // Home review (Nov 2026): one meta line — "Season 1–2 · Reality ·
@@ -71,6 +73,33 @@ class HeroCarouselTest {
     @Test
     fun metaLineTakesTheFirstGenreOnly() {
         assertEquals("Action · 2023", heroMetaLine(post(genres = "Action, Thriller", year = 2023)))
+    }
+
+    // E2 Ratings (Nov 2026): the hero is the one big surface that never
+    // painted a rating. It leads the meta line, rating-first like the rail
+    // meta line, and only when the catalog really has one — a missing,
+    // zero or unparseable value leaves the slot out, never a 0.0.
+    @Test
+    fun metaLineLeadsWithTheRatingWhenTheCatalogHasOne() {
+        assertEquals(
+            "★ 8.6 · Season 1–2 · Reality · 2026",
+            heroMetaLine(post(seasons = "S1-S2", genres = "Reality", year = 2026, imdbRating = "8.6")),
+        )
+        assertEquals("★ 7.0 · Action · 2023", heroMetaLine(post(genres = "Action", year = 2023, imdbRating = "7")))
+    }
+
+    @Test
+    fun metaLineSkipsAnAbsentOrDishonestRating() {
+        assertEquals("Action · 2023", heroMetaLine(post(genres = "Action", year = 2023, imdbRating = null)))
+        assertEquals("Action · 2023", heroMetaLine(post(genres = "Action", year = 2023, imdbRating = "")))
+        assertEquals("Action · 2023", heroMetaLine(post(genres = "Action", year = 2023, imdbRating = "0")))
+        assertEquals("Action · 2023", heroMetaLine(post(genres = "Action", year = 2023, imdbRating = "abc")))
+        assertEquals("Action · 2023", heroMetaLine(post(genres = "Action", year = 2023, imdbRating = "101")))
+    }
+
+    @Test
+    fun metaLineDividesTheOldHundredScale() {
+        assertEquals("★ 8.6 · 2023", heroMetaLine(post(year = 2023, imdbRating = "86")))
     }
 
     @Test

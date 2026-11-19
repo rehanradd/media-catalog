@@ -28,6 +28,17 @@ data class WatchHistoryEntity(
     val durationMs: Long,
     /** This device's clock at the last position write, in epoch milliseconds. */
     val updatedAt: Long,
+    /**
+     * E2 Ratings (Nov 2026, DB v12): the catalog's IMDb rating as the
+     * detail screen knew it when this row was written ("8.6", raw wire
+     * text — UserWords.displayRating is the choke point that decides
+     * what paints). Null for rows written before v12 and for titles the
+     * catalog never rated: the rail paints nothing for those, never a
+     * 0.0. Written at watch start and refreshed by WatchHistoryDao.touch
+     * alongside the art, so a title the backfill rates later picks the
+     * rating up the next time it is played.
+     */
+    val imdbRating: String? = null,
 ) {
     /** Worth offering as "continue": started, and not within the last few seconds of the end. */
     val resumable: Boolean
@@ -50,7 +61,7 @@ interface WatchHistoryDao {
     /** Playback actually started here: refresh metadata and move the row to the top. */
     @Query(
         "UPDATE watch_history SET postId = :postId, title = :title, posterUrl = :posterUrl," +
-            " updatedAt = :updatedAt" +
+            " imdbRating = :imdbRating, updatedAt = :updatedAt" +
             " WHERE workRef = :workRef AND seasonNumber = :season AND episodeNumber = :episode",
     )
     suspend fun touch(
@@ -60,6 +71,7 @@ interface WatchHistoryDao {
         postId: Int,
         title: String,
         posterUrl: String?,
+        imdbRating: String?,
         updatedAt: Long,
     )
 

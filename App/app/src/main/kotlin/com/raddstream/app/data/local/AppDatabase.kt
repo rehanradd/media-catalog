@@ -86,7 +86,7 @@ import com.raddstream.app.data.cache.CacheTaskEntity
         FollowedSeries::class,
         CatalogFtsEntity::class,
     ],
-    version = 11,
+    version = 12,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -336,6 +336,23 @@ abstract class AppDatabase : RoomDatabase() {
                         "`title` TEXT NOT NULL, `type` TEXT, `posterUrl` TEXT, " +
                         "`year` INTEGER, `popularity` INTEGER NOT NULL, prefix=`1,2,3,4`)",
                 )
+            }
+        }
+
+        /**
+         * 11 → 12: the Continue watching rail's rating (E2 Ratings, Nov
+         * 2026). One nullable TEXT column on `watch_history`, added in
+         * place — no row is touched, so every pre-v12 row reads NULL and
+         * the rail paints nothing for it, exactly as an unrated title.
+         * The column holds the catalog's raw IMDb text ("8.6"), never a
+         * rendered number: UserWords.displayRating stays the choke
+         * point that decides what paints. Room's schema validation
+         * throws on drift the first time a device opens the migrated
+         * database, exactly like the 2 → 3 step.
+         */
+        val MIGRATION_11_12: Migration = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE watch_history ADD COLUMN imdbRating TEXT")
             }
         }
     }

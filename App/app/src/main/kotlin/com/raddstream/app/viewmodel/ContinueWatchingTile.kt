@@ -47,6 +47,7 @@ data class ResumeTile(
                     title = row.title,
                     cleanTitle = row.title,
                     posterUrl = row.posterUrl,
+                    imdbRating = row.imdbRating,
                 ),
                 season = row.seasonNumber,
                 episode = row.episodeNumber,

@@ -11,18 +11,19 @@ import org.robolectric.RobolectricTestRunner
 
 /**
  * Flow-audit #25, proven on a real database instead of asserted in prose: a device stamped
- * at schema version 2 with a saved favorite must climb 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 and still hold
- * that favorite at the top. The builder used here registers the same ten migrations as
+ * at schema version 2 with a saved favorite must climb 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 and still hold
+ * that favorite at the top. The builder used here registers the same eleven migrations as
  * `DatabaseModule` but NO destructive fallback — with a gap in the ladder Room throws rather
  * than silently wiping rows, and if the hand-written 2 → 3 DDL drifts from the entities,
  * Room's schema validation throws the first time the migrated database is opened.
  *
- * The climb runs to 11 because that is the ladder that ships: version 9 is the Live TV
+ * The climb runs to 12 because that is the ladder that ships: version 9 is the Live TV
  * favourites table and version 10 is the followed-series table, and a device at version 2 is
  * exactly the device that has never been told whether its saved rows are adult or unavailable,
- * so it must arrive at 11 with its rows, its stamps unset, and nothing rebuilt — plus version
+ * so it must arrive at 12 with its rows, its stamps unset, and nothing rebuilt — plus version
  * 10's `followed_series` table, empty and writable, and version 11's `catalog_fts` search
- * index, empty and prefix-searchable.
+ * index, empty and prefix-searchable, and version 12's `watch_history.imdbRating` column,
+ * NULL on every row the climb carried.
  *
  * x86_64-only like every Robolectric suite (see the arm64 exclusion in `app/build.gradle.kts`):
  * this is the hosted-CI proof that the pure-text schema guards cannot provide.
@@ -31,7 +32,7 @@ import org.robolectric.RobolectricTestRunner
 class AppDatabaseMigrationTest {
 
     @Test
-    fun `a version-2 database upgrades to 11 with its favorites intact`() {
+    fun `a version-2 database upgrades to 12 with its favorites intact`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val dbName = "upgrade_from_2.db"
         context.deleteDatabase(dbName)
@@ -61,6 +62,7 @@ class AppDatabaseMigrationTest {
                 AppDatabase.MIGRATION_8_9,
                 AppDatabase.MIGRATION_9_10,
                 AppDatabase.MIGRATION_10_11,
+                AppDatabase.MIGRATION_11_12,
             )
             .build()
 
@@ -77,7 +79,7 @@ class AppDatabaseMigrationTest {
             }
             runtime.query("PRAGMA user_version").use { cursor ->
                 assertTrue(cursor.moveToFirst())
-                assertEquals(11, cursor.getInt(0))
+                assertEquals(12, cursor.getInt(0))
             }
 
             // Version 8's two answers arrive UNSET. A row this old was saved by a build that
@@ -98,6 +100,23 @@ class AppDatabaseMigrationTest {
             runtime.query("SELECT title FROM watch_history WHERE workRef = 'w'").use { cursor ->
                 assertTrue("version 5's table must survive the 2 → 11 climb", cursor.moveToFirst())
                 assertEquals("Kept after upgrade", cursor.getString(0))
+            }
+            // Version 12's rating column arrives with the climb: a row the
+            // climb carried reads NULL (never a 0.0 — an unrated title is
+            // not a badly rated one), and a new row stores the catalog's
+            // raw IMDb text and reads it back.
+            runtime.query("SELECT imdbRating FROM watch_history WHERE workRef = 'w'").use { cursor ->
+                assertTrue("version 12's column must arrive with the climb", cursor.moveToFirst())
+                assertTrue("a pre-v12 row must carry no rating", cursor.isNull(0))
+            }
+            runtime.execSQL(
+                "INSERT INTO watch_history (workRef, postId, title, seasonNumber, episodeNumber, " +
+                    "positionMs, durationMs, updatedAt, imdbRating) " +
+                    "VALUES ('wr', 7, 'Rated after upgrade', 0, 0, 10, 100, 2, '8.6')",
+            )
+            runtime.query("SELECT imdbRating FROM watch_history WHERE workRef = 'wr'").use { cursor ->
+                assertTrue("version 12's column must take a write", cursor.moveToFirst())
+                assertEquals("8.6", cursor.getString(0))
             }
             for (table in listOf("cache_tasks", "cache_files", "byte_range_manifests", "synced_progress", "ad_cadence", "unavailable_works", "live_tv_favourites", "followed_series")) {
                 runtime.query("SELECT * FROM $table LIMIT 0").use { } // throws if the table is absent

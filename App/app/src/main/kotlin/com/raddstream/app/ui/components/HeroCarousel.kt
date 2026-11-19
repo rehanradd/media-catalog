@@ -315,6 +315,13 @@ internal fun heroArtUrls(posts: List<Post>): List<String> =
  */
 internal fun heroMetaLine(post: Post): String? {
     val parts = listOfNotNull(
+        // E2 Ratings (Nov 2026): the hero is the one big surface that
+        // never painted a rating — the meta line is the only words under
+        // the title, so the rating leads it, "★ 8.6 · Season 1–2 · Drama
+        // · 2026", the same rating-first order the rail meta line
+        // ([posterMetaLine]) already uses. An absent or unparseable
+        // rating leaves its slot out — never an invented value.
+        UserWords.displayRating(post.imdbRating)?.let { "★ $it" },
         heroSeasonsLabel(post.seasons),
         post.genreList.firstOrNull()?.lowercase()?.replaceFirstChar { it.uppercase() }?.takeIf { it.isNotBlank() },
         post.yearLabel,
