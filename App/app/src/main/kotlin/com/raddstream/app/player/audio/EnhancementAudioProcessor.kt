@@ -201,15 +201,19 @@ class EnhancementAudioProcessor : BaseAudioProcessor() {
     }
 
     /**
-     * One byte at absolute stream offset [pos]: from the stash while [pos]
-     * is inside it, from the input buffer after it.
+     * One byte at absolute stream offset [pos], as an unsigned 0..255
+     * [Int]: from the stash while [pos] is inside it, from the input buffer
+     * after it. The return is an [Int] on purpose — a [Byte] `and 0xFF`
+     * does not resolve in Kotlin (0xFF is 255, outside [Byte]'s range),
+     * and every caller masks bytes into sample words.
      */
-    private fun nextByte(inputBuffer: ByteBuffer, pos: Int): Byte {
-        return if (pos < stashLength) {
+    private fun nextByte(inputBuffer: ByteBuffer, pos: Int): Int {
+        val byte = if (pos < stashLength) {
             stash[pos]
         } else {
             inputBuffer.get(inputBuffer.position() + (pos - stashLength))
         }
+        return byte.toInt() and 0xFF
     }
 
     private fun bytesPerSample(encoding: Int): Int = when (encoding) {
