@@ -76,6 +76,7 @@ MANDATORY_RUN = (
     "test_host_clearance.py",
     "test_resolver_probes.py",
     "test_network_intercept.py",
+    "test_gdflix_unwrap.py",
     "test_host_classifier.py",
     "test_catalog_exporter.py",
     "test_domain_resolver.py",

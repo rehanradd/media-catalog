@@ -3411,41 +3411,206 @@ def is_bridge_url(url: str) -> bool:
     return any(marker in host for marker in _BRIDGE_HOST_MARKERS)
 
 
-def unwrap_gdflix(gdflix_url: str) -> tuple[str, str, int]:
+class _GDFlixNoRedirect(urllib.request.HTTPRedirectHandler):
+    """Redirect handler that refuses to follow: the caller wants the
+    ``Location`` header, not the body behind it (following the Instant DL
+    hop with ``http_get`` would download the file itself)."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _gdflix_redirect_location(url: str, timeout: int = 10,
+                              clearance=None) -> str | None:
+    """GET ``url`` without following redirects; return the ``Location``
+    header of a 3xx answer, else None. Same UA/clearance posture as
+    ``http_get`` (a stored clearance rides with the UA that earned it)."""
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    if clearance is not None:
+        try:
+            c_header, c_ua = clearance.header_for(url)
+        except Exception:
+            c_header, c_ua = None, None
+        if c_header:
+            headers["Cookie"] = c_header
+        if c_ua:
+            headers["User-Agent"] = c_ua
+    opener = urllib.request.build_opener(_GDFlixNoRedirect())
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        opener.open(req, timeout=timeout)
+        return None
+    except urllib.error.HTTPError as err:
+        if err.code in (301, 302, 303, 307, 308):
+            try:
+                return err.headers.get("Location")
+            except Exception:
+                return None
+        return None
+    except Exception:
+        return None
+
+
+def unwrap_gdflix(gdflix_url: str, clearance=None) -> tuple[str, str, int]:
     """GDFlix `file/<ID>` page → the direct Google endpoint behind it.
 
     GDFlix is a Google Drive proxy: the `/file/<id>` address is an HTML landing
-    page and playing it in ExoPlayer produces an error, not a video. The page
-    carries either an embedded `video-downloads.googleusercontent.com` URL or a
-    Drive file id; both are unwrapped here. When neither is present the landing
-    page is returned unchanged and the caller's bridge guard refuses it.
+    page and playing it in ExoPlayer produces an error, not a video. The live
+    page (measured 2026-11-20 from hatch egress) carries download buttons,
+    not the embedded Drive ids the old code looked for:
+
+    * ``Instant DL`` → ``busycdn.instadl.rest/<token>?bytes=N`` → 302 →
+      ``fastdl-one.pages.dev/?url=<signed video-downloads URL>``; the
+      ``?url=`` value is the file. The busycdn token is per-file (stable
+      across fetches); the Google signature is re-minted per hop, so the
+      chain is re-run live on every resolve and the result is temporary.
+    * Legacy buttons (NuvioStreamsAddon / vega-app extractors): ``DIRECT DL``
+      and ``CLOUD DOWNLOAD [R2]`` return their href, ``PixelDrain DL`` is
+      rewritten to the ``/api/file/`` form, ``DRIVEBOT`` follows the ResumeBot
+      token-POST flow (``formData.append('token', …)`` → POST
+      ``/download?id=`` → JSON ``.url``).
+    * ``/cflare/…`` is a Turnstile-gated page and ``Login To DL`` needs an
+      account — both are skipped, never chased.
+
+    ``clearance`` (H4 R8) is threaded to every fetch, so a stored
+    ``cf_clearance`` for the GDFlix host rides the request instead of the
+    file page answering with a Cloudflare challenge. When no button yields a
+    direct link the landing page is returned unchanged and the caller's bridge
+    guard refuses it.
     """
     res_id = gdflix_url.rstrip("/").split("/")[-1].split("?")[0]
     try:
         code, _final_u, page = http_get(gdflix_url, timeout=10,
-                                        max_retries=RESOLVE_UNWRAP_MAX_RETRIES)
+                                        max_retries=RESOLVE_UNWRAP_MAX_RETRIES,
+                                        clearance=clearance)
     except Exception:
         return gdflix_url, res_id, 0
     if code != 200 or not page:
         return gdflix_url, res_id, 0
 
+    # Thin redirect wrapper: <body onload="location.replace('…')">.
+    onload = re.search(
+        r"""<body[^>]*onload=["'][^"']*location\.replace\(\s*["']([^"']+)["']""",
+        page, re.I)
+    if onload:
+        target = urllib.parse.urljoin(gdflix_url,
+                                      html_module.unescape(onload.group(1)))
+        try:
+            code, _final_u, wrapped = http_get(
+                target, timeout=10, max_retries=RESOLVE_UNWRAP_MAX_RETRIES,
+                clearance=clearance)
+        except Exception:
+            wrapped = ""
+        if code == 200 and wrapped:
+            page = wrapped
+
     direct = re.search(
-        r'https?://video-downloads\.googleusercontent\.com/[^\s"\'<>\\]+', page)
+        r"""https?://video-downloads\.googleusercontent\.com/[^\s"'<>\\]+""", page)
     if direct:
         return html_module.unescape(direct.group(0)), res_id, 1
 
     for pattern in (
-        r'drive\.google\.com/file/d/([A-Za-z0-9_-]{20,})',
-        r'drive\.google\.com/uc\?(?:[^"\'<>]*&)?id=([A-Za-z0-9_-]{20,})',
-        r'drive\.usercontent\.google\.com/download\?(?:[^"\'<>]*&)?id=([A-Za-z0-9_-]{20,})',
-        r'"fileId"\s*:\s*"([A-Za-z0-9_-]{20,})"',
-        r'data-id=["\']([A-Za-z0-9_-]{20,})["\']',
+        r"""drive\.google\.com/file/d/([A-Za-z0-9_-]{20,})""",
+        r"""drive\.google\.com/uc\?(?:[^"'<>]*&)?id=([A-Za-z0-9_-]{20,})""",
+        r"""drive\.usercontent\.google\.com/download\?(?:[^"'<>]*&)?id=([A-Za-z0-9_-]{20,})""",
+        r""""fileId"\s*:\s*"([A-Za-z0-9_-]{20,})\"""",
+        r"""data-id=["']([A-Za-z0-9_-]{20,})["']""",
     ):
         match = re.search(pattern, page)
         if match:
             file_id = match.group(1)
             return (f"https://drive.usercontent.google.com/download"
                     f"?id={file_id}&export=download"), res_id, 1
+
+    buttons: dict[str, str] = {}
+    for href, inner in re.findall(
+            r"""<a[^>]+href=["']([^"']+)["'][^>]*>(.*?)</a>""",
+            page, re.I | re.S):
+        text = re.sub(r"""<[^>]+>""", "", inner)
+        text = re.sub(r"""\s+""", " ", html_module.unescape(text)).strip().lower()
+        if not text or not href:
+            continue
+        href = html_module.unescape(href)
+        if "instant dl" in text and "instant" not in buttons:
+            buttons["instant"] = href
+        elif "direct dl" in text and "direct" not in buttons:
+            buttons["direct"] = href
+        elif "cloud download" in text and "cloud" not in buttons:
+            buttons["cloud"] = href
+        elif "pixeldrain" in text and "pixeldrain" not in buttons:
+            buttons["pixeldrain"] = href
+        elif "drivebot" in text and "drivebot" not in buttons:
+            buttons["drivebot"] = href
+
+    if "instant" in buttons:
+        location = _gdflix_redirect_location(buttons["instant"], timeout=10,
+                                             clearance=clearance)
+        if location:
+            parsed = urllib.parse.urlparse(location)
+            query = urllib.parse.parse_qs(parsed.query)
+            wrapped = query.get("url", [None])[0]
+            if wrapped and wrapped.startswith(("http://", "https://")):
+                return wrapped, res_id, 1
+            if parsed.netloc.endswith(("googleusercontent.com",
+                                       "google.com")):
+                return location, res_id, 1
+
+    if "direct" in buttons:
+        return buttons["direct"], res_id, 1
+    if "cloud" in buttons:
+        return buttons["cloud"], res_id, 1
+    if "pixeldrain" in buttons:
+        pix = buttons["pixeldrain"]
+        m = re.search(r"""/u/([A-Za-z0-9_-]+)""", pix)
+        if m:
+            return (f"https://pixeldrain.dev/api/file/{m.group(1)}?download",
+                    res_id, 0)
+        return pix, res_id, 0
+    if "drivebot" in buttons:
+        bot_url = buttons["drivebot"]
+        if bot_url.startswith("/"):
+            bot_url = urllib.parse.urljoin(gdflix_url, bot_url)
+        try:
+            b_code, _b_final, b_page = http_get(
+                bot_url, timeout=10, max_retries=RESOLVE_UNWRAP_MAX_RETRIES,
+                clearance=clearance)
+        except Exception:
+            b_code, b_page = 0, ""
+        if b_code == 200 and b_page:
+            token_m = re.search(
+                r"""formData\.append\(\s*['"]token['"]\s*,\s*['"]([^'"]+)['"]\s*\)""",
+                b_page)
+            if token_m:
+                bot_id = urllib.parse.parse_qs(
+                    urllib.parse.urlparse(bot_url).query).get("id", [None])[0]
+                if bot_id:
+                    post_url = (
+                        f"{urllib.parse.urlparse(bot_url).scheme}://"
+                        f"{urllib.parse.urlparse(bot_url).netloc}"
+                        f"/download?id={bot_id}")
+                    try:
+                        post_data = urllib.parse.urlencode(
+                            {"token": token_m.group(1)}).encode("utf-8")
+                        req = urllib.request.Request(
+                            post_url, data=post_data, headers={
+                                "User-Agent": USER_AGENT,
+                                "Content-Type":
+                                    "application/x-www-form-urlencoded",
+                            })
+                        with urllib.request.urlopen(req, timeout=10) as resp:
+                            payload = json.loads(resp.read().decode(
+                                "utf-8", errors="ignore"))
+                        bot_direct = payload.get("url") if isinstance(
+                            payload, dict) else None
+                        if bot_direct and bot_direct.startswith(
+                                ("http://", "https://")):
+                            return bot_direct, res_id, 1
+                    except Exception:
+                        pass
     return gdflix_url, res_id, 0
 
 
@@ -7878,7 +8043,8 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
             elif (service == "gdflix" or "gdflix" in source_u.lower()
                   or "gdflix" in cached_u.lower()):
                 _unwrap_branch_taken = True
-                direct_u, _res_id, is_temp = unwrap_gdflix(hoster_input("gdflix"))
+                direct_u, _res_id, is_temp = unwrap_gdflix(
+                    hoster_input("gdflix"), clearance=_clearance)
                 fresh_url = direct_u
                 fresh_temp = is_temp
             elif (service == "pixeldrain" or "pixeldrain" in source_u.lower()

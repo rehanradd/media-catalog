@@ -498,6 +498,16 @@ jobs:
       - name: 🧪 test_resolver_probes.py
         run: python3 -S Fast_Fetch/test_resolver_probes.py
 
+      # Phase C (GDFlix): the real button-flow resolver — Instant DL
+      # (busycdn 302 → fastdl-one ?url= signed Google URL), legacy DIRECT
+      # DL / CLOUD DOWNLOAD [R2] / PixelDrain DL buttons, DriveBot token
+      # POST, onload redirect wrapper, and the refusals (dead page,
+      # Cloudflare challenge page, login-only / Turnstile-gated /cflare
+      # page). Offline, stdlib, stubbed http_get + redirect helper +
+      # DriveBot POST, no network.
+      - name: 🧪 test_gdflix_unwrap.py
+        run: python3 -S Fast_Fetch/test_gdflix_unwrap.py
+
       # Gap A7 (prefetch run mode): the worker + its systemd timer/service +
       # runbook, tested offline against a scratch DB with a stubbed resolver.
       # Offline, stdlib, in-memory/scratch fixtures, no network.
