@@ -7,7 +7,7 @@
 
 ## ✅ Open items — index (q3, 2026-10-30; pointers only)
 
-1. **This file is a pointer, not a history** 122 session files (119 dated + 3 undated) cover
+1. **This file is a pointer, not a history** 123 session files (120 dated + 3 undated) cover
 
    every one of them verbatim: [`checkpoints/README.md`](checkpoints/README.md). Nothing was
    deleted, reworded, or summarized. The count is `ls Fast_Fetch/checkpoints/*.md` minus `README.md`,
@@ -71,7 +71,6 @@
 ## Rotated session history
 
 The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete index.
-- [Session 2026-11-17 — HF full-gate backup push `[HF-BACKUP-FULLGATE]`](checkpoints/20261117-hf-backup-fullgate.md)
 - [Session 2026-11-17 — search speed: residual search cost + the `_ensure_schema` first-request 504](checkpoints/20261117-search-speed.md)
 - [Session 2026-11-16 — pre-peak fill (play-fast §2 (j))](checkpoints/20261116-pre-peak-fill.md)
 - [Session 2026-11-16 — playback telemetry beacon](checkpoints/20261116-playback-telemetry-beacon.md)
@@ -86,6 +85,7 @@ The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete i
 - [2026-11-20 — H4 R7 per-segment retry](checkpoints/20261120-h4-r7-per-segment-retry.md): dead_handle report strikes both ledgers (resolved_cache circuit + negative cache) and the banked winner is refused on the next lookup; other classes record evidence only; report route now resolves the handle in the LEDGER universe; 13 server + 15 app tests green locally, CI pending.
 - [Session 2026-11-12 — self-check `[LIVE-TV-503]`](checkpoints/20261112-selfcheck-live-tv-503-logos.md)
 - [2026-11-20 — H4 R8 clearance-cookie reuse](checkpoints/20261120-h4-r8-clearance-cookie.md): per-host clearance store + probe/resolver wiring; 43 tests green locally, Backend CI pending.
+- [2026-11-20 — Phase C mega.nz: NOT VIABLE](checkpoints/20261120-phasec-mega.md): chain proven live, pure-Python AES 0.06 MB/s; no resolver.
 
 ## Moved out (reference prose, verbatim)
 
