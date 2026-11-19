@@ -963,7 +963,6 @@ class PaparazziPreviewTest {
                     state = playerBase(),
                     onBack = {},
                     onLock = {},
-                    onShowPrintSheet = {},
                     onShowSpeedSheet = {},
                     onToggleDecoderMode = {},
                 )
@@ -987,7 +986,6 @@ class PaparazziPreviewTest {
                     ),
                     onBack = {},
                     onLock = {},
-                    onShowPrintSheet = {},
                     onShowSpeedSheet = {},
                     onToggleDecoderMode = {},
                 )

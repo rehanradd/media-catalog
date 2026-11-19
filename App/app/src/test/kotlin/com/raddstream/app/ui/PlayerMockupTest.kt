@@ -30,8 +30,10 @@ import com.raddstream.app.ui.screens.KeepChip
 import com.raddstream.app.ui.screens.SkipSegmentButton
 import com.raddstream.app.ui.screens.SwitchSourceRow
 import com.raddstream.app.ui.screens.TopBar
+import com.raddstream.app.ui.screens.canShareMoment
 import com.raddstream.app.ui.screens.subtitleStatusLabel
 import com.raddstream.app.ui.theme.RaddStreamTheme
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -139,7 +141,6 @@ class PlayerMockupTest {
                     state = liveBase(),
                     onBack = {},
                     onLock = {},
-                    onShowPrintSheet = {},
                     onShowSpeedSheet = {},
                     onToggleDecoderMode = {},
                 )
@@ -158,7 +159,6 @@ class PlayerMockupTest {
                     state = vodBase(),
                     onBack = {},
                     onLock = {},
-                    onShowPrintSheet = {},
                     onShowSpeedSheet = {},
                     onToggleDecoderMode = {},
                 )
@@ -180,7 +180,6 @@ class PlayerMockupTest {
                     state = vodBase().copy(speed = 1.5f),
                     onBack = {},
                     onLock = {},
-                    onShowPrintSheet = {},
                     onShowSpeedSheet = { opened = true },
                     onToggleDecoderMode = {},
                 )
@@ -202,7 +201,6 @@ class PlayerMockupTest {
                     state = vodBase(),
                     onBack = {},
                     onLock = {},
-                    onShowPrintSheet = {},
                     onShowSpeedSheet = {},
                     onToggleDecoderMode = { toggled = true },
                 )
@@ -220,7 +218,6 @@ class PlayerMockupTest {
                     state = vodBase().copy(decoderMode = DecoderMode.SOFTWARE),
                     onBack = {},
                     onLock = {},
-                    onShowPrintSheet = {},
                     onShowSpeedSheet = {},
                     onToggleDecoderMode = {},
                 )
@@ -228,6 +225,77 @@ class PlayerMockupTest {
         }
         compose.onNodeWithText("SW").assertIsDisplayed()
         compose.onNodeWithText("HW").assertDoesNotExist()
+    }
+
+    @Test
+    fun `the top bar carries no source-switch button`() {
+        // MX #6 (chrome diet, D1): the print switch left the top bar — its
+        // "Switch version" button duplicated the More sheet's Prints row.
+        // The title, the lock, the speed pill and the decoder chip stay.
+        compose.setContent {
+            RaddStreamTheme {
+                TopBar(
+                    state = vodBase(),
+                    onBack = {},
+                    onLock = {},
+                    onShowSpeedSheet = {},
+                    onToggleDecoderMode = {},
+                )
+            }
+        }
+        compose.onNodeWithContentDescription("Switch version").assertDoesNotExist()
+        compose.onNodeWithText("Jawan").assertIsDisplayed()
+        compose.onNodeWithText("HW").assertIsDisplayed()
+    }
+
+    @Test
+    fun `a remote stream can share a moment`() {
+        // MX #6 (chrome diet, D4): the More sheet's "Share a moment" row
+        // shows only when the playing rendition carries a stream handle.
+        assertTrue(
+            "a stream with a handle must be shareable",
+            canShareMoment(
+                vodBase().copy(
+                    activeRendition = PlaybackRendition(
+                        print = PrintInfo(resolution = "1080p"),
+                        playback = PlaybackInfo(label = "Fast direct", streamId = "h-1080p"),
+                    ),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `a local file cannot share a moment`() {
+        // The same rule, the other side: a local file has no handle to link
+        // to, so the row hides instead of no-op'ing on tap — and a rendition
+        // with no handle at all is the same case.
+        assertFalse(
+            "a local streamId must not be shareable",
+            canShareMoment(
+                vodBase().copy(
+                    activeRendition = PlaybackRendition(
+                        print = PrintInfo(resolution = "1080p"),
+                        playback = PlaybackInfo(label = "Local file", streamId = "local"),
+                    ),
+                ),
+            ),
+        )
+        assertFalse(
+            "a blank streamId must not be shareable",
+            canShareMoment(
+                vodBase().copy(
+                    activeRendition = PlaybackRendition(
+                        print = PrintInfo(resolution = "1080p"),
+                        playback = PlaybackInfo(label = "Local file", streamId = "   "),
+                    ),
+                ),
+            ),
+        )
+        assertFalse(
+            "a rendition with no streamId must not be shareable",
+            canShareMoment(vodBase()),
+        )
     }
 
     @Test

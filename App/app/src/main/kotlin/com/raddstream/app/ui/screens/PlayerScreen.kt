@@ -730,7 +730,7 @@ private fun PlayerScreenContent(
                     enter = chromeEnter,
                     exit = chromeExit,
                 ) {
-                    TopBar(state = state, onBack = onBackClick, onLock = { vm.setLocked(true) }, onShowPrintSheet = { vm.showPrintSheet() }, onShowSpeedSheet = { vm.showSpeedSheet() }, onToggleDecoderMode = { vm.toggleDecoderMode() })
+                    TopBar(state = state, onBack = onBackClick, onLock = { vm.setLocked(true) }, onShowSpeedSheet = { vm.showSpeedSheet() }, onToggleDecoderMode = { vm.toggleDecoderMode() })
                 }
                 AnimatedVisibility(
                     visible = controlsVisible,
@@ -1820,7 +1820,7 @@ private fun playerChromeRail(): Dp {
 }
 
 @Composable
-internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit, onShowPrintSheet: () -> Unit, onShowSpeedSheet: () -> Unit, onToggleDecoderMode: () -> Unit) {
+internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit, onShowSpeedSheet: () -> Unit, onToggleDecoderMode: () -> Unit) {
     val print = state.activeRendition
     val rail = playerChromeRail()
     val topGradient = Brush.verticalGradient(
@@ -1839,7 +1839,7 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
             // the immersive frame is untouched.
             .statusBarsPadding()
             .background(topGradient)
-            .heightIn(min = 104.dp)
+            .heightIn(min = 80.dp)
             .padding(start = rail, end = rail, top = 4.dp, bottom = 8.dp),
     ) {
     Row(
@@ -1949,17 +1949,11 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
                 tint = Color.White,
             )
         }
-        // Review fix (16 Nov): this button switches the source — it opens the
-        // print sheet — so it wears the swap glyph and says so. It is not a
-        // guide: no programme data exists anywhere in the player.
-        IconButton(onClick = onShowPrintSheet) {
-            Icon(
-                painter = painterResource(R.drawable.ic_player_switch_source),
-                contentDescription = stringResource(R.string.player_prints_title),
-                tint = Color.White,
-            )
-        }
-        // MX idea #3: the decoder switch — one tap, HW ↔ SW, far right
+        // MX #6 (chrome diet): the print-switch button is gone from this bar —
+        // it opened the print sheet, and the More sheet already has the
+        // identical "Prints" row, so a source switch is one extra tap via
+        // More instead of a permanent 48dp slot crowding the title.
+        // MX #3: the decoder switch — one tap, HW ↔ SW, far right
         // where MX puts it. The button IS the chip: it shows the mode the
         // player is built with right now, and tapping it rebuilds the
         // player in the other mode at the same position. Same shape as the
@@ -2387,35 +2381,28 @@ internal fun BottomControls(
             // scrubber and no time row at all, only a LIVE mark in their
             // place, whatever duration the playlist claims.
             if (!state.isLive && state.durationMs > 0) {
-                Scrubber(
-                    chrome = chrome,
-                    positionMs = state.positionMs,
-                    bufferedMs = state.bufferedMs,
-                    durationMs = state.durationMs,
-                    enabled = state.seekEnabled,
-                    onSeek = { onSeekTo(it) },
-                    onScrubPreview = onScrubPreview,
-                    onScrubCommit = onScrubCommit,
-                    onActivity = onActivity,
-                    episodes = state.activeRendition?.coverage?.episodes.orEmpty(),
-                )
+                // MX #6 (chrome diet): the time row is merged into the
+                // scrubber row — position (+ status word) flanks the track
+                // on the left, duration on the right, the YouTube pattern.
+                // One full text row leaves the bottom bar; every value
+                // stays, including the status word (audit #3/#4: the viewer
+                // must tell loading, paused and buffering apart at a
+                // glance). The "--:--" fallback stays even though the guard
+                // above already proves a duration — a duration the player
+                // has not learned yet is not a time to show.
+                val statusWord = when (
+                    playerStatusWord(state.startPhase, state.isBuffering, state.isPlaying)
+                ) {
+                    PlayerStatusWord.LOADING -> stringResource(R.string.app_loading)
+                    PlayerStatusWord.BUFFERING -> stringResource(R.string.player_buffering)
+                    PlayerStatusWord.PAUSED -> stringResource(R.string.player_paused)
+                    PlayerStatusWord.NONE -> null
+                }
                 Row(
                     Modifier
                         .fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    // App-design audit #3/#4: current time and total duration are
-                    // always beside the scrubber — "--:--" until the total is
-                    // known — plus one status word, so the viewer can tell
-                    // loading, paused and buffering apart at a glance.
-                    val statusWord = when (
-                        playerStatusWord(state.startPhase, state.isBuffering, state.isPlaying)
-                    ) {
-                        PlayerStatusWord.LOADING -> stringResource(R.string.app_loading)
-                        PlayerStatusWord.BUFFERING -> stringResource(R.string.player_buffering)
-                        PlayerStatusWord.PAUSED -> stringResource(R.string.player_paused)
-                        PlayerStatusWord.NONE -> null
-                    }
                     Text(
                         text = state.positionMs.formatTime(),
                         color = Color.White,
@@ -2425,7 +2412,21 @@ internal fun BottomControls(
                         Spacer(Modifier.width(8.dp))
                         Text(statusWord, color = Color.White.copy(alpha = 0.85f), style = MaterialTheme.typography.labelMedium)
                     }
-                    Spacer(Modifier.weight(1f))
+                    Scrubber(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 8.dp),
+                        chrome = chrome,
+                        positionMs = state.positionMs,
+                        bufferedMs = state.bufferedMs,
+                        durationMs = state.durationMs,
+                        enabled = state.seekEnabled,
+                        onSeek = { onSeekTo(it) },
+                        onScrubPreview = onScrubPreview,
+                        onScrubCommit = onScrubCommit,
+                        onActivity = onActivity,
+                        episodes = state.activeRendition?.coverage?.episodes.orEmpty(),
+                    )
                     Text(
                         state.durationMs.takeIf { it > 0 }?.formatTime() ?: "--:--",
                         color = Color.White,
@@ -2746,6 +2747,7 @@ private fun QualityPill(
 /** Thin MX scrubber: grey track, brighter buffered segment, theme played segment + thumb. */
 @Composable
 private fun Scrubber(
+    modifier: Modifier = Modifier,
     chrome: PlayerChromeTheme,
     positionMs: Long,
     bufferedMs: Long,
@@ -2772,7 +2774,7 @@ private fun Scrubber(
         durationMs.formatTime(),
     ) + (currentChapter?.let { stringResource(R.string.player_seek_chapter, it) } ?: "")
     BoxWithConstraints(
-        Modifier
+        modifier
             .fillMaxWidth()
             // Hate-audit H6: 24dp of track + 12dp of padding each side = a
             // 48dp touch height, the floor the 44dp row missed. The thumb
@@ -4700,6 +4702,17 @@ private fun TracksSheet(state: PlayerUiState, vm: PlayerViewModel) {
 }
 
 /**
+ * MX #6 (chrome diet): a moment is shareable only when the playing rendition
+ * carries a stream handle to link to. A local file has none (streamId is
+ * blank or "local") — the same guard `PlayerViewModel.shareMoment()` applies
+ * before emitting. Pure, so the sheet and the tests read the same rule.
+ */
+internal fun canShareMoment(state: PlayerUiState): Boolean {
+    val streamId = state.activeRendition?.playback?.streamId?.trim()
+    return !streamId.isNullOrBlank() && streamId != "local"
+}
+
+/**
  * The More sheet (plan §4.3): every control that is not one of the six primaries,
  * grouped exactly like MX's overflow — Playback / Subtitle / Audio / Tools. Nothing
  * was deleted in step 3, only moved here from the bottom row; every row below calls
@@ -4838,12 +4851,15 @@ private fun MoreSheet(state: PlayerUiState, vm: PlayerViewModel, onEnterPip: () 
                 vm.hideMoreSheet()
                 vm.showPrintSheet()
             }
-            // SC.24: share a moment — title, timestamp, deep link — from the
-            // More sheet. The VM hides the row's effect for local bundles (no
-            // handle to link to); the row itself stays, and the tap is a no-op.
-            SheetRow(label = stringResource(R.string.player_share_moment)) {
-                vm.hideMoreSheet()
-                vm.shareMoment()
+            // MX #6 (chrome diet, quick-win F3): the row is hidden for local
+            // bundles — the VM's shareMoment() guard is the second door, and
+            // this is the first door its doc already promised. A row that can
+            // only no-op is chrome that lies.
+            if (canShareMoment(state)) {
+                SheetRow(label = stringResource(R.string.player_share_moment)) {
+                    vm.hideMoreSheet()
+                    vm.shareMoment()
+                }
             }
             SheetRow(label = stringResource(R.string.player_retry_row)) {
                 vm.hideMoreSheet()
