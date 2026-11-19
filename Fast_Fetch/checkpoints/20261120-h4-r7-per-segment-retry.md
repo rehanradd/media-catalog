@@ -190,3 +190,20 @@ All code + tests written; nothing pushed yet, no CI run yet.
 - Next: commit (author rehanradd <199005610+rehanradd@users.noreply.github.com>, stage
   only reviewed paths), push branch `muse/h4-r7-per-segment-retry-20261120`, report
   Backend CI + Android CI run ids. Do NOT merge — main chat merges.
+
+## CI round 1 — 2026-11-20 ~02:10 PKT
+
+- Pushed as `92a778eb`. Android CI **44612460918 SUCCESS** on the tip.
+- Backend CI **44612460796 FAILED** on one suite only: `test_docs_invariants.py`,
+  2 failures — both my session-log edits, not the code: (1) CONTINUITY.md claimed
+  "120 session files" while `checkpoints/` now holds 121 (the new checkpoint file);
+  (2) CONTINUITY.md was 12,490 bytes, over the 12,000-byte index ceiling (my H4 R7
+  line alone was 555 bytes).
+- Fix (follow-up commit): claim updated to "121 session files (118 dated +
+  3 undated)"; rotated the two oldest history lines (2026-11-06 crown, 192B + 197B)
+  — verified safe first: neither line is in the trunk-added set dc73ac7→4fe6f65,
+  and both checkpoint files stay named in `checkpoints/README.md`; shortened my H4 R7
+  line to ~330 bytes; added the H4 R7 entry to `checkpoints/README.md` (newest first).
+  CONTINUITY.md now 92 lines / 11,920 bytes. Local re-run: `test_docs_invariants`
+  22/22 OK, `test_ci_manifest` 10/10 OK. The new `test_per_segment_retry` step
+  itself passed on CI (it was not among the failures).
