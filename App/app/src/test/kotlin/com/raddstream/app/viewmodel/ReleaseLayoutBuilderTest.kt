@@ -637,6 +637,8 @@ class ReleaseLayoutBuilderTest {
         val s1 = layout.seasons.first { it.number == 1 }
         assertEquals(7, s1.totalEpisodes)
         assertEquals("7 episodes", s1.episodeCountLabel)
+        // The chips print the bare number, guide-corrected too.
+        assertEquals(7, s1.episodeCountNumber)
         // Only 2 episode rows exist (the capped prints), but the header
         // still reads the true total of 7.
         assertEquals(2, s1.episodeCount)
@@ -645,9 +647,13 @@ class ReleaseLayoutBuilderTest {
         assertTrue(s2.packOnly)
         assertEquals(0, s2.episodeCount)
         assertEquals("Full season", s2.episodeCountLabel)
+        // A pack-only season has no numeric total, so the chips keep
+        // the rows on screen (0) exactly as before B2.
+        assertEquals(0, s2.episodeCountNumber)
         val s3 = layout.seasons.first { it.number == 3 }
         assertEquals(1, s3.totalEpisodes)
         assertEquals("1 episode", s3.episodeCountLabel)
+        assertEquals(1, s3.episodeCountNumber)
         assertEquals(0, s3.episodeCount)
     }
 

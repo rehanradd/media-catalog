@@ -2163,7 +2163,7 @@ private fun SeasonChips(seasons: List<SeasonGroup>, selectedSeason: Int?, onSele
                     colors = raddFilterChipColors(),
                     selected = selectedSeason == s.number,
                     onClick = { onSelect(s.number) },
-                    label = { Text("Season ${s.number} · ${s.episodeCountLabel}") },
+                    label = { Text("Season ${s.number} · ${s.episodeCountNumber}") },
                     leadingIcon = { SeasonThumbnail(season = s, modifier = Modifier.size(24.dp)) },
                 )
             }

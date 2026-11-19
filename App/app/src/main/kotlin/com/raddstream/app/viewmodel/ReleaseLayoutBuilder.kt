@@ -307,9 +307,12 @@ data class SeasonGroup(
     /** True when this season has anything the viewer can play or keep. */
     val hasAnyPrint: Boolean get() = episodes.isNotEmpty() || packedPrints.isNotEmpty()
     /**
-     * What the header, chips and dropdown print for this season: the
-     * guide total when the server named one, "Full season" for a pack-only
+     * What the header and dropdown print for this season: the guide
+     * total when the server named one, "Full season" for a pack-only
      * season (its total is not a number), else the rows on screen.
+     * The chips print [episodeCountNumber] instead — they showed a
+     * bare number before B2, and the word form would change the
+     * golden (Paparazzi detailSeries, 2026-11-19).
      */
     val episodeCountLabel: String
         get() = when {
@@ -317,6 +320,14 @@ data class SeasonGroup(
             isPackOnly -> "Full season"
             else -> "$episodeCount episode${if (episodeCount == 1) "" else "s"}"
         }
+    /**
+     * What the season chips print: the bare number, guide-corrected
+     * when the server named a total, else the rows on screen — the
+     * exact shape the chips had before B2 ("Season 1 · 2"). A
+     * pack-only season has no numeric total, so it keeps the rows
+     * on screen (0) exactly as before; the header says "Full season".
+     */
+    val episodeCountNumber: Int get() = guideTotal ?: episodeCount
 }
 
 /** Everything the detail screen can show honestly about one title's releases. */
