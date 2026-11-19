@@ -81,7 +81,7 @@ The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete i
 - 2026-11-18 — B1 cursor pagination + band-aware play walk (`muse/cursor-pagination-20261118`): keyset cursors on v1 posts/trending, v2 walk verified, play best-band-first; 13 tests green locally.
 - 2026-11-18 — R1+R2+R4 + checkup #3 host ranking: decayed score + tiers + verified prints + slice; 24 tests green; checkpoints/20261118-host-ranking-r1r2r4.md.
 - [B2 episode_guide — 2026-11-19](checkpoints/20261119-b2-episode-guide.md)
-- MX #4 Skip Intro (2026-11-19, branch muse/mx-skip-intro-20261119): TheIntroDB v3 segments — cat_media_segments + cat_media_segment_lookups, backfill_segments.py (staging SQL only, skips is_18_plus=1), play_bundle "segments" with pack-offset shift/omit; 33 tests green locally; CI green: backend 44467838435 (4,152 tests), Android 44468545737 attempt 2 (2,544 tests, 0 failures, Paparazzi green); tip 6afe9d9f ready for parent to merge.
+- MX #4 Skip Intro (2026-11-19, muse/mx-skip-intro-20261119): TheIntroDB v3 segments — cat_media_segments + lookups, backfill_segments.py (staging SQL only), play_bundle "segments" (pack-offset shift/omit); CI green: backend 44467838435, Android 44468545737 attempt 2 (2,544 tests); tip 6afe9d9f ready to merge.
 - [Session 2026-11-12 — self-check `[LIVE-TV-503]`](checkpoints/20261112-selfcheck-live-tv-503-logos.md)
 - [Session 2026-11-06 — crown `[CROWN-NIGHT-CHAIN]`: five trunk commits, the live-tree gap, what was rejected](checkpoints/20261106-crown-night-chain-five-trunk-commits-one-live-tree-gap.md)
 - [Session 2026-11-06 crown `[Q75-LAND]`: 3 producer chars, red-first 18 tests, the `_sN` merge loss filed](checkpoints/20261106-crown-q75-three-producer-fixes-landed-and-the-s-n-key-loss-filed.md)
