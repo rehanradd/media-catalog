@@ -87,6 +87,7 @@ MANDATORY_RUN = (
     # green on the lane (171 and 45 tests) before they became steps.
     "test_host_resolvers.py",
     "test_stream_resolvers.py",
+    "test_multiup.py",
 )
 
 

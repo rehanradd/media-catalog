@@ -733,6 +733,14 @@ jobs:
       - name: 🧪 test_host_resolvers.py
         run: python3 -S Fast_Fetch/importers/test_host_resolvers.py
 
+      # Phase C Lane G (2026-11-20): the multiup mirror aggregator — GET the
+      # download page, POST its mirror form with the page's _csrf_token,
+      # return the best mirror's link (gofile, then mixdrop, else page order).
+      # Offline: every request goes through an injected fake fetch, and the
+      # fixtures are reduced from the real pages as fetched 2026-11-20.
+      - name: 🧪 test_multiup.py
+        run: python3 -S Fast_Fetch/importers/test_multiup.py
+
       # The documentation diet's guard (2026-10-30). The diet moved ~690 KB of LOG and SPEC out of
       # the files every agent auto-loads; this suite is what proves no LAW sentence was lost in the
       # move — it greps the trimmed AGENTS.md files for each invariant phrase, checks the rotated

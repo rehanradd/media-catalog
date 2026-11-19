@@ -227,6 +227,7 @@ from __future__ import annotations
 import base64
 from datetime import datetime, timezone
 import hashlib
+import html
 import json
 import re
 import ssl
@@ -358,6 +359,7 @@ SERVICE_VIDRIFT = "vidrift"
 SERVICE_IQSMART = "iqsmart"
 SERVICE_FILMU = "filmu"
 SERVICE_CINEVERSE = "cineverse"
+SERVICE_MULTIUP = "multiup"
 SERVICE_VIDOUT = "vidout"
 SERVICE_DOODSTREAM = "doodstream"
 
@@ -696,7 +698,7 @@ def http_request(url: str, headers: dict | None = None, timeout: float = DEFAULT
     return last
 
 
-def _cookie_jar_fetch():
+def _cookie_jar_fetch(read_bytes: int = PROBE_READ_BYTES):
     """A fetch with the http_request return shape that keeps cookies.
 
     The XFS form flow is a session: the download2 POST is the same session
@@ -704,6 +706,10 @@ def _cookie_jar_fetch():
     checks the session cookie would refuse the POST; the jar makes the
     flow match the browser's. One jar per call — nothing persists between
     unwraps.
+
+    `read_bytes` bounds the body read (default PROBE_READ_BYTES): multiup's
+    mirror form sits at ~464 KB of a ~488 KB page, past the default cap, so
+    its unwrapper asks for more.
     """
     import http.cookiejar
 
@@ -719,11 +725,11 @@ def _cookie_jar_fetch():
                                          data=data)
         try:
             with opener.open(request, timeout=timeout) as response:
-                return (int(response.status), response.read(PROBE_READ_BYTES),
+                return (int(response.status), response.read(read_bytes),
                         {k.lower(): v for k, v in response.getheaders()},
                         response.geturl())
         except urllib.error.HTTPError as exc:
-            return (int(exc.code), exc.read(PROBE_READ_BYTES),
+            return (int(exc.code), exc.read(read_bytes),
                     {k.lower(): v for k, v in (exc.headers.items() if exc.headers else [])},
                     url)
         except Exception as exc:                  # DNS, TLS, timeout, refused
@@ -4368,6 +4374,178 @@ def _is_hubcloud_page(url: str) -> bool:
     return is_hubcloud_drive(url) or is_hubcloud_bridge(url)
 
 
+# ---------------------------------------------------------------------------
+# multiup — mirror aggregator (Phase C Lane G, 2026-11-20)
+# ---------------------------------------------------------------------------
+
+#: Body-read cap for the multiup pages: the download page is ~488 KB with
+#: the mirror form + _csrf_token at ~464 KB, and the mirror list puts its
+#: links at ~464–476 KB — both past the module's 200 KB PROBE_READ_BYTES.
+#: 600 KB covers the observed pages with headroom and stays bounded; a
+#: future page that grows past it answers "unknown", never "dead".
+MULTIUP_READ_BYTES = 600_000
+
+#: A stored multiup download URL: /download/<32-hex id>/<filename>.
+MULTIUP_URL_RE = re.compile(
+    r"""https?://(?:www\.)?multiup\.io/(?:[a-z]{2}/)?download/(?P<id>[0-9a-f]{32})(?:[/?#]|$)""",
+    re.I)
+
+#: The mirror form's action, e.g. /fr/mirror/3572141cc0682e3b05f9a602cc4ffbd4.
+MULTIUP_MIRROR_FORM_RE = re.compile(
+    r"""<form\b[^>]*\baction\s*=\s*["'](?P<action>[^"']*?/mirror/[0-9a-f]{32})["']""",
+    re.I | re.S)
+
+#: Hidden <input> tags, parsed generically so attribute order does not matter.
+MULTIUP_INPUT_RE = re.compile(r"""<input\b[^>]*>""", re.I)
+MULTIUP_ATTR_RE = re.compile(
+    r"""\b(?P<name>name|value)\s*=\s*["'](?P<value>[^"']*)["']""", re.I)
+
+#: Mirror hosts whose links this module can itself resolve, in preference
+#: order: gofile (API chain) then mixdrop (mxdrop packer). Any other mirror
+#: follows in page order.
+MULTIUP_PREFERRED_MIRRORS = ("gofile.io", "mixdrop.ag")
+
+#: Hosts that appear on the mirror page but are not mirrors: social share,
+#: chat/community, premium resellers, the Usenet upsell.
+MULTIUP_NON_MIRROR_HOSTS = (
+    "facebook.com", "twitter.com", "mstdn.social", "t.me", "discord.gg",
+    "bit.ly", "filesharingkey.com", "geekdot.be", "premiumkeys.com",
+    "premiuminstant.com", "resellervoucher.com", "24instant.com",
+    "247premiumcart.com", "takepremium.com", "accountinstant.com",
+    "premiumcoupon.com", "plusinstant.com", "takenkey.com",
+    "buypremiumkey.com",
+)
+
+
+def is_multiup_url(url: str) -> bool:
+    """A multiup.io download page (a locale prefix is tolerated)."""
+    return bool(MULTIUP_URL_RE.search(url or ""))
+
+
+def multiup_download_id(url: str) -> str:
+    """The 32-hex download id of a multiup URL, or "" when it has none."""
+    match = MULTIUP_URL_RE.search(url or "")
+    return match.group("id") if match else ""
+
+
+def _multiup_hidden_inputs(html_text: str) -> dict:
+    """{name: value} of the page's hidden inputs (first value wins)."""
+    fields: dict[str, str] = {}
+    for tag in MULTIUP_INPUT_RE.findall(html_text or ""):
+        attrs = {m.group("name").lower(): m.group("value")
+                 for m in MULTIUP_ATTR_RE.finditer(tag)}
+        name = attrs.get("name")
+        if name and name not in fields:
+            fields[name] = attrs.get("value", "")
+    return fields
+
+
+def _multiup_mirror_links(html_text: str) -> list[str]:
+    """External hrefs on the mirror list, minus share/reseller/upsell links."""
+    links: list[str] = []
+    for href in re.findall(r"""href\s*=\s*["'](https?://[^"'\s<>]+)["']""",
+                           html_text or "", re.I):
+        url = html.unescape(href)
+        host = (urllib.parse.urlsplit(url).netloc or "").lower()
+        host = host[4:] if host.startswith("www.") else host
+        if host in ("multiup.io",) or host in MULTIUP_NON_MIRROR_HOSTS:
+            continue
+        if url not in links:
+            links.append(url)
+    return links
+
+
+def _multiup_pick_mirror(links: list[str]) -> str:
+    """Best mirror: a resolver-backed host first (gofile, then mixdrop), else page order."""
+    def host_of(link: str) -> str:
+        host = (urllib.parse.urlsplit(link).netloc or "").lower()
+        return host[4:] if host.startswith("www.") else host
+
+    for preferred in MULTIUP_PREFERRED_MIRRORS:
+        for link in links:
+            if host_of(link) == preferred:
+                return link
+    return links[0] if links else ""
+
+
+def unwrap_multiup(url: str, fetch=None, verify: bool = True) -> dict:
+    """
+    multiup download page -> {final_url, service, is_temporary, expires_in, status, notes, …}.
+
+    Chain (verified live 2026-11-20, from the hatch egress — the Oracle VM
+    egress is TLS-reset by multiup.io, see below): GET the download page,
+    POST its mirror form with the page's _csrf_token (session cookies kept:
+    the form is a session), parse the "Liste d'hébergeurs" mirror list, and
+    return the best mirror's link — gofile first, then mixdrop, both of which
+    this module can resolve, then any other mirror in page order.
+
+    The mirror itself is NEVER resolved here: the returned address is a
+    mirror page, not a byte endpoint, so the verdict is always "unverified"
+    (verify is accepted and ignored) and the mirror's own resolver owns the
+    next hop. A caller that needs a playable address must re-dispatch
+    final_url through resolve_url — embed_from_verdict refuses "unverified",
+    so the press path cannot serve this verdict as-is.
+
+    Live-proof gap (2026-11-20): multiup.io resets the TLS handshake from
+    the Oracle VM egress (curl AND urllib, root AND page; example.com answers
+    200 from the same box), so a server-side unwrap fails at the first GET
+    with status 0 "Connection reset by peer". A stored cf_clearance cannot
+    fix a reset that happens before any HTTP request is sent. The chain above
+    is proven from a non-blocked egress only.
+    """
+    fetch = fetch or _cookie_jar_fetch(read_bytes=MULTIUP_READ_BYTES)
+    result = _new_result(SERVICE_MULTIUP, url)
+    download_id = multiup_download_id(result["embed_url"])
+    if not download_id:
+        result["status"] = "unknown"
+        result["notes"].append("not a multiup download URL")
+        return result
+    result["file_id"] = download_id
+
+    status, body, _headers, _final = fetch(result["embed_url"])
+    if status != 200:
+        result["status"] = ("dead" if status in (404, 410)
+                            else "blocked" if status in (401, 403, 429) else "unknown")
+        result["notes"].append(f"multiup download page HTTP {status}")
+        return result
+    page = _page_text(body)
+    fields = _multiup_hidden_inputs(page)
+    token = fields.get("_csrf_token") or ""
+    form = MULTIUP_MIRROR_FORM_RE.search(page)
+    if not token or not form:
+        result["status"] = "unknown"
+        result["notes"].append(
+            "download page carries no mirror form (no _csrf_token or no /mirror/ action)")
+        return result
+    action = html.unescape(form.group("action"))
+    mirror_url = urllib.parse.urljoin(result["embed_url"], action)
+    payload = urllib.parse.urlencode({"_csrf_token": token}).encode("ascii")
+    status, body, _headers, _final = fetch(
+        mirror_url, method="POST", data=payload,
+        headers={"Content-Type": "application/x-www-form-urlencoded",
+                 "Referer": result["embed_url"]})
+    if status != 200:
+        result["status"] = ("dead" if status in (404, 410)
+                            else "blocked" if status in (401, 403, 429) else "unknown")
+        result["notes"].append(f"multiup mirror list HTTP {status}")
+        return result
+    mirrors = _multiup_mirror_links(_page_text(body))
+    if not mirrors:
+        result["status"] = "unknown"
+        result["notes"].append("mirror list carries no external mirror link")
+        return result
+    best = _multiup_pick_mirror(mirrors)
+    result["final_url"] = best
+    result["mirror_host"] = (urllib.parse.urlsplit(best).netloc or "").lower()
+    result["sources"] = [{"url": best, "mime": "", "label": result["mirror_host"]}]
+    result["status"] = "unverified"
+    result["notes"].append(
+        f"mirror list live ({len(mirrors)} mirror(s)); returning the "
+        f"{result['mirror_host']} link unverified — the mirror's own "
+        "resolver owns the next hop")
+    return result
+
+
 #: URL-shape routing, in the exact precedence of the old main() elif chain.
 #: The last entry is the catch-all: any URL that matches no shape is fed to
 #: the mxdrop packer, which returns "unknown" when it cannot unpack it.
@@ -4386,6 +4564,7 @@ SERVICE_RESOLVERS = (
     (SERVICE_ANIMAHD, is_animahd_player, unwrap_animahd),
     (SERVICE_CASTLE, is_castle_page, unwrap_castle),
     (SERVICE_HUBCLOUD, _is_hubcloud_page, unwrap_hubcloud),
+    (SERVICE_MULTIUP, is_multiup_url, unwrap_multiup),
     (SERVICE_MXDROP, lambda url: True, unwrap_mxdrop),
 )
 
@@ -4421,6 +4600,7 @@ RESOLVER_BY_SERVICE = {
     SERVICE_CINEVERSE: unwrap_cineverse,
     SERVICE_DOODSTREAM: unwrap_doodstream,
     SERVICE_VIDOUT: unwrap_vidout,
+    SERVICE_MULTIUP: unwrap_multiup,
 }
 
 
