@@ -465,6 +465,15 @@ jobs:
       - name: 🧪 test_shared_cache.py
         run: python3 -S Fast_Fetch/test_shared_cache.py
 
+      # H4 R7 (per-segment retry): the mid-playback failure feedback loop —
+      # a dead_handle report strikes both failure ledgers (resolved_cache
+      # circuit + download_sources negative cache) and the banked winner is
+      # refused on the next lookup; every other failure class records
+      # evidence only. Offline, stdlib, in-memory/scratch fixtures,
+      # no network.
+      - name: 🧪 test_per_segment_retry.py
+        run: python3 -S Fast_Fetch/test_per_segment_retry.py
+
       # Gap A7 (prefetch run mode): the worker + its systemd timer/service +
       # runbook, tested offline against a scratch DB with a stubbed resolver.
       # Offline, stdlib, in-memory/scratch fixtures, no network.

@@ -246,6 +246,44 @@ internal fun humanizeErrorSummary(raw: String): String {
     }
 }
 
+/**
+ * H4 R7: the failure class for a mid-playback report, or null when nothing should be reported.
+ *
+ * The server can never see a segment fetch (the 302 hands the player straight to the host), so
+ * the only way it learns a link died mid-play is the app telling it. The report fires when the
+ * machine ABANDONS the rendition — [FailoverDecision.Advance], [FailoverDecision.AdvanceBackup]
+ * or [FailoverDecision.Handoff] — because the abandoned copy really did die, whether or not the
+ * hop that follows succeeds. It does NOT fire on [FailoverDecision.RetrySame] or the two decoder
+ * retries: the rendition gets another chance there, and reporting it dead would be false.
+ *
+ * The class names the failure for the server, which decides what strikes: only `dead_handle` —
+ * a 404/403/410 from OUR redirector — writes the negative cache. `network` is the default for
+ * an unclassified mid-play load error (transport, never a strike), `decode` is a decoder problem,
+ * `gate` and `rate_limited` are our own decisions. An [FailoverDecision.Handoff] for an expired
+ * link reports nothing: the token rotted, not the source — the next press re-resolves for a fresh
+ * token, and a 12-hour negative-cache strike would wrongly bury a live source.
+ */
+internal fun midPlaybackReportClass(
+    decision: FailoverDecision,
+    isDeadHandle: Boolean = false,
+    isGateRefusal: Boolean = false,
+    isRateLimited: Boolean = false,
+    isDecodingFailed: Boolean = false,
+): String? {
+    val abandons = decision is FailoverDecision.Advance ||
+        decision is FailoverDecision.AdvanceBackup ||
+        decision is FailoverDecision.Handoff
+    if (!abandons) return null
+    if (decision is FailoverDecision.Handoff && decision.why == HandoffWhy.EXPIRED_LINK) return null
+    return when {
+        isDeadHandle -> "dead_handle"
+        isGateRefusal -> "gate"
+        isRateLimited -> "rate_limited"
+        isDecodingFailed -> "decode"
+        else -> "network"
+    }
+}
+
 class FailoverStateMachine(
     private val renditions: List<PlaybackRendition>,
     private val policy: PlaybackFailurePolicy,

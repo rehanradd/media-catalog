@@ -123,6 +123,14 @@ MAX_FEED_ITEMS = 2000
 MAX_BODY_BYTES = 64 * 1024
 MAX_OFFSET_SECONDS = 24 * 3600
 REPORT_EVENTS = ("played", "stalled", "failed", "resolved")
+
+#: H4 R7: the failure classes a client may name on a "failed" report. Only
+#: `dead_handle` — a 404/403/410 from OUR redirector, the resolver's own verdict
+#: that the source is gone — strikes the negative cache. The rest record evidence
+#: only: a network blip is transport, a decode failure is a decoder problem, a
+#: gate refusal and a rate limit are our own decisions, none of them evidence
+#: about the link. An unknown value is ignored (treated as no class).
+REPORT_FAILURE_CLASSES = ("dead_handle", "network", "decode", "gate", "rate_limited")
 PREFER_VALUES = ("quality", "speed", "data_saver")
 
 #: §7.1 — the link axis published as data. These are the exact weights
@@ -1379,6 +1387,29 @@ def link_row(conn, link_id: int, *, operator: bool):
         """, {"id": int(link_id)}).fetchone()
 
 
+def link_row_by_ledger(conn, ledger_id: int, *, operator: bool):
+    """One `cat_links` row for a LEDGER id, inside the adult scope.
+
+    H4 R7: the app reports with the bundle's `stream_id`, which is minted from
+    `ledger_link_id` — a `download_sources` id (`catalog_api.py`, Session 111) —
+    not from the projected `cat_links.id` `link_row` reads. Resolving by
+    `ledger_link_id` is what makes a report land on the link the player actually
+    tried; resolving by `l.id` answered the wrong row (or 404) whenever the two
+    sequences disagreed. A row that is not published and a row that does not
+    exist both answer `None`, so the caller cannot tell them apart — which is
+    the whole of §13. First row wins when a projection carries the ledger id
+    twice.
+    """
+    where = "l.ledger_link_id = :id" if operator else \
+        f"l.ledger_link_id = :id AND {adult_scope('w')}"
+    return conn.execute(
+        f"""
+        SELECT l.*, w.is_18_plus FROM cat_links l
+        JOIN cat_works w ON w.id = l.work_id WHERE {where}
+        ORDER BY l.id ASC LIMIT 1
+        """, {"id": int(ledger_id)}).fetchone()
+
+
 def ledger_source_id(conn, row):
     """Map a projected link back to its ledger row, so the JIT resolver — which
     owns the bridge recipes — is reused rather than copied (§12 "wraps
@@ -1959,6 +1990,10 @@ def route_post(handler, path: str, query: dict, *, db_path, operator: bool,
 
         if head == "links" and len(segments) == 3 and segments[2] == "report":
             ensure_side_tables(conn)
+            # H4 R7: the handle the app sends is the bundle's `stream_id`,
+            # minted from `ledger_link_id` — a `download_sources` id — not a
+            # `cat_links` id. `link_id` below is that ledger id throughout;
+            # the projected row is resolved by it, not by `l.id`.
             link_id = link_ref_parse(segments[1], secret, operator=bool(operator))
             if link_id is None:
                 problem(handler, code="invalid_params", rid=rid, instance=path,
@@ -1970,7 +2005,10 @@ def route_post(handler, path: str, query: dict, *, db_path, operator: bool,
                         detail="`event` must be one of " + ", ".join(REPORT_EVENTS) + ".",
                         extra={"allowed": list(REPORT_EVENTS)})
                 return True
-            row = link_row(conn, int(link_id), operator=bool(operator))
+            failure_class = str(body.get("failure_class") or "").strip().lower()
+            if failure_class not in REPORT_FAILURE_CLASSES:
+                failure_class = ""
+            row = link_row_by_ledger(conn, int(link_id), operator=bool(operator))
             if row is None:
                 problem(handler, code="not_found", rid=rid, instance=path,
                         detail="No such link in the catalog.")
@@ -1978,7 +2016,7 @@ def route_post(handler, path: str, query: dict, *, db_path, operator: bool,
             latency = _int_or_none(body.get("ms") if body.get("ms") is not None
                                    else body.get("latency_ms"))
             report_id = record_link_report(
-                conn, link_id=int(link_id), work_id=row["work_id"], event=event,
+                conn, link_id=int(row["id"]), work_id=row["work_id"], event=event,
                 latency_ms=max(0, latency) if latency is not None else None,
                 detail=str(body.get("error") or "")[:200],
                 client_ref=str(body.get("device") or "")[:64])
@@ -1994,9 +2032,25 @@ def route_post(handler, path: str, query: dict, *, db_path, operator: bool,
                     resolved_cache.note_failure(conn, int(link_id))
                 except Exception:  # noqa: BLE001
                     pass
+                if failure_class == "dead_handle":
+                    # H4 R7: a 404/403/410 from OUR redirector is the resolver's
+                    # own verdict that the source is gone — the same evidence
+                    # class as a probe failure — so it also writes the negative
+                    # cache, on this connection (see
+                    # `_record_resolve_failure_on`): the next /play walk and the
+                    # next re-resolve skip this winner, and `lookup_cache`
+                    # refuses its banked row at once instead of after three
+                    # strikes. Other classes record evidence only, never strike
+                    # the negative cache.
+                    try:
+                        import fast_fetch
+                        fast_fetch._record_resolve_failure_on(
+                            conn, int(link_id), "probe_failed")
+                    except Exception:  # noqa: BLE001
+                        pass
             json_response(handler, {"ok": True, "recorded": True,
                                     "report_id": report_id, "event": event,
-                                    "link_ref": link_ref_for(int(link_id), secret)},
+                                    "link_ref": link_ref_for(int(row["id"]), secret)},
                           rid=rid, cache=CACHE_NO_STORE, operator=operator)
             return True
 

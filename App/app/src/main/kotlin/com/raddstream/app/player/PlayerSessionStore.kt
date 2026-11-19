@@ -74,6 +74,34 @@ class PlayerSessionStore(
         _lastStartError.value = null
     }
 
+    /**
+     * H4 R7: a mid-playback failure the player ViewModel has not reported yet — the handle that
+     * died AFTER the first frame, the failure class the server strikes on, and the human summary
+     * for the report's error field. One-shot: the ViewModel consumes and clears it once, so a
+     * report is sent exactly once per abandoned rendition. A hop that later succeeds does not
+     * retract it, because the abandoned copy really did die; the next press must not re-serve it.
+     * The service writes it (it owns the player error); the ViewModel reads it (it owns the
+     * report call) — the same split as `lastStartError`.
+     */
+    data class MidPlaybackFailure(
+        val handle: String,
+        val failureClass: String,
+        val summary: String,
+    )
+
+    private val _midPlaybackFailure = MutableStateFlow<MidPlaybackFailure?>(null)
+    val midPlaybackFailure: StateFlow<MidPlaybackFailure?> = _midPlaybackFailure.asStateFlow()
+
+    fun recordMidPlaybackFailure(handle: String, failureClass: String, summary: String) {
+        val cleanHandle = handle.trim().takeIf { it.isNotEmpty() } ?: return
+        val cleanClass = failureClass.trim().takeIf { it.isNotEmpty() } ?: return
+        _midPlaybackFailure.value = MidPlaybackFailure(cleanHandle, cleanClass, summary)
+    }
+
+    fun clearMidPlaybackFailure() {
+        _midPlaybackFailure.value = null
+    }
+
     /** The active file ended and continuing needs UI/app involvement (next episode flow). */
     private val _nextEpisode = MutableStateFlow<NextEpisodeAction?>(null)
     val nextEpisode: StateFlow<NextEpisodeAction?> = _nextEpisode.asStateFlow()

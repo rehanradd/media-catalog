@@ -666,12 +666,12 @@ class CatalogRepository @Inject constructor(
      * a report must never interrupt playback or show the viewer an error.
      * `handle` is our own opaque handle — never a raw row id.
      */
-    suspend fun reportLink(handle: String, event: String, latencyMs: Int? = null, error: String? = null): Boolean {
+    suspend fun reportLink(handle: String, event: String, latencyMs: Int? = null, error: String? = null, failureClass: String? = null): Boolean {
         if (handle.isBlank()) return false
         return try {
             val response = apiProvider.current().reportLink(
                 handle = handle,
-                body = LinkReportRequest(event = event, latencyMs = latencyMs, error = error),
+                body = LinkReportRequest(event = event, latencyMs = latencyMs, error = error, failureClass = failureClass),
             )
             response.recorded
         } catch (_: HttpException) {

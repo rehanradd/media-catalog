@@ -1433,6 +1433,28 @@ class PlaybackService : MediaSessionService() {
                 isSoftwareDecoderAvailable = FfmpegSupport.isSoftwareAudioAvailable,
                 currentDecoderMode = currentDecoderMode,
             )
+            // H4 R7: a rendition abandoned AFTER the first frame died mid-play — the server
+            // can never see a segment fetch (the 302 hands the player straight to the host),
+            // so this record is the only way it learns the link is dead. The ViewModel
+            // reports it once (best-effort) from the store slot; the hop itself still
+            // proceeds below. Before the first frame this is a start failure, which the
+            // ViewModel's deadline path already reports — never report the same death twice.
+            if (!beforeFirstFrame) {
+                val reportClass = midPlaybackReportClass(
+                    decision,
+                    isDeadHandle = deadHandle,
+                    isGateRefusal = gateRefusal,
+                    isRateLimited = rateLimited,
+                    isDecodingFailed = isDecodingFailed,
+                )
+                if (reportClass != null) {
+                    store.activeRendition()?.playback?.streamId
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let { handle ->
+                            store.recordMidPlaybackFailure(handle, reportClass, rawSummary)
+                        }
+                }
+            }
             applyDecision(bundle, decision, preservePositionMs = lastKnownPositionMs)
         }
 

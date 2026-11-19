@@ -701,6 +701,66 @@ def prune_resolved_cache(conn: sqlite3.Connection, *,
     return {"orphans_deleted": orphans, "expired_deleted": cur.rowcount}
 
 
+def _negative_cache_terms() -> tuple:
+    """(TTL seconds, resolver version) for the negative cache — owned by
+    `fast_fetch` (`NEGATIVE_CACHE_TTL_SECONDS`, `RESOLVER_VERSION`).
+
+    Read lazily, the `api_v2` way: `resolved_cache` must not import the
+    resolver at module level. The literals are the fallback when the import
+    fails (a bare-cache test DB with no resolver on the path) — they match
+    today's values and the tests pin them against the live constants.
+    """
+    try:
+        import fast_fetch
+        return (float(fast_fetch.NEGATIVE_CACHE_TTL_SECONDS),
+                int(fast_fetch.RESOLVER_VERSION))
+    except Exception:      # noqa: BLE001 — fall back to the pinned literals
+        return (12 * 3600, 5)
+
+
+def _ledger_recently_failed(conn: sqlite3.Connection, link_id: int, *,
+                            now: float) -> bool:
+    """True when `download_sources` carries a FRESH negative-cache record for
+    this link — the resolver or a dead-handle client report proved it dead
+    within the TTL, at the current resolver version.
+
+    The freshness law mirrors `_release_has_unfailed_candidate` (`api_v2.py`)
+    exactly — same TTL, same version comparison, NULL version counting as 0 —
+    so the stream hit path and the /play walk agree on what "known dead" means.
+    Fail-open throughout: no `download_sources` table (a bare-cache test DB),
+    no row, a NULL `last_failed_at`, a stale record, or an old-version record
+    all answer False, and the banked row serves as before. A lookup fault is
+    neutral, never an error: the banked row's own evidence still decides it.
+    """
+    try:
+        tables = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
+    except sqlite3.Error:
+        return False
+    if "download_sources" not in tables:
+        return False
+    try:
+        rec = conn.execute(
+            "SELECT last_failed_at, failure_resolver_v FROM download_sources "
+            "WHERE id = ?", (int(link_id),)).fetchone()
+    except sqlite3.Error:
+        return False
+    if rec is None or rec[0] is None:
+        return False
+    try:
+        failed_age = float(now) - float(rec[0])
+    except (TypeError, ValueError):
+        return False
+    ttl, version = _negative_cache_terms()
+    if failed_age >= ttl:
+        return False
+    try:
+        failed_v = int(rec[1]) if rec[1] is not None else 0
+    except (TypeError, ValueError):
+        failed_v = 0
+    return failed_v >= version
+
+
 def lookup_cache(conn: sqlite3.Connection, link_id: int, want: str = "watch", *,
                  allow_ip_bound: bool = False,
                  now: float | None = None) -> dict | None:
@@ -712,11 +772,14 @@ def lookup_cache(conn: sqlite3.Connection, link_id: int, want: str = "watch", *,
     banked "for audit") is never playable media and is refused for every
     want — §6 fix 1: watch and the "either" fallback accept file or
     playlist only, exactly as this docstring promises. A row is refused
-    when its horizon has passed, when the failure circuit is open, or
-    (unless the caller opts in) when it is marked IP-bound, because a
-    shared cache must not replay one client's token to another. This is
-    the only check the cache path adds over the request route's own
-    adult/18+ gate, which must ALWAYS run before this function.
+    when its horizon has passed, when the failure circuit is open, when its
+    ledger row carries a fresh negative-cache record (H4 R7 — a link the
+    resolver or a dead-handle client report just proved dead is not served
+    again from the bank while that record is fresh), or (unless the caller
+    opts in) when it is marked IP-bound, because a shared cache must not
+    replay one client's token to another. This is the only check the cache
+    path adds over the request route's own adult/18+ gate, which must ALWAYS
+    run before this function.
     """
     if want not in ("watch", "download", "either"):
         want = "either"
@@ -738,6 +801,13 @@ def lookup_cache(conn: sqlite3.Connection, link_id: int, want: str = "watch", *,
         sql += " AND (ip_bound IS NULL OR ip_bound = 0)"
     row = conn.execute(sql, params).fetchone()
     if row is None:
+        return None
+    if _ledger_recently_failed(conn, int(link_id), now=now):
+        # H4 R7: the banked row is fresh and its circuit is closed, but the
+        # ledger just proved this link dead (a probe failure, or one dead-handle
+        # client report) — serving it would hand the next press the same dead
+        # winner. Refuse it so the press misses the cache and re-resolves onto
+        # the next verified candidate.
         return None
     hit = dict(zip((c for c in _ROW_COLUMNS), tuple(row)))
     # Task #24 law (c), the legacy-row defence: rows banked with kind='file'

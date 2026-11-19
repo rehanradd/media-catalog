@@ -934,6 +934,24 @@ class PlayerViewModel @Inject constructor(
                             }
                         }
                     }
+                    // H4 R7: a rendition abandoned mid-playback (after the first frame). The
+                    // service recorded it in the store slot when the failover machine hopped
+                    // or handed off; consume it once here and report it — best-effort and
+                    // silent, like every other link report — so the server banks the dead
+                    // winner and the next press does not re-serve it. This sits outside the
+                    // start-attempt block above on purpose: after the first frame lands,
+                    // `startAttemptAtMs` is null and that block never runs again.
+                    store.midPlaybackFailure.value?.let { failure ->
+                        store.clearMidPlaybackFailure()
+                        viewModelScope.launch {
+                            catalogRepository.reportLink(
+                                handle = failure.handle,
+                                event = "failed",
+                                error = failure.summary,
+                                failureClass = failure.failureClass,
+                            )
+                        }
+                    }
                     // Sleep timer advance + fade (player volume = user volume × fade factor)
                     if (_ui.value.sleep.mode == SleepMode.COUNTDOWN) {
                         val tick = sleepTimer.onTick(now - lastSleepTick)

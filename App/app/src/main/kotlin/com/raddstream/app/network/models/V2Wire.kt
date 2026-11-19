@@ -491,6 +491,11 @@ data class LinkReportRequest(
     val latencyMs: Int? = null,
     val error: String? = null,
     val device: String? = null,
+    // H4 R7: the failure class for a mid-playback "failed" report — one of the server's
+    // REPORT_FAILURE_CLASSES ("dead_handle", "network", "decode", "gate", "rate_limited").
+    // Null on start-failure reports, which keep today's contract (fail_count strike only).
+    @SerializedName("failure_class")
+    val failureClass: String? = null,
 )
 
 data class LinkReportResponse(

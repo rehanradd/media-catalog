@@ -219,6 +219,31 @@ class V2PlayWireTest {
         assertFalse(json.contains("device"))
     }
 
+    // H4 R7: a mid-playback "failed" report carries the failure class the server
+    // strikes on; a start-failure report (no class) omits the field entirely, so
+    // the server keeps today's contract — fail_count strike only.
+    @Test
+    fun `a mid-playback failed report encodes the failure class`() {
+        val json = gson.toJson(
+            LinkReportRequest(
+                event = "failed",
+                latencyMs = 900,
+                error = "HTTP 404",
+                failureClass = "dead_handle",
+            ),
+        )
+        assertTrue(json.contains("\"event\":\"failed\""))
+        assertTrue(json.contains("\"failure_class\":\"dead_handle\""))
+    }
+
+    @Test
+    fun `a start-failure report omits the failure class`() {
+        val json = gson.toJson(
+            LinkReportRequest(event = "failed", latencyMs = 30000, error = "Playback did not start"),
+        )
+        assertFalse(json.contains("failure_class"))
+    }
+
     @Test
     fun `a played link report decodes the servers answer`() {
         val response = gson.fromJson(
