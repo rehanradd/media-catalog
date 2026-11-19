@@ -733,6 +733,13 @@ jobs:
       - name: 🧪 test_host_resolvers.py
         run: python3 -S Fast_Fetch/importers/test_host_resolvers.py
 
+      # Phase C 1fichier (2026-11-20). The Premium-API token resolver:
+      # id extraction, no-key unknown, Bearer mint + Range probe, KO/HTTP/
+      # transport error mapping, and the never-serve-a-stored-token rule.
+      # Offline: injected fetch only, no socket, no key.
+      - name: 🧪 test_1fichier.py
+        run: python3 -S Fast_Fetch/importers/test_1fichier.py
+
       # The documentation diet's guard (2026-10-30). The diet moved ~690 KB of LOG and SPEC out of
       # the files every agent auto-loads; this suite is what proves no LAW sentence was lost in the
       # move — it greps the trimmed AGENTS.md files for each invariant phrase, checks the rotated

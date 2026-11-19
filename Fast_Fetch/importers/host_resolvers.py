@@ -228,6 +228,7 @@ import base64
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 import re
 import ssl
 import sys
@@ -341,6 +342,7 @@ SERVICE_GDRIVE = "gdrive"
 SERVICE_ANIMAHD = "animahd-player"
 SERVICE_GOFILE = "gofile"
 SERVICE_FILEPRESS = "filepress"
+SERVICE_1FICHIER = "1fichier"
 SERVICE_STREAMTAPE = "streamtape"
 SERVICE_STREAM = "stream"
 SERVICE_STREAMWISH = "streamwish"
@@ -2954,6 +2956,192 @@ def unwrap_filepress(url, fetch=None, verify=True):
 
 
 # ---------------------------------------------------------------------------
+# 1fichier — the Premium API token chain
+# ---------------------------------------------------------------------------
+#
+# Researched + probed live 2026-11-20 (full evidence in
+# checkpoints/20261120-phasec-1fichier.md). The free download page is NOT a
+# chain from server egress at all:
+#
+#   - Oracle VM (92.4.95.252): GET https://1fichier.com/?<id> -> 403, error #350
+#     "your IP address is temporarily locked ... following many request errors".
+#   - Hatch egress: 200, but the body is the "Accès restreint – professional
+#     infrastructure detected" page — no download form, no file, nothing to POST.
+#   - After ~6 requests the Oracle IP's connections to api.1fichier.com were
+#     reset too (connection reset by peer on every verb). Datacenter egress is
+#     the block, and it escalates with probe count — so probe rarely, once.
+#
+# The documented free limits make the page flow unusable for a shared server IP
+# even unblocked: one download at a time per IP, a 5–120 min wait between files,
+# ~100–150 KB/s, no resume, captcha possible. No free-flow code is built here:
+# no form was ever served to observe, so any POST shape would be guesswork.
+#
+# The only chain is the Premium API (rclone backend/fichier, current master;
+# meaSERIES Kodi client, same call):
+#
+#   POST https://api.1fichier.com/v1/download/get_token.cgi
+#     Authorization: Bearer <api_key>          (rclone fichier.go:220)
+#     {"url": "https://1fichier.com/?<id>", "single": 1, "restrict_ip": 0}
+#     -> {"url": "<direct link>", "Status": "OK", "Message": ""}
+#
+#   - The API key is Premium-only: free accounts cannot generate one (rclone
+#     docs; key at https://1fichier.com/console/params.pl). The key lives in
+#     the RADD_1FICHIER_API_KEY env var / server key file — never in code,
+#     chat, or memory. Without a key the resolver answers "unknown" (reason
+#     no_api_key), never "dead": an unconfigured host is unproven, not dead.
+#   - restrict_ip=0: the server mints, the phone plays — a token bound to the
+#     server IP would 403 on the handset. (1fichier API param, per the
+#     un_fichier_api gem's File.download signature; TO CONFIRM at live proof.)
+#   - Tokens are short-lived (~5 min per debrid documentation), so
+#     expires_in=300 and is_temporary=True: mint fresh every resolve, never
+#     serve a stored token URL.
+#   - The API route itself answers from the Oracle VM (GET info.cgi -> 400
+#     {"status":"KO","message":"Content-Type not JSON #40"}), so the route is
+#     reachable; only the key is missing. Live proof (206 + video mime) is
+#     OWED until a Premium key exists — that is the owner's call (paid
+#     Premium; the key needs a user login to create).
+#
+# One API POST + one Range probe per resolve; an HTTP answer (including 429)
+# is never retried, and a transport failure is "unknown", never "dead".
+
+FICHIER_API = "https://api.1fichier.com/v1"
+FICHIER_GET_TOKEN = FICHIER_API + "/download/get_token.cgi"
+FICHIER_API_KEY_ENV = "RADD_1FICHIER_API_KEY"
+FICHIER_TIMEOUT = 15
+# 1fichier tokens are short-lived (~5 min); a minted link is never served past it.
+FICHIER_TOKEN_TTL_SECONDS = 300
+FICHIER_ID_RE = re.compile(
+    r"""(?:www\.)?1fichier\.com/(?:\?)?([A-Za-z0-9]{8,})(?:[?&#/]|$)""", re.I)
+# The API's KO vocabulary is inferred from community reports (no KO body was
+# ever observed: unauthenticated POSTs are reset) — the mapping below is
+# conservative and defaults to "unknown" for anything it does not recognise.
+FICHIER_DEAD_RE = re.compile(
+    r"not found|no such|deleted|removed|does not exist|unknown file", re.I)
+FICHIER_BLOCKED_RE = re.compile(
+    r"api key|auth|forbidden|limit|too many|rate|premium|temporarily locked", re.I)
+
+
+def is_1fichier_url(url: str) -> bool:
+    """A 1fichier file URL (/?id or /id), not a 1fichier site page."""
+    return bool(FICHIER_ID_RE.search(url or ""))
+
+
+def _fichier_extract_id(url: str) -> str:
+    """The file id out of a 1fichier URL, or ""."""
+    match = FICHIER_ID_RE.search(url or "")
+    return match.group(1) if match else ""
+
+
+def _fichier_api_key(api_key: str | None) -> str:
+    """The caller's key, else the server-side env var — never a literal."""
+    if api_key:
+        return api_key.strip()
+    return os.environ.get(FICHIER_API_KEY_ENV, "").strip()
+
+
+def _fichier_get_token(fetch, file_url: str, api_key: str):
+    """One get_token POST. Returns (ok, data_or_note) like _filepress_api_call.
+
+    ok=True  -> data is the minted direct-link URL string.
+    ok=False -> data is a short machine-readable note for the verdict.
+    """
+    body = json.dumps({
+        "url": file_url,
+        "single": 1,
+        "restrict_ip": 0,
+    }).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + api_key,
+        "User-Agent": USER_AGENT,
+    }
+    try:
+        status, raw, _hdrs, _url = fetch(
+            FICHIER_GET_TOKEN,
+            headers=headers, timeout=FICHIER_TIMEOUT,
+            method="POST", follow=False, data=body,
+        )
+    except Exception as exc:  # network-level failure: unknown, not dead
+        return False, "fetch_error:%s" % type(exc).__name__
+    if status == 0:
+        return False, "fetch_error:transport"
+    if status in (401, 403, 429):
+        return False, "blocked:%d" % status
+    if status in (404, 410):
+        return False, "dead:%d" % status
+    if status != 200:
+        return False, "http:%d" % status
+    try:
+        parsed = json.loads(_page_text(raw))
+    except Exception:
+        return False, "bad_json"
+    if not isinstance(parsed, dict):
+        return False, "bad_json"
+    if parsed.get("Status") != "OK":
+        message = str(parsed.get("Message") or parsed.get("message") or "api_error")
+        if FICHIER_DEAD_RE.search(message):
+            return False, "dead:%s" % message
+        if FICHIER_BLOCKED_RE.search(message):
+            return False, "blocked:%s" % message
+        return False, "api_error:%s" % message
+    direct = parsed.get("url")
+    if not isinstance(direct, str) or not direct.lower().startswith("https:"):
+        return False, "bad_url"
+    return True, direct
+
+
+def unwrap_1fichier(url: str, fetch=None, verify: bool = True,
+                    api_key: str | None = None) -> dict:
+    """Resolve a 1fichier file URL to a direct link via the Premium API.
+
+    Returns a verdict dict like the other unwrap_* resolvers. With no API key
+    configured the verdict is "unknown" (reason no_api_key) — the host is
+    unproven, never dead, and no free fallback exists from server egress.
+    With a key: one get_token POST mints a fresh short-lived link, and with
+    verify=True it is Range-probed and only a 206 with real video bytes is
+    "active". The minted link is a return value, never a stored value: the
+    next press mints again.
+    """
+    fetch = fetch or http_request
+    result = _new_result(SERVICE_1FICHIER, url)
+    file_id = _fichier_extract_id(result["embed_url"])
+    if not file_id:
+        result["status"] = "unknown"
+        result["notes"].append("not a 1fichier file URL")
+        return result
+    result["file_id"] = file_id
+    key = _fichier_api_key(api_key)
+    if not key:
+        result["status"] = "unknown"
+        result["reason"] = "no_api_key"
+        result["notes"].append(
+            "no 1fichier Premium API key configured (%s): the API is "
+            "Premium-only and free accounts cannot generate keys, and the "
+            "free download page is blocked from server egress, so there is "
+            "no free chain to fall back to" % FICHIER_API_KEY_ENV)
+        return result
+    file_url = "https://1fichier.com/?" + file_id
+    ok, data = _fichier_get_token(fetch, file_url, key)
+    if not ok:
+        note = "get_token: %s" % data
+        if isinstance(data, str) and data.startswith("blocked:"):
+            result["status"] = "blocked"
+        elif isinstance(data, str) and data.startswith("dead:"):
+            result["status"] = "dead"
+        else:
+            result["status"] = "unknown"
+        result["notes"].append(note)
+        return result
+    result["final_url"] = data
+    result["sources"] = [{"url": data, "mime": "", "label": ""}]
+    result["expires_in"] = FICHIER_TOKEN_TTL_SECONDS
+    result["notes"].append(
+        "minted via 1fichier get_token (Premium API); token ~5 min, "
+        "re-resolve every press, never serve stored")
+    return _finish_media(result, fetch, verify)
+
+
+# ---------------------------------------------------------------------------
 # streamtape
 # ---------------------------------------------------------------------------
 
@@ -4382,6 +4570,7 @@ SERVICE_RESOLVERS = (
     (SERVICE_FILMU, is_filmu_embed, unwrap_filmu),
     (SERVICE_CINEVERSE, is_cineverse_embed, unwrap_cineverse),
     (SERVICE_DOODSTREAM, is_doodstream_url, unwrap_doodstream),
+    (SERVICE_1FICHIER, is_1fichier_url, unwrap_1fichier),
     (SERVICE_GDRIVE, is_gdrive_link, unwrap_gdrive),
     (SERVICE_ANIMAHD, is_animahd_player, unwrap_animahd),
     (SERVICE_CASTLE, is_castle_page, unwrap_castle),
@@ -4420,6 +4609,7 @@ RESOLVER_BY_SERVICE = {
     SERVICE_FILMU: unwrap_filmu,
     SERVICE_CINEVERSE: unwrap_cineverse,
     SERVICE_DOODSTREAM: unwrap_doodstream,
+    SERVICE_1FICHIER: unwrap_1fichier,
     SERVICE_VIDOUT: unwrap_vidout,
 }
 

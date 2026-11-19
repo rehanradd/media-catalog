@@ -7,7 +7,7 @@
 
 ## ✅ Open items — index (q3, 2026-10-30; pointers only)
 
-1. **This file is a pointer, not a history** 123 session files (120 dated + 3 undated) cover
+1. **This file is a pointer, not a history** 124 session files (121 dated + 3 undated) cover
 
    every one of them verbatim: [`checkpoints/README.md`](checkpoints/README.md). Nothing was
    deleted, reworded, or summarized. The count is `ls Fast_Fetch/checkpoints/*.md` minus `README.md`,
@@ -71,12 +71,9 @@
 ## Rotated session history
 
 The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete index.
-- [Session 2026-11-16 — playback telemetry beacon](checkpoints/20261116-playback-telemetry-beacon.md)
 - [2026-11-18 — B4 trending warm-failure loudness](checkpoints/20261118-trending-warm-loud-b4.md)
 - 2026-11-18 — H2 backfills #6/#8/#9: quality normalization, resolved_cache prune, desicinemas year.
 - 2026-11-18 — B1 cursor pagination + band-aware play walk (`muse/cursor-pagination-20261118`): keyset cursors on v1 posts/trending, v2 walk verified, play best-band-first; 13 tests green locally.
-- 2026-11-18 — R1+R2+R4 + checkup #3 host ranking: decayed score + tiers + verified prints + slice; 24 tests green; checkpoints/20261118-host-ranking-r1r2r4.md.
-- [B2 episode_guide — 2026-11-19](checkpoints/20261119-b2-episode-guide.md)
 - MX #4 Skip Intro (2026-11-19, muse/mx-skip-intro-20261119): TheIntroDB v3 segments — cat_media_segments + lookups, backfill_segments.py (staging SQL only), play_bundle "segments" (pack-offset shift/omit); CI green: backend 44467838435, Android 44468545737 attempt 2 (2,544 tests); tip 6afe9d9f ready to merge.
 - [2026-11-19 — H4 R5 shared streaming cache](checkpoints/20261119-h4-shared-cache.md): demand ledger + sibling-band warm + prefetch --demand; 33 tests green locally, Backend CI pending.
 - [2026-11-19 — H4 R6 direct-file preference](checkpoints/20261119-h4-direct-file.md): measured mime corrects the ingest label in tiers.score, candidate_order_sql, and the verify pass (+0.10 fresh banked-file nudge); 17 tests green locally, Backend CI pending.
@@ -84,6 +81,7 @@ The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete i
 - [Session 2026-11-12 — self-check `[LIVE-TV-503]`](checkpoints/20261112-selfcheck-live-tv-503-logos.md)
 - [2026-11-20 — H4 R8 clearance-cookie reuse](checkpoints/20261120-h4-r8-clearance-cookie.md): per-host clearance store + probe/resolver wiring; 43 tests green locally, Backend CI pending.
 - [2026-11-20 — H4 R9 resolver probes](checkpoints/20261120-h4-r9-resolver-probes.md): serve-time re-probe of an aging banked row before it is 302'd — fresh rows serve unprobed, a verifying probe refreshes the row, an endpoint-answered failure reads as a cache miss (live resolver fails over), a no-answer probe serves fail-open; 18 tests green locally, Backend CI pending.
+- [2026-11-20 — Phase C 1fichier resolver](checkpoints/20261120-phasec-1fichier.md): Premium-API get_token chain built + wired (36 tests green locally, Backend CI pending); NO live proof — free page blocked from both egresses, API key is Premium-only and owed (owner login + paid Premium).
 
 ## Moved out (reference prose, verbatim)
 
