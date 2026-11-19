@@ -4191,6 +4191,203 @@ def unwrap_greenmotors(greenmotors_url: str, timeout: int = 10) -> list[dict]:
     return results
 
 
+# ---------------------------------------------------------------------------
+# multiup (Phase C, 2026-11-20) — multi-host mirror hub.
+#
+# Proven live from the Oracle VM egress (curl + stdlib urllib, 20 Nov 2026):
+#   1. GET https://multiup.io/download/<32-hex>[/<filename>] -> 200, HTML carries
+#      <input type="hidden" name="_csrf_token" value="..."> plus a session cookie.
+#      (multiup.org/download/<id> 301s to the .io URL.)
+#   2. POST https://multiup.io/en/mirror/<id> with that token, the session cookie
+#      and a Referer -> 200, mirror list with PLAIN anchors:
+#      <a href="<mirror>" nameHost="<host>" link="<mirror>"
+#         validity="<valid|invalid|unknown>">Download</a>
+#   3. Follow the best mirror with an existing resolver: gofile first, then
+#      mixdrop (the mirror is the /f/<id> file page; the embed is /e/<id>).
+#
+# No yt-dlp extractor and no dedicated open-source multiup resolver exists
+# (searched 20 Nov 2026); JDownloader handles the links but that is not a
+# piece this codebase can reuse. So this is custom, stdlib only.
+#
+# Transport quirk, measured: multiup.io (57.129.5.167, OVH, direct — NOT
+# Cloudflare) intermittently RSTs the TLS handshake mid-SSL_connect from the
+# Oracle egress, about half of all attempts, successes interleaving with
+# failures on the same URL minutes apart. It is NOT a deterministic block, so
+# each request retries (3 attempts, short sleep); an HTTP 404 fails fast
+# (the file is deleted from multiup). The link sweep re-tries failed rows.
+#
+# Mirror liveness, measured on 5 random live-DB samples (20 Nov 2026): 2/5
+# multiup files are deleted outright (404) and every gofile/mixdrop mirror
+# probed was deleted at the host too — multiup's own validity="invalid" flag
+# agreed with the live checks in every case. The USENET mirror is
+# validity="valid" on every sample but is a premium /download-fast/ upsell,
+# not a free direct file, so it is never followed. The other mirrors
+# (vikingfile, dailyuploads, rapidgator, 1fichier, megaup, chomikuj, fireload)
+# have no resolver in this repo and are not attempted. Only an `active`
+# verdict from gofile/mixdrop wins; anything else is ("", id, 0, None).
+# ---------------------------------------------------------------------------
+MULTIUP_ID_RE = re.compile(
+    r"""multiup\.(?:io|org)/download/([0-9a-f]{32})""", re.I)
+MULTIUP_CSRF_RE = re.compile(
+    r'''name="_csrf_token"\s+value="([^"]+)"''')
+MULTIUP_MIRROR_RE = re.compile(
+    r"""<a[^>]*\bnameHost="([^"]+)"[^>]*>""", re.I | re.S)
+# multiup's own validity check, measured accurate on every sampled mirror:
+# "valid" mirrors are tried first, "unknown" next, "invalid" last.
+_MULTIUP_VALIDITY_RANK = {"valid": 0, "unknown": 1, "invalid": 2}
+_MULTIUP_MIRROR_HOSTS = ("gofile.io", "mixdrop")
+_MULTIUP_HTTP_TRIES = 3
+_MULTIUP_HTTP_SLEEP = 3.0
+
+
+def multiup_extract_id(multiup_url: str) -> str:
+    """The 32-hex file id of a multiup download URL, or "" when it is not one."""
+    if not multiup_url:
+        return ""
+    m = MULTIUP_ID_RE.search(multiup_url)
+    return m.group(1) if m else ""
+
+
+def multiup_parse_mirrors(mirror_html: str) -> list[dict]:
+    """Mirror list page -> [{"host", "validity", "link"}] in page order.
+
+    The page's anchors carry the mirror three times over (href, nameHost,
+    link); `link` is the authority because href and link always agreed in
+    every page fetched live, and `link` is what the button submits.
+    `&amp;` in a link (1fichier query strings) is unescaped. Anchors with no
+    usable link (the USENET upsell carries a relative /download-fast/ path)
+    are kept — the caller decides what is followable — with link as-is.
+    """
+    mirrors: list[dict] = []
+    if not mirror_html:
+        return mirrors
+    for m in MULTIUP_MIRROR_RE.finditer(mirror_html):
+        tag = m.group(0)
+        attrs = dict(re.findall(r"""([\w-]+)="([^"]*)""", tag))
+        link = html_module.unescape(attrs.get("link") or "")
+        mirrors.append({
+            "host": (attrs.get("nameHost") or "").strip(),
+            "validity": (attrs.get("validity") or "unknown").strip().lower(),
+            "link": link,
+        })
+    return mirrors
+
+
+def _multiup_session():
+    """A multiup request function with ONE cookie jar for its whole lifetime.
+
+    The mirror POST is only accepted with the session cookie the download-page
+    GET set, so the jar must survive across both calls of one unwrap — a
+    fresh opener per request would lose it. Returns a callable with the
+    signature (method, url, data, referer, timeout) -> (status, final_url,
+    body). Retries a transport reset (the origin RSTs TLS handshakes about
+    half the time from the Oracle egress — measured, not deterministic). An
+    HTTP 404 fails fast: the file is deleted, retrying cannot revive it.
+    Any other HTTP error is returned as its status with an empty body.
+    """
+    jar = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPCookieProcessor(jar),
+        urllib.request.HTTPSHandler(context=_tls_context("https://multiup.io")))
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+
+    def _request(method: str, url: str, data: bytes | None = None,
+                 referer: str | None = None,
+                 timeout: int = 12) -> tuple[int, str, str]:
+        req_headers = dict(headers)
+        if referer:
+            req_headers["Referer"] = referer
+        last_status, last_body = 0, ""
+        for _ in range(_MULTIUP_HTTP_TRIES):
+            req = urllib.request.Request(url, data=data, headers=req_headers,
+                                         method=method)
+            try:
+                with opener.open(req, timeout=timeout) as resp:
+                    charset = resp.headers.get_content_charset() or "utf-8"
+                    return (resp.status, resp.geturl(),
+                            resp.read().decode(charset, errors="replace"))
+            except urllib.error.HTTPError as e:
+                last_status = e.code
+                if e.code == 404:
+                    return (404, url, "")
+                time.sleep(_MULTIUP_HTTP_SLEEP)
+            except Exception:
+                last_status = 0
+                time.sleep(_MULTIUP_HTTP_SLEEP)
+        return (last_status, url, last_body)
+
+    return _request
+
+
+def unwrap_multiup(multiup_url: str, timeout: int = 12, _http=None,
+                   _resolvers=None) -> tuple[str, str, int, dict | None]:
+    """multiup download URL -> (direct_url, resource_id, is_temp, verdict).
+
+    GET the download page, POST its CSRF token to /en/mirror/<id>, parse the
+    mirror list, and unwrap the best mirror with an existing resolver
+    (gofile, then mixdrop). Only a mirror verdict of `active` — i.e. the
+    resolver's own Range probe just read real bytes — wins; the returned
+    direct URL is that verdict's final_url and is_temporary is 1 (gofile /
+    mixdrop links are signed and short-lived). Anything else is
+    ("", <id>, 0, None): file deleted (404), no CSRF token, no mirror page,
+    no resolvable mirror, or every mirror dead.
+
+    `_http` is the test seam: (method, url, data, referer, timeout) -> (status,
+    final_url, body). `_resolvers` is the test seam for the host_resolvers
+    module (unwrap_gofile / unwrap_mxdrop). Both default to the live paths.
+    """
+    file_id = multiup_extract_id(multiup_url)
+    if not file_id:
+        return ("", "", 0, None)
+    http = _http or _multiup_session()
+    resolvers = _resolvers if _resolvers is not None else _embed_resolvers()
+    if resolvers is None:
+        return ("", file_id, 0, None)
+    status, final_url, page = http("GET", multiup_url, None, None, timeout)
+    if status != 200 or not page:
+        return ("", file_id, 0, None)
+    token_m = MULTIUP_CSRF_RE.search(page)
+    if not token_m:
+        return ("", file_id, 0, None)
+    base = urllib.parse.urlparse(final_url or multiup_url)
+    mirror_url = f"{base.scheme or 'https'}://{base.netloc or 'multiup.io'}/en/mirror/{file_id}"
+    post_data = urllib.parse.urlencode(
+        {"_csrf_token": token_m.group(1)}).encode("utf-8")
+    status, _final, mirror_html = http("POST", mirror_url, post_data,
+                                       multiup_url, timeout)
+    if status != 200 or not mirror_html:
+        return ("", file_id, 0, None)
+    mirrors = multiup_parse_mirrors(mirror_html)
+    if not mirrors:
+        return ("", file_id, 0, None)
+    for want_host in _MULTIUP_MIRROR_HOSTS:
+        cands = [m for m in mirrors
+                 if want_host in (m.get("host") or "").lower()
+                 and (m.get("link") or "").lower().startswith("https://")]
+        cands.sort(key=lambda m: _MULTIUP_VALIDITY_RANK.get(
+            (m.get("validity") or "unknown").lower(), 1))
+        for cand in cands:
+            link = cand["link"]
+            if want_host == "mixdrop":
+                f_page = re.match(
+                    r"""^(https?://[^/]+)/f/([A-Za-z0-9_-]+)/?$""", link)
+                if f_page and "/e/" not in link:
+                    link = f"{f_page.group(1)}/e/{f_page.group(2)}"
+                verdict = resolvers.unwrap_mxdrop(link, verify=True)
+            else:
+                verdict = resolvers.unwrap_gofile(link, verify=True)
+            if isinstance(verdict, dict) and verdict.get("status") == "active":
+                direct = verdict.get("final_url") or ""
+                if direct.lower().startswith("https://"):
+                    return (direct, file_id,
+                            int(verdict.get("is_temporary", 1) or 1), verdict)
+    return ("", file_id, 0, None)
+
+
 def fetch_kmhd_bridge(file_id: str, token: str = "") -> list[dict]:
     """
     Directly queries KatMovieHD backend API (https://api.dandndn.one/api/v1/file/<file_id>)
@@ -8183,6 +8380,30 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                     fresh_url = direct_u
                     fresh_temp = 1
                     embed_verdict = verdict
+                    _gate_from_verdict = True
+            elif (service == "multiup" or "multiup" in source_u.lower()
+                    or "multiup" in cached_u.lower()):
+                # Phase C (2026-11-20): multiup is a mirror hub, not a file
+                # host — unwrap_multiup GETs the download page, POSTs its
+                # CSRF token to /en/mirror/<id>, and unwraps the best mirror
+                # (gofile, then mixdrop) with the existing resolvers. The
+                # unwrapper's Range probe IS the gate evidence, exactly as
+                # for gofile/mixdrop themselves: a gofile direct link 302s
+                # without its guest Authorization header and the mxcontent
+                # CDN 403s a bare re-probe, so a generic bare probe would
+                # fail a proven link. Measured 20 Nov 2026 on 5 random live
+                # rows: the chain runs, but no resolvable mirror was alive
+                # (2/5 files deleted from multiup, every gofile/mixdrop
+                # mirror deleted at the host) — so this branch mints
+                # correctly and serves the moment a row with a live mirror
+                # is pressed; it is NOT yet press-proven.
+                _unwrap_branch_taken = True
+                direct_u, _mu_id, _mu_temp, _mu_verdict = unwrap_multiup(
+                    hoster_input("multiup"))
+                if direct_u:
+                    fresh_url = direct_u
+                    fresh_temp = _mu_temp
+                    embed_verdict = _mu_verdict
                     _gate_from_verdict = True
             elif hr and (service == hr.SERVICE_FILEPRESS
                          or "filepress" in source_u.lower()

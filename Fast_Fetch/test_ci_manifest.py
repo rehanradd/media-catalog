@@ -89,6 +89,9 @@ MANDATORY_RUN = (
     # green on the lane (171 and 45 tests) before they became steps.
     "test_host_resolvers.py",
     "test_stream_resolvers.py",
+    # Phase C multiup (2026-11-20): mirror-hub unwrap, verified offline green
+    # on the lane (18 tests) before it became a step.
+    "test_multiup_unwrap.py",
 )
 
 
