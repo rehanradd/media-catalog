@@ -19,6 +19,7 @@ import com.raddstream.app.player.SubtitleColor
 import com.raddstream.app.player.SubtitleEdge
 import com.raddstream.app.player.SubtitleFont
 import com.raddstream.app.player.SubtitleUiSettings
+import com.raddstream.app.player.audio.EqState
 import com.raddstream.app.ui.theme.PlayerChromeTheme
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.concurrent.atomic.AtomicBoolean
@@ -94,6 +95,22 @@ class ServerSettingsRepository @Inject constructor(
     suspend fun saveAudioBoostLevel(level: Float) {
         val safe = if (level.isFinite()) level.coerceIn(0f, MAX_AUDIO_BOOST) else DEFAULT_AUDIO_BOOST
         dataStore.edit { preferences -> preferences[AUDIO_BOOST_LEVEL_KEY] = safe }
+    }
+
+    /**
+     * The equalizer state (MX idea #8), stored as one string
+     * (`EqState.serialize`: `on|off:preset:g1,g2,g3,g4,g5`). Persisted
+     * because it is a preference, not a gesture — the same reason the
+     * audio level is: a viewer who mixes once should not have to mix
+     * again after every episode. A value no parser understands reads back
+     * as [EqState.DEFAULT] (see [EqState.parse]), never as a crash.
+     */
+    val eqState: Flow<EqState> = dataStore.data.map { preferences ->
+        EqState.parse(preferences[EQ_STATE_KEY])
+    }
+
+    suspend fun saveEqState(state: EqState) {
+        dataStore.edit { preferences -> preferences[EQ_STATE_KEY] = state.serialize() }
     }
 
     /**
@@ -1167,6 +1184,7 @@ class ServerSettingsRepository @Inject constructor(
     companion object {
         private val SERVER_URL_KEY = stringPreferencesKey("server_url")
         private val AUDIO_BOOST_LEVEL_KEY = floatPreferencesKey("audio_boost_level")
+        private val EQ_STATE_KEY = stringPreferencesKey("player_eq_state")
         private val PREFERRED_AUDIO_LANGUAGE_KEY = stringPreferencesKey("preferred_audio_language")
         private val USER_REGION_KEY = stringPreferencesKey("user_region")
         private val REGION_RECORDED_KEY = booleanPreferencesKey("region_choice_recorded")

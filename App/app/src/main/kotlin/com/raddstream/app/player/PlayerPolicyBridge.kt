@@ -1,5 +1,7 @@
 package com.raddstream.app.player
 
+import com.raddstream.app.player.audio.GainSplit
+import com.raddstream.app.player.audio.splitTotalGain
 import kotlin.math.roundToInt
 
 /*
@@ -331,34 +333,33 @@ object ThermalCap {
 }
 
 /**
- * The 0..2 boost level translated into the one value Media3 may be given, plus the
- * honest sentence about what that value means.
+ * The 0..2 boost level translated into the two handles the platform actually
+ * offers, plus the honest sentence about what they mean.
  *
- * WHY A CEILING EXISTS AND IS SAID OUT LOUD: `Player.setVolume` is documented 0..1, so
- * a "200%" request cannot be met by the player, and this build has no software gain
- * stage to meet it with either — media3 1.3.1 ships no `DynamicsProcessing` renderer and
- * the app declares no equalizer dependency. [effectivePlayerGain] therefore multiplies
- * the boost into the user's own volume and clamps the product to the contract. Below the
- * ceiling the boost is completely real (a viewer at 60% who asks for 150% gets 90%); at
- * the ceiling only the part up to 100% applies, and [honestSummary] says so in plain words
- * and points at the device volume, so the UI can never claim a boost it did not apply.
+ * `Player.setVolume` is documented 0..1, so a "200%" request cannot be met
+ * by the player alone. MX idea #8 built the software gain stage the old
+ * comment waited for ([EnhancementAudioProcessor], in the sink chain): the
+ * part of the level at or below unity goes to the player, the excess above
+ * unity goes to the processor as a 1..2× gain, and the product is exactly
+ * the requested level. A viewer at 60% who asks for 150% gets 90% from the
+ * player and the remaining 1.5× from the processor — the boost is
+ * completely real now, including past the ceiling. [AudioBoost.plan] still
+ * models the 0..2 range and its dB excess untouched; this object is where
+ * that model meets the two sinks.
  *
  * AND THE CONTROL DOES NOT OFFER THE DEAD ZONE: a caption can explain a dead range, but a
  * thumb the viewer can drag to 170% while the sound cannot change is still a promise the build
  * breaks on every drag. [MAX_OFFERED_LEVEL] is the ceiling the sliders and setters use, so
- * what a viewer can ask for is exactly what this build can apply. [AudioBoost.plan] keeps
- * modelling the 0..2 range and its dB excess untouched — that is the policy a future
- * software-gain stage plugs into, and raising [SOFTWARE_GAIN_AVAILABLE] to true widens every
- * control from this one value.
+ * what a viewer can ask for is exactly what this build can apply.
  */
 object AudioBoostUi {
 
-    /** False on this build: no software gain stage is available, so dB excess is refused. */
-    const val SOFTWARE_GAIN_AVAILABLE: Boolean = false
+    /** True since MX #8: the enhancement processor applies the dB excess. */
+    const val SOFTWARE_GAIN_AVAILABLE: Boolean = true
 
     /**
-     * The highest level a control may offer. With no software gain that is the player's own
-     * unity ceiling; the 0..2 model above stays reachable only through a build that can act on it.
+     * The highest level a control may offer. With the software gain stage
+     * that is the full 0..2 model: 200%, the MX Player ceiling.
      */
     val MAX_OFFERED_LEVEL: Float =
         if (SOFTWARE_GAIN_AVAILABLE) AudioBoost.MAX else AudioBoost.BASELINE
@@ -375,27 +376,35 @@ object AudioBoostUi {
         return (AudioBoost.clampLevel(level) * safeVolume).coerceIn(0f, 1f)
     }
 
+    /**
+     * The split of one requested level into the player half and the
+     * processor half (see [splitTotalGain]): the player half is what
+     * [effectivePlayerGain] returns, the processor half is the excess.
+     * The two multiply back to exactly the requested total.
+     */
+    fun splitGain(level: Float, userVolume: Float): GainSplit {
+        val safeVolume = if (userVolume.isFinite()) userVolume.coerceIn(0f, 1f) else 1f
+        return splitTotalGain(AudioBoost.clampLevel(level) * safeVolume)
+    }
+
     /** Percent actually applied to the player, for the caption and the HUD. */
     fun appliedPercent(level: Float, userVolume: Float): Int =
         (effectivePlayerGain(level, userVolume) * 100f).roundToInt()
+
+    /** Percent actually applied in total — player gain × software gain. */
+    fun appliedTotalPercent(level: Float, userVolume: Float): Int {
+        val split = splitGain(level, userVolume)
+        return (split.playerGain * split.dspGain * 100f).roundToInt()
+    }
 
     /** Requested percent, clamped exactly as the policy clamps it. */
     fun requestedPercent(level: Float): Int = (AudioBoost.clampLevel(level) * 100f).roundToInt()
 
     /**
-     * User-facing caption. Never promises more than [effectivePlayerGain] delivers: below the
-     * ceiling it states the applied percent and nothing else; at the ceiling it says so in
-     * plain words and points at the device volume, because the rest of the request is not
-     * something this build can apply.
+     * User-facing caption. The applied total is the requested level now —
+     * the software gain stage applies the excess the player cannot — so
+     * the caption states the applied percent and nothing else.
      */
-    fun honestSummary(level: Float, userVolume: Float): String {
-        val plan = AudioBoost.plan(level)
-        if (!plan.boostActive) return AudioBoost.labelFor(level)
-        val applied = appliedPercent(level, userVolume)
-        return if (applied >= 100) {
-            "Louder than the player can play — turn up your device volume for the rest."
-        } else {
-            "Volume $applied%"
-        }
-    }
+    fun honestSummary(level: Float, userVolume: Float): String =
+        "Volume ${appliedTotalPercent(level, userVolume)}%"
 }

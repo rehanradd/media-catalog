@@ -275,7 +275,7 @@ class PlayerPolicyBridgeTest {
     }
 
     @Test
-    fun `the caption states the applied percent and says the ceiling plainly`() {
+    fun `the caption states the applied percent, in full, past the player ceiling`() {
         assertEquals("Volume 100%", AudioBoostUi.honestSummary(1f, 1f))
         assertEquals("Volume 60%", AudioBoostUi.honestSummary(0.6f, 1f))
 
@@ -283,21 +283,29 @@ class PlayerPolicyBridgeTest {
         // explanation of a mechanism the viewer cannot act on.
         assertEquals("Volume 90%", AudioBoostUi.honestSummary(1.5f, 0.6f))
 
-        val capped = AudioBoostUi.honestSummary(1.5f, 1f)
-        assertTrue(capped, capped.contains("Louder than the player can play"))
-        assertTrue(capped, capped.contains("turn up your device volume"))
-        assertFalse(capped, capped.contains("Requested"))
-        assertFalse(capped, capped.contains("no software gain"))
-        assertFalse(capped, capped.contains("Volume 150%"))
+        // MX idea #8: past the ceiling the caption states the applied
+        // total — the software gain stage applies the excess the player
+        // cannot, so there is no ceiling sentence left to say.
+        assertEquals("Volume 150%", AudioBoostUi.honestSummary(1.5f, 1f))
+        assertEquals("Volume 200%", AudioBoostUi.honestSummary(2f, 1f))
+        val applied = AudioBoostUi.honestSummary(1.5f, 1f)
+        assertFalse(applied, applied.contains("Louder than the player can play"))
+        assertFalse(applied, applied.contains("turn up your device volume"))
+        assertFalse(applied, applied.contains("Requested"))
+        assertFalse(applied, applied.contains("no software gain"))
         assertEquals(90, AudioBoostUi.appliedPercent(1.5f, 0.6f))
         assertEquals(100, AudioBoostUi.appliedPercent(2f, 1f))
+        assertEquals(150, AudioBoostUi.appliedTotalPercent(1.5f, 1f))
+        assertEquals(200, AudioBoostUi.appliedTotalPercent(2f, 1f))
     }
 
     @Test
-    fun `this build declares no software gain stage`() {
-        // The caption's honesty rests on this flag; if a DynamicsProcessing/equalizer route
-        // is ever added, this test is the place that has to change on purpose.
-        assertFalse(AudioBoostUi.SOFTWARE_GAIN_AVAILABLE)
+    fun `this build declares a software gain stage`() {
+        // The caption's honesty rests on this flag: the enhancement
+        // processor applies the excess above unity, so the 0..2 model is
+        // applied in full. If the stage is ever removed, this test is the
+        // place that has to change on purpose.
+        assertTrue(AudioBoostUi.SOFTWARE_GAIN_AVAILABLE)
     }
 
     // ── Salaar (2026-11-12): step down one rung on a gate refusal ───────────

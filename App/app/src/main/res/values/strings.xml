@@ -208,6 +208,27 @@
     <string name="player_audio_only_on">Audio-only mode: ON (screen decoder off)</string>
     <string name="player_audio_only_off">Audio-only mode: off</string>
     <string name="player_audio_level">Audio level</string>
+    <!-- MX idea #8 — equalizer (More sheet → EQ sheet). Every value is
+         unique among player_* strings and every one is used; the band
+         labels are resources, not literals, so the screen holds no prose. -->
+    <string name="player_equalizer">Equalizer</string>
+    <string name="player_equalizer_with_preset">Equalizer — %1$s</string>
+    <string name="player_eq_on">Equalizer on</string>
+    <string name="player_eq_off">Equalizer off</string>
+    <string name="player_eq_presets_title">Presets</string>
+    <string name="player_eq_bands_title">Bands</string>
+    <string name="player_eq_preset_flat">Flat</string>
+    <string name="player_eq_preset_normal">Normal</string>
+    <string name="player_eq_preset_bass">Bass boost</string>
+    <string name="player_eq_preset_treble">Treble boost</string>
+    <string name="player_eq_preset_vocal">Vocal</string>
+    <string name="player_eq_preset_custom">Custom</string>
+    <string name="player_eq_band_60">60 Hz</string>
+    <string name="player_eq_band_230">230 Hz</string>
+    <string name="player_eq_band_910">910 Hz</string>
+    <string name="player_eq_band_3600">3.6 kHz</string>
+    <string name="player_eq_band_14000">14 kHz</string>
+    <string name="player_eq_gain">%1$d dB</string>
     <string name="player_prints_title">Switch version</string>
     <string name="player_chapters_title">Chapters</string>
     <string name="player_chapter_row">"%1$s  ·  %2$s"</string>

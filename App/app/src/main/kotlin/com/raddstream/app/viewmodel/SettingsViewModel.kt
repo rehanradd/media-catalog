@@ -686,8 +686,8 @@ class SettingsViewModel @Inject constructor(
      * The persisted audio level. Written straight through to the same store the player
      * reads, so a mix made here is the mix the next playback starts with — and the caption
      * the screen shows comes from [AudioBoostUi.honestSummary], which states the applied
-     * value rather than the requested one, because above the player's 100% ceiling the two
-     * genuinely differ on this build.
+     * total: the part above the player's 100% ceiling is applied by the enhancement
+     * processor, so the applied value is the requested level.
      */
     fun setAudioBoost(level: Float) {
         val safe = AudioBoostUi.offeredLevel(level)

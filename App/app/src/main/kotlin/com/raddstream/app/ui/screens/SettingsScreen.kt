@@ -491,10 +491,11 @@ fun SettingsScreen(
                         )
                     }
                 }
-                // Still worth saying: below the ceiling the boost is real, but it rides on the
-                // viewer's own system volume, so the caption states what is applied, not what
-                // was asked. Above the ceiling it says so in plain words, and below it just
-                // the percent — the range above is already the range this build can honour.
+                // Still worth saying: the boost rides on the viewer's own
+                // system volume, so the caption states what is applied, not
+                // what was asked — and the applied total is the requested
+                // level, the part above the player's ceiling coming from the
+                // enhancement processor.
                 Text(
                     AudioBoostUi.honestSummary(state.prefs.audioBoost, 1f),
                     style = settingsHelperStyle,

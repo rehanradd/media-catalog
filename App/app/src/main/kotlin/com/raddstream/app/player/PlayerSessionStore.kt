@@ -1,5 +1,6 @@
 package com.raddstream.app.player
 
+import com.raddstream.app.player.audio.AudioEnhancementSettings
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -119,6 +120,22 @@ class PlayerSessionStore(
 
     fun setDecoderMode(mode: DecoderMode) {
         _decoderMode.value = mode
+    }
+
+    /**
+     * MX idea #8: the audio enhancement the processor is applying right
+     * now — the boost excess (the part of the level above unity, 1..2) and
+     * the equalizer state. The ViewModel writes it whenever the level, the
+     * user's volume or the EQ moves; the service collects it and pushes it
+     * into the processor live, so a slider move needs no rebuild and a
+     * rebuild never loses the mix. The decoder-mode pattern exactly: one
+     * value, one flow, no second opinion.
+     */
+    private val _audioEnhancement = MutableStateFlow(AudioEnhancementSettings.DEFAULT)
+    val audioEnhancement: StateFlow<AudioEnhancementSettings> = _audioEnhancement.asStateFlow()
+
+    fun setAudioEnhancement(settings: AudioEnhancementSettings) {
+        _audioEnhancement.value = settings
     }
 
     /**

@@ -21,6 +21,8 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.exoplayer.analytics.AnalyticsListener
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.source.LoadEventInfo
 import androidx.media3.exoplayer.source.MediaLoadData
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -34,6 +36,7 @@ import com.raddstream.app.data.PlaybackBeacons
 import com.raddstream.app.data.Telemetry
 import com.raddstream.app.data.cache.ConnectivityProbe
 import com.raddstream.app.data.cache.MediaDownloadCache
+import com.raddstream.app.player.audio.EnhancementAudioProcessor
 import com.raddstream.app.player.subtitles.OffsetSubtitleDecoderFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -87,6 +90,16 @@ class PlaybackService : MediaSessionService() {
      */
     private var currentDecoderMode: DecoderMode = DecoderMode.HARDWARE
 
+    /**
+     * MX idea #8: the one enhancement processor for the life of the
+     * service. It is injected into every player build (see the
+     * `buildAudioSink` override in [buildPlayer]), so a live rebuild for
+     * a decoder switch reuses the same instance — the mix survives the
+     * rebuild, and a slider move applies live through the store
+     * collection in [onCreate] with no rebuild at all.
+     */
+    private val enhancementProcessor = EnhancementAudioProcessor()
+
     /** The beacon recorder: one finished session's measurements, per load. */
     private val beaconRecorder = PlaybackBeaconRecorder()
 
@@ -135,6 +148,14 @@ class PlaybackService : MediaSessionService() {
 
         scope.launch {
             store.decoderMode.collect { mode -> rebuildPlayer(mode) }
+        }
+        // MX idea #8: the mix, applied live. The processor reads these
+        // volatiles on its next queued buffer — a slider move, a preset
+        // tap or a persisted level landing needs no rebuild.
+        scope.launch {
+            store.audioEnhancement.collect { settings ->
+                enhancementProcessor.setSettings(settings)
+            }
         }
         scope.launch {
             store.loadRequest.collect { request ->
@@ -209,6 +230,28 @@ class PlaybackService : MediaSessionService() {
                         OffsetSubtitleDecoderFactory { store.subtitleOffsetMs },
                     ),
                 )
+            }
+
+            /**
+             * MX idea #8: the audio sink carries the enhancement processor —
+             * the volume boost past 100% and the equalizer, applied to the
+             * decoded PCM in Media3's own chain. This is the documented
+             * injection point (`DefaultAudioSink.Builder.setAudioProcessors`):
+             * there is no `ExoPlayer.Builder.setAudioProcessors` in Media3.
+             * Everything else is the default sink, built exactly as the
+             * factory builds it. The processor instance is the service's
+             * one shared instance, so a rebuild re-injects the same mix.
+             */
+            override fun buildAudioSink(
+                context: Context,
+                enableFloatOutput: Boolean,
+                enableAudioTrackPlaybackParams: Boolean,
+            ): AudioSink? {
+                return DefaultAudioSink.Builder(context)
+                    .setEnableFloatOutput(enableFloatOutput)
+                    .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+                    .setAudioProcessors(arrayOf(enhancementProcessor))
+                    .build()
             }
         }
         // MX idea #1 (2026-11-18): the FFmpeg software audio decoder. PREFER

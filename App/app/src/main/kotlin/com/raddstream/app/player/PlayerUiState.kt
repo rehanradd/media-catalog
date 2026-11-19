@@ -8,6 +8,7 @@ package com.raddstream.app.player
 import androidx.media3.common.TrackGroup
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
+import com.raddstream.app.player.audio.EqState
 import com.raddstream.app.ui.theme.PlayerChromeTheme
 
 /**
@@ -275,10 +276,17 @@ data class PlayerUiState(
     val userVolume: Float = 1f,
     /**
      * The persisted audio level, 0..2 ([AudioBoost]'s unit), multiplied into [userVolume]
-     * by [AudioBoostUi.effectivePlayerGain]. Above 1.0 the excess is a request, not a
-     * promise — see [AudioBoostUi.honestSummary].
+     * by [AudioBoostUi.effectivePlayerGain]. Above 1.0 the excess goes to the
+     * enhancement processor as software gain ([AudioBoostUi.splitGain]) —
+     * since MX #8 the excess is applied, not a request: see
+     * [AudioBoostUi.honestSummary].
      */
     val audioBoostLevel: Float = AudioBoost.BASELINE,
+    /**
+     * The equalizer state (MX idea #8): on/off, preset, and the five band
+     * gains. Persisted in DataStore; the processor applies it live.
+     */
+    val eqState: EqState = EqState.DEFAULT,
     /**
      * The player chrome theme this device wears (`jade`, `midnight`, `ember`):
      * a skin for the chrome only — the background, the HUD plates, the rail
@@ -418,6 +426,7 @@ data class PlayerUiState(
     val playFromDialogVisible: Boolean = false,
     val qualitySheetVisible: Boolean = false,
     val moreSheetVisible: Boolean = false,
+    val eqSheetVisible: Boolean = false,
     /**
      * The rungs the CURRENT scope offers, staged by the detail screen and read back through
      * [PlayerSessionStore.peekAutoLadder]: band + handle + caption only. Empty for a

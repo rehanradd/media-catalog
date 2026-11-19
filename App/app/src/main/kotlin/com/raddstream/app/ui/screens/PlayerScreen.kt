@@ -198,6 +198,9 @@ import com.raddstream.app.player.PinchCommand
 import com.raddstream.app.player.PlayerOrientation
 import com.raddstream.app.player.PlayerStatusWord
 import com.raddstream.app.player.PlayerUiState
+import com.raddstream.app.player.audio.EQ_GAIN_MAX_DB
+import com.raddstream.app.player.audio.EQ_GAIN_MIN_DB
+import com.raddstream.app.player.audio.EqPresets
 import com.raddstream.app.player.QualityOption
 import com.raddstream.app.player.bufferingPercent
 import com.raddstream.app.player.playerStatusWord
@@ -1098,6 +1101,7 @@ private fun PlayerScreenContent(
         if (state.printSheetVisible) PrintLogSheet(state, vm)
         if (state.qualitySheetVisible) QualitySheet(state, vm)
         if (state.moreSheetVisible) MoreSheet(state, vm, onEnterPip = launchPip)
+        if (state.eqSheetVisible) EqSheet(state, vm)
 
         // 8 — lightweight snackbar. F4 (Batch A): suppressed while a start card is
         // showing — in landscape (~360dp tall) the card's bottom edge sits where
@@ -1160,7 +1164,7 @@ private val PlayerUiState.dialogBlocking: Boolean
     get() = resumeOfferMs != null || calibration != null || giveUp != null ||
         speedSheetVisible || tracksSheetVisible || subtitleSheetVisible ||
         subtitleOffsetSheetVisible || printSheetVisible || sleepSheetVisible ||
-        playFromDialogVisible || qualitySheetVisible || moreSheetVisible
+        playFromDialogVisible || qualitySheetVisible || moreSheetVisible || eqSheetVisible
 
 // ── 1. Surface ─────────────────────────────────────────────────────────────────
 
@@ -4712,10 +4716,11 @@ private fun TracksSheet(state: PlayerUiState, vm: PlayerViewModel) {
                 label = if (state.audioOnly) stringResource(R.string.player_audio_only_on) else stringResource(R.string.player_audio_only_off),
             ) { vm.toggleAudioOnly() }
 
-            // ── Audio level. Media3's setVolume contract stops at 100% and this build adds no
-            //    software gain, so the slider stops there too: a thumb the viewer can drag into a
-            //    range nothing can act on is a promise broken on every drag, caption or no caption.
-            //    A build that grows a DynamicsProcessing stage widens this from AudioBoostUi alone.
+            // ── Audio level. Media3's setVolume contract stops at 100%, so the
+            //    part of the level above unity goes to the enhancement
+            //    processor as software gain (MX idea #8): the slider runs
+            //    the full 0..200% and every stop on it is applied. The
+            //    caption states the applied percent.
             Spacer(Modifier.height(14.dp))
             SheetSection(stringResource(R.string.player_audio_level))
             Row(
@@ -4872,6 +4877,19 @@ private fun MoreSheet(state: PlayerUiState, vm: PlayerViewModel, onEnterPip: () 
             SheetRow(label = stringResource(R.string.player_stereo_only_toggle)) {
                 vm.hideMoreSheet()
                 vm.toggleStereoOnly()
+            }
+            // MX idea #8: the equalizer lives here, in the Audio section —
+            // one tap from the boost slider's sheet, never a permanent
+            // TopBar button (the chrome diet). The row shows the current
+            // preset so the viewer knows what is playing.
+            SheetRow(
+                label = stringResource(
+                    R.string.player_equalizer_with_preset,
+                    eqPresetLabel(state.eqState.presetId),
+                ),
+            ) {
+                vm.hideMoreSheet()
+                vm.showEqSheet()
             }
             SheetSection(stringResource(R.string.player_more_tools))
             // PL-11: "Next episode" and "Calibrate" are series rows — a movie or
@@ -5087,6 +5105,108 @@ private fun SheetTitle(text: String, modifier: Modifier = Modifier, onDismiss: (
             }
         }
     }
+}
+
+/**
+ * MX idea #8 — the equalizer sheet. One on/off row, the five named
+ * presets, and five band sliders (−12..+12 dB, 1 dB steps). Every move
+ * applies live through the ViewModel and is persisted, so the mix
+ * survives the next episode and the next session. A slider move off a
+ * preset becomes Custom; tapping a preset re-enables the EQ.
+ *
+ * Kids Lock: this sheet is only reachable from the More sheet, and the
+ * whole chrome (More button included) is not composed while the player
+ * is locked, so the EQ inherits the gate — there is no separate lock
+ * check here.
+ */
+@Composable
+private fun EqSheet(state: PlayerUiState, vm: PlayerViewModel) {
+    PlayerSheet(onDismiss = { vm.hideEqSheet() }) {
+        Column(
+            Modifier
+                .verticalScroll(rememberScrollState())
+                .padding(bottom = 24.dp),
+        ) {
+            SheetTitle(stringResource(R.string.player_equalizer))
+            val switchHaptics = LocalHapticFeedback.current
+            Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    stringResource(
+                        if (state.eqState.enabled) R.string.player_eq_on else R.string.player_eq_off,
+                    ),
+                    color = Color.White,
+                    fontSize = brandSp(14),
+                    modifier = Modifier.weight(1f),
+                )
+                Switch(
+                    checked = state.eqState.enabled,
+                    onCheckedChange = {
+                        switchHaptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        vm.setEqEnabled(it)
+                    },
+                    thumbContent = if (state.eqState.enabled) {
+                        { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(SwitchDefaults.IconSize)) }
+                    } else null,
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            SheetSection(stringResource(R.string.player_eq_presets_title))
+            EqPresets.ALL.forEach { preset ->
+                SheetRow(
+                    label = eqPresetLabel(preset.id),
+                    selected = state.eqState.presetId == preset.id,
+                ) { vm.setEqPreset(preset.id) }
+            }
+            Spacer(Modifier.height(8.dp))
+            SheetSection(stringResource(R.string.player_eq_bands_title))
+            state.eqState.gainsDb.forEachIndexed { index, gain ->
+                Row(
+                    Modifier.padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        stringResource(eqBandLabelRes(index)),
+                        color = Color.White,
+                        fontSize = brandSp(14),
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        stringResource(R.string.player_eq_gain, gain.roundToInt()),
+                        color = Color.White.copy(alpha = 0.6f),
+                        fontSize = brandSp(12),
+                    )
+                }
+                Slider(
+                    value = gain,
+                    onValueChange = { vm.setEqBandGain(index, it) },
+                    valueRange = EQ_GAIN_MIN_DB..EQ_GAIN_MAX_DB,
+                    // 24 dB of travel in 1 dB steps.
+                    steps = 23,
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
+            }
+        }
+    }
+}
+
+/** The preset's display name, by id; anything unrecognised reads Custom. */
+@Composable
+private fun eqPresetLabel(presetId: String): String = when (presetId) {
+    EqPresets.FLAT.id -> stringResource(R.string.player_eq_preset_flat)
+    EqPresets.NORMAL.id -> stringResource(R.string.player_eq_preset_normal)
+    EqPresets.BASS_BOOST.id -> stringResource(R.string.player_eq_preset_bass)
+    EqPresets.TREBLE_BOOST.id -> stringResource(R.string.player_eq_preset_treble)
+    EqPresets.VOCAL.id -> stringResource(R.string.player_eq_preset_vocal)
+    else -> stringResource(R.string.player_eq_preset_custom)
+}
+
+/** The band's frequency label, by index into the five EQ bands. */
+private fun eqBandLabelRes(index: Int): Int = when (index) {
+    0 -> R.string.player_eq_band_60
+    1 -> R.string.player_eq_band_230
+    2 -> R.string.player_eq_band_910
+    3 -> R.string.player_eq_band_3600
+    else -> R.string.player_eq_band_14000
 }
 
 /**

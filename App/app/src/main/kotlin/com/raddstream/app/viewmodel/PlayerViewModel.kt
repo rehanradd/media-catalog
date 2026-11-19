@@ -22,6 +22,9 @@ import com.raddstream.app.brand.Brand
 import com.raddstream.app.player.AbRepeat
 import com.raddstream.app.player.AspectMode
 import com.raddstream.app.player.AudioBoostUi
+import com.raddstream.app.player.audio.AudioEnhancementSettings
+import com.raddstream.app.player.audio.EqPresets
+import com.raddstream.app.player.audio.EqState
 import com.raddstream.app.player.activeSegment
 import com.raddstream.app.player.skipTargetMs
 import com.raddstream.app.player.AudioTrackMatcher
@@ -438,6 +441,15 @@ class PlayerViewModel @Inject constructor(
             settingsRepository.audioBoostLevel.collect { level ->
                 _ui.update { it.copy(audioBoostLevel = AudioBoostUi.offeredLevel(level)) }
                 applyPlayerVolume()
+            }
+        }
+        // MX idea #8: the persisted equalizer state lands in the UI state
+        // and is pushed to the store, so a mix made in an earlier session
+        // is the mix the next episode starts with.
+        viewModelScope.launch {
+            settingsRepository.eqState.collect { eq ->
+                _ui.update { it.copy(eqState = eq) }
+                pushAudioEnhancement(AudioBoostUi.splitGain(_ui.value.audioBoostLevel, _ui.value.userVolume).dspGain)
             }
         }
         viewModelScope.launch {
@@ -1679,11 +1691,13 @@ class PlayerViewModel @Inject constructor(
     }
 
     /**
-     * The audio level control. 1.0 is the untouched baseline and 1.0 is also the most this
-     * build can apply, so the stored value can never hold a promise the player cannot keep —
-     * including a level an older build wrote above the ceiling, which is sanitised on read too.
-     * Stored through the same DataStore the settings screen writes, so a mix made in the player
-     * is the level the next episode starts with and the one the settings screen shows.
+     * The audio level control. 1.0 is the untouched baseline and 2.0 is the
+     * MX Player ceiling: the part at or below unity goes to the player, the
+     * excess goes to the enhancement processor as software gain (see
+     * [AudioBoostUi.splitGain] and [applyPlayerVolume]). Stored through the
+     * same DataStore the settings screen writes, so a mix made in the player
+     * is the level the next episode starts with and the one the settings
+     * screen shows.
      */
     fun setAudioBoostLevel(level: Float) {
         val clamped = AudioBoostUi.offeredLevel(level)
@@ -1693,12 +1707,13 @@ class PlayerViewModel @Inject constructor(
     }
 
     /**
-     * The one place that writes `Player.setVolume`. Three inputs multiply into one legal
-     * number: the persisted boost, the user's own volume and the sleep fade — each clamped
-     * only once, at the end, because the platform's contract is the product, not any one
-     * factor. The boost can never push the result past 1.0; what it does buy is headroom
-     * below the ceiling, which is why the caption comes from
-     * [AudioBoostUi.honestSummary] and not from the requested number.
+     * The one place that writes `Player.setVolume` — and the one place that
+     * writes the processor's gain. Three inputs multiply into one requested
+     * total: the persisted boost and the user's own volume ([AudioBoostUi.splitGain]);
+     * the sleep fade multiplies only the player half. The boost can push the
+     * total past 1.0, and the excess is real now: it is the processor's gain,
+     * pushed to the store for the service to apply live. The caption comes
+     * from [AudioBoostUi.honestSummary] and not from the requested number.
      */
     private fun applyPlayerVolume() {
         val state = _ui.value
@@ -1708,7 +1723,49 @@ class PlayerViewModel @Inject constructor(
             1f
         }
         val safeFade = if (fade.isFinite()) fade.coerceIn(0f, 1f) else 1f
-        controller?.volume = AudioBoostUi.effectivePlayerGain(state.audioBoostLevel, state.userVolume) * safeFade
+        val split = AudioBoostUi.splitGain(state.audioBoostLevel, state.userVolume)
+        controller?.volume = split.playerGain * safeFade
+        pushAudioEnhancement(split.dspGain)
+    }
+
+    /**
+     * Pushes the current processor mix to the store: the boost excess from
+     * [applyPlayerVolume] (or the caller-supplied [dspGain]) plus the
+     * equalizer state. The service collects this and applies it live.
+     */
+    private fun pushAudioEnhancement(dspGain: Float) {
+        store.setAudioEnhancement(AudioEnhancementSettings(dspGain, _ui.value.eqState))
+    }
+
+    /** Equalizer on/off, from the EQ sheet. Persisted, applied live. */
+    fun setEqEnabled(enabled: Boolean) {
+        updateEqState(_ui.value.eqState.copy(enabled = enabled))
+    }
+
+    /** One of the named presets, from the EQ sheet. Enables the EQ. */
+    fun setEqPreset(presetId: String) {
+        val preset = EqPresets.byId(presetId) ?: return
+        updateEqState(_ui.value.eqState.withPreset(preset))
+    }
+
+    /** One band slider, from the EQ sheet. Moves the state to Custom unless the gains match a preset. */
+    fun setEqBandGain(index: Int, gainDb: Float) {
+        updateEqState(_ui.value.eqState.withBandGain(index, gainDb))
+    }
+
+    private fun updateEqState(next: EqState) {
+        _ui.update { it.copy(eqState = next) }
+        pushAudioEnhancement(AudioBoostUi.splitGain(_ui.value.audioBoostLevel, _ui.value.userVolume).dspGain)
+        viewModelScope.launch { settingsRepository.saveEqState(next) }
+    }
+
+    /** The EQ sheet, opened from the More sheet's Audio row. */
+    fun showEqSheet() {
+        _ui.update { it.copy(eqSheetVisible = true) }
+    }
+
+    fun hideEqSheet() {
+        _ui.update { it.copy(eqSheetVisible = false) }
     }
 
     fun retryCurrentCandidates() {

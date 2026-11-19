@@ -5,32 +5,35 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The audio control used to offer 0..200% while `Player.setVolume` stops at 100% and this build
- * carries no software-gain stage to reach past it: every drag above the ceiling moved a thumb
- * that changed nothing, and the label read a number the player had refused.
+ * MX idea #8 flipped this file's premise: the audio control offers 0..200% and this build
+ * now carries the software-gain stage to reach past `Player.setVolume`'s 100% — the
+ * enhancement processor in the sink chain applies the excess above unity. Every drag is
+ * applied in full now, and the label reads the number the two sinks actually produce.
  *
- * The rule these tests pin is one sentence — a control may only offer what this build can apply
- * — while [AudioBoost]'s 0..2 model stays intact, because that is the policy a future
- * DynamicsProcessing stage plugs into.
+ * The rule these tests pin is still one sentence — a control may only offer what this build
+ * can apply — and [AudioBoost]'s 0..2 model is still intact, because that is the policy the
+ * split ([AudioBoostUi.splitGain]) reads.
  */
 class AudioBoostCeilingTest {
 
     @Test
-    fun `with no software gain the offered ceiling is the player ceiling`() {
-        assertEquals(AudioBoost.BASELINE, AudioBoostUi.MAX_OFFERED_LEVEL, 1e-6f)
+    fun `with software gain the offered ceiling is the full model`() {
+        assertTrue(AudioBoostUi.SOFTWARE_GAIN_AVAILABLE)
+        assertEquals(AudioBoost.MAX, AudioBoostUi.MAX_OFFERED_LEVEL, 1e-6f)
+        assertEquals(2f, AudioBoostUi.MAX_OFFERED_LEVEL, 1e-6f)
     }
 
     @Test
-    fun `a request past the ceiling is offered AT the ceiling, not above it`() {
-        assertEquals(1f, AudioBoostUi.offeredLevel(1.8f), 1e-6f)
-        assertEquals("Volume 100%", AudioBoost.labelFor(AudioBoostUi.offeredLevel(1.8f)))
+    fun `a request past the player ceiling is offered in full, not at the ceiling`() {
+        assertEquals(1.8f, AudioBoostUi.offeredLevel(1.8f), 1e-6f)
+        assertEquals("Volume 180%", AudioBoost.labelFor(AudioBoostUi.offeredLevel(1.8f)))
     }
 
     @Test
-    fun `a level an older build stored above the ceiling is reduced on read`() {
-        // DataStore may hold 2.0 from a build that offered the dead range; the state the screen
-        // paints must still be a level the player can honour.
-        assertEquals(1f, AudioBoostUi.offeredLevel(AudioBoost.MAX), 1e-6f)
+    fun `a stored 2.0 is offered in full now`() {
+        // A level an older build stored above the old ceiling is a level
+        // this build can honour — the ceiling it was reduced against is gone.
+        assertEquals(2f, AudioBoostUi.offeredLevel(AudioBoost.MAX), 1e-6f)
     }
 
     @Test
@@ -38,9 +41,9 @@ class AudioBoostCeilingTest {
         val walk = (0..10).map { it / 10f }
         walk.forEach { level ->
             assertEquals(
-                "requested $level must be what the player receives",
+                "requested $level must be what the two sinks apply together",
                 AudioBoostUi.requestedPercent(level),
-                AudioBoostUi.appliedPercent(level, 1f),
+                AudioBoostUi.appliedTotalPercent(level, 1f),
             )
         }
         assertEquals(11, walk.size)
@@ -54,6 +57,23 @@ class AudioBoostCeilingTest {
     }
 
     @Test
+    fun `the split keeps the player half inside its contract at every level`() {
+        val walk = (0..20).map { it / 10f }
+        walk.forEach { level ->
+            val split = AudioBoostUi.splitGain(level, 1f)
+            assertTrue("player half of $level must be legal", split.playerGain in 0f..1f)
+            assertTrue("processor half of $level must be legal", split.dspGain in 1f..2f)
+            assertEquals(
+                "player x processor must be the requested total for $level",
+                level,
+                split.playerGain * split.dspGain,
+                1e-6f,
+            )
+        }
+        assertEquals(21, walk.size)
+    }
+
+    @Test
     fun `junk still collapses to the baseline rather than poisoning a device write`() {
         assertEquals(AudioBoost.BASELINE, AudioBoostUi.offeredLevel(Float.NaN), 1e-6f)
         assertEquals(AudioBoost.BASELINE, AudioBoostUi.offeredLevel(Float.POSITIVE_INFINITY), 1e-6f)
@@ -61,15 +81,17 @@ class AudioBoostCeilingTest {
     }
 
     /**
-     * The policy object keeps modelling the excess. If it stopped doing so, the day a software
-     * gain stage exists would mean rewriting the rule rather than flipping
-     * [AudioBoostUi.SOFTWARE_GAIN_AVAILABLE] and letting the controls widen from one value.
+     * The policy object keeps modelling the excess. The split reads it — it never
+     * re-derives it — so the day the gain stage changes, the rule changes in one place.
      */
     @Test
-    fun `the refusal is at the control, not inside the policy`() {
+    fun `the split is at the seam, not inside the policy`() {
         assertEquals(2f, AudioBoost.MAX, 1e-6f)
         assertTrue(AudioBoost.plan(1.5f).boostActive)
         assertTrue(AudioBoost.plan(1.5f).gainDb > 0f)
         assertEquals(1f, AudioBoost.plan(1.5f).playerGain, 1e-6f)
+        val split = AudioBoostUi.splitGain(1.5f, 1f)
+        assertEquals(1f, split.playerGain, 1e-6f)
+        assertEquals(1.5f, split.dspGain, 1e-6f)
     }
 }
