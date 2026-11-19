@@ -30,7 +30,7 @@ class AudioBoostCeilingTest {
     }
 
     @Test
-    fun `a stored 2.0 is offered in full now`() {
+    fun `a stored maximum is offered in full now`() {
         // A level an older build stored above the old ceiling is a level
         // this build can honour — the ceiling it was reduced against is gone.
         assertEquals(2f, AudioBoostUi.offeredLevel(AudioBoost.MAX), 1e-6f)

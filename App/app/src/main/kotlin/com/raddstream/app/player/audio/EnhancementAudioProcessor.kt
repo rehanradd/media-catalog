@@ -1,5 +1,6 @@
 package com.raddstream.app.player.audio
 
+import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.BaseAudioProcessor
@@ -41,7 +42,11 @@ import java.nio.ByteBuffer
  * A flush (seek) or reset clears the filter state: the stream
  * discontinues there, so old state would be a thump, not continuity.
  */
-@OptIn(UnstableApi::class)
+@OptIn(UnstableApi::class) // androidx.annotation.OptIn on purpose:
+// UnstableApi is not a Kotlin RequiresOptIn marker, so Kotlin's own
+// @OptIn is ignored (compiler warning) and lint then flags every Media3
+// use below as UnsafeOptInUsageError. The androidx form is the one lint
+// reads — same as PlaybackService.
 class EnhancementAudioProcessor : BaseAudioProcessor() {
 
     @Volatile
