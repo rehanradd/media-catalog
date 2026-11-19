@@ -610,5 +610,363 @@ class CliTests(unittest.TestCase):
             self.assertEqual(code, 2)
 
 
+class LanguageDisambiguationTests(unittest.TestCase):
+    """The Marco fix: same title + same year must not take the first match.
+    Language/industry first, then cast/director, then refuse (never guess)."""
+
+    MARCO_EN = {"title": "Marco", "year": 2022, "language": "en",
+                "country": "US", "cast": [], "director": []}
+    MARCO_ML = {"title": "Marco", "year": 2022, "language": "ml",
+                "country": "IN", "cast": ["Unni Mukundan"], "director": []}
+
+    def test_language_and_country_codes(self):
+        self.assertEqual(mb.language_codes("Malayalam"), {"ml"})
+        self.assertEqual(mb.language_codes("Malayalam, English"), {"ml", "en"})
+        self.assertEqual(mb.language_codes("ml"), {"ml"})
+        self.assertEqual(mb.language_codes("Unknown"), set())
+        self.assertEqual(mb.language_codes(None), set())
+        self.assertEqual(mb.country_codes("India"), {"IN"})
+        self.assertEqual(mb.country_codes("USA"), {"US"})
+        self.assertEqual(mb.country_codes("UK"), {"GB"})
+        self.assertEqual(mb.country_codes("Unknown"), set())
+
+    def test_single_match_is_chosen(self):
+        chosen, ambiguous, tied = mb.choose_candidate(
+            {"title": "Marco", "year": 2022}, [self.MARCO_ML])
+        self.assertIs(chosen, self.MARCO_ML)
+        self.assertFalse(ambiguous)
+        self.assertEqual(tied, [])
+
+    def test_language_wins_for_marco(self):
+        query = {"title": "Marco", "year": 2022,
+                 "language": "Malayalam", "country": "India"}
+        chosen, ambiguous, _ = mb.choose_candidate(
+            query, [self.MARCO_EN, self.MARCO_ML])
+        self.assertIs(chosen, self.MARCO_ML)
+        self.assertFalse(ambiguous)
+
+    def test_tie_with_no_language_info_is_ambiguous(self):
+        chosen, ambiguous, tied = mb.choose_candidate(
+            {"title": "Marco", "year": 2022},
+            [self.MARCO_EN, self.MARCO_ML])
+        self.assertIsNone(chosen)
+        self.assertTrue(ambiguous)
+        self.assertEqual(len(tied), 2)
+
+    def test_cast_overlap_breaks_a_language_tie(self):
+        query = {"title": "Marco", "year": 2022,
+                 "cast": ["Unni Mukundan"], "director": []}
+        chosen, ambiguous, _ = mb.choose_candidate(
+            query, [self.MARCO_EN, self.MARCO_ML])
+        self.assertIs(chosen, self.MARCO_ML)
+        self.assertFalse(ambiguous)
+
+    def test_tie_after_everything_is_ambiguous(self):
+        query = {"title": "Marco", "year": 2022,
+                 "cast": ["Somebody Else"], "director": []}
+        chosen, ambiguous, tied = mb.choose_candidate(
+            query, [self.MARCO_EN, self.MARCO_ML])
+        self.assertIsNone(chosen)
+        self.assertTrue(ambiguous)
+        self.assertEqual(len(tied), 2)
+
+    def test_year_guard_still_applies(self):
+        query = {"title": "Marco", "year": 2022}
+        chosen, ambiguous, _ = mb.choose_candidate(
+            query, [dict(self.MARCO_EN, year=2019),
+                    dict(self.MARCO_ML, year=2019)])
+        self.assertIsNone(chosen)
+        self.assertFalse(ambiguous)
+
+    def test_language_veto(self):
+        # A Malayalam post vs an English-only payload: refuse.
+        self.assertTrue(mb.language_veto({"language": "Malayalam"}, "English"))
+        # The same post vs a Malayalam payload: accept.
+        self.assertFalse(mb.language_veto({"language": "Malayalam"}, "Malayalam"))
+        # The post's bare 'English' never vetoes — a migration default.
+        self.assertFalse(mb.language_veto({"language": "English"}, "Malayalam"))
+        # No language on the post: no evidence, no veto.
+        self.assertFalse(mb.language_veto({}, "Malayalam"))
+        # Country: an Indian post vs a USA payload: refuse.
+        self.assertTrue(mb.language_veto({"country": "India"}, "English", "USA"))
+        # ... and a bare 'USA' never vetoes.
+        self.assertFalse(mb.language_veto({"country": "USA"}, "English", "India"))
+
+
+class TmdbDisambiguationTests(unittest.TestCase):
+    """TMDb search results go through choose_candidate: the Malayalam
+    Marco wins for a Malayalam post, a tie is refused, and an IMDb id never
+    searches at all."""
+
+    def _detail(self, tmdb_id, cast):
+        return {
+            "id": tmdb_id, "vote_average": 7.0, "overview": "A film.",
+            "poster_path": "/p.jpg", "backdrop_path": "/b.jpg",
+            "release_date": "2022-01-01", "genres": [{"name": "Action"}],
+            "credits": {"cast": [{"name": name} for name in cast],
+                        "crew": [{"name": "D", "job": "Director"}]},
+            "external_ids": {"imdb_id": None},
+            "images": {"backdrops": []},
+        }
+
+    def _search_routes(self):
+        return {
+            "/search/movie": {"results": [
+                {"id": 1, "title": "Marco", "release_date": "2022-01-01",
+                 "original_language": "en", "origin_country": ["US"]},
+                {"id": 2, "title": "Marco", "release_date": "2022-12-25",
+                 "original_language": "ml", "origin_country": ["IN"]},
+            ]},
+            "/movie/1": self._detail(1, ["Tom Cruise"]),
+            "/movie/2": self._detail(2, ["Unni Mukundan"]),
+        }
+
+    def _source(self, routes):
+        cache = mb.ResponseCache(None)
+        source = mb.TmdbSource(cache)
+        source.http = FakeHttp(routes)
+        return source
+
+    def _query(self, **extra):
+        query = {"title": "Marco", "year": 2022,
+                 "content_type": "movie", "seasons": 0}
+        query.update(extra)
+        return query
+
+    def test_malayalam_query_uses_the_ml_detail_only(self):
+        source = self._source(self._search_routes())
+        meta = source.lookup(self._query(language="Malayalam", country="India"))
+        self.assertIsNotNone(meta)
+        self.assertEqual(meta.get("cast"), ["Unni Mukundan"])
+        # The English detail was never fetched: language decided it.
+        self.assertFalse(any("/movie/1" in url for url in source.http.calls))
+        self.assertEqual(source.ambiguities, [])
+
+    def test_cast_breaks_the_tie_and_reuses_the_cached_detail(self):
+        source = self._source(self._search_routes())
+        meta = source.lookup(self._query(cast=["Unni Mukundan"], director=[]))
+        self.assertIsNotNone(meta)
+        self.assertEqual(meta.get("cast"), ["Unni Mukundan"])
+        # Both details were fetched to break the tie; the winner's detail
+        # was then reused from the cache, not fetched twice.
+        self.assertEqual(sum(1 for url in source.http.calls
+                             if "/movie/1" in url), 1)
+        self.assertEqual(sum(1 for url in source.http.calls
+                             if "/movie/2" in url), 1)
+
+    def test_no_language_no_cast_is_ambiguous_and_fetches_no_detail(self):
+        source = self._source(self._search_routes())
+        meta = source.lookup(self._query())
+        self.assertIsNone(meta)
+        self.assertEqual(len(source.ambiguities), 1)
+        self.assertEqual(source.ambiguities[0]["reason"],
+                         "tie-after-language-and-cast")
+        self.assertEqual(len(source.ambiguities[0]["candidates"]), 2)
+        self.assertFalse(any("/movie/" in url for url in source.http.calls))
+
+    def test_imdb_id_bypasses_disambiguation(self):
+        source = self._source({
+            "/find/tt1234567": {"movie_results": [
+                {"id": 2, "title": "Marco", "release_date": "2022-12-25"}],
+                "tv_results": []},
+            "/movie/2": self._detail(2, ["Unni Mukundan"]),
+        })
+        meta = source.lookup(self._query(imdb_id="tt1234567"))
+        self.assertIsNotNone(meta)
+        self.assertEqual(meta.get("cast"), ["Unni Mukundan"])
+        self.assertFalse(any("/search/movie" in url for url in source.http.calls))
+        self.assertEqual(source.ambiguities, [])
+
+
+class OmdbLanguageVetoTests(unittest.TestCase):
+    def _source(self, payload):
+        cache = mb.ResponseCache(None)
+        source = mb.OmdbSource(cache)
+        source.http = FakeHttp({"omdbapi.com": payload})
+        return source
+
+    def _payload(self, language="Malayalam", country="India"):
+        return {"Response": "True", "Title": "Marco", "Year": "2022",
+                "Language": language, "Country": country,
+                "imdbRating": "8.0", "Plot": "A film.",
+                "Poster": "N/A", "Actors": "Unni Mukundan",
+                "Director": "Haneef Adeni"}
+
+    def test_contradicting_language_is_rejected(self):
+        source = self._source(self._payload(language="English", country="USA"))
+        meta = source.lookup({"title": "Marco", "year": 2022,
+                              "language": "Malayalam", "country": "India"})
+        self.assertIsNone(meta)
+        self.assertEqual(len(source.ambiguities), 1)
+        self.assertEqual(source.ambiguities[0]["reason"],
+                         "language-contradiction")
+
+    def test_matching_language_is_accepted(self):
+        source = self._source(self._payload())
+        meta = source.lookup({"title": "Marco", "year": 2022,
+                              "language": "Malayalam", "country": "India"})
+        self.assertIsNotNone(meta)
+        self.assertEqual(meta.get("rating"), "8.0")
+        self.assertEqual(source.ambiguities, [])
+
+    def test_english_post_language_never_vetoes(self):
+        # The post's 'English' is a migration default, not evidence: a
+        # Malayalam payload for an English-labelled post is accepted.
+        source = self._source(self._payload())
+        meta = source.lookup({"title": "Marco", "year": 2022,
+                              "language": "English", "country": "USA"})
+        self.assertIsNotNone(meta)
+
+
+class BatchWriterTests(unittest.TestCase):
+    def _plan_with(self, count, *, source="site"):
+        plan = mb.Plan()
+        for post_id in range(1, count + 1):
+            plan.add(post_id, "rating", "7.5", source)
+        return plan
+
+    def _writer(self, tmp, *, batch_size=100):
+        sql_path = Path(tmp) / "out.sql"
+        progress_path = Path(tmp) / "out.progress.json"
+        writer = mb.BatchWriter(
+            sql_path, progress_path,
+            {"generated_at": "2026-11-19T00:00:00Z", "db": "fixture.db"},
+            batch_size=batch_size)
+        writer.open()
+        return writer, sql_path, progress_path
+
+    def _updates(self, sql_path):
+        return [line for line in sql_path.read_text().splitlines()
+                if line.startswith("UPDATE posts SET")]
+
+    def test_flush_writes_exact_batches(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            writer, sql_path, progress_path = self._writer(tmp, batch_size=100)
+            plan = self._plan_with(250)
+            self.assertEqual(writer.flush(plan), 200)
+            self.assertEqual(len(self._updates(sql_path)), 200)
+            progress = json.loads(progress_path.read_text())
+            self.assertEqual(progress["posts_updated"], 200)
+            self.assertEqual(progress["fields_filled"], 200)
+            self.assertEqual(progress["by_field"], {"rating": 200})
+            self.assertFalse(progress["complete"])
+            self.assertEqual(writer.finish(plan), 250)
+            self.assertEqual(len(self._updates(sql_path)), 250)
+            self.assertTrue(sql_path.read_text().rstrip().endswith("COMMIT;"))
+            progress = json.loads(progress_path.read_text())
+            self.assertTrue(progress["complete"])
+            self.assertEqual(progress["posts_updated"], 250)
+            self.assertIsNotNone(progress["finished_at"])
+
+    def test_below_batch_size_flush_waits(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            writer, sql_path, _ = self._writer(tmp, batch_size=100)
+            plan = self._plan_with(50)
+            self.assertEqual(writer.flush(plan), 0)
+            self.assertEqual(self._updates(sql_path), [])
+            self.assertEqual(writer.finish(plan), 50)
+            self.assertEqual(len(self._updates(sql_path)), 50)
+
+    def test_resume_loads_flushed_and_adds_only_new(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            writer, sql_path, progress_path = self._writer(tmp, batch_size=100)
+            plan = self._plan_with(150)
+            writer.flush(plan)
+            self.assertEqual(writer.finish(plan), 150)
+            self.assertEqual(len(self._updates(sql_path)), 150)
+            resumed = mb.BatchWriter(
+                sql_path, progress_path,
+                {"generated_at": "2026-11-19T01:00:00Z", "db": "fixture.db"},
+                batch_size=100)
+            resumed.open(resume=True)
+            self.assertEqual(resumed.resumed_posts, 150)
+            self.assertEqual(resumed.resumed_fields, 150)
+            plan = mb.Plan()
+            for post_id in range(151, 161):
+                plan.add(post_id, "rating", "7.5", "site")
+            self.assertEqual(resumed.finish(plan), 160)
+            updates = self._updates(sql_path)
+            self.assertEqual(len(updates), 160)
+            ids = [int(line.split("WHERE id = ")[1].split(";")[0])
+                   for line in updates]
+            self.assertEqual(len(set(ids)), 160)  # no post written twice
+            progress = json.loads(progress_path.read_text())
+            self.assertEqual(progress["resumed_posts"], 150)
+            self.assertEqual(progress["posts_updated"], 160)
+
+    def test_file_without_commit_is_an_interrupted_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            writer, sql_path, _ = self._writer(tmp, batch_size=100)
+            plan = self._plan_with(120)
+            writer.flush(plan)
+            flushed, complete = mb._parse_resume_sql(sql_path)
+            self.assertEqual(len(flushed), 100)
+            self.assertFalse(complete)  # killed mid-run: resume, never apply
+            writer.finish(plan)
+            flushed, complete = mb._parse_resume_sql(sql_path)
+            self.assertEqual(len(flushed), 120)
+            self.assertTrue(complete)
+
+    def test_seeded_plan_never_refills(self):
+        plan = mb.Plan()
+        plan.seed(2, {"rating": "site"})
+        self.assertTrue(plan.has(2, "rating"))
+        self.assertFalse(plan.add(2, "rating", "9.9", "tmdb"))
+        self.assertEqual(plan.count(), 0)
+        self.assertEqual(plan.by_source(), {})
+        self.assertEqual(plan.seeded_posts(), 1)
+        self.assertEqual(plan.seeded_fields(), 1)
+
+
+class ReportTests(unittest.TestCase):
+    def test_report_carries_resumed_and_ambiguous(self):
+        plan = mb.Plan()
+        plan.add(2, "rating", "8.6", "site")
+        stats = {"wanted": ["rating"], "posts_updated": 1, "fields_filled": 1,
+                 "by_field": {"rating": {"site": 1}}, "works_improved": {},
+                 "passes": {}, "sources": {},
+                 "resumed_posts": 150, "resumed_fields": 150,
+                 "ambiguous": [{"post_id": 9, "title": "Marco", "year": 2022,
+                                "source": "tmdb",
+                                "reason": "tie-after-language-and-cast",
+                                "candidates": []}],
+                 "ambiguous_count": 1}
+        report = mb.build_report(Path("fixture.db"), plan, stats, {})
+        self.assertEqual(report["resumed_posts"], 150)
+        self.assertEqual(report["resumed_fields"], 150)
+        self.assertEqual(len(report["ambiguous_review"]), 1)
+        self.assertEqual(report["ambiguous_review"][0]["title"], "Marco")
+
+
+class ResumeIntegrationTests(unittest.TestCase):
+    def test_cli_run_twice_with_resume_adds_no_new_updates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "fixture.db"
+            conn = make_db(db_path, fixture_rows())
+            conn.close()
+            out = Path(tmp) / "out.sql"
+            cache_dir = str(Path(tmp) / "cache")
+            code = mb.main(["--db", str(db_path), "--sources", "fanart",
+                            "--cache-dir", cache_dir, "--out", str(out)])
+            self.assertEqual(code, 0)
+            first = [line for line in out.read_text().splitlines()
+                     if line.startswith("UPDATE posts SET")]
+            self.assertGreater(len(first), 0)
+            progress = json.loads((Path(tmp) / "out.progress.json").read_text())
+            self.assertTrue(progress["complete"])
+            # Second run with --resume: everything is already filled, so no
+            # new UPDATE lines appear and the report says what was resumed.
+            code = mb.main(["--db", str(db_path), "--sources", "fanart",
+                            "--cache-dir", cache_dir, "--out", str(out),
+                            "--resume"])
+            self.assertEqual(code, 0)
+            second = [line for line in out.read_text().splitlines()
+                      if line.startswith("UPDATE posts SET")]
+            self.assertEqual(len(second), len(first))
+            report = json.loads(out.with_suffix(".json").read_text())
+            self.assertEqual(report["resumed_posts"], len(first))
+            self.assertEqual(report["posts_updated"], 0)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

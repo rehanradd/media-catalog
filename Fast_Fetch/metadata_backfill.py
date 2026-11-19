@@ -53,6 +53,23 @@ Safety (the law for this module)
 * Title searches require a guard: the normalized title must match and the
   year must agree within ±1 (when both are known). An IMDb-id lookup needs no
   title guard — the id IS the identity.
+* Same title, same year, two films (Indian Marco 2022 vs Hollywood Marco
+  2022) are disambiguated, never guessed: a title search that matches two
+  or more candidates prefers the one whose language/country matches the
+  post's stored language/country, then one sharing a cast member or
+  director; still tied, nothing is filled and the post goes on an
+  ambiguous-review list in the report. An IMDb/TMDb-id lookup bypasses
+  this — the id IS the identity. A single-payload source (OMDb, TVMaze)
+  is also vetoed when the post affirmatively claims a specific
+  non-English language (or non-USA country) and the payload's language
+  is known and different — the post's bare 'English' never vetoes, because
+  rows predating the language migration carry it as a default.
+* Streaming output (v2): fills are written to the staging SQL in batches
+  of ``--batch-size`` posts (default 100) as they are found, with a JSON
+  progress file updated after every batch — a killed run loses at most one
+  batch. ``--resume`` reads the staging SQL (and the progress file when
+  present) and skips the posts already written. A staging file without a
+  closing ``COMMIT;`` is an interrupted run: resume it, never apply it.
 * Ratings are stored as one-decimal strings (``"7.5"``), exactly the shape
   ``backfill_tmdb.normalize_rating`` writes and the projection's
   ``valid_rating`` accepts. A 0–100 score (AniList / Kitsu) is divided by 10.
@@ -100,6 +117,15 @@ Usage
 
     # Dry run: upstream lookups happen, nothing is written at all.
     python3 -S Fast_Fetch/metadata_backfill.py --db catalog.db --dry-run
+
+    # Streamed (v2): write every 100 filled posts as they are found, with
+    # a JSON progress file updated after every batch — a killed run loses
+    # at most one batch, and the count is visible while it runs.
+    python3 -S Fast_Fetch/metadata_backfill.py --db catalog.db --batch-size 100
+
+    # Resume a killed run where it left off (reads the staging SQL and the
+    # progress file, skips the posts already written).
+    python3 -S Fast_Fetch/metadata_backfill.py --db catalog.db --resume
 
     # Scope a run: only ratings, only series, only the first 500 works.
     python3 -S Fast_Fetch/metadata_backfill.py --db catalog.db \\
@@ -162,6 +188,7 @@ IMDB_DATASETS_ROOT = "https://datasets.imdbws.com"
 DEFAULT_TIMEOUT = 15.0
 DEFAULT_WORKERS = 4
 DEFAULT_CACHE_TTL = 30 * 24 * 3600  # 30 days; TMDb allows caching up to 6 months.
+DEFAULT_BATCH_SIZE = 100  # streaming: posts written per staging-SQL batch.
 
 # Per-field source order for the API pass (keyless sources first where they
 # can answer; a source that returns a field stops the chain for that field).
@@ -377,6 +404,185 @@ def match_candidate(query: dict, candidate_title, candidate_year) -> bool:
     return (titles_match(query.get("title") or query.get("clean_title") or "",
                          candidate_title or "")
             and years_compatible(query.get("year"), candidate_year))
+
+
+# ── collision disambiguation (the Marco fix) ─────────────────────────────────
+
+# Language names and ISO 639-1 codes, both accepted on either side: a post
+# stores "Malayalam" (the classifier's word) while TMDb answers "ml".
+_LANGUAGE_ALIASES = {
+    "malayalam": "ml", "ml": "ml", "hindi": "hi", "hi": "hi",
+    "tamil": "ta", "ta": "ta", "telugu": "te", "te": "te",
+    "kannada": "kn", "kn": "kn", "bengali": "bn", "bn": "bn",
+    "marathi": "mr", "mr": "mr", "gujarati": "gu", "gu": "gu",
+    "punjabi": "pa", "pa": "pa", "urdu": "ur", "ur": "ur",
+    "english": "en", "en": "en", "japanese": "ja", "ja": "ja",
+    "korean": "ko", "ko": "ko", "chinese": "zh", "zh": "zh",
+    "mandarin": "zh", "spanish": "es", "es": "es", "french": "fr",
+    "fr": "fr", "german": "de", "de": "de", "arabic": "ar", "ar": "ar",
+    "russian": "ru", "ru": "ru", "portuguese": "pt", "pt": "pt",
+    "italian": "it", "it": "it", "thai": "th", "th": "th",
+    "turkish": "tr", "tr": "tr",
+}
+
+# Country names and ISO 3166-1 codes, both accepted on either side.
+_COUNTRY_ALIASES = {
+    "india": "IN", "in": "IN", "usa": "US", "us": "US",
+    "united states": "US", "united kingdom": "GB", "uk": "GB", "gb": "GB",
+    "japan": "JP", "jp": "JP", "korea": "KR", "kr": "KR",
+    "south korea": "KR", "china": "CN", "cn": "CN", "france": "FR",
+    "fr": "FR", "germany": "DE", "de": "DE", "spain": "ES", "es": "ES",
+    "italy": "IT", "it": "IT", "canada": "CA", "ca": "CA",
+    "australia": "AU", "au": "AU", "pakistan": "PK", "pk": "PK",
+    "bangladesh": "BD", "bd": "BD", "sri lanka": "LK", "lk": "LK",
+    "thailand": "TH", "th": "TH", "turkey": "TR", "tr": "TR",
+    "russia": "RU", "ru": "RU", "brazil": "BR", "br": "BR",
+}
+
+
+def language_codes(value) -> set[str]:
+    """ISO language codes out of a stored or upstream value: a single name
+    or code (``"Malayalam"``, ``"ml"``), or a comma-separated list
+    (OMDb's ``"Malayalam, English"``). Placeholders mean 'unknown', never
+    a language."""
+    if value is None:
+        return set()
+    if isinstance(value, (list, tuple)):
+        parts = [str(item) for item in value]
+    else:
+        parts = str(value).split(",")
+    codes = set()
+    for part in parts:
+        code = _LANGUAGE_ALIASES.get(part.strip().lower())
+        if code:
+            codes.add(code)
+    return codes
+
+
+def country_codes(value) -> set[str]:
+    """ISO country codes out of a stored or upstream value, same shape as
+    :func:`language_codes`."""
+    if value is None:
+        return set()
+    if isinstance(value, (list, tuple)):
+        parts = [str(item) for item in value]
+    else:
+        parts = str(value).split(",")
+    codes = set()
+    for part in parts:
+        code = _COUNTRY_ALIASES.get(part.strip().lower())
+        if code:
+            codes.add(code)
+    return codes
+
+
+def _norm_name(name: str) -> str:
+    return re.sub(r"\s+", " ", str(name or "")).strip().lower()
+
+
+def _query_names(query: dict) -> set[str]:
+    """The post's known cast + director, normalised for overlap checks."""
+    names = set()
+    for field in ("cast", "director"):
+        for name in query.get(field) or []:
+            if _norm_name(name):
+                names.add(_norm_name(name))
+    return names
+
+
+def _language_country_score(query: dict, candidate: dict) -> int:
+    """How well a candidate matches the post's stored language/country:
+    language agreement is worth 2, country agreement 1. Either side
+    missing means no evidence, never a mismatch."""
+    score = 0
+    if language_codes(query.get("language")) & language_codes(candidate.get("language")):
+        score += 2
+    if country_codes(query.get("country")) & country_codes(candidate.get("country")):
+        score += 1
+    return score
+
+
+def _name_overlap(known: set[str], candidate: dict) -> int:
+    """Shared cast/director names between the post and a candidate."""
+    theirs = {_norm_name(name) for name in (candidate.get("cast") or [])
+              if _norm_name(name)}
+    theirs |= {_norm_name(name) for name in (candidate.get("director") or [])
+               if _norm_name(name)}
+    return len(known & theirs)
+
+
+def choose_candidate(query: dict, candidates: list[dict], *,
+                     enrich=None):
+    """Pick one candidate out of a title search's matches — or refuse.
+
+    ``candidates`` are dicts with ``title``, ``year``, and (when the
+    payload carries them) ``language``, ``country``, ``cast``,
+    ``director``. Returns ``(chosen, ambiguous, tied)``: ``chosen`` is
+    the winning candidate dict (or None), ``ambiguous`` is True when two
+    or more candidates survived every tiebreak, and ``tied`` is the list
+    still tied in that case (for the review list). ``enrich`` is an
+    optional callable, called only for candidates still tied after the
+    language step, returning a dict with ``cast``/``director`` (and
+    anything else the caller needs, e.g. a fetched detail) merged into
+    the candidate before the cast step.
+
+    Steps, in order: (1) the title+year guard; (2) language/country —
+    the unique best scorer wins, a shared best narrows the field; (3)
+    cast/director overlap — the unique best wins; (4) still tied: fill
+    NOTHING. An id lookup never reaches this function — the id is the
+    identity, so there is no tie to break."""
+    matches = [c for c in candidates
+               if match_candidate(query, c.get("title"), c.get("year"))]
+    if not matches:
+        return None, False, []
+    if len(matches) == 1:
+        return matches[0], False, []
+    best = max(_language_country_score(query, c) for c in matches)
+    if best > 0:
+        winners = [c for c in matches
+                   if _language_country_score(query, c) == best]
+        if len(winners) == 1:
+            return winners[0], False, []
+        matches = winners
+    known = _query_names(query)
+    if known:
+        if enrich is not None:
+            enriched = []
+            for candidate in matches:
+                extra = enrich(candidate) or {}
+                merged = dict(candidate)
+                for key in ("cast", "director", "meta"):
+                    if extra.get(key):
+                        merged[key] = extra[key]
+                enriched.append(merged)
+            matches = enriched
+        best = max(_name_overlap(known, c) for c in matches)
+        if best > 0:
+            winners = [c for c in matches if _name_overlap(known, c) == best]
+            if len(winners) == 1:
+                return winners[0], False, []
+            matches = winners
+    return None, True, matches
+
+
+def language_veto(query: dict, payload_language, payload_country=None) -> bool:
+    """True when a single-payload answer must be refused: the post
+    affirmatively claims a specific non-English language (or a specific
+    non-USA country) and the payload's language (or country) is known
+    and different. The post's bare 'English' / 'USA' never vetoes —
+    rows predating the language migration carry those as defaults, so
+    they are not evidence. A dubbed film (post 'English', payload
+    'Malayalam') is likewise never vetoed on this test."""
+    qlangs = language_codes(query.get("language"))
+    plangs = language_codes(payload_language)
+    if qlangs and qlangs != {"en"} and plangs and not (qlangs & plangs):
+        return True
+    qcountries = country_codes(query.get("country"))
+    pcountries = country_codes(payload_country)
+    if (qcountries and qcountries != {"US"} and pcountries
+            and not (qcountries & pcountries)):
+        return True
+    return False
 
 
 def is_series_like(content_type, seasons) -> bool:
@@ -801,6 +1007,24 @@ class Source:
         self.calls = 0
         self.cache_hits = 0
         self.exhausted = False
+        self.ambiguities: list[dict] = []
+
+    def _record_ambiguous(self, query: dict, candidates, reason: str) -> None:
+        """A title this source could not resolve to one film: the post is
+        left unfilled by this source and the tie goes on the review list
+        (post id, title, year, the tied candidates, why). Never guessed."""
+        self.ambiguities.append({
+            "post_id": query.get("post_id"),
+            "title": query.get("title") or query.get("clean_title"),
+            "year": query.get("year"),
+            "source": self.NAME,
+            "reason": reason,
+            "candidates": [
+                {"title": c.get("title"), "year": c.get("year"),
+                 "language": c.get("language"), "country": c.get("country")}
+                for c in candidates
+            ],
+        })
 
     @property
     def key(self) -> str:
@@ -928,6 +1152,17 @@ class TmdbSource(Source):
             out.set("imdb_id", external["imdb_id"], self.NAME)
         return out if not out.is_empty() else None
 
+    def _enrich_candidate(self, kind: str, candidate: dict) -> dict:
+        """Cast/director for a tied search result, from its detail. The
+        detail is cached, so when the enriched candidate wins its detail
+        is not fetched twice."""
+        meta = self._detail(kind, candidate["ref"]["id"])
+        if meta is None:
+            return {}
+        return {"cast": split_names(meta.get("cast")),
+                "director": split_names(meta.get("director")),
+                "meta": meta}
+
     def lookup(self, query: dict) -> Metadata | None:
         series = is_series_like(query.get("content_type"), query.get("seasons"))
         kind = "tv" if series else "movie"
@@ -961,11 +1196,24 @@ class TmdbSource(Source):
                                   headers=self._headers()))
         if not isinstance(payload, dict):
             return None
+        matches = []
         for result in payload.get("results") or []:
-            candidate_year = result.get("release_date") or result.get("first_air_date")
-            if match_candidate(query, result.get("title") or result.get("name"),
-                               candidate_year):
-                return self._detail(kind, result["id"])
+            matches.append({
+                "title": result.get("title") or result.get("name"),
+                "year": result.get("release_date") or result.get("first_air_date"),
+                "language": result.get("original_language"),
+                "country": (result.get("origin_country") or [None])[0],
+                "cast": [], "director": [],
+                "ref": result,
+            })
+        chosen, ambiguous, tied = choose_candidate(
+            query, matches, enrich=lambda c: self._enrich_candidate(kind, c))
+        if chosen is not None:
+            if chosen.get("meta") is not None:
+                return chosen["meta"]
+            return self._detail(kind, chosen["ref"]["id"])
+        if ambiguous:
+            self._record_ambiguous(query, tied, "tie-after-language-and-cast")
         return None
 
 
@@ -999,6 +1247,17 @@ class OmdbSource(Source):
             return None
         if not query.get("imdb_id") and not match_candidate(
                 query, payload.get("Title"), payload.get("Year")):
+            return None
+        if not query.get("imdb_id") and language_veto(
+                query, payload.get("Language"), payload.get("Country")):
+            # One payload, but it is the wrong film for this post: the
+            # post affirmatively claims a language/country the payload
+            # contradicts. Refuse it and let the review list have it.
+            self._record_ambiguous(query, [{
+                "title": payload.get("Title"), "year": payload.get("Year"),
+                "language": payload.get("Language"),
+                "country": payload.get("Country"),
+            }], "language-contradiction")
             return None
         out = Metadata()
         out.set("rating", payload.get("imdbRating"), self.NAME)
@@ -1048,6 +1307,12 @@ class TvmazeSource(Source):
             return None
         if not query.get("imdb_id") and not match_candidate(
                 query, show.get("name"), show.get("premiered")):
+            return None
+        if not query.get("imdb_id") and language_veto(query, show.get("language")):
+            self._record_ambiguous(query, [{
+                "title": show.get("name"), "year": show.get("premiered"),
+                "language": show.get("language"), "country": None,
+            }], "language-contradiction")
             return None
         out = Metadata()
         out.set("synopsis", strip_html(show.get("summary")), self.NAME)
@@ -1146,24 +1411,37 @@ class KitsuSource(Source):
                               lambda: self.http.get_json(url))
         if not isinstance(payload, dict):
             return None
+        matches = []
         for item in payload.get("data") or []:
             attrs = item.get("attributes") or {}
             titles = attrs.get("titles") or {}
             candidates = [attrs.get("canonicalTitle"), titles.get("en"),
                           titles.get("en_jp"), titles.get("ja_jp")]
-            if not any(titles_match(query.get("title") or "", c or "")
-                       for c in candidates if c):
+            title = next((c for c in candidates
+                          if c and titles_match(query.get("title") or "", c)),
+                         None)
+            if title is None:
                 continue
             if not years_compatible(query.get("year"), attrs.get("startDate")):
                 continue
-            out = Metadata()
-            out.set("rating", attrs.get("averageRating"), self.NAME)
-            out.set("synopsis", attrs.get("synopsis"), self.NAME)
-            poster = attrs.get("posterImage") or {}
-            out.set("poster", poster.get("large") or poster.get("original"), self.NAME)
-            out.set("year", attrs.get("startDate"), self.NAME)
-            return out if not out.is_empty() else None
-        return None
+            matches.append({
+                "title": title, "year": attrs.get("startDate"),
+                "language": None, "country": None,
+                "cast": [], "director": [], "ref": attrs,
+            })
+        chosen, ambiguous, tied = choose_candidate(query, matches)
+        if chosen is None:
+            if ambiguous:
+                self._record_ambiguous(query, tied, "tie-after-language-and-cast")
+            return None
+        attrs = chosen["ref"]
+        out = Metadata()
+        out.set("rating", attrs.get("averageRating"), self.NAME)
+        out.set("synopsis", attrs.get("synopsis"), self.NAME)
+        poster = attrs.get("posterImage") or {}
+        out.set("poster", poster.get("large") or poster.get("original"), self.NAME)
+        out.set("year", attrs.get("startDate"), self.NAME)
+        return out if not out.is_empty() else None
 
 
 class JikanSource(Source):
@@ -1185,25 +1463,38 @@ class JikanSource(Source):
                               lambda: self.http.get_json(url))
         if not isinstance(payload, dict):
             return None
+        matches = []
         for item in payload.get("data") or []:
             candidates = [item.get("title"), item.get("title_english"),
                           item.get("title_japanese")]
-            if not any(titles_match(query.get("title") or "", c or "")
-                       for c in candidates if c):
+            title = next((c for c in candidates
+                          if c and titles_match(query.get("title") or "", c)),
+                         None)
+            if title is None:
                 continue
             if not years_compatible(query.get("year"), item.get("year")):
                 continue
-            out = Metadata()
-            out.set("rating", item.get("score"), self.NAME)
-            out.set("synopsis", item.get("synopsis"), self.NAME)
-            images = (item.get("images") or {}).get("jpg") or {}
-            out.set("poster", images.get("large_image_url"), self.NAME)
-            out.set("year", item.get("year"), self.NAME)
-            genres = [g.get("name") for g in item.get("genres") or [] if g.get("name")]
-            if genres:
-                out.set("genres", genres, self.NAME)
-            return out if not out.is_empty() else None
-        return None
+            matches.append({
+                "title": title, "year": item.get("year"),
+                "language": None, "country": None,
+                "cast": [], "director": [], "ref": item,
+            })
+        chosen, ambiguous, tied = choose_candidate(query, matches)
+        if chosen is None:
+            if ambiguous:
+                self._record_ambiguous(query, tied, "tie-after-language-and-cast")
+            return None
+        item = chosen["ref"]
+        out = Metadata()
+        out.set("rating", item.get("score"), self.NAME)
+        out.set("synopsis", item.get("synopsis"), self.NAME)
+        images = (item.get("images") or {}).get("jpg") or {}
+        out.set("poster", images.get("large_image_url"), self.NAME)
+        out.set("year", item.get("year"), self.NAME)
+        genres = [g.get("name") for g in item.get("genres") or [] if g.get("name")]
+        if genres:
+            out.set("genres", genres, self.NAME)
+        return out if not out.is_empty() else None
 
 
 class MdblistSource(Source):
@@ -1235,6 +1526,14 @@ class MdblistSource(Source):
             return None
         if not query.get("imdb_id") and not match_candidate(
                 query, payload.get("title"), payload.get("year")):
+            return None
+        if not query.get("imdb_id") and language_veto(
+                query, payload.get("language"), payload.get("country")):
+            self._record_ambiguous(query, [{
+                "title": payload.get("title"), "year": payload.get("year"),
+                "language": payload.get("language"),
+                "country": payload.get("country"),
+            }], "language-contradiction")
             return None
         out = Metadata()
         ratings = payload.get("ratings") or []
@@ -1360,6 +1659,10 @@ COLUMN_FIELD = {column: field for field, column in FIELD_COLUMN.items()}
 ROW_COLUMNS = (
     "id", "canonical_key", "title", "clean_title", "year", "content_type",
     "seasons", "imdb_id", "tmdb_id", "is_18_plus", "is_animated",
+    # Disambiguation context: the post's own language/country/industry
+    # (site metadata is primary). _stream_groups filters by post_columns,
+    # so databases without these columns keep working.
+    "language", "country", "industry",
 )
 
 
@@ -1371,15 +1674,30 @@ class Plan:
     def __init__(self):
         self.updates: dict[int, dict[str, tuple]] = {}
         self.post_key: dict[int, str] = {}
+        # Already written by an earlier (resumed) run: post_id →
+        # {field: source}. Seeded fields are final — no pass re-fills
+        # them — and are excluded from count()/by_source() so a resumed
+        # run's report counts only what THIS run filled.
+        self.seeded: dict[int, dict[str, str]] = {}
+        # Posts with new fills since the last batch flush (O(1) check).
+        self.dirty: set[int] = set()
+
+    def seed(self, post_id: int, fields: dict[str, str]) -> None:
+        """Mark fields as already written by a previous run."""
+        if fields:
+            self.seeded.setdefault(post_id, {}).update(fields)
 
     def add(self, post_id: int, field: str, value, source: str,
             *, force: bool = False) -> bool:
         if value is None:
             return False
+        if field in self.seeded.get(post_id, {}):
+            return False
         per_post = self.updates.setdefault(post_id, {})
         if field in per_post and not force:
             return False
         per_post[field] = (value, source)
+        self.dirty.add(post_id)
         return True
 
     def add_metadata(self, post_id: int, meta: Metadata, columns: set[str],
@@ -1393,7 +1711,8 @@ class Plan:
         return added
 
     def has(self, post_id: int, field: str) -> bool:
-        return field in self.updates.get(post_id, {})
+        return (field in self.updates.get(post_id, {})
+                or field in self.seeded.get(post_id, {}))
 
     def count(self) -> int:
         return sum(len(fields) for fields in self.updates.values())
@@ -1406,6 +1725,12 @@ class Plan:
                 out.setdefault(field, {}).setdefault(source, 0)
                 out[field][source] += 1
         return out
+
+    def seeded_posts(self) -> int:
+        return len(self.seeded)
+
+    def seeded_fields(self) -> int:
+        return sum(len(fields) for fields in self.seeded.values())
 
 
 def post_columns(conn: sqlite3.Connection) -> set[str]:
@@ -1575,6 +1900,16 @@ def _representatives(conn: sqlite3.Connection, columns: set[str],
                     "seasons": row["seasons"], "imdb_id": row["imdb_id"],
                     "tmdb_id": row["tmdb_id"],
                     "animated": bool(row["is_animated"]) if "is_animated" in row.keys() else False,
+                    # Disambiguation context (site metadata is primary):
+                    # the post's own language/country/industry, plus its
+                    # known cast/director for the overlap tiebreak.
+                    "language": row["language"] if "language" in row.keys() else None,
+                    "country": row["country"] if "country" in row.keys() else None,
+                    "industry": row["industry"] if "industry" in row.keys() else None,
+                    "cast": split_names(row[FIELD_COLUMN["cast"]])
+                            if FIELD_COLUMN["cast"] in row.keys() else [],
+                    "director": split_names(row[FIELD_COLUMN["director"]])
+                            if FIELD_COLUMN["director"] in row.keys() else [],
                     "missing": missing,
                 })
         if not candidates:
@@ -1639,11 +1974,17 @@ def _resolve_representative(rep: dict, sources: dict, plan: Plan,
     failed: list[str] = []
     for candidate in rep["candidates"]:
         query = {
+            "post_id": candidate["id"],
             "title": candidate["title"], "clean_title": candidate["clean_title"],
             "year": candidate["year"], "content_type": candidate["content_type"],
             "seasons": candidate["seasons"], "imdb_id": candidate["imdb_id"],
             "tmdb_id": candidate["tmdb_id"],
             "animated": candidate["animated"],
+            "language": candidate.get("language"),
+            "country": candidate.get("country"),
+            "industry": candidate.get("industry"),
+            "cast": candidate.get("cast") or [],
+            "director": candidate.get("director") or [],
         }
         missing = [f for f in candidate["missing"]
                    if force or not plan.has(candidate["id"], f)]
@@ -1662,7 +2003,7 @@ def _resolve_representative(rep: dict, sources: dict, plan: Plan,
 def plan_api_pass(conn: sqlite3.Connection, columns: set[str],
                   wanted: list[str], sources: dict, plan: Plan, *,
                   limit: int = 0, after_id: int = 0, workers: int = DEFAULT_WORKERS,
-                  force: bool = False) -> dict:
+                  force: bool = False, writer=None) -> dict:
     """The API pass over the representatives, in a thread pool. Sources are
     thread-safe (each owns its Pace + HttpClient; the cache is read/written
     under no lock, which is safe here because a key is written by at most
@@ -1694,6 +2035,11 @@ def plan_api_pass(conn: sqlite3.Connection, columns: set[str],
             for field in meta.fields:
                 if plan.has(post_id, field):
                     stats["by_field"][field] = stats["by_field"].get(field, 0) + 1
+            # Streaming: a full batch on disk now, while the pool keeps
+            # working — this loop is the main thread, so the flush is safe
+            # here and nowhere else in the pass.
+            if writer is not None and len(plan.dirty) >= writer.batch_size:
+                writer.flush(plan)
     return stats
 
 
@@ -1720,6 +2066,20 @@ def estimate_work_gains(key_had: dict, plan: Plan, wanted: list[str]) -> dict:
 
 # ── staging output ───────────────────────────────────────────────────────────
 
+def _update_line(post_id: int, fields: dict) -> str:
+    """One UPDATE line: values as literals, a ``-- field: source`` comment
+    carrying the provenance. The one-shot writer and the streaming writer
+    share this function so the file format is identical either way (the
+    existing test pins the exact strings)."""
+    assignments = ", ".join(
+        f"{FIELD_COLUMN[field]} = {sql_literal(value)}"
+        for field, (value, _) in sorted(fields.items()))
+    provenance = "; ".join(
+        f"{field}: {source}" for field, (_, source) in sorted(fields.items()))
+    return (f"UPDATE posts SET {assignments} WHERE id = {post_id}; "
+            f"-- {provenance}")
+
+
 def write_staging_sql(path: Path, plan: Plan, meta: dict) -> int:
     """The staging SQL file: one UPDATE per post, values as literals, every
     line carrying a ``-- field: source`` comment so the provenance is visible
@@ -1736,18 +2096,201 @@ def write_staging_sql(path: Path, plan: Plan, meta: dict) -> int:
         "BEGIN;",
     ]
     for post_id in sorted(plan.updates):
-        fields = plan.updates[post_id]
-        assignments = ", ".join(
-            f"{FIELD_COLUMN[field]} = {sql_literal(value)}"
-            for field, (value, _) in sorted(fields.items()))
-        provenance = "; ".join(
-            f"{field}: {source}" for field, (_, source) in sorted(fields.items()))
-        lines.append(
-            f"UPDATE posts SET {assignments} WHERE id = {post_id}; -- {provenance}")
+        lines.append(_update_line(post_id, plan.updates[post_id]))
     lines.append("COMMIT;")
     lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")
     return len(plan.updates)
+
+
+def _parse_resume_sql(path: Path) -> tuple[dict[int, dict[str, str]], bool]:
+    """Read a staging SQL file back: post_id → {field: source} for every
+    UPDATE line, plus whether the file ends with a COMMIT; (a finished run)
+    or not (an interrupted one — resume it, never apply it). The parse
+    splits on the last ``; -- `` so a semicolon inside a quoted value
+    cannot fool it."""
+    flushed: dict[int, dict[str, str]] = {}
+    complete = False
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip() == "COMMIT;":
+            complete = True
+            continue
+        if not line.startswith("UPDATE posts SET "):
+            continue
+        head, sep, provenance = line.rpartition("; -- ")
+        if not sep:
+            continue
+        match = re.search(r"WHERE id = (\d+)$", head)
+        if match is None:
+            continue
+        fields: dict[str, str] = {}
+        for part in provenance.split(";"):
+            part = part.strip()
+            if ": " in part:
+                field, source = part.split(": ", 1)
+                fields[field.strip()] = source.strip()
+        if fields:
+            flushed.setdefault(int(match.group(1)), {}).update(fields)
+    return flushed, complete
+
+
+class BatchWriter:
+    """Streams the staging SQL to disk in batches as posts are filled, with
+    a JSON progress file updated after every batch. A crash loses at most
+    one batch; a file without a closing COMMIT; is an interrupted run —
+    resume it, never apply it."""
+
+    def __init__(self, sql_path: Path, progress_path: Path, meta: dict, *,
+                 batch_size: int = DEFAULT_BATCH_SIZE):
+        self.sql_path = sql_path
+        self.progress_path = progress_path
+        self.meta = meta
+        self.batch_size = max(1, batch_size)
+        self.started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        self.resumed_at: str | None = None
+        self.flushed: dict[int, dict[str, str]] = {}
+        self.posts_updated = 0
+        self.fields_filled = 0
+        self.by_field: dict[str, int] = {}
+        self.by_source: dict[str, dict[str, int]] = {}
+        self.ambiguous: list[dict] = []
+        self.resumed_posts = 0
+        self.resumed_fields = 0
+        self._file = None
+        self._started_monotonic = time.monotonic()
+
+    def open(self, *, resume: bool = False) -> None:
+        """Create the staging file (fresh) or reopen it for appending. On
+        resume the already-written posts are loaded first, so the run never
+        re-fills them; the original started_at and the earlier review list
+        carry over."""
+        if resume and self.sql_path.exists():
+            self.flushed, _complete = _parse_resume_sql(self.sql_path)
+            self.resumed_posts = len(self.flushed)
+            self.resumed_fields = sum(len(f) for f in self.flushed.values())
+            self.posts_updated = self.resumed_posts
+            self.fields_filled = self.resumed_fields
+            for fields in self.flushed.values():
+                for field, source in fields.items():
+                    self.by_field[field] = self.by_field.get(field, 0) + 1
+                    self.by_source.setdefault(field, {}).setdefault(source, 0)
+                    self.by_source[field][source] += 1
+            if self.progress_path.exists():
+                try:
+                    old = json.loads(
+                        self.progress_path.read_text(encoding="utf-8"))
+                except (ValueError, OSError):
+                    old = {}
+                self.started_at = old.get("started_at") or self.started_at
+                self.ambiguous = old.get("ambiguous") or []
+            self.resumed_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            self._file = self.sql_path.open("a", encoding="utf-8")
+            with self.sql_path.open("rb") as probe:
+                probe.seek(0, 2)
+                size = probe.tell()
+                probe.seek(max(0, size - 64))
+                tail = probe.read().decode("utf-8", "replace")
+            if tail and not tail.endswith("\n"):
+                self._file.write("\n")
+            if tail.rstrip().endswith("COMMIT;"):
+                # A finished run's file: start a new transaction block so
+                # the resumed run's rows are still one atomic batch.
+                self._file.write("BEGIN;\n")
+            self._write_progress()
+            return
+        self._file = self.sql_path.open("w", encoding="utf-8")
+        self._file.write("\n".join([
+            f"-- metadata_backfill staging SQL — generated {self.meta.get('generated_at', '')}",
+            f"-- source database: {self.meta.get('db', '')}",
+            "-- apply with: sqlite3 <copy-of-the-catalog.db> < this-file",
+            "-- then verify counts and re-run the v2 projection before serving.",
+            "",
+            "BEGIN;",
+            "",
+        ]))
+        self._file.flush()
+        self._write_progress()
+
+    def flush(self, plan: Plan, *, force: bool = False) -> int:
+        """Write every complete batch of batch_size dirty posts (or all of
+        them when force=True). Returns the number of posts written."""
+        if self._file is None:
+            return 0
+        dirty = sorted(plan.dirty)
+        if not force and len(dirty) < self.batch_size:
+            return 0
+        if force:
+            take = dirty
+        else:
+            take = dirty[:len(dirty) // self.batch_size * self.batch_size]
+        for post_id in take:
+            fields = plan.updates.get(post_id)
+            if not fields:
+                plan.dirty.discard(post_id)
+                continue
+            self._file.write(_update_line(post_id, fields) + "\n")
+            self.flushed[post_id] = {f: s for f, (_, s) in fields.items()}
+            self.posts_updated += 1
+            self.fields_filled += len(fields)
+            for field, (_, source) in fields.items():
+                self.by_field[field] = self.by_field.get(field, 0) + 1
+                self.by_source.setdefault(field, {}).setdefault(source, 0)
+                self.by_source[field][source] += 1
+            plan.dirty.discard(post_id)
+        self._file.flush()
+        os.fsync(self._file.fileno())
+        self._write_progress()
+        if take:
+            elapsed = time.monotonic() - self._started_monotonic
+            print(f"[·] batch: {self.posts_updated:,} posts "
+                  f"({self.fields_filled:,} fields) in {elapsed:.0f}s",
+                  flush=True)
+        return len(take)
+
+    def finish(self, plan: Plan) -> int:
+        """Flush the remainder, close the transaction, write the final
+        progress. Returns the total posts written (resumed + this run)."""
+        self.flush(plan, force=True)
+        if self._file is not None:
+            self._file.write(
+                f"-- posts updated: {self.posts_updated} · "
+                f"fields filled: {self.fields_filled}\n")
+            self._file.write("COMMIT;\n")
+            self._file.flush()
+            os.fsync(self._file.fileno())
+            self._file.close()
+            self._file = None
+        self._write_progress(complete=True)
+        return self.posts_updated
+
+    def _write_progress(self, *, complete: bool = False) -> None:
+        progress = {
+            "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "db": self.meta.get("db", ""),
+            "started_at": self.started_at,
+            "resumed_at": self.resumed_at,
+            "last_batch_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "finished_at": (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                            if complete else None),
+            "complete": complete,
+            "batch_size": self.batch_size,
+            "posts_updated": self.posts_updated,
+            "fields_filled": self.fields_filled,
+            "by_field": self.by_field,
+            "by_source": self.by_source,
+            "resumed_posts": self.resumed_posts,
+            "resumed_fields": self.resumed_fields,
+            "ambiguous_count": len(self.ambiguous),
+            "ambiguous": self.ambiguous,
+            "notes": [
+                "A staging file without a closing COMMIT; is an interrupted "
+                "run — resume it with --resume, never apply it.",
+            ],
+        }
+        tmp = self.progress_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(progress, indent=2, ensure_ascii=False),
+                       encoding="utf-8")
+        os.replace(tmp, self.progress_path)
 
 
 def apply_to_copy(src_db: Path, sql_path: Path, out_db: Path) -> dict:
@@ -1812,8 +2355,10 @@ def _build_sources(cache: ResponseCache, wanted_sources: list[str],
 def run(conn: sqlite3.Connection, *, wanted: list[str], sources: dict,
         datasets: ImdbDatasets | None, cache: ResponseCache,
         limit: int = 0, after_id: int = 0, workers: int = DEFAULT_WORKERS,
-        force: bool = False) -> tuple[Plan, dict]:
-    """The four passes, in priority order. Returns (plan, report-stats)."""
+        force: bool = False, writer=None) -> tuple[Plan, dict]:
+    """The four passes, in priority order. Returns (plan, report-stats).
+    With a writer, each pass streams its filled posts to disk in batches
+    as it goes — a killed run loses at most one batch."""
     columns = post_columns(conn)
     if "posts" not in {r[0] for r in conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}:
@@ -1823,26 +2368,38 @@ def run(conn: sqlite3.Connection, *, wanted: list[str], sources: dict,
         raise ValueError("posts has none of the fillable columns")
     plan = Plan()
     stats: dict = {"wanted": available, "passes": {}}
+    if writer is not None:
+        for post_id, fields in writer.flushed.items():
+            plan.seed(post_id, fields)
+        stats["resumed_posts"] = writer.resumed_posts
+        stats["resumed_fields"] = writer.resumed_fields
 
     site_first = plan_site_pass(conn, columns, available, plan)
     stats["passes"]["site"] = {k: v for k, v in site_first.items()
                                if k != "key_had"}
     key_had = site_first.get("key_had", {})
+    if writer is not None:
+        writer.flush(plan)
 
     if datasets is not None:
         stats["passes"]["imdb_datasets"] = plan_datasets_pass(
             conn, columns, available, datasets, plan)
+        if writer is not None:
+            writer.flush(plan)
 
     if sources:
         stats["passes"]["api"] = plan_api_pass(
             conn, columns, available, sources, plan,
-            limit=limit, after_id=after_id, workers=workers, force=force)
+            limit=limit, after_id=after_id, workers=workers, force=force,
+            writer=writer)
 
     # Propagation: an API/datasets win on one post now reaches its siblings.
     site_second = plan_site_pass(conn, columns, available, plan,
                                  include_plan_donors=True)
     stats["passes"]["site_propagate"] = {k: v for k, v in site_second.items()
                                         if k != "key_had"}
+    if writer is not None:
+        writer.flush(plan, force=True)
 
     stats["posts_updated"] = len(plan.updates)
     stats["fields_filled"] = plan.count()
@@ -1853,6 +2410,13 @@ def run(conn: sqlite3.Connection, *, wanted: list[str], sources: dict,
                "cache_hits": source.cache_hits, "exhausted": source.exhausted}
         for name, source in sources.items()
     }
+    ambiguous: list[dict] = []
+    for source in sources.values():
+        ambiguous.extend(source.ambiguities)
+    stats["ambiguous"] = ambiguous
+    stats["ambiguous_count"] = len(ambiguous)
+    if writer is not None:
+        writer.ambiguous = ambiguous
     cache.flush()
     return plan, stats
 
@@ -1863,7 +2427,7 @@ def build_report(db_path: Path, plan: Plan, stats: dict,
     missing a key. The rating source is recorded here (and in the SQL
     comments) because there is no column for it in the database."""
     disabled = [name for name, source in sources.items() if not source.enabled]
-    return {
+    report = {
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "db": str(db_path),
         "wanted_fields": stats["wanted"],
@@ -1882,8 +2446,17 @@ def build_report(db_path: Path, plan: Plan, stats: dict,
             "projection re-runs.",
             "Disabled sources were skipped for a missing key; set the key "
             "in the environment and re-run to fill what they alone cover.",
+            "ambiguous_review lists the posts no source would fill because "
+            "two or more same-title-same-year candidates tied — a human "
+            "checks them; blank beats wrong.",
         ],
     }
+    if stats.get("resumed_posts"):
+        report["resumed_posts"] = stats["resumed_posts"]
+        report["resumed_fields"] = stats["resumed_fields"]
+    if stats.get("ambiguous"):
+        report["ambiguous_review"] = stats["ambiguous"]
+    return report
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
@@ -1930,6 +2503,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--force", action="store_true",
                         help="API pass: re-resolve rows that already have a "
                              "value (site/datasets values still win ties)")
+    parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE,
+                        help=f"Streaming: posts written per staging-SQL batch "
+                             f"(default {DEFAULT_BATCH_SIZE}); a crash loses "
+                             "at most one batch")
+    parser.add_argument("--resume", action="store_true",
+                        help="Resume a killed run: read the existing staging "
+                             "SQL + progress file and skip already-filled posts")
+    parser.add_argument("--progress", type=Path, default=None,
+                        help="JSON progress output (default: <out> with "
+                             ".progress.json)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Query upstreams and report, but write no files")
     parser.add_argument("--apply-to", type=Path, default=None,
@@ -1941,8 +2524,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.limit < 0 or args.after_id < 0 or args.workers < 1:
-        parser.error("--limit/--after-id must be >= 0, --workers >= 1")
+    if (args.limit < 0 or args.after_id < 0 or args.workers < 1
+            or args.batch_size < 1):
+        parser.error("--limit/--after-id must be >= 0, --workers/--batch-size >= 1")
     if args.fetch_imdb_datasets and not args.imdb_datasets:
         parser.error("--fetch-imdb-datasets needs --imdb-datasets")
     wanted = [f.strip() for f in args.only.split(",") if f.strip()] or list(FIELDS)
@@ -1991,11 +2575,19 @@ def main(argv=None) -> int:
     print(f"[·] {db_path.name}: sources on: {', '.join(enabled) or 'none'}"
           + (f" · off (no key): {', '.join(disabled)}" if disabled else ""),
           flush=True)
+    generated_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    meta = {"generated_at": generated_at, "db": str(db_path)}
+    writer = None
+    if not args.dry_run:
+        progress_path = args.progress or args.out.with_suffix(".progress.json")
+        writer = BatchWriter(args.out, progress_path, meta,
+                             batch_size=args.batch_size)
+        writer.open(resume=args.resume)
     try:
         plan, stats = run(
             conn, wanted=wanted, sources=sources, datasets=datasets,
             cache=cache, limit=args.limit, after_id=args.after_id,
-            workers=args.workers, force=args.force)
+            workers=args.workers, force=args.force, writer=writer)
     except ValueError as error:
         print(f"[!] {error}", file=sys.stderr)
         return 2
@@ -2003,19 +2595,18 @@ def main(argv=None) -> int:
         conn.close()
 
     report = build_report(db_path, plan, stats, sources)
-    report["generated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    report["generated_at"] = generated_at
     if args.dry_run:
         print(json.dumps(report, indent=2, ensure_ascii=False))
         print(f"[·] dry run — {stats['posts_updated']} posts would be updated, "
               f"{stats['fields_filled']} fields filled; nothing written")
         return 0
 
+    wrote = writer.finish(plan)
     report_path = args.report or args.out.with_suffix(".json")
-    meta = {"generated_at": report["generated_at"], "db": str(db_path)}
-    wrote = write_staging_sql(args.out, plan, meta)
     report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False),
                            encoding="utf-8")
-    print(f"[✓] {wrote} posts in {args.out} ({stats['fields_filled']} fields) · "
+    print(f"[✓] {wrote} posts in {args.out} ({writer.fields_filled} fields) · "
           f"report in {report_path}")
     for field, count in sorted(stats["works_improved"].items()):
         if count:
