@@ -120,6 +120,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -140,10 +142,17 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.viewinterop.AndroidView
@@ -198,12 +207,22 @@ import com.raddstream.app.player.StartDeadline
 import com.raddstream.app.player.StartDeadlineStage
 import com.raddstream.app.player.StartPhase
 import com.raddstream.app.player.SubtitleColor
+import com.raddstream.app.player.SubtitleEdge
+import com.raddstream.app.player.SubtitleFont
 import com.raddstream.app.player.TapCommand
+import com.raddstream.app.player.isInSubtitleZone
+import com.raddstream.app.player.isSubtitleFling
+import com.raddstream.app.player.subtitle.AssAlignment
+import com.raddstream.app.player.subtitle.OverlayCue
+import com.raddstream.app.player.subtitle.assColorIsReadable
 import com.raddstream.app.player.subtitles.SubtitleOffset
 import com.raddstream.app.player.subtitles.SubtitleOffsetSheet
 import com.raddstream.app.player.dragHalfZone
 import com.raddstream.app.player.dominantAxis
 import com.raddstream.app.player.isInEdgeDeadZone
+import com.raddstream.app.player.subtitleMoveFraction
+import com.raddstream.app.player.subtitleRetimeSteps
+import com.raddstream.app.player.subtitleSizeDelta
 import com.raddstream.app.player.qualityCostPerHour
 import com.raddstream.app.ui.components.CatalogImage
 import com.raddstream.app.ui.components.RaddDialogTitle
@@ -580,7 +599,7 @@ private fun PlayerScreenContent(
             }
         }
 
-        // 2 — our own subtitle overlay (external SRT/VTT with delay)
+        // 2 — our own subtitle overlay (external SRT/VTT/ASS with delay)
         SubtitleOverlay(state, vm)
 
         // Review fix (16 Nov): a paused picture sits behind a 30% scrim so the
@@ -640,11 +659,16 @@ private fun PlayerScreenContent(
                 hud = Hud.Boost
             },
             onBoostEnd = vm::endBoost,
+            onSubtitleHud = {
+                hud = Hud.Subtitle(it)
+                interactTick = System.nanoTime()
+            },
         )
 
         // 4 — transient feedback layers
         DoubleTapRipple(state)
         hud?.let { EdgeFeedbackLine(it) }
+        (hud as? Hud.Subtitle)?.let { SubtitleToast(it.value) }
         scrubPreviewMs?.let { target ->
             ScrubToast(
                 target = target,
@@ -1125,11 +1149,14 @@ private fun PlayerSurface(
 /**
  * Native embedded-subtitle rendering (size/position/colors) — every call below was verified
  * public in media3-ui 1.3.1. Sync is applied below this layer by the service's decoder
- * wrapper, so this styling and the custom SRT/VTT overlay ([SubtitleOverlay]) agree.
+ * wrapper, so this styling and the custom overlay ([SubtitleOverlay]) agree.
  *
  * Both paths read the ONE [PlayerUiState.subtitle] snapshot, which is why the viewer's picked
- * colour and weight land on an embedded track exactly as they land on an external SRT: the
- * sheet never has to say which renderer a file happens to use.
+ * colour and weight land on an embedded track exactly as they land on an external file: the
+ * sheet never has to say which renderer a file happens to use. The one exception is
+ * [SubtitleUiSettings.useEmbeddedStyles]: when the viewer turns it on, the native view hands
+ * styling back to Media3's parsed ASS styles (colours, sizes, placement) instead of the
+ * viewer's look — the overlay keeps the file's colours for external ASS either way.
  */
 @androidx.annotation.OptIn(UnstableApi::class)
 private fun styleNativeSubtitles(view: PlayerView, state: PlayerUiState) {
@@ -1140,16 +1167,25 @@ private fun styleNativeSubtitles(view: PlayerView, state: PlayerUiState) {
         false,
     )
     sv.setBottomPaddingFraction(s.bottomFraction)
+    val fontTypeface = when (s.font) {
+        SubtitleFont.SERIF -> Typeface.SERIF
+        SubtitleFont.MONOSPACE -> Typeface.MONOSPACE
+        SubtitleFont.DEFAULT -> Typeface.DEFAULT
+    }
     sv.setStyle(
         CaptionStyleCompat(
             s.colour.argb,
             if (s.textBackground) RaddCaptionPlateArgb else android.graphics.Color.TRANSPARENT,
             android.graphics.Color.TRANSPARENT,
-            CaptionStyleCompat.EDGE_TYPE_NONE,
+            when (s.edge) {
+                SubtitleEdge.OUTLINE -> CaptionStyleCompat.EDGE_TYPE_OUTLINE
+                SubtitleEdge.SHADOW -> CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW
+                SubtitleEdge.NONE -> CaptionStyleCompat.EDGE_TYPE_NONE
+            },
             android.graphics.Color.BLACK,
             // Bold was overlay-only until the sheet persisted the style; the native path has
             // always had a typeface slot, it was simply never filled.
-            if (s.bold) Typeface.DEFAULT_BOLD else null,
+            if (s.bold) Typeface.create(fontTypeface, Typeface.BOLD) else fontTypeface,
         ),
     )
     // Robo run 4: embedded styles were applied on top of the viewer's own
@@ -1157,8 +1193,12 @@ private fun styleNativeSubtitles(view: PlayerView, state: PlayerUiState) {
     // black frame — invisible subtitles, and a 1.03:1 contrast flag. The
     // viewer's picked colour (bright by the SubtitleColor rule, white by
     // default) is the readable one, so it wins over whatever the file says.
-    // Position/size still come from the viewer's snapshot below.
-    sv.setApplyEmbeddedStyles(false)
+    // Position/size still come from the viewer's snapshot below — unless the
+    // viewer explicitly asks for the file's own styling in the sheet, in
+    // which case both switches hand the native view back to Media3's parsed
+    // styles. Font sizes only take effect while styles are on (Media3).
+    sv.setApplyEmbeddedStyles(s.useEmbeddedStyles)
+    sv.setApplyEmbeddedFontSizes(s.useEmbeddedStyles)
 }
 
 @Composable
@@ -1200,6 +1240,7 @@ private fun GestureOverlay(
     onScrubCommit: (Long) -> Unit,
     onBoostStart: () -> Unit,
     onBoostEnd: () -> Unit,
+    onSubtitleHud: (SubtitleHudValue) -> Unit,
 ) {
     val settings = GestureSettings(
         lockGestures = state.locked,
@@ -1209,6 +1250,8 @@ private fun GestureOverlay(
     val latestSettings by rememberUpdatedState(settings)
     val latestDuration by rememberUpdatedState(state.durationMs)
     val latestPosition by rememberUpdatedState(state.positionMs)
+    val latestSubtitle by rememberUpdatedState(state.subtitle)
+    val latestCustomSubtitleLoaded by rememberUpdatedState(state.customSubtitleLoaded)
     // Volume-gesture fix (Nov 2026): onVolume reads state.userVolume, a
     // snapshot — inside Lane C's never-restarted pointerInput(Unit) loop
     // the first composition's closure kept adding each frame's tiny delta
@@ -1218,6 +1261,7 @@ private fun GestureOverlay(
     // (brightness only worked by accident — it reads a live MutableState).
     val latestOnVolume by rememberUpdatedState(onVolume)
     val latestOnBrightness by rememberUpdatedState(onBrightness)
+    val latestOnSubtitleHud by rememberUpdatedState(onSubtitleHud)
     /**
      * Stamp of the last confirmed two-finger tap. The two-finger lane below watches the
      * Initial pass, which every frame delivers before the Main pass the tap lane reads, so
@@ -1315,7 +1359,9 @@ private fun GestureOverlay(
                 }
             }
             // Lane C — drags: vertical = brightness (left half) / volume (right half);
-            //           horizontal = scrub preview+commit
+            //           horizontal = scrub preview+commit. A vertical drag that starts on
+            //           the subtitle strip moves the subtitle seat instead (MX idea #5),
+            //           and a quick flick there jumps a subtitle line.
             .pointerInput(Unit) {
                 val paneSize: androidx.compose.ui.unit.IntSize = this.size
                 awaitEachGesture {
@@ -1325,6 +1371,22 @@ private fun GestureOverlay(
                     var lastY = startY
                     var axis: DominantAxis = DominantAxis.NONE
                     val zone = dragHalfZone(startX, paneSize.width.toFloat())
+                    val inSubtitleZone = isInSubtitleZone(
+                        startX,
+                        startY,
+                        paneSize.width.toFloat(),
+                        paneSize.height.toFloat(),
+                    )
+                    // The flick classifier needs the drag's own clock and travel, and the
+                    // seat it started from — the live move is undone on a flick, so the
+                    // seat never drifts from a gesture that meant "next line".
+                    val subtitleDragStartMs = System.currentTimeMillis()
+                    val subtitleStartFraction = latestSubtitle.bottomFraction
+                    var subtitleTotalDy = 0f
+                    // The seat accumulates locally per event: the fresh-state read can lag
+                    // recomposition by a frame, and adding each delta to a stale base would
+                    // drop most of the drag. The local sum is the truth; the VM is told it.
+                    var subtitleSeat = subtitleStartFraction
                     // Hate-audit H5: the screen edges belong to Android's back
                     // gesture — a vertical drag that starts inside the edge
                     // dead zone is the system gesture, not a brightness/volume
@@ -1351,7 +1413,13 @@ private fun GestureOverlay(
                             }
                             when (axis) {
                                 DominantAxis.VERTICAL ->
-                                    if (!inEdgeDeadZone) {
+                                    if (inSubtitleZone && !latestSettings.lockGestures) {
+                                        subtitleTotalDy = totalDy
+                                        val fraction = subtitleMoveFraction(dy, paneSize.height.toFloat())
+                                        subtitleSeat = (subtitleSeat + fraction).coerceIn(0f, 0.4f)
+                                        vm.setSubtitleBottomFraction(subtitleSeat)
+                                        latestOnSubtitleHud(SubtitleHudValue.Position((subtitleSeat * 100).toInt()))
+                                    } else if (!inEdgeDeadZone) {
                                         when (val cmd = GestureMapper.onVerticalDrag(zone, dy, paneSize.height.toFloat(), latestSettings)) {
                                             is DragCommand.BrightnessDelta -> latestOnBrightness(cmd.fractionPerSwipe)
                                             is DragCommand.VolumeDelta -> latestOnVolume(cmd.fractionPerSwipe)
@@ -1374,12 +1442,66 @@ private fun GestureOverlay(
                         if (axis == DominantAxis.HORIZONTAL) {
                             scrubTarget?.let { onScrubCommit(it) }
                         }
+                        if (axis == DominantAxis.VERTICAL && inSubtitleZone && !latestSettings.lockGestures) {
+                            val durationMs = System.currentTimeMillis() - subtitleDragStartMs
+                            if (isSubtitleFling(durationMs, subtitleTotalDy)) {
+                                // Undo the live move first, then jump: up = next line, down =
+                                // previous. With no overlay file the jump itself says so out
+                                // loud (the VM message); the pill only shows when a line was
+                                // actually jumped to.
+                                vm.setSubtitleBottomFraction(subtitleStartFraction)
+                                val next = subtitleTotalDy < 0f
+                                vm.jumpSubtitleLine(next)
+                                if (latestCustomSubtitleLoaded != null) {
+                                    latestOnSubtitleHud(SubtitleHudValue.LineJump(next))
+                                }
+                            }
+                        }
                     }
                 }
             }
-            // Lane D — pinch: expand → ZOOM, squeeze → FIT (mode mapping per PLAYER_SPEC §2.1)
+            // Lane D — pinch: expand → ZOOM, squeeze → FIT (mode mapping per PLAYER_SPEC §2.1).
+            //           On the subtitle strip the same two fingers work on the subtitles
+            //           instead (MX idea #5): a pinch resizes them live, a mostly-horizontal
+            //           two-finger swipe re-times them a coarse step per 10% of width.
             .pointerInput(Unit) {
-                detectTransformGestures { _, _, zoom, _ ->
+                val paneSize: androidx.compose.ui.unit.IntSize = this.size
+                // The re-time banks sub-step travel across transform callbacks; a gap over
+                // half a second means a new gesture, and the bank starts over. The size
+                // banks the same way, for the same frame-lag reason as the Lane C seat.
+                var retimeAccumPx = 0f
+                var lastTransformMs = 0L
+                var subtitleSize = 0
+                detectTransformGestures { centroid, pan, zoom, _ ->
+                    if (isInSubtitleZone(centroid.x, centroid.y, paneSize.width.toFloat(), paneSize.height.toFloat()) &&
+                        !latestSettings.lockGestures
+                    ) {
+                        val nowMs = System.currentTimeMillis()
+                        if (nowMs - lastTransformMs > 500L) {
+                            retimeAccumPx = 0f
+                            subtitleSize = latestSubtitle.sizePercent
+                        }
+                        lastTransformMs = nowMs
+                        val sizeDelta = subtitleSizeDelta(zoom)
+                        if (sizeDelta != 0) {
+                            subtitleSize = (subtitleSize + sizeDelta).coerceIn(50, 200)
+                            vm.setSubtitleSettings(latestSubtitle.copy(sizePercent = subtitleSize))
+                            latestOnSubtitleHud(SubtitleHudValue.Size(subtitleSize))
+                        }
+                        if (kotlin.math.abs(zoom - 1f) <= 0.02f) {
+                            retimeAccumPx += pan.x
+                            val steps = subtitleRetimeSteps(retimeAccumPx, paneSize.width.toFloat())
+                            if (steps != 0) {
+                                val nextDelay = SubtitleOffset.clamp(
+                                    latestSubtitle.delayMs + steps * SubtitleOffset.COARSE_STEP_MS,
+                                )
+                                vm.setSubtitleOffset(nextDelay)
+                                latestOnSubtitleHud(SubtitleHudValue.Delay(nextDelay))
+                                retimeAccumPx -= steps * 0.10f * paneSize.width
+                            }
+                        }
+                        return@detectTransformGestures
+                    }
                     val cause = when {
                         zoom > 1.02f -> "out"
                         zoom < 0.98f -> "in"
@@ -1454,6 +1576,20 @@ internal sealed class Hud {
     data class Brightness(val value: Float) : Hud()
     data class Volume(val value: Float) : Hud()
     object Boost : Hud()
+    /** A subtitle-gesture readout, shown as a pill. The value travels; the label is
+     *  formatted where it is drawn, because the gesture lanes cannot call stringResource. */
+    data class Subtitle(val value: SubtitleHudValue) : Hud()
+}
+
+/**
+ * What a subtitle gesture changed — a value, not a sentence. The lanes report these and the
+ * pill formats them, the same split the brightness/volume edge lines already use.
+ */
+internal sealed interface SubtitleHudValue {
+    data class Delay(val delayMs: Long) : SubtitleHudValue
+    data class Size(val percent: Int) : SubtitleHudValue
+    data class Position(val percent: Int) : SubtitleHudValue
+    data class LineJump(val next: Boolean) : SubtitleHudValue
 }
 
 /**
@@ -1465,16 +1601,20 @@ internal sealed class Hud {
  */
 @Composable
 internal fun EdgeFeedbackLine(hud: Hud) {
+    // The subtitle readout is a centred pill (SubtitleToast), not an edge line.
+    if (hud is Hud.Subtitle) return
     val isLeft = hud is Hud.Brightness
     val fraction = when (hud) {
         is Hud.Brightness -> hud.value
         is Hud.Volume -> hud.value
         is Hud.Boost -> 1f
+        is Hud.Subtitle -> 0f // unreachable: returned above; the when must stay exhaustive
     }
     val label = when (hud) {
         is Hud.Brightness -> stringResource(R.string.player_brightness, (hud.value * 100).toInt())
         is Hud.Volume -> stringResource(R.string.player_volume, (hud.value * 100).toInt())
         is Hud.Boost -> "2×"
+        is Hud.Subtitle -> "" // unreachable: returned above
     }
     val trackColor = if (hud is Hud.Boost) RaddCurrent500 else Color.White
     Box(
@@ -1547,6 +1687,40 @@ private fun ScrubToast(
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
                 )
             }
+        }
+    }
+}
+
+/**
+ * The subtitle-gesture readout: the same pill shape as the scrub toast, same seat above the
+ * subtitles, one value and nothing else — the delay, the size, the seat, or the line jumped
+ * to. It shares the 800 ms lifetime of the other HUDs (`LaunchedEffect(hud)`).
+ */
+@Composable
+private fun SubtitleToast(value: SubtitleHudValue) {
+    val text = when (value) {
+        is SubtitleHudValue.Delay -> stringResource(
+            R.string.player_subtitle_sync,
+            SubtitleOffset.format(value.delayMs),
+        )
+        is SubtitleHudValue.Size -> stringResource(R.string.player_subtitle_size, value.percent)
+        is SubtitleHudValue.Position -> stringResource(R.string.player_subtitle_position, value.percent)
+        is SubtitleHudValue.LineJump -> stringResource(
+            if (value.next) R.string.player_subtitle_next_line else R.string.player_subtitle_previous_line,
+        )
+    }
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
+        Surface(
+            color = RaddHudToast,
+            shape = MaterialTheme.shapes.small,
+            modifier = Modifier.padding(bottom = 130.dp),
+        ) {
+            Text(
+                text,
+                color = Color.White,
+                fontSize = brandSp(14),
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+            )
         }
     }
 }
@@ -3445,36 +3619,181 @@ private fun GiveUpCard(
     )
 }
 
-// ── Subtitle overlay (custom path: external SRT/VTT, delay honoured) ──────────
+// ── Subtitle overlay (custom path: external SRT/VTT/ASS, delay honoured) ───────
+
+private fun SubtitleFont.toFontFamily(): FontFamily = when (this) {
+    SubtitleFont.SERIF -> FontFamily.Serif
+    SubtitleFont.MONOSPACE -> FontFamily.Monospace
+    SubtitleFont.DEFAULT -> FontFamily.Default
+}
+
+private fun AssAlignment.toComposeAlignment(): Alignment = when (this) {
+    AssAlignment.BOTTOM_LEFT -> Alignment.BottomStart
+    AssAlignment.BOTTOM_CENTER -> Alignment.BottomCenter
+    AssAlignment.BOTTOM_RIGHT -> Alignment.BottomEnd
+    AssAlignment.MIDDLE_LEFT -> Alignment.CenterStart
+    AssAlignment.MIDDLE_CENTER -> Alignment.Center
+    AssAlignment.MIDDLE_RIGHT -> Alignment.CenterEnd
+    AssAlignment.TOP_LEFT -> Alignment.TopStart
+    AssAlignment.TOP_CENTER -> Alignment.TopCenter
+    AssAlignment.TOP_RIGHT -> Alignment.TopEnd
+}
+
+/**
+ * One cue as styled text. A run's own colour wins when the file gave one; a file colour too
+ * dark to read (the Robo run-4 rule) falls back to the viewer's colour instead of rendering
+ * invisible text; a cue with no file colour at all (SRT/VTT) is the viewer's colour outright.
+ * Size is the viewer's size, scaled by the cue style's size relative to the 20 pt default
+ * and by any `\fs` on the run — so a fansub's big title line stays big, and the viewer's
+ * size slider still moves everything. Weight and decoration follow the same rule as the
+ * embedded-styles toggle: the file's style is the look when the file has one, and the
+ * viewer's bold only fills in where the file says nothing (SRT/VTT).
+ */
+private fun OverlayCue.toAnnotatedString(viewer: SubtitleUiSettings): AnnotatedString {
+    val viewerColor = Color(viewer.colour.argb)
+    val builder = AnnotatedString.Builder()
+    val sizeScale = (styleFontSizePt / 20f).coerceIn(0.25f, 4f)
+    runs.forEach { run ->
+        val fileColor = run.colorArgb ?: stylePrimaryArgb
+        val color = when {
+            fileColor == null -> viewerColor
+            assColorIsReadable(fileColor) -> Color(fileColor)
+            else -> viewerColor
+        }
+        val scale = sizeScale * (run.fontSizeScale ?: 1f)
+        // Weight/decoration: the run's override wins, then the file style's, then — only
+        // when the file says nothing at all (SRT/VTT) — the viewer's own bold.
+        val bold = run.bold ?: styleBold ?: viewer.bold
+        val italic = run.italic ?: styleItalic ?: false
+        val underline = run.underline ?: styleUnderline ?: false
+        val strike = run.strike ?: styleStrike ?: false
+        builder.pushStyle(
+            SpanStyle(
+                color = color,
+                fontSize = brandSp(16f * viewer.sizePercent / 100f * scale),
+                fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
+                fontStyle = if (italic) FontStyle.Italic else FontStyle.Normal,
+                textDecoration = when {
+                    underline && strike ->
+                        TextDecoration.combine(listOf(TextDecoration.Underline, TextDecoration.LineThrough))
+                    underline -> TextDecoration.Underline
+                    strike -> TextDecoration.LineThrough
+                    else -> TextDecoration.None
+                },
+            ),
+        )
+        builder.append(run.text)
+        builder.pop()
+    }
+    return builder.toAnnotatedString()
+}
+
+/**
+ * The outline approximation, honestly labelled: Compose Text has no stroke, so the outline
+ * is the same text drawn behind with a stroke `drawStyle` in solid black, and the filled
+ * text drawn over it. The stroke is centred on the glyph edge, so the fill covers its inner
+ * half and ~1.5 px of black shows outside — a readable edge on any frame, not a true
+ * outline, and the sheet never claims otherwise.
+ */
+private fun outlinedAnnotated(annotated: AnnotatedString, outline: Color): AnnotatedString =
+    AnnotatedString(
+        text = annotated.text,
+        spanStyles = annotated.spanStyles.map { range ->
+            AnnotatedString.Range(range.item.copy(color = outline), range.start, range.end)
+        },
+        paragraphStyles = annotated.paragraphStyles,
+    )
 
 @Composable
 private fun SubtitleOverlay(state: PlayerUiState, vm: PlayerViewModel) {
     if (state.customSubtitleLoaded == null) return
     val cues = vm.overlayCues(state.positionMs)
     if (cues.isEmpty()) return
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp)
-                .padding(bottom = (72 + state.subtitle.bottomFraction * 300).dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            cues.forEach { cue ->
-                Text(
-                    cue.text,
-                    color = state.subtitle.colour.paint(),
-                    fontSize = brandSp(16f * state.subtitle.sizePercent / 100f),
-                    fontWeight = if (state.subtitle.bold) FontWeight.Bold else FontWeight.Normal,
-                    textAlign = TextAlign.Center,
-                    modifier = if (state.subtitle.textBackground) {
-                        Modifier
-                            .background(RaddCaptionPlate, MaterialTheme.shapes.small)
-                            .padding(horizontal = 8.dp, vertical = 2.dp)
-                    } else {
-                        Modifier
-                    },
-                )
+    val s = state.subtitle
+    val fontFamily = s.font.toFontFamily()
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        // \pos is absolute on the PlayRes canvas: the offset is measured from the cue's own
+        // alignment anchor, so a bottom-centre line at \pos(192,240) sits with its bottom
+        // centre at that point, exactly as libass places it.
+        val anchorX = { a: AssAlignment ->
+            when (a) {
+                AssAlignment.BOTTOM_LEFT, AssAlignment.MIDDLE_LEFT, AssAlignment.TOP_LEFT -> 0f
+                AssAlignment.BOTTOM_CENTER, AssAlignment.MIDDLE_CENTER, AssAlignment.TOP_CENTER -> 0.5f
+                else -> 1f
+            }
+        }
+        val anchorY = { a: AssAlignment ->
+            when (a) {
+                AssAlignment.TOP_LEFT, AssAlignment.TOP_CENTER, AssAlignment.TOP_RIGHT -> 0f
+                AssAlignment.MIDDLE_LEFT, AssAlignment.MIDDLE_CENTER, AssAlignment.MIDDLE_RIGHT -> 0.5f
+                else -> 1f
+            }
+        }
+        cues.forEach { cue ->
+            val isTop = cue.alignment in setOf(AssAlignment.TOP_LEFT, AssAlignment.TOP_CENTER, AssAlignment.TOP_RIGHT)
+            val isMiddle = cue.alignment in setOf(AssAlignment.MIDDLE_LEFT, AssAlignment.MIDDLE_CENTER, AssAlignment.MIDDLE_RIGHT)
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = cue.alignment.toComposeAlignment(),
+            ) {
+                val annotated = cue.toAnnotatedString(s)
+                val textAlign = when (cue.alignment) {
+                    AssAlignment.BOTTOM_LEFT, AssAlignment.MIDDLE_LEFT, AssAlignment.TOP_LEFT -> TextAlign.Start
+                    AssAlignment.BOTTOM_RIGHT, AssAlignment.MIDDLE_RIGHT, AssAlignment.TOP_RIGHT -> TextAlign.End
+                    else -> TextAlign.Center
+                }
+                // The seat: the viewer's bottom fraction, plus the style's own margin. A
+                // top-aligned cue is pushed down from the top instead, and a middle cue
+                // keeps its centre (a margin on a centred line has nowhere honest to go).
+                val seatPadding = maxHeight * (s.bottomFraction + cue.marginVFraction)
+                val posOffset = cue.position?.let { pos ->
+                    DpOffset(
+                        x = maxWidth * (pos.xFraction - anchorX(cue.alignment)),
+                        y = maxHeight * (pos.yFraction - anchorY(cue.alignment)),
+                    )
+                }
+                val plate = if (s.textBackground) {
+                    Modifier
+                        .background(RaddCaptionPlate, MaterialTheme.shapes.small)
+                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                } else {
+                    Modifier
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp)
+                        .padding(
+                            bottom = if (!isTop && !isMiddle) (72.dp + seatPadding) else 0.dp,
+                            top = if (isTop) (72.dp + seatPadding) else 0.dp,
+                        )
+                        .then(if (posOffset != null) Modifier.offset(posOffset.x, posOffset.y) else Modifier),
+                    contentAlignment = cue.alignment.toComposeAlignment(),
+                ) {
+                    if (s.edge == SubtitleEdge.OUTLINE) {
+                        // No plate here: the main text below draws it once. Drawing the
+                        // plate twice would stack its alpha and darken it.
+                        Text(
+                            outlinedAnnotated(annotated, Color.Black),
+                            style = TextStyle(
+                                fontFamily = fontFamily,
+                                drawStyle = Stroke(width = 3f),
+                            ),
+                            textAlign = textAlign,
+                        )
+                    }
+                    Text(
+                        annotated,
+                        fontFamily = fontFamily,
+                        style = if (s.edge == SubtitleEdge.SHADOW) {
+                            TextStyle(shadow = Shadow(color = Color.Black, offset = Offset(2f, 2f), blurRadius = 2f))
+                        } else {
+                            TextStyle.Default
+                        },
+                        textAlign = textAlign,
+                        modifier = plate,
+                    )
+                }
             }
         }
     }
@@ -4153,6 +4472,58 @@ private fun SubtitleSettingsSheet(state: PlayerUiState, vm: PlayerViewModel) {
                     )
                 }
             }
+
+            Text(
+                stringResource(R.string.player_subtitle_font),
+                color = Color.White,
+                fontSize = brandSp(14),
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+            SubtitleFont.entries.forEach { font ->
+                SheetRow(
+                    label = font.label,
+                    selected = font == state.subtitle.font,
+                ) { vm.setSubtitleSettings(state.subtitle.copy(font = font)) }
+            }
+
+            Text(
+                stringResource(R.string.player_subtitle_edge),
+                color = Color.White,
+                fontSize = brandSp(14),
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+            SubtitleEdge.entries.forEach { edge ->
+                SheetRow(
+                    label = edge.label,
+                    selected = edge == state.subtitle.edge,
+                ) { vm.setSubtitleSettings(state.subtitle.copy(edge = edge)) }
+            }
+
+            Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(stringResource(R.string.player_subtitle_embedded_styles), color = Color.White, fontSize = brandSp(14), modifier = Modifier.weight(1f))
+                Switch(
+                    checked = state.subtitle.useEmbeddedStyles,
+                    onCheckedChange = {
+                        switchHaptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        vm.setSubtitleSettings(state.subtitle.copy(useEmbeddedStyles = it))
+                    },
+                    thumbContent = if (state.subtitle.useEmbeddedStyles) {
+                        { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(SwitchDefaults.IconSize)) }
+                    } else null,
+                )
+            }
+            Text(
+                stringResource(R.string.player_subtitle_embedded_styles_note),
+                color = Color.White.copy(alpha = 0.55f),
+                fontSize = brandSp(11),
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+            Text(
+                stringResource(R.string.player_subtitle_gesture_hint),
+                color = Color.White.copy(alpha = 0.55f),
+                fontSize = brandSp(11),
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
 
             Spacer(Modifier.height(8.dp))
             SheetRow(label = stringResource(R.string.player_subtitle_load)) {

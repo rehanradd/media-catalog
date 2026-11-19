@@ -219,3 +219,66 @@ object GestureMapper {
 
     fun clampedSpeed(speed: Float): Float = speed.coerceIn(0.25f, 4.0f)
 }
+
+/**
+ * Subtitle gestures (MX idea #5). All four live inside the subtitle strip — the bottom 30% of
+ * the pane, centre third — where the text sits and where a viewer's thumb already is when they
+ * are looking at the subtitles. A vertical drag anywhere else keeps its old meaning
+ * (brightness/volume), a pinch anywhere else keeps zoom/fit, and a horizontal drag anywhere
+ * else keeps scrubbing. Gated on `lockGestures` only — they work in Ghost mode too, where
+ * there is no sheet to reach for.
+ *
+ *  - two-finger horizontal swipe on the strip → subtitle delay, one coarse step (500 ms)
+ *    per 10% of pane width travelled (the sync sheet's coarse step, same readout);
+ *  - pinch with its centroid on the strip → subtitle size, live, ±10 points per callback;
+ *  - vertical drag starting on the strip → the seat moves with the finger (up = higher);
+ *  - a quick vertical FLICK on the strip → previous/next subtitle line instead (the live
+ *    move is undone first, so the seat never drifts from a flick).
+ */
+const val SUBTITLE_ZONE_BOTTOM_FRACTION = 0.30f
+
+/** The strip: bottom 30% of the pane, centre third. */
+fun isInSubtitleZone(x: Float, y: Float, widthPx: Float, heightPx: Float): Boolean {
+    if (widthPx <= 0f || heightPx <= 0f) return false
+    val third = widthPx / 3f
+    return x in third..(2 * third) && y >= heightPx * (1f - SUBTITLE_ZONE_BOTTOM_FRACTION)
+}
+
+/**
+ * Two-finger re-time: whole 500 ms steps from the travelled distance. The caller accumulates
+ * raw pixels across transform callbacks and keeps the remainder (`travelled - steps * 10% of
+ * width`), so a slow swipe still banks its steps instead of losing the sub-step travel.
+ * Partial travel is no step — truncating toward zero, so a 15%-width swipe is one step.
+ */
+fun subtitleRetimeSteps(dxPx: Float, widthPx: Float): Int {
+    if (widthPx <= 0f) return 0
+    return (dxPx / widthPx / 0.10f).toInt()
+}
+
+/**
+ * Pinch on the strip: size change per transform callback, from the zoom factor. A real pinch
+ * reports ~0.95–1.05 per frame, so ±10 points per callback is a generous clamp, not a limit —
+ * the size itself is clamped to 50..200 by [SubtitleUiSettings.clamped].
+ */
+fun subtitleSizeDelta(zoom: Float): Int {
+    if (!zoom.isFinite() || zoom <= 0f) return 0
+    return ((zoom - 1f) * 100f).toInt().coerceIn(-10, 10)
+}
+
+/** Vertical drag on the strip: fraction of pane height the seat moves (up = higher). */
+fun subtitleMoveFraction(dyPx: Float, heightPx: Float): Float {
+    if (heightPx <= 0f) return 0f
+    return -dyPx / heightPx
+}
+
+/** A flick is short, far, and fast — a slow deliberate drag is none of those. */
+const val SUBTITLE_FLING_MAX_DURATION_MS = 300L
+const val SUBTITLE_FLING_MIN_DISTANCE_PX = 48f
+const val SUBTITLE_FLING_MIN_VELOCITY_PX_PER_S = 500f
+
+fun isSubtitleFling(durationMs: Long, totalDyPx: Float): Boolean {
+    if (durationMs <= 0L || durationMs > SUBTITLE_FLING_MAX_DURATION_MS) return false
+    if (kotlin.math.abs(totalDyPx) < SUBTITLE_FLING_MIN_DISTANCE_PX) return false
+    val averageVelocityPxPerSec = kotlin.math.abs(totalDyPx) / durationMs * 1000f
+    return averageVelocityPxPerSec >= SUBTITLE_FLING_MIN_VELOCITY_PX_PER_S
+}

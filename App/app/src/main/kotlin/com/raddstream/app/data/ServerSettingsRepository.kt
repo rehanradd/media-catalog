@@ -16,6 +16,8 @@ import com.raddstream.app.network.models.AccountEntitlement
 import com.raddstream.app.network.models.PanelDisclaimer
 import com.raddstream.app.network.models.PanelTheme
 import com.raddstream.app.player.SubtitleColor
+import com.raddstream.app.player.SubtitleEdge
+import com.raddstream.app.player.SubtitleFont
 import com.raddstream.app.player.SubtitleUiSettings
 import com.raddstream.app.ui.theme.PlayerChromeTheme
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -937,9 +939,10 @@ class ServerSettingsRepository @Inject constructor(
     }
 
     /**
-     * How subtitles look: size, vertical seat, weight, plate, colour — one snapshot of five
-     * keys. Read as one value so a style cannot land on the player half-applied, and so the
-     * sheet's five controls and the two render paths always agree on what the viewer asked for.
+     * How subtitles look: size, vertical seat, weight, plate, colour, font, edge, and whether
+     * an embedded track keeps its own styles — one snapshot of eight keys. Read as one value
+     * so a style cannot land on the player half-applied, and so the sheet's controls and the
+     * two render paths always agree on what the viewer asked for.
      *
      * [com.raddstream.app.player.SubtitleUiSettings.delayMs] is deliberately NOT stored. The
      * sync sheet promises to hold the offset "for the rest of this viewing", and a delay is a
@@ -954,6 +957,9 @@ class ServerSettingsRepository @Inject constructor(
             bold = preferences[SUBTITLE_BOLD_KEY],
             textBackground = preferences[SUBTITLE_BACKGROUND_KEY],
             colour = preferences[SUBTITLE_COLOUR_KEY],
+            font = preferences[SUBTITLE_FONT_KEY],
+            edge = preferences[SUBTITLE_EDGE_KEY],
+            useEmbeddedStyles = preferences[SUBTITLE_EMBEDDED_STYLES_KEY],
         )
     }
 
@@ -966,6 +972,9 @@ class ServerSettingsRepository @Inject constructor(
             preferences[SUBTITLE_BOLD_KEY] = safe.bold
             preferences[SUBTITLE_BACKGROUND_KEY] = safe.textBackground
             preferences[SUBTITLE_COLOUR_KEY] = safe.colour.wireName
+            preferences[SUBTITLE_FONT_KEY] = safe.font.wireName
+            preferences[SUBTITLE_EDGE_KEY] = safe.edge.wireName
+            preferences[SUBTITLE_EMBEDDED_STYLES_KEY] = safe.useEmbeddedStyles
         }
     }
 
@@ -1149,6 +1158,9 @@ class ServerSettingsRepository @Inject constructor(
         private val SUBTITLE_BOLD_KEY = booleanPreferencesKey("subtitle_bold")
         private val SUBTITLE_BACKGROUND_KEY = booleanPreferencesKey("subtitle_text_background")
         private val SUBTITLE_COLOUR_KEY = stringPreferencesKey("subtitle_colour")
+        private val SUBTITLE_FONT_KEY = stringPreferencesKey("subtitle_font")
+        private val SUBTITLE_EDGE_KEY = stringPreferencesKey("subtitle_edge")
+        private val SUBTITLE_EMBEDDED_STYLES_KEY = booleanPreferencesKey("subtitle_embedded_styles")
         private val DYNAMIC_COLOR_KEY = booleanPreferencesKey("dynamic_color")
         private val VIEW_MODE_KEY = stringPreferencesKey("view_mode")
         private val DECODER_MODE_KEY = stringPreferencesKey("player_decoder_mode")
@@ -1240,10 +1252,16 @@ internal fun subtitleStyleOf(
     bold: Boolean?,
     textBackground: Boolean?,
     colour: String?,
+    font: String? = null,
+    edge: String? = null,
+    useEmbeddedStyles: Boolean? = null,
 ): SubtitleUiSettings = SubtitleUiSettings(
     sizePercent = sizePercent ?: DEFAULT_SUBTITLE_STYLE.sizePercent,
     bottomFraction = bottomFraction?.takeIf { it.isFinite() } ?: DEFAULT_SUBTITLE_STYLE.bottomFraction,
     bold = bold ?: DEFAULT_SUBTITLE_STYLE.bold,
     textBackground = textBackground ?: DEFAULT_SUBTITLE_STYLE.textBackground,
     colour = SubtitleColor.fromWire(colour),
+    font = SubtitleFont.fromWire(font),
+    edge = SubtitleEdge.fromWire(edge),
+    useEmbeddedStyles = useEmbeddedStyles ?: DEFAULT_SUBTITLE_STYLE.useEmbeddedStyles,
 ).clamped()

@@ -2,9 +2,10 @@ package com.raddstream.app.player.subtitle
 
 /**
  * Minimal, honest external-subtitle loader for the player's custom overlay path
- * (PLAYER_SPEC.md §2.3): SRT and WebVTT are parsed here so the app can offer full MX-style
- * delay/size/position control for *external* files. Embedded tracks and exotic formats
- * (.ass/.ssa/.ttml) go through Media3's native `SubtitleConfiguration` instead
+ * (PLAYER_SPEC.md §2.3): SRT, WebVTT and ASS/SSA are parsed here so the app can offer full
+ * MX-style delay/size/position control for *external* files — ASS through [AssParser], which
+ * keeps the file's colours, weights and placement as overlay spans. Embedded tracks and the
+ * remaining exotic formats (.ttml) go through Media3's native `SubtitleConfiguration` instead
  * (`DefaultSubtitleParserFactory` in 1.3.1 parses SSA/ASS, VTT, SRT, TX3G, PGS, DVB, TTML —
  * verified) — for those, cue-level delay is not available in 1.3.1 and the UI says so.
  *
@@ -13,7 +14,7 @@ package com.raddstream.app.player.subtitle
 
 data class SubtitleCue(val startMs: Long, val endMs: Long, val text: String)
 
-class SubtitleFile(val cues: List<SubtitleCue>) {
+class SubtitleFile(val cues: List<SubtitleCue>) : OverlaySubtitleFile {
 
     /**
      * Cues visible at [positionMs] with [delayMs] applied. MX convention: positive delay
@@ -23,11 +24,18 @@ class SubtitleFile(val cues: List<SubtitleCue>) {
         val virtual = positionMs - delayMs
         return cues.filter { it.startMs <= virtual && virtual < it.endMs }
     }
+
+    override fun activeOverlayCues(positionMs: Long, delayMs: Long): List<OverlayCue> =
+        activeCues(positionMs, delayMs).map { OverlayCue(it.startMs, it.endMs, listOf(OverlayTextRun(it.text))) }
+
+    override fun cueBoundaries(): List<Pair<Long, Long>> = cues.map { it.startMs to it.endMs }
 }
 
 sealed class SubtitleFormat(val mime: String) {
     object SubRip : SubtitleFormat("text/x-subrip")
     object WebVtt : SubtitleFormat("text/vtt")
+    /** ASS/SSA: parsed by [AssParser] into styled overlay cues (same mime Media3 uses natively). */
+    object Ass : SubtitleFormat("text/x-ssa")
     object Unknown : SubtitleFormat("application/octet-stream")
 
     companion object {
@@ -36,6 +44,8 @@ sealed class SubtitleFormat(val mime: String) {
             return when {
                 lower.endsWith(".srt") || lower.contains("subrip") || lower.contains("srt") -> SubRip
                 lower.endsWith(".vtt") || lower.contains("vtt") -> WebVtt
+                lower.endsWith(".ass") || lower.endsWith(".ssa") || lower.contains("x-ssa") ||
+                    lower.contains("substation") -> Ass
                 else -> Unknown
             }
         }
@@ -44,9 +54,21 @@ sealed class SubtitleFormat(val mime: String) {
 
 object SubtitleParser {
 
+    /**
+     * External files the overlay draws, in overlay shape: SRT/VTT parsed here, ASS through
+     * [AssParser], which keeps the file's colours, weights and placement as overlay spans.
+     * This is the one dispatch for external files — the player never guesses a format twice.
+     */
+    fun parseOverlay(content: String, format: SubtitleFormat): OverlaySubtitleFile = when (format) {
+        SubtitleFormat.Ass -> AssParser.parse(content)
+        else -> parse(content, format)
+    }
+
     fun parse(content: String, format: SubtitleFormat): SubtitleFile = when (format) {
         SubtitleFormat.SubRip -> parseSrt(content)
         SubtitleFormat.WebVtt -> parseWebVtt(content)
+        // ASS has its own model (styled runs, placement) — parseOverlay is its entry point.
+        SubtitleFormat.Ass -> throw IllegalArgumentException("ASS files are parsed by AssParser — use parseOverlay")
         SubtitleFormat.Unknown -> if (content.trimStart().startsWith("WEBVTT")) {
             parseWebVtt(content)
         } else {

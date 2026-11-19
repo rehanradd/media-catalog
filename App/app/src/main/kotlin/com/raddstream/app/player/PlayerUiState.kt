@@ -132,11 +132,42 @@ enum class SubtitleColor(val wireName: String, val label: String, val red: Int, 
     }
 }
 
+/** The typeface the subtitle text renders in — the viewer's own, never the file's. */
+enum class SubtitleFont(val wireName: String, val label: String) {
+    DEFAULT("default", "Default"),
+    SERIF("serif", "Serif"),
+    MONOSPACE("monospace", "Monospace"),
+    ;
+
+    companion object {
+        fun fromWire(name: String?): SubtitleFont =
+            entries.firstOrNull { it.wireName == name?.trim()?.lowercase() } ?: DEFAULT
+    }
+}
+
 /**
- * Subtitle presentation. [delayMs] is honoured on both render paths: the custom SRT/VTT
- * overlay reads it directly, and native (embedded / Media3-parsed) tracks are retimed by
- * the decoder wrapper the playback service installs. Size/position/style reach the native
- * `SubtitleView` as before (PLAYER_SPEC §2.3).
+ * How the text stands off the picture. Outline is a true stroke on the native view and an
+ * approximation on the custom overlay — Compose Text has no stroke, so the overlay draws the
+ * same text twice, once offset in the plate colour and once in the text colour. That is
+ * documented where it is drawn, not hidden.
+ */
+enum class SubtitleEdge(val wireName: String, val label: String) {
+    NONE("none", "None"),
+    OUTLINE("outline", "Outline"),
+    SHADOW("shadow", "Shadow"),
+    ;
+
+    companion object {
+        fun fromWire(name: String?): SubtitleEdge =
+            entries.firstOrNull { it.wireName == name?.trim()?.lowercase() } ?: NONE
+    }
+}
+
+/**
+ * Subtitle presentation. [delayMs] is honoured on both render paths: the custom overlay
+ * (SRT/VTT/ASS, parsed in-app) reads it directly, and native (embedded / Media3-parsed)
+ * tracks are retimed by the decoder wrapper the playback service installs. Size/position/
+ * style reach the native `SubtitleView` as before (PLAYER_SPEC §2.3).
  *
  * Everything here except [delayMs] is the viewer's own look and is persisted; the offset is
  * a correction made to one viewing, and [withDelay] is what keeps a stored reload from
@@ -152,6 +183,15 @@ data class SubtitleUiSettings(
     val bold: Boolean = true,
     val textBackground: Boolean = true,
     val colour: SubtitleColor = SubtitleColor.WHITE,
+    val font: SubtitleFont = SubtitleFont.DEFAULT,
+    val edge: SubtitleEdge = SubtitleEdge.NONE,
+    /**
+     * Render an embedded track with the file's own ASS styles instead of the viewer's look.
+     * Off by default: a fansub style that draws dark text on a dark frame is unreadable
+     * (Robo run 4), and the viewer's bright colour is the safe default. Turning it on hands
+     * the native view back to Media3's parsed styles, sizes included.
+     */
+    val useEmbeddedStyles: Boolean = false,
 ) {
     fun clamped(): SubtitleUiSettings = copy(
         sizePercent = sizePercent.coerceIn(50, 200),

@@ -157,13 +157,16 @@ object PlaybackMediaItemFactory {
 
     /** Formats our custom overlay renderer supports (delay/offset/styling path). */
     fun isCustomRenderable(format: String?): Boolean =
-        format?.lowercase() in setOf("srt", "subrip", "vtt", "webvtt", "srt; charset=utf-8")
+        format?.lowercase() in setOf(
+            "srt", "subrip", "vtt", "webvtt", "srt; charset=utf-8",
+            "ass", "ssa", "substation",
+        )
 
     /**
      * Bundle subtitle tracks (Gap A3) as the externals [build] takes: the
      * label is the track's language, the format hint is the server's
      * format, and the render path follows the same rule as a user-picked
-     * file — SRT/VTT go to our overlay, everything else to Media3.
+     * file — SRT/VTT/ASS go to our overlay, everything else to Media3.
      * A track with no URL can never be fetched, so it is dropped here
      * rather than handed to the player to fail on.
      */

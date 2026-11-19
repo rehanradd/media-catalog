@@ -79,9 +79,10 @@ import com.raddstream.app.player.abRepeatWithB
 import com.raddstream.app.player.loopTargetMs
 import com.raddstream.app.player.resolveStartBand
 import com.raddstream.app.player.shouldAutoAdvance
-import com.raddstream.app.player.subtitle.SubtitleCue
-import com.raddstream.app.player.subtitle.SubtitleFile
+import com.raddstream.app.player.subtitle.OverlayCue
+import com.raddstream.app.player.subtitle.OverlaySubtitleFile
 import com.raddstream.app.player.subtitle.SubtitleFormat
+import com.raddstream.app.player.subtitle.SubtitleLineJump
 import com.raddstream.app.player.subtitle.SubtitleParser
 import com.raddstream.app.player.subtitles.SubtitleOffset
 import com.raddstream.app.data.LocalResumeRepository
@@ -353,7 +354,7 @@ class PlayerViewModel @Inject constructor(
     val player: StateFlow<Player?> = _player.asStateFlow()
 
     /** Externally parsed subtitle (custom-render path). Null → native rendering only. */
-    private var customSubtitleFile: SubtitleFile? = null
+    private var customSubtitleFile: OverlaySubtitleFile? = null
     /** True when the loaded overlay file came from the bundle (Gap A3), not from the viewer. */
     private var customSubtitleFromBundle: Boolean = false
 
@@ -2296,7 +2297,7 @@ class PlayerViewModel @Inject constructor(
         viewModelScope.launch {
             val text = fetchSubtitleText(url)
             if (text == null) return@launch
-            customSubtitleFile = SubtitleParser.parse(text, SubtitleFormat.fromFileNameOrMime(picked.format ?: ""))
+            customSubtitleFile = SubtitleParser.parseOverlay(text, SubtitleFormat.fromFileNameOrMime(picked.format ?: ""))
             customSubtitleFromBundle = true
             val label = AudioTrackPolicy.nameFor(picked.language)
                 ?: AudioTrackMatcher.displayableLanguageTag(picked.language) ?: "Subtitles"
@@ -2374,8 +2375,8 @@ class PlayerViewModel @Inject constructor(
         viewModelScope.launch { settingsRepository.saveSubtitleStyle(style) }
     }
 
-    /** Bundle-provided or SAF-picked external subtitle. SRT/VTT → our overlay (delay read
-     *  directly); exotic formats → Media3 SubtitleConfiguration (delay via the decoder wrapper). */
+    /** Bundle-provided or SAF-picked external subtitle. SRT/VTT/ASS → our overlay (delay read
+     *  directly, styles kept for ASS); exotic formats → Media3 SubtitleConfiguration (delay via the decoder wrapper). */
     fun addExternalSubtitle(url: String, label: String, formatHint: String) {
         viewModelScope.launch {
             val ext = ExternalSubtitle(
@@ -2390,7 +2391,7 @@ class PlayerViewModel @Inject constructor(
                     _events.emit(PlayerEvent.Message("Could not load subtitle file: $label"))
                     return@launch
                 }
-                customSubtitleFile = SubtitleParser.parse(text, SubtitleFormat.fromFileNameOrMime(formatHint))
+                customSubtitleFile = SubtitleParser.parseOverlay(text, SubtitleFormat.fromFileNameOrMime(formatHint))
                 customSubtitleFromBundle = false
                 _ui.update { it.copy(customSubtitleLoaded = label) }
             } else {
@@ -2442,9 +2443,45 @@ class PlayerViewModel @Inject constructor(
     }
 
     /** Active subtitle lines for the custom overlay (delay applied here — MX subtitle sync). */
-    fun overlayCues(positionMs: Long): List<SubtitleCue> {
+    fun overlayCues(positionMs: Long): List<OverlayCue> {
         val file = customSubtitleFile ?: return emptyList()
-        return file.activeCues(positionMs, _ui.value.subtitle.delayMs)
+        return file.activeOverlayCues(positionMs, _ui.value.subtitle.delayMs)
+    }
+
+    /**
+     * Move the subtitle seat (the strip-drag gesture). Persisted like the other style
+     * fields — a viewer who watches with the text higher expects it higher next time too.
+     */
+    fun setSubtitleBottomFraction(fraction: Float) {
+        setSubtitleSettings(_ui.value.subtitle.copy(bottomFraction = fraction))
+    }
+
+    /**
+     * Jump to the previous/next subtitle line — the strip flick. Overlay files only: the
+     * native path has no cue list (`Player.Listener.onCues` gives the current cues, never
+     * the neighbours), so a native track says so out loud instead of pretending to jump.
+     * The seek honours `seekEnabled`, like every other seek path.
+     */
+    fun jumpSubtitleLine(next: Boolean) {
+        val file = customSubtitleFile
+        if (file == null) {
+            viewModelScope.launch {
+                _events.emit(PlayerEvent.Message("Line jump needs an external subtitle file"))
+            }
+            return
+        }
+        val virtual = _ui.value.positionMs - _ui.value.subtitle.delayMs
+        val target = if (next) SubtitleLineJump.nextStart(file.cueBoundaries(), virtual)
+        else SubtitleLineJump.prevStart(file.cueBoundaries(), virtual)
+        if (target == null) {
+            viewModelScope.launch {
+                _events.emit(
+                    PlayerEvent.Message(if (next) "No next subtitle line" else "No previous subtitle line"),
+                )
+            }
+            return
+        }
+        seekTo(target)
     }
 
     // ── Sleep timer (fade-out per MX behavior) ───────────────────────────────────

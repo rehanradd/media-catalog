@@ -1,6 +1,8 @@
 package com.raddstream.app.data
 
 import com.raddstream.app.player.SubtitleColor
+import com.raddstream.app.player.SubtitleEdge
+import com.raddstream.app.player.SubtitleFont
 import com.raddstream.app.player.SubtitleUiSettings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -27,6 +29,9 @@ class SubtitleStylePersistenceTest {
         assertTrue(stored.bold)
         assertTrue(stored.textBackground)
         assertEquals(SubtitleColor.WHITE, stored.colour)
+        assertEquals(SubtitleFont.DEFAULT, stored.font)
+        assertEquals(SubtitleEdge.NONE, stored.edge)
+        assertFalse(stored.useEmbeddedStyles)
         assertEquals(0L, stored.delayMs)
     }
 
@@ -38,6 +43,9 @@ class SubtitleStylePersistenceTest {
             bold = true,
             textBackground = false,
             colour = SubtitleColor.CYAN,
+            font = SubtitleFont.SERIF,
+            edge = SubtitleEdge.OUTLINE,
+            useEmbeddedStyles = true,
         )
         val stored = subtitleStyleOf(
             sizePercent = chosen.sizePercent,
@@ -45,8 +53,36 @@ class SubtitleStylePersistenceTest {
             bold = chosen.bold,
             textBackground = chosen.textBackground,
             colour = chosen.colour.wireName,
+            font = chosen.font.wireName,
+            edge = chosen.edge.wireName,
+            useEmbeddedStyles = chosen.useEmbeddedStyles,
         )
         assertEquals(chosen, stored)
+    }
+
+    @Test
+    fun `a font or edge name this build has never seen falls back to the shipped one`() {
+        listOf("comic-sans", "", "   ", null).forEach { junk ->
+            assertEquals("font <$junk>", SubtitleFont.DEFAULT, SubtitleFont.fromWire(junk))
+            assertEquals("edge <$junk>", SubtitleEdge.NONE, SubtitleEdge.fromWire(junk))
+        }
+        // Case and whitespace do not matter, exactly like the colour names.
+        assertEquals(SubtitleFont.MONOSPACE, SubtitleFont.fromWire(" Monospace "))
+        assertEquals(SubtitleEdge.SHADOW, SubtitleEdge.fromWire("Shadow"))
+    }
+
+    @Test
+    fun `each offered font and edge has its own name and its own label`() {
+        listOf(SubtitleFont.entries, SubtitleEdge.entries).forEach { entries ->
+            val names = entries.map { it.wireName }
+            val labels = entries.map { it.label }
+            assertEquals(names.size, names.distinct().size)
+            assertEquals(labels.size, labels.distinct().size)
+            entries.forEach { entry ->
+                assertTrue("${entry.name} has no label", entry.label.isNotBlank())
+                assertTrue("${entry.name} has no wire name", entry.wireName.isNotBlank())
+            }
+        }
     }
 
     @Test

@@ -184,6 +184,13 @@
     <string name="player_subtitle_load">Load external subtitle file (SRT / VTT / ASS)…</string>
     <string name="player_subtitle_remove">Remove “%1$s”</string>
     <string name="player_subtitle_sync_note">Subtitle sync applies to this overlay and to every embedded track. Size, position and colour styling still come from the controls above.</string>
+    <string name="player_subtitle_font">Font</string>
+    <string name="player_subtitle_edge">Edge</string>
+    <string name="player_subtitle_embedded_styles">Use the file’s own subtitle styling</string>
+    <string name="player_subtitle_embedded_styles_note">Shows an embedded track’s own colours and sizes. Off keeps your readable style.</string>
+    <string name="player_subtitle_next_line">Next subtitle line</string>
+    <string name="player_subtitle_previous_line">Previous subtitle line</string>
+    <string name="player_subtitle_gesture_hint">On the subtitles: two-finger swipe re-times, pinch resizes, drag moves, flick jumps a line.</string>
     <string name="player_track_none">No track info for this version yet.</string>
     <string name="player_track_with_language">%1$s · %2$s</string>
     <string name="player_cycle_audio">Cycle audio track</string>
