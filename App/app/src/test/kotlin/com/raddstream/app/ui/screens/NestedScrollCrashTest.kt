@@ -34,6 +34,7 @@ import androidx.paging.compose.collectAsLazyPagingItems
 import kotlinx.coroutines.flow.MutableStateFlow
 import com.raddstream.app.data.UserRegion
 import com.raddstream.app.data.local.LocalVideoFile
+import com.raddstream.app.data.local.groupVideosIntoFolders
 import com.raddstream.app.network.models.FacetEntry
 import com.raddstream.app.network.models.FacetsResponse
 import com.raddstream.app.network.models.LiveTvChannel
@@ -623,14 +624,15 @@ class NestedScrollCrashTest {
 
     @Test
     fun localFilesGroupedByFolder() {
+        val files = listOf(
+            LocalVideoFile(uri = "content://media/1", title = "Maula Jatt", durationMs = 7_200_000L, sizeBytes = 1_300_000_000L, folder = "Movies", dateAddedMs = 1_791_000_000_000L, folderPath = "Movies"),
+            LocalVideoFile(uri = "content://media/3", title = "Parizaad Ep 23", durationMs = 2_700_000L, sizeBytes = 900_000_000L, folder = "Movies", dateAddedMs = 1_791_000_000_000L, folderPath = "Movies"),
+            LocalVideoFile(uri = "content://media/2", title = "Parizaad Ep 24", durationMs = 2_700_000L, sizeBytes = 900_000_000L, folder = "Downloads", dateAddedMs = 1_791_000_000_000L, folderPath = "Download"),
+        )
         compose.setContent {
             RaddStreamTheme {
-                LocalFilesListContent(
-                    files = listOf(
-                        LocalVideoFile(uri = "content://media/1", title = "Maula Jatt", durationMs = 7_200_000L, sizeBytes = 1_300_000_000L, folder = "Movies", dateAddedMs = 1_791_000_000_000L),
-                        LocalVideoFile(uri = "content://media/3", title = "Parizaad Ep 23", durationMs = 2_700_000L, sizeBytes = 900_000_000L, folder = "Movies", dateAddedMs = 1_791_000_000_000L),
-                        LocalVideoFile(uri = "content://media/2", title = "Parizaad Ep 24", durationMs = 2_700_000L, sizeBytes = 900_000_000L, folder = "Downloads", dateAddedMs = 1_791_000_000_000L),
-                    ),
+                LocalFolderVideosContent(
+                    folder = groupVideosIntoFolders(files).first { it.path == "Movies" },
                     onPlay = {},
                 )
             }

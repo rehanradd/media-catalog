@@ -15,6 +15,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import com.raddstream.app.data.UserRegion
 import com.raddstream.app.data.local.LocalVideoFile
+import com.raddstream.app.data.local.groupVideosIntoFolders
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.HistoryRow
 import com.raddstream.app.viewmodel.LanguagesUiState
@@ -199,57 +200,85 @@ class SubScreensMockupTest {
         sizeBytes = 1_300_000_000L,
         folder = folder,
         dateAddedMs = 1_791_000_000_000L,
+        folderPath = folder,
     )
 
     @Test
-    fun localFilesGroupsByFolderWithAPlayButtonPerRow() {
+    fun localLibraryFolderListShowsFoldersWithCounts() {
         compose.setContent {
             RaddStreamTheme {
-                LocalFilesListContent(
-                    files = listOf(
-                        localFile(),
-                        localFile(uri = "content://media/3", title = "Parizaad Ep 23", folder = "Movies"),
-                        localFile(uri = "content://media/2", title = "Parizaad Ep 24", folder = "Downloads"),
+                LocalFolderListContent(
+                    folders = groupVideosIntoFolders(
+                        listOf(
+                            localFile(),
+                            localFile(uri = "content://media/3", title = "Parizaad Ep 23", folder = "Movies"),
+                            localFile(uri = "content://media/2", title = "Parizaad Ep 24", folder = "Downloads"),
+                        ),
                     ),
-                    onPlay = {},
+                    thumbnails = emptyMap(),
+                    onOpenFolder = {},
                 )
             }
         }
         // One folder row per real folder, each with its count — the two
-        // folders hold different counts so neither "N files" line is
-        // ambiguous to a single-node lookup.
+        // folders hold different counts so neither "N videos" line is
+        // ambiguous to a single-node lookup. The files themselves stay
+        // hidden until their folder opens: that is the folder-first split.
         compose.onNodeWithText("Movies").assertIsDisplayed()
-        compose.onNodeWithText("2 files").assertIsDisplayed()
+        compose.onNodeWithText("2 videos").assertIsDisplayed()
         compose.onNodeWithText("Downloads").assertIsDisplayed()
-        compose.onNodeWithText("1 file").assertIsDisplayed()
-        compose.onNodeWithText("Maula Jatt").assertIsDisplayed()
-        compose.onNodeWithText("Parizaad Ep 23").assertIsDisplayed()
-        compose.onNodeWithText("Parizaad Ep 24").assertIsDisplayed()
-        assertEquals(3, compose.onAllNodesWithTag("localFile_play").fetchSemanticsNodes().size)
+        compose.onNodeWithText("1 video").assertIsDisplayed()
+        compose.onNodeWithText("Maula Jatt").assertDoesNotExist()
     }
 
     @Test
-    fun localFilesFolderRowFoldsItsFilesShut() {
+    fun localLibraryFolderRowOpensItsFolder() {
+        var opened: String? = null
         compose.setContent {
             RaddStreamTheme {
-                LocalFilesListContent(
-                    files = listOf(localFile()),
+                LocalFolderListContent(
+                    folders = groupVideosIntoFolders(
+                        listOf(
+                            localFile(),
+                            localFile(uri = "content://media/2", title = "Parizaad Ep 24", folder = "Downloads"),
+                        ),
+                    ),
+                    thumbnails = emptyMap(),
+                    onOpenFolder = { opened = it.path },
+                )
+            }
+        }
+        compose.onNodeWithTag("localFolder_Movies").performClick()
+        assertEquals("Movies", opened)
+    }
+
+    @Test
+    fun localLibraryFolderVideosShowPlayButtonPerRow() {
+        compose.setContent {
+            RaddStreamTheme {
+                LocalFolderVideosContent(
+                    folder = groupVideosIntoFolders(
+                        listOf(
+                            localFile(),
+                            localFile(uri = "content://media/3", title = "Parizaad Ep 23", folder = "Movies"),
+                        ),
+                    ).first { it.path == "Movies" },
                     onPlay = {},
                 )
             }
         }
         compose.onNodeWithText("Maula Jatt").assertIsDisplayed()
-        compose.onNodeWithTag("localFolder_Movies").performClick()
-        compose.onNodeWithText("Maula Jatt").assertDoesNotExist()
+        compose.onNodeWithText("Parizaad Ep 23").assertIsDisplayed()
+        assertEquals(2, compose.onAllNodesWithTag("localFile_play").fetchSemanticsNodes().size)
     }
 
     @Test
-    fun localFilesPlayButtonPlaysThatFile() {
+    fun localLibraryFolderVideoPlayButtonPlaysThatFile() {
         var played: LocalVideoFile? = null
         compose.setContent {
             RaddStreamTheme {
-                LocalFilesListContent(
-                    files = listOf(localFile()),
+                LocalFolderVideosContent(
+                    folder = groupVideosIntoFolders(listOf(localFile())).first(),
                     onPlay = { played = it },
                 )
             }
