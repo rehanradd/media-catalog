@@ -23,6 +23,11 @@ plugins {
     // source changes. Snapshots live in src/test/snapshots (recorded by
     // :app:recordPaparazziDebug, verified by :app:verifyPaparazziDebug).
     alias(libs.plugins.paparazzi)
+    // Feel-instant S7: Baseline Profiles — the plugin that generates them
+    // (the generator lives in :baselineprofile). Applied here so the
+    // `baselineProfile` dependency configuration exists and the generated
+    // profile ships inside the app.
+    alias(libs.plugins.androidx.baselineprofile)
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -589,4 +594,9 @@ dependencies {
     testImplementation(libs.work.testing)
     testImplementation(libs.compose.ui.test.junit4)
     debugImplementation(libs.compose.ui.test.manifest)
+
+    // Feel-instant S7: the generated Baseline Profile ships with the app.
+    // The `:baselineprofile` module produces it; without this line the
+    // profile is generated and then thrown away.
+    baselineProfile(project(":baselineprofile"))
 }

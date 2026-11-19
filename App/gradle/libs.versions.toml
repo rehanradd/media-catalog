@@ -34,6 +34,16 @@ datastore           = "1.1.1"
 core-ktx            = "1.13.1"
 robolectric         = "4.14.1"
 androidx-test       = "1.6.1"
+# Baseline Profiles (feel-instant S7): the Gradle plugin and the
+# Macrobenchmark rule that generate them move together on one version —
+# 1.4.1 is the stable line the AndroidX release notes list (1.5.0 exists
+# but is a month old; 1.4.1 is the proven pairing for AGP 8.5.2). The
+# plugin's minimum AGP is 8.x, so 8.5.2 satisfies it.
+benchmark           = "1.4.1"
+# UiAutomator drives the profile generator's Home → Search → Detail
+# journey (tab taps, typing, result taps). 2.3.0 is the stable line that
+# pairs with androidx-test 1.6.1; 2.4.x is newer and unproven here.
+uiautomator         = "2.3.0"
 workmanager         = "2.9.0"
 play-app-update     = "2.1.0"
 # Google Cast sender (E2 slice 3 spike, 2026-11-18): 21.4.0 is the line that
@@ -161,6 +171,13 @@ play-services-cast-framework = { group = "com.google.android.gms", name = "play-
 junit                   = { group = "junit", name = "junit", version = "4.13.2" }
 robolectric             = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
 androidx-test-core      = { group = "androidx.test", name = "core", version.ref = "androidx-test" }
+# Baseline Profiles (feel-instant S7): the generator module's test
+# dependencies. ext-junit 1.2.1 + runner 1.6.2 are the versions that pair
+# with androidx-test 1.6.1 above; the macro rule is the generator itself.
+androidx-test-ext-junit = { group = "androidx.test.ext", name = "junit", version = "1.2.1" }
+androidx-test-runner    = { group = "androidx.test", name = "runner", version = "1.6.2" }
+uiautomator             = { group = "androidx.test.uiautomator", name = "uiautomator", version.ref = "uiautomator" }
+benchmark-macro-junit4  = { group = "androidx.benchmark", name = "benchmark-macro-junit4", version.ref = "benchmark" }
 # Compose semantics assertions, run on the JVM under Robolectric (no emulator, no KVM).
 compose-ui-test-junit4  = { group = "androidx.compose.ui", name = "ui-test-junit4" }
 compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest" }
@@ -173,4 +190,7 @@ hilt                = { id = "com.google.dagger.hilt.android", version.ref = "hi
 kotlin-kapt         = { id = "org.jetbrains.kotlin.kapt",      version.ref = "kotlin" }
 google-services     = { id = "com.google.gms.google-services", version.ref = "google-services" }
 crashlytics         = { id = "com.google.firebase.crashlytics", version.ref = "crashlytics-plugin" }
+# Baseline Profiles (feel-instant S7): the Gradle plugin that generates
+# them. Version tracks the benchmark library above (one release train).
+androidx-baselineprofile = { id = "androidx.baselineprofile", version.ref = "benchmark" }
 paparazzi           = { id = "app.cash.paparazzi", version.ref = "paparazzi" }

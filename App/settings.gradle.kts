@@ -30,4 +30,4 @@ val brandName = run {
     (props.getProperty("identity.name") ?: "").trim().lowercase().replace(' ', '-') + "-app"
 }
 rootProject.name = brandName.ifBlank { "radd-stream-app" }
-include(":app")
+include(":app", ":baselineprofile")

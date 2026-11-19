@@ -32,6 +32,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.view.doOnPreDraw
 import com.raddstream.app.brand.Brand
 import com.raddstream.app.data.RemoteConfigWatcher
 import com.raddstream.app.data.RemoteFeatures
@@ -129,6 +130,22 @@ class MainActivity : ComponentActivity() {
         takeLocalVideoFrom(intent)
         takeDeepLinkFrom(intent)
         enableEdgeToEdge()
+        // Feel-instant S7 — Startup diet: the first frame is the starter's
+        // pistol for the deferred half of `Application.onCreate` (cache
+        // engine, LAN share, membership read, download resume — see
+        // `RaddStreamApplication.startDeferredComponents`). `doOnPreDraw`
+        // fires once, before the first frame is drawn, and waits for the
+        // decor view to attach first, so this cannot miss on a cold start;
+        // posting from it runs the starts after that frame's traversal, so
+        // none of their work can delay the paint itself. A process that
+        // never draws a frame still starts them via the Application's own
+        // fallback timer, and the exactly-once guard makes a double trigger
+        // a no-op either way.
+        window.decorView.doOnPreDraw {
+            window.decorView.post {
+                (application as? RaddStreamApplication)?.startDeferredComponents()
+            }
+        }
         setContent {
             // Collected as composition state, not snapshotted once: flipping the Settings switch
             // must recompose the theme live, and a `first()` here would freeze whatever the store

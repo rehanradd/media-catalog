@@ -29,6 +29,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -64,6 +65,72 @@ class RaddStreamApplication : Application(), Configuration.Provider {
 
     @Inject
     lateinit var workerFactory: HiltWorkerFactory
+
+    /**
+     * Feel-instant S7 — Startup diet: the scope the fallback timer below
+     * runs on. Deliberately separate from the ad-hoc scope `Telemetry.refresh`
+     * uses: the fallback is process-lifetime work, not one launch's refresh.
+     */
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /**
+     * Feel-instant S7 — Startup diet: the half of `onCreate` that may wait
+     * until after the first frame. The lambdas read the injected fields at
+     * call time, not at construction time, so building this list here is
+     * safe even though the fields are `lateinit` until Hilt injects them
+     * (injection happens before `onCreate` runs).
+     *
+     * What waits, and why it may:
+     * - `cacheEngineRunner`: publishes the offline engine and pumps the
+     *   scheduler; its first tick, first sweep and playhead collection all
+     *   run on its own scope, so nothing here blocks the frame — but the
+     *   work itself competes for CPU and disk while the frame composes.
+     * - `lanShareRunner`: binds the LAN socket once the opt-in reads on;
+     *   the bind and the catalog refresh happen right after it starts.
+     *   It reads its preference, never the UI, so this is the only place
+     *   the share server is ever constructed — and a fresh install never
+     *   exposes a share, because the opt-in is off until the viewer turns
+     *   it on.
+     * - `startEntitlementWatch` + `ensureDeviceTrialAtLaunch`: the
+     *   membership read — a network round-trip on a signed-in device, and
+     *   a trial mint on a fresh one. Nothing on the first frame reads the
+     *   membership, so it can wait for the frame.
+     * - `autoResumeInterrupted`: reads the download ledger from disk on the
+     *   calling thread and may start the download service — synchronous
+     *   disk I/O in `onCreate` before this slice, and the one item on this
+     *   list the spec did not name (found by audit; same class of problem).
+     *
+     * What stays on the critical path, and why: `Brand.load` + `CrashReporting`
+     * (the frame cannot paint without the brand, and a crash before the
+     * handler installs is a crash nobody counts); `Telemetry` (already
+     * backgrounded — its refresh reads DataStore on a background scope);
+     * `keepTtlHolder` + `imageSizingHolder` (the first frame reads the
+     * values they seed — the TTL the sweep obeys, the poster size every
+     * `AsyncImage` asks for); `remoteConfigWatcher` (maintenance mode must
+     * cover the whole app from the first paint, and its first refresh is a
+     * background network call, not main-thread work); the WorkManager
+     * enqueues (cheap registrations, no work runs inline).
+     */
+    private val deferredStartup = DeferredStartup(
+        listOf(
+            { cacheEngineRunner.start() },
+            { lanShareRunner.start() },
+            { syncAccountRepository.startEntitlementWatch() },
+            { syncAccountRepository.ensureDeviceTrialAtLaunch { DeviceIdentity.trialDeviceId(this) } },
+            { deviceDownloadsRepository.autoResumeInterrupted() },
+        ),
+    )
+
+    /**
+     * Feel-instant S7: starts the deferred half of `onCreate` — see
+     * [deferredStartup]. Called by `MainActivity` once its first frame is
+     * drawn, and by the fallback timer at the end of [onCreate] when no
+     * frame ever arrives. Exactly-once either way: the second call is a
+     * no-op, so the two triggers can race freely.
+     */
+    fun startDeferredComponents() {
+        deferredStartup.start()
+    }
 
     // The manifest removes WorkManager's default initializer, so this is the
     // only factory that can build a worker — and the only one that can build
@@ -106,29 +173,18 @@ class RaddStreamApplication : Application(), Configuration.Provider {
         // every AsyncImage. Until the first emission the holder answers its own AUTO / Wi-Fi default
         // (640px, nothing blocked), so a cold install renders exactly what it did before this existed.
         imageSizingHolder.start()
-        // The one owner that drives the offline engine for the whole process: wires the player's
-        // keep boundary, pumps the scheduler, and ages out ephemeral keeps via the existing sweep.
-        cacheEngineRunner.start()
-        // The one owner of the LAN share socket: it only binds once the persisted opt-in is on, so
-        // starting it here is safe — a fresh install never exposes a share. It reads its preference,
-        // never the UI, so this is the only place the server is ever constructed.
-        lanShareRunner.start()
-        // Membership is the server's fact, not this device's, so it is read at launch and then on a
-        // 6-hour interval for as long as this process lives. Nothing starts when there is no account
-        // key to ask with, and an app that was simply closed re-reads on the next launch — which is
-        // why the expiry lives on the ledger and never as a countdown here.
-        syncAccountRepository.startEntitlementWatch()
-        // The free three days are granted by the server's trial ledger, keyed on a device id this
-        // install reports about itself — a gate against the uninstall-reinstall case, not an
-        // attestation, and the card copy says so. Asked once per launch, and only by a device with
-        // no key and no trial record, so a returning viewer sends nothing here.
-        syncAccountRepository.ensureDeviceTrialAtLaunch { DeviceIdentity.trialDeviceId(this) }
+        // Feel-instant S7: the deferred half of this method — cache engine,
+        // LAN share, membership read, download resume — no longer starts
+        // here. `MainActivity` starts it once its first frame is drawn (see
+        // `startDeferredComponents`); the fallback timer at the end of this
+        // method covers a process that never draws a frame.
         // The operator's switches are process state, not a screen's private fetch: this is the
         // only reader of `/remote-config` that runs before any UI, and it is what makes
         // maintenance mode cover the whole app instead of only a screen someone opened.
         remoteConfigWatcher.start()
-        // Resume any public downloads that were interrupted while the app was closed.
-        deviceDownloadsRepository.autoResumeInterrupted()
+        // Feel-instant S7: the download resume moved with the rest of the
+        // deferred half — see `startDeferredComponents`. It used to run here,
+        // reading the download ledger from disk on the calling thread.
         // The closed-app sweep: the same TTL auto-delete + low-storage eviction
         // the in-process runner runs every 5 minutes, once a day while the app
         // is closed. KEEP means a reinstall of this line never duplicates the
@@ -164,5 +220,28 @@ class RaddStreamApplication : Application(), Configuration.Provider {
             ExistingPeriodicWorkPolicy.KEEP,
             CatalogIndexSyncWorker.request(),
         )
+        // Feel-instant S7 fallback: a process that never draws a frame —
+        // started for `PlaybackService`, a worker, or an activity that dies
+        // before its first paint — still gets the deferred half, a few
+        // seconds in. Five seconds is long enough that any device drawing
+        // its first frame in the normal window wins this race, and short
+        // enough that a service-only process is never left without its
+        // cache engine, LAN socket, or membership read for long. A player
+        // that starts before the engine is published is safe either way:
+        // every `CacheEngineHolder.engine` reader null-checks it and plays
+        // without the cache affordance until the engine lands.
+        applicationScope.launch {
+            delay(DEFERRED_STARTUP_FALLBACK_DELAY_MILLIS)
+            startDeferredComponents()
+        }
+    }
+
+    companion object {
+        /**
+         * Feel-instant S7: the fallback window — see the timer at the end of
+         * [onCreate]. Long enough for a slow device's first frame to win the
+         * race, short enough for a service-only process to come up promptly.
+         */
+        private const val DEFERRED_STARTUP_FALLBACK_DELAY_MILLIS = 5_000L
     }
 }
