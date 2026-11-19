@@ -1,7 +1,7 @@
 # Phase C — clicknupload: NOT CRACKED (hCaptcha enforced server-side)
 
 Date: 2026-11-20, probes 02:40–03:05 PKT. Builder lane; no merge, no push to main,
-no deploy, no live-DB writes. Base: main 8f7948d2 (H4 R8).
+no deploy, no live-DB writes. Base: main 44631e10 (H4 R9; rebased from 8f7948d2).
 Branch: `muse/phase-c-clicknupload-20261120`.
 
 ## Verdict
