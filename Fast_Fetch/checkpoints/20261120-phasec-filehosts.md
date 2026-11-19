@@ -104,7 +104,9 @@ service restart, no `/opt/radd-stream` touch.
 - `test_docs_invariants.py`: 22/22 OK. `test_ci_manifest.py`: 10/10 after
   commit (1 failure before commit is the by-design "present on disk but NOT
   tracked in HEAD" guard for the new module).
-- Backend CI: pending (run id to be recorded after push).
+- Backend CI 44624867895 SUCCESS on `a3c6a39c` (job "python3 -S offline
+  suites" success; steps test_multiup, test_host_resolvers,
+  test_ci_manifest, test_docs_invariants all success).
 
 ## Still owed (for the coordinator)
 

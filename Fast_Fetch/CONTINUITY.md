@@ -80,7 +80,7 @@ The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete i
 - [Session 2026-11-12 — self-check `[LIVE-TV-503]`](checkpoints/20261112-selfcheck-live-tv-503-logos.md)
 - [2026-11-20 — H4 R8 clearance-cookie reuse](checkpoints/20261120-h4-r8-clearance-cookie.md): per-host clearance store + probe/resolver wiring; 43 tests green locally, Backend CI pending.
 - [2026-11-20 — H4 R9 resolver probes](checkpoints/20261120-h4-r9-resolver-probes.md): serve-time re-probe of an aging banked row before it is 302'd — fresh rows serve unprobed, a verifying probe refreshes the row, an endpoint-answered failure reads as a cache miss (live resolver fails over), a no-answer probe serves fail-open; 18 tests green locally, Backend CI pending.
-- [2026-11-20 — Phase C Lane G file hosts](checkpoints/20261120-phasec-filehosts.md): megaup UNCRAKABLE (VM egress TLS-reset + download endpoint CF-challenged), multiup chain cracked but VM-egress-blocked (resolver + 23 tests, live proof from hatch only), clicknupload UNCRAKABLE (hCaptcha enforced, "Wrong captcha" proven); Backend CI pending.
+- [2026-11-20 — Phase C Lane G file hosts](checkpoints/20261120-phasec-filehosts.md): megaup UNCRAKABLE (VM egress TLS-reset + download endpoint CF-challenged), multiup chain cracked but VM-egress-blocked (resolver + 23 tests, live proof from hatch only), clicknupload UNCRAKABLE (hCaptcha enforced, "Wrong captcha" proven); Backend CI 44624867895 SUCCESS.
 
 ## Moved out (reference prose, verbatim)
 
