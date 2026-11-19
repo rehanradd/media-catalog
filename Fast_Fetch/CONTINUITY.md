@@ -7,7 +7,7 @@
 
 ## ✅ Open items — index (q3, 2026-10-30; pointers only)
 
-1. **This file is a pointer, not a history** 125 session files (122 dated + 3 undated) cover
+1. **This file is a pointer, not a history** 127 session files (124 dated + 3 undated) cover
 
    every one of them verbatim: [`checkpoints/README.md`](checkpoints/README.md). Nothing was
    deleted, reworded, or summarized. The count is `ls Fast_Fetch/checkpoints/*.md` minus `README.md`,
@@ -80,6 +80,7 @@ The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete i
 - [2026-11-20 — H4 R8 clearance-cookie reuse](checkpoints/20261120-h4-r8-clearance-cookie.md): per-host clearance store + probe/resolver wiring; 43 tests, merged 8f7948d2.
 - [2026-11-20 — H4 R9 resolver probes](checkpoints/20261120-h4-r9-resolver-probes.md): serve-time re-probe of an aging banked row before it is 302'd — fresh rows serve unprobed, a verifying probe refreshes the row, an endpoint-answered failure reads as a cache miss (live resolver fails over), a no-answer probe serves fail-open; 18 tests, merged 44631e10.
 - [2026-11-20 — H4 R10 network-intercept fallback](checkpoints/20261120-h4-r10-network-intercept.md): network failures (transport / intermediary block) retried through a bounded alternate route before any dead verdict; WIP, Backend CI pending.
+- [2026-11-20 — Phase C GDFlix button-flow resolver](checkpoints/20261120-phase-c-gdflix.md): real button-flow resolver (Instant DL chain + legacy buttons + DriveBot); 21 tests green locally, Backend CI pending; NOT cracked — Oracle egress gets a Cloudflare managed challenge, chain proven to the signed Google URL from hatch egress only.
 
 ## Moved out (reference prose, verbatim)
 
