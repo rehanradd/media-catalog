@@ -177,6 +177,29 @@ try:
 except ImportError:  # pragma: no cover - legacy tree without the classifier
     _hc = None
 
+# Per-host clearance-cookie store (H4 R8): the shared jar the resolver and
+# the probers read before paying the clearance cost again. Same guarded
+# import as the classifier: if the module is absent the engine still runs,
+# and every unwrap below simply resolves without a cookie.
+try:
+    import host_clearance as _hclear
+except ImportError:  # pragma: no cover - legacy tree without the store
+    _hclear = None
+
+
+def _clearance_store():
+    """A ``HostClearance`` bound to this process's ``DB_PATH``, or None.
+
+    Never raises: an absent module or an unusable path means "no store",
+    and the caller resolves exactly as before.
+    """
+    if _hclear is None:
+        return None
+    try:
+        return _hclear.HostClearance(DB_PATH)
+    except Exception:
+        return None
+
 # Subtitle tracks (Gap A3): the resolver's subtitle URLs, persisted per
 # ledger link so the next bundle carries them as `tracks[]`. Same guarded
 # import as the classifier: if the module is absent the engine still
@@ -2012,10 +2035,16 @@ def _init_db(db_path: Path | None = None) -> None:
 
 # ── HTTP Networking ───────────────────────────────────────────────────────────
 
-def http_get(url: str, timeout: int = 15, max_retries: int = 2, allow_probe: bool = True) -> tuple[int, str, str]:
+def http_get(url: str, timeout: int = 15, max_retries: int = 2, allow_probe: bool = True,
+             clearance=None) -> tuple[int, str, str]:
     """
     Returns (status_code, final_url, html_content).
     Tracks HTTP 301/302 redirects to auto-update domains in SQLite and memory.
+
+    ``clearance`` (H4 R8) is a ``host_clearance.HostClearance``: the host's
+    stored clearance rides on the request (with the UA that earned it) and
+    a clean 200 captures a fresh one, while a challenge on the final
+    attempt invalidates the host at once. ``None`` fetches exactly as before.
     """
     norm_url = normalize_url(url)
     headers = {
@@ -2023,6 +2052,20 @@ def http_get(url: str, timeout: int = 15, max_retries: int = 2, allow_probe: boo
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
     }
+    # H4 R8: replay the host's stored clearance with the UA that earned it
+    # (the vendor binds the cookie to IP + UA + hostname). The pinned UA
+    # is what the capture below records, so a replay never mixes identities.
+    ua_used = USER_AGENT
+    if clearance is not None:
+        try:
+            c_header, c_ua = clearance.header_for(norm_url)
+        except Exception:
+            c_header, c_ua = None, None
+        if c_header:
+            headers["Cookie"] = c_header
+        if c_ua:
+            headers["User-Agent"] = c_ua
+            ua_used = c_ua
     req = urllib.request.Request(norm_url, headers=headers)
     for attempt in range(max_retries + 1):
         try:
@@ -2062,11 +2105,48 @@ def http_get(url: str, timeout: int = 15, max_retries: int = 2, allow_probe: boo
                 charset = resp.headers.get_content_charset() or "utf-8"
                 content = resp.read().decode(charset, errors="replace")
 
+                # H4 R8: record the response against the host that SERVED it
+                # (final_url after redirects — the cookie is bound to the
+                # host that set it, not the host that was asked). A clean
+                # 200 captures a fresh clearance; a challenge invalidates.
+                if clearance is not None:
+                    try:
+                        clearance.note_response(
+                            final_url, status=resp.status,
+                            headers=resp.headers, body=content,
+                            user_agent=ua_used)
+                    except Exception:
+                        pass
+
                 # Check for sister links in content to keep domains updated
                 harvest_sister_domains(content)
 
                 return resp.status, final_url, content
         except Exception as e:
+            # H4 R8: a challenge on the final attempt invalidates the host's
+            # stored clearance at once, so the next resolve re-earns it
+            # instead of re-sending a dead cookie. Anything without an HTTP
+            # status (DNS, timeout, reset) is not a challenge and leaves
+            # the store alone. The note runs before the retry/fallback
+            # logic below so the store is current whatever the caller does.
+            if attempt == max_retries and clearance is not None:
+                try:
+                    err_status = getattr(e, "code", None)
+                    if err_status is not None:
+                        try:
+                            err_body = e.read().decode("utf-8", errors="replace")
+                        except Exception:
+                            err_body = ""
+                        try:
+                            err_url = e.geturl()
+                        except Exception:
+                            err_url = None
+                        clearance.note_response(
+                            err_url or norm_url, status=err_status,
+                            headers=getattr(e, "headers", None),
+                            body=err_body, user_agent=ua_used)
+                except Exception:
+                    pass
             if attempt == max_retries:
                 if allow_probe:
                     # If DNS failure or connection error on main site, try candidate TLD probe once
@@ -2076,7 +2156,8 @@ def http_get(url: str, timeout: int = 15, max_retries: int = 2, allow_probe: boo
                             live_mirror = probe_candidate_domains(site)
                             if live_mirror:
                                 retry_u = normalize_url(url)
-                                return http_get(retry_u, timeout=timeout, max_retries=1, allow_probe=False)
+                                return http_get(retry_u, timeout=timeout, max_retries=1, allow_probe=False,
+                                                clearance=clearance)
                 return 0, norm_url, f"ERROR: {e}"
             time.sleep(1)
     return 0, norm_url, "ERROR: request failed"
@@ -3126,16 +3207,20 @@ def unwrap_fastdl(fastdl_url: str) -> tuple[str, str, int]:
     return fastdl_url, res_id, 0
 
 
-def unwrap_vcloud(vcloud_url: str) -> list[tuple[str, str, str, int]]:
+def unwrap_vcloud(vcloud_url: str, clearance=None) -> list[tuple[str, str, str, int]]:
     """
     Decodes V-Cloud double base64 token and fetches direct server links
     (FSL Cloudflare R2 bucket & HubCloud 10Gbps servers).
     Returns list of: [(source_name, service, final_url, is_temporary)]
+
+    ``clearance`` (H4 R8) is threaded to every ``http_get`` and to the
+    nested HubCloud unwrap, so a protected vcloud landing reuses the
+    host's stored clearance instead of paying it again.
     """
     res_id = vcloud_url.rstrip("/").split("/")[-1].split("?")[0]
     code, final_vcloud_url, html = http_get(
         vcloud_url, timeout=RESOLVE_LANDING_TIMEOUT_SECONDS,
-        max_retries=RESOLVE_LANDING_MAX_RETRIES)
+        max_retries=RESOLVE_LANDING_MAX_RETRIES, clearance=clearance)
     if code != 200:
         return [("V-Cloud", "vcloud", vcloud_url, 0)]
 
@@ -3155,7 +3240,8 @@ def unwrap_vcloud(vcloud_url: str) -> list[tuple[str, str, str, int]]:
 
     # Fetch token URL to get actual server buttons
     t_code, _, t_html = http_get(token_url, timeout=RESOLVE_LANDING_TIMEOUT_SECONDS,
-                                 max_retries=RESOLVE_LANDING_MAX_RETRIES)
+                                 max_retries=RESOLVE_LANDING_MAX_RETRIES,
+                                 clearance=clearance)
     if t_code != 200:
         return [("V-Cloud (Token)", "vcloud", token_url, 0)]
 
@@ -3169,7 +3255,7 @@ def unwrap_vcloud(vcloud_url: str) -> list[tuple[str, str, str, int]]:
     # 2. HubCloud 10Gbps server & Google CDN
     hub_links = re.findall(r'href=[\"\'](https?://[^\s\"\']*hubcloud\.[^\s\"\']+)[\"\']', t_html)
     for l in hub_links:
-        direct_url, svc, is_temp = unwrap_hubcloud(l)
+        direct_url, svc, is_temp = unwrap_hubcloud(l, clearance=clearance)
         if svc == "google_cdn":
             resolved.append(("V-Cloud [Google Direct CDN]", "google_cdn", direct_url, is_temp))
         else:
@@ -3181,14 +3267,18 @@ def unwrap_vcloud(vcloud_url: str) -> list[tuple[str, str, str, int]]:
     return resolved
 
 
-def unwrap_hubcloud(hub_url: str) -> tuple[str, str, int]:
+def unwrap_hubcloud(hub_url: str, clearance=None) -> tuple[str, str, int]:
     """
     Follows HubCloud GPDL link to direct Google CDN URL (video-downloads.googleusercontent.com)
     or falls back to the original HubCloud link.
+
+    ``clearance`` (H4 R8) is threaded to the landing fetch, so a protected
+    HubCloud page reuses the host's stored clearance.
     """
     if "gpdl" in hub_url:
         try:
-            code, final_u, _ = http_get(hub_url, timeout=5, max_retries=1)
+            code, final_u, _ = http_get(hub_url, timeout=5, max_retries=1,
+                                        clearance=clearance)
             if "link=" in final_u:
                 direct = urllib.parse.unquote(final_u.split("link=", 1)[1])
                 return direct, "google_cdn", 1
@@ -3577,12 +3667,18 @@ def unwrap_linkszilla(lz_url: str) -> list[dict]:
     return results
 
 
-def unwrap_direct_cloud(direct_cloud_url: str, timeout: int = 10) -> tuple[str, str, int]:
+def unwrap_direct_cloud(direct_cloud_url: str, timeout: int = 10,
+                        clearance=None) -> tuple[str, str, int]:
     """
     Unwraps direct-cloud bridge URL (e.g. https://dl.direct-cloud.top/d/<id>
     or https://storage.direct-cloud.org/d/<uid>) to its high-speed Google CDN
     direct stream link using session cookie-aware DOWNLOAD_GENERATE action negotiation.
     Returns: (final_stream_or_landing_url, service_name, is_temporary)
+
+    ``clearance`` (H4 R8) rides on the landing fetch (with the UA that
+    earned it) and a fresh clearance the landing sets is captured from
+    the jar afterwards — the action POST keeps the opener's jar, so the
+    stored cookie never leaks into the POST's own headers.
     """
     try:
         cj = http.cookiejar.CookieJar()
@@ -3590,13 +3686,35 @@ def unwrap_direct_cloud(direct_cloud_url: str, timeout: int = 10) -> tuple[str, 
             urllib.request.HTTPCookieProcessor(cj),
             urllib.request.HTTPSHandler(context=_tls_context(direct_cloud_url))
         )
-        req = urllib.request.Request(direct_cloud_url, headers={
+        dc_headers = {
             "User-Agent": USER_AGENT,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        })
+        }
+        dc_ua = USER_AGENT
+        if clearance is not None:
+            try:
+                c_header, c_ua = clearance.header_for(direct_cloud_url)
+            except Exception:
+                c_header, c_ua = None, None
+            if c_header:
+                dc_headers["Cookie"] = c_header
+            if c_ua:
+                dc_headers["User-Agent"] = c_ua
+                dc_ua = c_ua
+        req = urllib.request.Request(direct_cloud_url, headers=dc_headers)
         with opener.open(req, timeout=timeout) as resp:
             html = resp.read().decode("utf-8", errors="replace")
             landing_u = resp.geturl()
+        # H4 R8: the landing may have set a fresh clearance — capture the
+        # allowlisted names from the jar (the store filters the rest).
+        if clearance is not None:
+            try:
+                clearance.note_response(
+                    landing_u, status=200,
+                    set_cookie_values=[f"{c.name}={c.value}" for c in cj],
+                    user_agent=dc_ua)
+            except Exception:
+                pass
 
         m_uid = re.search(r'data-uid=["\']([^"\']+)["\']', html)
         m_token = re.search(r'data-token=["\']([^"\']+)["\']', html)
@@ -3640,24 +3758,60 @@ class _HubcdnNoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def _hubcdn_page(url: str, timeout: int) -> tuple[str, str]:
+def _hubcdn_page(url: str, timeout: int, clearance=None) -> tuple[str, str]:
     """The gateway page's HTML and the cookies it set, as a ``Cookie`` header.
 
     A real :class:`http.cookiejar.CookieJar` rather than the raw ``Set-Cookie``
     strings: the jar applies the attributes the gateway puts on them (path,
     expiry), which is what makes the cookie still valid on the button hop.
+
+    ``clearance`` (H4 R8) rides on the gateway fetch (with the UA that
+    earned it). The stored clearance is NOT in the jar — it was attached
+    as a header — so it is merged back into the returned cookie string
+    (fresh jar cookies win a name collision), otherwise the button hop
+    would lose it. A fresh clearance the gateway sets is captured from
+    the jar afterwards.
     """
     jar = http.cookiejar.CookieJar()
     opener = urllib.request.build_opener(
         urllib.request.HTTPCookieProcessor(jar),
         urllib.request.HTTPSHandler(context=_tls_context(url)))
-    req = urllib.request.Request(url, headers={
+    hc_headers = {
         "User-Agent": USER_AGENT,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    })
+    }
+    hc_ua = USER_AGENT
+    stored_header = None
+    if clearance is not None:
+        try:
+            stored_header, c_ua = clearance.header_for(url)
+        except Exception:
+            stored_header, c_ua = None, None
+        if stored_header:
+            hc_headers["Cookie"] = stored_header
+        if c_ua:
+            hc_headers["User-Agent"] = c_ua
+            hc_ua = c_ua
+    req = urllib.request.Request(url, headers=hc_headers)
     with opener.open(req, timeout=timeout) as resp:
         page = resp.read().decode("utf-8", errors="replace")
-    return page, "; ".join(f"{c.name}={c.value}" for c in jar)
+        landing_u = resp.geturl()
+    if clearance is not None:
+        try:
+            clearance.note_response(
+                landing_u, status=200,
+                set_cookie_values=[f"{c.name}={c.value}" for c in jar],
+                user_agent=hc_ua)
+        except Exception:
+            pass
+    merged = {c.name: c.value for c in jar}
+    if stored_header:
+        for pair in stored_header.split(";"):
+            pair = pair.strip()
+            if "=" in pair:
+                name, value = pair.split("=", 1)
+                merged.setdefault(name.strip(), value.strip())
+    return page, "; ".join(f"{name}={value}" for name, value in merged.items())
 
 
 def _hubcdn_hop(url: str, headers: dict, timeout: int) -> tuple:
@@ -3678,7 +3832,7 @@ def _hubcdn_hop(url: str, headers: dict, timeout: int) -> tuple:
 
 
 def unwrap_hubcdn(cloud_url: str, timeout: int = 8, *, _fetch=None,
-                  _hop=None) -> dict:
+                  _hop=None, clearance=None) -> dict:
     """Unwrap a ``hubcdn.io/cloud/<id>`` gateway page to its direct assets.
 
     Returns ``{ok, r2_url, google_url, title, size_str}`` plus ``error`` on any
@@ -3695,6 +3849,10 @@ def unwrap_hubcdn(cloud_url: str, timeout: int = 8, *, _fetch=None,
     ``r2.dev.attacker.tld``, or with a ``pixeldrain`` button whose Location is
     something else entirely, buys nothing. Without the classifier module the
     unwrap reports nothing at all rather than guessing.
+
+    ``clearance`` (H4 R8) is threaded to the gateway fetch, so a protected
+    gateway reuses the host's stored clearance; the button hop keeps it
+    through the merged cookie header :func:`_hubcdn_page` returns.
     """
     out = {"ok": False, "r2_url": None, "google_url": None, "title": None,
            "size_str": None}
@@ -3705,7 +3863,7 @@ def unwrap_hubcdn(cloud_url: str, timeout: int = 8, *, _fetch=None,
         out["error"] = "not_a_hubcdn_cloud_page"
         return out
 
-    fetch = _fetch or (lambda u: _hubcdn_page(u, timeout))
+    fetch = _fetch or (lambda u: _hubcdn_page(u, timeout, clearance=clearance))
     hop = _hop or (lambda u, h: _hubcdn_hop(u, h, timeout))
     try:
         page, cookies = fetch(cloud_url)
@@ -7254,6 +7412,10 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
     if want not in ("watch", "download", "either"):
         want = "either"
     init_db()
+    # H4 R8: one shared clearance store for this resolve — the protected-host
+    # unwraps below reuse the host's stored clearance instead of paying it
+    # again, and a challenge invalidates it at once. None means "no store".
+    _clearance = _clearance_store()
     not_found = {"success": False, "error": "not_found", "code": "not_found"}
     with get_db() as conn:
         row = conn.execute("SELECT * FROM download_sources WHERE id = ?", (source_id,)).fetchone()
@@ -7646,7 +7808,7 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                 # its own Location; `/drive/<id>` is a landing page that needs the
                 # gamerxyt hop. Try the cheap one for a gpdl URL first.
                 if "gpdl" in hub:
-                    direct_u, _svc, is_temp = unwrap_hubcloud(hub)
+                    direct_u, _svc, is_temp = unwrap_hubcloud(hub, clearance=_clearance)
                     if is_direct_media_url(direct_u):
                         fresh_url = direct_u
                         fresh_temp = is_temp
@@ -7680,7 +7842,7 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
             elif (service == "hubcdn" or "hubcdn.io/cloud" in source_u.lower()
                   or "hubcdn.io/cloud" in cached_u.lower()):
                 _unwrap_branch_taken = True
-                res = unwrap_hubcdn(hoster_input("hubcdn"))
+                res = unwrap_hubcdn(hoster_input("hubcdn"), clearance=_clearance)
                 if res.get("ok"):
                     # The R2 bucket copy is the streamable asset; the Google
                     # front is its download twin. Both are durable Category A
@@ -7690,7 +7852,7 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
             elif (service == "direct_cloud" or "direct-cloud" in source_u.lower()
                   or "direct-cloud" in cached_u.lower()):
                 _unwrap_branch_taken = True
-                fresh_url, _, fresh_temp = unwrap_direct_cloud(hoster_input("direct-cloud"))
+                fresh_url, _, fresh_temp = unwrap_direct_cloud(hoster_input("direct-cloud"), clearance=_clearance)
             elif (service == "greenmotors" or "greenmotors" in source_u.lower()
                   or "greenmotors" in cached_u.lower()):
                 _unwrap_branch_taken = True
@@ -7701,7 +7863,7 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
             elif (service == "vcloud" or "vcloud" in source_u.lower()
                   or "vcloud" in cached_u.lower()):
                 _unwrap_branch_taken = True
-                v_res = unwrap_vcloud(hoster_input("vcloud"))
+                v_res = unwrap_vcloud(hoster_input("vcloud"), clearance=_clearance)
                 if v_res:
                     fresh_url = v_res[0][2]
                     fresh_temp = v_res[0][3]

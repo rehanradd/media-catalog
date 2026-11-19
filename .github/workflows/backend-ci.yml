@@ -474,6 +474,15 @@ jobs:
       - name: 🧪 test_per_segment_retry.py
         run: python3 -S Fast_Fetch/test_per_segment_retry.py
 
+      # H4 R8 (clearance-cookie reuse): the shared per-host clearance
+      # store the resolver and both probers read before paying the
+      # clearance cost again — capture only on a clean 200/206, 15-min
+      # reuse ceiling, challenge invalidates at once, UA pinned to the
+      # cookie that earned it. Offline, stdlib, in-memory/scratch
+      # fixtures + a loopback stub server, no network.
+      - name: 🧪 test_host_clearance.py
+        run: python3 -S Fast_Fetch/test_host_clearance.py
+
       # Gap A7 (prefetch run mode): the worker + its systemd timer/service +
       # runbook, tested offline against a scratch DB with a stubbed resolver.
       # Offline, stdlib, in-memory/scratch fixtures, no network.

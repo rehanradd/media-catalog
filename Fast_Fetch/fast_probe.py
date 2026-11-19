@@ -897,7 +897,7 @@ class VerdictWriter(threading.Thread):
 
 def _probe_host(host: str, groups: list[dict], *, session_factory=None,
                 timeout: float, spacing_s: float | None,
-                headers: dict, out_queue=None) -> dict:
+                headers: dict, out_queue=None, clearance=None) -> dict:
     """Probe one host's distinct URLs, strictly serially, in id order.
 
     Returns per-host stats. When ``out_queue`` is given, verdicts are
@@ -905,6 +905,11 @@ def _probe_host(host: str, groups: list[dict], *, session_factory=None,
     in ``stats["verdicts"]`` as ``{url: (status, http_status, error)}``
     (dry-run compare mode). A URL the SSRF guard refuses, or a HEAD chain
     that earns no verdict, counts as ``no_verdict`` — the row is left alone.
+
+    ``clearance`` (H4 R8) is a ``host_clearance.HostClearance``: the host's
+    stored clearance rides on every hop (with the UA that earned it), and
+    a 403/503 verdict invalidates the host at once, so a dead clearance
+    is never re-sent on the next run. ``None`` probes exactly as before.
     """
     session = HostSession(connection_factory=session_factory, timeout=timeout)
     stats: dict = {"host": host, "probed": 0, "verdicts": 0, "by_status": {},
@@ -912,6 +917,18 @@ def _probe_host(host: str, groups: list[dict], *, session_factory=None,
                    "redirects_seen": 0, "moves_applied": 0,
                    "get_fallbacks": 0,
                    "results": {} if out_queue is None else None}
+    # H4 R8: one stored clearance per host, read once per host (not once
+    # per URL — the store is the same for the whole serial walk).
+    hop_headers = dict(headers)
+    if clearance is not None:
+        try:
+            c_header, c_ua = clearance.header_for(host)
+        except Exception:
+            c_header, c_ua = None, None
+        if c_header:
+            hop_headers["Cookie"] = c_header
+        if c_ua:
+            hop_headers["User-Agent"] = c_ua
     for group in groups:
         url = group["url"]
         blocked = link_health._block_reason(url, allow_private=False)
@@ -919,7 +936,7 @@ def _probe_host(host: str, groups: list[dict], *, session_factory=None,
             stats["blocked"] += 1
             stats["no_verdict"] += 1
             continue
-        status, error, _final = head_chain(url, session, base_headers=headers,
+        status, error, _final = head_chain(url, session, base_headers=hop_headers,
                                            timeout=timeout, spacing_s=spacing_s)
         # Self-healing host registry (2026-11-18): a HEAD chain that lands
         # on a different host is one observation of a domain move. The
@@ -938,7 +955,7 @@ def _probe_host(host: str, groups: list[dict], *, session_factory=None,
             # better than a verdict from a method this host mis-answers).
             stats["get_fallbacks"] += 1
             g_status, g_error, g_final = get_chain(
-                url, session, base_headers=headers, timeout=timeout,
+                url, session, base_headers=hop_headers, timeout=timeout,
                 spacing_s=spacing_s)
             g_verdict = chain_verdict(g_status, g_error, checked_at)
             if g_verdict is not None:
@@ -951,6 +968,15 @@ def _probe_host(host: str, groups: list[dict], *, session_factory=None,
         if verdict is None:
             stats["no_verdict"] += 1
             continue
+        # H4 R8: a challenged verdict kills the host's stored clearance at
+        # once — the next run re-earns it instead of re-sending a dead one.
+        # (The capture half lives in the resolver / probe_many: this HEAD
+        # chain never sees a Set-Cookie worth keeping.)
+        if clearance is not None and status in (403, 503):
+            try:
+                clearance.note_challenge(host)
+            except Exception:
+                pass
         stats["verdicts"] += 1
         stats["by_status"][verdict] = stats["by_status"].get(verdict, 0) + 1
         item = {"row_ids": group["row_ids"], "status": verdict,
@@ -1001,6 +1027,20 @@ def run_pilot(conn: sqlite3.Connection, *, max_rows: int = DEFAULT_MAX_ROWS,
     db_path = _db_path_of(conn)
     selection = select_rows(conn, max_rows=max_rows, dry_run=False)
     headers = probe_headers()
+    # H4 R8: the apply sweep reads the shared clearance store (and
+    # invalidates a host the moment it challenges again). An absent
+    # module or a failed build means "no store" — the sweep probes
+    # exactly as before. Compare mode never gets one: a dry run writes
+    # nothing, and attaching a cookie would change what it measures.
+    clearance = None
+    try:
+        try:
+            from Fast_Fetch.host_clearance import HostClearance
+        except ImportError:
+            from host_clearance import HostClearance  # type: ignore
+        clearance = HostClearance(db_path)
+    except Exception:
+        clearance = None
     writer_conn = sqlite3.connect(db_path, timeout=WRITER_BUSY_TIMEOUT_MS / 1000.0,
                                   check_same_thread=False)
     try:
@@ -1014,7 +1054,8 @@ def run_pilot(conn: sqlite3.Connection, *, max_rows: int = DEFAULT_MAX_ROWS,
             futures = [pool.submit(_probe_host, host, groups,
                                    session_factory=session_factory,
                                    timeout=timeout, spacing_s=spacing_s,
-                                   headers=headers, out_queue=writer.queue)
+                                   headers=headers, out_queue=writer.queue,
+                                   clearance=clearance)
                        for host, groups in selection["hosts"]]
             for future in concurrent.futures.as_completed(futures):
                 stats = future.result()

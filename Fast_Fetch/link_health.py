@@ -216,6 +216,9 @@ class ProbeResult:
     redirects_to: str = ""              # final URL after redirects, "" if none
     error: str = ""                     # "" or a stable short code
     checked_at: float = 0.0             # unix timestamp
+    challenge: bool = False             # H4 R8: the response IS a bot challenge
+    set_cookie: tuple = ()              # H4 R8: raw Set-Cookie header(s) that
+                                        # carried an allowlisted clearance cookie
 
 
 # ── SSRF / hygiene guard ─────────────────────────────────────────────────────
@@ -594,7 +597,8 @@ def probe(url: str, *, final_url: str = "", timeout: float = DEFAULT_TIMEOUT,
           sample_bytes: int = DEFAULT_SAMPLE_BYTES, headers: dict | None = None,
           allow_download: bool = True, allow_private: bool = False,
           max_redirects: int = DEFAULT_MAX_REDIRECTS,
-          service: str = "") -> ProbeResult:
+          service: str = "", cookie_header: str | None = None,
+          user_agent: str | None = None) -> ProbeResult:
     """Measure *url* and return a :class:`ProbeResult`.
 
     Args:
@@ -616,6 +620,10 @@ def probe(url: str, *, final_url: str = "", timeout: float = DEFAULT_TIMEOUT,
             detected independently and report ``redirect_loop``.
         service: informational (``hubcloud``, ``fastdl``, ...); reserved for
             per-service header presets, currently unused.
+        cookie_header: H4 R8 — a stored clearance ``Cookie`` header for this
+            host, replayed with ``user_agent`` (the UA that earned it).
+            A per-link ``headers`` Cookie/User-Agent, when given, wins.
+        user_agent: H4 R8 — the UA to send; defaults to ``USER_AGENT``.
 
     Raises:
         TypeError: only when *url* is not a ``str`` — a programming error, not
@@ -639,12 +647,17 @@ def probe(url: str, *, final_url: str = "", timeout: float = DEFAULT_TIMEOUT,
     # does not. Every production probe keeps DEFAULT_HOST_SPACING_S.
     spacing_kw = {"host_spacing_s": 0.0 if allow_private else DEFAULT_HOST_SPACING_S}
     req_headers = {
-        "User-Agent": USER_AGENT,
+        "User-Agent": user_agent or USER_AGENT,
         "Accept": "*/*",
         "Accept-Language": "en-US,en;q=0.9",
         "Connection": "close",
         "Origin": origin,
     }
+    # H4 R8: a stored clearance rides with the UA that earned it (the vendor
+    # binds the cookie to IP + UA + hostname). A per-link header, when given
+    # below, overrides both — explicit beats stored.
+    if cookie_header:
+        req_headers["Cookie"] = cookie_header
     if headers:
         for k, v in dict(headers).items():
             if isinstance(k, str):
@@ -780,6 +793,32 @@ def _finalize(url: str, exch: _Exchange, chain_final: str, body: bytes, *,
     if not error and body and len(body) >= MIN_SAMPLE_FOR_SPEED and exch.body_ms > 0:
         speed = round(len(body) * 8 / (exch.body_ms / 1000.0) / 1e6, 2)
 
+    # H4 R8: the challenge + clearance signals ride on the result so the
+    # caller (the sweep, the resolver) can store or invalidate the host's
+    # clearance without re-reading the wire. Computed here, inside the one
+    # place that still holds the final exchange's headers and body; the
+    # import is lazy and two-form like the rest of the tree, and a failure
+    # here degrades to "no signal" rather than breaking a verdict.
+    challenge = False
+    set_cookie: tuple = ()
+    try:
+        try:
+            from Fast_Fetch.host_clearance import (
+                extract_clearance_cookies as _extract_cc,
+                is_challenge_response as _is_challenge,
+            )
+        except ImportError:
+            from host_clearance import (  # type: ignore
+                extract_clearance_cookies as _extract_cc,
+                is_challenge_response as _is_challenge,
+            )
+        challenge = bool(_is_challenge(status, meta_headers, body))
+        raw_set_cookie = _header_get(meta_headers, "set-cookie")
+        if raw_set_cookie and _extract_cc([raw_set_cookie]):
+            set_cookie = (raw_set_cookie,)
+    except Exception:
+        challenge, set_cookie = False, ()
+
     # A redirect that lands on a different host than the stored final_url is
     # still usable (ok stays True); the move is recorded in redirects_to, so
     # callers compare _host_of(redirects_to) against final_url to re-canon.
@@ -800,6 +839,8 @@ def _finalize(url: str, exch: _Exchange, chain_final: str, body: bytes, *,
         redirects_to=redirects_to if redirects_to != url else "",
         error=error,
         checked_at=float(now),
+        challenge=challenge,
+        set_cookie=set_cookie,
     )
 
 
@@ -1137,13 +1178,22 @@ def _is_blocklisted(url: str, blocklist) -> bool:
 
 def probe_many(links: list[dict], *, workers: int = 8,
                timeout: float = DEFAULT_TIMEOUT, sample_bytes: int = DEFAULT_SAMPLE_BYTES,
-               url_blocklist=None, allow_private: bool = False) -> list[ProbeResult]:
+               url_blocklist=None, allow_private: bool = False,
+               cookie_headers: dict | None = None) -> list[ProbeResult]:
     """Probe *links* concurrently, returning results in input order.
 
     Each item is a dict::
 
         {"url": str, "final_url": str, "headers": dict, "service": str,
          "allow_private": bool}
+
+    ``cookie_headers`` (H4 R8) maps a lowercase hostname to a stored
+    clearance ``Cookie`` header; the matching header is attached to that
+    host's items (a per-link ``Cookie`` header, when given, wins). The
+    pinned User-Agent travels with the header only through
+    :func:`link_state.default_prober` — ``probe_many`` itself sends the
+    default UA, so a caller that needs the pinned UA must pass it via
+    the item's ``headers`` or use ``probe`` directly.
 
     Only the worker's own arguments and an immutable :class:`ProbeResult` ever
     cross thread boundaries — no probe *result* state is shared, so the pool is
@@ -1177,6 +1227,15 @@ def probe_many(links: list[dict], *, workers: int = 8,
             kwargs["headers"] = link["headers"]
         if link.get("service"):
             kwargs["service"] = link["service"]
+        # H4 R8: attach the host's stored clearance, if any. A per-link
+        # Cookie header wins (setdefault); the pinned UA rides through
+        # the item's headers when the caller set it there.
+        if cookie_headers:
+            stored = cookie_headers.get(_host_of(url)) if isinstance(cookie_headers, dict) else None
+            if stored:
+                hdrs = dict(link.get("headers") or {})
+                hdrs.setdefault("Cookie", stored)
+                kwargs["headers"] = hdrs
         try:
             return probe(url, **kwargs)
         except TypeError:

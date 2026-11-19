@@ -912,7 +912,9 @@ class StyleTests(unittest.TestCase):
             "url", "ok", "http_status", "protocol", "content_type", "size_bytes",
             "accepts_ranges", "resumable", "cors_open", "latency_ms",
             "download_speed_mbps", "streamable", "downloadable", "redirects_to",
-            "error", "checked_at"})
+            "error", "checked_at",
+            # H4 R8: the challenge flag + the raw clearance Set-Cookie.
+            "challenge", "set_cookie"})
 
     def test_probe_many_does_not_share_mutable_state(self):
         links = [{"url": self_url} for self_url in [f"{SERVERS['media'][1]}/movie.mp4"] * 6]

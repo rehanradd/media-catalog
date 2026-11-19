@@ -542,13 +542,44 @@ def _iter_ids_page(conn: sqlite3.Connection, ids: list[int], offset: int,
     return selected, seen, offset + len(page), offset + len(page) >= len(ids)
 
 
+def _clearance_for_conn(conn):
+    """A :class:`host_clearance.HostClearance` for ``conn``'s file, or None.
+
+    Never raises and never touches the filesystem beyond opening the
+    store's own short-lived connections: an in-memory connection (no
+    path) or an absent module means "no store", and the sweep probes
+    exactly as before. The lazy two-form import mirrors the rest of
+    this module (``config`` is never imported here).
+    """
+    try:
+        try:
+            from Fast_Fetch.host_clearance import HostClearance
+        except ImportError:
+            from host_clearance import HostClearance  # type: ignore
+        row = conn.execute("PRAGMA database_list").fetchone()
+        path = row[2] if row else ""
+        if not path:
+            return None
+        return HostClearance(path)
+    except Exception:
+        return None
+
+
 def default_prober(rows, *, workers: int = 4, timeout: float | None = None,
-                   sample_bytes: int | None = None):
+                   sample_bytes: int | None = None, clearance=None):
     """Knock on every row through ``link_health.probe_many`` (ordered like input).
 
     ``allow_private`` is never set: production probing must not touch internal
     addresses (link_health's SSRF guard). Non-media rows come back with a
-    ``blocked_target``/transport error and are recorded as such."""
+    ``blocked_target``/transport error and are recorded as such.
+
+    ``clearance`` (H4 R8) is a ``host_clearance.HostClearance``: a host's
+    stored clearance rides on its rows (with the UA that earned it) and
+    each result is recorded back — a challenged probe invalidates the
+    host at once, a clean 200/206 that sets a clearance cookie captures
+    it. ``None`` (the default) probes exactly as before; a store failure
+    never breaks a verdict.
+    """
     items = []
     for row in rows:
         item = {"url": row.get("final_url") or row.get("source_url") or "",
@@ -557,13 +588,34 @@ def default_prober(rows, *, workers: int = 4, timeout: float | None = None,
             item["final_url"] = row["source_url"]
         if row.get("service"):
             item["service"] = row["service"]
+        if clearance is not None:
+            try:
+                header, ua = clearance.header_for(
+                    link_health._host_of(item["url"]))
+            except Exception:
+                header, ua = None, None
+            if header:
+                hdrs = dict(item.get("headers") or {})
+                hdrs.setdefault("Cookie", header)
+                if ua:
+                    hdrs["User-Agent"] = ua
+                item["headers"] = hdrs
         items.append(item)
     kwargs = {"workers": max(1, int(workers))}
     if timeout is not None:
         kwargs["timeout"] = timeout
     if sample_bytes is not None:
         kwargs["sample_bytes"] = sample_bytes
-    return link_health.probe_many(items, **kwargs)
+    results = link_health.probe_many(items, **kwargs)
+    if clearance is not None:
+        for item, result in zip(items, results):
+            try:
+                ua = (item.get("headers") or {}).get("User-Agent") \
+                    or link_health.USER_AGENT
+                clearance.note_probe(item["url"], result, user_agent=ua)
+            except Exception:
+                pass
+    return results
 
 
 def _cursor_row(conn, scope: str) -> sqlite3.Row | None:
@@ -837,7 +889,12 @@ def propagate(conn: sqlite3.Connection, *, scope: str = "default", prober=None,
     # A plan must not reach the network: a dry run over this catalog would else
     # issue three million HTTP requests. Probing only happens when asked for.
     plan_only = bool(dry_run) and prober is None
-    prober = prober or (lambda rows: default_prober(rows, workers=workers, timeout=timeout))
+    # H4 R8: the live sweep reads the shared clearance store (and feeds it
+    # back) when it probes for real. A fake prober, a plan-only dry run, or
+    # an unavailable store keeps the old behaviour — clearance=None.
+    _clearance = _clearance_for_conn(conn) if (prober is None and not plan_only) else None
+    prober = prober or (lambda rows: default_prober(
+        rows, workers=workers, timeout=timeout, clearance=_clearance))
 
     cursor_row_exists = _has_table(conn, "link_state_cursor")
     existing = _cursor_row(conn, scope) if cursor_row_exists else None
