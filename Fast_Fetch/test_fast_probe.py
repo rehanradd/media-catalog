@@ -9,6 +9,11 @@ lookup with a public IP).
 Pinned here:
 * verdict mapping is DELEGATED to ``link_state.classify`` — the same inputs
   give the same outputs as a ``link_health.ProbeResult``;
+* HEAD first, ranged-GET fallback: HEAD 400/405/501 earns its verdict from
+  one ranged GET, and a host on ``KNOWN_HEAD_LIARS`` is judged by GET
+  whenever HEAD did not already prove the link active (vcloud.beer HEAD
+  403 vs GET 301 -> 200, measured 2026-11-19). Transport errors never
+  trigger a GET, and a non-liar HEAD 404 stays dead with no GET issued;
 * dedup: one probe per distinct URL, verdicts applied to every row sharing it;
 * selection: a batch spans many hosts — each host contributes at most
   ``max(4, max_rows // 24)`` rows, so one giant host cannot fill it;
@@ -75,8 +80,11 @@ class _FakeResponse:
 
 
 class _FakeConnection:
-    """http.client-shaped fake. ``behaviour(host, target, n)`` returns either
-    ``(status, headers, will_close)`` or raises (to simulate a dead socket).
+    """http.client-shaped fake. ``behaviour(host, target, n, method)`` returns
+    either ``(status, headers, will_close)`` or raises (to simulate a dead
+    socket). ``method`` defaults to ``"HEAD"`` so behaviours that only care
+    about HEAD keep working; method-aware behaviours key on it (the GET
+    fallback answers HEAD 403 and GET 301 on the same target).
     """
 
     def __init__(self, host, port, https, timeout, behaviour, log):
@@ -92,8 +100,8 @@ class _FakeConnection:
 
     def request(self, method, target, headers=None, **kwargs):
         self._calls += 1
-        self._log.append(("request", self.host, target, method))
-        self._pending = self._behaviour(self.host, target, self._calls)
+        self._log.append(("request", self.host, target, method, dict(headers or {})))
+        self._pending = self._behaviour(self.host, target, self._calls, method)
 
     def getresponse(self):
         status, headers, will_close = self._pending
@@ -116,9 +124,15 @@ def _make_factory(behaviour, log):
 
 
 def _status_map(mapping, default=(200, {}, False)):
-    """behaviour from a {(host, target): (status, headers, will_close)} map."""
-    def behaviour(host, target, _n):
-        return mapping.get((host, target), mapping.get(("*", target), default))
+    """behaviour from a {(host, target[, method]): (status, headers, will_close)} map.
+
+    A method-specific entry ``(host, target, "GET")`` wins over the plain
+    ``(host, target)`` one, so one map can say HEAD 403 and GET 301.
+    """
+    def behaviour(host, target, _n, method="HEAD"):
+        return mapping.get((host, target, method),
+                           mapping.get((host, target),
+                                       mapping.get(("*", target), default)))
     return behaviour
 
 
@@ -159,6 +173,9 @@ class PayloadMappingTests(unittest.TestCase):
         for (status, error), expected in self.CASES:
             with self.subTest(status=status, error=error):
                 self.assertEqual(fast_probe.head_verdict(status, error, 0.0),
+                                 expected)
+                # The GET fallback classifies through the same mapping.
+                self.assertEqual(fast_probe.chain_verdict(status, error, 0.0),
                                  expected)
 
     def test_delegation_matches_link_health(self):
@@ -314,7 +331,7 @@ class HostSessionTests(unittest.TestCase):
     def test_dead_keepalive_reconnects_once_and_probe_succeeds(self):
         log = []
 
-        def behaviour(host, target, n):
+        def behaviour(host, target, n, method="HEAD"):
             if target == "/b.mp4" and n == 2:
                 raise http.client.RemoteDisconnected("server closed it")
             return (200, {}, False)
@@ -332,7 +349,7 @@ class HostSessionTests(unittest.TestCase):
     def test_timeout_reported_not_retried(self):
         log = []
 
-        def behaviour(host, target, n):
+        def behaviour(host, target, n, method="HEAD"):
             raise socket.timeout("slow server")
 
         # A timeout surfaces as a transport error from the session itself.
@@ -402,7 +419,7 @@ class HostSessionTests(unittest.TestCase):
         # verdict instead of killing the batch.
         log = []
 
-        def behaviour(host, target, n):
+        def behaviour(host, target, n, method="HEAD"):
             raise UnicodeEncodeError("ascii", "’", 0, 1, "ordinal not in range")
 
         factory = _make_factory(behaviour, log)
@@ -418,7 +435,7 @@ class HostSessionTests(unittest.TestCase):
 class HostPartitionTests(unittest.TestCase):
     def _timed_factory(self, log, delay=0.05):
         """behaviour that sleeps per request and records (host, start, end)."""
-        def behaviour(host, target, _n):
+        def behaviour(host, target, _n, method="HEAD"):
             start = time.monotonic()
             time.sleep(delay)
             log.append((host, threading.current_thread().name, start,
@@ -466,6 +483,254 @@ class HostPartitionTests(unittest.TestCase):
         self.assertLess(elapsed, 0.65)
         hosts = {h for h, _t, _s, _e in log}
         self.assertEqual(hosts, {"a.example", "b.example"})
+
+
+# ── ranged-GET fallback ──────────────────────────────────────────────────────
+
+class GetFallbackTests(unittest.TestCase):
+    # Measured 2026-11-19 from the Oracle VM (curl, Chrome UA):
+    # vcloud.beer HEAD 403, ranged GET 301 -> vcloud.my 200. The fallback
+    # exists so a HEAD lie never becomes a ledger verdict.
+
+    def _run(self, host, groups, mapping, registry=None):
+        """_probe_host through the method-aware fake; registry mocked.
+
+        The registry is always mocked here: a redirect would otherwise
+        write an observation into the real sidecar file on disk.
+        """
+        log = []
+        factory = _make_factory(_status_map(mapping), log)
+        if registry is None:
+            registry = unittest.mock.Mock()
+            registry.record_redirect.return_value = {"count": 0,
+                                                     "applied": False}
+        with unittest.mock.patch.object(fast_probe, "host_registry", registry):
+            stats = fast_probe._probe_host(
+                host, groups, session_factory=factory, timeout=5.0,
+                spacing_s=0.0, headers=fast_probe.probe_headers(),
+                out_queue=None)
+        return stats, log, registry
+
+    def _one(self, url):
+        return [{"url": url, "row_ids": [1], "stored": None}]
+
+    def _requests(self, log):
+        return [e for e in log if e[0] == "request"]
+
+    def test_liar_matcher(self):
+        self.assertTrue(fast_probe.is_known_head_liar("vcloud.beer"))
+        self.assertTrue(fast_probe.is_known_head_liar("www.vcloud.beer"))
+        self.assertTrue(fast_probe.is_known_head_liar("VCLOUD.BEER"))
+        self.assertTrue(fast_probe.is_known_head_liar(
+            "rozgarlelo.modiplay.xyz"))
+        self.assertFalse(fast_probe.is_known_head_liar("fakevcloud.beer"))
+        self.assertFalse(fast_probe.is_known_head_liar("vcloud.beer.evil.example"))
+        self.assertFalse(fast_probe.is_known_head_liar("r2.dev"))
+        self.assertFalse(fast_probe.is_known_head_liar(""))
+
+    def test_needs_get_fallback_triggers(self):
+        # HEAD refused: any host, verdict is None either way.
+        self.assertTrue(fast_probe._needs_get_fallback(
+            "plain.example", 405, "", None))
+        self.assertTrue(fast_probe._needs_get_fallback(
+            "plain.example", 400, "", None))
+        self.assertTrue(fast_probe._needs_get_fallback(
+            "plain.example", 501, "", None))
+        # Liar host: any non-active HEAD answer, including 403/404.
+        self.assertTrue(fast_probe._needs_get_fallback(
+            "vcloud.beer", 403, "", "expired"))
+        self.assertTrue(fast_probe._needs_get_fallback(
+            "vcloud.beer", 404, "", "dead"))
+        # Active is active, whatever the host — no GET.
+        self.assertFalse(fast_probe._needs_get_fallback(
+            "vcloud.beer", 200, "", "active"))
+        self.assertFalse(fast_probe._needs_get_fallback(
+            "plain.example", 200, "", "active"))
+        # A plain HEAD 404 stays dead with no GET.
+        self.assertFalse(fast_probe._needs_get_fallback(
+            "plain.example", 404, "", "dead"))
+        # Transport errors never trigger a GET.
+        self.assertFalse(fast_probe._needs_get_fallback(
+            "vcloud.beer", 0, "timeout", None))
+        self.assertFalse(fast_probe._needs_get_fallback(
+            "plain.example", 0, "dns", None))
+
+    @_public_dns
+    def test_get_sends_range_and_drops_connection(self):
+        log = []
+        factory = _make_factory(_status_map({}), log)
+        session = fast_probe.HostSession(connection_factory=factory, timeout=5.0)
+        status, _h, error, _ms = session.get(
+            "http://big.example/f.mp4", fast_probe.probe_headers())
+        self.assertEqual((status, error), (200, ""))
+        requests = self._requests(log)
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0][3], "GET")
+        self.assertEqual(requests[0][4].get("Range"), "bytes=0-0")
+        # A GET connection is dropped, never reused: the next GET dials anew.
+        self.assertIn(("close", "big.example"), log)
+        session.get("http://big.example/g.mp4", fast_probe.probe_headers())
+        self.assertEqual(factory.created["n"], 2)
+
+    @_public_dns
+    def test_head_405_falls_back_to_get(self):
+        mapping = {
+            ("plain.example", "/f.mp4", "HEAD"): (405, {}, False),
+            ("plain.example", "/f.mp4", "GET"): (200, {}, False),
+        }
+        stats, log, _reg = self._run(
+            "plain.example", self._one("http://plain.example/f.mp4"), mapping)
+        self.assertEqual(stats["by_status"], {"active": 1})
+        self.assertEqual(stats["get_fallbacks"], 1)
+        self.assertEqual(stats["results"]["http://plain.example/f.mp4"],
+                         ("active", 200, ""))
+        methods = [r[3] for r in self._requests(log)]
+        self.assertEqual(methods, ["HEAD", "GET"])
+
+    @_public_dns
+    def test_head_501_falls_back_to_get(self):
+        mapping = {
+            ("plain.example", "/f.mp4", "HEAD"): (501, {}, False),
+            ("plain.example", "/f.mp4", "GET"): (206, {}, False),
+        }
+        stats, _log, _reg = self._run(
+            "plain.example", self._one("http://plain.example/f.mp4"), mapping)
+        self.assertEqual(stats["by_status"], {"active": 1})
+        self.assertEqual(stats["get_fallbacks"], 1)
+
+    @_public_dns
+    def test_vcloud_head_403_corrected_by_get(self):
+        # The measured lie: HEAD 403, ranged GET 301 to vcloud.my, GET 200.
+        mapping = {
+            ("vcloud.beer", "/x", "HEAD"): (403, {}, False),
+            ("vcloud.beer", "/x", "GET"): (
+                301, {"location": "https://vcloud.my/x"}, False),
+            ("vcloud.my", "/x", "GET"): (200, {}, False),
+        }
+        registry = unittest.mock.Mock()
+        registry.record_redirect.return_value = {"count": 1, "applied": False}
+        stats, log, _reg = self._run(
+            "vcloud.beer", self._one("https://vcloud.beer/x"), mapping,
+            registry=registry)
+        self.assertEqual(stats["by_status"], {"active": 1})
+        self.assertEqual(stats["get_fallbacks"], 1)
+        self.assertEqual(stats["results"]["https://vcloud.beer/x"],
+                         ("active", 200, ""))
+        self.assertEqual(stats["redirects_seen"], 1)
+        # The GET chain followed the move to the new domain...
+        gets = [(r[1], r[2]) for r in self._requests(log) if r[3] == "GET"]
+        self.assertIn(("vcloud.beer", "/x"), gets)
+        self.assertIn(("vcloud.my", "/x"), gets)
+        # ...and the registry observed exactly that move, once.
+        registry.record_redirect.assert_called_once_with(
+            "https://vcloud.beer/x", "https://vcloud.my/x")
+
+    @_public_dns
+    def test_head_404_on_plain_host_stays_dead_no_get(self):
+        mapping = {("plain.example", "/f.mp4", "HEAD"): (404, {}, False)}
+        stats, log, _reg = self._run(
+            "plain.example", self._one("http://plain.example/f.mp4"), mapping)
+        self.assertEqual(stats["by_status"], {"dead": 1})
+        self.assertEqual(stats["get_fallbacks"], 0)
+        self.assertEqual([r[3] for r in self._requests(log)], ["HEAD"])
+
+    @_public_dns
+    def test_head_200_never_gets_even_on_liar(self):
+        mapping = {("vcloud.beer", "/x", "HEAD"): (200, {}, False)}
+        stats, log, _reg = self._run(
+            "vcloud.beer", self._one("https://vcloud.beer/x"), mapping)
+        self.assertEqual(stats["by_status"], {"active": 1})
+        self.assertEqual(stats["get_fallbacks"], 0)
+        self.assertEqual([r[3] for r in self._requests(log)], ["HEAD"])
+
+    @_public_dns
+    def test_head_timeout_never_gets(self):
+        log = []
+
+        def behaviour(host, target, n, method="HEAD"):
+            raise socket.timeout("slow server")
+
+        factory = _make_factory(behaviour, log)
+        with unittest.mock.patch.object(fast_probe, "host_registry",
+                                        unittest.mock.Mock()):
+            stats = fast_probe._probe_host(
+                "vcloud.beer", self._one("https://vcloud.beer/x"),
+                session_factory=factory, timeout=5.0, spacing_s=0.0,
+                headers=fast_probe.probe_headers(), out_queue=None)
+        self.assertEqual(stats["no_verdict"], 1)
+        self.assertEqual(stats["get_fallbacks"], 0)
+        requests = self._requests(log)
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0][3], "HEAD")
+
+    @_public_dns
+    def test_liar_get_also_dead_stays_dead(self):
+        # The GET verdict wins when it can judge: a liar's HEAD 403 plus
+        # a GET 404 is a dead link, not a corrected one.
+        mapping = {
+            ("vcloud.beer", "/x", "HEAD"): (403, {}, False),
+            ("vcloud.beer", "/x", "GET"): (404, {}, False),
+        }
+        stats, _log, _reg = self._run(
+            "vcloud.beer", self._one("https://vcloud.beer/x"), mapping)
+        self.assertEqual(stats["by_status"], {"dead": 1})
+        self.assertEqual(stats["get_fallbacks"], 1)
+        # The GET chain answered 404 (error "" — an answer, not a failure).
+        self.assertEqual(stats["results"]["https://vcloud.beer/x"],
+                         ("dead", 404, ""))
+
+    @_public_dns
+    def test_liar_get_with_no_verdict_leaves_row_alone(self):
+        # HEAD 403 on a liar, GET 405 as well: neither method judged it,
+        # so the row stays eligible instead of taking HEAD's lie.
+        mapping = {
+            ("vcloud.beer", "/x", "HEAD"): (403, {}, False),
+            ("vcloud.beer", "/x", "GET"): (405, {}, False),
+        }
+        stats, _log, _reg = self._run(
+            "vcloud.beer", self._one("https://vcloud.beer/x"), mapping)
+        self.assertEqual(stats["by_status"], {})
+        self.assertEqual(stats["no_verdict"], 1)
+        self.assertEqual(stats["get_fallbacks"], 1)
+
+    @_public_dns
+    def test_get_chain_follows_redirects_and_loops(self):
+        log = []
+        mapping = {
+            ("plain.example", "/a", "GET"): (
+                301, {"location": "http://plain.example/b"}, False),
+            ("plain.example", "/b", "GET"): (200, {}, False),
+            ("plain.example", "/loop", "GET"): (
+                301, {"location": "http://plain.example/loop"}, False),
+            ("plain.example", "/noloc", "GET"): (302, {}, False),
+        }
+        factory = _make_factory(_status_map(mapping), log)
+        session = fast_probe.HostSession(connection_factory=factory, timeout=5.0)
+        status, error, final = fast_probe.get_chain(
+            "http://plain.example/a", session,
+            base_headers=fast_probe.probe_headers(), spacing_s=0.0)
+        self.assertEqual((status, error, final),
+                         (200, "", "http://plain.example/b"))
+        status, error, _final = fast_probe.get_chain(
+            "http://plain.example/loop", session,
+            base_headers=fast_probe.probe_headers(), spacing_s=0.0)
+        self.assertEqual((status, error), (301, "redirect_loop"))
+        status, error, _final = fast_probe.get_chain(
+            "http://plain.example/noloc", session,
+            base_headers=fast_probe.probe_headers(), spacing_s=0.0)
+        self.assertEqual((status, error), (302, ""))
+        self.assertIsNone(fast_probe.chain_verdict(status, error, 0.0))
+
+    def test_merge_counts_get_fallbacks(self):
+        merged = fast_probe._merge_stats(
+            [{"probed": 2, "verdicts": 1, "no_verdict": 1, "blocked": 0,
+              "reconnects": 0, "redirects_seen": 0, "moves_applied": 0,
+              "get_fallbacks": 1, "by_status": {"active": 1}},
+             {"probed": 1, "verdicts": 1, "no_verdict": 0, "blocked": 0,
+              "reconnects": 0, "redirects_seen": 0, "moves_applied": 0,
+              "get_fallbacks": 0, "by_status": {"dead": 1}}])
+        self.assertEqual(merged["get_fallbacks"], 1)
+        self.assertEqual(merged["by_status"], {"active": 1, "dead": 1})
 
 
 # ── single writer ────────────────────────────────────────────────────────────

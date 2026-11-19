@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-fast_probe.py — host-partitioned, keep-alive, HEAD-only link prober (pilot).
+fast_probe.py — host-partitioned, keep-alive link prober (pilot).
+
+HEAD first, ranged-GET fallback for the hosts and statuses where HEAD lies.
 
 Why this exists
 ---------------
@@ -46,15 +48,23 @@ What this module changes (and what it deliberately does NOT change)
   (``link_health._block_reason``) still runs on EVERY URL — the guard is a
   safety check, not a hot path to optimise away, and DNS-rebinding must
   still be caught per URL.
-* **HEAD-only verdict pass.** The verdict comes from the HEAD chain status,
-  mapped through the SAME function the sweep uses
-  (``link_state.classify`` on a ``ProbeResult``-shaped payload). No GET, no
-  body sample, no enrichment: this pass writes ONLY the five verdict
-  columns (``status``, ``http_status``, ``last_checked_at``, ``checked_at``,
-  ``probe_error``) and leaves ``is_resumable`` / ``file_size_bytes`` /
-  ``mime_type`` / ``protocol`` / ``latency_ms`` / ``speed_mbps`` /
-  ``cors_open`` exactly as they were. An enrichment pass (full probe for
-  rows that came back active) is a separate later step.
+* **HEAD-first verdict pass, ranged-GET fallback.** The verdict comes
+  from the HEAD chain status, mapped through the SAME function the sweep
+  uses (``link_state.classify`` on a ``ProbeResult``-shaped payload) — but
+  HEAD lies on some hosts (it answers 403/404 on a live URL while a GET
+  answers normally; measured 2026-11-19, vcloud.beer HEAD 403 vs ranged
+  GET 301 -> vcloud.my 200). So when HEAD gives no usable verdict
+  (400/405/501, the statuses the full prober falls through to GET on) or
+  the probe target is a host on ``KNOWN_HEAD_LIARS``, the pass issues ONE
+  ranged GET (``Range: bytes=0-0``, at most 1 KiB read) and classifies
+  from that chain instead. Transport errors never trigger a GET — a GET
+  would burn the same budget on the same failure. The pass still writes
+  ONLY the five verdict columns (``status``, ``http_status``,
+  ``last_checked_at``, ``checked_at``, ``probe_error``) and leaves
+  ``is_resumable`` / ``file_size_bytes`` / ``mime_type`` / ``protocol`` /
+  ``latency_ms`` / ``speed_mbps`` / ``cors_open`` exactly as they were.
+  An enrichment pass (full probe for rows that came back active) is a
+  separate later step.
 * **Single writer.** Exactly ONE thread touches SQLite. Workers push verdicts
   into a queue; the writer batches 100 and commits under ``BEGIN IMMEDIATE``
   with a 30s busy timeout and up to 5 lock retries with backoff. Lock
@@ -68,9 +78,6 @@ What this module does NOT do (pilot scope, by design)
 * No ``cat_links`` projection sync and no ``host_health`` feed: the pilot
   writes ledger verdicts only, so the served projection does not move until
   a rebuild. For a 1,000-row pilot that is irrelevant; the swap decides it.
-* No verdict for HEAD-refused endpoints (HEAD 400/405/501): the current
-  prober falls through to GET there, so a HEAD-only pass earns no verdict
-  and the row stays eligible for the full prober.
 
 Row selection (documented; both passes stream, memory stays bounded)
 ---------------------------------------------------------------------
@@ -143,6 +150,10 @@ except ImportError:  # running from inside Fast_Fetch/ (the documented way)
 __all__ = [
     "payload_for_head",
     "head_verdict",
+    "chain_verdict",
+    "get_chain",
+    "is_known_head_liar",
+    "KNOWN_HEAD_LIARS",
     "select_rows",
     "run_pilot",
     "run_compare",
@@ -177,6 +188,39 @@ COMPARE_SINCE_SECONDS = 7 * 86400
 #: (``link_health.probe``: ``need_get`` when HEAD is 400/405/501). A
 #: HEAD-only pass earns no verdict there — the full prober judges it later.
 HEAD_UNSUPPORTED_STATUSES = (400, 405, 501)
+
+#: Hosts whose HEAD answers cannot be trusted: they refuse or mis-answer
+#: HEAD on a live URL while a ranged GET answers normally. Measured
+#: 2026-11-19 from the Oracle VM (curl, Chrome UA):
+#:   vcloud.beer — HEAD 403, ranged GET 301 -> vcloud.my 200. (21,853
+#:   rows are probed AT this host; the other ~215k vcloud rows resolve to
+#:   file hosts and are judged on those hosts' answers, not this list's.)
+#:   rozgarlelo.modiplay.xyz — listed on the 2026-11-18 domain audit's
+#:   HEAD-vs-GET false-dead evidence; the 2026-11-19 sample (7 URLs)
+#:   agreed HEAD/GET, so this entry is insurance: one ranged GET per
+#:   non-active row, which can only confirm or correct the HEAD verdict.
+#: Matched exact-or-subdomain on the lowercased probe-target hostname:
+#: the host actually knocked on, never the bridge that served the link.
+KNOWN_HEAD_LIARS = frozenset({"vcloud.beer", "rozgarlelo.modiplay.xyz"})
+
+#: The fallback GET asks for one byte only; a server that ignores Range
+#: could send a whole file, so the body read is capped and the connection
+#: is dropped afterwards (a half-read body cannot be reused).
+GET_RANGE = "bytes=0-0"
+GET_READ_CAP = 1024
+
+
+def is_known_head_liar(host: str) -> bool:
+    """True when *host* (probe-target hostname) is on ``KNOWN_HEAD_LIARS``.
+
+    Exact match or any subdomain of a listed host, lowercased. A merely
+    similar name (``fakevcloud.beer``) is not a liar — the dot matters.
+    """
+    host = (host or "").lower().strip()
+    if not host:
+        return False
+    return any(host == liar or host.endswith("." + liar)
+               for liar in KNOWN_HEAD_LIARS)
 
 _UPDATE_VERDICT_SQL = """
     UPDATE download_sources
@@ -219,13 +263,15 @@ def payload_for_head(status: int, error: str, checked_at: float) -> dict | None:
     return None
 
 
-def head_verdict(status: int, error: str, checked_at: float) -> str | None:
-    """One HEAD-chain outcome -> ledger status, or ``None`` (no verdict).
+def chain_verdict(status: int, error: str, checked_at: float) -> str | None:
+    """One redirect-chain outcome -> ledger status, or ``None`` (no verdict).
 
     Pure delegation: the payload goes through ``link_state.classify``, the
     same function the sweep uses, so a timeout can never be "dead" here and
     "not a verdict" there. ``STATUS_UNVERIFIED`` (transport errors,
     blocked targets) also returns ``None`` — the row stays eligible.
+    Applies to a HEAD chain and to a ranged-GET chain alike: the mapping
+    is about what the endpoint answered, not which method asked.
     """
     payload = payload_for_head(status, error, checked_at)
     if payload is None:
@@ -234,6 +280,15 @@ def head_verdict(status: int, error: str, checked_at: float) -> str | None:
     if verdict == link_state.STATUS_UNVERIFIED:
         return None
     return verdict
+
+
+def head_verdict(status: int, error: str, checked_at: float) -> str | None:
+    """One HEAD-chain outcome -> ledger status, or ``None`` (no verdict).
+
+    Kept name for the existing call sites and tests; the mapping lives in
+    :func:`chain_verdict` and is shared with the ranged-GET fallback.
+    """
+    return chain_verdict(status, error, checked_at)
 
 
 # ── DNS cache (connect path only; the SSRF guard still checks every URL) ─────
@@ -413,6 +468,69 @@ class HostSession:
                 return 0, {}, "conn_error", int((time.monotonic() - t0) * 1000)
         return 0, {}, "conn_error", 0  # pragma: no cover - loop guard
 
+    def get(self, url: str, headers: dict, timeout: float | None = None):
+        """One ranged GET (``Range: bytes=0-0``). Returns as :meth:`head`.
+
+        The fallback GET asks for one byte only: a server that honours
+        Range answers 206 with one byte; one that ignores it answers 200
+        with the whole file. Either way the body read is capped at
+        ``GET_READ_CAP`` and the connection is dropped afterwards — a
+        half-read body cannot be reused by keep-alive, and the fallback
+        is rare enough that the reconnect costs nothing measurable.
+        Error codes mirror :meth:`head` exactly, so a GET transport
+        failure earns no verdict just like a HEAD one.
+        """
+        parts = urllib.parse.urlsplit(url)
+        host = parts.hostname or ""
+        try:
+            port = parts.port or (443 if parts.scheme == "https" else 80)
+        except ValueError:
+            # Unparseable port (e.g. :99999): never attempted, no verdict.
+            return 0, {}, "conn_error", 0
+        https = parts.scheme == "https"
+        target = urllib.parse.quote(parts.path or "/", safe="/%")
+        if parts.query:
+            target += "?" + urllib.parse.quote(parts.query, safe="=&%")
+        send_headers = dict(headers)
+        send_headers["Range"] = GET_RANGE
+        budget = float(self._timeout if timeout is None else timeout)
+        for attempt in (0, 1):
+            conn = self._conn_for(host, port, https)
+            t0 = time.monotonic()
+            try:
+                conn.request("GET", target, headers=send_headers)
+                resp = conn.getresponse()
+                header_ms = int((time.monotonic() - t0) * 1000)
+                raw = [(k.lower(), v) for k, v in resp.getheaders()]
+                try:
+                    resp.read(GET_READ_CAP)
+                except Exception:
+                    pass
+                self._drop(host, port, https)
+                return resp.status, dict(raw), "", header_ms
+            except (http.client.RemoteDisconnected, ConnectionResetError,
+                    BrokenPipeError, http.client.BadStatusLine):
+                self._drop(host, port, https)
+                self.reconnects += 1
+                if attempt == 1:
+                    return 0, {}, "conn_reset", int((time.monotonic() - t0) * 1000)
+                continue
+            except (socket.timeout, TimeoutError):
+                return 0, {}, "timeout", int((time.monotonic() - t0) * 1000)
+            except socket.gaierror:
+                return 0, {}, "dns", int((time.monotonic() - t0) * 1000)
+            except ssl.SSLError:
+                return 0, {}, "tls", int((time.monotonic() - t0) * 1000)
+            except (http.client.HTTPException, OSError) as exc:
+                code = "tls" if "ssl" in str(exc).lower() else "conn_error"
+                return 0, {}, code, int((time.monotonic() - t0) * 1000)
+            except (UnicodeEncodeError, ValueError):
+                # Unencodable request line/header: our side could not
+                # attempt the URL, so it earns no verdict and must not
+                # kill the batch (same backstop as head()).
+                return 0, {}, "conn_error", int((time.monotonic() - t0) * 1000)
+        return 0, {}, "conn_error", 0  # pragma: no cover - loop guard
+
 
 def head_chain(url: str, session: HostSession, *, base_headers: dict,
                timeout: float = DEFAULT_TIMEOUT,
@@ -453,6 +571,91 @@ def head_chain(url: str, session: HostSession, *, base_headers: dict,
             continue
         return status, "", current
     return 0, "redirect_limit", current  # pragma: no cover - loop guard
+
+
+def get_chain(url: str, session: HostSession, *, base_headers: dict,
+              timeout: float = DEFAULT_TIMEOUT,
+              max_redirects: int = DEFAULT_MAX_REDIRECTS,
+              spacing_s: float | None = None):
+    """Follow a ranged-GET redirect chain manually. Returns ``(status, error, final_url)``.
+
+    Mirror of :func:`head_chain` with :meth:`HostSession.get` in place of
+    ``head``: every hop inside ``link_health.host_gate`` for *its own*
+    host, same redirect budget, same loop/limit codes. The Range header
+    is added by ``session.get`` itself, so every hop asks for one byte.
+    """
+    if spacing_s is None:
+        spacing_s = link_health.DEFAULT_HOST_SPACING_S
+    current = url
+    seen = {current}
+    for hop in range(max_redirects + 1):
+        parts = urllib.parse.urlsplit(current)
+        headers = dict(base_headers)
+        headers["Origin"] = f"{parts.scheme.lower()}://{(parts.netloc or '').lower()}"
+        with link_health.host_gate(current, spacing_s=spacing_s,
+                                   jitter_s=link_health.DEFAULT_HOST_JITTER_S):
+            status, resp_headers, error, _ms = session.get(current, headers, timeout)
+        if error:
+            return status, error, current
+        if 300 <= status < 400:
+            loc = resp_headers.get("location", "")
+            if not loc:
+                return status, "", current
+            nxt = urllib.parse.urljoin(current, loc)
+            if nxt in seen:
+                return status, "redirect_loop", nxt
+            if hop == max_redirects:
+                return status, "redirect_limit", nxt
+            seen.add(nxt)
+            current = nxt
+            continue
+        return status, "", current
+    return 0, "redirect_limit", current  # pragma: no cover - loop guard
+
+
+def _needs_get_fallback(host: str, status: int, error: str, verdict: str | None) -> bool:
+    """True when a ranged GET may say something HEAD could not.
+
+    Two triggers, and only these:
+    * HEAD answered but refused the method (400/405/501): the full
+      prober falls through to GET there (``link_health.probe``:
+      ``need_get``), so a HEAD-only pass would earn no verdict and the
+      row would wait for the full prober. Any host.
+    * The probe target is a known HEAD liar (``KNOWN_HEAD_LIARS``) and
+      HEAD did not already prove the link active: the liar's HEAD answer
+      (403/404 on a live URL) is not evidence about the link, so the GET
+      chain judges instead.
+    Transport errors never trigger a GET: a GET would burn the same
+    budget on the same failure, and the full prober reports the transport
+    truth instead. A 2xx HEAD never triggers one either — active is
+    active, whatever the host.
+    """
+    if error:
+        return False
+    if int(status or 0) in HEAD_UNSUPPORTED_STATUSES:
+        return True
+    if verdict != link_state.STATUS_ACTIVE and is_known_head_liar(host):
+        return True
+    return False
+
+
+def _record_move(url: str, final_url: str, stats: dict) -> None:
+    """One host-only redirect observation for the self-healing registry.
+
+    The observation is recorded IN ADDITION to the verdict — the verdict
+    policy is untouched, and a registry failure never breaks a probe
+    (``record_redirect`` never raises; this try is belt-and-braces).
+    """
+    if host_registry is None or not final_url or final_url == url:
+        return
+    try:
+        obs = host_registry.record_redirect(url, final_url)
+        if obs.get("count"):
+            stats["redirects_seen"] = stats.get("redirects_seen", 0) + 1
+        if obs.get("applied"):
+            stats["moves_applied"] = stats.get("moves_applied", 0) + 1
+    except Exception:
+        pass
 
 
 def probe_headers() -> dict:
@@ -707,6 +910,7 @@ def _probe_host(host: str, groups: list[dict], *, session_factory=None,
     stats: dict = {"host": host, "probed": 0, "verdicts": 0, "by_status": {},
                    "no_verdict": 0, "blocked": 0, "reconnects": 0,
                    "redirects_seen": 0, "moves_applied": 0,
+                   "get_fallbacks": 0,
                    "results": {} if out_queue is None else None}
     for group in groups:
         url = group["url"]
@@ -721,19 +925,29 @@ def _probe_host(host: str, groups: list[dict], *, session_factory=None,
         # on a different host is one observation of a domain move. The
         # observation is recorded IN ADDITION to the verdict below — the
         # verdict policy is untouched, and a registry failure never breaks
-        # a probe (record_redirect never raises; this try is belt-and-braces).
-        if host_registry is not None and not error and _final and _final != url:
-            try:
-                _obs = host_registry.record_redirect(url, _final)
-                if _obs.get("count"):
-                    stats["redirects_seen"] += 1
-                if _obs.get("applied"):
-                    stats["moves_applied"] += 1
-            except Exception:
-                pass
+        # a probe.
+        if not error:
+            _record_move(url, _final, stats)
         checked_at = time.time()
         stats["probed"] += 1
         verdict = head_verdict(status, error, checked_at)
+        if _needs_get_fallback(host, status, error, verdict):
+            # HEAD lied or refused: one ranged GET judges instead. When
+            # the GET chain earns a verdict it replaces HEAD's; when it
+            # earns none either, the row stays eligible (no verdict is
+            # better than a verdict from a method this host mis-answers).
+            stats["get_fallbacks"] += 1
+            g_status, g_error, g_final = get_chain(
+                url, session, base_headers=headers, timeout=timeout,
+                spacing_s=spacing_s)
+            g_verdict = chain_verdict(g_status, g_error, checked_at)
+            if g_verdict is not None:
+                status, error, _final = g_status, g_error, g_final
+                verdict = g_verdict
+                if not g_error:
+                    _record_move(url, g_final, stats)
+            else:
+                verdict = None
         if verdict is None:
             stats["no_verdict"] += 1
             continue
@@ -753,7 +967,7 @@ def _probe_host(host: str, groups: list[dict], *, session_factory=None,
 def _merge_stats(stats_list: list[dict]) -> dict:
     merged: dict = {"hosts": 0, "probed": 0, "verdicts": 0, "by_status": {},
                     "no_verdict": 0, "blocked": 0, "reconnects": 0,
-                    "redirects_seen": 0, "moves_applied": 0}
+                    "redirects_seen": 0, "moves_applied": 0, "get_fallbacks": 0}
     for stats in stats_list:
         merged["hosts"] += 1
         merged["probed"] += stats["probed"]
@@ -763,6 +977,7 @@ def _merge_stats(stats_list: list[dict]) -> dict:
         merged["reconnects"] += stats["reconnects"]
         merged["redirects_seen"] += stats.get("redirects_seen", 0)
         merged["moves_applied"] += stats.get("moves_applied", 0)
+        merged["get_fallbacks"] += stats.get("get_fallbacks", 0)
         for status, count in stats["by_status"].items():
             merged["by_status"][status] = merged["by_status"].get(status, 0) + count
     return merged
@@ -922,9 +1137,11 @@ def _db_path_of(conn: sqlite3.Connection) -> str:
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         prog="fast_probe.py",
-        description="Host-partitioned, keep-alive, HEAD-only link prober (pilot). "
+        description="Host-partitioned, keep-alive link prober (pilot). "
+                    "HEAD first, with a ranged-GET fallback where HEAD lies "
+                    "(HEAD 400/405/501, or a host on KNOWN_HEAD_LIARS). "
                     "Probes --max-rows distinct unchecked URLs (biggest hosts "
-                    "first) and writes HEAD-only verdicts. --dry-run re-probes "
+                    "first) and writes verdicts. --dry-run re-probes "
                     "already-verdict rows and compares, writing nothing.")
     parser.add_argument("--db", required=True, help="catalog SQLite file to work on")
     parser.add_argument("--max-rows", type=int, default=DEFAULT_MAX_ROWS,
