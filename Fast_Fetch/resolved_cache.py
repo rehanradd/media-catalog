@@ -493,6 +493,105 @@ def serve_share(conn: sqlite3.Connection, *, day: str, hour_lo: int = 19,
                 "total": 0, "pool_share": None}
 
 
+#: Shared-warm demand ledger (H4 R5): aggregates only. A cold press — one
+#: user paying a full live resolve — is the only honest popularity signal
+#: the pool has (its top-200 pick ranks by catalog size, not presses).
+#: One row per (day, hour, work, band) counting cold presses. No link id,
+#: no user, no device, no URL: nothing here can name who pressed what, and
+#: nothing here can be served to a player — it only tells the pool which
+#: titles to warm first.
+_DEMAND_DDL = (
+    "CREATE TABLE IF NOT EXISTS shared_warm_demand ("
+    " day TEXT NOT NULL, hour INTEGER NOT NULL, work_id INTEGER NOT NULL,"
+    " band TEXT NOT NULL, cold_presses INTEGER NOT NULL DEFAULT 0,"
+    " PRIMARY KEY (day, hour, work_id, band))"
+)
+
+#: Demand window the pool reads, the press count that makes a work hot, and
+#: the most works one --demand run may promote (the --pins cap: demand can
+#: never crowd out the priority pick the way an unbounded list could).
+DEMAND_WINDOW_HOURS = 6
+DEMAND_MIN_PRESSES = 2
+DEMAND_MAX_WORKS = 20
+
+
+def _ensure_demand_table(conn) -> None:
+    conn.execute(_DEMAND_DDL)
+
+
+def note_cold_press(conn, *, work_id, band, now=None):
+    """Count one cold press for (work, band). Never raises.
+
+    Returns the new count for the (day, hour, work, band) cell, or None
+    when the input is unusable or the write failed. The caller owns the
+    transaction (same contract as `note_serve_outcome`): a press that is
+    already being banked records its demand in the same write. `band` is
+    the pressed link's tier band; anything unusable falls back to
+    "unspecified" rather than inventing a band.
+    """
+    try:
+        work_id = int(work_id)
+    except (TypeError, ValueError):
+        return None
+    if work_id <= 0:
+        return None
+    band = (str(band or "").strip() or "unspecified")[:16]
+    try:
+        _ensure_demand_table(conn)
+        stamp = time.localtime(now if now is not None else time.time())
+        day = time.strftime("%Y-%m-%d", stamp)
+        conn.execute(
+            "INSERT INTO shared_warm_demand (day, hour, work_id, band,"
+            " cold_presses) VALUES (?, ?, ?, ?, 1)"
+            " ON CONFLICT(day, hour, work_id, band)"
+            " DO UPDATE SET cold_presses = cold_presses + 1",
+            (day, stamp.tm_hour, work_id, band))
+        row = conn.execute(
+            "SELECT cold_presses FROM shared_warm_demand"
+            " WHERE day = ? AND hour = ? AND work_id = ? AND band = ?",
+            (day, stamp.tm_hour, work_id, band)).fetchone()
+        return int(row[0]) if row else None
+    except Exception:
+        return None
+
+
+def hot_works(conn, *, hours=DEMAND_WINDOW_HOURS,
+              min_presses=DEMAND_MIN_PRESSES, limit=DEMAND_MAX_WORKS,
+              now=None):
+    """Works with the most cold presses in the last `hours` hours, hottest first.
+
+    Returns [{"work_id", "presses"}]. A flagged work — or an unflagged twin
+    of one — never appears: the pool must not warm the twin of a hidden
+    title (same exclusion as `prefetch_worker.select_priority_posts`).
+    Read-only; never raises; [] when the ledger or the catalog is absent.
+    The (day, hour) lower bound is a row comparison on ISO days, so the
+    window spans midnight correctly.
+    """
+    try:
+        tables = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
+        if "shared_warm_demand" not in tables or "posts" not in tables:
+            return []
+        stamp = time.localtime(
+            (now if now is not None else time.time()) - float(hours) * 3600)
+        cutoff_day = time.strftime("%Y-%m-%d", stamp)
+        rows = conn.execute(
+            "SELECT d.work_id, SUM(d.cold_presses) AS presses"
+            " FROM shared_warm_demand d JOIN posts p ON p.id = d.work_id"
+            " WHERE (d.day, d.hour) >= (?, ?)"
+            " AND p.is_18_plus = 0"
+            " AND (p.canonical_key IS NULL OR NOT EXISTS ("
+            "  SELECT 1 FROM posts f WHERE f.is_18_plus = 1"
+            "  AND f.canonical_key = p.canonical_key))"
+            " GROUP BY d.work_id HAVING presses >= ?"
+            " ORDER BY presses DESC, d.work_id ASC LIMIT ?",
+            (cutoff_day, stamp.tm_hour, int(min_presses),
+             int(limit))).fetchall()
+        return [{"work_id": int(r[0]), "presses": int(r[1])} for r in rows]
+    except Exception:
+        return []
+
+
 def note_failure(conn: sqlite3.Connection, link_id: int) -> int:
     """Close the circuit for one link whose URL was just probed and found dead.
 

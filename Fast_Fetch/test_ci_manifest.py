@@ -70,6 +70,7 @@ EXCLUDED_RE = re.compile(r"^\s*#\s*EXCLUDED:\s*((?:[a-z_]+/)?test_\w+\.py)\b")
 # the step).
 MANDATORY_RUN = (
     "test_resolved_cache.py",
+    "test_shared_cache.py",
     "test_host_classifier.py",
     "test_catalog_exporter.py",
     "test_domain_resolver.py",

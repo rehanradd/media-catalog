@@ -7124,6 +7124,76 @@ def _start_preresolve(source_id: int):
     return thread
 
 
+#: Sibling-band warm (H4 R5): a cold press banks one band; the print's
+#: other bands stay cold for the next press. The fill warms at most two
+#: links per title (start rung + auto rung), so a press warms at most two
+#: siblings, only when they are definitely cold, only when the process-wide
+#: warm budget has room — the same fail-closed shape as the detail warm
+#: (a skipped warm only means the next press pays live).
+_SHARED_WARM_MAX_SIBLINGS = 2
+
+
+def _note_shared_demand(conn, source_id: int) -> None:
+    """Record one cold press in the shared-warm demand ledger. Never raises.
+
+    `conn` is the caller's open connection (the cold-bank branch already
+    holds one); the work/band come from the pressed link's own release row.
+    A link with no release row records nothing — an unusable key must not
+    invent demand. The adult gate above the bank branch already ran, so a
+    flagged work can never reach this call; `hot_works` re-checks anyway.
+    """
+    try:
+        import resolved_cache
+        row = conn.execute(
+            "SELECT r.post_id, r.quality, r.codec, r.size "
+            "FROM download_sources s JOIN releases r ON r.id = s.release_id "
+            "WHERE s.id = ?", (int(source_id),)).fetchone()
+        if row is None:
+            return
+        band = tiers.band_of(row[1], row[2], row[3])
+        resolved_cache.note_cold_press(conn, work_id=int(row[0]), band=band)
+    except Exception:      # noqa: BLE001 — a counter must never break playback
+        return
+
+
+def _warm_sibling_bands(source_id: int) -> None:
+    """Warm the pressed title's other bands in the background. Never raises.
+
+    The siblings are exactly the fill's links for the title (start rung +
+    auto rung, at most two — see `prefetch_worker.fill_links_for_post`),
+    minus the link just pressed. Each sibling warms only when it is
+    definitely cold (`_preresolve_is_warm` False — unknown stays
+    unspawned, the detail warm's fail-closed rule) and only through
+    `_start_preresolve`, which dedups in-flight warms and refuses when
+    the process-wide warm budget is full. Runs on the public port only:
+    both callers are `not full` cold-bank branches.
+    """
+    try:
+        import prefetch_worker
+        with get_db() as conn:
+            release = conn.execute(
+                "SELECT release_id FROM download_sources WHERE id = ?",
+                (int(source_id),)).fetchone()
+            if release is None:
+                return
+            post = conn.execute(
+                "SELECT post_id FROM releases WHERE id = ?",
+                (int(release[0]),)).fetchone()
+            if post is None:
+                return
+            links = prefetch_worker.fill_links_for_post(
+                conn, tiers, int(post[0]))
+    except Exception:      # noqa: BLE001 — a warm that cannot start is skipped
+        return
+    for link_id in [l for l in links if l != int(source_id)][:_SHARED_WARM_MAX_SIBLINGS]:
+        try:
+            if _preresolve_is_warm(link_id) is not False:
+                continue
+            _start_preresolve(link_id)
+        except Exception:      # noqa: BLE001 — one sibling's failure skips it
+            continue
+
+
 def _split_audio_param(value) -> tuple:
     """``?audio=Hindi,English`` -> ``("Hindi", "English")`` (empty -> ())."""
     if not value:
@@ -8449,6 +8519,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         conn.execute("PRAGMA busy_timeout = 250")
                         resolved_cache.note_serve_outcome(
                             conn, route="stream", served_from="cold")
+                        # H4 R5 shared warm: this cold press is the demand
+                        # signal — record it, then warm the print's other
+                        # bands so the next press at another band hits warm.
+                        _note_shared_demand(conn, int(source_id))
+                    _warm_sibling_bands(int(source_id))
                 except Exception:      # noqa: BLE001
                     pass
 
@@ -8623,6 +8698,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
                             conn.execute("PRAGMA busy_timeout = 250")
                             resolved_cache.note_serve_outcome(
                                 conn, route="download", served_from="cold")
+                            # H4 R5 shared warm: same demand signal and
+                            # sibling warm as the stream route above.
+                            _note_shared_demand(conn, int(source_id))
+                        _warm_sibling_bands(int(source_id))
                     except Exception:      # noqa: BLE001
                         pass
                 elif not full:

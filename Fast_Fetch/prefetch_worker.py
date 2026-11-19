@@ -577,12 +577,32 @@ def _resolve_one(*, fast_fetch, resolved_cache, source_id, title,
     return "failed" if not blocked else "failed_gated"
 
 
+def _demand_pin_ids(conn, *, limit: int = 20) -> tuple[int, ...]:
+    """Post ids the shared demand ledger says are hot, hottest first.
+
+    The pool's demand consumer: a fill/top-up with --demand warms these
+    first (after operator pins). Capped at the --pins cap (20) so demand
+    can never crowd out the priority pick the way an unbounded list could.
+    Never raises: an unreadable ledger answers (), and `hot_works` itself
+    already excludes flagged works and their unflagged twins.
+    """
+    try:
+        import resolved_cache
+        return tuple(w["work_id"] for w in resolved_cache.hot_works(
+            conn, hours=resolved_cache.DEMAND_WINDOW_HOURS,
+            min_presses=resolved_cache.DEMAND_MIN_PRESSES,
+            limit=int(limit)))
+    except Exception:      # noqa: BLE001 — an unreadable ledger is no demand
+        return ()
+
+
 def prefetch_once(*, limit: int, min_fresh: float, load_ceiling: float,
                   fail_backoff: float, dry_run: bool, verbose: bool,
                   max_wait_seconds: float = MAX_WAIT_SECONDS,
                   _failure_backoff: dict[int, float],
                   workers: int = 1, warmup_count: int | None = None,
-                  mode: str = "sweep", pins: tuple[int, ...] = ()) -> dict:
+                  mode: str = "sweep", pins: tuple[int, ...] = (),
+                  demand: bool = False) -> dict:
     """One sweep: select the priority titles, resolve the cold ones.
 
     `workers` is the resolve fan-out — the operator's `prefetch_concurrency`
@@ -599,13 +619,21 @@ def prefetch_once(*, limit: int, min_fresh: float, load_ceiling: float,
     links per title (start rung + auto rung) instead of the one Tier-1
     winner; hubcloud-family links resolve last. `stats` gains "pins"
     (pinned titles selected) and "links" (distinct links to resolve).
+
+    `demand=True` (fill only) promotes the shared-warm demand ledger's hot
+    works to pins — after the operator's own pins, before the priority
+    pick — so a title that went hot between runs is warm by the next fill
+    instead of cold for every press until the next run. `stats` gains
+    "demand" (hot works that survived selection). A sweep ignores it: the
+    sweeps exist to keep the pool fresh, not to chase the evening peak.
     """
     import fast_fetch
     import resolved_cache
     import tiers
 
     stats = {"posts": 0, "pins": 0, "tier1": 0, "links": 0, "warm": 0,
-             "resolved": 0, "failed": 0, "skipped_no_link": 0, "gated": 0}
+             "resolved": 0, "failed": 0, "skipped_no_link": 0, "gated": 0,
+             "demand": 0}
     if _prefetch_paused():
         log("prefetching is paused by the operator (panel pause "
             "prefetch_global); sweep skipped.")
@@ -615,12 +643,18 @@ def prefetch_once(*, limit: int, min_fresh: float, load_ceiling: float,
     with fast_fetch.get_db() as conn:
         resolved_cache.init_resolved_cache(conn)
         conn.commit()
+        if mode == "fill" and demand:
+            demand_ids = _demand_pin_ids(conn)
+            pins = tuple(dict.fromkeys((*pins, *demand_ids)))
         if mode == "fill" and pins:
             pinned = select_priority_posts(conn, len(pins), only_ids=pins)
             order = {pid: idx for idx, pid in enumerate(pins)}
             pinned = sorted(pinned,
                             key=lambda r: order.get(r["post_id"], len(order)))
             stats["pins"] = len(pinned)
+            if demand:
+                stats["demand"] = len(
+                    [p for p in pinned if p["post_id"] in set(demand_ids)])
             pinned_ids = {r["post_id"] for r in pinned}
             rest = [p for p in
                     select_priority_posts(conn, limit + len(pinned))
@@ -738,7 +772,7 @@ def prefetch_once(*, limit: int, min_fresh: float, load_ceiling: float,
 
 
 def _run_one_sweep(*, args, limit, workers, warmup_count, failure_backoff,
-                   pins, fill):
+                   pins, fill, demand=False):
     """One sweep under the overlap guard, or None when this run yields.
 
     The guard has two halves: our own family's lock (fail fast — a second
@@ -769,7 +803,8 @@ def _run_one_sweep(*, args, limit, workers, warmup_count, failure_backoff,
                              max_wait_seconds=args.max_wait_seconds,
                              _failure_backoff=failure_backoff,
                              workers=workers, warmup_count=warmup_count,
-                             mode="fill" if fill else "sweep", pins=pins)
+                             mode="fill" if fill else "sweep", pins=pins,
+                             demand=demand)
     finally:
         if lock_handle is not None:
             lock_handle.close()
@@ -811,6 +846,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--pins", default=None,
                         help="comma-separated post ids warmed first in a fill "
                              "(at most 20; a flagged or missing pin is dropped)")
+    parser.add_argument("--demand", action="store_true",
+                        help="fill/topup only: warm the titles with the most "
+                             "recent cold presses first (shared demand ledger, "
+                             "H4 R5), after --pins and before the priority pick")
     parser.add_argument("--lock-path", default=PREFETCH_LOCK_PATH,
                         help="shared flock between fill, top-up and sweeps "
                              "(default /tmp/radd-prefetch.lock)")
@@ -862,6 +901,9 @@ def main(argv: list[str] | None = None) -> int:
     # None (unwired panel) means no cap; a stored 0 means "warm up
     # nothing" and is honoured as an empty todo list by prefetch_once.
     pins = parse_pins(args.pins) if fill else ()
+    # --demand is a fill/top-up knob only: the sweeps keep the pool fresh,
+    # they do not chase the evening peak.
+    demand = bool(args.demand and fill)
 
     signal.signal(signal.SIGINT, _handle_stop)
     signal.signal(signal.SIGTERM, _handle_stop)
@@ -870,6 +912,7 @@ def main(argv: list[str] | None = None) -> int:
         f"workers {workers}, "
         f"warmup cap {warmup_count if warmup_count is not None else 'none'}, "
         f"pins {len(pins)}, "
+        f"demand {'on' if demand else 'off'}, "
         f"fresh window {args.min_fresh:.0f}s, "
         f"load ceiling {args.load_ceiling:.1f}, "
         f"db {os.environ.get('RADD_DB_PATH', 'default')}")
@@ -880,7 +923,7 @@ def main(argv: list[str] | None = None) -> int:
             stats = _run_one_sweep(
                 args=args, limit=limit, workers=workers,
                 warmup_count=warmup_count, failure_backoff=failure_backoff,
-                pins=pins, fill=fill)
+                pins=pins, fill=fill, demand=demand)
             if stats is not None:
                 log("sweep: " + " ".join(f"{k}={v}" for k, v in stats.items()) +
                     f" in {time.time() - started:.1f}s")

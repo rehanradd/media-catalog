@@ -453,6 +453,13 @@ jobs:
       - name: 🧪 test_resolved_cache.py
         run: python3 -S Fast_Fetch/test_resolved_cache.py
 
+      # H4 R5 (shared streaming cache): the demand ledger, the sibling-band
+      # warm and the --demand fill promotion, tested offline against an
+      # in-memory DB with stubbed resolvers and stubbed warm machinery.
+      # Offline, stdlib, in-memory/scratch fixtures, no network.
+      - name: 🧪 test_shared_cache.py
+        run: python3 -S Fast_Fetch/test_shared_cache.py
+
       # Gap A7 (prefetch run mode): the worker + its systemd timer/service +
       # runbook, tested offline against a scratch DB with a stubbed resolver.
       # Offline, stdlib, in-memory/scratch fixtures, no network.
