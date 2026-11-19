@@ -2,6 +2,7 @@ package com.raddstream.app.player
 
 import androidx.media3.cast.MediaItemConverter
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import com.google.android.gms.cast.MediaQueueItem
 
@@ -15,11 +16,15 @@ import com.google.android.gms.cast.MediaQueueItem
  * mimeType, so the converter reads it back into the protocol the spike's
  * mapper understands — a URL alone cannot be trusted to say `.m3u8`.
  *
- * The 1.3.1 shape is [MediaItemConverter.toMediaQueueItem]: the converter
- * hands the CastPlayer a queue item wrapping the MediaInfo (the newer
- * `toMediaInfo` shape arrived with the 1.9.0 rewrite and does not exist
- * here). The queue item carries no autoplay or preload flags — the
- * defaults are the receiver's own.
+ * The 1.3.1 shape is bidirectional: [MediaItemConverter] declares both
+ * [toMediaQueueItem] (our item → the receiver's queue item, the load
+ * direction) and [toMediaItem] (the receiver's queue item → our item, the
+ * direction the CastPlayer reports its remote timeline back in). The
+ * newer `toMediaInfo` shape arrived with the 1.9.0 rewrite and does not
+ * exist here. The queue item carries no autoplay or preload flags — the
+ * defaults are the receiver's own. The reverse trip keeps the address,
+ * the title, and the declared HLS/DASH type, so a round-tripped item
+ * loads exactly as the original would.
  *
  * Not carried, deliberately (same limits as the spike): subtitles (the
  * Default Receiver would need text tracks in the MediaInfo — a follow-up),
@@ -47,5 +52,22 @@ class CastMediaItemConverter : MediaItemConverter {
             playback = playback,
         )
         return MediaQueueItem.Builder(info).build()
+    }
+
+    override fun toMediaItem(mediaQueueItem: MediaQueueItem): MediaItem {
+        val info = mediaQueueItem.mediaInfo
+        val metadata = MediaMetadata.Builder().apply {
+            info.metadata?.title?.let { setTitle(it) }
+        }.build()
+        return MediaItem.Builder()
+            .setUri(info.contentId)
+            .apply {
+                when (info.contentType) {
+                    "application/x-mpegurl" -> setMimeType(MimeTypes.APPLICATION_M3U8)
+                    "application/dash+xml" -> setMimeType(MimeTypes.APPLICATION_MPD)
+                }
+            }
+            .setMediaMetadata(metadata)
+            .build()
     }
 }

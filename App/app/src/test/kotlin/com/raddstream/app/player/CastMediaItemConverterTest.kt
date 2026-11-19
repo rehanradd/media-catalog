@@ -62,4 +62,13 @@ class CastMediaItemConverterTest {
         val info = converter.toMediaQueueItem(item(redirector, MimeTypes.APPLICATION_M3U8, null)).mediaInfo
         assertNull(info.metadata?.title)
     }
+
+    @Test
+    fun `a round trip keeps the address, the title and the HLS type`() {
+        val original = item(redirector, MimeTypes.APPLICATION_M3U8, "One Piece")
+        val back = converter.toMediaItem(converter.toMediaQueueItem(original))
+        assertEquals(redirector, back.localConfiguration?.uri.toString())
+        assertEquals(MimeTypes.APPLICATION_M3U8, back.localConfiguration?.mimeType)
+        assertEquals("One Piece", back.mediaMetadata.title.toString())
+    }
 }
