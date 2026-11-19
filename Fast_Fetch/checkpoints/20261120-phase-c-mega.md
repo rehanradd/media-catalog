@@ -141,6 +141,19 @@ leak through a public handle).
 - **Not** unblocked by: retrying the API, another sample link, a browser
   replay, or yt-dlp (no extractor exists).
 
+## CI (branch `muse/phase-c-mega-20261120`)
+
+- Commit `9dfe2f51` pushed; Backend CI run **44622054076** FAILED (~02:52 PKT)
+  on `test_docs_invariants.py` (2 failures, both mine, not flakes):
+  (1) CONTINUITY.md claimed 122 archive files but `checkpoints/` held 123
+  after my new file; (2) my one-line CONTINUITY entry put it at 12,417 B,
+  over the 12,000 B index ceiling.
+- Fix (fixup commit, no amend/force-push): count claim corrected to
+  "123 session files (120 dated + 3 undated)"; the long CONTINUITY line
+  removed (file back to 11,974 B / 92 lines); the session entry indexed in
+  `checkpoints/README.md` (newest first) instead, which is where long
+  entries live. `test_docs_invariants.py` 22/22 green locally after the fix.
+
 ## Files changed
 
 - `Fast_Fetch/checkpoints/20261120-phase-c-mega.md` (this file).
