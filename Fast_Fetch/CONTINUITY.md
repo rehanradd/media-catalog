@@ -7,7 +7,7 @@
 
 ## ✅ Open items — index (q3, 2026-10-30; pointers only)
 
-1. **This file is a pointer, not a history** 123 session files (120 dated + 3 undated) cover
+1. **This file is a pointer, not a history** 125 session files (122 dated + 3 undated) cover
 
    every one of them verbatim: [`checkpoints/README.md`](checkpoints/README.md). Nothing was
    deleted, reworded, or summarized. The count is `ls Fast_Fetch/checkpoints/*.md` minus `README.md`,
@@ -31,7 +31,7 @@
    "Project Identity" is the law, `docs/SPEC_ADULT_FLAG_EVIDENCE.md` the receipts.
 6. Still open, design only: the link-health sweep — `docs/LINK_HEALTH_SWEEP.md` prices it at ≈ 7 days
    of this box and concludes it is not feasible as one run; the 429-parking and per-run cap are unbuilt.
-7. Queued quiet-window actions (load-gated, nothing run tonight): see "🕒 Queued" below.
+7. Queued quiet-window actions (load-gated, nothing run tonight): rotated verbatim to [`checkpoints/20261120-continuity-queued-actions.md`](checkpoints/20261120-continuity-queued-actions.md) on 2026-11-20 to keep this index under its 12,000 B ceiling.
 8. The documentation-diet notes that were items 8–9 here are rotated verbatim into
    `checkpoints/20261031-q2-humtv-status-and-rotated-diet-notes.md`.
 9. `[Q2-HUMTV-STATUS]` — the Hum TV importer exists on trunk, is import-clean, and is byte-identical
@@ -54,18 +54,6 @@
 
 ---
 
-## 🕒 Queued quiet-window actions (run only when `cat /proc/loadavg` 1-min is under 4)
-
-| # | exact command | expected cost | why |
-|---|---|---|---|
-| 1 | `python3 -S Fast_Fetch/site_scout.py https://movibd.com --max-samples 20 --timeout 12 --retries 1` | ~26 requests to one host, minutes, serial at 1 in-flight per host | measured from this box 2026-10-30: `movibd.com` answered real HTML with a sitemap; `.online` is a parked stub, `.top` challenge-blocked (blueprints `movibd_blueprint.json`, `movibd_com_blueprint.json`) |
-| 2 | new `Fast_Fetch/importers/import_movibd.py` + `test_movibd_import.py` writing to **`movibd.db` staging only** | unknown N posts; price = `N × 2 pages × 1.1 s / distinct_hosts` — never into `fast_fetch.db` or the merged catalog | repo rule 9 (per-site staging DB) |
-| 3 | the adult-twin count against the live 6.4 GB catalog — **no command exists yet, writing it is the task** | a single `WHERE is_18_plus=1` count measured 26.46 s by qoder4 2026-10-30, so a scan of that size is a load-under-4-only action | the re-key residual in item 5 |
-| 4 | the 3.7 M-link health sweep | ≈ 7 days thread-bound (`docs/LINK_HEALTH_SWEEP.md` §1) | not scheduled; design doc only |
-| 5 | `nice -n 19 python3 -S Fast_Fetch/importers/import_humtv.py sync --db /home/ubuntu/radd-stream-data/humtv.db` then `nice -n 19 python3 -S Fast_Fetch/importers/import_humtv.py crawl --db /home/ubuntu/radd-stream-data/humtv.db --workers 1 --delay 0.5` | sync ≈ 1–2 min (57 REST pages); crawl ≈ 2.5–4.5 h serial for 5,625 pages (`workers != 1` refused in code); verify `--limit 200` ≈ 5 min | **Start only at load1 < 3.5; stop (Ctrl-C) at 4.0.** Self-stops too: MemAvailable < 2,500 MB or SwapFree < 800 MB refuses, a 429 pauses and the row stays queued, Ctrl-C leaves the rest `scraped=0` and resumable. Staging vault only |
-| 6 | `nice -n 19 python3 -S Fast_Fetch/importers/test_dub_collision_census.py --census > /tmp/q2_census_20261031.json` | 1–3 min estimated; nearest comparable measured 12.0 s at load 0.91 | fills the three headline numbers in the census checkpoint; the script exits 2 above `LOAD_CEILING = 4.0` |
-
----
 - **Project Quick Summary** → [`checkpoints/20261116-project-quick-summary.md`](checkpoints/20261116-project-quick-summary.md)
 
 ## Rotated session history
@@ -84,6 +72,7 @@ The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete i
 - [Session 2026-11-12 — self-check `[LIVE-TV-503]`](checkpoints/20261112-selfcheck-live-tv-503-logos.md)
 - [2026-11-20 — H4 R8 clearance-cookie reuse](checkpoints/20261120-h4-r8-clearance-cookie.md): per-host clearance store + probe/resolver wiring; 43 tests green locally, Backend CI pending.
 - [2026-11-20 — H4 R9 resolver probes](checkpoints/20261120-h4-r9-resolver-probes.md): serve-time re-probe of an aging banked row before it is 302'd — fresh rows serve unprobed, a verifying probe refreshes the row, an endpoint-answered failure reads as a cache miss (live resolver fails over), a no-answer probe serves fail-open; 18 tests green locally, Backend CI pending.
+- [2026-11-20 — Lane C gdrive-sharer family](checkpoints/20261120-phasec-gdfamily.md): shared sharer unwrapper (appdrive/gdflix: GET /file/ + POST action=direct with the page key → drive link → unwrap_gdrive) + gdtot /ddl/ + gdbot token routes, 34 tests green locally, Backend CI pending; gd-mirror/gdmirror wired to unwrap_iqsmart by name + resolve_required in the projection (live proof: 2 rows active 206 HLS). gdflix live-blocked (CF 403), gdtot TLS-reset, appdrive TCP-dead — chains fixture-tested only, nothing served on a guess; kmhd has no unwrapper (aggregator pages).
 
 ## Moved out (reference prose, verbatim)
 

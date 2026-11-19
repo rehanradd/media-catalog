@@ -492,6 +492,15 @@ jobs:
       - name: 🧪 test_resolver_probes.py
         run: python3 -S Fast_Fetch/test_resolver_probes.py
 
+      # Lane C, Phase C (gdrive-sharer family: appdrive / gdflix / gdtot
+      # + gd-mirror wiring): the documented sharer chain (GET /file/<id>,
+      # POST action=direct with the page key, drive link to unwrap_gdrive)
+      # and gdtot's /ddl/ + gdbot token routes, fixture-tested offline;
+      # gd-mirror/gdmirror ride unwrap_iqsmart by name and flip to
+      # resolve_required in the projection. No live socket.
+      - name: 🧪 test_gdrive_sharer.py
+        run: python3 -S Fast_Fetch/importers/test_gdrive_sharer.py
+
       # Gap A7 (prefetch run mode): the worker + its systemd timer/service +
       # runbook, tested offline against a scratch DB with a stubbed resolver.
       # Offline, stdlib, in-memory/scratch fixtures, no network.

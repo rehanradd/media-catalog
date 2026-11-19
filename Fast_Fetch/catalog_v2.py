@@ -150,6 +150,13 @@ _SERVER_RESOLVABLE_SERVICES = frozenset({
     "streamtape", "stream", "streamwish", "mixdrop", "voe", "vidhide",
     "1xplayer", "uploadflix", "vidout", "doodstream",
     "mxdrop", "animahd-player",
+    # Lane C (Phase C, 2026-11-20): gd-mirror/gdmirror rows are iqsmart
+    # embeds — the Stage-1 streamhg chain and resolve_url already unwrap
+    # them by shape, so the iframe rows must read resolve_required, not
+    # webview. (The sharer family — gdflix/gdtot/appdrive — stays out: its
+    # rows are url-typed cloud pages, already resolve_required, and its
+    # chains are fixture-tested only, not live-proven.)
+    "gd-mirror", "gdmirror",
 })
 _BRIDGE_SERVICES = {
     "shortink", "shortlink", "linkvertise", "ezylink", "vlink", "shrinkme", "urlshort",

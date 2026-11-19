@@ -360,6 +360,9 @@ SERVICE_FILMU = "filmu"
 SERVICE_CINEVERSE = "cineverse"
 SERVICE_VIDOUT = "vidout"
 SERVICE_DOODSTREAM = "doodstream"
+SERVICE_APPDRIVE = "appdrive"
+SERVICE_GDFLIX = "gdflix"
+SERVICE_GDTOT = "gdtot"
 
 VIDBOLT_HOST_RE = re.compile(r"(?:^|\.)vidbolt\.(?:xyz|pro)$", re.I)
 VIDBOLT_CONTENT_RE = re.compile(
@@ -2954,6 +2957,453 @@ def unwrap_filepress(url, fetch=None, verify=True):
 
 
 # ---------------------------------------------------------------------------
+# gdrive sharers — appdrive / gdflix / gdtot (the "gdrivesharer" family)
+# ---------------------------------------------------------------------------
+# Audit 2026-11-20 (Lane C, Phase C) against the live catalog + Oracle VM egress:
+#   gdflix    122,070 rows, all https://gd.kmhd.me/file/<id> (302 -> new10.gdflix.io)
+#   gdtot      78,577 rows, all https://new.gdtot.eu/file/<digits>
+#   gd-mirror  59,394 rows, all https://streams.iqsmartgames.com/embed/... (iqsmart)
+#   appdrive   35,863 rows, all https://appdrive.in/file/<hex>
+#   kmhd       30,253 rows, all https://kmhd.eu/archives/<n> (WordPress post pages)
+#
+# What the VM egress actually sees (probes 2026-11-20, curl + urllib):
+#   - gdflix: 403 Cloudflare "Just a moment..." on gd.kmhd.me AND on
+#     new10.gdflix.io, even with full browser headers. No lighter route.
+#   - gdtot: new.gdtot.eu/file/<id> 302s to ww16.gdtot.eu/file/<id>?sub1=<uuid>,
+#     then the follow-up hop resets the TLS connection (curl 35); /ddl/ and
+#     gdbot.xyz reset the same way, intermittently (one /ddl/ probe 302'd).
+#     The site is alive (hatch egress: 200 in ~6 s) — the VM's datacenter
+#     egress is what gets reset.
+#   - appdrive.in: TCP connect times out on 443 and 80 from the VM (and an
+#     empty reply from hatch egress); appdrive.info answers 200 but serves a
+#     ParkLogic parking page, not the file page. The .in host is unreachable.
+#   - kmhd.eu/archives: 200, WordPress. The page is a link aggregator: its
+#     buttons point at OTHER sharers — "G-Drive [Tot]" -> gdtot.re/<slug>,
+#     "G-Drive [GD]" -> gdfiles.org/file/<id>, "G-Drive [PD]" ->
+#     new.piratedrive.com/file/<id>, "G-Drive [Klop]" -> drive.klop.me/file/<id>.
+#     No button yields a drive link directly, so a kmhd parser alone plays
+#     nothing until a downstream chain is proven; none is built here.
+#   - gd-mirror: NOT a sharer at all. Every sampled row is an iqsmart embed
+#     and already resolves through the live Stage-1 path
+#     (current_hosts.classify_backend -> "streamhg" -> _unwrap_iqsmart) and
+#     through resolve_url here (is_iqsmart_embed). What was missing was the
+#     NAME path: resolve_service("gd-mirror") answered no_unwrapper, and
+#     catalog_v2._SERVER_RESOLVABLE_SERVICES did not list the labels, so
+#     iframe rows showed as webview instead of resolve_required. Both are
+#     wired in this change; no new chain was needed.
+#
+# The chain below is the documented "sharer" flow, from two independent
+# implementations of the same app (bipinkrish/Link-Bypasser-Bot ddl.py
+# sharer_scraper + gdtot, and sanjit-sinha/PyBypass's gdrivesharer notes):
+#   GET <host>/file/<id> (session cookies kept)
+#     -> page carries "key", "<key>" and a <button id="drc">
+#   POST same URL, multipart/form-data action=direct, key=<key>,
+#     action_token=(empty), header x-token: <hostname>
+#     -> JSON {"url": "<drive link>"} (or an intermediate page whose
+#        .btn anchor carries the drive link)
+#     -> unwrap_gdrive verifies the drive link (Range probe, container magic)
+# PyBypass lists the same app under: appdrive, driveapp.in, drivehub.in,
+# gdflix.pro, drivesharer.in, drivebit.in, drivelinks.in, driveace.in,
+# drivepro.in, gdflix.top. gd.kmhd.me is gdflix's file host (it 302s to
+# new10.gdflix.io). gdtot's own chain is different: GET {host}/ddl/<id>
+# -> myDl('https://drive.google.com/...'), falling back to the gdbot.xyz
+# token page, whose path feeds back into this same sharer flow.
+#
+# Landing status (filepress precedent): the chain is built and fixture-tested,
+# but NO live proof exists yet — the VM egress is challenge/reset/blocked on
+# all three hosts, so verify=True returns "blocked"/"unknown" there today and
+# nothing is ever served on a guess. The unwrapper will serve the moment a
+# placed cf_clearance (H4 R8 store) or a reachable egress lets the page
+# through; until then the verdict names the block. kmhd has no unwrapper:
+# its rows are aggregator pages, not file pages.
+
+#: Hosts running the shared "gdrivesharer" app (PyBypass's lookalike list,
+#: plus gd.kmhd.me, gdflix's file host). gdfiles.org / piratedrive /
+#: drive.klop.me are NOT here: they only appear as kmhd button targets and
+#: their page shape is unprobed.
+SHARER_HOST_RE = re.compile(
+    r"""(?:^|\.)(?:appdrive\.info|appdrive\.in|driveapp\.in|drivehub\.in
+        |gdflix\.(?:pro|top|io)|gd\.kmhd\.me|drivesharer\.in|drivebit\.in
+        |drivelinks\.in|driveace\.in|drivepro\.in)$""",
+    re.I | re.X)
+SHARER_FILE_RE = re.compile(r"""^/file/([A-Za-z0-9_-]+)/?$""", re.I)
+#: gdtot rotates its apex (new.gdtot.eu, new2.gdtot.sbs, new5.gdtot.dad,
+#: gdtot.re); the chain keys on the host, not one domain.
+GDTOT_HOST_RE = re.compile(r"""(?:^|\.)gdtot\.[a-z]{2,}$""", re.I)
+GDTOT_FILE_RE = re.compile(r"""^/file/([0-9]+)/?$""")
+SHARER_KEY_RE = re.compile(r'''"key",\s*"([^"]+)"''')
+SHARER_KEY_RE_SQ = re.compile(r"""'key',\s*'([^']+)'""")
+SHARER_DRC_RE = re.compile(r"""id=["']drc["']""", re.I)
+SHARER_BTN_RE = re.compile(
+    r"""<a[^>]+class=["'][^"']*btn[^"']*["'][^>]*href=["']([^"']+)["']""", re.I)
+SHARER_BTN_RE_REV = re.compile(
+    r"""<a[^>]+href=["']([^"']+)["'][^>]*class=["'][^"']*btn[^"']*["']""", re.I)
+GDTOT_MYDL_RE = re.compile(r"""myDl\('([^']+)'\)""")
+#: The gdbot.xyz token link: an anchor whose class is the Tailwind row
+#: `inline-flex items-center justify-center`.
+GDBOT_TOKEN_ANCHOR_RE = re.compile(r"""<a\b[^>]*>""", re.I)
+GDBOT_TOKEN_CLASS_RE = re.compile(r"""inline-flex\s+items-center\s+justify-center""")
+GDBOT_TOKEN_PATH_RE = re.compile(r'''\("(.*?)"\)''')
+CF_CHALLENGE_RE = re.compile(
+    r"""challenges\.cloudflare|Just a moment|Attention Required|cf-turnstile""",
+    re.I)
+
+
+def _sharer_host(url: str) -> str:
+    return (urllib.parse.urlsplit(url or "").netloc or "").lower()
+
+
+def _sharer_service_for(host: str) -> str:
+    """The service label for a sharer host (the row's service name)."""
+    host = (host or "").lower()
+    if "appdrive" in host:
+        return SERVICE_APPDRIVE
+    if "gdflix" in host or "kmhd" in host:
+        return SERVICE_GDFLIX
+    if "driveapp" in host:
+        return "driveapp"
+    if "drivehub" in host:
+        return "drivehub"
+    if "drivesharer" in host:
+        return "drivesharer"
+    if "drivebit" in host:
+        return "drivebit"
+    if "drivelinks" in host:
+        return "drivelinks"
+    if "driveace" in host:
+        return "driveace"
+    if "drivepro" in host:
+        return "drivepro"
+    return SERVICE_GDFLIX
+
+
+def is_gdrive_sharer_url(url: str) -> bool:
+    """A /file/<id> page on a host running the shared sharer app."""
+    if not url:
+        return False
+    parts = urllib.parse.urlsplit(url.strip())
+    if parts.scheme.lower() not in ("http", "https"):
+        return False
+    return bool(SHARER_HOST_RE.search(parts.netloc or "")
+                and SHARER_FILE_RE.match(parts.path or ""))
+
+
+def is_gdtot_url(url: str) -> bool:
+    """A /file/<digits> page on any gdtot apex."""
+    if not url:
+        return False
+    parts = urllib.parse.urlsplit(url.strip())
+    if parts.scheme.lower() not in ("http", "https"):
+        return False
+    return bool(GDTOT_HOST_RE.search(parts.netloc or "")
+                and GDTOT_FILE_RE.match(parts.path or ""))
+
+
+def sharer_file_id(url: str) -> str:
+    """The /file/<id> segment of a sharer URL, or ""."""
+    if not url:
+        return ""
+    match = SHARER_FILE_RE.match(
+        urllib.parse.urlsplit(url.strip()).path or "")
+    return match.group(1) if match else ""
+
+
+def gdtot_file_id(url: str) -> str:
+    """The /file/<digits> segment of a gdtot URL, or ""."""
+    if not url:
+        return ""
+    match = GDTOT_FILE_RE.match(
+        urllib.parse.urlsplit(url.strip()).path or "")
+    return match.group(1) if match else ""
+
+
+def sharer_key_from_page(page: str) -> str:
+    """The "key", "<key>" token the direct-download POST needs, or ""."""
+    if not page:
+        return ""
+    found = SHARER_KEY_RE.search(page) or SHARER_KEY_RE_SQ.search(page)
+    return found.group(1) if found else ""
+
+
+def sharer_has_direct_button(page: str) -> bool:
+    """Whether the page carries the <button id="drc"> direct button."""
+    return bool(page) and bool(SHARER_DRC_RE.search(page))
+
+
+def sharer_btn_link(page: str) -> str:
+    """The first .btn anchor href on an intermediate page, or ""."""
+    if not page:
+        return ""
+    found = SHARER_BTN_RE.search(page) or SHARER_BTN_RE_REV.search(page)
+    return (found.group(1).strip() if found else "")
+
+
+def gdtot_mydl_link(page: str) -> str:
+    """The myDl('...') drive link on a gdtot /ddl/ page, or ""."""
+    if not page:
+        return ""
+    found = GDTOT_MYDL_RE.search(page)
+    return (found.group(1).strip() if found else "")
+
+
+def gdbot_token_url(page: str) -> str:
+    """The token link on a gdbot.xyz/file/<id> page, or ""."""
+    if not page:
+        return ""
+    for tag in GDBOT_TOKEN_ANCHOR_RE.findall(page):
+        if not GDBOT_TOKEN_CLASS_RE.search(tag):
+            continue
+        href = re.search(r"""href=["']([^"']+)["']""", tag, re.I)
+        if href:
+            return href.group(1).strip()
+    return ""
+
+
+def gdbot_token_path(page: str) -> str:
+    """The ("/path") string on a gdbot token page, or ""."""
+    if not page:
+        return ""
+    found = GDBOT_TOKEN_PATH_RE.search(page)
+    return (found.group(1).strip() if found else "")
+
+
+def _sharer_multipart(key: str) -> tuple[bytes, str]:
+    """The direct-download POST body + Content-Type (ddl.py's exact shape).
+
+    action=direct, key=<key>, action_token empty. The boundary is minted
+    per call so a replayed body is never served twice.
+    """
+    boundary = ("----WebKitFormBoundary"
+                + hashlib.sha256(f"{time.time()}-{key}".encode()).hexdigest()[:16])
+    body = (
+        f"--{boundary}\r\n"
+        "Content-Disposition: form-data; name=\"action\"\r\n\r\ndirect\r\n"
+        f"--{boundary}\r\n"
+        "Content-Disposition: form-data; name=\"key\"\r\n\r\n" + key + "\r\n"
+        f"--{boundary}\r\n"
+        "Content-Disposition: form-data; name=\"action_token\"\r\n\r\n\r\n"
+        f"--{boundary}--\r\n"
+    ).encode("utf-8")
+    return body, f"multipart/form-data; boundary={boundary}"
+
+
+def _sharer_status_for_page(status: int, body: str) -> str:
+    """The verdict word for a failed sharer page fetch (never "dead" on a guess)."""
+    if status in (404, 410):
+        return "dead"
+    if status in (401, 403, 429):
+        return "blocked"
+    if status == 0:
+        return "unknown"
+    return "unknown"
+
+
+def _sharer_direct_post(fetch, page_url: str, key: str) -> tuple[bool, str]:
+    """One direct-download POST. Returns (ok, url_or_note)."""
+    host = _sharer_host(page_url)
+    body, content_type = _sharer_multipart(key)
+    headers = {"Content-Type": content_type, "x-token": host}
+    try:
+        status, raw, _hdrs, _url = fetch(
+            page_url, headers=headers, timeout=DEFAULT_TIMEOUT,
+            method="POST", data=body)
+    except Exception as exc:  # network-level failure: unknown, not dead
+        return False, "fetch_error:%s" % type(exc).__name__
+    if status in (401, 403, 429):
+        return False, "blocked:%d" % status
+    if status in (404, 410):
+        return False, "dead:%d" % status
+    if status != 200:
+        return False, "http:%d" % status
+    try:
+        parsed = json.loads(_page_text(raw))
+    except Exception:
+        return False, "bad_json"
+    if not isinstance(parsed, dict) or not parsed.get("url"):
+        return False, "no_url_in_json"
+    return True, str(parsed["url"])
+
+
+def _sharer_drive_result(result: dict, drive_url: str, fetch,
+                         verify: bool) -> dict:
+    """Hand a minted drive link to unwrap_gdrive and keep this service's name.
+
+    The drive link is minted fresh by this call and never stored: the
+    durable identifier stays the sharer page URL in result["embed_url"].
+    """
+    drive_verdict = unwrap_gdrive(drive_url, fetch=fetch, verify=verify)
+    result["final_url"] = drive_verdict["final_url"]
+    result["status"] = drive_verdict["status"]
+    result["is_temporary"] = drive_verdict["is_temporary"]
+    result["expires_in"] = drive_verdict["expires_in"]
+    result["sources"] = drive_verdict["sources"]
+    result["signed_params"] = drive_verdict["signed_params"]
+    for field in ("http_status", "content_type", "size_bytes"):
+        if field in drive_verdict:
+            result[field] = drive_verdict[field]
+    result["notes"].extend(drive_verdict["notes"])
+    result["notes"].append("drive link minted by the sharer direct button")
+    return result
+
+
+def _sharer_resolve_page(fetch, page_url: str, service: str,
+                         verify: bool) -> dict:
+    """The sharer chain for one /file/<id> page URL. Returns a verdict dict."""
+    result = _new_result(service, page_url)
+    status, raw, _hdrs, final_url = fetch(result["embed_url"])
+    page = _page_text(raw)
+    if status != 200:
+        result["status"] = _sharer_status_for_page(status, page)
+        note = f"sharer page HTTP {status}"
+        if status in (401, 403, 429) and CF_CHALLENGE_RE.search(page or ""):
+            note += " (cloudflare challenge page)"
+        elif status == 0:
+            note += f" (transport: {(raw or '')[:120]!s})"
+        result["notes"].append(note)
+        return result
+    key = sharer_key_from_page(page)
+    if not key:
+        result["status"] = "unknown"
+        result["notes"].append("sharer page carries no direct-download key")
+        return result
+    if not sharer_has_direct_button(page):
+        result["status"] = "unknown"
+        result["notes"].append("sharer page has no direct download button")
+        return result
+    ok, url_or_note = _sharer_direct_post(fetch, final_url or page_url, key)
+    if not ok:
+        if url_or_note.startswith("blocked:"):
+            result["status"] = "blocked"
+        elif url_or_note.startswith("dead:"):
+            result["status"] = "dead"
+        else:
+            result["status"] = "unknown"
+        result["notes"].append(f"direct post: {url_or_note}")
+        return result
+    drive_url = url_or_note
+    if is_gdrive_link(drive_url):
+        return _sharer_drive_result(result, drive_url, fetch, verify)
+    # An intermediate page: the .btn anchor carries the drive link.
+    try:
+        status2, raw2, _h2, _u2 = fetch(drive_url)
+    except Exception as exc:
+        result["status"] = "unknown"
+        result["notes"].append(f"intermediate fetch error: {type(exc).__name__}")
+        return result
+    if status2 != 200:
+        result["status"] = _sharer_status_for_page(status2, _page_text(raw2))
+        result["notes"].append(f"intermediate page HTTP {status2}")
+        return result
+    btn = sharer_btn_link(_page_text(raw2))
+    if btn and is_gdrive_link(btn):
+        return _sharer_drive_result(result, btn, fetch, verify)
+    result["status"] = "unknown"
+    result["notes"].append("intermediate page carries no drive link")
+    return result
+
+
+def unwrap_gdrive_sharer(url: str, fetch=None, verify: bool = True,
+                         referer: str | None = None) -> dict:
+    """A sharer /file/<id> page -> a verified Drive file, or a named block.
+
+    The GET and the POST are one session: the page sets a session cookie the
+    direct-download POST is checked against, so the default fetch keeps a
+    cookie jar (one jar per call — nothing persists between unwraps). A
+    caller that injects a fetch supplies its own session behaviour.
+    `verify=False` still runs the page + POST (the drive link is minted, not
+    stored) but hands the link to unwrap_gdrive without probing it.
+    """
+    fetch = fetch or _cookie_jar_fetch()
+    result_host = _sharer_host(url)
+    result = _new_result(_sharer_service_for(result_host), url)
+    _withheld_referrer(result, referer)
+    if not is_gdrive_sharer_url(result["embed_url"]):
+        result["status"] = "unknown"
+        result["notes"].append("not a gdrive sharer file URL")
+        return result
+    verdict = _sharer_resolve_page(fetch, result["embed_url"],
+                                   result["service"], verify)
+    verdict["notes"] = result["notes"] + verdict["notes"]
+    return verdict
+
+
+def unwrap_gdtot(url: str, fetch=None, verify: bool = True,
+                 referer: str | None = None) -> dict:
+    """A gdtot /file/<id> page -> a verified Drive file, or a named block.
+
+    Two documented routes, in ddl.py's order:
+      1. GET {host}/ddl/<id> -> myDl('https://drive.google.com/...').
+      2. GET https://gdbot.xyz/file/<id> -> token link -> token page's
+         ("/path") -> the same sharer flow as unwrap_gdrive_sharer.
+    The default fetch is http_request, whose transport retries matter here:
+    the VM egress resets the gdtot TLS handshake intermittently, and a reset
+    says nothing about the file. Route 2's sharer POST needs a session, so
+    it switches to a cookie-jar fetch when the caller did not inject one.
+    """
+    injected = fetch is not None
+    fetch = fetch or http_request
+    result = _new_result(SERVICE_GDTOT, url)
+    _withheld_referrer(result, referer)
+    if not is_gdtot_url(result["embed_url"]):
+        result["status"] = "unknown"
+        result["notes"].append("not a gdtot file URL")
+        return result
+    file_id = gdtot_file_id(result["embed_url"])
+    parts = urllib.parse.urlsplit(result["embed_url"])
+    ddl_url = f"{parts.scheme}://{parts.netloc}/ddl/{file_id}"
+    try:
+        status, raw, _hdrs, _url = fetch(ddl_url)
+    except Exception as exc:
+        status, raw = 0, str(exc)
+    if status == 200:
+        link = gdtot_mydl_link(_page_text(raw))
+        if link and is_gdrive_link(link):
+            return _sharer_drive_result(result, link, fetch, verify)
+        result["notes"].append("ddl page carries no drive link")
+    else:
+        result["notes"].append(f"ddl page HTTP {status}")
+    token_page = None
+    try:
+        status, raw, _hdrs, _url = fetch(
+            f"https://gdbot.xyz/file/{file_id}")
+    except Exception as exc:
+        status, raw = 0, str(exc)
+    if status == 200:
+        token_page = _page_text(raw)
+    else:
+        result["notes"].append(f"gdbot page HTTP {status}")
+    if token_page:
+        token_url = gdbot_token_url(token_page)
+        if not token_url:
+            result["status"] = "unknown"
+            result["notes"].append("gdbot page carries no token link")
+            return result
+        try:
+            status, raw, _hdrs, _url = fetch(token_url)
+        except Exception as exc:
+            status, raw = 0, str(exc)
+        if status != 200:
+            result["status"] = "unknown"
+            result["notes"].append(f"token page HTTP {status}")
+            return result
+        path = gdbot_token_path(_page_text(raw))
+        if not path:
+            result["status"] = "unknown"
+            result["notes"].append("token page carries no path")
+            return result
+        tparts = urllib.parse.urlsplit(token_url)
+        sharer_url = f"{tparts.scheme}://{tparts.netloc}{path}"
+        sharer_fetch = fetch if injected else _cookie_jar_fetch()
+        verdict = _sharer_resolve_page(sharer_fetch, sharer_url,
+                                       SERVICE_GDTOT, verify)
+        verdict["notes"] = result["notes"] + verdict["notes"]
+        return verdict
+    result["status"] = "unknown"
+    result["notes"].append("gdtot routes exhausted without a drive link")
+    return result
+
+
+# ---------------------------------------------------------------------------
 # streamtape
 # ---------------------------------------------------------------------------
 
@@ -4379,6 +4829,12 @@ SERVICE_RESOLVERS = (
     (SERVICE_VIDRIFT, is_vidrift_embed, unwrap_vidrift),
     (SERVICE_VIDOUT, is_vidout_page, unwrap_vidout),
     (SERVICE_IQSMART, is_iqsmart_embed, unwrap_iqsmart),
+    # Lane C: the sharer tuple's service label is gdflix (the family's
+    # biggest member); the unwrapper itself names the service from the host
+    # (appdrive / gdflix / driveapp / ...), so the label here only matters
+    # when the unwrapper raises.
+    (SERVICE_GDFLIX, is_gdrive_sharer_url, unwrap_gdrive_sharer),
+    (SERVICE_GDTOT, is_gdtot_url, unwrap_gdtot),
     (SERVICE_FILMU, is_filmu_embed, unwrap_filmu),
     (SERVICE_CINEVERSE, is_cineverse_embed, unwrap_cineverse),
     (SERVICE_DOODSTREAM, is_doodstream_url, unwrap_doodstream),
@@ -4421,6 +4877,16 @@ RESOLVER_BY_SERVICE = {
     SERVICE_CINEVERSE: unwrap_cineverse,
     SERVICE_DOODSTREAM: unwrap_doodstream,
     SERVICE_VIDOUT: unwrap_vidout,
+    # Lane C (Phase C, 2026-11-20): the gdrive-sharer family. gd-mirror /
+    # gdmirror rows are iqsmart embeds, so they ride unwrap_iqsmart by name
+    # as well as by shape (is_iqsmart_embed already routes them in
+    # SERVICE_RESOLVERS and current_hosts.classify_backend maps the host to
+    # "streamhg"). kmhd has no entry: its rows are aggregator pages.
+    SERVICE_APPDRIVE: unwrap_gdrive_sharer,
+    SERVICE_GDFLIX: unwrap_gdrive_sharer,
+    SERVICE_GDTOT: unwrap_gdtot,
+    "gd-mirror": unwrap_iqsmart,
+    "gdmirror": unwrap_iqsmart,
 }
 
 
