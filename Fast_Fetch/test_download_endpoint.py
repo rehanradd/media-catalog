@@ -180,6 +180,23 @@ class DownloadEndpointTests(unittest.TestCase):
         self.assertNotIn("media.example.test", raw.decode("utf-8", "replace"))
         self.assertNotIn(SITE, raw.decode("utf-8", "replace"))
 
+    def test_json_descriptor_echoes_the_presented_handle(self):
+        """A descriptor answers the handle it was asked about, not a fresh
+        mint: mint_token embeds the expiry second, so a re-mint a second
+        later is a different token for the same download — Backend CI
+        44626688528 caught exactly that second-boundary race on a slow
+        runner. Minting five seconds in the past makes the re-mint differ
+        deterministically, so this test pins the echo without waiting on
+        wall-clock luck."""
+        token = redact.mint_token(self.source_id, viewer.signing_secret(),
+                                  now=time.time() - 5)
+        status, _headers, raw = self.fetch(
+            self.public_url, f"/api/v1/download?id={token}&redirect=0")
+        self.assertEqual(status, 200, raw)
+        body = json.loads(raw)
+        self.assertEqual(body["stream_id"], token)
+        self.assertIn(f"/api/v1/download?id={token}&redirect=1", body["download_url"])
+
     def test_redirect_points_at_the_resolved_media_url(self):
         token = self.token(self.source_id)
         status, headers, _body = self.fetch(

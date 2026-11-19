@@ -392,14 +392,25 @@ def download_filename(stream_id: str, mime_type, url_hint=None) -> str:
     return f"radd-{str(stream_id)[:12]}{extension}"
 
 
-def download_descriptor(source_id: int, res: dict, base_url: str = "") -> dict:
+def download_descriptor(source_id: int, res: dict, base_url: str = "",
+                        token: str | None = None) -> dict:
     """The public JSON answer to `GET /api/v1/download`: what to fetch and how.
 
     Same provenance rule as the stream route: the descriptor names our own
     handle and our own redirector, never the hoster or the upstream file URL.
     The bytes still move through nobody — a caller follows `download_url` and
-    the 302 points at the resolved media URL."""
-    token = redact.mint_token(int(source_id), signing_secret())
+    the 302 points at the resolved media URL.
+
+    ``token`` is the handle the caller presented: the descriptor answers the
+    request that handle identifies, so it echoes it. A fresh mint here would
+    embed a new expiry second, and a request that straddles a wall-clock
+    second would hand the caller a different token for the same download
+    (Backend CI 44626688528 caught exactly that second-boundary race on a
+    slow runner). With no handle — the operator port's plain row id — a
+    fresh mint is still right, and a handle for another row never echoes."""
+    if not token or redact.parse_token(token, signing_secret(),
+                                       signed_only=True) != int(source_id):
+        token = redact.mint_token(int(source_id), signing_secret())
     descriptor = {
         "success": True,
         "stream_id": token,
@@ -8542,13 +8553,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     return
                 # Descriptor from the cache row. `kind` keeps the legacy wire
                 # value "url" for files (the shipped app branches on it); only
-                # the genuinely-new playlist case differs.
+                # the genuinely-new playlist case differs. The handle echoes
+                # the one presented (see download_descriptor): a fresh mint
+                # embeds a new expiry second.
                 expires_in = hit["expires_in"]
                 if expires_in is None:
                     expires_in = max(0.0, round(hit["reverify_after"] - time.time(), 3))
                 self.send_json({
                     "success": True,
-                    "stream_id": redact.mint_token(int(source_id), signing_secret()),
+                    "stream_id": source_ref,
                     "kind": "playlist" if hit["kind"] == "playlist" else "url",
                     "mime_type": hit["mime_type"],
                     "file_size_bytes": hit["file_size_bytes"],
@@ -8635,10 +8648,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         # Used to hand back url + service + source_name, i.e. the
                         # upstream file URL and who hosts it. A caller who wants
                         # bytes follows the 302; nobody needs the hoster's name to
-                        # play a video.
+                        # play a video. The handle echoes the one presented (see
+                        # download_descriptor): a fresh mint embeds a new expiry
+                        # second.
                         self.send_json({
                             "success": True,
-                            "stream_id": redact.mint_token(int(source_id), signing_secret()),
+                            "stream_id": source_ref,
                             "kind": res.get("playback_type") or "url",
                             "mime_type": res.get("mime_type"),
                             "file_size_bytes": res.get("file_size_bytes"),
@@ -8858,7 +8873,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 elif full:
                     self.send_json(res)
                 else:
-                    self.send_json(download_descriptor(int(source_id), res, base_url))
+                    self.send_json(download_descriptor(int(source_id), res, base_url,
+                                                       token=source_ref))
             else:
                 if full:
                     self.send_json(res)

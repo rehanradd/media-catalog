@@ -1298,6 +1298,10 @@ class PublicEdgeHttpTests(FixtureMixin):
         payload = json.loads(body)
         self.assert_no_provenance(payload, "stream redirect=0")
         self.assertTrue(payload["success"])
+        self.assertEqual(payload["stream_id"], handle,
+                         "the descriptor echoes the presented handle, it never "
+                         "re-mints it (a fresh mint embeds a new expiry second "
+                         "— Backend CI 44626688528)")
         self.assertNotIn("url", payload)
         # The 302 model: bytes go direct, so a capture shows the upstream host.
         # That is the accepted trade (documented in redact.py); the redirect itself
