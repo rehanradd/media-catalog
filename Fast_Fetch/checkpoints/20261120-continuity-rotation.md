@@ -21,3 +21,17 @@ Two more bullets left the index in the SexTB rebase (2026-11-20), moved verbatim
 
 - [2026-11-20 — H4 R9 resolver probes](checkpoints/20261120-h4-r9-resolver-probes.md): serve-time re-probe of an aging banked row before it is 302'd — fresh rows serve unprobed, a verifying probe refreshes the row, an endpoint-answered failure reads as a cache miss (live resolver fails over), a no-answer probe serves fail-open; 18 tests, merged 44631e10.
 - [2026-11-20 — H4 R8 clearance-cookie reuse](checkpoints/20261120-h4-r8-clearance-cookie.md): per-host clearance store + probe/resolver wiring; 43 tests, merged 8f7948d2.
+
+One more bullet left the index in the H4 R10 fixup rebase (2026-11-20),
+moved verbatim (12,262 bytes before that rotation). Nothing reworded,
+nothing deleted — the file it names is already indexed in
+`checkpoints/README.md`. (The MX #4 bullet rotated in that same rebase is
+NOT listed here: it never left main's index, so it stays in CONTINUITY.md.)
+
+- [Session 2026-11-12 — self-check `[LIVE-TV-503]`](checkpoints/20261112-selfcheck-live-tv-503-logos.md)
+
+One more bullet left the index in the second H4 R10 fixup rebase
+(2026-11-20), moved verbatim to bring CONTINUITY.md under its 12,000-byte
+budget (12,081 bytes before this rotation).
+
+- [2026-11-19 — H4 R5 shared streaming cache](checkpoints/20261119-h4-shared-cache.md): demand ledger + sibling-band warm + prefetch --demand; 33 tests green locally, Backend CI pending.

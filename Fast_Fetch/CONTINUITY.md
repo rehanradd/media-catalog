@@ -7,7 +7,7 @@
 
 ## ✅ Open items — index (q3, 2026-10-30; pointers only)
 
-1. **This file is a pointer, not a history** 132 session files (129 dated + 3 undated) cover
+1. **This file is a pointer, not a history** 133 session files (130 dated + 3 undated) cover
 
    every one of them verbatim: [`checkpoints/README.md`](checkpoints/README.md). Nothing was
    deleted, reworded, or summarized. The count is `ls Fast_Fetch/checkpoints/*.md` minus `README.md`,
@@ -74,12 +74,11 @@ The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete i
 - [2026-11-20 — Phase C SexTB importer: NO IMPORTER](checkpoints/20261120-phasec-sextb-importer.md): sextb.net alive but geo/IP-walled from all server egress (homepage/sitemap/video URL all 403 "Access Restricted"); no fetchable surface, so no importer built — hollow importers forbidden. Unblocks: real-browser HAR from an allowed region, WARP egress test, or earned clearance.
 - [B2 episode_guide — 2026-11-19](checkpoints/20261119-b2-episode-guide.md)
 - MX #4 Skip Intro (2026-11-19, muse/mx-skip-intro-20261119): TheIntroDB v3 segments — cat_media_segments + lookups, backfill_segments.py (staging SQL only), play_bundle "segments" (pack-offset shift/omit); CI green: backend 44467838435, Android 44468545737 attempt 2 (2,544 tests); tip 6afe9d9f ready to merge.
-- [2026-11-19 — H4 R5 shared streaming cache](checkpoints/20261119-h4-shared-cache.md): demand ledger + sibling-band warm + prefetch --demand; 33 tests green locally, Backend CI pending.
 - [2026-11-19 — H4 R6 direct-file preference](checkpoints/20261119-h4-direct-file.md): measured mime corrects the ingest label in tiers.score, candidate_order_sql, and the verify pass (+0.10 fresh banked-file nudge); 17 tests green locally, Backend CI pending.
 - [2026-11-20 — H4 R7 per-segment retry](checkpoints/20261120-h4-r7-per-segment-retry.md): dead_handle report strikes both ledgers (resolved_cache circuit + negative cache) and the banked winner is refused on the next lookup; other classes record evidence only; report route now resolves the handle in the LEDGER universe; 13 server + 15 app tests green locally, CI pending.
-- [Session 2026-11-12 — self-check `[LIVE-TV-503]`](checkpoints/20261112-selfcheck-live-tv-503-logos.md)
+- [2026-11-20 — H4 R10 fixup](checkpoints/20261120-h4-r10-fixup.md): Backend CI 44626688528 failed on main c27890db with one test — the descriptor re-minted the handle and mint_token embeds the expiry second, so a request straddling a second boundary returned a different token; download + both stream descriptors now echo the presented signed handle; new backdated-mint test fails on unfixed code, passes on fixed; 27 + 116 tests green locally, Backend CI pending.
 - [2026-11-20 — Phase C GDFlix button-flow resolver](checkpoints/20261120-phase-c-gdflix.md): real button-flow resolver (Instant DL chain + legacy buttons + DriveBot); 21 tests green locally, Backend CI pending; NOT cracked — Oracle egress gets a Cloudflare managed challenge, chain proven to the signed Google URL from hatch egress only.
-- [2026-11-20 — H4 R10 network-intercept fallback](checkpoints/20261120-h4-r10-network-intercept.md): network failures (transport / intermediary block) retried through a bounded alternate route before any dead verdict; WIP, Backend CI pending.
+- [2026-11-20 — H4 R10 network-intercept fallback](checkpoints/20261120-h4-r10-network-intercept.md): network failures (transport / intermediary block) retried through a bounded alternate route before any dead verdict; merged c27890db.
 
 ## Moved out (reference prose, verbatim)
 
