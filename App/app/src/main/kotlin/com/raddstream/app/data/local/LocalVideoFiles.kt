@@ -17,6 +17,14 @@ data class LocalVideoFile(
     val sizeBytes: Long,
     val folder: String,
     val dateAddedMs: Long,
+    /**
+     * The full parent path the row came from (`Movies/RaddStream`, or an
+     * absolute `/storage/…/Movies` on older releases) — the library groups
+     * by this, not by [folder], because two parents can share a leaf name.
+     * Empty when the provider stored no path; the file still belongs to the
+     * library, under "On this phone".
+     */
+    val folderPath: String = "",
 )
 
 /** The file name a row with no usable name is shown under. Never blank. */
@@ -26,30 +34,6 @@ const val LOCAL_VIDEO_UNTITLED = "Local video"
 val LOCAL_VIDEO_MIMES = setOf("video/mp4", "video/x-matroska", "video/webm")
 
 private val LOCAL_VIDEO_EXTENSIONS = setOf("mp4", "mkv", "webm")
-
-/**
- * The MediaStore query for the Movies/ and Download/ folders, as a selection
- * string plus its arguments. [useRelativePath] is true on API 29+, where the
- * provider answers `relative_path` (`Movies/…`, `Download/…`); older releases
- * have only the `_data` filesystem path. The format clause accepts either a
- * known video MIME or a known extension, because providers disagree about
- * which one they fill in for .mkv rows.
- */
-fun localVideoSelection(useRelativePath: Boolean): Pair<String, Array<String>> {
-    val folderColumn = if (useRelativePath) "relative_path" else "_data"
-    val folderArgs = if (useRelativePath) {
-        arrayOf("Movies%", "Download%")
-    } else {
-        arrayOf("%/Movies/%", "%/Download/%")
-    }
-    val selection = "($folderColumn LIKE ? OR $folderColumn LIKE ?) AND " +
-        "(mime_type IN (?, ?, ?) OR _display_name LIKE ? OR _display_name LIKE ? OR _display_name LIKE ?)"
-    val args = folderArgs + arrayOf(
-        "video/mp4", "video/x-matroska", "video/webm",
-        "%.mp4", "%.mkv", "%.webm",
-    )
-    return selection to args
-}
 
 /**
  * A display name out of whatever the provider stored. The extension comes
@@ -110,5 +94,6 @@ fun localVideoFromRow(
         sizeBytes = sizeBytes,
         folder = localVideoFolder(relativePath, dataPath),
         dateAddedMs = dateAddedMs,
+        folderPath = localVideoFolderPath(relativePath, dataPath),
     )
 }

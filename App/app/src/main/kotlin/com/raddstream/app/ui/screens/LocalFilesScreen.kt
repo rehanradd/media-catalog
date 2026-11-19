@@ -3,11 +3,14 @@ package com.raddstream.app.ui.screens
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -29,7 +32,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
@@ -53,8 +55,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
@@ -63,7 +68,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.raddstream.app.R
 import com.raddstream.app.data.local.LocalVideoFile
+import com.raddstream.app.data.local.LocalVideoFolder
 import com.raddstream.app.player.QualityOption
 import com.raddstream.app.ui.components.EmptyState
 import com.raddstream.app.ui.components.rememberDelayedVisible
@@ -71,15 +78,18 @@ import com.raddstream.app.viewmodel.LocalFilesViewModel
 import com.raddstream.app.viewmodel.formatTime
 
 /**
- * The phone's own videos — Movies/ and Download/, newest first — listed from
- * MediaStore and played through the same local player as a finished download.
- * Nothing here touches the server: no search, no catalog, no upload. A tap
- * plays the file; the player remembers where it stopped, even after the app
- * restarts.
+ * The phone's own videos as a Local Library — folders first, like MX
+ * Player, not one flat list. The first level is every folder on the phone
+ * (folder name, video count, a real thumbnail from its newest video), the
+ * newest folder on top; tap a folder to see its videos, tap a video to
+ * play it in the same local player as a finished download. Nothing here
+ * touches the server: no search, no catalog, no upload. The player
+ * remembers where it stopped, even after the app restarts.
  *
  * The permission is asked once, on first entry. A denied answer shows the
  * honest state with a retry and a way to the app's settings — the screen
  * never pretends the phone has no videos when it was never allowed to look.
+ * Back inside a folder returns to the folder list; back on the list leaves.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -89,6 +99,7 @@ fun LocalFilesScreen(
     viewModel: LocalFilesViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val selectedFolder = state.selectedFolder
     val context = LocalContext.current
     var asked by rememberSaveable { mutableStateOf(false) }
     val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -111,15 +122,24 @@ fun LocalFilesScreen(
             viewModel.onPermissionResult(false)
         }
     }
+    BackHandler(enabled = selectedFolder != null) { viewModel.backToFolders() }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("Local files") },
+                title = {
+                    Text(selectedFolder?.displayName ?: stringResource(R.string.local_library_title))
+                },
                 navigationIcon = {
-                    IconButton(onClick = onBackClick) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                    IconButton(onClick = {
+                        if (selectedFolder != null) viewModel.backToFolders()
+                        else onBackClick()
+                    }) {
+                        Icon(
+                            Icons.Default.ArrowBack,
+                            contentDescription = stringResource(R.string.local_library_back),
+                        )
                     }
                 },
                 actions = {
@@ -127,7 +147,10 @@ fun LocalFilesScreen(
                         if (state.needsPermission) permissionLauncher.launch(permission)
                         else viewModel.refresh()
                     }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Refresh")
+                        Icon(
+                            Icons.Default.Refresh,
+                            contentDescription = stringResource(R.string.local_library_refresh),
+                        )
                     }
                 },
             )
@@ -152,20 +175,19 @@ fun LocalFilesScreen(
                 verticalArrangement = Arrangement.Center,
             ) {
                 Text(
-                    "Allow access to your videos",
+                    stringResource(R.string.local_library_permission_title),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "Radd lists videos in Movies and Downloads so you can play them here. " +
-                        "Nothing leaves the phone.",
+                    stringResource(R.string.local_library_permission_message),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(16.dp))
                 Button(onClick = { permissionLauncher.launch(permission) }) {
-                    Text("Allow access")
+                    Text(stringResource(R.string.local_library_permission_allow))
                 }
                 TextButton(onClick = {
                     context.startActivity(
@@ -175,7 +197,7 @@ fun LocalFilesScreen(
                         ),
                     )
                 }) {
-                    Text("Open settings")
+                    Text(stringResource(R.string.local_library_open_settings))
                 }
             }
             state.loadFailed -> Column(
@@ -184,19 +206,19 @@ fun LocalFilesScreen(
                 verticalArrangement = Arrangement.Center,
             ) {
                 Text(
-                    "Couldn't list your videos.",
+                    stringResource(R.string.local_library_load_failed),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Spacer(Modifier.height(16.dp))
                 Button(onClick = { viewModel.refresh() }) {
-                    Text("Try again")
+                    Text(stringResource(R.string.local_library_retry))
                 }
             }
-            state.files.isEmpty() -> Box(Modifier.fillMaxSize().padding(contentPadding)) {
+            state.folders.isEmpty() -> Box(Modifier.fillMaxSize().padding(contentPadding)) {
                 EmptyState(
-                    title = "No videos on this phone",
-                    message = "Videos you save in Movies or Downloads will show up here.",
+                    title = stringResource(R.string.local_library_empty_title),
+                    message = stringResource(R.string.local_library_empty_message),
                     icon = {
                         Icon(
                             Icons.Default.Folder,
@@ -208,9 +230,17 @@ fun LocalFilesScreen(
                     modifier = Modifier.fillMaxSize(),
                 )
             }
-            else -> LocalFilesListContent(
-                files = state.files,
+            selectedFolder != null -> LocalFolderVideosContent(
+                folder = selectedFolder,
                 onPlay = { file -> onPlayLocal(file.uri, file.title) },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(contentPadding),
+            )
+            else -> LocalFolderListContent(
+                folders = state.folders,
+                thumbnails = state.thumbnails,
+                onOpenFolder = { folder -> viewModel.selectFolder(folder.path) },
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(contentPadding),
@@ -220,68 +250,49 @@ fun LocalFilesScreen(
 }
 
 /**
- * The list itself, grouped by the folder each file came from: one folder
- * row ("Movies — N files") with its files under it, newest first inside
- * each folder. The mockup shows a single folder because Stitch imagined one;
- * the phone has two (Movies and Downloads), so a folder earns its own row
- * rather than the list pretending they are one.
- *
- * Stitch sub-screens mockup (Nov 2026): each file is a card with a small
- * thumb, the title, the size line and a jade play button. A local file has
- * no poster art, so the thumb is a dark tile with a play mark — never an
- * invented picture — and the size line is the file's own duration and size:
- * there is no quality field on a local file, so no "1080p" is claimed.
+ * The first level: one row per folder — the folder's name, how many videos
+ * it holds, and a thumbnail from its newest video. Folders arrive sorted,
+ * newest folder first; the order is the ViewModel's, not this list's.
  */
 @Composable
-internal fun LocalFilesListContent(
-    files: List<LocalVideoFile>,
-    onPlay: (LocalVideoFile) -> Unit,
+internal fun LocalFolderListContent(
+    folders: List<LocalVideoFolder>,
+    thumbnails: Map<String, Bitmap>,
+    onOpenFolder: (LocalVideoFolder) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // Which folders are folded shut; a list survives a rotation.
-    var collapsed by rememberSaveable { mutableStateOf(listOf<String>()) }
-    // groupBy keeps the folders in first-encounter order, and the files
-    // arrive newest first, so each folder's rows stay newest first too.
-    val groups = files.groupBy { it.folder }
-
     LazyColumn(
         modifier = modifier,
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        groups.forEach { (folder, folderFiles) ->
-            val isCollapsed = folder in collapsed
-            item(key = "folder:$folder") {
-                FolderHeaderRow(
-                    folder = folder,
-                    count = folderFiles.size,
-                    expanded = !isCollapsed,
-                    onToggle = {
-                        collapsed = if (isCollapsed) collapsed - folder
-                        else collapsed + folder
-                    },
-                )
-            }
-            if (!isCollapsed) {
-                items(folderFiles, key = { it.uri }) { file ->
-                    LocalVideoRow(
-                        file = file,
-                        onPlay = { onPlay(file) },
-                    )
-                }
-            }
+        items(folders, key = { it.path }) { folder ->
+            LocalFolderRow(
+                folder = folder,
+                thumbnail = thumbnails[folder.path],
+                onOpen = { onOpenFolder(folder) },
+            )
         }
     }
 }
 
-/** One folder row: the folder, how many files it holds, fold it shut. */
+/** One folder row: its newest video's keyframe, its name, its count. */
 @Composable
-private fun FolderHeaderRow(
-    folder: String,
-    count: Int,
-    expanded: Boolean,
-    onToggle: () -> Unit,
+private fun LocalFolderRow(
+    folder: LocalVideoFolder,
+    thumbnail: Bitmap?,
+    onOpen: () -> Unit,
 ) {
+    val countText = if (folder.videoCount == 1) {
+        stringResource(R.string.local_library_videos_one)
+    } else {
+        stringResource(R.string.local_library_videos_many, folder.videoCount)
+    }
+    val subtitle = if (folder.parentHint != null) {
+        "$countText · ${folder.parentHint}"
+    } else {
+        countText
+    }
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -290,32 +301,44 @@ private fun FolderHeaderRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { onToggle() }
-                .testTag("localFolder_$folder")
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .clickable { onOpen() }
+                .testTag("localFolder_${folder.path}")
+                .padding(12.dp),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            // A real keyframe when the provider has one; below API 29, or
+            // when the media has no thumbnail, the dark tile with a folder
+            // mark — never an invented picture.
             Box(
                 modifier = Modifier
-                    .size(40.dp)
-                    .clip(RoundedCornerShape(12.dp))
+                    .size(64.dp)
+                    .clip(RoundedCornerShape(8.dp))
                     .background(MaterialTheme.colorScheme.surfaceVariant),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(
-                    Icons.Default.Folder,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(22.dp),
-                )
+                if (thumbnail != null) {
+                    Image(
+                        bitmap = thumbnail.asImageBitmap(),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    Icon(
+                        Icons.Default.Folder,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(28.dp),
+                    )
+                }
             }
             Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(start = 12.dp),
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Text(
-                    text = folder,
+                    text = folder.displayName,
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                     fontWeight = FontWeight.SemiBold,
@@ -323,16 +346,41 @@ private fun FolderHeaderRow(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = if (count == 1) "1 file" else "$count files",
+                    text = subtitle,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
             Icon(
-                imageVector = if (expanded) Icons.Default.KeyboardArrowDown
-                else Icons.Default.ChevronRight,
-                contentDescription = if (expanded) "Collapse $folder" else "Expand $folder",
+                Icons.Default.ChevronRight,
+                contentDescription = stringResource(
+                    R.string.local_library_open_folder,
+                    folder.displayName,
+                ),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** The second level: the videos of one folder, newest first. */
+@Composable
+internal fun LocalFolderVideosContent(
+    folder: LocalVideoFolder,
+    onPlay: (LocalVideoFile) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    LazyColumn(
+        modifier = modifier,
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items(folder.videos, key = { it.uri }) { file ->
+            LocalVideoRow(
+                file = file,
+                onPlay = { onPlay(file) },
             )
         }
     }
@@ -406,7 +454,7 @@ internal fun LocalVideoRow(file: LocalVideoFile, onPlay: () -> Unit) {
             ) {
                 Icon(
                     Icons.Default.PlayArrow,
-                    contentDescription = "Play ${file.title}",
+                    contentDescription = stringResource(R.string.local_library_play_video, file.title),
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(22.dp),
                 )

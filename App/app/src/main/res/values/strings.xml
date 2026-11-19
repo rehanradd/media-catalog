@@ -289,6 +289,27 @@
     <string name="mylist_count_many">%1$d titles</string>
     <string name="mylist_save_failed">Couldn\'t save — check your connection</string>
 
+    <!-- ═══ LOCAL LIBRARY ═══ the phone's own videos, folders first.
+         Every value here is painted by LocalFilesScreen (or the Downloads
+         entry that opens it) — the DeadCodeGuard fails an unreferenced
+         string, so add one only with the line that reads it. -->
+    <string name="local_library_title">Local library</string>
+    <string name="local_library_back">Back</string>
+    <string name="local_library_refresh">Refresh</string>
+    <string name="local_library_permission_title">Allow access to your videos</string>
+    <string name="local_library_permission_message">Radd lists the videos on this phone, grouped by folder, so you can play them here. Nothing leaves the phone.</string>
+    <string name="local_library_permission_allow">Allow access</string>
+    <string name="local_library_open_settings">Open settings</string>
+    <string name="local_library_load_failed">Couldn\'t list your videos.</string>
+    <string name="local_library_retry">Try again</string>
+    <string name="local_library_empty_title">No videos on this phone</string>
+    <string name="local_library_empty_message">Videos you save on this phone will show up here, grouped by folder.</string>
+    <string name="local_library_videos_one">1 video</string>
+    <string name="local_library_videos_many">%1$d videos</string>
+    <string name="local_library_open_folder">Open %1$s</string>
+    <string name="local_library_play_video">Play %1$s</string>
+    <string name="local_library_entry_subtitle">Browse folders on this phone</string>
+
     <!-- ═══ RESOLVE TEST (debug-only harness, 2026-11-16) ═══
          The manual field-test screen. Debug builds only: no NavGraph entry
          and no Settings row exist unless DEBUG, so none of this ships. -->

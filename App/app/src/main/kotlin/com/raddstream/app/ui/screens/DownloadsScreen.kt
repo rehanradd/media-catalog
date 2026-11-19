@@ -43,6 +43,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import com.raddstream.app.R
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.contentDescription
@@ -262,7 +264,7 @@ private fun LocalFilesEntry(onOpenLocalFiles: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Text(
-                "Browse Movies and Downloads",
+                stringResource(R.string.local_library_entry_subtitle),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
