@@ -1,6 +1,12 @@
+@file:OptIn(UnstableApi::class)
+// Kotlin's `@file:OptIn` above satisfies the *compiler*; Media3's opt-in rule is enforced a
+// second time by the lint check `UnsafeOptInUsageError`, which only reads
+// `androidx.annotation.OptIn`. Both are required, and the class-level one below is what clears
+// the `MediaCodecSelector` / `MediaCodecInfo` references in this file.
 package com.raddstream.app.player
 
 import android.os.Build
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.mediacodec.MediaCodecInfo
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 
@@ -22,6 +28,7 @@ import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
  * format the device only ships in hardware, which is the opposite of what
  * a fallback switch is for.
  */
+@androidx.annotation.OptIn(UnstableApi::class)
 class SoftwareMediaCodecSelector(
     private val delegate: MediaCodecSelector = MediaCodecSelector.DEFAULT,
 ) : MediaCodecSelector {
@@ -62,6 +69,7 @@ class SoftwareMediaCodecSelector(
  * selector above. A pure function so the mode → factory mapping is a JVM
  * test, not a player-build test.
  */
+@androidx.annotation.OptIn(UnstableApi::class)
 internal fun mediaCodecSelectorFor(mode: DecoderMode): MediaCodecSelector =
     when (mode) {
         DecoderMode.HARDWARE -> MediaCodecSelector.DEFAULT

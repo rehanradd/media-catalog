@@ -17,10 +17,18 @@ import org.junit.Test
  * reads the device's codec list.
  */
 @OptIn(UnstableApi::class)
+@androidx.annotation.OptIn(UnstableApi::class)
 class SoftwareMediaCodecSelectorTest {
 
     private fun info(name: String, softwareOnly: Boolean, hardwareAccelerated: Boolean = !softwareOnly) =
-        MediaCodecInfo.newInstance(name, "video/avc", "video/avc", null, hardwareAccelerated, softwareOnly, false)
+        // Media3 1.3.1 (pinned) `newInstance` takes nine arguments — the
+        // seven-argument overload is newer, and the developer docs page
+        // shows the current version, not 1.3.1. The last two are
+        // forceDisableAdaptive / forceSecure; both false here, so the
+        // instance reports exactly the flags it was given.
+        MediaCodecInfo.newInstance(
+            name, "video/avc", "video/avc", null, hardwareAccelerated, softwareOnly, false, false, false,
+        )
 
     private class FixedSelector(private val infos: List<MediaCodecInfo>) : MediaCodecSelector {
         override fun getDecoderInfos(
