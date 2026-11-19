@@ -2,6 +2,7 @@ package com.raddstream.app.di
 
 import android.app.ActivityManager
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import androidx.test.core.app.ApplicationProvider
 import coil.annotation.ExperimentalCoilApi
 import coil.imageLoader
@@ -15,6 +16,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
+import kotlin.math.roundToInt
 
 /**
  * Feel-instant S9 — Coil tuning: the loader's caches are the spec's
@@ -47,12 +49,12 @@ class ImageLoaderModuleTest {
     fun pinMemoryClass() {
         // Coil sizes the memory cache from ActivityManager: memoryClass, or
         // largeMemoryClass when the manifest sets largeHeap (it does — see
-        // AndroidManifest.xml). Pin both so the percent math below is
-        // deterministic, not whatever the runner's shadow defaults to.
+        // AndroidManifest.xml). Pin memoryClass so the percent math below
+        // has one known input; the large class is read live in the test,
+        // because this Robolectric version's shadow has no setter for it.
         val activityManager =
             context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         shadowOf(activityManager).setMemoryClass(256)
-        shadowOf(activityManager).setLargeMemoryClass(512)
     }
 
     @Test
@@ -68,9 +70,17 @@ class ImageLoaderModuleTest {
     fun `memory cache honours the twenty-five percent cap`() {
         val loader = ImageLoaderModule.buildImageLoader(context)
         val quarter = loader.memoryCache?.maxSize ?: 0
-        // largeHeap is on, so Coil sizes from largeMemoryClass (512 MB pinned
-        // above): 25% is 128 MB.
-        assertEquals(128 * 1024 * 1024, quarter)
+        // Mirror Coil's own sizing read — largeMemoryClass when largeHeap
+        // is on, else memoryClass — so the test pins the 25% against
+        // whatever this device reports, not a hardcoded class: a different
+        // percent in the module fails the exact check either way.
+        val activityManager =
+            context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val isLargeHeap =
+            (context.applicationInfo.flags and ApplicationInfo.FLAG_LARGE_HEAP) != 0
+        val memoryClassMb =
+            if (isLargeHeap) activityManager.largeMemoryClass else activityManager.memoryClass
+        assertEquals((0.25 * memoryClassMb * 1024 * 1024).roundToInt(), quarter)
         val tenth = MemoryCache.Builder(context).maxSizePercent(0.10).build().maxSize
         assertTrue(quarter > tenth)
     }
