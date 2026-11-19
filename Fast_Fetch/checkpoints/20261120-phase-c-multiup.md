@@ -112,3 +112,10 @@ Full raw pages saved at `/tmp/mu1.html` (download page, 57,563 B) and `/tmp/mu_m
   further addition — this checkpoint file is the session log).
 - Commit after rebase: `6fe4e9cc` on `muse/phase-c-multiup-20261120`
   (base `44631e10`). Backend CI run id (round 2): PENDING push (see report).
+- CI round 2: Backend CI run 44624503866 → FAILURE, single failing step
+  `test_docs_invariants.py::test_the_index_counts_are_the_directory_listings`
+  (`123 != 124`: CONTINUITY.md claimed 123 archive files, checkpoints holds
+  124 — my new checkpoint file). Manifest passed; the multiup step was skipped
+  (fail-fast). Fix: count line 123→124 (121 dated + 3 undated, verified by
+  listing) + README index entry for this checkpoint; fixup commit on top.
+  Current tip: see report.
