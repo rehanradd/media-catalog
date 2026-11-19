@@ -258,11 +258,13 @@ fun subtitleRetimeSteps(dxPx: Float, widthPx: Float): Int {
 /**
  * Pinch on the strip: size change per transform callback, from the zoom factor. A real pinch
  * reports ~0.95–1.05 per frame, so ±10 points per callback is a generous clamp, not a limit —
- * the size itself is clamped to 50..200 by [SubtitleUiSettings.clamped].
+ * the size itself is clamped to 50..200 by [SubtitleUiSettings.clamped]. Rounded, not
+ * truncated: (1.05f − 1) * 100 is 4.9999952 in float, and truncating that to 4 would make
+ * every gentle pinch-out a no-op.
  */
 fun subtitleSizeDelta(zoom: Float): Int {
     if (!zoom.isFinite() || zoom <= 0f) return 0
-    return ((zoom - 1f) * 100f).toInt().coerceIn(-10, 10)
+    return kotlin.math.roundToInt((zoom - 1f) * 100f).coerceIn(-10, 10)
 }
 
 /** Vertical drag on the strip: fraction of pane height the seat moves (up = higher). */

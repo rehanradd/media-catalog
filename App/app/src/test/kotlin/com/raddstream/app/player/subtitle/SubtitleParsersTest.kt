@@ -221,7 +221,11 @@ class SubtitleParsersTest {
         assertEquals(SubtitleFormat.WebVtt, SubtitleFormat.fromFileNameOrMime("MOVIE.VTT"))
         assertEquals(SubtitleFormat.SubRip, SubtitleFormat.fromFileNameOrMime("text/x-subrip"))
         assertEquals(SubtitleFormat.WebVtt, SubtitleFormat.fromFileNameOrMime("text/vtt"))
-        assertEquals(SubtitleFormat.Unknown, SubtitleFormat.fromFileNameOrMime("movie.ass"))
+        // MX idea #5: ASS/SSA is claimed by the in-app parser now (styled overlay), not
+        // left Unknown for the native path.
+        assertEquals(SubtitleFormat.Ass, SubtitleFormat.fromFileNameOrMime("movie.ass"))
+        assertEquals(SubtitleFormat.Ass, SubtitleFormat.fromFileNameOrMime("SHOW.SSA"))
+        assertEquals(SubtitleFormat.Ass, SubtitleFormat.fromFileNameOrMime("text/x-ssa"))
         assertEquals(SubtitleFormat.Unknown, SubtitleFormat.fromFileNameOrMime(null))
     }
 
