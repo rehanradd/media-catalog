@@ -1,0 +1,31 @@
+# B2 — season paging + episode_guide (server + app)
+
+Branch `muse/b2-season-paging-20261119` from main `a5514d95`. Episode-guide shape is per-season TOTALS only (season number + episode_count per season), per the parent's small-first decision; the per-episode slice is deferred, not built.
+
+## Server (`Fast_Fetch/catalog_api.py::work_detail`, stdlib only)
+
+- New top-level `episode_guide` on the v2 detail payload: one row per season — `season`, `episode_count` (the projection's per-season total from `cat_episodes`, same number `seasons[]` carries), `enumerated_episode_count`, `pack_only`. It is a lightweight projection of the `seasons` list, which is already uncapped (only `prints` are capped at `max_prints` = 1,000).
+- `pack_only` is read from the FULL release list via one `SELECT DISTINCT season_number ... WHERE coverage_type IN ('season_pack','episode_range')` query, not the capped prints — so a season whose pack fell past the cap still counts as a pack season. `seasons[]`'s own `pack_only` (capped-print based) was left unchanged.
+- No new endpoint: `work_detail` already serves all seasons uncapped, and a per-season endpoint already exists (`season_detail`, `api_v2.py`). On-demand late-season prints via `season_detail` is a follow-up, not built here.
+- The 1,000-release cap and the `prints_truncated` / `print_total` disclosure are unchanged. The field is purely additive; no existing key changes shape. It rides `_project_fields` field selection automatically. Adult works still return the identical `not_found` (no guide leaks).
+- Known limitation, documented in code: spans past `MAX_ENUMERATED_EPISODES = 120` materialise nothing, so such a season reports `episode_count` 0 with `pack_only` true; the pack print still stands for it.
+- Discovery: a movie (Dune) carries a phantom `cat_seasons` row with `number = 0` (whole-work prints filed under season 0), so its guide has one season-0 row and `work["season_count"]` is 1. The guide mirrors `seasons[]` exactly rather than filtering it; the app only reads the guide for series-like titles.
+
+## App
+
+- Wire (`V2CatalogWire.kt`): `WireEpisodeGuideEntry` (all-nullable, per file convention) + `episodeGuide` on `WireWorkDetailResponse` (`@SerializedName("episode_guide")`). `toPostDetail` maps it, dropping entries with a null season number.
+- Model (`Models.kt`): `EpisodeGuideEntry` + `PostDetail.episodeGuideRows` (nullable-rows pattern — required, PostDetail has no no-arg constructor so Gson uses Unsafe) with safe getter `episodeGuide`.
+- Builder (`ReleaseLayoutBuilder.kt`): `build()` gains `episodeGuide` on all three overloads (defaulted, last param — existing call sites unchanged). When the guide is non-empty, seasons come from the UNION of guide seasons + print seasons. Each `SeasonGroup` gains `totalEpisodes` / `packOnly` plus `guideTotal`, `isPackOnly`, `hasAnyPrint`, `episodeCountLabel` ("N episodes", "Full season" for pack-only, else rows on screen). Without a guide the grouping is byte-identical to before.
+- DetailViewModel passes `detail.episodeGuide` at both `build()` call sites; `selectedSeason` now defaults to the newest season WITH prints, falling back to the newest season, so the screen never lands on a print-less guide season. DetailScreen season headers/chips/dropdown read `episodeCountLabel`.
+- `SmartDownloadsRunner` left on the default (no guide) — it only plans from episodes with prints.
+
+## Tests
+
+- Server (`test_catalog_api.py`, WorkDetailTests): guide lists every season with true counts (Campus Beats S1 7/7, S2 0/0 pack-only); guide mirrors `seasons` even for a movie (Dune season-0 row); guide survives the print cap ("Long Runner Show" fixture — 5 releases over 3 seasons, `max_prints=2` → 2 prints, `print_total` 5, guide still 3 seasons [7, 0, 2], plus the degenerate `max_prints=0` pin); `episode_guide` absent from the adult `not_found` payload.
+- App: `V2CatalogWireTest` (synthetic capped-series JSON decodes the guide; missing-keys test extended); `V2DetailRegressionTest` (live Scarpetta/Penguin fixtures assert an empty guide); `ReleaseLayoutBuilderTest` (guide lists seasons the capped releases never mention; uncapped title unchanged except totals; print season the guide missed is not dropped; guide never turns a movie into a series).
+- Local before push: 508 tests green across 7 server suites (catalog_api 165, api_v2 83, redact 116, works_api 52, home_rails 64, host_ranking 24, detail_projection 4). No local Gradle (owner order: CI is the gate).
+
+## CI + log note
+
+- First push (`18638bdf`) failed BOTH CIs. Backend: `test_docs_invariants.py` — the CONTINUITY.md entry took the file to 12,288 B, over the 12,000 B ceiling the test enforces (the "12 KB" in AGENTS.md is 12,000 bytes, not 12,288). Fix: this file holds the full note; CONTINUITY.md keeps only a link line, the three oldest 2026-11-02 audit one-liners rotated out verbatim to `20261102-audit-q6q8q9.md` (file back to 11,648 B), and the archive count claim updated 113 → 115. Android (run 44443357991): 2,480 tests, 457 failed — all runner-network, none of them B2: Maven Central answered 429 (Too Many Requests) resolving `:baselineprofile` deps (`jspecify:1.0.0`, `moshi:1.13.0`), and Robolectric's `MavenArtifactFetcher` hit `IOException` fetching android-all artifacts, failing every Robolectric test en masse. No B2 test class (V2CatalogWireTest, V2DetailRegressionTest, ReleaseLayoutBuilderTest) appears in the failure list. Known flake — re-run on a fresh push, do not fix code for it.
+- Owed: per-episode slice (deferred); on-demand late-season prints via `season_detail` (follow-up); a unit test for the ViewModel's default-season landing (no light harness exists — verify on device). Parent merges; do not deploy live.

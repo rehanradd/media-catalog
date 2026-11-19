@@ -7,7 +7,7 @@
 
 ## ✅ Open items — index (q3, 2026-10-30; pointers only)
 
-1. **This file is a pointer, not a history** 113 session files (110 dated + 3 undated) cover
+1. **This file is a pointer, not a history** 115 session files (112 dated + 3 undated) cover
 
    every one of them verbatim: [`checkpoints/README.md`](checkpoints/README.md). Nothing was
    deleted, reworded, or summarized. The count is `ls Fast_Fetch/checkpoints/*.md` minus `README.md`,
@@ -80,14 +80,11 @@ The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete i
 - 2026-11-18 — H2 backfills #6/#8/#9: quality normalization, resolved_cache prune, desicinemas year.
 - 2026-11-18 — B1 cursor pagination + band-aware play walk (`muse/cursor-pagination-20261118`): keyset cursors on v1 posts/trending, v2 walk verified, play best-band-first; 13 tests green locally.
 - 2026-11-18 — R1+R2+R4 + checkup #3 host ranking: decayed score + tiers + verified prints + slice; 24 tests green; checkpoints/20261118-host-ranking-r1r2r4.md.
-- 2026-11-19 — B2 season paging + episode_guide (`muse/b2-season-paging-20261119`): v2 detail gains an `episode_guide` (season + episode_count per season); app renders seasons from it when truncated, old grouping without a guide; no new endpoint (work_detail serves all seasons uncapped). 508 tests green; Android CI owed; parent merges.
+- [B2 episode_guide — 2026-11-19](checkpoints/20261119-b2-episode-guide.md)
 - [Session 2026-11-12 — self-check `[LIVE-TV-503]`](checkpoints/20261112-selfcheck-live-tv-503-logos.md)
 - [Session 2026-11-06 — crown `[CROWN-NIGHT-CHAIN]`: five trunk commits, the live-tree gap, what was rejected](checkpoints/20261106-crown-night-chain-five-trunk-commits-one-live-tree-gap.md)
 - [Session 2026-11-06 crown `[Q75-LAND]`: 3 producer chars, red-first 18 tests, the `_sN` merge loss filed](checkpoints/20261106-crown-q75-three-producer-fixes-landed-and-the-s-n-key-loss-filed.md)
-- 2026-11-02 q9 `[Q9-PLAY-STALE]`: no stale 302 — JIT honours all five `tiers.UNPLAYABLE_STATES` words
 - Session 2026-11-02 — q9 supervisor lane `[Q9-AUDIT-SIGNING-SECRET]`: audit critical 4 — `stream_secret`/`signing_secret` fail closed; the constant dev fallback is retired, first install generates and persists a random key, no secret ever logged
-- 2026-11-02 q6 `[Q6-AUDIT-HLS]`: audit critical 1 — a manifest is never a file; protocol recorded from probe, dash branch added, client checks content-type
-- 2026-11-02 q8 `[Q8-AUDIT-DEADLINKS]`: audit critical 10 — dead/expired links can no longer win a band or play
 
 - [Session 2026-11-05 q1 `[Q1-CROWN-VERIFY-AND-DOCS-GATE]`: trunk is `main`@`37ae67b`; 8 guide claims fixed, 66 GB staging freed, hubcdn trust gate re-derived — see `docs/checkpoints/20261105-q1-crown-verify-and-docs-gate.md`
 
