@@ -1,5 +1,7 @@
 package com.raddstream.app.player
 
+import kotlin.math.roundToInt
+
 /**
  * Pure gesture decision table for the MX Player gesture surface. The Compose layer
  * (`player/ui/GestureLayer.kt`) captures pointers and delegates every *meaning* here, so the
@@ -264,7 +266,7 @@ fun subtitleRetimeSteps(dxPx: Float, widthPx: Float): Int {
  */
 fun subtitleSizeDelta(zoom: Float): Int {
     if (!zoom.isFinite() || zoom <= 0f) return 0
-    return kotlin.math.roundToInt((zoom - 1f) * 100f).coerceIn(-10, 10)
+    return ((zoom - 1f) * 100f).roundToInt().coerceIn(-10, 10)
 }
 
 /** Vertical drag on the strip: fraction of pane height the seat moves (up = higher). */
