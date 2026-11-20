@@ -674,16 +674,46 @@ screenshot "10-livetv-scrolled.png"
 # rails left, so a fixed count can never be right for a feed whose
 # length the server decides. The stable door is Settings -> "Open
 # Downloads" (SettingsScreen, inside `if (features.downloads)`): the
-# Settings tab is on the bottom bar, the Downloads section is third,
-# and the button navigates to the same Screen.Downloads route. If the
-# operator switched downloads off the button is gone — that is a
-# product state, not a broken run, so record DOWNLOADS-NOT-REACHABLE
-# and continue to the Settings screenshots instead of failing.
+# Settings tab is on the bottom bar, the Downloads section sits below
+# Family / Kids Lock, and the button lives at the bottom of its Offline
+# card (after the Wi-Fi, auto-delete, Smart Downloads toggles and the
+# Downloads For You budget), so it is ~10 swipes down a list whose
+# length the app decides. A fixed swipe count can never be right here
+# either — run 44801478145 proved it: 8 swipes stopped with the section
+# heading just entering the frame (shot 13) and the button still below
+# the fold. So the search below swipes until the button appears or the
+# list stops moving, bounded so a switched-off downloads flag still
+# exits promptly. If the operator switched downloads off the button is
+# gone — that is a product state, not a broken run, so record
+# DOWNLOADS-NOT-REACHABLE and continue to the Settings screenshots
+# instead of failing.
 tap_text "Settings" || { echo "FAIL: Settings tab not found" >&2; exit 1; }
 sleep 4
 found=0
-for i in 1 2 3 4 5 6 7 8; do
+# Swipe until "Open Downloads" appears or the list stops moving: two
+# identical dumps in a row means the list has run out of content (the
+# run-12 dump is app-only, 65 nodes, no clock — a stationary list
+# hashes identically, so this is a real bottom signal, not noise).
+# Two in a row, not one: a single swipe can fail to register while the
+# list is still settling. The 20-try bound is a backstop only — a
+# switched-off downloads flag exits at the bottom after ~2 extra
+# swipes instead of burning the whole budget.
+prev_dump=""
+still=0
+for i in $(seq 1 20); do
   if ui_has_text "Open Downloads"; then found=1; break; fi
+  # ui_has_text leaves its fresh dump in /tmp/ui.xml.
+  this_dump=$(md5sum /tmp/ui.xml 2>/dev/null | cut -d' ' -f1)
+  if [ -n "$this_dump" ] && [ "$this_dump" = "$prev_dump" ]; then
+    still=$((still + 1))
+    if [ "$still" -ge 2 ]; then
+      echo "Downloads search: list stopped moving after $i swipes — at the bottom, button absent" >&2
+      break
+    fi
+  else
+    still=0
+  fi
+  prev_dump="$this_dump"
   adb shell input swipe 540 1600 540 600 400
   sleep 2
 done
