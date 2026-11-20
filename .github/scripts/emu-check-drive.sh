@@ -551,9 +551,41 @@ sleep 4
 tap_result "One Piece" || { echo "FAIL: no 'One Piece' result to open" >&2; exit 1; }
 sleep 6
 screenshot "07-detail.png"
-adb shell input swipe 540 1600 540 600 400
-sleep 3
-screenshot "08-detail-scrolled.png"
+# Detail-load error guard (run 44722458634): the tap WORKED and 07 IS the
+# detail page, but the BODY failed to load — "Couldn't load this title"
+# with Retry / Back to browse / Report broken stream (One Piece's v2
+# payload is 3.8 MB: 23 seasons, 1,065 episodes; ApiProvider.kt's 60 s
+# read budget was sized for a 441 KB payload). The error screen has
+# nothing to scroll, so the swipe below changes nothing and 08 comes out
+# byte-identical to 07 — the frozen-screen guard then misfires on a
+# legitimate error state. When the error is on screen, tap Retry once
+# and wait for the retry (up to the 60 s read budget); if the detail
+# still fails, record the load failure and CONTINUE to Live TV /
+# Downloads / Settings instead of aborting the whole run. A genuinely
+# frozen screen (no error state, no scroll change) still fails below.
+DETAIL_FAILED=0
+if ui_has_text "Couldn't load this title"; then
+  echo "Detail: 'Couldn't load this title' on screen — tapping Retry once" >&2
+  tap_text "Retry" || true
+  RETRY_OK=0
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    sleep 5
+    if ! ui_has_text "Couldn't load this title"; then RETRY_OK=1; break; fi
+  done
+  if [ "$RETRY_OK" -eq 1 ]; then
+    echo "Detail: retry cleared the error — re-screenshotting 07" >&2
+    screenshot "07-detail.png"
+  else
+    echo "DETAIL-LOAD-FAILED: 'Couldn't load this title' persisted after one Retry (One Piece v2 payload is 3.8 MB; see ApiProvider.kt 60 s budget) — continuing to Live TV / Downloads / Settings" >&2
+    cp /tmp/ui.xml "$OUT/detail-load-failed-ui.xml" 2>/dev/null || true
+    DETAIL_FAILED=1
+  fi
+fi
+if [ "$DETAIL_FAILED" -eq 0 ]; then
+  adb shell input swipe 540 1600 540 600 400
+  sleep 3
+  screenshot "08-detail-scrolled.png"
+fi
 stop_video
 
 # --- Live TV -> Downloads -> Settings ---
