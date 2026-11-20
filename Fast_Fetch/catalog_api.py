@@ -222,100 +222,20 @@ def _json_list(value) -> list:
     return [p.strip().strip('"').strip() for p in parts if p and p.strip()]
 
 
-#: Display placeholders — values that mean "we do not know", never a real
-#: language / country / industry / genre. Dev-cleanup (2026-11-18): the
-#: ledger stores these literals on ~60–100k works per field (language
-#: "Unknown" 62,654 posts; country 102,877; industry 103,608) because the
-#: merge used to write the word "Unknown" when a source had no value.
-#: The API must not serve them: a missing value is null (or an empty
-#: list), never the word "Unknown". The app keeps its own identical rule
-#: (WireText.isPlaceholder) as a safety net. Matching is on the
-#: casefolded, whitespace-collapsed token, so "Unknown", "UNKNOWN" and
-#: " unknown " are all placeholders — and so is the computed label
-#: "Unknown print", which the old print_label() minted for prints with
-#: no describable parts.
-_PLACEHOLDER_VALUES = frozenset({
-    "unknown", "unknown print", "n/a", "n.a.", "null", "none", "tbd",
-    "undefined", "not specified", "not available", "not applicable",
-})
+#: Display placeholders, genre denylist and the helpers that apply
+#: them — the single source is redact.py (the v1 projection and the
+#: write choke point read the same sets from there, so the rule cannot
+#: drift between paths). These names stay as aliases so every existing
+#: call site and test keeps working unchanged.
+_PLACEHOLDER_VALUES = redact.PLACEHOLDER_VALUES
+is_placeholder_value = redact.is_placeholder_value
+clean_text_value = redact.clean_text_value
+clean_text_list = redact.clean_text_list
+_GENRE_DENYLIST = redact.GENRE_DENYLIST
+_GENRE_NORMALISATIONS = redact.GENRE_NORMALISATIONS
+curate_genres = redact.curate_genres
 
 
-def is_placeholder_value(value) -> bool:
-    """True when `value` carries no real display value: None, blank, or
-    one of the placeholder words above."""
-    if value is None:
-        return True
-    text = " ".join(str(value).split()).casefold()
-    return text == "" or text in _PLACEHOLDER_VALUES
-
-
-def clean_text_value(value):
-    """A display string, or None when it is blank or a placeholder."""
-    if value is None:
-        return None
-    text = str(value).strip()
-    return None if is_placeholder_value(text) else text
-
-
-def clean_text_list(value) -> list:
-    """A `_json_list` with placeholder tokens dropped."""
-    return [item for item in _json_list(value)
-            if not is_placeholder_value(item)]
-
-
-#: Genre tokens that are not genres — platform names, release-status
-#: words and dub markers the importers filed verbatim into `genres`
-#: ("Hindi Dub" on 11,047 works, "NETFLIX" on 1,908, "COMPLETED" on
-#: 745). Compared on the casefolded, whitespace-collapsed token, so
-#: "NETFLIX", "Netflix" and " netflix " all match. "Animes" is not
-#: dropped, it is normalised to "Anime" (see below). Stored rows are
-#: untouched — this curates at serve time only, so a wrong entry here
-#: hides a chip, never deletes data.
-_GENRE_DENYLIST = frozenset({
-    # Platforms.
-    "netflix", "amazon prime", "amazon prime video", "prime video",
-    "disney+", "disney plus", "disney+ hotstar", "hotstar", "hbo",
-    "hbo max", "max", "hulu", "apple tv", "apple tv+", "zee5",
-    "sonyliv", "sony liv", "voot", "jio cinema", "jiocinema",
-    "mx player", "alt balaji", "altbalaji", "ullu", "crunchyroll",
-    "funimation", "aha", "eros now", "hoichoi", "mubi",
-    "lionsgate play", "discovery+", "paramount+", "peacock", "amc+",
-    "shudder", "kanopy", "sunnxt", "sun nxt", "shemaroo", "hungama",
-    "yupp tv", "yupptv", "airtel xstream", "erosnow", "jiohotstar",
-    # Release status, not a genre.
-    "completed", "ongoing", "on-going", "on going", "coming soon",
-    "announced", "cancelled", "canceled", "hiatus", "airing",
-    "finished", "upcoming", "ended", "returning series", "tba",
-    "to be announced", "not yet aired", "complete", "incomplete",
-    # Dub / audio markers, not a genre (the language list carries this).
-    "hindi dub", "hindi dubbed", "english dub", "english dubbed",
-    "dual audio", "multi audio", "multi-audio", "dual-audio",
-    "dubbed", "subbed", "multi audios", "dual audios", "hindi-dub",
-    "english-dub", "multi language", "multilingual",
-    "multi-language", "multiple audio", "all languages",
-    "original audio", "original language",
-})
-
-#: Genre spellings normalised at serve time (the stored token stays).
-_GENRE_NORMALISATIONS = {"animes": "Anime"}
-
-
-def curate_genres(value) -> list:
-    """A work's genre list with non-genres dropped and spellings
-    normalised. Placeholder tokens go first (a genre of "Unknown" is
-    not a genre); then the denylist above; then tokens starting with
-    "adapted from" ("Adapted From A Manga" is a source note, not a
-    genre). Everything else passes through verbatim, original casing
-    kept."""
-    out = []
-    for item in _json_list(value):
-        token = " ".join(str(item).split()).casefold()
-        if not token or token in _PLACEHOLDER_VALUES:
-            continue
-        if token in _GENRE_DENYLIST or token.startswith("adapted from"):
-            continue
-        out.append(_GENRE_NORMALISATIONS.get(token, str(item).strip()))
-    return out
 
 
 def normalize_text(text) -> str:
@@ -1116,14 +1036,17 @@ _EPISODE_LABEL_RE = re.compile(
     r"|^E\d+$|^S\d+E\d+$", re.IGNORECASE)
 
 
-def print_label(release) -> str:
+def print_label(release, title=None) -> str:
     """Human print name for the UI: '4K HDR10 BluRay REPACK', '720p CAM — avoid'.
 
     Built only from columns the projector writes; a CAM-family print always gets the
     explicit ' — avoid' warning so a cam can never look like a distribution print.
-    A print with no describable parts returns "" (or its episode
-    identifier when the stored label is one) — never "Unknown print":
-    the UI falls back to "Episode N" for an empty label.
+    A print with no describable parts returns its clean episode
+    identifier when the stored label is one, else the work title when
+    the caller passes one, else "" — never "Unknown print": the UI falls
+    back to "Episode N" for an empty label. `title` is the work's
+    display title (already served scrubbed elsewhere); the raw scrape
+    label never leaks in, whatever it says.
     """
     row = _as_dict(release) if not isinstance(release, dict) else release
     res = _RES_LABEL.get(str(row.get("resolution") or "").strip().lower(),
@@ -1161,9 +1084,17 @@ def print_label(release) -> str:
         # pill. A clean episode identifier from the stored label is the
         # title ("Episode 1"); anything else leaves the core empty and
         # the UI falls back to "Episode N" (the app already does this).
+        # Slices S1 (2026-11-20): a bare print falls back to the work
+        # title when the caller passes one — the raw scrape label still
+        # never leaks in, whatever it says (pinned by the print-label
+        # tests: a fragment label with no title passed still returns "").
         fallback = (label_text or "").strip()
         if fallback and _EPISODE_LABEL_RE.match(fallback):
             parts.append(fallback)
+        elif title:
+            clean_title = redact.scrub_text(str(title)).strip()
+            if clean_title:
+                parts.append(clean_title)
     core = " ".join(parts)
     details: list[str] = []
     codec = str(row.get("codec") or "").strip()
@@ -1187,7 +1118,8 @@ def print_label(release) -> str:
 
 # ── print / episode coverage ─────────────────────────────────────────────────
 
-def _print_view(conn, release_row, links_by_release: dict[int, list[dict]]) -> dict:
+def _print_view(conn, release_row, links_by_release: dict[int, list[dict]],
+                title=None) -> dict:
     release = _as_dict(release_row)
     lo, hi = _episode_range_bounds(release.get("episode_range")
                                    or release.get("label") or "")
@@ -1195,7 +1127,7 @@ def _print_view(conn, release_row, links_by_release: dict[int, list[dict]]) -> d
     return {
         "release_id": release["id"],
         "work_id": release["work_id"],
-        "print_label": print_label(release),
+        "print_label": print_label(release, title),
         "label": release.get("label"),
         "coverage": {
             "type": release.get("coverage_type"),
@@ -1391,7 +1323,7 @@ def _covering_prints(conn, *, work: dict, season_number: int, episode_number: in
         entry = confident[release_id]
         release = releases[release_id]
         coverage = str(release.get("coverage_type") or "whole_work")
-        entry["print_label"] = print_label(release)
+        entry["print_label"] = print_label(release, work.get("title"))
         entry["label"] = release.get("label")
         entry["coverage_type"] = coverage
         entry["season_number"] = release.get("season_number")
@@ -1407,7 +1339,7 @@ def _covering_prints(conn, *, work: dict, season_number: int, episode_number: in
         ordered.append(entry)
     for entry in unresolved:
         release = releases[entry["release_id"]]
-        entry["print_label"] = print_label(release)
+        entry["print_label"] = print_label(release, work.get("title"))
         entry["season_number"] = release.get("season_number")
         entry["quality_score"] = release.get("quality_score")
     return ordered, unresolved
@@ -2076,7 +2008,8 @@ def work_detail(conn, *, work_id=None, work_key=None, slug=None, url=None,
         release_rows = release_rows[:max_prints]
     release_ids = [row["id"] for row in release_rows]
     links_by_release = _ordered_links(conn, release_ids)
-    prints = [_print_view(conn, row, links_by_release) for row in release_rows]
+    prints = [_print_view(conn, row, links_by_release, work.get("title"))
+              for row in release_rows]
     # R2 (2026-11-18): the verified-only top rung, as data — each print
     # carries whether a copy was just verified live. Fail-open: the
     # annotation never breaks the detail answer.
@@ -2460,7 +2393,9 @@ def episode_detail(conn, *, episode_id, include_adult=False) -> dict:
         release = releases.get(entry["release_id"])
         if release is None:
             continue
-        served.append(_merge_print(entry, _print_view(conn, release, links_by_release)))
+        served.append(_merge_print(
+            entry, _print_view(conn, release, links_by_release,
+                               work.get("title"))))
     return {
         "ok": True,
         "episode": {
@@ -2551,7 +2486,8 @@ def release_detail(conn, *, release_id, include_adult=False) -> dict:
         return _not_found(_NOT_FOUND_RELEASE)
     release = _as_dict(row)
     links_by_release = _ordered_links(conn, [release["id"]])
-    print_view = _print_view(conn, row, links_by_release)
+    print_view = _print_view(conn, row, links_by_release,
+                             release.get("work_title"))
     episodes = conn.execute(
         """
         SELECT e.id, e.number, e.absolute_number, re.ordinal, re.offset_seconds,
@@ -2691,7 +2627,8 @@ def episode_manifest(conn, *, work_id=None, work_key=None, slug=None, season=Non
         release = releases.get(entry["release_id"])
         if release is None:
             continue
-        view = _print_view(conn, release, links_by_release)
+        view = _print_view(conn, release, links_by_release,
+                           work.get("title"))
         best_link = view["links"][0] if view["links"] else None
         served.append({
             **_merge_print(entry, view),

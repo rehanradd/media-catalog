@@ -2506,6 +2506,32 @@ class PrintLabelFallbackTests(unittest.TestCase):
                 catalog_api.print_label(self._row(label=fragment)), "",
                 fragment)
 
+    def test_bare_print_falls_back_to_the_work_title(self):
+        # Slices S1 (2026-11-20): a print with no describable parts and
+        # no episode identifier falls back to the work title the caller
+        # passes — a movie print has no "Episode N" to fall back to.
+        self.assertEqual(
+            catalog_api.print_label(
+                self._row(label="Download One Piece S01 Complete 720p"),
+                title="One Piece"),
+            "One Piece")
+        self.assertEqual(
+            catalog_api.print_label(self._row(label=None), title="One Piece"),
+            "One Piece")
+
+    def test_episode_identifier_still_wins_over_the_work_title(self):
+        self.assertEqual(
+            catalog_api.print_label(self._row(), title="One Piece"),
+            "Episode 1")
+
+    def test_scrape_fragment_never_becomes_the_label_even_with_a_title(self):
+        # The fallback is the work's display title, never the fragment.
+        self.assertEqual(
+            catalog_api.print_label(
+                self._row(label="Episode 1 Hindi Dub 720p WEB-DL"),
+                title="One Piece"),
+            "One Piece")
+
     def test_unknown_audio_language_never_leaks_into_the_details(self):
         label = catalog_api.print_label(
             self._row(label="Episode 1", audio_languages='["Unknown"]'))

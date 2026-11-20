@@ -227,6 +227,28 @@ class DatabaseSaveTests(unittest.TestCase):
             "SELECT year FROM posts WHERE id = ?", (post_id,))[0]
         self.assertIsNone(row[0])
 
+    def test_ingest_files_missing_language_country_industry_as_null(self):
+        """Dev-cleanup (2026-11-20, S2/S3): importers file the literal word
+        "Unknown" when the source has no value (62,654 posts carry language
+        "Unknown"). The shared normaliser now files NULL instead, so no new
+        placeholder row can be written — and a release whose languages are
+        only placeholders files NULL too. Real values pass through."""
+        data = self.media("site_a", "https://site-a.example/unknown-meta/")
+        data["language"] = "Unknown"
+        data["country"] = "N/A"
+        data["industry"] = "Unknown"
+        data["releases"][0]["languages"] = "Hindi, Unknown"
+        post_id = fast_fetch.save_scraped_data(data)
+        row = self.rows(
+            "SELECT language, country, industry FROM posts WHERE id = ?",
+            (post_id,))[0]
+        self.assertIsNone(row[0])
+        self.assertIsNone(row[1])
+        self.assertIsNone(row[2])
+        rel = self.rows(
+            "SELECT languages FROM releases WHERE post_id = ?", (post_id,))[0]
+        self.assertEqual(rel[0], "Hindi")
+
     def test_an_unprobed_source_is_stored_as_unverified_not_active(self):
         """
         `status` is a measurement, so the writer may not invent one.

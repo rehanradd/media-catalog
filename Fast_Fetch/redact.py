@@ -52,6 +52,7 @@ import re
 import sqlite3
 import struct
 import time
+import unicodedata
 from pathlib import Path
 
 import db_pragmas  # serve-path SQLite pragmas (Session 125)
@@ -738,6 +739,156 @@ def public_label(release, title=None) -> str | None:
 #: They are not provenance, but they are not a genre either, and a card that
 #: reads "Unknown" next to the title is worse than one that reads nothing.
 _BLANK_TOKENS = frozenset({"unknown", "none", "null", "n/a", "other", "-"})
+
+#: Display placeholders — values that mean "we do not know", never a real
+#: language / country / industry / genre. Dev-cleanup (2026-11-18): the
+#: ledger stores these literals on ~60–100k works per field (language
+#: "Unknown" 62,654 posts; country 102,877; industry 103,608) because the
+#: merge used to write the word "Unknown" when a source had no value.
+#: This is the ONE shared set: the v2 read model (catalog_api), the v1
+#: projection (project() below) and the write choke point
+#: (fast_fetch._normalize_scraped_data) all read it from here, so the
+#: rule cannot drift between paths. Matching is on the casefolded,
+#: whitespace-collapsed token, so "Unknown", "UNKNOWN" and " unknown "
+#: are all placeholders — and so is the computed label "Unknown print",
+#: which the old print_label() minted for prints with no describable
+#: parts.
+PLACEHOLDER_VALUES = frozenset({
+    "unknown", "unknown print", "n/a", "n.a.", "null", "none", "tbd",
+    "undefined", "not specified", "not available", "not applicable",
+})
+
+
+def is_placeholder_value(value) -> bool:
+    """True when `value` carries no real display value: None, blank, or
+    one of the placeholder words above."""
+    if value is None:
+        return True
+    text = " ".join(str(value).split()).casefold()
+    return text == "" or text in PLACEHOLDER_VALUES
+
+
+def clean_text_value(value):
+    """A display string, or None when it is blank or a placeholder."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return None if is_placeholder_value(text) else text
+
+
+def _list_items(value) -> list:
+    """A stored list field as plain items: a JSON array, a bare list, or
+    a delimiter-separated string (comma, semicolon, pipe, slash)."""
+    if value in (None, ""):
+        return []
+    if isinstance(value, (list, tuple)):
+        return [str(v).strip() for v in value if str(v).strip()]
+    text = str(value).strip()
+    if not text:
+        return []
+    if text[0] in "[{":
+        try:
+            parsed = json.loads(text)
+        except (ValueError, TypeError):
+            parsed = None
+        if isinstance(parsed, list):
+            return [str(v).strip() for v in parsed if str(v).strip()]
+        if isinstance(parsed, str):
+            return [parsed.strip()] if parsed.strip() else []
+    parts = re.split(r"[,;|/]", text)
+    return [p.strip().strip('"').strip() for p in parts if p and p.strip()]
+
+
+def clean_text_list(value) -> list:
+    """A stored list field with placeholder tokens dropped."""
+    return [item for item in _list_items(value)
+            if not is_placeholder_value(item)]
+
+
+#: Genre tokens that are not genres — platform names, release-status
+#: words and dub markers the importers filed verbatim into `genres`
+#: ("Hindi Dub" on 11,047 works, "NETFLIX" on 1,908, "COMPLETED" on
+#: 745). Compared on the casefolded, whitespace-collapsed token, so
+#: "NETFLIX", "Netflix" and " netflix " all match. "Animes" is not
+#: dropped, it is normalised to "Anime" (see below). Stored rows are
+#: untouched — this curates at serve time only, so a wrong entry here
+#: hides a chip, never deletes data.
+GENRE_DENYLIST = frozenset({
+    # Platforms.
+    "netflix", "amazon prime", "amazon prime video", "prime video",
+    "disney+", "disney plus", "disney+ hotstar", "hotstar", "hbo",
+    "hbo max", "max", "hulu", "apple tv", "apple tv+", "zee5",
+    "sonyliv", "sony liv", "voot", "jio cinema", "jiocinema",
+    "mx player", "alt balaji", "altbalaji", "ullu", "crunchyroll",
+    "funimation", "aha", "eros now", "hoichoi", "mubi",
+    "lionsgate play", "discovery+", "paramount+", "peacock", "amc+",
+    "shudder", "kanopy", "sunnxt", "sun nxt", "shemaroo", "hungama",
+    "yupp tv", "yupptv", "airtel xstream", "erosnow", "jiohotstar",
+    # Release status, not a genre.
+    "completed", "ongoing", "on-going", "on going", "coming soon",
+    "announced", "cancelled", "canceled", "hiatus", "airing",
+    "finished", "upcoming", "ended", "returning series", "tba",
+    "to be announced", "not yet aired", "complete", "incomplete",
+    # Dub / audio markers, not a genre (the language list carries this).
+    "hindi dub", "hindi dubbed", "english dub", "english dubbed",
+    "dual audio", "multi audio", "multi-audio", "dual-audio",
+    "dubbed", "subbed", "multi audios", "dual audios", "hindi-dub",
+    "english-dub", "multi language", "multilingual",
+    "multi-language", "multiple audio", "all languages",
+    "original audio", "original language",
+})
+
+#: Genre spellings normalised at serve time (the stored token stays).
+GENRE_NORMALISATIONS = {"animes": "Anime"}
+
+
+def curate_genres(value) -> list:
+    """A work's genre list with non-genres dropped and spellings
+    normalised. Placeholder tokens go first (a genre of "Unknown" is
+    not a genre); then the denylist above; then tokens starting with
+    "adapted from" ("Adapted From A Manga" is a source note, not a
+    genre). Everything else passes through verbatim, original casing
+    kept."""
+    out = []
+    for item in _list_items(value):
+        token = " ".join(str(item).split()).casefold()
+        if not token or token in PLACEHOLDER_VALUES:
+            continue
+        if token in GENRE_DENYLIST or token.startswith("adapted from"):
+            continue
+        out.append(GENRE_NORMALISATIONS.get(token, str(item).strip()))
+    return out
+
+
+def null_placeholders(value):
+    """A value about to be filed, with its placeholders removed: a
+    whole-value placeholder becomes None; a list loses placeholder
+    items (None when nothing is left, the original shape kept — JSON
+    stays JSON, a comma list stays a comma list); anything else passes
+    through untouched. Junk genre tokens are NOT touched here: they are
+    serve-time curation, never a write-time deletion (Zero Data Loss —
+    only the absence of a value may be filed as NULL)."""
+    if value is None:
+        return None
+    if isinstance(value, (list, tuple)):
+        kept = [v for v in value if not is_placeholder_value(v)]
+        return kept or None
+    text = str(value).strip()
+    if is_placeholder_value(text):
+        return None
+    if text.startswith("["):
+        try:
+            items = json.loads(text)
+        except (ValueError, TypeError):
+            items = None
+        if isinstance(items, list):
+            kept = [v for v in items if not is_placeholder_value(v)]
+            return json.dumps(kept, ensure_ascii=False) if kept else None
+    if "," in text or ";" in text:
+        kept = [t.strip() for t in re.split(r"[,;]", text)
+                if not is_placeholder_value(t.strip())]
+        return ", ".join(kept) if kept else None
+    return value
 #: What a genre/`--`language list really contains. Some parsers mistook a page's
 #: schema.org + WordPress block for the genre list, so these tokens — plus
 #: anything with a digit, an underscore or a domain in it — are markup residue,
@@ -763,20 +914,34 @@ _MARKUP_RE = re.compile(r"[{}\"\\]|://|@type|<[^>]*>")
 
 
 def _category_token(raw) -> str | None:
-    """One list element, kept only if it could plausibly be a category name."""
+    """One list element, kept only if it could plausibly be a category name.
+
+    The genre rules live here too, so the v1 projection cleans a list
+    exactly the way the v2 read model's curate_genres() does: platform
+    names, release-status words and dub markers are not genres, and
+    "Animes" is the spelling "Anime". The denylist tokens are none of
+    them a language, country or industry either, so dropping them from
+    every list key is safe."""
     if isinstance(raw, bool) or not isinstance(raw, (str, int, float)):
         return None
     text = str(raw)
     if _MARKUP_RE.search(text):
         return None
     token = scrub_text(text).strip(" .,:;·-–—|&\"'()")
-    if not (2 <= len(token) <= 40) or not _CATEGORY_RE.match(token):
+    # Diacritics fold for the shape check only ("Côte d'Ivoire" is a
+    # country, not junk) — the original spelling is what is returned.
+    folded = "".join(ch for ch in unicodedata.normalize("NFKD", token)
+                     if not unicodedata.combining(ch))
+    if not (2 <= len(folded) <= 40) or not _CATEGORY_RE.match(folded):
         return None
-    if token.count("-") > 1:                       # a page slug, not a genre
+    if folded.count("-") > 1:                      # a page slug, not a genre
         return None
-    if token.lower() in _BLANK_TOKENS or token.lower() in _JUNK_TOKENS:
+    lowered = folded.lower()
+    if (lowered in _BLANK_TOKENS or lowered in PLACEHOLDER_VALUES
+            or lowered in _JUNK_TOKENS or lowered in GENRE_DENYLIST
+            or lowered.startswith("adapted from")):
         return None
-    return token
+    return GENRE_NORMALISATIONS.get(lowered, token)
 
 
 def public_list(value) -> str:
@@ -784,7 +949,10 @@ def public_list(value) -> str:
 
     Cleans element by element and re-emits the same JSON shape the client already
     parses; the ledger keeps the raw string, so nothing is lost, only
-    un-displayed."""
+    un-displayed. A comma/semicolon-separated stored value ("Hindi,
+    Unknown") cleans token by token the same way and re-emits the same
+    plain-string shape — a single token that cleans to nothing ("Unknown")
+    becomes ""."""
     if value is None:
         return ""
     text = str(value).strip()
@@ -795,7 +963,8 @@ def public_list(value) -> str:
     except (ValueError, TypeError):
         items = None
     if not isinstance(items, list):
-        return scrub_text(text)
+        return ", ".join(_clean_tokens(
+            [t.strip() for t in re.split(r"[,;]", text) if t.strip()]))
     return json.dumps(_clean_tokens(items), ensure_ascii=False)
 
 
@@ -806,18 +975,19 @@ def _project_post_derived(out: dict) -> None:
     ``title`` / ``clean_title`` keep their stored values so existing clients
     and the identity machinery never change. ``imdb_rating`` is normalised
     to 0–10 (None when missing or unshowable, so the badge hides);
-    ``industry`` / ``country`` lose their ``"Unknown"`` placeholder (None,
-    so the chip hides); ``synopsis`` loses ``/PLOT``-style section markers.
-    The ledger is untouched — this is a serialisation decision at the edge.
+    ``industry`` / ``country`` / ``language`` lose their ``"Unknown"``
+    placeholder (None, so the chip hides); ``synopsis`` loses
+    ``/PLOT``-style section markers. The ledger is untouched — this is
+    a serialisation decision at the edge.
     """
     display = title_clean.clean_display_title(
         out.get("title"), out.get("clean_title"))
     out["display_title"] = display or out.get("clean_title") or out.get("title") or ""
     out["imdb_rating"] = title_clean.normalize_rating(out.get("imdb_rating"))
-    for key in ("industry", "country"):
+    for key in ("industry", "country", "language"):
         value = out.get(key)
         if isinstance(value, str) and (
-                value.strip().lower() in _BLANK_TOKENS or value.strip() == "[]"):
+                is_placeholder_value(value) or value.strip() == "[]"):
             out[key] = None
     if "synopsis" in out:
         out["synopsis"] = title_clean.clean_synopsis(out.get("synopsis"))

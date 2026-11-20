@@ -42,6 +42,7 @@ import db_pragmas  # serve-path SQLite pragmas (Session 125); stdlib-only
 import title_clean  # shared title/synopsis/rating rules (stdlib only)
 import quality  # release-quality spelling (DB checkup fix #6); stdlib only
 import backfill_year_from_title  # conservative year-from-title rules; stdlib only
+import redact  # shared placeholder / genre vocabulary (stdlib only)
 try:
     import panel_feed  # the operator's tuning knobs + pauses
 except Exception:  # pragma: no cover - panel_feed is always importable in-repo
@@ -6295,6 +6296,22 @@ def _normalize_scraped_data(data: dict) -> None:
         data["year"] = backfill_year_from_title.validate_year(
             data.get("year"),
             data.get("title") or data.get("clean_title") or "")
+    # Dev-cleanup (2026-11-20, S2/S3): a missing language / country /
+    # industry is NULL, never the literal word "Unknown" — importers file
+    # the word when the source has no value, and the merge funnels
+    # through this same choke point (merge_catalogs calls
+    # save_scraped_data for every post it files), so one guard covers
+    # every writer, including the importers that write their staging
+    # DBs directly. List-shaped values drop placeholder tokens only;
+    # junk genre tokens are serve-time curation, never a write-time
+    # deletion (Zero Data Loss — only the absence of a value may be
+    # filed as NULL).
+    for key in ("language", "languages", "country", "industry", "genres"):
+        if key in data:
+            data[key] = redact.null_placeholders(data.get(key))
+    for rel in data.get("releases") or []:
+        if isinstance(rel, dict) and "languages" in rel:
+            rel["languages"] = redact.null_placeholders(rel.get("languages"))
 
 
 def _enrich_scraped_metadata(data: dict) -> None:

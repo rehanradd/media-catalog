@@ -389,6 +389,74 @@ class DisplayTextTests(unittest.TestCase):
         self.assertTrue(redact.scrub_text(deep).startswith("Tom &"), deep[:60])
 
 
+class ServeTimeCleanupTests(unittest.TestCase):
+    """Dev-cleanup S2/S3 (2026-11-20): the v1 projection applies the same
+    placeholder + genre rules as the v2 read model — one rule, every path.
+    The stored rows keep the merge's literals (Zero Data Loss); the wire
+    never carries them."""
+
+    def _row(self, **overrides):
+        row = {
+            "id": 1, "title": "Blue Box", "clean_title": "Blue Box",
+            "year": 2024, "content_type": "series", "seasons": 1,
+            "imdb_rating": "8.6", "imdb_id": None, "tmdb_id": None,
+            "genres": '["Animes", "COMPLETED", "Hindi Dub", "NETFLIX", "Action"]',
+            "synopsis": "A boy plays badminton.", "is_animated": 1,
+            "industry": "Unknown", "country": "Unknown",
+            "language": "Unknown", "release_count": 3, "source_count": 5,
+        }
+        row.update(overrides)
+        return row
+
+    def test_v1_post_brief_curates_genres_like_v2(self):
+        out = redact.project(self._row(), "post_brief")
+        self.assertEqual(json.loads(out["genres"]), ["Anime", "Action"])
+        self.assertEqual(out["genres"],
+                         json.dumps(["Anime", "Action"], ensure_ascii=False))
+
+    def test_v1_post_brief_nulls_unknown_language_in_every_shape(self):
+        for stored in ("Unknown", '["Unknown"]', "  N/A  "):
+            out = redact.project(self._row(language=stored), "post_brief")
+            self.assertIsNone(out["language"], stored)
+        # A mixed list keeps its real languages and drops the placeholder.
+        out = redact.project(self._row(language="Hindi, Unknown"), "post_brief")
+        self.assertEqual(out["language"], "Hindi")
+        out = redact.project(self._row(language="Hindi, English"), "post_brief")
+        self.assertEqual(out["language"], "Hindi, English")
+
+    def test_v1_post_brief_keeps_real_values_and_diacritics(self):
+        out = redact.project(
+            self._row(language="Hindi", industry="Bollywood",
+                      country="Côte d'Ivoire"), "post_brief")
+        self.assertEqual(out["language"], "Hindi")
+        self.assertEqual(out["industry"], "Bollywood")
+        self.assertEqual(out["country"], "Côte d'Ivoire")
+
+    def test_public_list_cleans_comma_values_and_keeps_shape(self):
+        self.assertEqual(redact.public_list("Action, NETFLIX"), "Action")
+        self.assertEqual(redact.public_list("Hindi, Unknown"), "Hindi")
+        self.assertEqual(redact.public_list("Unknown"), "")
+        self.assertEqual(
+            json.loads(redact.public_list('["Action", "NETFLIX"]')),
+            ["Action"])
+
+    def test_null_placeholders_is_shape_preserving(self):
+        self.assertIsNone(redact.null_placeholders("Unknown"))
+        self.assertIsNone(redact.null_placeholders("  N/A  "))
+        self.assertIsNone(redact.null_placeholders(None))
+        self.assertIsNone(redact.null_placeholders('["Unknown"]'))
+        self.assertEqual(redact.null_placeholders("Hindi, Unknown"), "Hindi")
+        self.assertEqual(redact.null_placeholders('["Hindi", "Unknown"]'),
+                         '["Hindi"]')
+        self.assertEqual(redact.null_placeholders("Hindi"), "Hindi")
+        # Junk genre tokens are serve-time curation, never a write-time
+        # deletion: the ledger keeps them, the wire drops them.
+        self.assertEqual(redact.null_placeholders('["NETFLIX", "Action"]'),
+                         '["NETFLIX", "Action"]')
+        self.assertEqual(redact.null_placeholders(["Hindi", "Unknown"]),
+                         ["Hindi"])
+
+
 class HandleTests(unittest.TestCase):
     SECRET = "unit-test-secret"
 

@@ -232,6 +232,39 @@ class StagingFamilyMergeTests(unittest.TestCase):
                 # probe that never happened (see 8c7488e and _link_state_of).
                 self.assertEqual(src["status"], "unverified")
 
+    def test_merge_files_unknown_placeholders_as_null(self):
+        """Dev-cleanup (2026-11-20, S2/S3): a staging row that literally
+        says "Unknown" must not reach the catalog as the word — the merge
+        funnels through save_scraped_data, so the shared normaliser
+        files NULL for the post fields and the release languages."""
+        with tempfile.TemporaryDirectory() as td:
+            src_db = Path(td) / "hdhub4u.db"
+            tgt_db = Path(td) / "unified.db"
+            self._make_staging_db(src_db)
+            conn = sqlite3.connect(src_db)
+            conn.execute("ALTER TABLE posts ADD COLUMN industry TEXT")
+            conn.execute("ALTER TABLE posts ADD COLUMN country TEXT")
+            conn.execute(
+                "UPDATE posts SET languages = 'Unknown',"
+                " industry = 'Unknown', country = 'N/A'")
+            conn.execute(
+                "UPDATE releases SET audio_languages = '[\"Unknown\"]'")
+            conn.commit()
+            conn.close()
+
+            stats = merge_catalogs.merge_site_db(src_db, tgt_db, verbose=False)
+            self.assertEqual(stats["posts_merged"], 1)
+
+            fast_fetch.DB_PATH = tgt_db
+            with fast_fetch.get_db() as conn:
+                post = conn.execute(
+                    "SELECT language, country, industry FROM posts").fetchone()
+                self.assertIsNone(post["language"])
+                self.assertIsNone(post["country"])
+                self.assertIsNone(post["industry"])
+                rel = conn.execute(
+                    "SELECT languages FROM releases").fetchone()
+                self.assertIsNone(rel["languages"])
 
     def test_duplicate_canonical_keys_merge_into_one_record(self):
         """Two staging rows for the same title must not create sibling catalog records."""
