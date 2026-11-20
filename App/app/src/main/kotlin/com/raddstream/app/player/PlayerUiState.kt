@@ -85,8 +85,9 @@ enum class StartPhase(val label: String) {
 }
 
 /**
- * Screen orientation while the player is open. Playback entry locks to sensor landscape;
- * the Rotate control flips between the two so a viewer can watch portrait in one tap.
+ * Screen orientation while the player is open. Playback entry follows the
+ * phone's held orientation (H18); the Rotate control flips between the two
+ * so a viewer can watch portrait in one tap.
  */
 enum class PlayerOrientation(val label: String) {
     LANDSCAPE("Landscape"),

@@ -64,8 +64,8 @@ data class UserPreferences(
     val dataSaver: Boolean = true,
     /** Downloads start on Wi-Fi only. On by default. */
     val wifiOnlyDownloads: Boolean = true,
-    /** A finished movie's download deletes itself. On by default. */
-    val autoDeleteWatched: Boolean = true,
+    /** A finished movie's download deletes itself. Off by default (user decision 04:42 PKT 20 Nov). */
+    val autoDeleteWatched: Boolean = false,
     /** Smart Downloads: the next episode downloads itself on Wi-Fi. Off by default. */
     val smartDownloadsEnabled: Boolean = false,
     val keepTtl: KeepTtl = KeepTtl.H3,

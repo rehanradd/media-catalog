@@ -124,8 +124,6 @@ import com.raddstream.app.viewmodel.homeFilterMatches
 import com.raddstream.app.viewmodel.selectHeroSection
 import com.raddstream.app.viewmodel.visibleHomeRows
 
-private data class JumpOff(val label: String, val type: String?)
-
 /** Slides in the hero banner. Six is enough to feel like a rail, few enough that the
  *  auto-advance cycle does not outlast attention. */
 private const val HERO_LIMIT = 6
@@ -550,10 +548,12 @@ internal fun HomeContent(
                 Spacer(Modifier.height(8.dp))
             }
 
-            // P1-H3: one "Browse" row, not two near-identical chip rows.
+            // A5 (user decision 04:42 PKT 20 Nov): the Browse row carries
+            // only the server's facet chips now — its type jump-offs
+            // (All / Movies / Series / Anime) duplicated the filter row
+            // above, so they are gone; one filter row only.
             BrowseSection(
                 facets = state.facets,
-                onBrowseType = onBrowseType,
                 onFacetSelected = onFacetSelected,
             )
             Spacer(Modifier.height(8.dp))
@@ -1256,18 +1256,17 @@ private fun LibraryTile(
 }
 
 /**
- * UI-fix P1-H3/H4/H5: one "Browse" row, not two near-identical chip rows
- * ("Browse by genre" over "Browse by type"). Type chips first, then the
- * catalog's own facet chips — genres, industries, and languages (the server
- * already serves `language=`; the chips waited for a Search language filter
- * to land on, and it has now). "Seasons" is a catalog ingest state, not
- * something a viewer browses for — it reads "Complete series" here and in
- * Search. Internal so HomeSectionMarginsTest can pin the 16dp margin.
+ * UI-fix P1-H3/H4/H5: one "Browse" row of the catalog's own facet chips —
+ * genres, industries, and languages (the server already serves
+ * `language=`; the chips waited for a Search language filter to land on,
+ * and it has now). A5 (user decision 04:42 PKT 20 Nov): the type
+ * jump-offs (All / Movies / Series / Anime) are gone — they duplicated
+ * the filter row above, and Home has one filter row only. Internal so
+ * HomeSectionMarginsTest can pin the 16dp margin.
  */
 @Composable
 internal fun BrowseSection(
     facets: FacetsResponse?,
-    onBrowseType: (String?) -> Unit,
     onFacetSelected: (genre: String?, industry: String?, language: String?) -> Unit,
 ) {
     val chips = remember(facets) { browseFacetChips(facets) }
@@ -1295,19 +1294,6 @@ internal fun BrowseSection(
         // [RaddChip] (Navigation) now — the fade and the row are the
         // shared component, not a hand-rolled copy.
         ScrollingChipRow {
-            items(browseTypeTiles) { tile ->
-                RaddChip(
-                    selected = false,
-                    onClick = { onBrowseType(tile.type) },
-                    label = {
-                        Text(
-                            text = tile.label,
-                            style = MaterialTheme.typography.labelMedium,
-                        )
-                    },
-                    style = RaddChipStyle.Navigation,
-                )
-            }
             items(chips) { chip ->
                 RaddChip(
                     selected = false,
@@ -1349,15 +1335,6 @@ internal fun browseFacetChips(facets: FacetsResponse?): List<FacetChip> {
         .map { FacetChip(label = "${it.label} · ${it.count}", genre = null, industry = null, language = it.key) }
     return genreChips + industryChips + languageChips
 }
-
-/** The browse type jump-offs. "Complete series" is the viewer's word for `complete_season`. */
-private val browseTypeTiles = listOf(
-    JumpOff("All", null),
-    JumpOff("Movies", "movie"),
-    JumpOff("Series", "series"),
-    JumpOff("Anime", "anime"),
-    JumpOff("Complete series", "complete_season"),
-)
 
 @Composable
 private fun HomeRailSection(

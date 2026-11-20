@@ -200,7 +200,7 @@ class DownloadsViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(DownloadsUiState())
     val uiState = _uiState.asStateFlow()
 
-    private var autoDeleteWatched: Boolean = true
+    private var autoDeleteWatched: Boolean = false
 
     /** The auto-delete sweep runs once per ViewModel lifetime, not on every list emission. */
     private var sweepDone = false

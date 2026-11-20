@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
@@ -131,6 +132,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -350,6 +352,7 @@ private fun PlayerScreenContent(
     kidsLockViewModel: KidsLockViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
     val activity = remember(context) { context.findActivity() }
     // MX #7 — Kids Lock: the unlock pad, raised when the VM answers an
     // unlock tap in kids mode with RequestKidsPin. The error and lockout
@@ -437,14 +440,25 @@ private fun PlayerScreenContent(
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         insets?.hide(WindowInsetsCompat.Type.systemBars())
         val originalBrightness = window?.attributes?.screenBrightness
-        // Session 157 (S4): playback starts in forced landscape, not
-        // sensor landscape. A sensor reading only picks which landscape the
-        // device is already in — on a device whose sensor is fixed, flat
-        // or slow (a cloud device, an emulator) it can hold the player in
-        // portrait while a landscape picture plays sideways. Forced
-        // landscape is what "play this video" means; the rotate button's
-        // portrait branch below still follows the sensor.
-        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        // H18 (user decision 04:42 PKT 20 Nov): playback entry respects
+        // the phone's held orientation instead of forcing landscape — a
+        // viewer holding the phone portrait opens portrait; landscape
+        // stays available through the rotate control. The sensor request
+        // follows how the device is held right now, and the state is
+        // synced to it here so the orientation effect below applies the
+        // held orientation on its first run instead of overwriting the
+        // sensor request with the stale LANDSCAPE default. (Session 157
+        // S4 forced landscape because a sensor on a fixed/flat/slow
+        // device could hold the player portrait while a landscape picture
+        // played sideways; the owner decided the held orientation wins.)
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR
+        vm.setOrientation(
+            if (configuration.orientation == Configuration.ORIENTATION_PORTRAIT) {
+                PlayerOrientation.PORTRAIT
+            } else {
+                PlayerOrientation.LANDSCAPE
+            },
+        )
         onDispose {
             window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             insets?.show(WindowInsetsCompat.Type.systemBars())
@@ -493,11 +507,11 @@ private fun PlayerScreenContent(
     }
 
     // Manual orientation (rotate button). configChanges on MainActivity keeps playback alive.
-    // Session 157 (S4): the landscape branch is forced, matching the entry
-    // effect above — the orientation state is the source of truth, and its
-    // first composition would otherwise overwrite the forced request with
-    // the sensor one. The portrait branch keeps the sensor, so an explicit
-    // flip to portrait still follows how the viewer holds the device.
+    // H18: the entry effect above already synced the state to the held
+    // orientation, so the first composition applies it; later flips are
+    // the viewer's explicit choice. The landscape branch is forced, the
+    // portrait branch keeps the sensor, so an explicit flip to portrait
+    // still follows how the viewer holds the device.
     LaunchedEffect(state.orientation) {
         activity?.requestedOrientation = when (state.orientation) {
             PlayerOrientation.LANDSCAPE -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE

@@ -718,10 +718,15 @@ class DetailViewModel @Inject constructor(
             full.seasons.any { it.hasAnyPrint }
         val includedPill = if (!hasPrints) {
             null
+        } else if (!qualityGateEnabled) {
+            // F4 (user decision 04:42 PKT 20 Nov): with the gate off, free
+            // 4K for everyone, so no pill at all — not even for a VIP
+            // viewer, whose "VIP" would imply premium content that isn't
+            // gated. The pill returns automatically when the gate is
+            // switched on.
+            null
         } else if (serverVip || premiumLocked) {
             "VIP"
-        } else if (!qualityGateEnabled) {
-            null
         } else {
             "Free · up to $freeQualityCap"
         }

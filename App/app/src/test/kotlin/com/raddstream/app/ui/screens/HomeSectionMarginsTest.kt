@@ -1,7 +1,9 @@
 package com.raddstream.app.ui.screens
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertLeftPositionInRootIsEqualTo
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.network.models.FacetEntry
@@ -47,28 +49,32 @@ class HomeSectionMarginsTest {
         )
         compose.setContent {
             RaddStreamTheme {
-                BrowseSection(facets = facets, onBrowseType = {}, onFacetSelected = { _, _, _ -> })
+                BrowseSection(facets = facets, onFacetSelected = { _, _, _ -> })
             }
         }
         compose.onNodeWithText("Browse").assertLeftPositionInRootIsEqualTo(16.dp)
     }
 
     @Test
-    fun browseSectionKeepsItsNavigationTiles() {
-        // A4-F3: the Browse row rides the shared ScrollingChipRow now,
-        // but it is still a navigation row, not a second filter system —
-        // the type jump-offs and the facet chips must still be there.
+    fun browseSectionKeepsOnlyFacetChips() {
+        // A5 (user decision 04:42 PKT 20 Nov): the Browse row is a
+        // navigation row, not a second filter system — the type
+        // jump-offs are gone (they duplicated the filter row above) and
+        // only the server's facet chips remain.
         val facets = FacetsResponse(
             genres = listOf(FacetEntry(key = "action", label = "Action", count = 12)),
         )
         compose.setContent {
             RaddStreamTheme {
-                BrowseSection(facets = facets, onBrowseType = {}, onFacetSelected = { _, _, _ -> })
+                BrowseSection(facets = facets, onFacetSelected = { _, _, _ -> })
             }
         }
         compose.onNodeWithText("Browse").assertExists()
-        compose.onNodeWithText("All").assertExists()
-        compose.onNodeWithText("Movies").assertExists()
         compose.onNodeWithText("Action · 12").assertExists()
+        // assertDoesNotExist() exists only on node COLLECTIONS, not on the
+        // single node onNodeWithText returns (it never resolves there) —
+        // count the matches instead: zero means the jump-offs are gone.
+        compose.onAllNodesWithText("All").assertCountEquals(0)
+        compose.onAllNodesWithText("Movies").assertCountEquals(0)
     }
 }

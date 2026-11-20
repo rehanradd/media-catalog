@@ -61,6 +61,7 @@ import com.raddstream.app.player.PlaybackInfo
 import com.raddstream.app.player.PlaybackMediaItemFactory
 import com.raddstream.app.player.PlaybackRendition
 import com.raddstream.app.player.PlayTarget
+import com.raddstream.app.player.PlayerOrientation
 import com.raddstream.app.player.PlayerSessionStore
 import com.raddstream.app.player.PrintInfo
 import com.raddstream.app.player.SessionInfo
@@ -364,8 +365,8 @@ class PlayerViewModel @Inject constructor(
     private var decoderMode: DecoderMode = DecoderMode.HARDWARE
     /** Wi-Fi-only downloads — on by default; the Keep button honours it (Session 123). */
     private var wifiOnlyDownloads: Boolean = true
-    /** Delete a watched download to free the space — on by default (Session 123: series episodes too). */
-    private var autoDeleteWatched: Boolean = true
+    /** Delete a watched download to free the space — off by default (user decision 04:42 PKT 20 Nov; Session 123: series episodes too). */
+    private var autoDeleteWatched: Boolean = false
     /**
      * MX #7 — Kids Lock: the mode in force, mirrored from DataStore.
      * [kidsUnlockGranted] is the PIN's grant for THIS title only — a new
@@ -2325,6 +2326,15 @@ class PlayerViewModel @Inject constructor(
 
     fun toggleOrientation() {
         _ui.update { it.copy(orientation = it.orientation.toggled()) }
+    }
+
+    /**
+     * H18 (user decision 04:42 PKT 20 Nov): set the orientation to the
+     * phone's held orientation at player entry, so the entry effect's
+     * sensor request is not overwritten by the stale LANDSCAPE default.
+     */
+    fun setOrientation(orientation: PlayerOrientation) {
+        _ui.update { it.copy(orientation = orientation) }
     }
 
     fun setLocked(locked: Boolean) {

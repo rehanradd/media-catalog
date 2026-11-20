@@ -898,13 +898,15 @@ class ServerSettingsRepository @Inject constructor(
     }
 
     /**
-     * Delete a finished movie's download on its own, to free the space. On
-     * by default; the viewer can switch it off in Settings, and a series
-     * keep is never touched — one watched episode does not mean the season
-     * file is done. The notice names what was deleted.
+     * Delete a finished movie's download on its own, to free the space. Off
+     * by default (user decision 04:42 PKT 20 Nov — auto-deleting files a
+     * viewer downloaded is the kind of surprise that loses trust); the
+     * viewer can switch it on in Settings, and a series keep is never
+     * touched — one watched episode does not mean the season file is done.
+     * The notice names what was deleted.
      */
     val autoDeleteWatched: Flow<Boolean> = dataStore.data.map { preferences ->
-        preferences[AUTO_DELETE_WATCHED_KEY] ?: true
+        preferences[AUTO_DELETE_WATCHED_KEY] ?: false
     }
 
     suspend fun saveAutoDeleteWatched(enabled: Boolean) {
