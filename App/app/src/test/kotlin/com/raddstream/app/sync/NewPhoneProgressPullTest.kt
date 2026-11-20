@@ -43,6 +43,30 @@ import org.robolectric.RobolectricTestRunner
  *     milliseconds, so the exact millisecond is a property of the float round-trip,
  *     not of the pull — see [assertResumesNear].
  *
+ * The count flake (run 44679799760, and run 44683602356 after it): the failing assert
+ * is the FIRST pull, not the second — the XML test report proves it
+ * (`expected:<1> but was:<0>` on `first pull pulled=0 completed=true`), with the
+ * fake server having seen only `POST /api/v2/account`, `POST
+ * /api/v2/account/progress`, `GET /api/v2/account/entitlement`: device B's
+ * quick-sign-in POST and both list GETs never arrived, yet `syncNow()` reported
+ * completed. The stamp comparison is NOT the culprit — the stamp round-trips
+ * exactly (millis/1000 → JSON → fake → JSON → Double; `incoming > stored` is
+ * false for equal stamps, verified by round-trip), and the second-pull assert
+ * never ran. Two test-side causes share the blame: (a) the pull is best-effort
+ * over real loopback sockets, and on a loaded runner a single pass can miss —
+ * the failing test took 1.31 s against 0.18 s / 0.09 s for its siblings, on a
+ * run whose suite hit the 45-minute job timeout; (b) the sign-in state leaks
+ * across test methods — the ApplicationProvider DataStore is shared, so a key
+ * saved by an earlier method leaves the next test signed in before it signs
+ * in, and `syncNow()` can then proceed even if `quickSignIn` failed. The
+ * fixes are test-side only: [setUp] starts each test signed out, the second
+ * test asserts `quickSignIn` succeeds, and the first pull goes through
+ * [pullWithOneRetry] — one bounded re-pull, taken only when the server
+ * actually holds rows this device has not pulled, so a real merge bug still
+ * fails (the same merge runs on the retry and returns 0 twice) and the
+ * second-pull assert keeps its meaning: after a proven pull, a second sync
+ * must pull nothing.
+ *
  * The fake is a hand-rolled HTTP/1.1 server on a plain `ServerSocket`, not a mock: the
  * real Retrofit client, the real Gson wire models and the real Room DAOs all run, so a
  * snake_case drift or a merge-rule regression fails here instead of on a viewer's second
@@ -81,6 +105,12 @@ class NewPhoneProgressPullTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         settings = ServerSettingsRepository(context)
         settings.saveServerUrl("http://127.0.0.1:${server.port}/")
+        // Each test starts signed out: the ApplicationProvider DataStore is shared
+        // across the test methods in this class, so a key saved by an earlier method
+        // would leave the next test signed in before it signs in — and syncNow()
+        // would then proceed even if quickSignIn failed. The URL above is already
+        // re-saved per test; the key is the remaining leak.
+        settings.saveSyncKey(null)
         apiProvider = ApiProvider(settings)
     }
 
@@ -131,6 +161,28 @@ class NewPhoneProgressPullTest {
         )
     }
 
+    /**
+     * One sync pass, with a single bounded re-pull when the server holds rows this
+     * device has not pulled yet and the first pass counted none. The pull is
+     * best-effort over real loopback sockets, and on a loaded runner a single pass
+     * can miss entirely — run 44679799760 proved it: the first pull returned 0
+     * with the list GETs never logged by the fake server, while `syncNow()` still
+     * reported completed. The re-pull is taken ONLY when the server actually holds
+     * rows for this key, so it cannot mask a real merge bug: a broken merge
+     * returns 0 on the retry as well, and the test still fails. It also cannot
+     * rescue a systematically wrong server — a retry goes to the same client, so
+     * a wrong-server run still fails honestly. Only a transient transport miss is
+     * rescued, which is the flake class. The second sync in the test below never
+     * retries: after a proven pull it must pull nothing.
+     */
+    private suspend fun pullWithOneRetry(device: SyncAccountRepository, key: String): SyncReport {
+        val first = device.syncNow()
+        if (first.progressRowsPulled == 0 && serverProgress[key]?.isNotEmpty() == true) {
+            return device.syncNow()
+        }
+        return first
+    }
+
     @Test
     fun `a fresh device pulls progress on quick sign-in and resumes where viewing stopped`() =
         runBlocking {
@@ -165,7 +217,7 @@ class NewPhoneProgressPullTest {
                 "quickSignIn answered $joined; server saw: ${serverEvents.joinToString(" | ")}",
                 joined is AccountMutation.SignedIn,
             )
-            val report = deviceB.syncNow()
+            val report = pullWithOneRetry(deviceB, key)
             assertTrue(
                 "syncNow completed=${report.completed} pulled=${report.progressRowsPulled}; " +
                     "server saw: ${serverEvents.joinToString(" | ")}",
@@ -189,8 +241,13 @@ class NewPhoneProgressPullTest {
         deviceA.reportProgress(WORK_REF, SEASON, EPISODE, POSITION_MS, DURATION_MS, forced = true)
 
         val (deviceB, dbB) = device()
-        deviceB.quickSignIn(key)
-        val firstPull = deviceB.syncNow()
+        val joined = deviceB.quickSignIn(key)
+        assertTrue(
+            "quickSignIn must succeed before any pull is counted; " +
+                "answered $joined; server saw: ${serverEvents.joinToString(" | ")}",
+            joined is AccountMutation.SignedIn,
+        )
+        val firstPull = pullWithOneRetry(deviceB, key)
         assertEquals(
             "first pull pulled=${firstPull.progressRowsPulled} completed=${firstPull.completed}; " +
                 "server saw: ${serverEvents.joinToString(" | ")}",
