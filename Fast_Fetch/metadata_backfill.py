@@ -38,7 +38,7 @@ Order of sources (site metadata is primary, per the standing order)
      AniList / Kitsu cover
    * cast: TMDb credits (top 8) > TVMaze cast > AniList characters >
      Cinemeta cast
-   * director: TMDb credits (job=Director) > OMDb > Cinemeta > IMDb crew
+   * director: TMDb credits (job=Director) > Simkl > OMDb > Cinemeta > IMDb crew
    * year / ids: TMDb (release_date / first_air_date, external_ids) >
      Simkl year / ids.tmdb > Cinemeta year > TVMaze premiered > AniList
      startDate
@@ -213,7 +213,7 @@ FIELD_SOURCES = {
     "poster": ("tmdb", "simkl", "cinemeta", "fanart", "anilist", "kitsu", "jikan"),
     "backdrop": ("tmdb", "simkl", "cinemeta", "fanart"),
     "cast": ("tmdb", "tvmaze", "anilist", "cinemeta"),
-    "director": ("tmdb", "omdb", "cinemeta"),
+    "director": ("tmdb", "simkl", "omdb", "cinemeta"),
     "year": ("tmdb", "simkl", "cinemeta", "tvmaze", "anilist", "kitsu"),
     "tmdb_id": ("tmdb", "simkl"),
     "imdb_id": ("tmdb", "omdb", "mdblist", "trakt"),
@@ -1289,9 +1289,10 @@ class SimklSource(Source):
     needed: ``/movies|/tv|/anime/:imdb``. Gives the real IMDb rating when
     Simkl has one, else its own Simkl score (recorded as source simkl,
     never as an IMDb score — the same honesty rule as TMDb's
-    vote_average); overview, poster, fanart, year, genres, runtime, and
-    the TMDb id for the cross-link. No cast in the summary shape — cast
-    stays TMDb-only. Probe 2026-11-20 on 100 no-rating works: Simkl
+    vote_average); overview, poster, fanart, year, genres, runtime, the
+    TMDb id for the cross-link, and the movie payload's ``director``
+    string. No cast in the summary shape — cast stays TMDb-only. Probe
+    2026-11-20 on 100 no-rating works: Simkl
     86/100 found, TMDb 26/68 completed calls on the same 100.
 
     Some lookups answer with a list of matches instead of one object;
@@ -1328,6 +1329,7 @@ class SimklSource(Source):
             out.set("backdrop", [data["fanart"]], self.NAME)
         out.set("year", data.get("year"), self.NAME)
         out.set("genres", data.get("genres"), self.NAME)
+        out.set("director", data.get("director"), self.NAME)
         out.set("tmdb_id", data.get("tmdb_id"), self.NAME)
         return out if not out.is_empty() else None
 

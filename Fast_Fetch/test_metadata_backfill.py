@@ -518,6 +518,7 @@ class SimklClientTests(unittest.TestCase):
     MATRIX = {
         "title": "The Matrix", "year": 1999, "runtime": 136,
         "overview": "Set in the 22nd century, a hacker joins the rebellion.",
+        "director": "Lana Wachowski",
         "genres": ["Action", "Science Fiction"],
         "ratings": {"simkl": {"rating": 8.6, "votes": 13222},
                     "imdb": {"rating": 8.7, "votes": 2295151}},
@@ -546,6 +547,8 @@ class SimklClientTests(unittest.TestCase):
                          ["https://simkl.in/fanart/12/12560269d5c490d440_medium.jpg"])
         self.assertEqual(meta.get("year"), 1999)
         self.assertEqual(meta.get("genres"), ["Action", "Science Fiction"])
+        self.assertEqual(meta.get("director"), "Lana Wachowski")
+        self.assertEqual(meta.sources.get("director"), "simkl")
         self.assertEqual(meta.get("tmdb_id"), "603")
         self.assertIsNone(meta.get("cast"))  # Simkl summaries carry no cast
         self.assertTrue(source.http.calls[0].startswith(
@@ -609,7 +612,7 @@ class SimklClientTests(unittest.TestCase):
         names = [cls.NAME for cls in mb.SOURCE_CLASSES]
         self.assertIn("simkl", names)
         for field in ("rating", "synopsis", "poster", "backdrop",
-                      "year", "genres", "tmdb_id"):
+                      "year", "genres", "tmdb_id", "director"):
             chain = mb.FIELD_SOURCES[field]
             self.assertIn("simkl", chain)
             self.assertEqual(chain[chain.index("tmdb") + 1], "simkl",

@@ -7,7 +7,7 @@
 
 ## ✅ Open items — index (q3, 2026-10-30; pointers only)
 
-1. **This file is a pointer, not a history** 145 session files (142 dated + 3 undated) cover
+1. **This file is a pointer, not a history** 146 session files (143 dated + 3 undated) cover
 
    every one of them verbatim: [`checkpoints/README.md`](checkpoints/README.md). Nothing was
    deleted, reworded, or summarized. The count is `ls Fast_Fetch/checkpoints/*.md` minus `README.md`,
@@ -71,6 +71,7 @@
 ## Rotated session history
 
 The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete index.
+- [2026-11-20 — Simkl director](checkpoints/20261120-simkl-director.md): director string wired after tmdb; live proof The Matrix fills "Lana Wachowski"; 24 + 90 tests green locally.
 - [2026-11-20 — Simkl enricher](checkpoints/20261120-simkl-enricher.md): SimklSource after TMDb; probe 86/100 vs TMDb 26/68; 23 + 90 tests green, CI pending.
 - [2026-11-20 — Duration backfill job](checkpoints/20261120-duration-backfill.md): EXTINF-sum + header-first prober, resolved_cache batches of 100, staging table + NULL-only gate apply; 59 tests green locally.
 - [2026-11-20 — GDFlix clearance re-earning loop](checkpoints/20261120-gdflix-clearance-loop.md): loop earning cf_clearance for new10.gdflix.io before the 15-min ceiling; resolve path marks a challenged host due; 24 tests, Backend CI pending.
@@ -79,7 +80,7 @@ The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete i
 - [2026-11-20 — Scale fix #1: per-user rate-limit keys](checkpoints/20261120-scale-real-ip.md): `client_ip()` reads `CF-Connecting-IP` from loopback only (X-Real-IP/XFF fallback unchanged); no limit numbers changed. nginx patch (22 Cloudflare `set_real_ip_from` + header, `nginx -t` ok on a patched copy of live config) applies at gate time. 56x503 on remote-config are cold-cache refills, not the gate restart.
 - [2026-11-20 — Phase C SexTB importer: NO IMPORTER](checkpoints/20261120-phasec-sextb-importer.md): sextb.net alive but geo/IP-walled from all server egress (homepage/sitemap/video URL all 403 "Access Restricted"); no fetchable surface, so no importer built — hollow importers forbidden. Unblocks: real-browser HAR from an allowed region, WARP egress test, or earned clearance.
 - [2026-11-20 — Server slices S1/S2/S3](checkpoints/20261120-server-slices-s1s2s3.md): shared redact placeholder/genre source, v1 curates genres, print_label title fallback, gate-time backfill ready; full gate BLOCKED on hatch sandbox write block (EPERM).
-- [2026-11-20 — H4 R7 per-segment retry](checkpoints/20261120-h4-r7-per-segment-retry.md): dead_handle report strikes both ledgers (resolved_cache circuit + negative cache); other classes record evidence only; report route resolves the handle in the LEDGER universe; 13 server + 15 app tests green locally, CI pending.
+- [2026-11-20 — H4 R7 per-segment retry](checkpoints/20261120-h4-r7-per-segment-retry.md): dead_handle report strikes both ledgers; 13 server + 15 app tests green locally, CI pending.
 - [2026-11-20 — H4 R10 fixup](checkpoints/20261120-h4-r10-fixup.md): Backend CI failed on main c27890db — the descriptor re-minted the handle (mint_token embeds the expiry second); download + both stream descriptors now echo the presented signed handle; backdated-mint test fails unfixed, passes fixed; 27 + 116 tests green locally.
 ## Moved out (reference prose, verbatim)
 

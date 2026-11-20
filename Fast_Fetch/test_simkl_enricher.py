@@ -12,6 +12,8 @@ the decisions that can quietly poison the catalog if they drift:
   ``_medium.jpg`` (fanart ``_m.jpg`` 301s to an alert placeholder);
 * the IMDb rating wins over the Simkl score, and a 0 / out-of-range
   value is not a score;
+* the movie payload's ``director`` string is extracted when present —
+  blank or non-string values are not a director;
 * a missing field stays absent — nothing is ever invented.
 """
 from __future__ import annotations
@@ -27,6 +29,7 @@ import simkl_enricher as se
 MATRIX = {
     "title": "The Matrix", "year": 1999, "runtime": 136,
     "overview": "Set in the 22nd century, a hacker joins the rebellion.",
+    "director": "Lana Wachowski",
     "genres": ["Action", "Science Fiction"],
     "ratings": {"simkl": {"rating": 8.6, "votes": 13222},
                 "imdb": {"rating": 8.7, "votes": 2295151}},
@@ -133,6 +136,7 @@ class ExtractMetadataTests(unittest.TestCase):
         self.assertEqual(out["year"], 1999)
         self.assertEqual(out["runtime"], 136)
         self.assertEqual(out["overview"], MATRIX["overview"])
+        self.assertEqual(out["director"], "Lana Wachowski")
         self.assertEqual(out["genres"], ["Action", "Science Fiction"])
         self.assertEqual(out["rating"], 8.7)
         self.assertEqual(out["rating_kind"], "imdb")
@@ -170,6 +174,14 @@ class ExtractMetadataTests(unittest.TestCase):
             "title": "Obscure", "year": 2019,
             "ratings": {"simkl": {"rating": 6.4, "votes": 12}}})
         self.assertEqual((out["rating"], out["rating_kind"]), (6.4, "simkl"))
+
+    def test_blank_and_non_string_director_are_dropped(self):
+        out = se.extract_metadata({"title": "X", "director": "   "})
+        self.assertNotIn("director", out)
+        out = se.extract_metadata({"title": "X", "director": ["A", "B"]})
+        self.assertNotIn("director", out)
+        out = se.extract_metadata({"title": "X", "director": None})
+        self.assertNotIn("director", out)
 
     def test_bad_year_and_runtime_are_dropped(self):
         out = se.extract_metadata({"title": "X", "year": 1066, "runtime": 0})

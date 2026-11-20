@@ -12,10 +12,10 @@ The summary endpoints (``/movies/:id``, ``/tv/:id``, ``/anime/:id``, by
 IMDb id or Simkl id) return one rich object — but some lookups return a
 LIST of matches instead of one object; the first dict element is the
 match (the probe crashed on this once, before the fix). Cast is NOT in
-the summary shape, so Simkl never fills cast; the movie payload does
-carry a ``director`` string, which is NOT wired here (the backfill's
-Simkl field list is title/year/overview/genres/rating/poster/fanart/
-runtime — see the checkpoint for the director follow-up).
+the summary shape, so Simkl never fills cast. The movie payload also
+carries a ``director`` string (``"Lana Wachowski"`` for The Matrix),
+extracted by ``extract_metadata`` and wired after TMDb in the backfill's
+``director`` chain.
 
 Image URLs (verified live 2026-11-20: poster ``_m.jpg`` 200 with real
 JPEG bytes, fanart ``_medium.jpg`` 200 with real JPEG bytes; ``_l.jpg``
@@ -176,6 +176,9 @@ def extract_metadata(payload) -> dict:
               if str(item).strip()]
     if genres:
         out["genres"] = genres
+    director = data.get("director")
+    if isinstance(director, str) and director.strip():
+        out["director"] = director.strip()
     rating, kind = best_rating(data.get("ratings"))
     if rating is not None:
         out["rating"] = rating
