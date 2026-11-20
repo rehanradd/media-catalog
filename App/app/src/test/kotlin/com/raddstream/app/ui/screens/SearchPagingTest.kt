@@ -156,7 +156,20 @@ class SearchPagingTest {
             PagingData.from(
                 data = listOf(samplePost(1, "One Piece")),
                 sourceLoadStates = LoadStates(
-                    refresh = idle,
+                    // refresh endOfPaginationReached = true, local to this
+                    // test: with the shared idle (false) the pager
+                    // auto-appends as soon as the PagingData is processed;
+                    // the static source returns an empty page, so append
+                    // becomes NotLoading and OVERWRITES the fixture Error
+                    // before any recomposition renders it — that is why
+                    // this test read "not displayed" in all three CI runs
+                    // (44646400985 / 44649050155 / 44651470183) while the
+                    // Loading sibling passes (Loading is the initial
+                    // state, rendered before any processing). Marking the
+                    // refresh as the end of pagination stops the
+                    // auto-append, so the fixture Error persists and the
+                    // retry row renders. The other tests keep idle.
+                    refresh = LoadState.NotLoading(endOfPaginationReached = true),
                     prepend = idle,
                     append = LoadState.Error(IOException("dead socket")),
                 ),
@@ -167,10 +180,9 @@ class SearchPagingTest {
         // which passes on the initial all-Loading state before any
         // processing runs, this footer does not exist on the first
         // composition. waitUntil polls for it instead of asserting
-        // against a state that may not have landed yet (CI 44646400985
-        // and 44649050155 both failed here with "not displayed"). It
-        // still fails if the footer never appears — a missing retry row
-        // is not papered over, it is waited for.
+        // against a state that may not have landed yet. It still fails
+        // if the footer never appears — a missing retry row is not
+        // papered over, it is waited for.
         compose.waitUntil(timeoutMillis = 5_000) {
             compose.onAllNodesWithText("Could not load more.")
                 .fetchSemanticsNodes().isNotEmpty()

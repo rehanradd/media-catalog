@@ -164,15 +164,31 @@ class ScrollingChipRowTest {
         // production rows carry 16dp of start padding, and the snap
         // behaviour lands the item flush at the CONTENT edge — so with
         // padding, the previous chip's tail still peeks into the 16dp
-        // start zone and firstVisibleItemScrollOffset reads nonzero
-        // (CI 44646400985: 48) even though the fling snapped correctly.
-        // Zero padding makes the snap target the viewport start, so
-        // offset 0 is the snap itself, not the padding.
+        // start zone and firstVisibleItemScrollOffset reads nonzero even
+        // when the fling snapped correctly. Zero padding makes the snap
+        // target the viewport start, so offset 0 is the snap itself.
+        //
+        // Twelve chips on purpose: with five, the default swipe's drag
+        // already exceeded maxScroll, so the list pinned at its end in
+        // every run and the offset was pure geometry — 48 with 16dp
+        // padding, 16 with zero padding (the 32px delta is exactly the
+        // padding increase at density 2.0) — and at maxScroll no item
+        // can sit flush, so offset 0 was unreachable by construction
+        // (CI 44646400985 / 44649050155 / 44651470183). Twelve chips
+        // make the content ~3x the viewport, so the swipe lands
+        // mid-list where a snap CAN align an item flush.
+        //
+        // The swipe is fast (100ms) on purpose too: the default 300ms
+        // swipe never produced a fling under Robolectric in any of the
+        // three runs — the settled offset was the drag-rest position in
+        // all of them — so a faster swipe is the remaining lever for
+        // producing fling velocity. If this still settles nonzero, the
+        // gesture produces no fling at all under Robolectric and the
+        // test needs a programmatic fling, not a faster swipe.
         //
         // A fling + snap takes virtual time: advance well past any fling
         // duration so the assertions read the SETTLED state, not a
-        // mid-flight sample (CI 44649050155 read offset 16 with
-        // waitForIdle alone). The index assertion keeps the test honest:
+        // mid-flight sample. The index assertion keeps the test honest:
         // a swipe that moved nothing would also read offset 0.
         val state = LazyListState()
         compose.setContent {
@@ -183,7 +199,7 @@ class ScrollingChipRowTest {
                         contentPadding = PaddingValues(0.dp),
                         rowTestTag = "test-snap-row",
                     ) {
-                        items(listOf("Complete series", "Documentaries", "Science Fiction", "Action", "Drama")) { label ->
+                        items(listOf("Complete series", "Documentaries", "Science Fiction", "Action", "Drama", "Comedy", "Horror", "Romance", "Thriller", "Mystery", "Animation", "Crime")) { label ->
                             RaddChip(
                                 selected = false,
                                 onClick = {},
@@ -194,7 +210,7 @@ class ScrollingChipRowTest {
                 }
             }
         }
-        compose.onNodeWithTag("test-snap-row").performTouchInput { swipeLeft() }
+        compose.onNodeWithTag("test-snap-row").performTouchInput { swipeLeft(durationMillis = 100) }
         compose.mainClock.advanceTimeBy(3000)
         compose.waitForIdle()
         assertTrue(state.firstVisibleItemIndex > 0)
