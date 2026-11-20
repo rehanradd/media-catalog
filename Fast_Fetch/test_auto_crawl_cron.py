@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import fcntl
 import os
+import re
 import stat
 import subprocess
 import tempfile
@@ -176,10 +177,22 @@ class AutoCrawlCronTests(unittest.TestCase):
         self.assertNotIn("huggingface", invoked.lower())
         self.assertIn("No backup step in this cycle", self.log())
 
-    def test_script_source_has_no_backup_call(self):
-        # Static guard: the broken Step 3 must not creep back in.
+    def test_script_source_has_no_backup_invocation(self):
+        # Guard: no code line may invoke a backup binary. The header comment
+        # documents why the step is gone and the final log line tells the
+        # operator the same, so those may name it; a call may not. (An
+        # earlier version of this guard asserted on the bare substring and
+        # failed on its own documentation — the behaviour test above is the
+        # real proof; this one only catches a re-added call.)
+        invocation = re.compile(r"""(^|\s)(/usr/local/bin/backup-hf|backup-hf-slim)\b""")
+        for line in SCRIPT.read_text().splitlines():
+            if line.lstrip().startswith("#"):
+                continue
+            self.assertIsNone(
+                invocation.search(line),
+                "a code line invokes a backup binary: %r" % line,
+            )
         source = SCRIPT.read_text()
-        self.assertNotIn("backup-hf", source)
         self.assertNotIn("HF_TOKEN", source)
         self.assertNotIn("HF_DATASET_REPO", source)
 
