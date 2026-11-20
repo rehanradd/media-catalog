@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "updated_at": "2026-11-18T13:48:56Z",
+  "updated_at": "2026-11-20T19:30:27Z",
   "hosts": {
     "hubcloud.ist": {
       "current_domain": "hubcloud.mov",
@@ -245,13 +245,14 @@
       "dead_rows": 60
     },
     "vd.1xplayer.com": {
-      "current_domain": "geffe448mik.com",
-      "evidence": "audit-confirmed",
+      "current_domain": "asrmo449ddj.com",
+      "evidence": "prober",
       "status": "active",
-      "last_verified": "2026-11-18T13:17:00Z",
-      "verified_by": "audit-20261118",
+      "last_verified": "2026-11-20T07:32:23Z",
+      "verified_by": "prober",
       "rows_affected": 31077,
       "known_mirrors": [
+        "https://asrmo449ddj.com",
         "https://geffe448mik.com"
       ],
       "rotation_history": [
@@ -262,6 +263,14 @@
         {
           "domain": "geffe448mik.com",
           "seen_from": "2026-11-18"
+        },
+        {
+          "domain": "geffe448mik.com",
+          "seen_until": "2026-11-20T07:32:23Z"
+        },
+        {
+          "domain": "asrmo449ddj.com",
+          "seen_from": "2026-11-20T07:32:23Z"
         }
       ],
       "dead_rows": 2
@@ -333,13 +342,14 @@
       "dead_rows": 0
     },
     "filebee.xyz": {
-      "current_domain": "filebee.top",
-      "evidence": "audit-unconfirmed",
+      "current_domain": "rt.filepress.lat",
+      "evidence": "prober",
       "status": "active",
-      "last_verified": "2026-11-18T13:17:00Z",
-      "verified_by": "audit-20261118",
+      "last_verified": "2026-11-19T22:38:14Z",
+      "verified_by": "prober",
       "rows_affected": 90736,
       "known_mirrors": [
+        "https://rt.filepress.lat",
         "https://filebee.top"
       ],
       "rotation_history": [
@@ -350,6 +360,14 @@
         {
           "domain": "filebee.top",
           "seen_from": "2026-11-18"
+        },
+        {
+          "domain": "filebee.top",
+          "seen_until": "2026-11-19T22:38:14Z"
+        },
+        {
+          "domain": "rt.filepress.lat",
+          "seen_from": "2026-11-19T22:38:14Z"
         }
       ],
       "dead_rows": 0
@@ -509,13 +527,14 @@
       "dead_rows": 0
     },
     "new4.filepress.baby": {
-      "current_domain": "fpgo.xyz",
-      "evidence": "audit-unconfirmed",
+      "current_domain": "rt.filepress.lat",
+      "evidence": "prober",
       "status": "active",
-      "last_verified": "2026-11-18T13:17:00Z",
-      "verified_by": "audit-20261118",
+      "last_verified": "2026-11-19T23:22:16Z",
+      "verified_by": "prober",
       "rows_affected": 652,
       "known_mirrors": [
+        "https://rt.filepress.lat",
         "https://fpgo.xyz"
       ],
       "rotation_history": [
@@ -526,6 +545,14 @@
         {
           "domain": "fpgo.xyz",
           "seen_from": "2026-11-18"
+        },
+        {
+          "domain": "fpgo.xyz",
+          "seen_until": "2026-11-19T23:22:16Z"
+        },
+        {
+          "domain": "rt.filepress.lat",
+          "seen_from": "2026-11-19T23:22:16Z"
         }
       ],
       "dead_rows": 0
@@ -616,6 +643,46 @@
       "rows_affected": 22853,
       "known_mirrors": [],
       "rotation_history": []
+    },
+    "doodstream.com": {
+      "current_domain": "playmogo.com",
+      "evidence": "prober",
+      "status": "active",
+      "last_verified": "2026-11-20T04:02:28Z",
+      "verified_by": "prober",
+      "known_mirrors": [
+        "https://playmogo.com"
+      ],
+      "rotation_history": [
+        {
+          "domain": "doodstream.com",
+          "seen_until": "2026-11-20T04:02:28Z"
+        },
+        {
+          "domain": "playmogo.com",
+          "seen_from": "2026-11-20T04:02:28Z"
+        }
+      ]
+    },
+    "vikingfile.com": {
+      "current_domain": "vik1ngf1le.online",
+      "evidence": "prober",
+      "status": "active",
+      "last_verified": "2026-11-20T19:30:27Z",
+      "verified_by": "prober",
+      "known_mirrors": [
+        "https://vik1ngf1le.online"
+      ],
+      "rotation_history": [
+        {
+          "domain": "vikingfile.com",
+          "seen_until": "2026-11-20T19:30:27Z"
+        },
+        {
+          "domain": "vik1ngf1le.online",
+          "seen_from": "2026-11-20T19:30:27Z"
+        }
+      ]
     }
   }
 }
