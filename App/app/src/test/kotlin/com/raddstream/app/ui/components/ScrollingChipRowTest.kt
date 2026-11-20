@@ -1,6 +1,7 @@
 package com.raddstream.app.ui.components
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.snapping.SnapPosition
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -185,13 +186,22 @@ class ScrollingChipRowTest {
         // A swipe produces a drag but no fling velocity here, so
         // performFling is never called and the snap never runs. The
         // test therefore builds the same snap behaviour the row builds
-        // (rememberSnapFlingBehavior over the same hoisted state, same
-        // defaults) and drives it from a LaunchedEffect. That pins the
-        // snap settlement for this row's state; the row's own wiring —
-        // it passes rememberSnapFlingBehavior(state) to its LazyRow —
-        // is the one-liner in ScrollingChipRow.kt:86. The gesture path
-        // (a real swipe -> fling -> snap) is a device-verification
-        // item, not something Robolectric can prove.
+        // (rememberSnapFlingBehavior over the same hoisted state, with
+        // the same snapPosition) and drives it from a LaunchedEffect.
+        // That pins the snap settlement for this row's state; the row's
+        // own wiring — it passes rememberSnapFlingBehavior(state,
+        // snapPosition = SnapPosition.Start) to its LazyRow — is the
+        // one-liner in ScrollingChipRow.kt:86. The gesture path (a real
+        // swipe -> fling -> snap) is a device-verification item, not
+        // something Robolectric can prove.
+        //
+        // The snapPosition is Start EXPLICITLY here and in the row:
+        // the default is Center, and that was the root cause of eight
+        // failing CI runs — the row was center-snapping, so offset 0
+        // was never the settled state and the waitUntil for it timed
+        // out every time (run 44661783465). A filter strip must rest
+        // with a chip flush at the start edge; Center is for
+        // carousels, not chip rows.
         //
         // The fling velocity is 400px/s on purpose: it moves the list
         // ~135px, past the first chip (so the index assertion means
@@ -206,9 +216,9 @@ class ScrollingChipRowTest {
             RaddStreamTheme {
                 // The snap behaviour, built exactly the way the row
                 // builds its own (same function, same state, same
-                // defaults) — driven from the LaunchedEffect below
-                // because a Robolectric swipe produces no fling.
-                val snapBehavior = rememberSnapFlingBehavior(state)
+                // snapPosition = Start) — driven from the LaunchedEffect
+                // below because a Robolectric swipe produces no fling.
+                val snapBehavior = rememberSnapFlingBehavior(state, snapPosition = SnapPosition.Start)
                 Box(Modifier.width(200.dp)) {
                     ScrollingChipRow(
                         state = state,

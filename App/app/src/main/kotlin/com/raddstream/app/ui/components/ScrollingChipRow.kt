@@ -3,6 +3,7 @@ package com.raddstream.app.ui.components
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.snapping.SnapPosition
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -83,7 +84,13 @@ fun ScrollingChipRow(
             contentPadding = contentPadding,
             horizontalArrangement = Arrangement.spacedBy(horizontalSpacing),
             verticalAlignment = verticalAlignment,
-            flingBehavior = rememberSnapFlingBehavior(state),
+            // SnapPosition.Start is explicit on purpose: the default is
+            // Center, which centers a chip in the viewport — wrong for
+            // a filter strip, where the row must rest with a chip flush
+            // at the start edge (this KDoc and the snap test both pin
+            // that). Found the hard way: eight CI runs failed the test's
+            // offset-0 assertion before the default was checked.
+            flingBehavior = rememberSnapFlingBehavior(state, snapPosition = SnapPosition.Start),
         ) {
             content()
         }
