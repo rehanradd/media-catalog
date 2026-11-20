@@ -5,8 +5,8 @@ Offline, stdlib, no network: every HTTP hop goes through an injected
 fake fetcher. Real DNS is never touched.
 
 Pinned here:
-* the seeded registry loads: 32 entries (30 moved pairs + 2 dead hosts),
-  30 live domains, and the two dead hosts are recorded, not rewritten;
+* the seeded registry loads: 38 entries (34 moved pairs + 4 dead hosts),
+  34 live domains, and the four dead hosts are recorded, not rewritten;
 * rewrite_url swaps ONLY the host (scheme/port/path/query/fragment
   preserved) and falls back to the stored URL for unknown, dead, or
   already-current hosts;
@@ -76,15 +76,16 @@ class TestSeededRegistry(unittest.TestCase):
         reg = hr.load_registry()
         hosts = reg["hosts"]
         self.assertEqual(reg["version"], "2.0")
-        self.assertEqual(len(hosts), 32)  # 30 moved pairs + 2 dead hosts
-        self.assertEqual(len(hr.live_domains()), 30)
+        self.assertEqual(len(hosts), 38)  # 34 moved pairs + 4 dead hosts
+        self.assertEqual(len(hr.live_domains()), 34)
         # The audit's headline said 26 pairs; the enumerated lists sum to
         # 29, and the pair row counts sum to exactly the audit's 1,010,359.
-        # The vcloud move (domain-doctor 2026-11-21, 237,014 rows) brings
-        # the total to 1,247,373.
+        # The vcloud move (domain-doctor 2026-11-21, 237,014 rows) and the
+        # subdomain lane (2026-11-21, 4 moves + 9,297 rows, 2 DNS-dead)
+        # bring the total to 1,256,670.
         rows = sum(h.get("rows_affected", 0) for h in hosts.values()
                    if h.get("status") == "active")
-        self.assertEqual(rows, 1247373)
+        self.assertEqual(rows, 1256670)
 
     def test_seed_evidence_states(self):
         reg = hr.load_registry()
@@ -92,10 +93,10 @@ class TestSeededRegistry(unittest.TestCase):
         by_evidence = {}
         for h in hosts.values():
             by_evidence[h["evidence"]] = by_evidence.get(h["evidence"], 0) + 1
-        self.assertEqual(by_evidence["audit-confirmed"], 14)
-        self.assertEqual(by_evidence["audit-unconfirmed"], 7)
+        self.assertEqual(by_evidence["audit-confirmed"], 15)
+        self.assertEqual(by_evidence["audit-unconfirmed"], 10)
         self.assertEqual(by_evidence["audit-dead-sample"], 3)
-        self.assertEqual(by_evidence["audit-dead"], 2)
+        self.assertEqual(by_evidence["audit-dead"], 4)
         # 5 prober-learned moves + vcloud.beer, proven by the
         # domain-doctor's live probe (beer 301/302s to my, my serves 200).
         self.assertEqual(by_evidence["prober"], 6)
@@ -160,6 +161,51 @@ class TestRewrite(unittest.TestCase):
         self.assertEqual(
             hr.rewrite_url("https://hubcloud.ist:8443/drive/1"),
             "https://hubcloud.mov:8443/drive/1")
+
+    def test_subdomain_moves_are_explicit_entries(self):
+        # Subdomain rewrite lane (2026-11-21): each subdomain is its own
+        # registry entry, validated live from the Oracle VM on a real file
+        # URL. new8/new.filebee.xyz follow the parent's chain to
+        # rt.filepress.lat; links.kmhd.eu keeps its prefix on .me (200);
+        # gd.kmhd.eu ends at new10.gdflix.io (CF 403, same family).
+        self.assertEqual(
+            hr.rewrite_url("https://new8.filebee.xyz/file/65ae3485869e1f441cf55927"),
+            "https://rt.filepress.lat/file/65ae3485869e1f441cf55927")
+        self.assertEqual(
+            hr.rewrite_url("https://new.filebee.xyz/file/64d1d50be6431cadaee0dc94"),
+            "https://rt.filepress.lat/file/64d1d50be6431cadaee0dc94")
+        self.assertEqual(
+            hr.rewrite_url("https://links.kmhd.eu/atchs/dl2.jiocloud.link/Sample/x.mkv"),
+            "https://links.kmhd.me/atchs/dl2.jiocloud.link/Sample/x.mkv")
+        self.assertEqual(
+            hr.rewrite_url("https://gd.kmhd.eu/file/nb4O4OtJWn"),
+            "https://new10.gdflix.io/file/nb4O4OtJWn")
+
+    def test_subdomain_dead_hosts_recorded_not_rewritten(self):
+        # new5/new6.filebee.xyz have no DNS record at all (2026-11-21):
+        # dead with no successor, so callers skip them instead of timing
+        # out — exactly like mobilejsr.com.
+        self.assertTrue(hr.is_dead_host("new5.filebee.xyz"))
+        self.assertTrue(hr.is_dead_host("new6.filebee.xyz"))
+        self.assertEqual(
+            hr.rewrite_url("https://new5.filebee.xyz/file/65671442ca2e7262ef2278c8"),
+            "https://new5.filebee.xyz/file/65671442ca2e7262ef2278c8")
+        self.assertEqual(
+            hr.rewrite_url("https://new6.filebee.xyz/file/658420503993a3b20797a65b"),
+            "https://new6.filebee.xyz/file/658420503993a3b20797a65b")
+
+    def test_no_suffix_match(self):
+        # Deliberate: a subdomain with NO entry never inherits its
+        # parent's move. A blanket suffix-match would rewrite
+        # pixel.hubcloud.ist (pinned excluded in TestSeededRegistry) and
+        # would have sent links.kmhd.eu to bare kmhd.me instead of
+        # links.kmhd.me. Subdomains move only as explicit entries.
+        self.assertEqual(
+            hr.rewrite_url("https://foo.hubcloud.ist/drive/1"),
+            "https://foo.hubcloud.ist/drive/1")
+        self.assertEqual(
+            hr.rewrite_url("https://wait.kmhd.eu/page"),
+            "https://wait.kmhd.eu/page")  # alive host, 200 at root; no entry
 
 
 class TestApplyMove(unittest.TestCase):

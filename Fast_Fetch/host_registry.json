@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "updated_at": "2026-11-20T21:09:00Z",
+  "updated_at": "2026-11-20T21:12:34Z",
   "hosts": {
     "hubcloud.ist": {
       "current_domain": "hubcloud.mov",
@@ -704,6 +704,110 @@
           "seen_from": "2026-11-20T19:36:00Z"
         }
       ]
+    },
+    "new8.filebee.xyz": {
+      "current_domain": "rt.filepress.lat",
+      "evidence": "audit-unconfirmed",
+      "status": "active",
+      "last_verified": "2026-11-20T21:12:33Z",
+      "verified_by": "subdomain-rewrite-20261121",
+      "rows_affected": 686,
+      "known_mirrors": [
+        "https://rt.filepress.lat"
+      ],
+      "rotation_history": [
+        {
+          "domain": "new8.filebee.xyz",
+          "seen_until": "2026-11-20T21:12:33Z"
+        },
+        {
+          "domain": "rt.filepress.lat",
+          "seen_from": "2026-11-20T21:12:33Z"
+        }
+      ]
+    },
+    "new.filebee.xyz": {
+      "current_domain": "rt.filepress.lat",
+      "evidence": "audit-unconfirmed",
+      "status": "active",
+      "last_verified": "2026-11-20T21:12:33Z",
+      "verified_by": "subdomain-rewrite-20261121",
+      "rows_affected": 3,
+      "known_mirrors": [
+        "https://rt.filepress.lat"
+      ],
+      "rotation_history": [
+        {
+          "domain": "new.filebee.xyz",
+          "seen_until": "2026-11-20T21:12:33Z"
+        },
+        {
+          "domain": "rt.filepress.lat",
+          "seen_from": "2026-11-20T21:12:33Z"
+        }
+      ]
+    },
+    "links.kmhd.eu": {
+      "current_domain": "links.kmhd.me",
+      "evidence": "audit-confirmed",
+      "status": "active",
+      "last_verified": "2026-11-20T21:12:34Z",
+      "verified_by": "subdomain-rewrite-20261121",
+      "rows_affected": 6302,
+      "known_mirrors": [
+        "https://links.kmhd.me"
+      ],
+      "rotation_history": [
+        {
+          "domain": "links.kmhd.eu",
+          "seen_until": "2026-11-20T21:12:34Z"
+        },
+        {
+          "domain": "links.kmhd.me",
+          "seen_from": "2026-11-20T21:12:34Z"
+        }
+      ]
+    },
+    "gd.kmhd.eu": {
+      "current_domain": "new10.gdflix.io",
+      "evidence": "audit-unconfirmed",
+      "status": "active",
+      "last_verified": "2026-11-20T21:12:34Z",
+      "verified_by": "subdomain-rewrite-20261121",
+      "rows_affected": 2306,
+      "known_mirrors": [
+        "https://new10.gdflix.io"
+      ],
+      "rotation_history": [
+        {
+          "domain": "gd.kmhd.eu",
+          "seen_until": "2026-11-20T21:12:34Z"
+        },
+        {
+          "domain": "new10.gdflix.io",
+          "seen_from": "2026-11-20T21:12:34Z"
+        }
+      ]
+    },
+    "new5.filebee.xyz": {
+      "current_domain": "",
+      "evidence": "audit-dead",
+      "status": "dead",
+      "last_verified": "2026-11-20T21:12:34Z",
+      "verified_by": "subdomain-rewrite-20261121",
+      "rows_affected": 417,
+      "known_mirrors": [],
+      "rotation_history": []
+    },
+    "new6.filebee.xyz": {
+      "current_domain": "",
+      "evidence": "audit-dead",
+      "status": "dead",
+      "last_verified": "2026-11-20T21:12:34Z",
+      "verified_by": "subdomain-rewrite-20261121",
+      "rows_affected": 351,
+      "known_mirrors": [],
+      "rotation_history": []
     }
   }
 }
