@@ -3243,7 +3243,7 @@ def unwrap_fastdl(fastdl_url: str) -> tuple[str, str, int]:
 def unwrap_vcloud(vcloud_url: str, clearance=None) -> list[tuple[str, str, str, int]]:
     """
     Decodes V-Cloud double base64 token and fetches direct server links
-    (FSL Cloudflare R2 bucket & HubCloud 10Gbps servers).
+    (FSL Cloudflare R2 bucket & HubCloud 10Gbps servers & PixelDrain).
     Returns list of: [(source_name, service, final_url, is_temporary)]
 
     ``clearance`` (H4 R8) is threaded to every ``http_get`` and to the
@@ -3280,10 +3280,27 @@ def unwrap_vcloud(vcloud_url: str, clearance=None) -> list[tuple[str, str, str, 
 
     resolved = []
     # Search for server links
-    # 1. Cloudflare R2 storage / FSL Server
-    r2_links = re.findall(r'href=[\"\'](https?://[^\s\"\']*r2\.dev[^\s\"\']*)[\"\']', t_html)
+    # 1. Cloudflare R2 storage / FSL Server. The token page's
+    # "cfstorage" button points at the bucket's direct host
+    # <hash>.r2.cloudflarestorage.com, not the r2.dev alias, so
+    # match both (live 2026-11-20: the cfstorage button is the
+    # R2 link on every token page sampled).
+    r2_links = re.findall(
+        r'href=[\"\'](https?://[^\s\"\']*(?:r2\.dev|r2\.cloudflarestorage\.com)[^\s\"\']*)[\"\']',
+        t_html)
     for l in r2_links:
         resolved.append(("V-Cloud [FSL Cloudflare R2]", "fsl_r2", l, 0))
+
+    # 1b. PixelDrain button — same /u/<id> -> /api/file/<id>
+    # transform the gdflix unwrapper already uses.
+    pd_links = re.findall(
+        r'href=[\"\'](https?://[^\s\"\']*pixeldrain\.com/(?:u|d|api/file)/[^\s\"\']+)[\"\']',
+        t_html)
+    for l in pd_links:
+        direct_pd, _pd_id, _ = unwrap_pixeldrain(l)
+        if "/api/file/" in direct_pd:
+            resolved.append(("V-Cloud [PixelDrain]", "pixeldrain",
+                             direct_pd, 0))
 
     # 2. HubCloud 10Gbps server & Google CDN
     hub_links = re.findall(r'href=[\"\'](https?://[^\s\"\']*hubcloud\.[^\s\"\']+)[\"\']', t_html)

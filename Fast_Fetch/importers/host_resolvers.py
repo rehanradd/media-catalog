@@ -2919,10 +2919,10 @@ def unwrap_gofile(url: str, fetch=None, verify: bool = True) -> dict:
 # challenge applies to the HTML route, not the API route. Two POSTs, no
 # browser, no captcha, no JS:
 #
-#   POST https://new3.filepress.lat/api/file/downlaod/
+#   POST https://new4.filepress.lat/api/file/downlaod/
 #     {"id": "<fileId>", "method": "indexDownlaod", "captchaValue": null}
 #     -> {"status": true, "statusCode": 200, "data": "<24-hex token>"}
-#   POST https://new3.filepress.lat/api/file/downlaod2/
+#   POST https://new4.filepress.lat/api/file/downlaod2/
 #     {"id": "<token>", "method": "indexDownlaod", "captchaValue": null}
 #     -> {"status": true, "statusCode": 200, "data": ["<direct .mkv link>"]}
 #
@@ -2937,20 +2937,24 @@ def unwrap_gofile(url: str, fetch=None, verify: bool = True) -> dict:
 # brackets MUST be percent-encoded or HTTP clients reject the URL.
 #
 # Measured limits, 2026-11-13 (must be re-measured before trusting):
-#   - The API base MUST be new3.filepress.lat with a matching Referer.
-#     new2 301s to new3 and filebee.xyz 301s to filebee.top (unreachable);
-#     a mismatched Referer turns the answer into INVALID_REQUEST.
+#   - The API base MUST be new4.filepress.lat with a matching Referer.
+#     Re-measured 2026-11-20: new3's API route now serves the site's SPA
+#     shell (200, non-JSON) and new2 does the same — both are dead as API
+#     bases; new4 answers real JSON. A mismatched Referer turns the
+#     answer into INVALID_REQUEST.
 #   - The download origin aws.flapdoodle.cyou answered HTTP 522 on EVERY
 #     /download/* path for ~50 min from BOTH egresses, so no minted link
 #     has yet played. The unwrapper is built and gated so a dead origin can
 #     never be served: verify=True Range-probes the minted link and only an
-#     "active" verdict reaches the player.
+#     "active" verdict reaches the player. Re-measured 2026-11-20 via WARP:
+#     the minted link (flapdoodle-space origin) Range-probed 206
+#     video/x-matroska — the chain plays end to end when the API answers.
 #   - The Oracle VM egress is 403-challenged on the API itself
 #     (cf-mitigated: challenge), so this resolver cannot run in production
-#     from the Oracle VM as-is. The unwrapper is still worth landing: it is
-#     the proven chain, it mints correctly, and it will serve the moment the
-#     API/origin answers from the production egress again.
-FILEPRESS_API_BASE = "https://new3.filepress.lat"
+#     from the Oracle VM as-is. Via WARP egress the same two POSTs mint and
+#     the minted link plays (206, Matroska, 2026-11-20). WARP-in-production
+#     is an owner decision; until then this resolver stays WARP-only.
+FILEPRESS_API_BASE = "https://new4.filepress.lat"
 FILEPRESS_METHOD = "indexDownlaod"
 FILEPRESS_TIMEOUT = 15
 _FILEPRESS_ID_RE = re.compile(r"^[0-9a-f]{24}$")
@@ -3046,6 +3050,16 @@ def unwrap_filepress(url, fetch=None, verify=True):
         return result
 
     ok, token = _filepress_api_call(fetch, "/api/file/downlaod/", file_id)
+    if ok and isinstance(token, str) and token.startswith("http"):
+        # The API sometimes answers the first call with a Telegram
+        # deep-link (https://tgfiles.space?start=...) instead of a mint
+        # token — that file is served via Telegram on this call, and
+        # downlaod2 rejects the URL (400 Cast to ObjectId). The same
+        # file returns a bare token on a later call (measured 2026-11-20
+        # on one filebee.top row: tgfiles, token, tgfiles, token across
+        # four calls), so retry the first call once before giving up.
+        ok, token = _filepress_api_call(fetch, "/api/file/downlaod/",
+                                        file_id)
     if not ok:
         note = "downlaod: %s" % token
         if isinstance(token, str) and token.startswith("blocked:"):

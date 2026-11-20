@@ -1950,6 +1950,38 @@ class DatabaseSaveTests(unittest.TestCase):
             self.assertEqual(call.kwargs.get("timeout"), 5)
             self.assertEqual(call.kwargs.get("max_retries"), 0)
 
+    def test_unwrap_vcloud_captures_cfstorage_r2_and_pixeldrain(self):
+        """Token page buttons the old regexes missed: the cfstorage
+        button is <hash>.r2.cloudflarestorage.com (not r2.dev) and the
+        PixelDrain button is a /u/<id> link (live 2026-11-20)."""
+        import base64
+        token = base64.b64encode(base64.b64encode(
+            b"https://token.example/x")).decode()
+        page = f"var url = atob(atob('{token}'));"
+        token_page = (
+            '<a href="https://556138dca7367763ed46eecaa4284eca'
+            '.r2.cloudflarestorage.com/file.mkv">cfstorage</a>'
+            '<a href="https://pixeldrain.com/u/AbCdEfGh">pixeldrain</a>'
+            '<a href="https://hubcloud.example/gpdl/1">hubcloud</a>')
+        getter = Mock(side_effect=[
+            (200, "https://vcloud.example/abc", page),
+            (200, "https://token.example/x", token_page),
+        ])
+        with patch.object(fast_fetch, "http_get", getter), \
+                patch.object(fast_fetch, "unwrap_hubcloud",
+                             return_value=(
+                                 "https://video-downloads.googleusercontent.com/x",
+                                 "google_cdn", 1)):
+            out = fast_fetch.unwrap_vcloud("https://vcloud.example/abc")
+        by_service = {svc: url for _name, svc, url, _t in out}
+        self.assertIn("fsl_r2", by_service)
+        self.assertIn("r2.cloudflarestorage.com",
+                      by_service["fsl_r2"])
+        self.assertEqual(by_service.get("pixeldrain"),
+                         "https://pixeldrain.com/api/file/AbCdEfGh")
+        self.assertEqual(by_service.get("google_cdn"),
+                         "https://video-downloads.googleusercontent.com/x")
+
     def test_unwrap_hubcloud_drive_dead_page_retries_once(self):
         """A dead HubCloud Drive page keeps its 10 s timeout but costs
         two attempts, not three."""
@@ -2753,7 +2785,10 @@ class DatabaseSaveTests(unittest.TestCase):
         indexDownlaod — the API's own spelling) mints a 24-hex token,
         POST downlaod2/ swaps it for a direct .mkv link, and the Range
         probe of that link is the gate. The minted filename carries raw
-        spaces/brackets, so the final URL must be percent-encoded."""
+        spaces/brackets, so the final URL must be percent-encoded.
+        Base moved new3 -> new4 on 2026-11-20: new3's API route now
+        serves the site's SPA shell (200, non-JSON); new4 answers real
+        JSON (verified live via WARP on filebee.top rows)."""
         hr = fast_fetch._embed_resolvers()
 
         def fake_fetch(url, headers=None, timeout=25, method="GET",
@@ -2763,7 +2798,7 @@ class DatabaseSaveTests(unittest.TestCase):
                 self.assertEqual(body["method"], "indexDownlaod")
                 self.assertIsNone(body["captchaValue"])
                 self.assertEqual(headers.get("Referer"),
-                                 "https://new3.filepress.lat")
+                                 "https://new4.filepress.lat")
                 return (200, json.dumps(
                     {"status": True, "statusCode": 200,
                      "data": "6ad7ecde69b577b115172142"}).encode(), {}, url)
@@ -2788,6 +2823,49 @@ class DatabaseSaveTests(unittest.TestCase):
                          "Film%20%282024%29%20%5B1080p%5D.mkv")
         self.assertEqual(verdict["content_type"], "video/x-matroska")
         self.assertEqual(verdict["http_status"], 206)
+
+    def test_filepress_unwrap_retries_when_first_call_returns_tgfiles(self):
+        """The first downlaod/ call sometimes answers a Telegram
+        deep-link (https://tgfiles.space?start=...) instead of a mint
+        token — downlaod2 rejects that URL (400 Cast to ObjectId). The
+        same file returns a bare token on a later call (measured
+        2026-11-20: tgfiles, token, tgfiles, token), so the unwrapper
+        retries the first call once and mints from the token."""
+        hr = fast_fetch._embed_resolvers()
+        calls = {"downlaod": 0}
+
+        def fake_fetch(url, headers=None, timeout=25, method="GET",
+                       follow=True, data=None):
+            if url.endswith("/api/file/downlaod/") and method == "POST":
+                calls["downlaod"] += 1
+                if calls["downlaod"] == 1:
+                    return (200, json.dumps(
+                        {"status": True, "statusCode": 200,
+                         "data": "https://tgfiles.space?start=2AtkaHmtIxReE5mXEKEEfiwvMT9yn2XjjdCXZ4T"}).encode(),
+                        {}, url)
+                return (200, json.dumps(
+                    {"status": True, "statusCode": 200,
+                     "data": "6ad7ecde69b577b115172142"}).encode(), {}, url)
+            if url.endswith("/api/file/downlaod2/") and method == "POST":
+                body = json.loads(data.decode("utf-8"))
+                self.assertEqual(body["id"], "6ad7ecde69b577b115172142")
+                return (200, json.dumps(
+                    {"status": True, "statusCode": 200,
+                     "data": ["https://aws.flapdoodle.cyou/download/abc123/"
+                              "Film.mkv"]}).encode(), {}, url)
+            self.assertIn("Range", headers or {})
+            return (206, b"\x1a\x45\xdf\xa3" + b"\x00" * 508,
+                    {"content-type": "video/x-matroska",
+                     "content-range": "bytes 0-511/1800000000"}, url)
+
+        verdict = hr.unwrap_filepress(
+            "https://new4.filepress.lat/file/6ad7ecde69b577b115172142/",
+            fetch=fake_fetch)
+        self.assertEqual(calls["downlaod"], 2)
+        self.assertEqual(verdict["status"], "active", verdict)
+        self.assertEqual(verdict["final_url"],
+                         "https://aws.flapdoodle.cyou/download/abc123/"
+                         "Film.mkv")
 
     def test_filepress_unwrap_522_origin_is_error_never_active(self):
         """The download origin aws.flapdoodle.cyou answers 522 on every
