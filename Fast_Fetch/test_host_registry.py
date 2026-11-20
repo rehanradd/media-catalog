@@ -5,8 +5,8 @@ Offline, stdlib, no network: every HTTP hop goes through an injected
 fake fetcher. Real DNS is never touched.
 
 Pinned here:
-* the seeded registry loads: 29 entries (27 moved pairs + 2 dead hosts),
-  27 live domains, and the two dead hosts are recorded, not rewritten;
+* the seeded registry loads: 31 entries (29 moved pairs + 2 dead hosts),
+  29 live domains, and the two dead hosts are recorded, not rewritten;
 * rewrite_url swaps ONLY the host (scheme/port/path/query/fragment
   preserved) and falls back to the stored URL for unknown, dead, or
   already-current hosts;
@@ -76,10 +76,10 @@ class TestSeededRegistry(unittest.TestCase):
         reg = hr.load_registry()
         hosts = reg["hosts"]
         self.assertEqual(reg["version"], "2.0")
-        self.assertEqual(len(hosts), 29)  # 27 moved pairs + 2 dead hosts
-        self.assertEqual(len(hr.live_domains()), 27)
+        self.assertEqual(len(hosts), 31)  # 29 moved pairs + 2 dead hosts
+        self.assertEqual(len(hr.live_domains()), 29)
         # The audit's headline said 26 pairs; the enumerated lists sum to
-        # 27, and the pair row counts sum to exactly the audit's 1,010,359.
+        # 29, and the pair row counts sum to exactly the audit's 1,010,359.
         rows = sum(h.get("rows_affected", 0) for h in hosts.values()
                    if h.get("status") == "active")
         self.assertEqual(rows, 1010359)
@@ -90,10 +90,11 @@ class TestSeededRegistry(unittest.TestCase):
         by_evidence = {}
         for h in hosts.values():
             by_evidence[h["evidence"]] = by_evidence.get(h["evidence"], 0) + 1
-        self.assertEqual(by_evidence["audit-confirmed"], 15)
-        self.assertEqual(by_evidence["audit-unconfirmed"], 9)
+        self.assertEqual(by_evidence["audit-confirmed"], 14)
+        self.assertEqual(by_evidence["audit-unconfirmed"], 7)
         self.assertEqual(by_evidence["audit-dead-sample"], 3)
         self.assertEqual(by_evidence["audit-dead"], 2)
+        self.assertEqual(by_evidence["prober"], 5)
 
     def test_pixel_excluded(self):
         # Both sides 400 (expired tokens): never a mapping, never rewritten.
@@ -129,7 +130,7 @@ class TestRewrite(unittest.TestCase):
             "https://www.mp4moviez.computer/post/1")
         self.assertEqual(
             hr.rewrite_url("https://vd.1xplayer.com/embed/1"),
-            "https://geffe448mik.com/embed/1")
+            "https://asrmo449ddj.com/embed/1")  # prober reclassified 2026-11-20 (was geffe448mik.com)
         self.assertEqual(
             hr.rewrite_url("https://dl.direct-cloud.top/f/1"),
             "https://storage.direct-cloud.org/f/1")

@@ -72,6 +72,7 @@
 
 The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete index.
 - [2026-11-21 — Fleet lock hardening](checkpoints/20261121-fleet-lock-hardening.md): Nov 13 run died on the first INSERT (`database is locked`, default 5 s timeout, no retry); catalog connects now use timeout=30 plus a bounded retry (3 attempts, 0.5/1.0 s) on the audit writes; 5 new lock tests, 21/21 green locally.
+- **2026-11-21 — Registry test stale expectations:** prober learned 5 moves after the Nov 18 seed (doodstream added; filebee, new4.filepress.baby, vd.1xplayer reclassified; vikingfile.com added after the domain-doctor run). Seed counts 29→31 hosts, 27→29 live domains; evidence 15→14 confirmed, 9→7 unconfirmed, prober == 5; vd.1xplayer rewrite target geffe448mik.com → asrmo449ddj.com; rows 1,010,359 unchanged. Full module 32/32 green against the live registry; the live registry sync follows in the same branch.
 - [2026-11-20 — Simkl director](checkpoints/20261120-simkl-director.md): director string wired after tmdb; live proof The Matrix fills "Lana Wachowski"; 24 + 90 tests green locally.
 - [2026-11-20 — Simkl enricher](checkpoints/20261120-simkl-enricher.md): SimklSource after TMDb; probe 86/100 vs TMDb 26/68; 23 + 90 tests green, CI pending.
 - [2026-11-20 — Duration backfill job](checkpoints/20261120-duration-backfill.md): EXTINF-sum + header-first prober, resolved_cache batches of 100, staging table + NULL-only gate apply; 59 tests green locally.
@@ -79,9 +80,6 @@ The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete i
 - [2026-11-20 — init_db busy fix](checkpoints/20261120-init-db-busy.md): hot-path `init_db_once()` + bounded busy retry; `init_db()` repair semantics unchanged.
 - [2026-11-20 - Mega decrypt](checkpoints/20261120-mega-client-decrypt.md)
 - [2026-11-20 — Scale fix #1: per-user rate-limit keys](checkpoints/20261120-scale-real-ip.md): `client_ip()` reads `CF-Connecting-IP` from loopback only (X-Real-IP/XFF fallback unchanged); no limit numbers changed. nginx patch (22 Cloudflare `set_real_ip_from` + header, `nginx -t` ok on a patched copy of live config) applies at gate time. 56x503 on remote-config are cold-cache refills, not the gate restart.
-- [2026-11-20 — Phase C SexTB importer: NO IMPORTER](checkpoints/20261120-phasec-sextb-importer.md): sextb.net alive but geo/IP-walled from all server egress (homepage/sitemap/video URL all 403 "Access Restricted"); no fetchable surface, so no importer built — hollow importers forbidden. Unblocks: real-browser HAR from an allowed region, WARP egress test, or earned clearance.
-- [2026-11-20 — Server slices S1/S2/S3](checkpoints/20261120-server-slices-s1s2s3.md): shared redact placeholder/genre source, v1 curates genres, print_label title fallback, gate-time backfill ready; full gate BLOCKED on hatch sandbox write block (EPERM).
-- [2026-11-20 — H4 R7 per-segment retry](checkpoints/20261120-h4-r7-per-segment-retry.md): dead_handle report strikes both ledgers; 13 server + 15 app tests green locally, CI pending.
 ## Moved out (reference prose, verbatim)
 
 - ✍️ Incoming Agent Checklist → `../docs/SPEC_INCOMING_AGENT_CHECKLIST.md` (294 lines) — the onboarding procedure, unchanged
