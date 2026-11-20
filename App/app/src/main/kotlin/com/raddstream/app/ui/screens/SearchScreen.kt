@@ -1236,10 +1236,20 @@ internal fun SearchContent(
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             pair.forEach { post ->
+                                // Screen audit #7 (Nov 2026): result tiles
+                                // get two title lines and no bare-type meta
+                                // — a long title reads whole under the
+                                // "Series" header instead of truncating to
+                                // "One Piece ·…", and the "Series" line
+                                // under it no longer restates the header.
+                                // The discovery rails above keep the
+                                // one-line tile and the full meta line.
                                 PosterCard(
                                     post = post,
                                     onClick = { onPostClick(post) },
                                     modifier = Modifier.weight(1f),
+                                    titleMaxLines = 2,
+                                    suppressBareTypeMeta = true,
                                 )
                             }
                             if (pair.size == 1) Spacer(Modifier.weight(1f))

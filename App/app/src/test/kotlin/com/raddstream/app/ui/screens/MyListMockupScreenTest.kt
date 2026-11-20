@@ -19,6 +19,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.dp
+import com.raddstream.app.R
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.ListSort
@@ -151,6 +152,34 @@ class MyListMockupScreenTest {
         // title ("Trending titles to start your list") — the rail carries
         // the title alone now.
         compose.onNodeWithText("Trending titles to start your list")
+            .assertDoesNotExist()
+        compose.onNodeWithText("Inception").assertIsDisplayed()
+        compose.onNodeWithText("Dune").assertIsDisplayed()
+        compose.onNodeWithText("McLintock!").assertIsDisplayed()
+    }
+
+    @Test
+    fun popularRowRendersTheRecentlyAddedRailWithoutASubtitle() {
+        compose.setContent {
+            RaddStreamTheme {
+                Box(Modifier.width(390.dp)) {
+                    PopularRow(
+                        popular = listOf(
+                            post(1, "Inception"),
+                            post(2, "Dune"),
+                            post(3, "McLintock!"),
+                        ),
+                        onPostClick = {},
+                        titleRes = R.string.mylist_recent_title,
+                    )
+                }
+            }
+        }
+        compose.onNodeWithText("Recently Added").assertIsDisplayed()
+        // Screen audit #5 (Nov 2026): the subtitle restated the title
+        // ("New titles in the catalog") — the rail carries the title
+        // alone now, like the Trending rail above it.
+        compose.onNodeWithText("New titles in the catalog")
             .assertDoesNotExist()
         compose.onNodeWithText("Inception").assertIsDisplayed()
         compose.onNodeWithText("Dune").assertIsDisplayed()

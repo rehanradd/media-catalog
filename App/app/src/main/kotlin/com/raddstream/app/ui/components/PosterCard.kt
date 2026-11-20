@@ -133,6 +133,21 @@ fun PosterCard(
      * — a % with no ranker score behind it would be invented.
      */
     matchPercent: Int? = null,
+    /**
+     * Screen audit #7 (Nov 2026): the search results grid passes 2 —
+     * a long title gets a second line instead of truncating under a
+     * "Series" header that already says what it is. Everywhere else
+     * keeps the one-line slot (F7): rails stay uniform.
+     */
+    titleMaxLines: Int = 1,
+    /**
+     * Screen audit #7 (Nov 2026): the search results grid passes true —
+     * when the meta line is only the bare type word ("Series") it paints
+     * nothing, because the section header already states it. A line with
+     * a rating or year still paints. The type stays in the tile's spoken
+     * sentence — only the painted line is suppressed.
+     */
+    suppressBareTypeMeta: Boolean = false,
 ) {
     // Rail-title cleanup (Nov 2026): the tile paints the same clean title
     // Detail and the hero paint ([UserWords.detailTitle] — the server's
@@ -164,6 +179,10 @@ fun PosterCard(
     // "★ 6.7 · 2026 · Series" — so the rating badge that used to ride the
     // poster is gone: it would say the same number twice on one tile.
     val details = posterMetaLine(post, compactMeta, matchPercent)
+    // Screen audit #7: a bare-type meta line ("Series") is redundant under
+    // a section header that already says "Series" — hide it when the
+    // caller asked, and only when it carries nothing else.
+    val showDetails = details.isNotBlank() && !(suppressBareTypeMeta && details == typeLabel)
     // The spoken sentence keeps the old shape — "2024 · Movie" — and the
     // rating arrives once, as "rating 8.6 out of 10" below, so a screen
     // reader never hears the number twice.
@@ -195,7 +214,9 @@ fun PosterCard(
     // the same height — the round-2 "inconsistent card heights" complaint,
     // kept from the two-line slot (F7, Batch B). The height is
     // density-scaled, so a 200% font scale grows the slot instead of
-    // clipping the line.
+    // clipping the line. Screen audit #7: the slot scales with
+    // titleMaxLines — the search grid's two-line titles get a two-line
+    // slot, so its cards stay uniform with each other.
     val titleLineHeight = MaterialTheme.typography.titleSmall.lineHeight
     val titleSlotHeight = with(LocalDensity.current) {
         // TextUnit has no isSpecified in this Compose version — Unspecified
@@ -452,6 +473,9 @@ fun PosterCard(
                 // mid-word, back the text off to the previous word
                 // boundary once — the trimmed string is strictly shorter
                 // and the guard below keeps the state from ever looping.
+                // Screen audit #7: with two lines the cut lands on the
+                // LAST line, not line 0 — the check reads the last
+                // laid-out line, so a two-line title trims the same way.
                 var displayTitle by remember(title) {
                     mutableStateOf(UserWords.breakableTitle(title))
                 }
@@ -460,20 +484,21 @@ fun PosterCard(
                     color = MaterialTheme.colorScheme.onSurface,
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
-                    maxLines = 1,
+                    maxLines = titleMaxLines,
                     overflow = TextOverflow.Ellipsis,
                     onTextLayout = { result ->
-                        if (result.isLineEllipsized(0)) {
+                        val lastLine = result.lineCount - 1
+                        if (lastLine >= 0 && result.isLineEllipsized(lastLine)) {
                             val trimmed = UserWords.trimToWordBoundary(
                                 displayTitle,
-                                result.getLineEnd(0, visibleEnd = true),
+                                result.getLineEnd(lastLine, visibleEnd = true),
                             )
                             if (trimmed != displayTitle) displayTitle = trimmed
                         }
                     },
-                    modifier = Modifier.height(titleSlotHeight),
+                    modifier = Modifier.height(titleSlotHeight * titleMaxLines),
                 )
-                if (details.isNotBlank()) {
+                if (showDetails) {
                     Text(
                         text = details,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,

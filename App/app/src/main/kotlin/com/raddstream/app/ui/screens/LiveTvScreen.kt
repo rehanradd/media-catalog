@@ -869,7 +869,13 @@ internal fun LiveTvChannelCard(
                 // language the viewer filters by was the part that vanished.
                 // Two lines hold the full "Category · Country · Language"
                 // triple on a 2-column card; anything longer still ellipsizes.
+                // Screen audit #6 (Nov 2026): minLines = 2 reserves the
+                // second line even for a one-line meta, so every card is
+                // the same height — a short "News · Pakistan" leaves a
+                // blank second line instead of a shorter card. The audit's
+                // literal one-line clamp would have re-cut the A4-F2 triple.
                 maxLines = 2,
+                minLines = 2,
                 overflow = TextOverflow.Ellipsis,
                 // The tag MUST sit before clearAndSetSemantics: the clear
                 // wipes every semantics set after it in the chain, so a tag

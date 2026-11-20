@@ -288,9 +288,10 @@
          sentence telling the viewer to go find the catalog. -->
     <string name="mylist_browse_titles">Browse Titles</string>
     <!-- A4-F5: the second discovery rail under Trending — the server's
-         freshest-first order, the same "newest" sort Home's rails use. -->
+         freshest-first order, the same "newest" sort Home's rails use.
+         Screen audit #5 (Nov 2026): its subtitle ("New titles in the
+         catalog") is gone — it restated the "Recently Added" title. -->
     <string name="mylist_recent_title">Recently Added</string>
-    <string name="mylist_recent_subtitle">New titles in the catalog</string>
     <string name="mylist_count_one">1 title</string>
     <string name="mylist_count_many">%1$d titles</string>
     <string name="mylist_save_failed">Couldn\'t save — check your connection</string>

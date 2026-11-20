@@ -2,6 +2,7 @@ package com.raddstream.app.ui.components
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
@@ -17,6 +18,8 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import org.junit.Assert.assertEquals
@@ -144,5 +147,37 @@ class ScrollingChipRowTest {
             }
         }
         compose.onNodeWithTag("test-genre-fade").assertHeightIsEqualTo(22.dp)
+    }
+
+    @Test
+    fun flingSettlesOnAnItemBoundary() {
+        // Screen audit #1 (Nov 2026): the row snaps — a free fling used
+        // to rest mid-chip ("Complete serie…" cut at the edge reads as
+        // broken, not scrollable, even under the fade). After a fling the
+        // first visible item sits flush at the row's start edge, so its
+        // scroll offset is 0. The state is hoisted so the test can read
+        // the settled offset after the fling animation finishes.
+        val state = LazyListState()
+        compose.setContent {
+            RaddStreamTheme {
+                Box(Modifier.width(200.dp)) {
+                    ScrollingChipRow(
+                        state = state,
+                        rowTestTag = "test-snap-row",
+                    ) {
+                        items(listOf("Complete series", "Documentaries", "Science Fiction", "Action", "Drama")) { label ->
+                            RaddChip(
+                                selected = false,
+                                onClick = {},
+                                label = { Text(label) },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        compose.onNodeWithTag("test-snap-row").performTouchInput { swipeLeft() }
+        compose.waitForIdle()
+        assertEquals(0, state.firstVisibleItemScrollOffset)
     }
 }

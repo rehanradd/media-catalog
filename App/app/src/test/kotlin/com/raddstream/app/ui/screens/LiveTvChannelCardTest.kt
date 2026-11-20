@@ -1,8 +1,10 @@
 package com.raddstream.app.ui.screens
 
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.network.models.LiveTvChannel
@@ -136,5 +138,53 @@ class LiveTvChannelCardTest {
         compose.onNode(
             hasContentDescription("ARY Digital, live · Entertainment · Pakistan · Urdu"),
         ).assertExists()
+    }
+
+    @Test
+    fun channelMetaReservesTwoLinesSoCardHeightsStayEven() {
+        // Screen audit #6 (Nov 2026): the audit asked for a one-line
+        // clamp, which would re-cut the A4-F2 triple ("Religious ·
+        // Pakistan · Ur…"). The fix is the other direction: minLines = 2
+        // reserves the second line always, so a short meta ("News ·
+        // Pakistan") leaves the same blank second line a long meta fills
+        // — uniform card heights, full triple readable. Without minLines
+        // the short card's meta is one line tall and the row staggers.
+        val short = LiveTvChannel(
+            id = 1,
+            name = "Geo News",
+            category = "news",
+            country = "PK",
+            language = "Unknown",
+            logoUrl = "",
+            streamId = "stream-1",
+        )
+        val long = LiveTvChannel(
+            id = 2,
+            name = "Madani Channel",
+            category = "religious",
+            country = "PK",
+            language = "urdu",
+            logoUrl = "",
+            streamId = "stream-2",
+        )
+        compose.setContent {
+            RaddStreamTheme {
+                Row {
+                    LiveTvChannelCard(
+                        channel = short,
+                        onClick = {},
+                        modifier = Modifier.width(180.dp),
+                    )
+                    LiveTvChannelCard(
+                        channel = long,
+                        onClick = {},
+                        modifier = Modifier.width(180.dp),
+                    )
+                }
+            }
+        }
+        val metas = compose.onAllNodes(hasTestTag("liveTv_channelMeta")).fetchSemanticsNodes()
+        assertEquals(2, metas.size)
+        assertEquals(metas[0].boundsInRoot.height, metas[1].boundsInRoot.height, 0.01f)
     }
 }

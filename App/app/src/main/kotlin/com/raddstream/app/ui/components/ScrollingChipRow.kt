@@ -1,7 +1,9 @@
 package com.raddstream.app.ui.components
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -46,11 +48,20 @@ import androidx.compose.ui.unit.dp
  * presence in a 360dp box where Robolectric's ~1px/char metrics may make
  * the row fit.
  *
+ * Screen audit (Nov 2026) #1: the row also snaps. A free fling used to
+ * rest mid-chip ("Complete serie…" cut at the edge reads as broken, not
+ * scrollable, even under the fade); the snap fling behaviour lands every
+ * fling with a chip flush at the row's start edge, so the row never rests
+ * on a half-visible label. Programmatic scrolls (scrollToItem, the
+ * selected-chip-into-view calls) are untouched — snap only governs
+ * flings, so no call site changes behaviour except at rest.
+ *
  * Not a scrolling row, and deliberately NOT migrated here: Settings'
  * internal `ChipRow` (a FlowRow segmented control — a different component
  * that happens to share the name), AudioBadgeChipRow (poster-card badges),
  * Detail's lone quality-picker chip, and Detail's cast FlowRow.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ScrollingChipRow(
     modifier: Modifier = Modifier,
@@ -72,6 +83,7 @@ fun ScrollingChipRow(
             contentPadding = contentPadding,
             horizontalArrangement = Arrangement.spacedBy(horizontalSpacing),
             verticalAlignment = verticalAlignment,
+            flingBehavior = rememberSnapFlingBehavior(state),
         ) {
             content()
         }

@@ -587,10 +587,13 @@ private fun HeroSlide(
         // too late and too softly, so baked-in poster text bled behind
         // the title and buttons; this one is clear through the top half
         // (nothing sits there now — the dots ride below the card) and
-        // 0.65 at 67% before landing at 0.92 at the bottom. Gemini home
+        // 0.78 at 67% before landing at 0.92 at the bottom. Gemini home
         // review (Nov 2026): the Dragon Ball Super title sat over bright
         // yellow/white art with only the button area scrimmed — the scrim
-        // now covers the lower 55% with 0.65 behind the title and meta.
+        // now covers the lower 55% with 0.78 behind the title and meta.
+        // Screen audit #9 (Nov 2026): the mid stop rose 0.65 → 0.78 —
+        // the title sits in the mid-zone, and on bright yellow art 0.65
+        // left it marginal; stop positions unchanged.
         // The mid stop is 0.67f, not 0.68f: 0.68f is the poster-ratio
         // literal owned by CardGeometry (CardGeometryTest bans it in
         // every other UI source), and 1% of hero height is invisible.
@@ -603,7 +606,7 @@ private fun HeroSlide(
                 .background(
                     Brush.verticalGradient(
                         0.45f to MaterialTheme.colorScheme.background.copy(alpha = 0f),
-                        0.67f to MaterialTheme.colorScheme.background.copy(alpha = 0.65f),
+                        0.67f to MaterialTheme.colorScheme.background.copy(alpha = 0.78f),
                         1f to MaterialTheme.colorScheme.background.copy(alpha = 0.92f),
                     )
                 ),
