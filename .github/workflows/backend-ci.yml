@@ -995,6 +995,13 @@ jobs:
       - name: 🧪 test_probe_classify.py
         run: python3 -S Fast_Fetch/test_probe_classify.py
 
+      # Modiplay unwrap (2026-11-21): _unwrap_modiplay tries every listed
+      # server in preference order (streamhg, vidrift/bingr iframe chain,
+      # vidara JSON /api/stream) instead of the first match only. Offline —
+      # fixtures are the measured live shapes, stub fetch + stub probe.
+      - name: 🧪 test_current_hosts.py
+        run: python3 -S Fast_Fetch/test_current_hosts.py
+
       # Multiup mirror hub (Phase C, 2026-11-20): GET download page, POST its
       # CSRF token to /en/mirror/<id>, unwrap the best mirror (gofile, then
       # mixdrop). Offline — canned pages via the _http seam, stub resolvers.

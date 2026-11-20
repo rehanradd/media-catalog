@@ -6,8 +6,8 @@ notes (patterns only — this file stores no keys, file codes, tokens, or
 signed URLs, and it never stores a resolved signed URL: every resolve runs
 fresh at play time):
 
-- watch: iqsmart chain (StreamHG), modiplay backends (StreamHG + Vidrift),
-  vidrift direct, vidbolt, filmu movies, vibuxer signed HLS route.
+- watch: iqsmart chain (StreamHG), modiplay backends (StreamHG + Vidrift
+  + Vidara), vidrift direct, vidbolt, filmu movies, vibuxer signed HLS route.
 - download: PixelDrain (resumable) and fastdl.beer (real file, NOT
   resumable — it ranks below every resumable host).
 
@@ -65,7 +65,7 @@ FILE_PROBE_BYTES = 512
 #: backend: resolve_copy returns the backend it actually resolved to.
 STAGE1_BACKENDS = frozenset({
     "streamhg", "vidrift", "vidbolt", "vidly", "vibuxer",
-    "pixeldrain", "fastdl-beer",
+    "pixeldrain", "fastdl-beer", "vidara",
 })
 
 #: Independence groups: two copies in one group are one backup, not two.
@@ -77,12 +77,13 @@ INDEPENDENCE_GROUP = {
     "vibuxer": "vibuxer",
     "pixeldrain": "pixeldrain",
     "fastdl-beer": "fastdl-beer",
+    "vidara": "vidara",
 }
 
 #: Watch tie-break order between backends (only after probe evidence).
 WATCH_PREFERENCE = (
     "streamhg", "vidrift", "vidbolt", "vidly", "vibuxer",
-    "pixeldrain", "fastdl-beer",
+    "vidara", "pixeldrain", "fastdl-beer",
 )
 
 #: Download order: resumable first (handled by the sort), then this order.
@@ -145,15 +146,26 @@ class FetchResult:
 def default_fetch(url: str, referer: str | None = None, method: str = "GET",
                   range_bytes: tuple[int, int] | None = None,
                   data: dict | None = None,
+                  json_data: dict | None = None,
                   timeout: float = DEFAULT_TIMEOUT) -> FetchResult:
-    """Real network fetch: capped reads, redirects followed, no JS, no login."""
+    """Real network fetch: capped reads, redirects followed, no JS, no login.
+
+    ``data`` sends a form-encoded POST body; ``json_data`` sends a JSON
+    POST body (vidara's /api/stream requires JSON — a form-encoded body
+    answers 400 "Missing or invalid filecode", measured 2026-11-21).
+    """
     headers = {"User-Agent": USER_AGENT}
     if referer:
         headers["Referer"] = referer
     if range_bytes is not None:
         headers["Range"] = f"bytes={range_bytes[0]}-{range_bytes[1]}"
     body_data = None
-    if data is not None:
+    if json_data is not None:
+        body_data = json.dumps(json_data).encode()
+        headers["Content-Type"] = "application/json"
+        if method == "GET":
+            method = "POST"
+    elif data is not None:
         body_data = urllib.parse.urlencode(data).encode()
         headers["Content-Type"] = "application/x-www-form-urlencoded"
         if method == "GET":
@@ -554,49 +566,54 @@ def _unwrap_hanerix_page(hanerix_url: str, fetch) -> tuple:
     return [], "unverified"
 
 
-def _unwrap_modiplay(saved_url: str, fetch) -> tuple:
-    page = fetch(saved_url)
-    if page.status != 200:
-        return "modiplay", [], ("blocked" if page.status == 403 else
-                                "transport" if page.status == 0 else "unverified")
-    html = page.text()
-    match = re.search(r"/proxy\.php\?p=([a-z0-9]+)(?:&amp;|&)c=([^\"&]+)", html)
-    if not match:
-        return "modiplay", [], "unverified"
-    server, code = match.group(1), match.group(2)
-    base = urllib.parse.urlsplit(saved_url)
-    origin = f"{base.scheme}://{base.netloc}"
-    if server == "streamhg":
-        proxy = (f"{origin}/proxy.php?p=streamhg&c={code}"
-                 f"&title=x&site_ref=&noredirect=1")
-    elif server == "bingr":
-        proxy = (f"{origin}/proxy.php?p=bingr&c={code}"
-                 f"&title=x&noredirect=1")
-    else:
-        # The shell lists other servers, but only streamhg/bingr are proven
-        # server-side. Anything else is unverified, never dead.
-        return "modiplay", [], "unsupported_server"
-    player = fetch(proxy, referer=saved_url)
+_MODIPLAY_SERVER_ORDER = {"streamhg": 0, "vidrift": 1, "bingr": 1, "vidara": 2}
+
+
+def _modiplay_streamhg(origin: str, proxy_url: str, saved_url: str,
+                      fetch) -> tuple:
+    """streamhg proxy page -> stream_proxy master (verified live 2026-11-21:
+    the master answers 200 application/vnd.apple.mpegurl with renditions)."""
+    player = fetch(proxy_url, referer=saved_url)
     if player.status != 200:
-        return "modiplay", [], ("blocked" if player.status == 403 else
+        return "streamhg", [], ("blocked" if player.status == 403 else
                                 "transport" if player.status == 0 else "unverified")
     body = player.text().replace("\\/", "/")
-    if server == "streamhg":
-        found = [c for c in re.findall(
-            r"/stream_proxy\.php\?url=[^\"'<> ]+", body)
-            if "master.m3u8" in c]
-        if found:
-            master = origin + found[0].replace("&amp;", "&")
-            return "streamhg", [{"url": master, "referer": saved_url,
-                                 "kind_hint": "playlist"}], None
-        direct = re.findall(
-            r"https?://[A-Za-z0-9.\-]+/[^\s\"'<>]*master\.m3u8", body)
-        if direct:
-            return "streamhg", [{"url": direct[0].replace("&amp;", "&"),
-                                 "referer": proxy,
-                                 "kind_hint": "playlist"}], None
-        return "streamhg", [], "unverified"
-    # bingr -> Vidrift master, Referer MUST be the Vidrift embed domain.
+    found = [c for c in re.findall(
+        r"/stream_proxy\.php\?url=[^\"'<> ]+", body)
+        if "master.m3u8" in c]
+    if found:
+        master = origin + found[0].replace("&amp;", "&")
+        return "streamhg", [{"url": master, "referer": saved_url,
+                             "kind_hint": "playlist"}], None
+    direct = re.findall(
+        r"https?://[A-Za-z0-9.\-]+/[^\s\"'<>]*master\.m3u8", body)
+    if direct:
+        return "streamhg", [{"url": direct[0].replace("&amp;", "&"),
+                             "referer": proxy_url,
+                             "kind_hint": "playlist"}], None
+    return "streamhg", [], "unverified"
+
+
+def _modiplay_vidrift(proxy_url: str, saved_url: str, fetch) -> tuple:
+    """vidrift/bingr proxy page -> iframe to the vidrift embed -> _unwrap_vidrift.
+
+    Measured 2026-11-21: the proxy page is a ~5 KB iframe wrapper
+    (``<iframe src="https://embed.vidrift.net/embed/movie/11667">``), NOT a
+    page carrying an orion master — the old direct-orion regex never
+    matched it, so the bingr branch always ended "shell_unverified". The
+    iframe chain is the same one unwrap_cineverse already uses. The
+    direct-orion match stays as a fallback for an older wrapper shape.
+    """
+    player = fetch(proxy_url, referer=saved_url)
+    if player.status != 200:
+        return "vidrift", [], ("blocked" if player.status == 403 else
+                               "transport" if player.status == 0 else "unverified")
+    body = player.text().replace("\\/", "/")
+    iframe = re.search(
+        r'<iframe[^>]+src=["\'](https://embed\.vidrift\.net/embed/[^"\']+)',
+        body)
+    if iframe:
+        return _unwrap_vidrift(iframe.group(1), fetch)
     master = re.search(
         r"https://embed\.vidrift\.net/api/orion/[A-Za-z0-9_\-]+/master\.m3u8",
         body)
@@ -605,6 +622,86 @@ def _unwrap_modiplay(saved_url: str, fetch) -> tuple:
                             "referer": "https://embed.vidrift.net/",
                             "kind_hint": "playlist"}], None
     return "vidrift", [], "shell_unverified"
+
+
+def _modiplay_vidara(code: str, saved_url: str, fetch) -> tuple:
+    """vidara: POST the filecode as JSON to /api/stream -> streaming_url.
+
+    Measured 2026-11-21: ``POST https://vidara.to/api/stream`` with a
+    JSON body ``{"filecode": code}`` answers 200 with a signed HLS master
+    in ``streaming_url``. A form-encoded body answers 400 ("Missing or
+    invalid filecode"), so the JSON body is required. The embed page's
+    ``c=`` code IS the vidara filecode (the proxy page names the same
+    ``/e/<code>``), so no proxy fetch is needed before the POST.
+    """
+    api = fetch("https://vidara.to/api/stream", referer=saved_url,
+                method="POST", json_data={"filecode": code})
+    if api.status != 200:
+        return "vidara", [], ("blocked" if api.status == 403 else
+                              "transport" if api.status == 0 else "vidara_unverified")
+    try:
+        master = (json.loads(api.text()) or {}).get("streaming_url") or ""
+    except Exception:
+        master = ""
+    if not master:
+        return "vidara", [], "vidara_unverified"
+    return "vidara", [{"url": master,
+                       "referer": f"https://vidara.to/e/{code}",
+                       "kind_hint": "playlist"}], None
+
+
+def _unwrap_modiplay(saved_url: str, fetch) -> tuple:
+    """modiplay embed -> the backend it actually resolves to.
+
+    The embed page lists 2–3 servers (proxy.php?p=<server>&c=<code>).
+    Every listed server is tried in preference order — streamhg, then
+    vidrift/bingr, then vidara — not just the first match: a movie page
+    lists streamhg + vidrift, a TV page lists vidara + vidrift, and one
+    server can 403 while its sibling works. Measured 2026-11-21 on 20
+    sampled embed pages: streamhg present on 19, vidrift on all 20,
+    vidara on 1 (first on that one). A server name with no proven chain
+    is skipped, never dead: the failure is the preferred server's.
+    """
+    page = fetch(saved_url)
+    if page.status != 200:
+        return "modiplay", [], ("blocked" if page.status == 403 else
+                                "transport" if page.status == 0 else "unverified")
+    html = page.text()
+    matches = re.findall(r"/proxy\.php\?p=([a-z0-9]+)(?:&amp;|&)c=([^\"&]+)",
+                         html)
+    if not matches:
+        return "modiplay", [], "unverified"
+    base = urllib.parse.urlsplit(saved_url)
+    origin = f"{base.scheme}://{base.netloc}"
+    ordered = sorted(matches,
+                     key=lambda m: _MODIPLAY_SERVER_ORDER.get(m[0], 9))
+    servers = {}
+    for server, code in ordered:
+        servers.setdefault(server, code)
+    first_failure = None
+    for server, code in servers.items():
+        if server == "streamhg":
+            proxy = (f"{origin}/proxy.php?p=streamhg&c={code}"
+                     f"&title=x&site_ref=&noredirect=1")
+            backend, candidates, failure = _modiplay_streamhg(
+                origin, proxy, saved_url, fetch)
+        elif server in ("vidrift", "bingr"):
+            proxy = (f"{origin}/proxy.php?p={server}&c={code}"
+                     f"&title=x&noredirect=1")
+            backend, candidates, failure = _modiplay_vidrift(
+                proxy, saved_url, fetch)
+        elif server == "vidara":
+            backend, candidates, failure = _modiplay_vidara(
+                code, saved_url, fetch)
+        else:
+            continue
+        if not failure:
+            return backend, candidates, None
+        if first_failure is None:
+            first_failure = (backend, failure)
+    if first_failure is not None:
+        return first_failure[0], [], first_failure[1]
+    return "modiplay", [], "unsupported_server"
 
 
 def _unwrap_vidrift(saved_url: str, fetch) -> tuple:
