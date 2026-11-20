@@ -462,7 +462,7 @@ screenshot "05-search.png"
 # open the first result row.
 tap_text "Search titles or cast" || { echo "FAIL: search field not found" >&2; exit 1; }
 sleep 2
-adb shell input text "One%20Piece"
+adb shell input text "One%sPiece" # %s is adb's space escape; %20 stays literal ("One%20Piece", zero results — run 44701819731)
 sleep 3
 adb shell input keyevent 66
 sleep 6
