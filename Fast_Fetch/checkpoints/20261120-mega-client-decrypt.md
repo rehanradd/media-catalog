@@ -60,7 +60,7 @@ base main `6199929e` (main has since advanced: autocrawl fix ce5dd227, slices 33
 rebase owed at merge time). 38 files, +2,336/−46. Pre-push checks pass. Commit + push + CI
 verdicts owed; parent merges.
 
-## Gates #2/#3 + Android CI fix (folded in at rebase time, 2026-11-20)
+## Gates #2/#3 (folded in at rebase time, 2026-11-20)
 
 - Gate #2 (129 suites): 118 pass. 2 real — `test_docs_invariants` count/bytes (the rebase
   brought the slices lane's checkpoint file, so the count is 135 and CONTINUITY.md was
@@ -68,13 +68,22 @@ verdicts owed; parent merges.
   (Python `mkstemp`+write → `PermissionError` while shell writes worked, 01:05–01:49 UTC).
   A background driver waited for a write window, amended the commit, ran gate #3.
 - Gate #3: **129/129 pass, 0 fail** (log `/tmp/mega-gate3.log`).
-- Android CI first run failed on exactly 1 of 2,783 tests:
-  `MegaDecryptProxyTest.aFailedCiphertextFetchDropsTheConnection` — a real bug:
-  `respondStreaming` wrote `200 OK` headers before the first `readPlain`, so a dead fetch
-  answered 200 with `Content-Length` and 0 bytes instead of dropping the connection. Fixed
-  in the proxy only (fetch first chunk before headers; return unwritten on failure; window
-  cache reuses the chunk, no second fetch) — commit `d8bb58ed`. No test change.
 - CI on `d8bb58ed`: Backend 44658516021 SUCCESS, Android 44658516013 SUCCESS (2,784 tests,
   0 failed). Rebased onto main `deddff6f` (app small fixes) at merge time; CONTINUITY.md
   conflict resolved (kept both the mega and scale-fix bullets, count corrected to 136),
   `test_redact.py` auto-merged (scale lane + this lane both added tests — both kept).
+
+## Android CI failure + proxy fix (02:04 UTC 20 Nov)
+
+First CI on tip `34d5bd0e`: Backend CI SUCCESS (run 44657324135), Android CI FAILURE
+(run 44657324118) — 2,783 tests, exactly 1 failed:
+`MegaDecryptProxyTest.aFailedCiphertextFetchDropsTheConnection`, AssertionError at
+`MegaDecryptProxyTest.kt:168`. Real bug, not a flake: `respondStreaming` wrote the
+`200 OK` headers BEFORE the first `readPlain`, so when the ciphertext fetch threw,
+the client had already been promised `Content-Length: <fileSize>` and got 0 bytes —
+a lying 200, not the dropped connection the design and the `readPlain` doc comment
+promise. Fix (proxy only, no test change): `handle()` fetches the first chunk
+before writing headers; on failure it returns without writing anything, so the
+socket closes and the client gets an IOException. The window cache makes the
+streaming loop reuse that first chunk — no second fetch. Re-verdict on the fix
+commit `d8bb58ed`: Backend 44658516021 SUCCESS, Android 44658516013 SUCCESS.

@@ -170,7 +170,16 @@ class MegaDecryptProxy(
                 val len = (effectiveEnd - start + 1).coerceAtLeast(0L)
                 val contentRange = "bytes $start-$effectiveEnd/$size"
                 val status = if (range != null) 206 else 200
-                respondStreaming(s.getOutputStream(), status, contentType, len, contentRange, start)
+                // Fetch the first chunk BEFORE writing headers: a dead MEGA
+                // fetch must drop the connection, not answer 200 with an
+                // empty body. The window cache makes the streaming loop
+                // below reuse this chunk — no second fetch.
+                val firstChunk = try {
+                    readPlain(start, minOf(len, LocalMediaProxy.STREAM_CHUNK_BYTES.toLong()).toInt())
+                } catch (_: Exception) {
+                    return
+                }
+                respondStreaming(s.getOutputStream(), status, contentType, len, contentRange, start, firstChunk)
             }
         } catch (_: Exception) {
             /* a dropped player connection, or a failed MEGA fetch mid-stream, is
@@ -190,6 +199,7 @@ class MegaDecryptProxy(
         contentLength: Long,
         contentRange: String?,
         start: Long,
+        firstChunk: ByteArray,
     ) {
         val sb = StringBuilder()
         sb.append("HTTP/1.1 $status ${reasonOf(status)}\r\n")
@@ -201,6 +211,11 @@ class MegaDecryptProxy(
         out.write(sb.toString().toByteArray())
         var remaining = contentLength
         var at = start
+        if (firstChunk.isNotEmpty()) {
+            out.write(firstChunk)
+            at += firstChunk.size
+            remaining -= firstChunk.size
+        }
         while (remaining > 0) {
             val want = minOf(remaining, LocalMediaProxy.STREAM_CHUNK_BYTES.toLong()).toInt()
             val chunk = readPlain(at, want)
