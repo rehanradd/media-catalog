@@ -351,6 +351,11 @@ class DownloadsViewModel @Inject constructor(
                     "Smart Downloads needs Wi-Fi — the next episode will download when you're back on Wi-Fi."
                 result.skippedLowSpace ->
                     "Smart Downloads paused — not enough free space on this phone."
+                // REA #5: the budget stopped at least one episode — the
+                // pass still fetched what fit, so this line only shows
+                // when nothing was enqueued at all.
+                result.skippedOverCap ->
+                    "Downloads For You is full. Delete a downloaded episode or raise the limit in Settings."
                 else -> null
             } ?: return@launch
             _uiState.update { it.copy(statusMessage = message) }

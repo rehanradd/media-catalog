@@ -23,6 +23,29 @@ data class SmartDownloadCandidate(
     val episode: Int,
 )
 
+/** REA #5: the cap options Settings offers — 1, 2 or 5 GB. */
+internal val DOWNLOADS_FOR_YOU_CAP_OPTIONS_GB = listOf(1, 2, 5)
+
+/**
+ * REA #5: does one more episode fit in the budget? [usedBytes] is the
+ * bytes still on the device for episodes Smart Downloads fetched; a
+ * candidate whose size the server never stated counts as zero — it is
+ * admitted on the bytes the budget can see, never refused for a size
+ * nobody stated. Exactly at the cap still fits: the cap is a limit, not
+ * a fence with one byte of margin. 1 GB is a billion bytes, the
+ * storage-GB the Settings options name, not a gibibyte: the cap is a
+ * promise about the phone's storage screen, so it counts the way that
+ * screen does.
+ */
+internal fun downloadsForYouFits(
+    usedBytes: Long,
+    candidateSizeBytes: Long?,
+    capGb: Int,
+): Boolean {
+    val candidate = candidateSizeBytes ?: 0L
+    return usedBytes + candidate <= capGb.toLong() * 1_000_000_000L
+}
+
 /**
  * Smart Downloads, plan E2 (feature-gap audit #1): the pure choice of
  * which episode comes next for one series — no network, no storage, no

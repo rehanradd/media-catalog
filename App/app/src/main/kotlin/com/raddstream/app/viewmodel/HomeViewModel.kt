@@ -7,6 +7,8 @@ import com.raddstream.app.data.ServerSettingsRepository
 import com.raddstream.app.data.UserRegion
 import com.raddstream.app.data.cache.ConnectivityProbe
 import com.raddstream.app.data.cache.NetworkClass
+import com.raddstream.app.data.local.DownloadsForYouDao
+import com.raddstream.app.data.local.DownloadsForYouEntry
 import com.raddstream.app.data.local.FavoritePost
 import com.raddstream.app.data.local.SyncedProgressDao
 import com.raddstream.app.data.local.WatchHistoryDao
@@ -23,6 +25,7 @@ import com.raddstream.app.network.models.WireText
 import com.raddstream.app.ui.components.UserWords
 import com.raddstream.app.player.AdCadenceGovernor
 import com.raddstream.app.player.AdSurface
+import com.raddstream.app.repository.CacheRepository
 import com.raddstream.app.repository.CatalogRepository
 import com.raddstream.app.repository.FavoritesRepository
 import com.raddstream.app.repository.FollowedSeriesRepository
@@ -657,6 +660,10 @@ class HomeViewModel @Inject constructor(
     private val settingsRepository: ServerSettingsRepository,
     private val syncAccountRepository: SyncAccountRepository,
     private val connectivityProbe: ConnectivityProbe,
+    /** REA #5: the "Downloads For You" ledger — what Smart Downloads fetched. */
+    private val downloadsForYouDao: DownloadsForYouDao,
+    /** REA #5: the keeps list, so the row shows only episodes still on the device. */
+    private val cacheRepository: CacheRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(HomeUiState())
@@ -671,6 +678,7 @@ class HomeViewModel @Inject constructor(
     init {
         observeContinueWatching()
         observeFavorites()
+        observeDownloadsForYou()
         observeTrialNote()
         observePickThreeDone()
         observePickThreeShown()
@@ -909,6 +917,41 @@ class HomeViewModel @Inject constructor(
                 } else {
                     current.copy(sections = insertForYouSection(current.sections, fresh))
                 }
+            }
+            // REA #5: the Home load is the moment the rails exist to
+            // resolve the row's tiles from — rebuild it here as well as
+            // on ledger changes, so a fetch that landed while Home was
+            // open appears without a reload.
+            rebuildDownloadsForYouRow()
+        }
+    }
+
+    /**
+     * REA #5: the "Downloads For You" row — rebuilt whenever the ledger
+     * changes and whenever the "For you" row is recomputed (the Home
+     * load). The keeps list is read fresh on every rebuild, so an
+     * episode the player auto-deleted never lingers in the row past the
+     * next rebuild.
+     */
+    private fun observeDownloadsForYou() {
+        viewModelScope.launch {
+            downloadsForYouDao.observeAll().collect {
+                rebuildDownloadsForYouRow()
+            }
+        }
+    }
+
+    private fun rebuildDownloadsForYouRow() {
+        viewModelScope.launch {
+            val entries = runCatching { downloadsForYouDao.listAll() }.getOrDefault(emptyList())
+            val liveHandles = runCatching { cacheRepository.list() }
+                .getOrDefault(emptyList())
+                .mapNotNull { it.resourceId }
+                .toSet()
+            val pool = _uiState.value.sections.flatMap { it.items }
+            val row = buildDownloadsForYouSection(entries, pool, liveHandles)
+            _uiState.update { current ->
+                current.copy(sections = insertDownloadsForYouSection(current.sections, row))
             }
         }
     }
@@ -1387,3 +1430,59 @@ class HomeViewModel @Inject constructor(
         }
     }
 }
+
+/** REA #5 (Netflix, Nov 2026): the "Downloads For You" home row. */
+internal const val DOWNLOADS_FOR_YOU_KEY = "downloads_for_you"
+
+/** REA #5: the row's title, as painted. */
+internal const val DOWNLOADS_FOR_YOU_TITLE = "Downloads For You"
+
+/**
+ * REA #5: the "Downloads For You" row, pure so the rule is pinned in a
+ * test without a repository: one tile per fetched series, newest fetch
+ * first, only while its episode is still on the device. A fetched series
+ * no rail still carries has no poster to paint, so it is left out rather
+ * than drawn poster-less; a row whose handle is gone (watched and
+ * auto-deleted, or deleted by hand) is invisible until the runner's
+ * sweep removes its ledger row. Null when nothing is both fetched and
+ * still kept — the row never appears empty.
+ */
+internal fun buildDownloadsForYouSection(
+    entries: List<DownloadsForYouEntry>,
+    pool: List<Post>,
+    liveHandles: Set<String>,
+    maxItems: Int = 10,
+): HomeSection? {
+    val posts = entries
+        .filter { it.handle in liveHandles }
+        .mapNotNull { entry -> pool.firstOrNull { it.id == entry.postId } }
+        .distinctBy { it.id }
+        .take(maxItems)
+    if (posts.isEmpty()) return null
+    return HomeSection(
+        key = DOWNLOADS_FOR_YOU_KEY,
+        title = DOWNLOADS_FOR_YOU_TITLE,
+        type = null,
+        items = posts,
+        subtitle = "Downloaded for you — ready offline",
+    )
+}
+
+/**
+ * REA #5: where the row goes — right after the "For you" row when that
+ * rail exists (the two personal rows sit together), else second. A
+ * section already at the key is replaced in place, so the row never
+ * appears twice.
+ */
+internal fun insertDownloadsForYouSection(
+    sections: List<HomeSection>,
+    row: HomeSection?,
+): List<HomeSection> {
+    val without = sections.filterNot { it.key == DOWNLOADS_FOR_YOU_KEY }
+    if (row == null) return without
+    val afterForYou = without.indexOfFirst { it.key == FOR_YOU_KEY }
+        .takeIf { it >= 0 }?.plus(1) ?: 1
+    val index = afterForYou.coerceIn(0, without.size)
+    return without.toMutableList().apply { add(index, row) }
+}
+

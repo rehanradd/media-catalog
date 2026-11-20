@@ -99,6 +99,7 @@ import com.raddstream.app.R
 import com.raddstream.app.brand.Brand
 import com.raddstream.app.data.RegionChoices
 import com.raddstream.app.data.RemoteFeatures
+import com.raddstream.app.data.downloads.DOWNLOADS_FOR_YOU_CAP_OPTIONS_GB
 import com.raddstream.app.network.models.DEFAULT_DISCLAIMER_EMAIL
 import com.raddstream.app.player.AudioBoost
 import com.raddstream.app.player.AudioBoostUi
@@ -650,6 +651,30 @@ fun SettingsScreen(
                     )
                     Text(
                         "When on, the next episode of a series you're watching downloads itself on Wi-Fi, so it's ready offline. Only one episode per series at a time, and only while this phone has free space.",
+                        style = settingsHelperStyle,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    // REA #5 (Netflix, Nov 2026): the Downloads For You
+                    // budget — how much space the automatic downloads may
+                    // use. The runner counts only episodes still on the
+                    // device, and an episode whose size the server never
+                    // stated counts as nothing, never as a guess.
+                    Text(
+                        "Downloads For You may use",
+                        style = settingsHelperStyle,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    ChipRow(
+                        options = DOWNLOADS_FOR_YOU_CAP_OPTIONS_GB.map { "$it GB" },
+                        selectedIndex = DOWNLOADS_FOR_YOU_CAP_OPTIONS_GB
+                            .indexOf(state.prefs.downloadsForYouCapGb)
+                            .takeIf { it >= 0 } ?: 1,
+                        onSelect = { idx ->
+                            viewModel.setDownloadsForYouCapGb(DOWNLOADS_FOR_YOU_CAP_OPTIONS_GB[idx])
+                        },
+                    )
+                    Text(
+                        "When the budget is full, the next episode waits — delete a downloaded episode or raise the limit.",
                         style = settingsHelperStyle,
                     )
                     Spacer(Modifier.height(10.dp))

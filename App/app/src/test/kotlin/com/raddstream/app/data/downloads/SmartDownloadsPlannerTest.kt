@@ -9,7 +9,9 @@ import com.raddstream.app.viewmodel.RankedLink
 import com.raddstream.app.viewmodel.RankedPrint
 import com.raddstream.app.viewmodel.SeasonGroup
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -252,5 +254,36 @@ class SmartDownloadsPlannerTest {
             freeQualityCap = "720p",
         )
         assertNull(next)
+    }
+
+    // REA #5 — Downloads For You: the storage budget, in whole gigabytes.
+    // A gigabyte is a billion bytes here, the storage-GB the Settings
+    // options name; a candidate whose size the server never stated counts
+    // as zero, never as a guess.
+
+    @Test
+    fun `the budget admits an episode that fits`() {
+        assertTrue(downloadsForYouFits(usedBytes = 1_500_000_000L, candidateSizeBytes = 400_000_000L, capGb = 2))
+        assertTrue(downloadsForYouFits(usedBytes = 0L, candidateSizeBytes = null, capGb = 1))
+    }
+
+    @Test
+    fun `exactly at the cap still fits`() {
+        assertTrue(downloadsForYouFits(usedBytes = 1_500_000_000L, candidateSizeBytes = 500_000_000L, capGb = 2))
+    }
+
+    @Test
+    fun `one byte over the cap does not fit`() {
+        assertFalse(downloadsForYouFits(usedBytes = 1_500_000_000L, candidateSizeBytes = 500_000_001L, capGb = 2))
+        assertFalse(downloadsForYouFits(usedBytes = 2_000_000_001L, candidateSizeBytes = null, capGb = 2))
+    }
+
+    @Test
+    fun `an unstated size never refuses on its own`() {
+        // The budget counts what it can see: an episode the server never
+        // sized is admitted, and only the bytes already on the device can
+        // push the pass over the cap.
+        assertTrue(downloadsForYouFits(usedBytes = 1_999_999_999L, candidateSizeBytes = null, capGb = 2))
+        assertFalse(downloadsForYouFits(usedBytes = 2_000_000_000L, candidateSizeBytes = 1L, capGb = 2))
     }
 }

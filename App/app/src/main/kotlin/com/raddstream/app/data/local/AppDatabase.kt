@@ -80,6 +80,15 @@ import com.raddstream.app.data.cache.CacheTaskEntity
  * new table with no prior data, real DDL like 5 and 7: the destructive fallback would still
  * take `favorite_posts` with it, and a vote is the viewer's own, worth exactly as much as a
  * saved title.
+ *
+ * Version 14 adds `title_sync_prefs`, the per-title audio/subtitle delays (REA #3, Nov 2026).
+ * It is a new table with no prior data, real DDL like 5 and 7: a correction is the viewer's
+ * own, and it must survive exactly like a saved title.
+ *
+ * Version 15 adds `downloads_for_you`, the ledger of episodes Smart Downloads fetched (REA #5,
+ * Nov 2026). It is a new table with no prior data, real DDL like 5 and 7: the row is what the
+ * Home row and the storage budget both read, and a fetch the viewer never asked to lose must
+ * not be dropped by an upgrade.
  */
 @Database(
     entities = [
@@ -96,8 +105,9 @@ import com.raddstream.app.data.cache.CacheTaskEntity
         CatalogFtsEntity::class,
         TitleFeedback::class,
         TitleSyncPrefs::class,
+        DownloadsForYouEntry::class,
     ],
-    version = 14,
+    version = 15,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -114,6 +124,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun catalogFtsDao(): CatalogFtsDao
     abstract fun titleFeedbackDao(): TitleFeedbackDao
     abstract fun titleSyncPrefsDao(): TitleSyncPrefsDao
+    abstract fun downloadsForYouDao(): DownloadsForYouDao
 
     companion object {
         /**
@@ -405,6 +416,26 @@ abstract class AppDatabase : RoomDatabase() {
                         "workRef TEXT NOT NULL, audioDelayMs INTEGER NOT NULL, " +
                         "subtitleDelayMs INTEGER NOT NULL, updatedAt INTEGER NOT NULL, " +
                         "PRIMARY KEY(workRef))",
+                )
+            }
+        }
+
+        /**
+         * Version 15 adds `downloads_for_you`, the ledger of episodes Smart Downloads fetched
+         * (REA #5). One row per fetched episode, keyed by post + season + episode, so a re-fetch
+         * replaces its own row and the ledger never holds two rows for one episode. The DDL
+         * below must equal Room's own output for [DownloadsForYouEntry]: a drift is caught the
+         * first time a device opens the migrated database, exactly like the 2 → 3 step.
+         */
+        val MIGRATION_14_15: Migration = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS downloads_for_you (" +
+                        "postId INTEGER NOT NULL, season INTEGER NOT NULL, " +
+                        "episode INTEGER NOT NULL, title TEXT NOT NULL, " +
+                        "handle TEXT NOT NULL, sizeBytes INTEGER, " +
+                        "fetchedAt INTEGER NOT NULL, " +
+                        "PRIMARY KEY(postId, season, episode))",
                 )
             }
         }

@@ -11,20 +11,21 @@ import org.robolectric.RobolectricTestRunner
 
 /**
  * Flow-audit #25, proven on a real database instead of asserted in prose: a device stamped
- * at schema version 2 with a saved favorite must climb 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14 and still hold
- * that favorite at the top. The builder used here registers the same thirteen migrations as
+ * at schema version 2 with a saved favorite must climb 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14 → 15 and still hold
+ * that favorite at the top. The builder used here registers the same fourteen migrations as
  * `DatabaseModule` but NO destructive fallback — with a gap in the ladder Room throws rather
  * than silently wiping rows, and if the hand-written 2 → 3 DDL drifts from the entities,
  * Room's schema validation throws the first time the migrated database is opened.
  *
- * The climb runs to 14 because that is the ladder that ships: version 9 is the Live TV
+ * The climb runs to 15 because that is the ladder that ships: version 9 is the Live TV
  * favourites table and version 10 is the followed-series table, and a device at version 2 is
  * exactly the device that has never been told whether its saved rows are adult or unavailable,
- * so it must arrive at 14 with its rows, its stamps unset, and nothing rebuilt — plus version
+ * so it must arrive at 15 with its rows, its stamps unset, and nothing rebuilt — plus version
  * 10's `followed_series` table, empty and writable, and version 11's `catalog_fts` search
  * index, empty and prefix-searchable, and version 12's `watch_history.imdbRating` column,
  * NULL on every row the climb carried, and version 13's `title_feedback` table, empty and
- * writable, and version 14's `title_sync_prefs` table, empty and writable.
+ * writable, and version 14's `title_sync_prefs` table, empty and writable, and version 15's
+ * `downloads_for_you` table, empty and writable.
  *
  * x86_64-only like every Robolectric suite (see the arm64 exclusion in `app/build.gradle.kts`):
  * this is the hosted-CI proof that the pure-text schema guards cannot provide.
@@ -33,7 +34,7 @@ import org.robolectric.RobolectricTestRunner
 class AppDatabaseMigrationTest {
 
     @Test
-    fun `a version-2 database upgrades to 14 with its favorites intact`() {
+    fun `a version-2 database upgrades to 15 with its favorites intact`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val dbName = "upgrade_from_2.db"
         context.deleteDatabase(dbName)
@@ -66,6 +67,7 @@ class AppDatabaseMigrationTest {
                 AppDatabase.MIGRATION_11_12,
                 AppDatabase.MIGRATION_12_13,
                 AppDatabase.MIGRATION_13_14,
+                AppDatabase.MIGRATION_14_15,
             )
             .build()
 
@@ -75,14 +77,14 @@ class AppDatabaseMigrationTest {
 
             runtime.query("SELECT title FROM favorite_posts WHERE id = 7").use { cursor ->
                 assertTrue(
-                    "the 2 → 14 climb lost a saved favorite — a destructive path ran",
+                    "the 2 → 15 climb lost a saved favorite — a destructive path ran",
                     cursor.moveToFirst(),
                 )
                 assertEquals("Saved before the upgrade", cursor.getString(0))
             }
             runtime.query("PRAGMA user_version").use { cursor ->
                 assertTrue(cursor.moveToFirst())
-                assertEquals(14, cursor.getInt(0))
+                assertEquals(15, cursor.getInt(0))
             }
 
             // Version 8's two answers arrive UNSET. A row this old was saved by a build that
@@ -90,7 +92,7 @@ class AppDatabaseMigrationTest {
             // a never-checked favourite look checked — and that is the row revalidation exists to
             // find first. Same law the re-validation pass reads; proven on a climbed database.
             runtime.query("SELECT is18Plus, checkedAt FROM favorite_posts WHERE id = 7").use { cursor ->
-                assertTrue("the 2 → 14 climb dropped the saved row", cursor.moveToFirst())
+                assertTrue("the 2 → 15 climb dropped the saved row", cursor.moveToFirst())
                 assertTrue("a never-checked favourite must not gain an adult answer", cursor.isNull(0))
                 assertTrue("a never-checked favourite must not gain a check stamp", cursor.isNull(1))
             }
@@ -101,7 +103,7 @@ class AppDatabaseMigrationTest {
                     "positionMs, durationMs, updatedAt) VALUES ('w', 7, 'Kept after upgrade', 1, 1, 10, 100, 1)",
             )
             runtime.query("SELECT title FROM watch_history WHERE workRef = 'w'").use { cursor ->
-                assertTrue("version 5's table must survive the 2 → 14 climb", cursor.moveToFirst())
+                assertTrue("version 5's table must survive the 2 → 15 climb", cursor.moveToFirst())
                 assertEquals("Kept after upgrade", cursor.getString(0))
             }
             // Version 12's rating column arrives with the climb: a row the
@@ -130,7 +132,7 @@ class AppDatabaseMigrationTest {
                 "INSERT INTO live_tv_favourites (channelId, starredAt) VALUES (14, 123)",
             )
             runtime.query("SELECT starredAt FROM live_tv_favourites WHERE channelId = 14").use { cursor ->
-                assertTrue("version 9's table must survive the 2 → 14 climb", cursor.moveToFirst())
+                assertTrue("version 9's table must survive the 2 → 15 climb", cursor.moveToFirst())
                 assertEquals(123, cursor.getInt(0))
             }
             // Version 10's table takes a follow and reads it back.
@@ -139,7 +141,7 @@ class AppDatabaseMigrationTest {
                     "VALUES ('w', 'Kept after upgrade', 2, 5, 1)",
             )
             runtime.query("SELECT lastSeenEpisode FROM followed_series WHERE workRef = 'w'").use { cursor ->
-                assertTrue("version 10's table must survive the 2 → 14 climb", cursor.moveToFirst())
+                assertTrue("version 10's table must survive the 2 → 15 climb", cursor.moveToFirst())
                 assertEquals(5, cursor.getInt(0))
             }
             // Version 11's search index arrives with the climb and answers a
@@ -151,7 +153,7 @@ class AppDatabaseMigrationTest {
                     "VALUES ('Jawan', 2023, 'movie', NULL, 4)",
             )
             runtime.query("SELECT title FROM catalog_fts WHERE catalog_fts MATCH 'jaw*'").use { cursor ->
-                assertTrue("version 11's index must survive the 2 → 14 climb", cursor.moveToFirst())
+                assertTrue("version 11's index must survive the 2 → 15 climb", cursor.moveToFirst())
                 assertEquals("Jawan", cursor.getString(0))
             }
             // Version 13's thumbs table arrives with the climb and takes
@@ -161,7 +163,7 @@ class AppDatabaseMigrationTest {
                     "VALUES ('w', -1, 1)",
             )
             runtime.query("SELECT thumb FROM title_feedback WHERE workRef = 'w'").use { cursor ->
-                assertTrue("version 13's table must survive the 2 → 14 climb", cursor.moveToFirst())
+                assertTrue("version 13's table must survive the 2 → 15 climb", cursor.moveToFirst())
                 assertEquals(-1, cursor.getInt(0))
             }
             // Version 14's sync table arrives with the climb and takes
@@ -172,9 +174,21 @@ class AppDatabaseMigrationTest {
                     "VALUES ('w', 250, -500, 1)",
             )
             runtime.query("SELECT audioDelayMs, subtitleDelayMs FROM title_sync_prefs WHERE workRef = 'w'").use { cursor ->
-                assertTrue("version 14's table must survive the 2 → 14 climb", cursor.moveToFirst())
+                assertTrue("version 14's table must survive the 2 → 15 climb", cursor.moveToFirst())
                 assertEquals(250, cursor.getLong(0))
                 assertEquals(-500, cursor.getLong(1))
+            }
+            // Version 15's ledger arrives with the climb and takes a
+            // fetched episode — a fetch is a row, and it reads back as
+            // one.
+            runtime.execSQL(
+                "INSERT INTO downloads_for_you (postId, season, episode, title, handle, sizeBytes, fetchedAt) " +
+                    "VALUES (7, 1, 2, 'Episode 2', 'h-2', 100000000, 1)",
+            )
+            runtime.query("SELECT title, handle FROM downloads_for_you WHERE postId = 7 AND episode = 2").use { cursor ->
+                assertTrue("version 15's table must survive the 2 → 15 climb", cursor.moveToFirst())
+                assertEquals("Episode 2", cursor.getString(0))
+                assertEquals("h-2", cursor.getString(1))
             }
         } finally {
             db.close()

@@ -930,6 +930,23 @@ class ServerSettingsRepository @Inject constructor(
     }
 
     /**
+     * REA #5 (Netflix, Nov 2026): how much space Downloads For You may
+     * use, in whole gigabytes — the user-chosen budget ("Choose how many
+     * GB of movies and shows you want downloaded for you"). 2 GB by
+     * default: enough for a few episodes, small enough that an automatic
+     * download never eats the phone. The runner counts only episodes
+     * still on the device, and an episode whose size the server never
+     * stated counts as zero — never as a guess.
+     */
+    val downloadsForYouCapGb: Flow<Int> = dataStore.data.map { preferences ->
+        preferences[DOWNLOADS_FOR_YOU_CAP_GB_KEY] ?: DOWNLOADS_FOR_YOU_CAP_DEFAULT_GB
+    }
+
+    suspend fun saveDownloadsForYouCapGb(gb: Int) {
+        dataStore.edit { preferences -> preferences[DOWNLOADS_FOR_YOU_CAP_GB_KEY] = gb }
+    }
+
+    /**
      * PL-10: enter picture-in-picture automatically when the viewer leaves the player
      * while it is playing. OFF by default — PiP unasked for is a window the viewer did
      * not open, and the manual PiP button is always there for the one time they want it.
@@ -1258,6 +1275,10 @@ class ServerSettingsRepository @Inject constructor(
         private val WIFI_ONLY_DOWNLOADS_KEY = booleanPreferencesKey("wifi_only_downloads")
         private val AUTO_DELETE_WATCHED_KEY = booleanPreferencesKey("auto_delete_watched")
         private val SMART_DOWNLOADS_KEY = booleanPreferencesKey("smart_downloads")
+        /** REA #5: the Downloads For You budget in whole gigabytes (default 2). */
+        private val DOWNLOADS_FOR_YOU_CAP_GB_KEY = intPreferencesKey("downloads_for_you_cap_gb")
+        /** REA #5: the default budget, and the middle of the 1 / 2 / 5 GB options. */
+        const val DOWNLOADS_FOR_YOU_CAP_DEFAULT_GB = 2
         private val KEEP_TTL_KEY = intPreferencesKey("keep_ttl_hours")
         private val PREFERRED_SUBTITLE_LANGUAGE_KEY = stringPreferencesKey("preferred_subtitle_language")
         private val SUBTITLE_SIZE_KEY = intPreferencesKey("subtitle_size_percent")

@@ -68,6 +68,12 @@ data class UserPreferences(
     val autoDeleteWatched: Boolean = false,
     /** Smart Downloads: the next episode downloads itself on Wi-Fi. Off by default. */
     val smartDownloadsEnabled: Boolean = false,
+    /**
+     * REA #5 (Netflix, Nov 2026): how much space Downloads For You may
+     * use, in whole gigabytes. 2 GB by default — the middle of the 1 / 2
+     * / 5 GB options, enough for a few episodes.
+     */
+    val downloadsForYouCapGb: Int = 2,
     val keepTtl: KeepTtl = KeepTtl.H3,
     val subtitleLang: String = SUBTITLE_DEFAULT,
     val dynamicColor: Boolean = false,
@@ -483,6 +489,11 @@ class SettingsViewModel @Inject constructor(
             }
         }
         viewModelScope.launch {
+            settingsRepository.downloadsForYouCapGb.collect { gb ->
+                _uiState.update { it.copy(prefs = it.prefs.copy(downloadsForYouCapGb = gb)) }
+            }
+        }
+        viewModelScope.launch {
             settingsRepository.keepTtlHours.collect { hours ->
                 _uiState.update { it.copy(prefs = it.prefs.copy(keepTtl = KeepTtl.fromHours(hours))) }
             }
@@ -670,6 +681,12 @@ class SettingsViewModel @Inject constructor(
     fun setSmartDownloadsEnabled(value: Boolean) {
         updatePrefs { it.copy(smartDownloadsEnabled = value) }
         viewModelScope.launch { settingsRepository.saveSmartDownloadsEnabled(value) }
+    }
+
+    /** REA #5: the Downloads For You budget, in whole gigabytes (1 / 2 / 5). */
+    fun setDownloadsForYouCapGb(gb: Int) {
+        updatePrefs { it.copy(downloadsForYouCapGb = gb) }
+        viewModelScope.launch { settingsRepository.saveDownloadsForYouCapGb(gb) }
     }
 
     fun setKeepTtl(value: KeepTtl) {
