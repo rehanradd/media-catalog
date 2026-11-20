@@ -239,7 +239,7 @@ class OfflineCacheWiringTest {
         }
     }
 
-    private class FakeFactory(private val baseUrl: String) : KeepSourceFactory {
+    private class FakeFactory(val baseUrl: String) : KeepSourceFactory {
         var metaMimeType: String? = null
         var metaSize: Long? = null
         var lastPostIdSeen: Int? = null
@@ -277,6 +277,33 @@ class OfflineCacheWiringTest {
         }
     }
 
+    // ── no-network client: the real fetchers must never emit a request ────────
+
+    /**
+     * An OkHttpClient that can never reach a network (prod-leak audit S3,
+     * 2026-11-20): `RangeByteFetcher` and `HlsAheadBuffer` are concrete classes,
+     * so the wiring cannot hand them a fake the way it hands the ahead executor
+     * a [FakeAhead] — but it can hand them a client whose every call fails
+     * loudly instead of fetching. The only thing that stood between these two
+     * real fetchers and the network was the factory's `catalog.test` base URL;
+     * now the client itself refuses. Any future test path that actually drives
+     * one of them errors here, in the open, instead of fetching.
+     */
+    private class NoNetworkClient {
+        var attemptedCalls = 0
+            private set
+
+        fun build(): okhttp3.OkHttpClient = okhttp3.OkHttpClient.Builder()
+            .addInterceptor { chain ->
+                attemptedCalls++
+                throw AssertionError(
+                    "OfflineCacheWiringTest: a real fetcher tried to fetch " +
+                        chain.request().url + " — no network in tests",
+                )
+            }
+            .build()
+    }
+
     private fun newTask(
         handle: String,
         id: Long,
@@ -309,6 +336,7 @@ class OfflineCacheWiringTest {
         val factory: FakeFactory,
         val repository: CacheRepository,
         val clock: FixedUptimeClock,
+        val noNetwork: NoNetworkClient,
     )
 
     private fun wiring(
@@ -326,14 +354,19 @@ class OfflineCacheWiringTest {
         // job-then-launch ordering holds exactly as it does on Dispatchers.Default in production,
         // while every fake stays on one thread (no cross-thread map races).
         val scope = CoroutineScope(ctx + SupervisorJob())
+        // The real fetchers ride a client that can never emit a request (S3):
+        // no test path drives them — progressive tasks go through FakeAhead,
+        // HLS tasks and the no-range fallback are never scripted here — and if
+        // one ever is, the call fails loudly above instead of fetching.
+        val noNetwork = NoNetworkClient()
         val coordinator = CacheCoordinator(
             scope = scope,
             taskDao = taskDao,
             manifestDao = manifestDao,
             fileDao = fileDao,
             aheadFetcher = ahead,
-            rangeFetcher = RangeByteFetcher(okhttp3.OkHttpClient()),
-            hlsBuffer = HlsAheadBuffer(okhttp3.OkHttpClient(), clock),
+            rangeFetcher = RangeByteFetcher(noNetwork.build()),
+            hlsBuffer = HlsAheadBuffer(noNetwork.build(), clock),
             storage = storage,
             resolver = resolver,
             clock = clock,
@@ -342,7 +375,7 @@ class OfflineCacheWiringTest {
         )
         val factory = FakeFactory("https://catalog.test")
         val repository = CacheRepository(coordinator, taskDao, factory, storage, clock)
-        return Wiring(taskDao, fileDao, manifestDao, storage, resolver, ahead, coordinator, factory, repository, clock)
+        return Wiring(taskDao, fileDao, manifestDao, storage, resolver, ahead, coordinator, factory, repository, clock, noNetwork)
     }
 
     /** Let the queued engine pass run to a terminal state on the shared event loop. */
@@ -391,6 +424,19 @@ class OfflineCacheWiringTest {
         val second = w.repository.keep("HDL-2", "Work", 2000, true)
         assertTrue("second tap must be AlreadyKept, not a new task", second is KeepOutcome.AlreadyKept)
         assertEquals(1, w.taskDao.rows.size)
+    }
+
+    // ── (a2) the real fetchers can never reach a network (prod-leak audit S3) ──
+
+    @Test
+    fun `the real fetchers never emit a request while the engine drives a keep`() = runBlocking {
+        val w = wiring(coroutineContext, FakeAhead(FetchOutcome.COMPLETED))
+        val taskId = (w.repository.keep("HDL-NN", "Work", 2000, resumable = true) as KeepOutcome.Enqueued).taskId
+        awaitState(w.taskDao, taskId, CacheTaskState.COMPLETED)
+
+        assertEquals("no path the engine drove reached a real fetcher", 0, w.noNetwork.attemptedCalls)
+        assertTrue("the factory base URL stays an unroutable .test domain",
+            java.net.URI(w.factory.baseUrl).host.endsWith(".test"))
     }
 
     // ── (b) StorageGate refusal surfaced honestly, not silently dropped ─────────

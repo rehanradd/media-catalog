@@ -18,6 +18,12 @@ import org.robolectric.RobolectricTestRunner
  * the detail error screen even though the API had answered 200. The Retrofit client
  * is already built from this same URL and cached, so a populated cache must answer
  * without touching storage.
+ *
+ * Prod-leak audit (2026-11-20): the saved URL used to be the production address,
+ * so the real provider built a real client for it here. It is now `catalog.test` —
+ * an unroutable test string: this class pins URL resolution itself, so a
+ * `PinnedApiProvider` would bypass the code under test, and no endpoint is ever
+ * called through the provider here.
  */
 @RunWith(RobolectricTestRunner::class)
 class ApiProviderBaseUrlTest {
@@ -31,19 +37,19 @@ class ApiProviderBaseUrlTest {
     @Test
     fun `a cached base URL answers without re-reading storage`() = runBlocking {
         val (apiProvider, settings) = provider()
-        settings.saveServerUrl("https://raddstream.duckdns.org")
+        settings.saveServerUrl("https://catalog.test")
         // Builds the client; populates the cache. No network.
         apiProvider.current()
         // The stored value is now malformed — a fresh read would throw.
         settings.saveServerUrl("not a url")
-        assertEquals("https://raddstream.duckdns.org/", apiProvider.currentBaseUrl())
+        assertEquals("https://catalog.test/", apiProvider.currentBaseUrl())
     }
 
     @Test
     fun `a cold start still reads the stored URL`() = runBlocking {
         val (apiProvider, settings) = provider()
-        settings.saveServerUrl("https://raddstream.duckdns.org")
-        assertEquals("https://raddstream.duckdns.org/", apiProvider.currentBaseUrl())
+        settings.saveServerUrl("https://catalog.test")
+        assertEquals("https://catalog.test/", apiProvider.currentBaseUrl())
     }
 
     @Test

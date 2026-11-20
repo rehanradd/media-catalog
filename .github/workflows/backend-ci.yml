@@ -165,7 +165,10 @@ name: 🐍 Backend CI — Stdlib Python Tests
 #     EXCLUDED: test_10xflix_import.py  — per-site parser
 #     EXCLUDED: test_7starhd_import.py  — per-site parser
 #     EXCLUDED: test_9xmovies.py  — per-site parser
-#     EXCLUDED: test_audit_staging.py  — owner not yet verified offline
+#     PROMOTED (prod-leak audit, 2026-11-20 — the old hold reason, "owner not
+#     yet verified offline", is stale: the suite uses temp dirs only and
+#     mode=ro connections, proved by the audit; it now has a real step below):
+#     test_audit_staging.py — NO LONGER EXCLUDED.
 #     EXCLUDED: test_backfill_animated_flag.py  — operator migration, not a suite
 #     EXCLUDED: test_bolly4u_import.py  — per-site parser
 #     EXCLUDED: test_desicinemas.py  — per-site parser
@@ -262,6 +265,18 @@ jobs:
         run: |
           python3 --version
           echo "Runner system Python in use. This workflow must never pip-install."
+
+      # Prod-leak audit S5 (2026-11-20): `config.DATA_DIR` falls back to the
+      # live staging directory `/home/ubuntu/radd-stream-data` when the probe
+      # can stat it — on the Oracle VM that is the LIVE staging dir, so any
+      # future suite that writes through a default staging path would land in
+      # live staging. CI pins it to a scratch dir first, so no suite run here
+      # can ever resolve the live path. The same rule applies to any suite run
+      # on the Oracle VM: export RADD_DATA_DIR to a scratch dir before running.
+      - name: 📁 Pin RADD_DATA_DIR to a scratch dir (prod-leak audit S5)
+        run: |
+          mkdir -p "$RUNNER_TEMP/radd-data-dir"
+          echo "RADD_DATA_DIR=$RUNNER_TEMP/radd-data-dir" >> "$GITHUB_ENV"
 
       # One step per suite: a red X names the exact failing suite.
       # First, deliberately: a lane cut at `b99814e` that ports whole files rather than diffs silently
@@ -951,6 +966,12 @@ jobs:
       # all — it is manufactured by `mock.patch`. This run is its first execution.
       - name: 🧪 test_config_data_dir.py
         run: python3 -S Fast_Fetch/test_config_data_dir.py
+
+      # Prod-leak audit (2026-11-20): the exclusion reason ("owner not yet
+      # verified offline") is stale — the suite is offline (temp dirs only,
+      # mode=ro connections), so it is registered like any other suite.
+      - name: 🧪 test_audit_staging.py
+        run: python3 -S Fast_Fetch/test_audit_staging.py
 
       # The hubcdn gateway unwrap (task #54/#59). The classifier's own suite runs first:
       # `unwrap_hubcdn` refuses every Location `host_classifier` will not bless, so a red here

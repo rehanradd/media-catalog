@@ -45,8 +45,13 @@ class CatalogImageLoadingTest {
         compose.mainClock.autoAdvance = false
         compose.setContent {
             RaddStreamTheme {
+                // Prod-leak audit S4 (2026-11-20): the URL is deliberately
+                // unresolvable — the test only needs a URL string, and a real
+                // TMDB address made the test depend on "no real network under
+                // Robolectric". example.test never resolves, so the load
+                // errors the same way on any runner.
                 CatalogImage(
-                    url = "https://image.tmdb.org/t/p/w500/abc123.jpg",
+                    url = "https://example.test/poster.jpg",
                     contentDescription = "McLintock! poster",
                     fallbackLabel = "MC",
                 )

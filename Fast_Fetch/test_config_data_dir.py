@@ -101,5 +101,47 @@ class DataDirProbeTests(unittest.TestCase):
         self.assertEqual(sys.modules["config"], config)
 
 
+class DataDirEnvOverrideTests(unittest.TestCase):
+    """`RADD_DATA_DIR` pins the staging dir — the prod-leak audit S5 guard.
+
+    `config.DATA_DIR` falls back to the live staging directory
+    `/home/ubuntu/radd-stream-data` when the probe can stat it, which on the
+    Oracle VM is the LIVE staging dir. Backend CI pins it to a scratch dir
+    first (backend-ci.yml, "Pin RADD_DATA_DIR to a scratch dir"); these tests
+    pin the mechanism that step relies on, and fail loudly if the step is
+    ever removed. Any suite run on the Oracle VM must export RADD_DATA_DIR to
+    a scratch dir first — same rule, same reason.
+    """
+
+    def test_radd_data_dir_override_is_honoured(self):
+        """The env var decides DATA_DIR — the mechanism the CI step relies on."""
+        clean = dict(os.environ)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                with patch.dict(os.environ, {"RADD_DATA_DIR": tmp}):
+                    importlib.reload(config)
+                self.assertEqual(config.DATA_DIR, Path(tmp))
+                self.assertEqual(config.staging_db_path("katmoviehd"),
+                                 Path(tmp) / "katmoviehd.db")
+        finally:
+            os.environ.clear()
+            os.environ.update(clean)
+            importlib.reload(config)
+
+    def test_ci_pins_data_dir_to_a_temp_dir_not_live_staging(self):
+        """Under CI the workflow must have pinned DATA_DIR to a temp dir.
+
+        Skipped, not failed, off CI: locally the env var is the operator's
+        choice, and this box's own probe answer is pinned by the tests above.
+        """
+        if os.environ.get("CI") != "true":
+            self.skipTest("CI-only guard: the CI env is not set here")
+        env_dir = os.environ.get("RADD_DATA_DIR")
+        self.assertTrue(env_dir,
+                        "backend-ci.yml must export RADD_DATA_DIR to a temp dir")
+        self.assertEqual(config.DATA_DIR, Path(env_dir))
+        self.assertNotEqual(config.DATA_DIR, _ORACLE)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
