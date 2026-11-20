@@ -12,6 +12,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -26,6 +27,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.ui.theme.RaddStreamTheme
+import kotlinx.coroutines.flow.first
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -244,9 +246,19 @@ class ScrollingChipRowTest {
                     }
                 }
                 LaunchedEffect(snapBehavior) {
+                    // Wait until the row has laid out items BEFORE
+                    // flinging. 1.6.8's calculateApproachOffset divides
+                    // by the average item size — 0 when no items are
+                    // laid out yet — and calculateSnappingOffset reads
+                    // visibleItemsInfo, which is empty pre-layout. A
+                    // fling launched before the first layout is a no-op
+                    // (the list never moves), and the LaunchedEffect can
+                    // fire before layout, so gate on items being visible.
+                    snapshotFlow { state.layoutInfo.visibleItemsInfo.isNotEmpty() }
+                        .first { it }
                     state.scroll {
                         // The with() is load-bearing: the direct call
-                        // snapBehavior.performFling(400f) does not
+                        // snapBehavior.performFling(600f) does not
                         // resolve here (compile error in run 44659478756:
                         // "Unresolved reference 'performFling'"), while
                         // the with() form does — performFling is the
@@ -259,13 +271,13 @@ class ScrollingChipRowTest {
                 }
             }
         }
-        // Let the composition and the LaunchedEffect fling run, then
-        // print the settled state into the test XML's system-out. If
-        // waitUntil below times out, this shows whether the fling moved
-        // the list at all (index 0 = it did not) and what offset the
-        // snap actually settles at (nonzero mid-list = 1.7 does not
-        // snap to Start). Temporary diagnostic — remove once green.
-        compose.waitForIdle()
+        // Give the fling bounded virtual time to run, then print the
+        // settled state. advanceTimeBy is bounded (it returns after
+        // advancing); waitForIdle is not used here — it can hang on an
+        // animation that never idles. The print goes to the test XML's
+        // system-out and, via the assertion messages below, to the
+        // Gradle log too.
+        compose.mainClock.advanceTimeBy(3000)
         println(
             "SNAP-DEBUG index=${state.firstVisibleItemIndex} " +
                 "offset=${state.firstVisibleItemScrollOffset} " +
@@ -276,11 +288,22 @@ class ScrollingChipRowTest {
         )
         // Poll for the settled snapped state: waitUntil advances the
         // test clock while it polls, so the decay + snap spring gets
-        // the virtual time it needs.
+        // the virtual time it needs. The assertions carry the state in
+        // their messages so a failure is diagnostic in the Gradle log
+        // even without the test XMLs.
         compose.waitUntil(timeoutMillis = 10_000) {
             state.firstVisibleItemIndex > 0 && state.firstVisibleItemScrollOffset == 0
         }
-        assertTrue(state.firstVisibleItemIndex > 0)
-        assertEquals(0, state.firstVisibleItemScrollOffset)
+        assertTrue(
+            "fling did not move the list: index=${state.firstVisibleItemIndex} " +
+                "offset=${state.firstVisibleItemScrollOffset}",
+            state.firstVisibleItemIndex > 0,
+        )
+        assertEquals(
+            "snap did not settle at Start: index=${state.firstVisibleItemIndex} " +
+                "offset=${state.firstVisibleItemScrollOffset}",
+            0,
+            state.firstVisibleItemScrollOffset,
+        )
     }
 }
