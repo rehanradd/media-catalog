@@ -63,6 +63,8 @@ import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.ThumbDown
+import androidx.compose.material.icons.filled.ThumbUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
@@ -432,6 +434,7 @@ fun DetailScreen(
                     seasonCount = 0,
                     includedPill = null,
                     pageSides = Modifier.padding(horizontal = 16.dp),
+                    matchPercent = state.matchPercent,
                 )
                 Spacer(Modifier.height(16.dp))
                 DetailBodySkeleton()
@@ -591,6 +594,10 @@ fun DetailScreen(
                 // silent until the viewer grants it in Settings.
                 isFollowed = state.isFollowed,
                 onToggleFollow = { requestNotificationsThen { viewModel.toggleFollow() } },
+                // REA #2: the thumbs and the Match % for this title.
+                thumb = state.titleThumb,
+                onThumb = viewModel::setTitleThumb,
+                matchPercent = state.matchPercent,
                 onShare = {
                     shareTitle(context, post)
                 },
@@ -1043,6 +1050,11 @@ internal fun DetailContent(
     /** E2 slice 2: the "Notify me" bell — series only, handle required (see below). */
     isFollowed: Boolean = false,
     onToggleFollow: () -> Unit = {},
+    /** REA #2: this title's thumbs vote (1 / -1 / 0) and its tap target. */
+    thumb: Int = 0,
+    onThumb: (Int) -> Unit = {},
+    /** REA #2: the "97% Match" for this title, or null when no row scored it. */
+    matchPercent: Int? = null,
     onShare: () -> Unit,
     /** Open the broken-stream report — the utility row's Report action. */
     onReport: () -> Unit = {},
@@ -1099,6 +1111,7 @@ internal fun DetailContent(
                 seasonCount = if (isSeries) seasons.size else 0,
                 includedPill = includedPill,
                 pageSides = pageSides,
+                matchPercent = matchPercent,
             )
         }
 
@@ -1156,6 +1169,12 @@ internal fun DetailContent(
                 showFollow = isSeries && !post.workRef.isNullOrBlank(),
                 isFollowed = isFollowed,
                 onToggleFollow = onToggleFollow,
+                // REA #2: the thumbs show only on a title the catalog
+                // named with a handle — a vote with nothing to name the
+                // work by could never feed the ranker.
+                showThumbs = !post.workRef.isNullOrBlank(),
+                thumb = thumb,
+                onThumb = onThumb,
                 onShare = onShare,
                 hasSimilar = similarTitles.isNotEmpty(),
                 onBrowseSimilar = {
@@ -1397,6 +1416,8 @@ private fun DetailHeroSection(
     includedPill: String?,
     /** The page's side padding — the fallback pads itself with it; the bleed does not. */
     pageSides: Modifier,
+    /** REA #2: the "97% Match" for this title, or null when no row scored it. */
+    matchPercent: Int? = null,
 ) {
     val backdropUrl = remember(post.backdropList) {
         post.backdropList.firstOrNull { it.isNotBlank() }
@@ -1416,6 +1437,7 @@ private fun DetailHeroSection(
                 capabilities = capabilities,
                 seasonCount = seasonCount,
                 includedPill = includedPill,
+                matchPercent = matchPercent,
             )
         }
         return
@@ -1464,6 +1486,7 @@ private fun DetailHeroSection(
             capabilities = capabilities,
             seasonCount = seasonCount,
             includedPill = includedPill,
+            matchPercent = matchPercent,
             // D1: the hero title caps at two lines — a three-line title
             // is what pushed the block into the top bar. The full title
             // stays in the block's semantics and on the no-backdrop
@@ -1483,8 +1506,12 @@ private fun DetailHeroSection(
  * the two must never drift apart. Pure so the meta rules are testable
  * without a device.
  */
-internal fun detailMetaParts(post: PostDetail, seasonCount: Int): List<String> =
+internal fun detailMetaParts(post: PostDetail, seasonCount: Int, matchPercent: Int? = null): List<String> =
     listOfNotNull(
+        // REA #2 (Netflix, Nov 2026): the Match % leads the line — "97%
+        // Match · 2023 · Series" — and only when a row scored this title.
+        // Null means no score: the line is exactly as before.
+        matchPercent?.let { "$it% Match" },
         // M3 (home review, Nov 2026): the year comes from [Post.yearLabel],
         // the guarded choke point — the old inline `takeIf { it > 0 }`
         // let an impossible year straight onto the header.
@@ -1519,6 +1546,8 @@ private fun DetailTitleBlock(
     modifier: Modifier = Modifier,
     /** Screenshot-fix D1 (2026-11-16): the hero caps at two lines — see [DetailHeroSection]. */
     titleMaxLines: Int = 3,
+    /** REA #2: the "97% Match" for this title, or null when no row scored it. */
+    matchPercent: Int? = null,
 ) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         // Robo run 3: this title text is identical to the bar title above
@@ -1538,7 +1567,7 @@ private fun DetailTitleBlock(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.semantics { contentDescription = "Title: $titleText" },
         )
-        val meta = detailMetaParts(post, seasonCount)
+        val meta = detailMetaParts(post, seasonCount, matchPercent)
         if (meta.isNotEmpty()) {
             Text(meta.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -1625,6 +1654,8 @@ private fun PosterHeader(
     seasonCount: Int = 0,
     /** What this viewer can watch of this title, as a pill — null when it has no prints. */
     includedPill: String? = null,
+    /** REA #2: the "97% Match" for this title, or null when no row scored it. */
+    matchPercent: Int? = null,
 ) {
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         // The poster's own colour, sampled once it loads: a 1dp border in the
@@ -1678,6 +1709,7 @@ private fun PosterHeader(
             capabilities = capabilities,
             seasonCount = seasonCount,
             includedPill = includedPill,
+            matchPercent = matchPercent,
             modifier = Modifier.weight(1f),
         )
     }
@@ -1918,6 +1950,12 @@ private fun DetailUtilityRow(
     showFollow: Boolean = false,
     isFollowed: Boolean = false,
     onToggleFollow: () -> Unit = {},
+    /** REA #2: the thumbs show only when the title has a handle to vote on. */
+    showThumbs: Boolean = false,
+    /** REA #2: this title's vote — 1 liked, -1 disliked, 0 no opinion. */
+    thumb: Int = 0,
+    /** REA #2: tap a thumb to vote; tap the same one again to clear it. */
+    onThumb: (Int) -> Unit = {},
     onShare: () -> Unit,
     hasSimilar: Boolean,
     onBrowseSimilar: () -> Unit,
@@ -1935,6 +1973,25 @@ private fun DetailUtilityRow(
             tint = if (isFavorite) MaterialTheme.colorScheme.secondary else Color.Unspecified,
             onClick = onToggleFavorite,
         )
+        // REA #2 (Netflix, Nov 2026): the thumbs — the input behind the
+        // Match %. A selected thumb reads in the secondary tint, like the
+        // saved heart; tapping it again clears the vote.
+        if (showThumbs) {
+            UtilityAction(
+                icon = Icons.Default.ThumbUp,
+                label = "Like",
+                contentDescription = thumbActionLabel(thumb, 1),
+                tint = if (thumb == 1) MaterialTheme.colorScheme.secondary else Color.Unspecified,
+                onClick = { onThumb(1) },
+            )
+            UtilityAction(
+                icon = Icons.Default.ThumbDown,
+                label = "Dislike",
+                contentDescription = thumbActionLabel(thumb, -1),
+                tint = if (thumb == -1) MaterialTheme.colorScheme.secondary else Color.Unspecified,
+                onClick = { onThumb(-1) },
+            )
+        }
         if (showFollow) {
             UtilityAction(
                 icon = if (isFollowed) Icons.Default.NotificationsActive else Icons.Default.Notifications,
@@ -2008,6 +2065,15 @@ internal fun favoriteActionLabel(isFavorite: Boolean): String =
 /** Action label for the "Notify me" bell (E2 slice 2). */
 internal fun followActionLabel(isFollowed: Boolean): String =
     if (isFollowed) "Following this series — tap to stop notifications" else "Notify me about new episodes"
+
+/** REA #2: the spoken name of a thumb action — the current vote decides whether the tap votes or clears. */
+internal fun thumbActionLabel(thumb: Int, which: Int): String =
+    when {
+        thumb == which && which == 1 -> "Liked — tap to clear your like"
+        thumb == which && which == -1 -> "Disliked — tap to clear your dislike"
+        which == 1 -> "Like this title"
+        else -> "Dislike this title"
+    }
 
 /**
  * Whether this print gets the viewer somewhere: our player can start a file, or the provider's own

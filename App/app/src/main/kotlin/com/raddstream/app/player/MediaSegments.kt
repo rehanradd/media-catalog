@@ -1,5 +1,6 @@
 package com.raddstream.app.player
 
+import com.raddstream.app.R
 import com.raddstream.app.network.models.WireMediaSegment
 
 /**

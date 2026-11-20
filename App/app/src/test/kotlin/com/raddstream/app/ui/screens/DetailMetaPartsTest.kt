@@ -77,4 +77,28 @@ class DetailMetaPartsTest {
     fun emptyPostHasNoMeta() {
         assertEquals(emptyList<String>(), detailMetaParts(post(), seasonCount = 0))
     }
+
+    @Test
+    fun matchPercentLeadsTheMetaLine() {
+        assertEquals(
+            listOf("97% Match", "2023", "Hindi", "2 h 49 m"),
+            detailMetaParts(
+                post(contentType = "movie", year = 2023, language = "Hindi", runtimeMinutes = 169),
+                seasonCount = 0,
+                matchPercent = 97,
+            ),
+        )
+    }
+
+    @Test
+    fun noMatchPercentMeansTheMetaLineIsExactlyAsBefore() {
+        assertEquals(
+            listOf("2023", "Hindi", "2 h 49 m"),
+            detailMetaParts(
+                post(contentType = "movie", year = 2023, language = "Hindi", runtimeMinutes = 169),
+                seasonCount = 0,
+                matchPercent = null,
+            ),
+        )
+    }
 }

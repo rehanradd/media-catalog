@@ -74,6 +74,7 @@
     <string name="player_ab_point">Point %1$s · %2$s</string>
     <string name="player_ab_clear">Clear A-B repeat</string>
     <string name="player_next_episode">Next episode</string>
+    <string name="player_more_to_watch">More to watch</string>
     <string name="player_sleep_timer">Sleep timer</string>
     <string name="player_aspect_label">Aspect: %1$s</string>
     <string name="player_orientation_label">Orientation: %1$s</string>
@@ -145,6 +146,10 @@
     <string name="detail_truncated_releases">Showing the first %1$s of %2$s releases</string>
     <string name="player_start_slow">Taking longer than usual</string>
     <string name="player_start_try_another">Try another version</string>
+    <!-- REA #4 (Netflix, Nov 2026): the one-tap shuffle — a weighted random
+         pick from the "For you" pool, on the Home row header and on the
+         player give-up card. -->
+    <string name="player_play_something">Play Something</string>
     <string name="player_attempt_counter">Trying another version…</string>
     <string name="player_start_giveup_message">This version didn\'t start in time.</string>
     <string name="player_first_frame">Started in %1$s</string>

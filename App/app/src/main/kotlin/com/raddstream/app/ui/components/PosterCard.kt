@@ -127,6 +127,12 @@ fun PosterCard(
      * line loses it.
      */
     compactMeta: Boolean = false,
+    /**
+     * REA #2 (Netflix, Nov 2026): the "97% Match" for this tile, from
+     * the "For you" row's ranker score. Null everywhere except that row
+     * — a % with no ranker score behind it would be invented.
+     */
+    matchPercent: Int? = null,
 ) {
     // Rail-title cleanup (Nov 2026): the tile paints the same clean title
     // Detail and the hero paint ([UserWords.detailTitle] — the server's
@@ -157,7 +163,7 @@ fun PosterCard(
     // Mockup (Nov 2026): the meta line carries the rating too — one line,
     // "★ 6.7 · 2026 · Series" — so the rating badge that used to ride the
     // poster is gone: it would say the same number twice on one tile.
-    val details = posterMetaLine(post, compactMeta)
+    val details = posterMetaLine(post, compactMeta, matchPercent)
     // The spoken sentence keeps the old shape — "2024 · Movie" — and the
     // rating arrives once, as "rating 8.6 out of 10" below, so a screen
     // reader never hears the number twice.
@@ -180,6 +186,7 @@ fun PosterCard(
             append(", rating ").append(rating).append(" out of 10")
         }
         if (tileBadges.isNotEmpty()) append(", ").append(tileBadges.joinToString(", ") { it.a11y })
+        if (matchPercent != null) append(", $matchPercent percent match")
         if (progressLabel != null) append(", ").append(progressLabel)
     }
 
@@ -537,20 +544,29 @@ fun PosterCard(
  * The type stays in the tile's spoken sentence
  * and on Detail; only the painted rail line loses it. An absent rating or
  * year simply leaves its slot out — never an invented value.
+ *
+ * REA #2 (Netflix, Nov 2026): [matchPercent] paints first — "97% Match ·
+ * ★ 8.6 · 2024 · Series" — and alone when nothing else paints ("97%
+ * Match", never "97% Match · " with a dangling separator). Null means no
+ * match to paint: the line is exactly as before.
  */
-internal fun posterMetaLine(post: Post, compact: Boolean): String =
-    if (compact) {
+internal fun posterMetaLine(post: Post, compact: Boolean, matchPercent: Int? = null): String {
+    val match = matchPercent?.let { "$it% Match" }
+    return if (compact) {
         listOfNotNull(
+            match,
             UserWords.displayRating(post.imdbRating)?.let { "★ $it" },
             post.yearLabel,
         ).joinToString(" · ")
     } else {
         listOfNotNull(
+            match,
             UserWords.displayRating(post.imdbRating)?.let { "★ $it" },
             post.yearLabel,
             post.typeLabel,
         ).joinToString(" · ")
     }
+}
 
 /**
  * F25 (Batch B): the placeholder tile as Android Studio sees it — a title

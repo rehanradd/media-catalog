@@ -71,6 +71,15 @@ import com.raddstream.app.data.cache.CacheTaskEntity
  * [com.raddstream.app.data.local.AppDatabaseMigrationTest] holds that contract on CI.
  * The table starts empty on every device and fills from traffic — there is no data to
  * preserve across the step, only a schema to land.
+ *
+ * Version 12 adds `watch_history.imdbRating`, the Continue watching rail's rating (E2 Ratings,
+ * Nov 2026): one nullable TEXT column, added in place — no row is touched, so every pre-v12
+ * row reads NULL and the rail paints nothing for it, exactly as an unrated title.
+ *
+ * Version 13 adds `title_feedback`, the viewer's thumbs up/down (REA #2, Nov 2026). It is a
+ * new table with no prior data, real DDL like 5 and 7: the destructive fallback would still
+ * take `favorite_posts` with it, and a vote is the viewer's own, worth exactly as much as a
+ * saved title.
  */
 @Database(
     entities = [
@@ -85,8 +94,10 @@ import com.raddstream.app.data.cache.CacheTaskEntity
         LiveTvFavourite::class,
         FollowedSeries::class,
         CatalogFtsEntity::class,
+        TitleFeedback::class,
+        TitleSyncPrefs::class,
     ],
-    version = 12,
+    version = 14,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -101,6 +112,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun liveTvFavouriteDao(): LiveTvFavouriteDao
     abstract fun followedSeriesDao(): FollowedSeriesDao
     abstract fun catalogFtsDao(): CatalogFtsDao
+    abstract fun titleFeedbackDao(): TitleFeedbackDao
+    abstract fun titleSyncPrefsDao(): TitleSyncPrefsDao
 
     companion object {
         /**
@@ -353,6 +366,46 @@ abstract class AppDatabase : RoomDatabase() {
         val MIGRATION_11_12: Migration = object : Migration(11, 12) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE watch_history ADD COLUMN imdbRating TEXT")
+            }
+        }
+
+        /**
+         * 12 → 13: the thumbs table (REA #2, Nov 2026). One statement, no
+         * existing row touched — the column names and nullability are
+         * Room's own for [TitleFeedback], so a drift throws Room's schema
+         * validation the first time a device opens the migrated database,
+         * exactly like the 2 → 3 step. A down-vote is a row here, not a
+         * flag on another table: the vote is the viewer's own, and it
+         * must survive exactly like a saved title.
+         */
+        val MIGRATION_12_13: Migration = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS title_feedback (" +
+                        "workRef TEXT NOT NULL, thumb INTEGER NOT NULL, " +
+                        "updatedAt INTEGER NOT NULL, PRIMARY KEY(workRef))",
+                )
+            }
+        }
+
+        /**
+         * 13 → 14: the per-title sync table (REA #3, Nov 2026). One
+         * statement, no existing row touched — the column names and
+         * nullability are Room's own for [TitleSyncPrefs], so a drift
+         * throws Room's schema validation the first time a device opens
+         * the migrated database, exactly like the 2 → 3 step. An offset
+         * is a row here, not a flag on another table: the correction is
+         * the viewer's own, and it must survive exactly like a saved
+         * title.
+         */
+        val MIGRATION_13_14: Migration = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS title_sync_prefs (" +
+                        "workRef TEXT NOT NULL, audioDelayMs INTEGER NOT NULL, " +
+                        "subtitleDelayMs INTEGER NOT NULL, updatedAt INTEGER NOT NULL, " +
+                        "PRIMARY KEY(workRef))",
+                )
             }
         }
     }

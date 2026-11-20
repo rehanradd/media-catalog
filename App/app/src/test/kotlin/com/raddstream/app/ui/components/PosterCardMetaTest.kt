@@ -61,4 +61,25 @@ class PosterCardMetaTest {
         val movie = post(title = "Jawan", year = 2023, contentType = "movie", rating = "7.0")
         assertEquals("★ 7.0 · 2023", posterMetaLine(movie, compact = true))
     }
+
+    @Test
+    fun `match percent leads the full meta line`() {
+        assertEquals("97% Match · ★ 8.6 · 2024 · Series", posterMetaLine(post(), compact = false, matchPercent = 97))
+    }
+
+    @Test
+    fun `match percent leads the compact meta line too`() {
+        assertEquals("97% Match · ★ 8.6 · 2024", posterMetaLine(post(), compact = true, matchPercent = 97))
+    }
+
+    @Test
+    fun `match percent alone never leaves a dangling separator`() {
+        assertEquals("97% Match", posterMetaLine(post(year = null, rating = null), compact = true, matchPercent = 97))
+        assertEquals("97% Match · 2024 · Series", posterMetaLine(post(rating = null), compact = false, matchPercent = 97))
+    }
+
+    @Test
+    fun `no match percent means the line is exactly as before`() {
+        assertEquals("★ 8.6 · 2024 · Series", posterMetaLine(post(), compact = false, matchPercent = null))
+    }
 }

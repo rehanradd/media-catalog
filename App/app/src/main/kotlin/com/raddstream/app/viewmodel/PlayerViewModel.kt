@@ -84,6 +84,7 @@ import com.raddstream.app.player.ViewMode
 import com.raddstream.app.player.abRepeatWithA
 import com.raddstream.app.player.abRepeatWithB
 import com.raddstream.app.player.loopTargetMs
+import com.raddstream.app.player.mergePostPlayPreviews
 import com.raddstream.app.player.resolveStartBand
 import com.raddstream.app.player.shouldAutoAdvance
 import com.raddstream.app.player.subtitle.OverlayCue
@@ -91,17 +92,19 @@ import com.raddstream.app.player.subtitle.OverlaySubtitleFile
 import com.raddstream.app.player.subtitle.SubtitleFormat
 import com.raddstream.app.player.subtitle.SubtitleLineJump
 import com.raddstream.app.player.subtitle.SubtitleParser
+import com.raddstream.app.player.subtitles.AudioOffset
 import com.raddstream.app.player.subtitles.SubtitleOffset
 import com.raddstream.app.data.LocalResumeRepository
 import com.raddstream.app.data.isLocalResumeUri
 import com.raddstream.app.data.ServerSettingsRepository
 import com.raddstream.app.data.cache.ConnectivityProbe
-import com.raddstream.app.data.cache.MegaProxyHolder
-import com.raddstream.app.data.cache.MegaStartError
 import com.raddstream.app.data.cache.NetworkClass
 import com.raddstream.app.data.downloads.SmartDownloadsRunner
+import com.raddstream.app.data.local.TitleSyncPrefs
+import com.raddstream.app.data.local.TitleSyncPrefsDao
 import com.raddstream.app.data.local.WatchHistoryDao
 import com.raddstream.app.network.ApiProvider
+import com.raddstream.app.network.models.Post
 import com.raddstream.app.network.models.parseCastNames
 import com.raddstream.app.network.streamRedirectUrl
 import com.raddstream.app.network.withVipPass
@@ -158,6 +161,7 @@ class PlayerViewModel @Inject constructor(
     private val favoritesRepository: FavoritesRepository,
     private val syncAccountRepository: SyncAccountRepository,
     private val watchHistoryDao: WatchHistoryDao,
+    private val titleSyncPrefsDao: TitleSyncPrefsDao,
     private val localResumeRepository: LocalResumeRepository,
     private val connectivityProbe: ConnectivityProbe,
     private val smartDownloads: SmartDownloadsRunner,
@@ -678,6 +682,7 @@ class PlayerViewModel @Inject constructor(
                 handleSleepEndOfVideo()
                 maybeAutoDeleteWatchedEpisode()
                 onEpisodeEndedSmartDownloads()
+                loadPostPlayPreviews()
             }
         }
 
@@ -716,7 +721,12 @@ class PlayerViewModel @Inject constructor(
                 // A new bundle is a new episode: any countdown belonging to the
                 // ended one is dropped, never carried across.
                 clearAutoplayCountdown()
-                _ui.update { it.copy(bundle = b, activeRendition = store.activeRendition(), endedHasNextEpisode = false, activeSkipSegment = null) }
+                _ui.update { it.copy(bundle = b, activeRendition = store.activeRendition(), endedHasNextEpisode = false, activeSkipSegment = null, postPlayPreviews = emptyList()) }
+                // REA #3: a new bundle is a new title — its saved sync
+                // offsets land here, before the first frame the viewer
+                // judges. A rung switch is the same bundle, so the guard
+                // inside applySavedSyncPrefs keeps it from re-reading.
+                applySavedSyncPrefs(b?.target?.workKey?.takeIf { it.isNotBlank() })
                 armQualityChoices()
                 // A rung Auto moved to is the SAME episode in a different address, so the
                 // binge policy must not be re-armed by it; only a new file or a new episode
@@ -1027,37 +1037,6 @@ class PlayerViewModel @Inject constructor(
     // ── Play entry points ────────────────────────────────────────────────────────
 
     /**
-     * The decrypting-copy start: resolve the descriptor for [streamId], start
-     * the decrypting proxy, and return the loopback URL the player should play.
-     * Null when the copy cannot start — the reason is already shown to the
-     * viewer as plain words, so the caller simply does not begin a bundle.
-     * The proxy start mints and fetches over the network, so it runs on IO,
-     * never on the main thread the play entry runs on.
-     */
-    private suspend fun resolveDecryptPlayUrl(streamId: String): String? {
-        val descriptor = try {
-            catalogRepository.resolveStream(streamId)
-        } catch (_: Exception) {
-            null
-        }
-        if (descriptor == null || descriptor.decrypt?.lowercase() != "aes-ctr") {
-            _events.emit(PlayerEvent.Message("This copy could not be opened right now. Try another quality."))
-            return null
-        }
-        val loopback = withContext(Dispatchers.IO) { MegaProxyHolder.start(descriptor) }
-        if (loopback != null) return loopback
-        val message = when (MegaProxyHolder.lastError) {
-            MegaStartError.Quota -> "MEGA's free limit is used up for now — this copy needs a few hours before it can play again. Try another quality."
-            MegaStartError.Dead -> "This copy is gone from MEGA. Try another quality."
-            MegaStartError.BadKey -> "This copy could not be opened. Try another quality."
-            MegaStartError.Network -> "MEGA did not answer right now. Check your connection and try again."
-            MegaStartError.NotMega, null -> "This copy could not be opened right now. Try another quality."
-        }
-        _events.emit(PlayerEvent.Message(message))
-        return null
-    }
-
-    /**
      * Route path `player/{streamId}/{title}`: one opaque handle of ours. The address the
      * player loads is our own redirector for that handle, built here — never a URL that
      * came from a scraper, and never one that names where the file lives.
@@ -1085,23 +1064,14 @@ class PlayerViewModel @Inject constructor(
                 )
                 return@launch
             }
-            val playUrl = if (store.peekDecrypt(streamId)?.lowercase() == "aes-ctr") {
-                // Client-side decrypt: this copy's bytes are ciphertext, and the
-                // redirector has nothing to serve for it. Resolve the descriptor,
-                // start the decrypting proxy, and play its loopback URL. A start
-                // failure is a plain-words message, never a play of ciphertext —
-                // and no bundle begins, so the player never sits on a dead rung.
-                resolveDecryptPlayUrl(streamId) ?: return@launch
-            } else {
-                withVipPass(
-                    streamRedirectUrl(apiProvider.currentBaseUrl(), streamId),
-                    // Session 123: the VIP pass rides the URL because the player
-                    // follows the 302 outside this process — a header cannot ride
-                    // along, and the sync key must never be handed to a file host
-                    // on a redirect. A guest or free account sends no pass.
-                    syncAccountRepository.currentVipPass(),
-                )
-            }
+            val playUrl = withVipPass(
+                streamRedirectUrl(apiProvider.currentBaseUrl(), streamId),
+                // Session 123: the VIP pass rides the URL because the player
+                // follows the 302 outside this process — a header cannot ride
+                // along, and the sync key must never be handed to a file host
+                // on a redirect. A guest or free account sends no pass.
+                syncAccountRepository.currentVipPass(),
+            )
             // Runner-ups of this rung, staged by the detail screen: handles only, so a
             // 403 mid-play costs one silent hop instead of a dialog and a quality drop.
             // The manifest MIME, staged by the Live TV screen for a channel: without
@@ -2316,12 +2286,96 @@ class PlayerViewModel @Inject constructor(
      * custom SRT/VTT overlay re-renders on the next frame AND the service's decoder wrapper
      * retimes the native track from the same number while playback continues.
      *
-     * A positive value shows the text later, matching both render paths.
+     * A positive value shows the text later, matching both render paths. The value is
+     * remembered for this title (see [scheduleSyncPrefsSave]) — the sheet is where a
+     * per-file correction is made, so the next episode of the same work opens with it.
      */
     fun setSubtitleOffset(delayMs: Long) {
         val clamped = SubtitleOffset.clamp(delayMs)
         _ui.update { it.copy(subtitle = it.subtitle.copy(delayMs = clamped)) }
         store.subtitleOffsetMs = clamped
+        scheduleSyncPrefsSave()
+    }
+
+    /**
+     * Live audio sync. Called on every slider frame and on each quick button; the delay
+     * processor in the service's audio sink retimes the sound from the same number while
+     * playback continues, with no rebuild and no seek.
+     *
+     * A positive value plays the sound later, matching the subtitle convention. The
+     * value is remembered for this title (see [scheduleSyncPrefsSave]).
+     */
+    fun setAudioDelay(delayMs: Long) {
+        val clamped = AudioOffset.clamp(delayMs)
+        _ui.update { it.copy(audioDelayMs = clamped) }
+        store.setAudioDelayMs(clamped)
+        scheduleSyncPrefsSave()
+    }
+
+    /**
+     * REA #3: the sync offsets for the work now playing, loaded once per title and
+     * applied to the UI, the subtitle paths and the audio sink. A work with no saved
+     * row opens in sync (both offsets 0) — the correction belongs to the file that
+     * needed it, never to the next title. Called from the bundle collector, which
+     * is where a new episode's identity first lands.
+     */
+    private var lastSyncPrefsWorkRef: String? = null
+    private var syncPrefsSaveJob: Job? = null
+
+    private fun applySavedSyncPrefs(workRef: String?) {
+        if (workRef == lastSyncPrefsWorkRef) return
+        lastSyncPrefsWorkRef = workRef
+        syncPrefsSaveJob?.cancel()
+        if (workRef.isNullOrBlank()) {
+            applySyncOffsets(audioDelayMs = 0L, subtitleDelayMs = 0L)
+            return
+        }
+        viewModelScope.launch {
+            val saved = runCatching { titleSyncPrefsDao.findByWorkRef(workRef) }.getOrNull()
+            applySyncOffsets(
+                audioDelayMs = saved?.audioDelayMs ?: 0L,
+                subtitleDelayMs = saved?.subtitleDelayMs ?: 0L,
+            )
+        }
+    }
+
+    /** One place that puts both offsets into the UI and the two live paths. */
+    private fun applySyncOffsets(audioDelayMs: Long, subtitleDelayMs: Long) {
+        val audio = AudioOffset.clamp(audioDelayMs)
+        val subtitle = SubtitleOffset.clamp(subtitleDelayMs)
+        _ui.update { it.copy(audioDelayMs = audio, subtitle = it.subtitle.copy(delayMs = subtitle)) }
+        store.setAudioDelayMs(audio)
+        store.subtitleOffsetMs = subtitle
+    }
+
+    /**
+     * Persists the live offsets for the work now playing, debounced so a slider drag
+     * writes once instead of once per frame. A row with both offsets 0 is deleted —
+     * "in sync" and "never asked" are the same absence, exactly like a cleared thumb.
+     * A Room write never touches playback: a failure here is swallowed, because a
+     * viewer mid-scene must never lose their picture to a preference save.
+     */
+    private fun scheduleSyncPrefsSave() {
+        syncPrefsSaveJob?.cancel()
+        syncPrefsSaveJob = viewModelScope.launch {
+            delay(SYNC_PREFS_SAVE_DEBOUNCE_MS)
+            val workRef = lastSyncPrefsWorkRef?.takeIf { it.isNotBlank() } ?: return@launch
+            val audio = _ui.value.audioDelayMs
+            val subtitle = _ui.value.subtitle.delayMs
+            runCatching {
+                if (audio == 0L && subtitle == 0L) {
+                    titleSyncPrefsDao.deleteByWorkRef(workRef)
+                } else {
+                    titleSyncPrefsDao.insert(
+                        TitleSyncPrefs(
+                            workRef = workRef,
+                            audioDelayMs = audio,
+                            subtitleDelayMs = subtitle,
+                        ),
+                    )
+                }
+            }
+        }
     }
 
     fun showPrintSheet() {
@@ -2378,6 +2432,19 @@ class PlayerViewModel @Inject constructor(
     fun setOrientation(orientation: PlayerOrientation) {
         _ui.update { it.copy(orientation = orientation) }
     }
+
+    /**
+     * REA #4 (Netflix, Nov 2026): the "Play Something" shuffle for the
+     * give-up card — a weighted random pick from the "For you" pool
+     * ([ForYouPoolStore]), so a title that will not play still ends in
+     * something playing. [canPlaySomething] is false when the ranker has
+     * no row (yet), so the card never offers a shuffle with nothing
+     * behind it; the pick itself is taken at tap time, never at
+     * composition, so two taps draw two titles.
+     */
+    val canPlaySomething: Boolean get() = ForYouPoolStore.hasPicks()
+
+    fun playSomething(): Post? = ForYouPoolStore.pick()
 
     fun setLocked(locked: Boolean) {
         // MX #7 — Kids Lock: unlocking in kids mode asks for the PIN first.
@@ -2646,7 +2713,9 @@ class PlayerViewModel @Inject constructor(
     /**
      * Change how subtitles look, and remember it. Size, seat, weight, plate and colour are the
      * viewer's own style and survive a restart, a process kill and the next title; the sync
-     * offset is the one field the store is never told, because it belongs to this viewing.
+     * offset is the one field this store is never told, because it belongs to one title's
+     * file — it is remembered per work in [TitleSyncPrefs] instead, and applied when that
+     * title opens.
      */
     fun setSubtitleSettings(settings: SubtitleUiSettings) {
         val style = settings.clamped()
@@ -2952,6 +3021,37 @@ class PlayerViewModel @Inject constructor(
     }
 
     /**
+     * REA #1: the post-play previews for the title that just ended — the
+     * server's related titles (GET /api/v1/related, the same answer Home's
+     * "Because you watch" rail reads), merged and capped by
+     * [mergePostPlayPreviews]. A failed fetch is an empty row, never a
+     * placeholder: the load is best-effort, the end card is not. Cancelled
+     * and re-run on every end, so a replay never wears the last title's tiles.
+     */
+    private var postPlayPreviewsJob: Job? = null
+
+    private fun loadPostPlayPreviews() {
+        postPlayPreviewsJob?.cancel()
+        postPlayPreviewsJob = viewModelScope.launch {
+            val seedPostId = store.bundle.value?.target?.id?.takeIf { it > 0 }
+                ?: store.currentSyncScope()?.postId?.takeIf { it > 0 }
+            val similar = if (seedPostId != null) {
+                runCatching {
+                    catalogRepository.getRelated(workId = seedPostId, page = 1, limit = 6)
+                }.getOrNull()?.results.orEmpty()
+            } else {
+                emptyList()
+            }
+            _ui.update { it.copy(postPlayPreviews = mergePostPlayPreviews(similar)) }
+        }
+    }
+
+    /** REA #1: a post-play preview tile was tapped — open that title's Detail. */
+    fun openPost(postId: Int) {
+        viewModelScope.launch { _events.emit(PlayerEvent.OpenPost(postId)) }
+    }
+
+    /**
      * The autoplay-next countdown (Session 123, PL-1).
      *
      * The state is the pure [AutoplayCountdown] ticking once a second; the
@@ -3237,9 +3337,6 @@ class PlayerViewModel @Inject constructor(
         settingsJob?.cancel()
         bingeResolveJob?.cancel()
         bingePrefetchJob?.cancel()
-        // The decrypting proxy holds the link key in memory: dropping the
-        // player drops the key with it, and the loopback socket closes.
-        MegaProxyHolder.stop()
         _player.value = null
         controller?.removeListener(playerListener)
         controller?.release()
@@ -3253,6 +3350,9 @@ class PlayerViewModel @Inject constructor(
 
         /** At most one local history write per this interval; a forced stop always writes. */
         const val HISTORY_WRITE_INTERVAL_MS = 15_000L
+
+        /** REA #3: a slider drag saves its sync offsets once, not once per frame. */
+        const val SYNC_PREFS_SAVE_DEBOUNCE_MS = 500L
     }
 }
 
@@ -3278,6 +3378,11 @@ sealed class PlayerEvent {
     data class PlayNextEpisode(val workKey: String?, val postId: Int?, val season: Int, val episode: Int) : PlayerEvent()
     data class OpenExternalPlayer(val url: String) : PlayerEvent()
     /** SC.24: share-a-moment text for the system share sheet. */
+    /**
+     * REA #1: a post-play preview tile was tapped — open that title's
+     * Detail. The screen owns the navigation; the VM only names the post.
+     */
+    data class OpenPost(val postId: Int) : PlayerEvent()
     data class ShareMoment(val text: String) : PlayerEvent()
     /**
      * MX #7 — Kids Lock: the unlock FAB was tapped while kids mode is on.

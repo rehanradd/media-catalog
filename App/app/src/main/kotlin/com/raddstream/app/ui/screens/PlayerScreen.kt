@@ -46,6 +46,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -173,6 +174,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import com.raddstream.app.R
 import com.raddstream.app.brand.Brand
+import com.raddstream.app.network.models.Post
 import com.raddstream.app.player.AUTOPLAY_COUNTDOWN_SECONDS
 import com.raddstream.app.player.AspectMode
 import com.raddstream.app.player.AudioBoost
@@ -200,6 +202,8 @@ import com.raddstream.app.player.PinchCommand
 import com.raddstream.app.player.PlayerOrientation
 import com.raddstream.app.player.PlayerStatusWord
 import com.raddstream.app.player.PlayerUiState
+import com.raddstream.app.player.PostPlayPreview
+import com.raddstream.app.player.showInPlaybackNext
 import com.raddstream.app.player.audio.EQ_GAIN_MAX_DB
 import com.raddstream.app.player.audio.EQ_GAIN_MIN_DB
 import com.raddstream.app.player.audio.EqPresets
@@ -225,7 +229,7 @@ import com.raddstream.app.player.subtitle.AssAlignment
 import com.raddstream.app.player.subtitle.OverlayCue
 import com.raddstream.app.player.subtitle.assColorIsReadable
 import com.raddstream.app.player.subtitles.SubtitleOffset
-import com.raddstream.app.player.subtitles.SubtitleOffsetSheet
+import com.raddstream.app.player.subtitles.SyncOffsetSheet
 import com.raddstream.app.player.dragHalfZone
 import com.raddstream.app.player.dominantAxis
 import com.raddstream.app.player.isInEdgeDeadZone
@@ -240,6 +244,7 @@ import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.components.RaddChip
 import com.raddstream.app.ui.components.ScrollingChipRow
 import com.raddstream.app.ui.components.rememberReduceMotion
+import com.raddstream.app.ui.layout.CardGeometry
 import com.raddstream.app.ui.theme.RaddCaptionPlate
 import com.raddstream.app.ui.theme.RaddCaptionPlateArgb
 import com.raddstream.app.ui.theme.RaddCoral400
@@ -304,12 +309,21 @@ fun PlayerScreen(
     title: String,
     onBackClick: () -> Unit,
     onPlayNextEpisode: (workKey: String?, postId: Int?, season: Int, episode: Int) -> Unit = { _, _, _, _ -> },
+    /** REA #1: a post-play preview tile was tapped — open that title's Detail. */
+    onOpenPost: (Int) -> Unit = {},
     localUri: String? = null,
     // SC §3 (Session 126): tapping an actor on the pause strip searches them, the
     // same route the detail screen's cast chips take. NAV-4: the expired-link
     // card's Home button.
     onActorClick: (String) -> Unit = {},
     onHomeClick: (() -> Unit)? = null,
+    /**
+     * REA #4 (Netflix, Nov 2026): the give-up card's "Play Something" —
+     * a weighted random pick from the "For you" pool, opened and started
+     * at once. The screen picks through the ViewModel at tap time; a null
+     * pick (no row yet) means the card never offers the button.
+     */
+    onPlaySomethingClick: (Post) -> Unit = {},
     viewModel: PlayerViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -320,7 +334,7 @@ fun PlayerScreen(
             viewModel.startStreamHandle(streamId, title)
         }
     }
-    PlayerScreenContent(state, viewModel, onBackClick, onPlayNextEpisode, onActorClick, onHomeClick)
+    PlayerScreenContent(state, viewModel, onBackClick, onPlayNextEpisode, onActorClick, onHomeClick, onOpenPost = onOpenPost, onPlaySomethingClick = onPlaySomethingClick)
 }
 
 /** Bundle-driven entry (PlayBundle already installed into the session store by the caller). */
@@ -329,12 +343,16 @@ fun PlayerScreen(
     title: String,
     onBackClick: () -> Unit,
     onPlayNextEpisode: (workKey: String?, postId: Int?, season: Int, episode: Int) -> Unit = { _, _, _, _ -> },
+    /** REA #1: a post-play preview tile was tapped — open that title's Detail. */
+    onOpenPost: (Int) -> Unit = {},
     onActorClick: (String) -> Unit = {},
     onHomeClick: (() -> Unit)? = null,
+    /** REA #4: the give-up card's "Play Something" — see the other overload. */
+    onPlaySomethingClick: (Post) -> Unit = {},
     viewModel: PlayerViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
-    PlayerScreenContent(state, viewModel, onBackClick, onPlayNextEpisode, onActorClick, onHomeClick)
+    PlayerScreenContent(state, viewModel, onBackClick, onPlayNextEpisode, onActorClick, onHomeClick, onOpenPost = onOpenPost, onPlaySomethingClick = onPlaySomethingClick)
 }
 
 // ── Root ───────────────────────────────────────────────────────────────────────
@@ -348,6 +366,10 @@ private fun PlayerScreenContent(
     onPlayNextEpisode: (workKey: String?, postId: Int?, season: Int, episode: Int) -> Unit,
     onActorClick: (String) -> Unit = {},
     onHomeClick: (() -> Unit)? = null,
+    /** REA #1: a post-play preview tile was tapped — open that title's Detail. */
+    onOpenPost: (Int) -> Unit = {},
+    /** REA #4: the give-up card's "Play Something" — see [PlayerScreen]. */
+    onPlaySomethingClick: (Post) -> Unit = {},
     /** MX #7 — Kids Lock: the PIN's owner for the unlock pad below. */
     kidsLockViewModel: KidsLockViewModel = hiltViewModel(),
 ) {
@@ -413,6 +435,7 @@ private fun PlayerScreenContent(
         vm, context, onPlayNextEpisode,
         onMessage = { snackbar = PlayerSnackbar(it) },
         onMessageWithUndo = { snackbar = PlayerSnackbar(it, showUndo = true) },
+        onOpenPost = onOpenPost,
         // MX #7 — Kids Lock: the VM's answer to an unlock tap in kids mode.
         onRequestKidsPin = { kidsPinRequested = true },
     )
@@ -734,6 +757,18 @@ private fun PlayerScreenContent(
             }
         }
 
+        // REA #1: the in-playback Next Episode pill — the last 30 s of an
+        // episode whose successor is already prepared. It takes the same
+        // bottom-right seat as the Skip button (116 dp), sitting above it
+        // when both show (152 dp = 116 + ~28 pill + 8 gap), so the two
+        // never overlap and neither hides with the chrome.
+        if (showInPlaybackNext(state.positionMs, state.durationMs, state.nextEpisodeTitle != null, state.isEnded, state.locked)) {
+            NextEpisodePill(
+                bottomPadding = if (state.activeSkipSegment != null) 152.dp else 116.dp,
+                onClick = { vm.requestNextEpisode() },
+            )
+        }
+
         // 5 — chrome. Ghost mode paints only the edge strip; everything else keeps the
         // three-zone MX bars, with no centre button and no scrim on the picture.
         // Session 121 (P-17): while the player is still starting there is no picture
@@ -892,6 +927,15 @@ private fun PlayerScreenContent(
                 } else {
                     null
                 },
+                // REA #4: this title will not play — offer a different one
+                // from the "For you" pool instead of only retrying the dead
+                // ladder. The pick is taken at tap time, never at
+                // composition, so two taps draw two titles.
+                onPlaySomething = if (vm.canPlaySomething) {
+                    { vm.playSomething()?.let(onPlaySomethingClick) }
+                } else {
+                    null
+                },
             )
         } ?: if (state.deadlineGiveUp) {
             // The 30 s hard deadline (§5 P5): no candidate failed, but none produced a
@@ -908,6 +952,14 @@ private fun PlayerScreenContent(
                 onHomeClick = onHomeClick,
                 onTryAnother = if (state.canTryAnotherPrint) {
                     { vm.tryNextPrint() }
+                } else {
+                    null
+                },
+                // REA #4: same shuffle as the handoff card above — a title
+                // that never produced a frame still ends in something
+                // playing. The pick is taken at tap time.
+                onPlaySomething = if (vm.canPlaySomething) {
+                    { vm.playSomething()?.let(onPlaySomethingClick) }
                 } else {
                     null
                 },
@@ -1061,6 +1113,8 @@ private fun PlayerScreenContent(
                     nextEpisodeSeason = state.nextEpisodeSeason,
                     nextEpisodeEpisode = state.nextEpisodeEpisode,
                     onPlayNow = { vm.requestNextEpisode() },
+                    previews = state.postPlayPreviews,
+                    onPreviewClick = { preview -> vm.openPost(preview.postId) },
                 )
             } else {
                 EndedButtons(
@@ -1072,6 +1126,8 @@ private fun PlayerScreenContent(
                     nextEpisodeSeason = state.nextEpisodeSeason,
                     nextEpisodeEpisode = state.nextEpisodeEpisode,
                     nextEpisodePosterUrl = state.nextEpisodePosterUrl,
+                    previews = state.postPlayPreviews,
+                    onPreviewClick = { preview -> vm.openPost(preview.postId) },
                 )
             }
         }
@@ -1104,7 +1160,9 @@ private fun PlayerScreenContent(
         if (state.sleepSheetVisible) SleepSheet(state, vm)
         if (state.subtitleSheetVisible) SubtitleSettingsSheet(state, vm)
         if (state.subtitleOffsetSheetVisible) {
-            SubtitleOffsetSheet(
+            SyncOffsetSheet(
+                audioOffsetMs = state.audioDelayMs,
+                onAudioOffsetChange = { vm.setAudioDelay(it) },
                 offsetMs = state.subtitle.delayMs,
                 hasCustomOverlay = state.customSubtitleLoaded != null,
                 onOffsetChange = { vm.setSubtitleOffset(it) },
@@ -1910,6 +1968,37 @@ internal fun SkipSegmentButton(segment: MediaSegment, onSkip: () -> Unit) {
                     ),
                     color = Color.Black, fontSize = brandSp(12), fontWeight = FontWeight.Bold,
                 )
+            }
+        }
+    }
+}
+
+/**
+ * REA #1: the in-playback Next Episode pill — the same bottom-right seat
+ * as [SkipSegmentButton] (116 dp above the controls), dark instead of
+ * jade so the two never read as the same action. Shown only in the last
+ * 30 s with a prepared successor (see [showInPlaybackNext]); the tap is
+ * the same path as the end card's Next button. [bottomPadding] is 152 dp
+ * when the Skip button is showing (116 + ~28 pill + 8 gap) and 116 dp
+ * when it is not, so the pill never covers the Skip button.
+ */
+@Composable
+private fun NextEpisodePill(bottomPadding: Dp, onClick: () -> Unit) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomEnd) {
+        Surface(
+            color = RaddHudPillIdle,
+            shape = MaterialTheme.shapes.small,
+            modifier = Modifier.padding(end = 16.dp, bottom = bottomPadding),
+        ) {
+            Row(
+                Modifier
+                    .clickableNoRipple { onClick() }
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Default.SkipNext, null, tint = Color.White, modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(R.string.player_next_episode), color = Color.White, fontSize = brandSp(12), fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -3084,6 +3173,10 @@ private fun EndedButtons(
     nextEpisodeSeason: Int? = null,
     nextEpisodeEpisode: Int? = null,
     nextEpisodePosterUrl: String? = null,
+    // REA #1: the "More to watch" tiles — the server's related titles for
+    // the title that just ended. Empty until the ended load returns.
+    previews: List<PostPlayPreview> = emptyList(),
+    onPreviewClick: (PostPlayPreview) -> Unit = {},
 ) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -3162,6 +3255,70 @@ private fun EndedButtons(
                     }
                 }
             }
+            // REA #1: "More to watch" — the related titles for this title.
+            // Only when the ended load returned some; a failed fetch leaves
+            // the row out entirely, never a placeholder.
+            PostPlayPreviewRow(previews = previews, onPreviewClick = onPreviewClick)
+        }
+    }
+}
+
+/**
+ * REA #1: the "More to watch" row shared by both end cards — up to three
+ * small poster tiles for the server's related titles, each opening that
+ * title's Detail. Renders nothing when the ended load returned nothing:
+ * a failed fetch is an empty row, never a placeholder tile.
+ */
+@Composable
+private fun PostPlayPreviewRow(
+    previews: List<PostPlayPreview>,
+    onPreviewClick: (PostPlayPreview) -> Unit,
+) {
+    if (previews.isEmpty()) return
+    Column {
+        Spacer(Modifier.height(12.dp))
+        Text(
+            stringResource(R.string.player_more_to_watch),
+            color = Color.White.copy(alpha = 0.7f),
+            fontSize = brandSp(12),
+            fontWeight = FontWeight.SemiBold,
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            previews.forEach { preview ->
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickableNoRipple { onPreviewClick(preview) },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    CatalogImage(
+                        url = preview.posterUrl,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(CardGeometry.POSTER_ASPECT)
+                            .clip(RoundedCornerShape(8.dp)),
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        preview.title,
+                        color = Color.White,
+                        fontSize = brandSp(12),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    preview.subtitle?.let { subtitle ->
+                        Text(
+                            subtitle,
+                            color = Color.White.copy(alpha = 0.6f),
+                            fontSize = brandSp(11),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -3189,6 +3346,9 @@ private fun AutoplayCountdownCard(
     nextEpisodeSeason: Int? = null,
     nextEpisodeEpisode: Int? = null,
     onPlayNow: (() -> Unit)? = null,
+    // REA #1: the "More to watch" tiles — see EndedButtons.
+    previews: List<PostPlayPreview> = emptyList(),
+    onPreviewClick: (PostPlayPreview) -> Unit = {},
 ) {
     val seasonEpisode = if (nextEpisodeSeason != null && nextEpisodeEpisode != null) {
         stringResource(R.string.player_season_episode, nextEpisodeSeason, nextEpisodeEpisode)
@@ -3297,6 +3457,10 @@ private fun AutoplayCountdownCard(
                         }
                     }
                 }
+                    // REA #1: "More to watch" — the related titles for the title
+                    // that just ended. The row renders only when the ended load
+                    // returned some; a failed fetch leaves it out entirely.
+                    PostPlayPreviewRow(previews = previews, onPreviewClick = onPreviewClick)
             }
         }
     }
@@ -3670,6 +3834,12 @@ private fun GiveUpCard(
     onDismiss: () -> Unit,
     onBackToDetails: () -> Unit,
     onTryAnother: (() -> Unit)? = null,
+    /**
+     * REA #4: the "Play Something" shuffle — a different title from the
+     * "For you" pool. Null when the ranker has no row, so the card never
+     * offers a shuffle with nothing behind it.
+     */
+    onPlaySomething: (() -> Unit)? = null,
     // NAV-4: an expired shared link gets its own way home. Only the expired
     // card shows it — the other failures already have their own way out.
     onHomeClick: (() -> Unit)? = null,
@@ -3778,6 +3948,18 @@ private fun GiveUpCard(
                     TextButton(onClick = it, modifier = Modifier.fillMaxWidth()) {
                         Text(
                             stringResource(R.string.player_start_try_another),
+                            color = Color.White.copy(alpha = 0.85f),
+                        )
+                    }
+                }
+                // REA #4: this title will not play — a different title from
+                // the "For you" pool is the way out that still ends in
+                // playback. A secondary white action like Try Another, not
+                // the green recovery: retrying this title stays primary.
+                onPlaySomething?.let {
+                    TextButton(onClick = it, modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            stringResource(R.string.player_play_something),
                             color = Color.White.copy(alpha = 0.85f),
                         )
                     }
@@ -5354,6 +5536,8 @@ private fun PlayerEventWatcher(
     onMessageWithUndo: (String) -> Unit = onMessage,
     /** MX #7 — Kids Lock: the unlock FAB was tapped while kids mode is on. */
     onRequestKidsPin: () -> Unit = {},
+    /** REA #1: a post-play preview tile was tapped — the caller opens that title's Detail. */
+    onOpenPost: (Int) -> Unit = {},
 ) {
     LaunchedEffect(vm) {
         vm.events.collect { event ->
@@ -5363,6 +5547,7 @@ private fun PlayerEventWatcher(
                 is PlayerEvent.PlayNextEpisode ->
                     onPlayNextEpisode(event.workKey, event.postId, event.season, event.episode)
                 is PlayerEvent.OpenExternalPlayer -> openExternally(context, event.url)
+                is PlayerEvent.OpenPost -> onOpenPost(event.postId)
                 // SC.24: share a moment — the VM built the text (title, time,
                 // deep link); the screen only opens the system chooser for it.
                 is PlayerEvent.ShareMoment -> shareMoment(context, event.text)

@@ -171,9 +171,10 @@ enum class SubtitleEdge(val wireName: String, val label: String) {
  * tracks are retimed by the decoder wrapper the playback service installs. Size/position/
  * style reach the native `SubtitleView` as before (PLAYER_SPEC §2.3).
  *
- * Everything here except [delayMs] is the viewer's own look and is persisted; the offset is
- * a correction made to one viewing, and [withDelay] is what keeps a stored reload from
- * wiping it mid-film.
+ * Everything here except [delayMs] is the viewer's own look and is persisted globally; the
+ * offset is a correction to one title's muxing, so it is persisted per work instead
+ * ([com.raddstream.app.data.local.TitleSyncPrefs]) and [withDelay] is what keeps a stored
+ * reload from wiping it mid-film.
  */
 data class SubtitleUiSettings(
     /** 50..200 %; applied as fractional text size for native and sp scale for the overlay. */
@@ -256,6 +257,13 @@ data class PlayerUiState(
      * non-null the ended overlay shows the countdown, not the buttons.
      */
     val autoplayCountdownSeconds: Int? = null,
+    /**
+     * REA #1 (Netflix, Nov 2026): the post-play screen's "More to watch"
+     * tiles — the server's related titles for the title that just ended.
+     * Empty until the ended load returns (or fails, when it stays empty
+     * and the row simply does not render): never a placeholder tile.
+     */
+    val postPlayPreviews: List<PostPlayPreview> = emptyList(),
     /** The A-B repeat segment (plan §5 step 14): the playhead loops back to A when it reaches B. Empty = no segment. */
     val abRepeat: AbRepeat = AbRepeat(),
     val positionMs: Long = 0,
@@ -422,6 +430,8 @@ data class PlayerUiState(
     val selectedAudioId: String? = null,
     val selectedSubtitleId: String? = null,
     val subtitle: SubtitleUiSettings = SubtitleUiSettings(),
+    /** REA #3: the audio sync offset in milliseconds; positive = sound later than the picture. */
+    val audioDelayMs: Long = 0,
     /** Label of the external SRT/VTT file currently rendered by the Compose overlay. */
     val customSubtitleLoaded: String? = null,
     /** External subtitles handed to Media3 natively (exotic formats). */

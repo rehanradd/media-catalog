@@ -17,6 +17,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -138,6 +139,14 @@ fun HomeScreen(
     onPostClick: (Post) -> Unit = {},
     /** Session 121 (P-26): the hero's Watch Now — opens the title and starts it. */
     onWatchNowClick: (Post) -> Unit = onPostClick,
+    /**
+     * REA #4 (Netflix, Nov 2026): the "Play Something" shuffle — a weighted
+     * random pick from the "For you" pool, opened and started at once. The
+     * screen picks through the ViewModel; a null pick (no row yet) means
+     * the button is never offered, so this callback never fires with
+     * nothing behind it.
+     */
+    onPlaySomethingClick: (Post) -> Unit = {},
     onBrowseType: (String?) -> Unit = {},
     /**
      * A facet chip's jump-off: the genre, industry and/or language to land
@@ -227,6 +236,10 @@ fun HomeScreen(
             heroIntervalMs = heroIntervalMs,
             onPostClick = onPostClick,
             onWatchNowClick = onWatchNowClick,
+            // REA #4: the shuffle lives on the "For you" row header — the
+            // pool it draws from — and only while the row exists. A null
+            // pick hides the button; the callback fires only with a title.
+            onPlaySomething = { viewModel.playSomething()?.let(onPlaySomethingClick) },
             onBrowseType = onBrowseType,
             onFacetSelected = onFacetSelected,
             onSetupServerClick = onSetupServerClick,
@@ -305,6 +318,12 @@ internal fun HomeContent(
     heroIntervalMs: Long = 8_000L,
     onPostClick: (Post) -> Unit = {},
     onWatchNowClick: (Post) -> Unit = onPostClick,
+    /**
+     * REA #4: the "Play Something" shuffle, offered only on the "For you"
+     * row header — the pool it draws from. Null everywhere else, so no
+     * other rail grows a button that plays a title it did not pick.
+     */
+    onPlaySomething: (() -> Unit)? = null,
     onBrowseType: (String?) -> Unit = {},
     onFacetSelected: (genre: String?, industry: String?, language: String?) -> Unit = { _, _, _ -> },
     onSetupServerClick: () -> Unit = {},
@@ -600,6 +619,10 @@ internal fun HomeContent(
                     // survives the jump.
                     showSeeAll = section.browseEquivalent,
                     onRetry = { onRetrySection(section.key) },
+                    // REA #4: the shuffle rides only the "For you" header —
+                    // the pool it draws from. Every other rail passes null
+                    // and keeps its header exactly as it was.
+                    onPlaySomething = if (section.forYou) onPlaySomething else null,
                 )
             }
             // A filter that hides every rail is not a broken catalog — say
@@ -1336,6 +1359,30 @@ internal fun browseFacetChips(facets: FacetsResponse?): List<FacetChip> {
     return genreChips + industryChips + languageChips
 }
 
+/**
+ * REA #4 (Netflix, Nov 2026): the "Play Something" shuffle on the "For
+ * you" header — one tap, one title, no decision tax. Same shape as the
+ * [SeeAllButton] beside it (text button, primary, 48dp floor) so the
+ * header reads as one row of actions, not a button and an afterthought.
+ * Text-only on purpose: the shuffle icon lives in material-icons-extended,
+ * which this module does not depend on, and the words say what the tap
+ * does without one.
+ */
+@Composable
+private fun PlaySomethingButton(onClick: () -> Unit) {
+    Button(
+        onClick = onClick,
+        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.primary),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+        modifier = Modifier.heightIn(min = 48.dp),
+    ) {
+        Text(
+            stringResource(R.string.player_play_something),
+            style = MaterialTheme.typography.labelLarge,
+        )
+    }
+}
+
 @Composable
 private fun HomeRailSection(
     section: HomeSection,
@@ -1344,6 +1391,8 @@ private fun HomeRailSection(
     onSeeAll: () -> Unit,
     showSeeAll: Boolean = true,
     onRetry: () -> Unit,
+    /** REA #4: the "Play Something" shuffle for the "For you" row only. */
+    onPlaySomething: (() -> Unit)? = null,
 ) {
     // UI-fix P1-X1: rails arrive staggered (index * 60 ms, fade + a short
     // rise — the Region screen's index * 90 pattern, extended to rails).
@@ -1405,10 +1454,27 @@ private fun HomeRailSection(
                     // distinct; the painted text stays the short "See all".
                     // A sorted rail has no Browse equivalent (Browse takes a
                     // type but no sort), so it gets no "See all" at all.
-                    action = if (showSeeAll) {
-                        { SeeAllButton(onClick = onSeeAll, contentDescription = "See all ${section.title}") }
-                    } else {
-                        null
+                    // REA #4: the "For you" header also carries the shuffle —
+                    // the pool it draws from — beside "See all" when the row
+                    // has one; other rails keep the single action they had.
+                    action = when {
+                        section.forYou && onPlaySomething != null -> {
+                            {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    PlaySomethingButton(onClick = onPlaySomething)
+                                    if (showSeeAll) {
+                                        SeeAllButton(
+                                            onClick = onSeeAll,
+                                            contentDescription = "See all ${section.title}",
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        showSeeAll -> {
+                            { SeeAllButton(onClick = onSeeAll, contentDescription = "See all ${section.title}") }
+                        }
+                        else -> null
                     },
                 )
                 val isRanked = section.sort == "trending"
@@ -1418,6 +1484,10 @@ private fun HomeRailSection(
                         post = post,
                         onClick = { onPostClick(post) },
                         rank = if (isRanked && itemIndex < 10) itemIndex + 1 else null,
+                        // REA #2: the "For you" row's Match % rides its
+                        // tiles; every other rail carries no scores, so
+                        // this reads null there and paints nothing.
+                        matchPercent = section.matchScores[post.id],
                     )
                 }
                 // The rows here are real and from this page; the refresh that failed is a

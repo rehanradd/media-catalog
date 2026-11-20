@@ -5,6 +5,7 @@ import com.raddstream.app.data.local.FollowedSeries
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.network.models.WireText
 import com.raddstream.app.ui.components.UserWords
+import kotlin.random.Random
 
 /**
  * "For you" — the on-device personalised row (E2, Nov 2026).
@@ -60,6 +61,29 @@ internal const val FOR_YOU_MAX_PICKS = 10
  * (+2) or one shared title token (+2) alone never does.
  */
 internal const val FOR_YOU_MIN_SCORE = 3
+
+/**
+ * The highest score the ranker can mint without feedback: shared genres
+ * 6 (3 × at most 2) + language 2 + industry 2 + type 1 + animated 1 +
+ * title tokens 4 (2 × at most 2) + a real IMDb rating ≥ 7.0 1 = 17.
+ * A feedback bonus can push a score past it — see [matchPercentage].
+ */
+internal const val FOR_YOU_MAX_SCORE = 17
+
+/**
+ * REA #2 (Netflix, Nov 2026): the ranker score as a "97% Match" — a
+ * presentation scale over the real score, never a new signal. The lowest
+ * score a pick can carry ([FOR_YOU_MIN_SCORE]) reads 65%: a title the
+ * ranker barely claims is still a match, just a weak one. The highest
+ * score the ranker can mint without feedback ([FOR_YOU_MAX_SCORE]) reads
+ * 99%: Netflix never prints 100%, and neither do we — a perfect score
+ * would promise a certainty the ranker does not have. Linear between,
+ * clamped, so a feedback bonus that pushes a score past 17 still reads
+ * 99% and a score below the floor still reads 65%.
+ */
+internal fun matchPercentage(score: Int): Int =
+    (65 + (score - FOR_YOU_MIN_SCORE) * 34 / (FOR_YOU_MAX_SCORE - FOR_YOU_MIN_SCORE))
+        .coerceIn(65, 99)
 
 /**
  * The genre words the ranker is allowed to match on — the standard genre
@@ -253,6 +277,31 @@ internal fun pickAnchor(
 }
 
 /**
+ * REA #2: what the viewer's up-votes lend the ranker — the genres and
+ * title words of every up-voted work the pool still carries. A candidate
+ * that shares any of them earns one +2 affinity bonus (see
+ * [scoreCandidate]), not one point per shared word, so a single
+ * enthusiastic vote cannot outrank the anchor's own signals. Down-votes
+ * lend nothing here — they exclude (see [selectForYou]), they never
+ * subtract.
+ */
+internal data class FeedbackSignals(
+    val genres: Set<String> = emptySet(),
+    val tokens: Set<String> = emptySet(),
+)
+
+/** The up-voted works' genres + title words, resolved from the pool. */
+internal fun feedbackSignals(feedback: Map<String, Int>, pool: List<Post>): FeedbackSignals {
+    val upvoted = feedback.filterValues { it > 0 }.keys
+    if (upvoted.isEmpty()) return FeedbackSignals()
+    val resolved = pool.filter { it.workRef in upvoted }
+    return FeedbackSignals(
+        genres = resolved.flatMap { knownTasteGenres(it) }.toSet(),
+        tokens = resolved.flatMap { titleTokens(it.displayTitle) }.toSet(),
+    )
+}
+
+/**
  * How much one candidate owes its anchor. Shared genres pay most, then
  * language and industry, then type and animation, then franchise words;
  * the candidate's own real IMDb rating (≥7.0) pays one point. A missing
@@ -260,7 +309,11 @@ internal fun pickAnchor(
  * invented number: the tile paints the candidate's own rating, or
  * nothing, exactly as the E2 Ratings rail does.
  */
-internal fun scoreCandidate(candidate: Post, anchor: ForYouAnchor): Int {
+internal fun scoreCandidate(
+    candidate: Post,
+    anchor: ForYouAnchor,
+    feedbackSignals: FeedbackSignals = FeedbackSignals(),
+): Int {
     var score = 0
     val sharedGenres = knownTasteGenres(candidate).intersect(anchor.genres.toSet())
     score += 3 * minOf(sharedGenres.size, 2)
@@ -276,6 +329,14 @@ internal fun scoreCandidate(candidate: Post, anchor: ForYouAnchor): Int {
     score += 2 * minOf(sharedTokens.size, 2)
     val rating = candidate.imdbRating?.trim()?.toDoubleOrNull()
     if (rating != null && rating >= 7.0) score += 1
+    // REA #2: one +2 affinity bonus when the candidate shares a genre or
+    // a title word with anything the viewer thumbed up — the vote's echo,
+    // not a second anchor.
+    if (feedbackSignals.genres.isNotEmpty() || feedbackSignals.tokens.isNotEmpty()) {
+        val sharesGenre = knownTasteGenres(candidate).intersect(feedbackSignals.genres).isNotEmpty()
+        val sharesToken = titleTokens(candidate.displayTitle).intersect(feedbackSignals.tokens).isNotEmpty()
+        if (sharesGenre || sharesToken) score += 2
+    }
     return score
 }
 
@@ -332,25 +393,39 @@ internal fun selectForYou(
     excluded: List<ForYouWork>,
     kidsMode: Boolean,
     maxPicks: Int = FOR_YOU_MAX_PICKS,
+    /**
+     * REA #2: the viewer's thumbs as workRef → thumb (1 / -1). A
+     * down-vote excludes its work from the picks; an up-vote lends its
+     * genres and title words to the ranker through [feedbackSignals].
+     * Empty by default, so every existing caller keeps its shape.
+     */
+    feedback: Map<String, Int> = emptyMap(),
 ): HomeSection? {
     val anchor = pickAnchor(watched, favorites, followed, pool, kidsMode) ?: return null
-    val picks = pool
+    val signals = feedbackSignals(feedback, pool)
+    val scored = pool
         .filterNot { isExcluded(it, excluded) }
+        // REA #2: a down-vote is a veto — the work never appears in the
+        // row, however well it scores. A vote is keyed by workRef, so a
+        // candidate with no handle cannot be vetoed by one.
+        .filterNot { it.workRef != null && feedback[it.workRef] == -1 }
         .filterNot { UserWords.workKey(it.workRef, it.displayTitle, it.year) == anchor.workKey }
         .filter { !kidsMode || KidsLock.isKidAppropriate(it) }
-        .map { candidate -> candidate to scoreCandidate(candidate, anchor) }
+        .map { candidate -> candidate to scoreCandidate(candidate, anchor, signals) }
         .filter { (_, score) -> score >= FOR_YOU_MIN_SCORE }
         .sortedByDescending { (_, score) -> score }
         .take(maxPicks)
-        .map { (candidate, _) -> candidate }
-    if (picks.isEmpty()) return null
+    if (scored.isEmpty()) return null
     return HomeSection(
         key = FOR_YOU_KEY,
         title = FOR_YOU_TITLE,
         type = null,
-        items = picks,
+        items = scored.map { (candidate, _) -> candidate },
         subtitle = anchor.explanation(),
         forYou = true,
+        // REA #2: the "97% Match" per pick, keyed by post id — the
+        // presentation scale of the score that claimed it.
+        matchScores = scored.associate { (candidate, score) -> candidate.id to matchPercentage(score) },
     )
 }
 
@@ -383,4 +458,86 @@ internal fun insertForYouSection(
     if (forYou == null) return without
     val index = forYouInsertIndex(without).coerceIn(0, without.size)
     return without.toMutableList().apply { add(index, forYou) }
+}
+
+/**
+ * REA #2: the bridge from Home's "For you" row to Detail — the match
+ * percentages for the row on screen, keyed by post id. In-memory only:
+ * the row is recomputed on every Home load, so the store is overwritten
+ * there and never read from disk; a Detail opened from Search (or a
+ * cold start straight to Detail) finds nothing here and paints no % —
+ * the % is a property of the current Home row, not of the title. A row
+ * that drops to nothing clears the store, so a stale % never outlives
+ * the row that minted it.
+ */
+internal object MatchScoreStore {
+    private val scores = mutableMapOf<Int, Int>()
+
+    fun set(scores: Map<Int, Int>) {
+        this.scores.clear()
+        this.scores.putAll(scores)
+    }
+
+    fun get(postId: Int): Int? = scores[postId]
+
+    fun clear() {
+        scores.clear()
+    }
+}
+
+/**
+ * REA #4 (Netflix, Nov 2026): one-tap shuffle from the "For you" pool.
+ * The pick is weighted by the row's Match % — a 97% title is roughly
+ * twice as likely as a 50% one — so the shuffle still respects the
+ * ranker instead of drawing blind. A pick with no score still counts
+ * at 1, so it stays eligible. The last pick is skipped while the pool
+ * has more than one title, so two taps never play the same title twice
+ * in a row; a one-title pool has nothing else to offer and repeats
+ * honestly. Pure, so the weighting is pinned in [ForYouTest] with a
+ * seeded [Random] instead of asserted on a device.
+ */
+internal fun pickPlaySomething(
+    section: HomeSection?,
+    random: Random = Random.Default,
+    lastPickedPostId: Int? = null,
+): Post? {
+    val items = section?.items.orEmpty()
+    if (items.isEmpty()) return null
+    if (items.size == 1) return items.first()
+    val pool = items.filterNot { it.id == lastPickedPostId }.ifEmpty { items }
+    val weights = pool.map { (section?.matchScores?.get(it.id) ?: 1).coerceAtLeast(1) }
+    val total = weights.sum()
+    var roll = random.nextInt(total)
+    for ((index, post) in pool.withIndex()) {
+        roll -= weights[index]
+        if (roll < 0) return post
+    }
+    return pool.last()
+}
+
+/**
+ * REA #4: the bridge from Home's "For you" row to anywhere a shuffle is
+ * offered — the player give-up card included. In-memory only, like
+ * [MatchScoreStore]: Home sets it when the row is (re)computed, and a
+ * row that drops to nothing clears it, so a shuffle never plays a title
+ * the ranker no longer stands behind. The last pick is remembered here
+ * (not in each caller) so a tap on Home and a tap on the give-up card
+ * never play the same title twice in a row either.
+ */
+internal object ForYouPoolStore {
+    private var section: HomeSection? = null
+    private var lastPickedPostId: Int? = null
+
+    fun set(section: HomeSection?) {
+        this.section = section
+        if (section == null) lastPickedPostId = null
+    }
+
+    fun hasPicks(): Boolean = !section?.items.isNullOrEmpty()
+
+    fun pick(random: Random = Random.Default): Post? {
+        val picked = pickPlaySomething(section, random, lastPickedPostId) ?: return null
+        lastPickedPostId = picked.id
+        return picked
+    }
 }

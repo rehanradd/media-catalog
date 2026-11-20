@@ -8,6 +8,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.random.Random
 
 /**
  * E2 "For you": the on-device personalised row. Every rule is pure, so
@@ -492,5 +493,178 @@ class ForYouTest {
         val forYou = HomeSection(key = FOR_YOU_KEY, title = FOR_YOU_TITLE, type = null, forYou = true)
         val normal = HomeSection(key = "movie", title = "Movies", type = "movie")
         assertEquals(listOf("movie"), cachedSectionsOf(listOf(forYou, normal)).map { it.key })
+    }
+
+    @Test
+    fun `match percentage scales the score from 65 to 99`() {
+        assertEquals(65, matchPercentage(3))
+        assertEquals(99, matchPercentage(17))
+        assertEquals(82, matchPercentage(10))
+        // Clamped both ways: a feedback bonus past the top still reads
+        // 99%, and a score below the floor still reads 65%.
+        assertEquals(99, matchPercentage(19))
+        assertEquals(65, matchPercentage(0))
+    }
+
+    @Test
+    fun `row carries a match score per pick`() {
+        val row = selectForYou(
+            watched = listOf(actionAnchor()),
+            favorites = emptyList(),
+            followed = emptyList(),
+            pool = listOf(actionAnchorRow(), actionCandidate()),
+            excluded = listOf(ForYouWork("work:hero", "Action Hero", 2024)),
+            kidsMode = false,
+        )
+        // "Action Two": one shared genre (+3) and the shared "action"
+        // title word (+2) = 5, which reads 69%.
+        assertEquals(mapOf(2 to 69), row?.matchScores)
+    }
+
+    @Test
+    fun `a down-vote vetoes its work from the row`() {
+        val downVoted = actionCandidate(id = 2, title = "Action Two")
+            .copy(workRef = "work:two")
+        assertNull(
+            selectForYou(
+                watched = listOf(actionAnchor()),
+                favorites = emptyList(),
+                followed = emptyList(),
+                pool = listOf(actionAnchorRow(), downVoted),
+                excluded = listOf(ForYouWork("work:hero", "Action Hero", 2024)),
+                kidsMode = false,
+                feedback = mapOf("work:two" to -1),
+            ),
+        )
+    }
+
+    @Test
+    fun `an up-vote lends its genres to the ranker`() {
+        val anchor = pickAnchor(
+            watched = listOf(actionAnchor()),
+            favorites = emptyList(),
+            followed = emptyList(),
+            pool = listOf(actionAnchorRow()),
+            kidsMode = false,
+        )!!
+        val liked = post(id = 9, title = "Comedy Gold", genres = "Comedy", year = 2024, workRef = "work:gold")
+        val candidate = post(id = 2, title = "Comedy Two", genres = "Comedy", language = "English", year = 2025)
+        // Without the vote the candidate scores 2 (shared language only)
+        // and never qualifies; with it the shared Comedy genre pays +2.
+        assertEquals(2, scoreCandidate(candidate, anchor))
+        val signals = feedbackSignals(mapOf("work:gold" to 1), listOf(liked))
+        assertEquals(4, scoreCandidate(candidate, anchor, signals))
+        val row = selectForYou(
+            watched = listOf(actionAnchor()),
+            favorites = emptyList(),
+            followed = emptyList(),
+            pool = listOf(actionAnchorRow(), liked, candidate),
+            excluded = listOf(ForYouWork("work:hero", "Action Hero", 2024)),
+            kidsMode = false,
+            feedback = mapOf("work:gold" to 1),
+        )
+        assertEquals(listOf("Comedy Two"), row?.items?.map { it.title })
+        assertEquals(mapOf(2 to 67), row?.matchScores)
+    }
+
+    @Test
+    fun `match score store holds the row until it is cleared`() {
+        MatchScoreStore.set(mapOf(2 to 69, 5 to 82))
+        assertEquals(69, MatchScoreStore.get(2))
+        assertEquals(82, MatchScoreStore.get(5))
+        assertNull(MatchScoreStore.get(9))
+        MatchScoreStore.clear()
+        assertNull(MatchScoreStore.get(2))
+    }
+
+    // REA #4 — Play Something: the shuffle draws from the "For you" row,
+    // weighted by Match %, never repeats the last pick while the pool has
+    // more, and never offers a shuffle with nothing behind it.
+
+    private fun forYouSection(vararg picks: Pair<Post, Int>) = HomeSection(
+        key = FOR_YOU_KEY,
+        title = FOR_YOU_TITLE,
+        type = null,
+        items = picks.map { it.first },
+        matchScores = picks.toMap().mapKeys { it.key.id },
+    )
+
+    @Test
+    fun `play something returns null without a row`() {
+        assertNull(pickPlaySomething(null))
+        assertNull(
+            pickPlaySomething(
+                HomeSection(key = FOR_YOU_KEY, title = FOR_YOU_TITLE, type = null),
+            ),
+        )
+    }
+
+    @Test
+    fun `play something always picks the only title`() {
+        val only = post(id = 1, title = "Only One")
+        val section = forYouSection(only to 97)
+        assertEquals(only, pickPlaySomething(section, Random(0)))
+        // A one-title pool has nothing else to offer and repeats honestly.
+        assertEquals(only, pickPlaySomething(section, Random(0), lastPickedPostId = 1))
+    }
+
+    @Test
+    fun `play something never repeats the last pick while the pool has more`() {
+        val first = post(id = 1, title = "First")
+        val second = post(id = 2, title = "Second")
+        val section = forYouSection(first to 90, second to 90)
+        repeat(20) { seed ->
+            assertEquals(
+                second,
+                pickPlaySomething(section, Random(seed.toLong()), lastPickedPostId = 1),
+            )
+        }
+    }
+
+    @Test
+    fun `play something weights by match percent`() {
+        val heavy = post(id = 1, title = "Heavy")
+        val light = post(id = 2, title = "Light")
+        val section = forYouSection(heavy to 99, light to 1)
+        val random = Random(42)
+        val picks = (1..200).map { pickPlaySomething(section, random) }
+        val heavyWins = picks.count { it == heavy }
+        assertTrue(
+            "a 99% title should win the large majority of draws, won $heavyWins/200",
+            heavyWins > 160,
+        )
+    }
+
+    @Test
+    fun `play something keeps scoreless titles eligible`() {
+        val first = post(id = 1, title = "First")
+        val second = post(id = 2, title = "Second")
+        val section = HomeSection(
+            key = FOR_YOU_KEY,
+            title = FOR_YOU_TITLE,
+            type = null,
+            items = listOf(first, second),
+            matchScores = emptyMap(),
+        )
+        // No scores at all: both titles still draw — a missing score is a
+        // weight of 1, never an exclusion.
+        val picks = (1..50).map { pickPlaySomething(section, Random(it.toLong())) }.toSet()
+        assertEquals(setOf(first, second), picks)
+    }
+
+    @Test
+    fun `the pool store holds the row for the give-up card until it clears`() {
+        val first = post(id = 1, title = "First")
+        val second = post(id = 2, title = "Second")
+        val section = forYouSection(first to 90, second to 90)
+        ForYouPoolStore.set(section)
+        assertTrue(ForYouPoolStore.hasPicks())
+        // Two picks in a row never repeat while the pool has more than one.
+        val one = ForYouPoolStore.pick(Random(7))!!
+        val two = ForYouPoolStore.pick(Random(7))!!
+        assertTrue(one != two)
+        ForYouPoolStore.set(null)
+        assertFalse(ForYouPoolStore.hasPicks())
+        assertNull(ForYouPoolStore.pick())
     }
 }

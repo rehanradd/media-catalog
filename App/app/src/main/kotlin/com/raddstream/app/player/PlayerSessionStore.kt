@@ -167,6 +167,22 @@ class PlayerSessionStore(
     }
 
     /**
+     * REA #3 (VLC, Nov 2026): the audio sync offset in milliseconds;
+     * positive = sound later than the picture, matching the subtitle
+     * convention. The ViewModel writes it whenever the viewer moves the
+     * sync sheet; the service collects it and pushes it into the delay
+     * processor live, so a slider move needs no rebuild and a rebuild
+     * never loses the offset. The decoder-mode pattern exactly: one
+     * value, one flow, no second opinion.
+     */
+    private val _audioDelayMs = MutableStateFlow(0L)
+    val audioDelayMs: StateFlow<Long> = _audioDelayMs.asStateFlow()
+
+    fun setAudioDelayMs(delayMs: Long) {
+        _audioDelayMs.value = delayMs
+    }
+
+    /**
      * MX idea #3: the chosen decoder could not decode this rendition, so
      * the player fell back to the other mode once. The settled banner is
      * the screen's own 5s transient — the same one Auto's quality moves
@@ -410,36 +426,6 @@ class PlayerSessionStore(
 
     /** Read without consuming: re-opening the same rung still gets its runner-ups. */
     fun peekFailover(streamId: String): List<String> = stagedFailovers[streamId].orEmpty()
-
-    /**
-     * The client-side decrypt scheme of the copy a launched handle plays,
-     * staged by the detail screen and read by the player when it opens the
-     * handle ("aes-ctr" when the bytes are ciphertext the app must decrypt
-     * on-device). The SCHEME only — never a node id, never a key: the player
-     * resolves the descriptor for the handle itself and the key travels only
-     * in that per-press answer.
-     *
-     * Same discipline as [stageFailover]: in memory only, nothing survives a
-     * process death. A playback launched any other way simply has no entry,
-     * so it builds exactly as before — a plain copy plays through the
-     * redirector, and a decrypting copy reached without its marker is
-     * treated as plain (the descriptor is only asked for when the marker
-     * says decrypt, so no extra round-trip is paid on a normal press).
-     */
-    private val stagedDecrypts = LinkedHashMap<String, String>()
-
-    fun stageDecrypt(streamId: String, decrypt: String?) {
-        if (streamId.isBlank()) return
-        stagedDecrypts.remove(streamId)
-        val scheme = decrypt?.trim()?.lowercase()
-        if (!scheme.isNullOrBlank()) stagedDecrypts[streamId] = scheme
-        while (stagedDecrypts.size > MAX_STAGED_FAILOVERS) {
-            stagedDecrypts.remove(stagedDecrypts.keys.first())
-        }
-    }
-
-    /** Read without consuming: re-opening the same rung still gets its marker. */
-    fun peekDecrypt(streamId: String): String? = stagedDecrypts[streamId]
 
     /**
      * The manifest MIME a launched handle's bytes are, staged by the Live TV

@@ -36,6 +36,7 @@ import com.raddstream.app.data.PlaybackBeacons
 import com.raddstream.app.data.Telemetry
 import com.raddstream.app.data.cache.ConnectivityProbe
 import com.raddstream.app.data.cache.MediaDownloadCache
+import com.raddstream.app.player.audio.DelayAudioProcessor
 import com.raddstream.app.player.audio.EnhancementAudioProcessor
 import com.raddstream.app.player.subtitles.OffsetSubtitleDecoderFactory
 import kotlinx.coroutines.CoroutineScope
@@ -107,6 +108,16 @@ class PlaybackService : MediaSessionService() {
      * collection in [onCreate] with no rebuild at all.
      */
     private val enhancementProcessor = EnhancementAudioProcessor()
+
+    /**
+     * REA #3 (VLC, Nov 2026): the one delay processor for the life of
+     * the service, same lifetime as the enhancement processor above.
+     * It sits behind the enhancement processor in the sink chain, so it
+     * always sees the enhanced PCM — a delay move applies live through
+     * the store collection in [onCreate], and a rebuild reuses the same
+     * instance, so the offset survives a decoder switch.
+     */
+    private val delayProcessor = DelayAudioProcessor()
 
     /** The beacon recorder: one finished session's measurements, per load. */
     private val beaconRecorder = PlaybackBeaconRecorder()
@@ -206,6 +217,14 @@ class PlaybackService : MediaSessionService() {
                 enhancementProcessor.setSettings(settings)
             }
         }
+        // REA #3: the audio sync offset, applied live the same way. The
+        // delay processor sits behind the enhancement processor in the
+        // sink chain, so it always sees the enhanced PCM.
+        scope.launch {
+            store.audioDelayMs.collect { delayMs ->
+                delayProcessor.setDelayMs(delayMs)
+            }
+        }
         scope.launch {
             store.loadRequest.collect { request ->
                 if (request != null && request.nonce != lastHandledNonce) {
@@ -282,14 +301,16 @@ class PlaybackService : MediaSessionService() {
             }
 
             /**
-             * MX idea #8: the audio sink carries the enhancement processor —
-             * the volume boost past 100% and the equalizer, applied to the
-             * decoded PCM in Media3's own chain. This is the documented
+             * MX idea #8 + REA #3: the audio sink carries the enhancement
+             * processor — the volume boost past 100% and the equalizer —
+             * and behind it the delay processor, applied to the decoded
+             * PCM in Media3's own chain. This is the documented
              * injection point (`DefaultAudioSink.Builder.setAudioProcessors`):
              * there is no `ExoPlayer.Builder.setAudioProcessors` in Media3.
              * Everything else is the default sink, built exactly as the
-             * factory builds it. The processor instance is the service's
-             * one shared instance, so a rebuild re-injects the same mix.
+             * factory builds it. The processor instances are the service's
+             * shared ones, so a rebuild re-injects the same mix and the
+             * same offset.
              */
             override fun buildAudioSink(
                 context: Context,
@@ -299,7 +320,7 @@ class PlaybackService : MediaSessionService() {
                 return DefaultAudioSink.Builder(context)
                     .setEnableFloatOutput(enableFloatOutput)
                     .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
-                    .setAudioProcessors(arrayOf(enhancementProcessor))
+                    .setAudioProcessors(arrayOf(enhancementProcessor, delayProcessor))
                     .build()
             }
         }

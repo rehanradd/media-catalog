@@ -26,6 +26,7 @@ import com.raddstream.app.player.AdSurface
 import com.raddstream.app.repository.CatalogRepository
 import com.raddstream.app.repository.FavoritesRepository
 import com.raddstream.app.repository.FollowedSeriesRepository
+import com.raddstream.app.repository.TitleFeedbackRepository
 import com.raddstream.app.sync.DeviceTrial
 import com.raddstream.app.sync.SyncAccountRepository
 import com.raddstream.app.ui.navigation.BroadcastTargeting
@@ -170,6 +171,16 @@ data class HomeSection(
      * rail, the exact hazard [cachedSectionsOf] guards against.
      */
     val forYou: Boolean = false,
+    /**
+     * REA #2 (Netflix, Nov 2026): the "97% Match" per pick, keyed by post
+     * id — the [matchPercentage] of each pick's ranker score. Only the
+     * "For you" row sets one: every other rail has no ranker score to
+     * present, and a % with no score behind it would be invented. Empty
+     * for every other rail. Excluded from the Home cache with the row
+     * itself ([cachedSectionsOf] drops `forYou` sections), so no codec
+     * change is owed.
+     */
+    val matchScores: Map<Int, Int> = emptyMap(),
 ) {
     val visible: Boolean get() = items.isNotEmpty() && error == null
 
@@ -640,6 +651,7 @@ class HomeViewModel @Inject constructor(
     private val syncedProgressDao: SyncedProgressDao,
     private val favoritesRepository: FavoritesRepository,
     private val followedSeriesRepository: FollowedSeriesRepository,
+    private val titleFeedbackRepository: TitleFeedbackRepository,
     private val adCadence: AdCadenceGovernor,
     private val adFreeReader: AdFreeReader,
     private val settingsRepository: ServerSettingsRepository,
@@ -834,6 +846,10 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             val followed = runCatching { followedSeriesRepository.getAllFollowed() }
                 .getOrDefault(emptyList())
+            // REA #2: the viewer's thumbs, read once per refresh like the
+            // followed list — a failure reads as "no votes", never a
+            // failed Home. The repository already guards its own read.
+            val feedback = titleFeedbackRepository.allFeedback()
             val state = _uiState.value
             val sections = state.sections
             val index = forYouInsertIndex(sections)
@@ -877,7 +893,15 @@ class HomeViewModel @Inject constructor(
                 pool = sections.flatMap { it.items },
                 excluded = excluded,
                 kidsMode = state.kidsMode,
+                feedback = feedback,
             )
+            // REA #2: publish the row's percentages for Detail — and
+            // clear them when the row drops, so a stale % never outlives
+            // the row that minted it. REA #4: publish the row itself for
+            // the shuffle — the player give-up card draws from the same
+            // pool, so it clears with the row too.
+            MatchScoreStore.set(fresh?.matchScores.orEmpty())
+            ForYouPoolStore.set(fresh)
             _uiState.update { current ->
                 val existing = current.sections.firstOrNull { it.key == FOR_YOU_KEY }
                 if (existing == fresh) {
@@ -1125,6 +1149,16 @@ class HomeViewModel @Inject constructor(
         loadFacets()
         checkForUpdate()
     }
+
+    /**
+     * REA #4 (Netflix, Nov 2026): one tap, one title — a weighted random
+     * pick from the "For you" pool ([ForYouPoolStore]), so the viewer who
+     * cannot choose still gets instant play. Null when the ranker has no
+     * row (yet), so the button that calls this is never offered then.
+     * The last pick lives in the store, so a shuffle here and a shuffle
+     * on the player give-up card never repeat each other.
+     */
+    fun playSomething(): Post? = ForYouPoolStore.pick()
 
     fun dismissUpdate() {
         dismissedUpdateUrl = _uiState.value.updateNotice?.url

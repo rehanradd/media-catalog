@@ -978,11 +978,12 @@ class ServerSettingsRepository @Inject constructor(
      * so a style cannot land on the player half-applied, and so the sheet's controls and the
      * two render paths always agree on what the viewer asked for.
      *
-     * [com.raddstream.app.player.SubtitleUiSettings.delayMs] is deliberately NOT stored. The
-     * sync sheet promises to hold the offset "for the rest of this viewing", and a delay is a
-     * correction to one file's muxing, not a taste: carrying yesterday's +4.2s onto the next
-     * title would make subtitles wrong on a file that never needed it. The player re-applies
-     * its live offset through `withDelay` whenever this flow answers.
+     * [com.raddstream.app.player.SubtitleUiSettings.delayMs] is deliberately NOT stored HERE.
+     * The sync sheet promises to hold the offset per title, and a delay is a correction to
+     * one file's muxing, not a taste: carrying yesterday's +4.2s onto the next title would
+     * make subtitles wrong on a file that never needed it — so it lives per work in
+     * [com.raddstream.app.data.local.TitleSyncPrefs] instead, keyed by workRef, and the
+     * player re-applies its live offset through `withDelay` whenever this flow answers.
      */
     val subtitleStyle: Flow<SubtitleUiSettings> = dataStore.data.map { preferences ->
         subtitleStyleOf(

@@ -580,6 +580,11 @@ fun RaddStreamNavGraph(
                     onWatchNowClick = { post ->
                         navController.navigateToPost(post, autoplay = true)
                     },
+                    // REA #4: the "Play Something" shuffle — the Home row
+                    // header's pick, opened and started at once.
+                    onPlaySomethingClick = { post ->
+                        navController.navigateToPost(post, autoplay = true)
+                    },
                     onBrowseType = { type -> navController.navigate(Screen.Browse.createRoute(type)) },
                     // A facet chip on Home lands on Search with the filter
                     // already applied — the same tab, not a pushed copy.
@@ -948,6 +953,31 @@ fun RaddStreamNavGraph(
                                 launchSingleTop = true
                                 popUpTo(Screen.Player.route) { inclusive = true }
                             }
+                        }
+                    },
+                    // REA #1: a post-play preview tile was tapped — open that
+                    // title's Detail, leaving the player behind exactly as
+                    // the next-episode advance does.
+                    onOpenPost = { postId ->
+                        navController.navigate(Screen.Detail.createRoute(postId)) {
+                            launchSingleTop = true
+                            popUpTo(Screen.Player.route) { inclusive = true }
+                        }
+                    },
+                    // REA #4: the give-up card's "Play Something" — the
+                    // shuffle's pick, opened with autoplay and leaving the
+                    // dead player behind, exactly as a post-play tile does.
+                    // Back from that Detail never drops the viewer back
+                    // into the failed player.
+                    onPlaySomethingClick = { post ->
+                        val route = if (post.workId != null) {
+                            Screen.Detail.createRouteForWork(post.workId, true)
+                        } else {
+                            Screen.Detail.createRoute(post.id, true)
+                        }
+                        navController.navigate(route) {
+                            launchSingleTop = true
+                            popUpTo(Screen.Player.route) { inclusive = true }
                         }
                     },
                     // SC §3: an actor tapped on the pause strip searches them,

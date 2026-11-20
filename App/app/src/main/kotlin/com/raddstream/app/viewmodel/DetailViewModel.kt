@@ -41,6 +41,7 @@ import com.raddstream.app.player.SubtitleTrackInfo
 import com.raddstream.app.repository.CatalogRepository
 import com.raddstream.app.repository.FavoritesRepository
 import com.raddstream.app.repository.FollowedSeriesRepository
+import com.raddstream.app.repository.TitleFeedbackRepository
 import com.raddstream.app.repository.V2DetailResult
 import com.raddstream.app.repository.V2PlayResult
 import com.raddstream.app.sync.SyncAccountRepository
@@ -105,6 +106,21 @@ data class DetailUiState(
      * be checked.
      */
     val isFollowed: Boolean = false,
+    /**
+     * REA #2 (Netflix, Nov 2026): this title's thumbs vote, 1 (liked),
+     * -1 (disliked), 0 (no opinion) — the Detail row's Like/Dislike
+     * state, observed from [TitleFeedbackRepository]. A vote feeds the
+     * "For you" ranker on the next Home load; it never changes this page.
+     */
+    val titleThumb: Int = 0,
+    /**
+     * REA #2: the "97% Match" for this title from the "For you" row on
+     * screen ([MatchScoreStore]), or null when no row scored it — a
+     * Detail opened from Search, or a cold start straight here, paints
+     * no %. Read once when the detail lands; a Home recompute while
+     * this page is open does not rewrite it.
+     */
+    val matchPercent: Int? = null,
     val error: String? = null,
     /**
      * MX #7 — Kids Lock: when on, this detail shows only kid-appropriate
@@ -451,6 +467,7 @@ class DetailViewModel @Inject constructor(
     private val catalogRepository: CatalogRepository,
     private val favoritesRepository: FavoritesRepository,
     private val followedSeriesRepository: FollowedSeriesRepository,
+    private val titleFeedbackRepository: TitleFeedbackRepository,
     private val deviceDownloads: DeviceDownloadsRepository,
     private val apiProvider: ApiProvider,
     private val syncAccountRepository: SyncAccountRepository,
@@ -848,6 +865,31 @@ class DetailViewModel @Inject constructor(
         }
     }
 
+    /** REA #2: the thumbs vote for this work's handle, like [observeFollowed]. */
+    private fun observeTitleFeedback(workRef: String?) {
+        val ref = workRef?.takeIf { it.isNotBlank() } ?: return
+        viewModelScope.launch {
+            titleFeedbackRepository.thumbFor(ref).collect { thumb ->
+                _uiState.update { it.copy(titleThumb = thumb ?: 0) }
+            }
+        }
+    }
+
+    /**
+     * REA #2: tap a thumb to vote; tap the same thumb again to clear it.
+     * The state paints the returned vote at once, and the Flow above
+     * keeps it in sync afterwards. A title with no handle cannot be
+     * voted on — the row is hidden there, so this guard is the second
+     * line, not the first.
+     */
+    fun setTitleThumb(thumb: Int) {
+        val ref = _uiState.value.post?.workRef?.takeIf { it.isNotBlank() } ?: return
+        viewModelScope.launch {
+            val next = titleFeedbackRepository.toggleThumb(ref, thumb)
+            _uiState.update { it.copy(titleThumb = next) }
+        }
+    }
+
     /**
      * Appetize FAILED 2 (2026-11-12) — the detail fetch, retried.
      *
@@ -1000,6 +1042,10 @@ class DetailViewModel @Inject constructor(
                             // The real detail is on screen now; the
                             // optimistic header has done its job.
                             optimisticDetail = null,
+                            // REA #2: the Match % for this title from the
+                            // "For you" row on screen, or null when no row
+                            // scored it.
+                            matchPercent = MatchScoreStore.get(detail.id),
                         )
                     }
                     // The catalog answer is ungated; what the viewer may SEE is decided here,
@@ -1009,6 +1055,8 @@ class DetailViewModel @Inject constructor(
                     // v2 detail whose bridge found no v1 post still has a handle
                     // worth following, so this is gated on the handle alone.
                     observeFollowed(detail.workRef)
+                    // REA #2: the thumbs follow the same handle, for the same reason.
+                    observeTitleFeedback(detail.workRef)
                     // Gap A2: pre-resolve the top link now, while the viewer
                     // is still reading the page, so Play does not pay the
                     // `playV2` round trip first.
@@ -1691,11 +1739,6 @@ class DetailViewModel @Inject constructor(
             return
         }
         PlayerSessionStore.Instance.stageFailover(effective.streamId, effective.backupHandles)
-        // Client-side decrypt: the rung's marker rides with the handle, so the
-        // player knows to resolve the descriptor and start the decrypting
-        // proxy instead of playing the redirector (which has no bytes for
-        // such a copy). The scheme only — never a node id, never a key.
-        PlayerSessionStore.Instance.stageDecrypt(effective.streamId, effective.decrypt)
         stageAutoLadder(effective)
         stageSyncScope(
             streamId = effective.streamId,
@@ -1969,7 +2012,6 @@ class DetailViewModel @Inject constructor(
             kind = null,
             playability = winner.playability,
             score = winner.linkScore,
-            decrypt = winner.decrypt,
         )
         // Session 153: stage the gated ladder's rungs for the winner's band
         // before playing, so a 402 on this print steps down to the next rung
@@ -2018,11 +2060,6 @@ class DetailViewModel @Inject constructor(
         if (backupHandles.isNotEmpty()) {
             PlayerSessionStore.Instance.stageFailover(link.streamId, backupHandles)
         }
-        // Client-side decrypt: the link's marker rides with the handle, so the
-        // player knows to resolve the descriptor and start the decrypting
-        // proxy instead of playing the redirector. The scheme only — never a
-        // node id, never a key.
-        PlayerSessionStore.Instance.stageDecrypt(link.streamId, link.decrypt)
         val scope = stageSyncScope(
             link.streamId,
             season,
