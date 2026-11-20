@@ -351,7 +351,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Tap a search-result row by its title text. The search field itself holds
+# Tap a search-result row by its title. The search field itself holds
 # the same query text, so a bare text match can tap the field instead of
 # the row — run 44707017527 proved it: the field was the LAST (only) exact
 # match in the dump, the tap re-focused it, the keyboard reopened, and the
@@ -360,7 +360,10 @@ trap cleanup EXIT
 # list when the row is not on screen yet — the One Piece series sits below
 # the fold in the Series section, and a LazyColumn only composes visible
 # rows, so a below-the-fold row is not in the dump at all until it
-# scrolls into view.
+# scrolls into view. PosterCard titles are paint-only
+# (clearAndSetSemantics, run 44717792791): no node carries the bare title
+# text, so also match a content-desc that starts with "<title>, " — the
+# tile's spoken sentence is "{title}, {year} · {type}[, ...]".
 tap_result() {
   local want="$1" tries=0
   while [ "$tries" -lt 10 ]; do
@@ -375,21 +378,42 @@ try:
 except Exception:
     sys.exit(0)
 last = None
+prefix = None
 for n in root.iter('node'):
     # Never match the search field: it holds the query text too, and
     # tapping it just re-focuses the keyboard (run 44707017527).
     cls = n.get('class') or ''
     if cls == 'android.widget.EditText' or cls.endswith('EditText'):
         continue
-    if (n.get('text') or '') == want or (n.get('content-desc') or '') == want:
-        b = n.get('bounds', '')
-        nums = b.replace('[', ' ').replace(']', ' ').replace(',', ' ').split()
-        if len(nums) == 4:
-            x = (int(nums[0]) + int(nums[2])) // 2
-            y = (int(nums[1]) + int(nums[3])) // 2
+    # PosterCard titles are paint-only (clearAndSetSemantics, run
+    # 44717792791): no node carries the bare title text. The tile's
+    # only node is its outer Column with content-desc = the spoken
+    # sentence "{title}, {year} · {type}[, ...]" — so also match a
+    # content-desc that STARTS with "<title>, ". The comma-space keeps
+    # neighbours out: "One Piece Season 2..." / "One Piece - Netflix
+    # Original..." / "ONE PIECE HEROINES" all have different prefixes.
+    # Exact matches win over prefix matches.
+    cd = n.get('content-desc') or ''
+    text = n.get('text') or ''
+    if text == want or cd == want:
+        hit = 'exact'
+    elif cd.startswith(want + ', '):
+        hit = 'prefix'
+    else:
+        continue
+    b = n.get('bounds', '')
+    nums = b.replace('[', ' ').replace(']', ' ').replace(',', ' ').split()
+    if len(nums) == 4:
+        x = (int(nums[0]) + int(nums[2])) // 2
+        y = (int(nums[1]) + int(nums[3])) // 2
+        if hit == 'exact':
             last = f"{x} {y}"
+        else:
+            prefix = f"{x} {y}"
 if last:
     print(last)
+elif prefix:
+    print(prefix)
 PY
 )
     if [ -n "$XY" ]; then
