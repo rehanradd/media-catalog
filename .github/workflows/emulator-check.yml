@@ -124,7 +124,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libpulse0 libasound2t64 libgl1 libx11-6 libxcb1 libxext6 \
-            libxi6 libxrender1 libxtst6 libnss3 libnspr4 libdbus-1-3
+            libxi6 libxrender1 libxtst6 libnss3 libnspr4 libdbus-1-3 \
+            libxcb-cursor0
 
       - name: Boot emulator, drive app, capture screenshots + video + logcat
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d  # v2
@@ -141,8 +142,16 @@ jobs:
           # ("Unable to resolve host firebase-settings.crashlytics.com") —
           # point the emulator at public DNS instead (same fix as the
           # screenshots workflow). -no-snapshot/-noaudio/-no-boot-anim are
-          # the oranblock shape for a clean CI boot.
-          emulator-options: -dns-server 8.8.8.8,8.8.4.4 -no-snapshot -noaudio -no-boot-anim
+          # the oranblock shape for a clean CI boot. -no-window is
+          # REQUIRED on the headless runner: run 44698499761 (after the
+          # libpulse fix) died in <1 s with Qt fatal "Could not load the
+          # Qt platform plugin xcb ... could not connect to display (:0)"
+          # — the emulator opens a Qt GUI window by default and there is
+          # no X server. -no-window skips the GUI entirely; screenshots
+          # and screenrecord still work via adb. libxcb-cursor0 (added
+          # above) is the belt-and-braces half of the same fix — Qt 6.5+
+          # needs it to load the xcb plugin at all.
+          emulator-options: -dns-server 8.8.8.8,8.8.4.4 -no-snapshot -noaudio -no-boot-anim -no-window
           # ONE line on purpose: the action runs `script:` line by line in
           # fresh shells (see the drive script's header) — the drive logic
           # lives in .github/scripts/emu-check-drive.sh so its variables

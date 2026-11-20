@@ -94,6 +94,20 @@ jobs:
           chmod +x gradlew
           ./gradlew :app:assembleDebug --no-daemon --stacktrace --console=plain
 
+      - name: 🔊 Install emulator system libraries
+        # Same step as emulator-check.yml: the ubuntu-24.04 runner image
+        # does not ship the libraries qemu / the emulator's Qt GUI link
+        # against. Without these, the emulator dies before boot — first
+        # libpulse.so.0 (run 44672411719), then the Qt xcb plugin
+        # (run 44698499761). libxcb-cursor0 is the Qt 6.5+ xcb-plugin
+        # dependency named in that run's log.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libpulse0 libasound2t64 libgl1 libx11-6 libxcb1 libxext6 \
+            libxi6 libxrender1 libxtst6 libnss3 libnspr4 libdbus-1-3 \
+            libxcb-cursor0
+
       - name: Boot emulator, drive app, capture screenshots + video
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -108,8 +122,11 @@ jobs:
           # firebase-settings.crashlytics.com: No address associated with
           # hostname" — the AVD's default resolver (10.0.2.3) failed, the
           # same shape as the Welcome catalog-unreachable in 44048613561.
-          # Point the emulator at public DNS instead.
-          emulator-options: -dns-server 8.8.8.8,8.8.4.4
+          # Point the emulator at public DNS instead. -no-window is
+          # REQUIRED on the headless runner — see emulator-check.yml
+          # run 44698499761: without it the emulator dies in <1 s with
+          # Qt fatal "Could not load the Qt platform plugin xcb".
+          emulator-options: -dns-server 8.8.8.8,8.8.4.4 -no-window
           # ONE line on purpose: the action runs `script:` line by line in
           # fresh shells (see header comment) — the drive logic lives in
           # .github/scripts/emu-drive.sh so its variables/functions persist.
