@@ -68,6 +68,7 @@ fun SetupScreen(
         onRetryDefault = viewModel::retryDefault,
         onRevealUrlField = viewModel::revealUrlField,
         onConnected = onConnected,
+        onContinue = { viewModel.continuePressed(onConnected) },
     )
 }
 
@@ -88,6 +89,7 @@ internal fun SetupScreenContent(
     onRetryDefault: () -> Unit,
     onRevealUrlField: () -> Unit,
     onConnected: (askRegion: Boolean) -> Unit,
+    onContinue: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -181,7 +183,7 @@ internal fun SetupScreenContent(
 
         Spacer(Modifier.height(12.dp))
         Button(
-            onClick = { viewModel.continuePressed(onConnected) },
+            onClick = onContinue,
             enabled = state.isConnected && !state.isChecking,
             modifier = Modifier.fillMaxWidth().height(56.dp),
             colors = ButtonDefaults.buttonColors(
