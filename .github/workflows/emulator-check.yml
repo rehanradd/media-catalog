@@ -1,0 +1,153 @@
+# Emulator check — on-demand, free (public repo)
+# A permanent device-testing workhorse to replace Robo (10 runs/day, shuts
+# down Sep 2027), TestMu (exhausted), Appetize (dead) and Samsung RTL
+# (needs the user's sign-in): build the debug APK, boot a free emulator
+# (KVM on the GitHub-hosted Ubuntu runner), tap through Home -> Search ->
+# Detail -> Live TV -> Downloads -> Settings, screenshot every step, record
+# video per section, stream logcat — and upload it all as run artifacts.
+# Runs on workflow_dispatch only, so it never fires on pushes.
+#
+# SHAPE (from the two reference templates — see the hidden-tools hunt):
+#   * reactivecircus/android-emulator-runner, one-line `script:` that calls
+#     a script file (oranblock/android-test-harness: the action runs `script:`
+#     line by line in fresh shells, so variables do not survive across
+#     lines; the drive logic lives in .github/scripts/emu-check-drive.sh).
+#   * KVM udev rule before boot (oranblock: without it the emulator falls
+#     back to software rendering and a four-minute sweep takes forty).
+#   * A screenshot + logcat tail per step (oranblock's send_step shape —
+#     here the full logcat is streamed to the artifact dir instead).
+#   * No Telegram, no encryption, no agents (pierridotite/mobile-agent-testers
+#     does headless-agent testing with encrypted results — out of scope here;
+#     this workflow is a fixed tap-through, not an agent).
+#
+# What it reuses from this repo: the ci.yml setup steps verbatim (JDK 17,
+# Gradle cache, setup-android v4.0.4, google-services.json restore — the
+# debug build needs it, same as CI) and the battle-tested helpers from
+# .github/scripts/emu-drive.sh (ANR guards, frozen-screen guard, the
+# ".debug" package derivation, /data/local/tmp scratch, public DNS).
+# It does NOT touch ci.yml, emulator-screenshots.yml or emu-drive.sh.
+#
+# HONEST LIMITS: an emulator is not a real device (Robo v10 proved it:
+# Discover Pakistan played from the server but never played on the virtual
+# device) and video has no sound. This replaces Robo for UI proofs, not
+# for playback proof. API 30 + Pixel 5 match our Robo runs.
+#
+# Cost: $0. No card, no signup, no third party.
+
+name: 📱 Emulator check — tap-through + video + logcat
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_level:
+        description: "Android API level for the emulator (30 = our Robo runs)"
+        required: false
+        default: "30"
+      video_seconds:
+        description: "Video length per section in seconds (max 180)"
+        required: false
+        default: "120"
+
+permissions:
+  contents: read
+
+concurrency:
+  # One active run per workflow+ref; a newer dispatch supersedes an older one.
+  group: emulator-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04   # pinned, not `ubuntu-latest`, so runner drift is visible
+    timeout-minutes: 60
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: ☕ Set up JDK 17 (temurin)
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad  # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: 📦 Restore Gradle caches
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-java17-${{ hashFiles('App/gradle/wrapper/gradle-wrapper.properties', 'App/gradle/libs.versions.toml', 'App/**/*.gradle.kts', 'App/**/*.gradle', 'App/settings.gradle.kts') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-java17-
+            gradle-${{ runner.os }}-
+
+      - name: 📱 Install Android SDK (platform-tools, android-35, build-tools 35.0.0)
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd  # v4.0.4
+        with:
+          packages: "platform-tools platforms;android-35 build-tools;35.0.0"
+
+      - name: 🔧 Make gradlew executable
+        run: chmod +x App/gradlew
+
+      - name: 🔑 Restore google-services.json (CI secret, never committed)
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -z "$GOOGLE_SERVICES_JSON" ]; then echo "GOOGLE_SERVICES_JSON secret is empty" >&2; exit 1; fi
+          echo "$GOOGLE_SERVICES_JSON" | base64 -d > App/app/google-services.json
+
+      - name: 🏗️ Build debug APK
+        working-directory: App
+        run: |
+          ./gradlew :app:assembleDebug --no-daemon --stacktrace --console=plain
+
+      - name: 🖥️ Enable KVM
+        # oranblock/android-test-harness: without this the emulator falls
+        # back to software rendering and a four-minute sweep takes forty.
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Boot emulator, drive app, capture screenshots + video + logcat
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d  # v2
+        with:
+          api-level: ${{ inputs.api_level }}
+          target: google_apis
+          arch: x86_64
+          profile: pixel_5
+          cores: 2
+          ram-size: 4096M
+          emulator-boot-timeout: 900
+          disable-animations: true
+          # The AVD's default resolver (10.0.2.3) failed on run 44059589013
+          # ("Unable to resolve host firebase-settings.crashlytics.com") —
+          # point the emulator at public DNS instead (same fix as the
+          # screenshots workflow). -no-snapshot/-noaudio/-no-boot-anim are
+          # the oranblock shape for a clean CI boot.
+          emulator-options: -dns-server 8.8.8.8,8.8.4.4 -no-snapshot -noaudio -no-boot-anim
+          # ONE line on purpose: the action runs `script:` line by line in
+          # fresh shells (see the drive script's header) — the drive logic
+          # lives in .github/scripts/emu-check-drive.sh so its variables
+          # and functions persist.
+          script: bash .github/scripts/emu-check-drive.sh "${{ inputs.video_seconds }}"
+
+      - name: 📤 Upload screenshots + video + logcat
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: emulator-check-${{ github.run_number }}
+          path: emu-check/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: 📊 Check summary
+        if: always()
+        run: |
+          echo "## 📱 Emulator check" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Screenshots: $(ls emu-check/*.png 2>/dev/null | wc -l) | Videos: $(ls emu-check/*.mp4 2>/dev/null | wc -l) | Logcat: $(du -h emu-check/logcat.txt 2>/dev/null | cut -f1)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Artifact: emulator-check-${{ github.run_number }} (14-day retention)" >> "$GITHUB_STEP_SUMMARY"
