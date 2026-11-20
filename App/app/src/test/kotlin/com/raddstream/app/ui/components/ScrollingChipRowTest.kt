@@ -167,9 +167,13 @@ class ScrollingChipRowTest {
         // start zone and firstVisibleItemScrollOffset reads nonzero
         // (CI 44646400985: 48) even though the fling snapped correctly.
         // Zero padding makes the snap target the viewport start, so
-        // offset 0 is the snap itself, not the padding. The index
-        // assertion keeps the test honest: a swipe that moved nothing
-        // would also read offset 0.
+        // offset 0 is the snap itself, not the padding.
+        //
+        // A fling + snap takes virtual time: advance well past any fling
+        // duration so the assertions read the SETTLED state, not a
+        // mid-flight sample (CI 44649050155 read offset 16 with
+        // waitForIdle alone). The index assertion keeps the test honest:
+        // a swipe that moved nothing would also read offset 0.
         val state = LazyListState()
         compose.setContent {
             RaddStreamTheme {
@@ -191,6 +195,7 @@ class ScrollingChipRowTest {
             }
         }
         compose.onNodeWithTag("test-snap-row").performTouchInput { swipeLeft() }
+        compose.mainClock.advanceTimeBy(3000)
         compose.waitForIdle()
         assertTrue(state.firstVisibleItemIndex > 0)
         assertEquals(0, state.firstVisibleItemScrollOffset)

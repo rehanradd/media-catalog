@@ -6,6 +6,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.unit.dp
 import androidx.paging.LoadState
@@ -161,6 +162,19 @@ class SearchPagingTest {
                 ),
             ),
         )
+        // The append Error only arrives once the PagingData is processed
+        // through collectAsLazyPagingItems — unlike the Loading sibling,
+        // which passes on the initial all-Loading state before any
+        // processing runs, this footer does not exist on the first
+        // composition. waitUntil polls for it instead of asserting
+        // against a state that may not have landed yet (CI 44646400985
+        // and 44649050155 both failed here with "not displayed"). It
+        // still fails if the footer never appears — a missing retry row
+        // is not papered over, it is waited for.
+        compose.waitUntil(timeoutMillis = 5_000) {
+            compose.onAllNodesWithText("Could not load more.")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
         compose.onNodeWithText("Could not load more.").assertIsDisplayed()
     }
 
