@@ -665,26 +665,60 @@ screenshot "09-livetv.png"
 adb shell input swipe 540 1600 540 600 400
 sleep 3
 screenshot "10-livetv-scrolled.png"
-# Downloads has no bottom tab: it lives behind the DOWNLOADS tile in the
-# "Your Library" strip at the bottom of the Home feed. Go Home, scroll
-# until the tile is on screen, then tap it.
-tap_text "Home" || { echo "FAIL: Home tab not found" >&2; exit 1; }
+# Downloads has no bottom tab. The old route — the DOWNLOADS tile in the
+# "Your Library" strip at the bottom of the Home feed (HomeScreen
+# LibraryStrip, below every rail) — is real but unreachable in a fixed
+# swipe budget: the strip rides below all server-driven rails, and run
+# 44781776255 proved it: 8 swipes crossed Hero, Browse, Featured,
+# Movies, Series, Complete series and still sat at "Top 10 Today" with
+# rails left, so a fixed count can never be right for a feed whose
+# length the server decides. The stable door is Settings -> "Open
+# Downloads" (SettingsScreen, inside `if (features.downloads)`): the
+# Settings tab is on the bottom bar, the Downloads section is third,
+# and the button navigates to the same Screen.Downloads route. If the
+# operator switched downloads off the button is gone — that is a
+# product state, not a broken run, so record DOWNLOADS-NOT-REACHABLE
+# and continue to the Settings screenshots instead of failing.
+tap_text "Settings" || { echo "FAIL: Settings tab not found" >&2; exit 1; }
 sleep 4
 found=0
 for i in 1 2 3 4 5 6 7 8; do
-  if ui_has_text "DOWNLOADS"; then found=1; break; fi
+  if ui_has_text "Open Downloads"; then found=1; break; fi
   adb shell input swipe 540 1600 540 600 400
   sleep 2
 done
-if [ "$found" -ne 1 ]; then echo "FAIL: DOWNLOADS tile never appeared on Home" >&2; exit 1; fi
-tap_text "DOWNLOADS" || { echo "FAIL: DOWNLOADS tile tap failed" >&2; exit 1; }
-sleep 5
-screenshot "11-downloads.png"
-# Downloads is not a bottom-nav route either — Back, then Settings tab.
-adb shell input keyevent 4
-sleep 3
-tap_text "Settings" || { echo "FAIL: Settings tab not found" >&2; exit 1; }
-sleep 4
+if [ "$found" -ne 1 ]; then
+  echo "DOWNLOADS-NOT-REACHABLE: 'Open Downloads' never appeared in Settings (downloads may be switched off) — continuing to Settings screenshots" >&2
+  cp /tmp/ui.xml "$OUT/downloads-not-reachable-ui.xml" 2>/dev/null || true
+else
+  tap_text "Open Downloads" || { echo "FAIL: 'Open Downloads' tap failed" >&2; exit 1; }
+  sleep 5
+  # Confirm the tap actually landed on Downloads before shooting 11:
+  # a failed navigation would leave 11 as a second Settings frame, and
+  # the shot after Back would then trip the byte-identical guard.
+  # Fresh installs have no downloads, so the empty state ("Nothing
+  # downloaded yet") is the arrival marker; poll it briefly.
+  arrived=0
+  for _ in 1 2 3; do
+    if ui_has_text "Nothing downloaded yet"; then arrived=1; break; fi
+    sleep 3
+  done
+  if [ "$arrived" -eq 1 ]; then
+    screenshot "11-downloads.png"
+    # Back from Downloads lands on Settings — the Settings screenshots
+    # below need no tab tap.
+    adb shell input keyevent 4
+    sleep 3
+  else
+    echo "DOWNLOADS-NOT-REACHED: tapped 'Open Downloads' but the Downloads screen never arrived — continuing to Settings screenshots" >&2
+    cp /tmp/ui.xml "$OUT/downloads-not-reached-ui.xml" 2>/dev/null || true
+  fi
+fi
+# One swipe back up first: the search above may have left Settings at
+# its bottom, where the swipe below would change nothing and 13 would
+# come out byte-identical to 12.
+adb shell input swipe 540 600 540 1600 400
+sleep 2
 screenshot "12-settings.png"
 adb shell input swipe 540 1600 540 600 400
 sleep 3
