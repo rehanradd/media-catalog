@@ -420,45 +420,80 @@ sleep 4
 # first segment's time limit before a single app frame appears.
 start_video "01-onboarding-home"
 screenshot "01-disclaimer.png"
-# The two onboarding taps are the known flow (DisclaimerDialog
-# confirmLabel "I understand", SetupScreen Button "Continue"). If either
-# text never appears the flow is stuck — fail honestly instead of walking
-# a dead screen and screenshotting it.
+# The onboarding taps depend on the cold-start destination, which is
+# probe-timing-dependent (StartupRouting.resolveStartDestination):
+# Setup (DisclaimerDialog "I understand", SetupScreen "Continue")
+# when the default-server probe has not answered reachable yet, Region
+# ("Content preference", "Done"/"Skip") when it has. If the expected
+# text never appears the flow is stuck — fail honestly instead of
+# walking a dead screen and screenshotting it.
 tap_text "I understand" || { echo "FAIL: disclaimer 'I understand' never appeared" >&2; exit 1; }
 sleep 4
 screenshot "02-welcome.png"
-# Welcome probes the default catalog on arrival: if the probe fails the
-# screen shows "We couldn't find the catalog at that address" and
-# Continue stays DISABLED — tapping it is a no-op (run 44048613561).
-# Retry the probe via Connect; if it still fails, capture diagnostics
-# (logcat + in-emulator network probe) and fail clearly instead of
-# letting the frozen-screen guard misreport a stuck Welcome as Home.
-if ui_has_text "couldn't find the catalog"; then
-  echo "Welcome: catalog unreachable — retrying via Connect" >&2
-  for attempt in 1 2; do
-    tap_text "Connect" || true
-    sleep 20
-    if ! ui_has_text "couldn't find the catalog"; then
-      echo "Welcome: catalog reachable after Connect (attempt $attempt)" >&2
-      break
-    fi
-    echo "Welcome: catalog still unreachable after Connect (attempt $attempt)" >&2
-  done
-  if ui_has_text "couldn't find the catalog"; then
-    echo "FAIL: catalog unreachable from the emulator after Connect retries" >&2
-    adb logcat -d -t 500 2>/dev/null | grep -i -E 'raddstream|UnknownHost|ConnectException|SocketTimeout|SSL|Handshake|AndroidRuntime|FATAL' > "$OUT/welcome-unreachable-logcat.txt" || true
-    {
-      echo "--- ping raddstream.duckdns.org ---"
-      adb shell ping -c 1 -W 5 raddstream.duckdns.org 2>&1 || true
-      echo "--- curl posts from the emulator ---"
-      adb shell curl -s -o /dev/null -w "posts:%{http_code}\n" --max-time 15 "https://raddstream.duckdns.org/api/v1/posts?limit=1" 2>&1 || true
-    } > "$OUT/welcome-network-probe.txt" 2>&1 || true
-    adb exec-out screencap -p > "$OUT/welcome-unreachable.png" 2>/dev/null || true
-    cp /tmp/ui.xml "$OUT/welcome-unreachable-ui.xml" 2>/dev/null || true
-    exit 1
+# Cold start lands on ONE of two screens depending on probe timing
+# (StartupRouting.resolveStartDestination): Setup (Welcome with
+# "Continue") when the default-server probe has not answered reachable
+# yet, Region ("Content preference" with "Done"/"Skip") when it has.
+# Run 44713928572 landed on Region and the script burned 10 tries
+# waiting for a "Continue" that does not exist there. Wait for either
+# screen to appear, then take the matching path: "Skip" on Region
+# (neutral — RegionViewModel.skip saves the default Desi and goes to
+# Home, no preference recorded), "Continue" on Setup.
+ON_REGION=0
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  if ui_has_text "Content preference"; then
+    ON_REGION=1
+    break
   fi
+  # Exact text attribute, not a substring grep: a resource-id could
+  # contain "continue" while the Welcome button is not on screen.
+  # Reuses the dump ui_has_text just pulled.
+  if grep -q 'text="Continue"' /tmp/ui.xml 2>/dev/null; then
+    break
+  fi
+  sleep 3
+done
+if [ "$ON_REGION" -eq 1 ]; then
+  echo "Onboarding: Region screen (probe answered fast) - tapping Skip" >&2
+  tap_text "Skip" || { echo "FAIL: Region 'Skip' never appeared" >&2; exit 1; }
+  sleep 4
 fi
-tap_text "Continue" || { echo "FAIL: setup 'Continue' never appeared" >&2; exit 1; }
+# Setup path only (ON_REGION=0): the Region screen has no Welcome
+# and no Continue, so none of this applies there.
+if [ "$ON_REGION" -eq 0 ]; then
+  # Welcome probes the default catalog on arrival: if the probe fails the
+  # screen shows "We couldn't find the catalog at that address" and
+  # Continue stays DISABLED — tapping it is a no-op (run 44048613561).
+  # Retry the probe via Connect; if it still fails, capture diagnostics
+  # (logcat + in-emulator network probe) and fail clearly instead of
+  # letting the frozen-screen guard misreport a stuck Welcome as Home.
+  if ui_has_text "couldn't find the catalog"; then
+    echo "Welcome: catalog unreachable — retrying via Connect" >&2
+    for attempt in 1 2; do
+      tap_text "Connect" || true
+      sleep 20
+      if ! ui_has_text "couldn't find the catalog"; then
+        echo "Welcome: catalog reachable after Connect (attempt $attempt)" >&2
+        break
+      fi
+      echo "Welcome: catalog still unreachable after Connect (attempt $attempt)" >&2
+    done
+    if ui_has_text "couldn't find the catalog"; then
+      echo "FAIL: catalog unreachable from the emulator after Connect retries" >&2
+      adb logcat -d -t 500 2>/dev/null | grep -i -E 'raddstream|UnknownHost|ConnectException|SocketTimeout|SSL|Handshake|AndroidRuntime|FATAL' > "$OUT/welcome-unreachable-logcat.txt" || true
+      {
+        echo "--- ping raddstream.duckdns.org ---"
+        adb shell ping -c 1 -W 5 raddstream.duckdns.org 2>&1 || true
+        echo "--- curl posts from the emulator ---"
+        adb shell curl -s -o /dev/null -w "posts:%{http_code}\n" --max-time 15 "https://raddstream.duckdns.org/api/v1/posts?limit=1" 2>&1 || true
+      } > "$OUT/welcome-network-probe.txt" 2>&1 || true
+      adb exec-out screencap -p > "$OUT/welcome-unreachable.png" 2>/dev/null || true
+      cp /tmp/ui.xml "$OUT/welcome-unreachable-ui.xml" 2>/dev/null || true
+      exit 1
+    fi
+  fi
+  tap_text "Continue" || { echo "FAIL: setup 'Continue' never appeared" >&2; exit 1; }
+fi
 sleep 10
 screenshot "03-home.png"
 adb shell input swipe 540 1600 540 600 400
