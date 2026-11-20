@@ -269,6 +269,7 @@ class FlowMockupTest {
         setupContent(
             state = SetupUiState(isConnected = true),
             onConnected = { connected++ },
+            onContinue = { connected++ },
         )
         compose.onNodeWithText("Continue").assertIsEnabled().performClick()
         assertEquals(1, connected)
