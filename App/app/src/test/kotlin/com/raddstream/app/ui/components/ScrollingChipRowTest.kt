@@ -188,12 +188,18 @@ class ScrollingChipRowTest {
         // an item flush. (The earlier note claiming the default 300ms
         // swipe "never produced a fling" was unproven: the five-chip
         // runs were drag-pinned at maxScroll, where a fling would have
-        // been indistinguishable from no fling.) If this still settles
-        // nonzero, the fling distance — not the velocity — is the
-        // remaining variable, and the test needs a shorter swipe.
+        // been indistinguishable from no fling.) Run 44656557077 (200ms)
+        // still settled nonzero at offset 36: the snap had not finished
+        // when the fixed 3000ms advance + waitForIdle read the state.
+        // So the test now polls for the SETTLED snapped state with
+        // waitUntil (up to 10s of virtual time) instead of assuming a
+        // fixed duration covers the decay + snap spring. If waitUntil
+        // times out, the snap never settles under Robolectric and the
+        // test needs a programmatic fling.
         //
-        // A fling + snap takes virtual time: advance well past any fling
-        // duration so the assertions read the SETTLED state, not a
+        // A fling + snap takes virtual time: the 3000ms advance below
+        // starts the decay, and waitUntil then polls until the snap
+        // spring settles — the assertions read the SETTLED state, not a
         // mid-flight sample. The index assertion keeps the test honest:
         // a swipe that moved nothing would also read offset 0.
         val state = LazyListState()
@@ -219,6 +225,27 @@ class ScrollingChipRowTest {
         compose.onNodeWithTag("test-snap-row").performTouchInput { swipeLeft(durationMillis = 200) }
         compose.mainClock.advanceTimeBy(3000)
         compose.waitForIdle()
+        // Diagnostic, temporary — remove once this test is green. Prints
+        // the state after 3s of virtual time into the test XML's
+        // system-out: if waitUntil below times out, this shows whether
+        // the list was still scrolling or had settled at a non-snap
+        // position.
+        println(
+            "SNAP-DEBUG index=${state.firstVisibleItemIndex} " +
+                "offset=${state.firstVisibleItemScrollOffset} " +
+                "scrolling=${state.isScrollInProgress} " +
+                "visible=" + state.layoutInfo.visibleItemsInfo.joinToString(",") {
+                    "${it.index}@${it.offset}"
+                },
+        )
+        // Poll for the settled snapped state instead of asserting after
+        // a fixed advance: waitUntil advances the test clock while it
+        // polls, so a slow decay + snap spring gets the virtual time it
+        // needs. The index assertion keeps the test honest: a swipe
+        // that moved nothing would also read offset 0.
+        compose.waitUntil(timeoutMillis = 10_000) {
+            state.firstVisibleItemIndex > 0 && state.firstVisibleItemScrollOffset == 0
+        }
         assertTrue(state.firstVisibleItemIndex > 0)
         assertEquals(0, state.firstVisibleItemScrollOffset)
     }
