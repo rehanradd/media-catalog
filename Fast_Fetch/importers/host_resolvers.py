@@ -232,10 +232,15 @@ decrypt on device, and serve plaintext to Media3 — with quota then applying
 per user's own IP. That needs a new API contract to deliver the fragment key
 to the app without leaking it through a public play_url (the classifier
 already bars mega from `kind='file'` banking for exactly that reason) plus
-an app-side decryptor: a new app + API feature, not a resolver. Until an
-owner/coordinator decision commissions that, `mega` rows stay
-`download_only` (as the app's golden vectors already classify them) and no
-code here pretends to resolve them.
+an app-side decryptor: a new app + API feature, not a resolver. The owner
+commissioned exactly that on 2026-11-20 (Phase C decision, client-side
+decrypt, no paid Pro): `verify_mega_live` below asks the g API whether the
+node is still alive and passes the encrypted attributes + size back for the
+app to check the key against — the server never sees the key, never returns
+the ciphertext URL, and never banks a mega row. `mega` rows stay
+`download_only` for any client that cannot decrypt (the golden vectors
+already classify them that way); a client that declares it can decrypt is
+served the descriptor instead.
 
 HUBCLOUD — THE DRIVE PAGE IS A DOOR, NOT A FILE
 -------------------------------------------------
@@ -285,6 +290,82 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+
+
+def mega_parse_url(url: str) -> dict | None:
+    """Split a MEGA file URL into its node id and link key.
+
+    ``https://mega.nz/file/<node_id>#<key>`` — the ``#`` fragment is never
+    sent to any server, which is why the key can travel in the URL at all.
+    Returns ``{"node_id": ..., "key": ...}`` or None when the URL is not a
+    MEGA file link. A folder link (``/folder/``) is not a file and answers
+    None, as does a bare ``mega.nz`` domain with no file path.
+    """
+    if not url:
+        return None
+    match = re.search(r"""mega\.nz/file/([A-Za-z0-9_-]+)#([A-Za-z0-9_-]+)""", url)
+    if not match:
+        return None
+    return {"node_id": match.group(1), "key": match.group(2)}
+
+
+def verify_mega_live(node_id: str, fetch=None) -> dict:
+    """Ask MEGA's public API whether one file node is still alive.
+
+    ``POST https://g.api.mega.co.nz/cs`` with ``[{"a": "g", "g": 1,
+    "p": "<node_id>"}]`` — no account, no CAPTCHA. The answer carries the
+    ciphertext URL (``g``), the encrypted attributes (``at``) and the size
+    (``s``); the server keeps NONE of the URL (the app mints it itself, so
+    quota accrues on the user's own IP, not the shared server IP) and
+    passes ``at`` + ``s`` through opaquely — the app needs ``at`` to check
+    the key before playing, and ``at`` is useless without the key.
+
+    Returns ``{"ok": True, "size": int, "attrs": str}`` on a live file, or
+    ``{"ok": False, "reason": "dead" | "quota" | "network"}``:
+
+    * ``dead`` — the API answered -9 (not found), -11 (access violation)
+      or -16 (banned uploader), or the node is gone;
+    * ``quota`` — the API answered -18 (over quota) or HTTP 509: MEGA's
+      free transfer budget for this connection is used up (~5 GB / 6 h);
+    * ``network`` — no answer at all (a transport failure on our side).
+
+    ``fetch`` is the ``http_request``-shaped callable, injected by tests.
+    """
+    _fetch = fetch or http_request
+    try:
+        payload = json.dumps([{"a": "g", "g": 1, "p": node_id}]).encode("utf-8")
+        status, body, _headers, _url = _fetch(
+            "https://g.api.mega.co.nz/cs", method="POST", data=payload,
+            headers={"Content-Type": "application/json"}, timeout=10.0)
+    except Exception:  # noqa: BLE001 — any fetch failure is "network"
+        return {"ok": False, "reason": "network"}
+    if status == 0:
+        return {"ok": False, "reason": "network"}
+    if status == 509:
+        return {"ok": False, "reason": "quota"}
+    if status != 200:
+        return {"ok": False, "reason": "dead"}
+    try:
+        text = body.decode("utf-8") if isinstance(body, bytes) else body
+        answer = json.loads(text)
+    except Exception:  # noqa: BLE001 — an unparsable 200 is not a live file
+        return {"ok": False, "reason": "dead"}
+    if isinstance(answer, int):
+        # The API answers a bare negative integer on error: -9 not found,
+        # -11 access violation, -16 banned uploader, -18 over quota.
+        if answer == -18:
+            return {"ok": False, "reason": "quota"}
+        return {"ok": False, "reason": "dead"}
+    if not isinstance(answer, dict) or not answer.get("g"):
+        return {"ok": False, "reason": "dead"}
+    try:
+        size = int(answer.get("s") or 0)
+    except (TypeError, ValueError):
+        size = 0
+    if size <= 0:
+        return {"ok": False, "reason": "dead"}
+    return {"ok": True, "size": size, "attrs": answer.get("at") or ""}
+
 
 BASE_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 USER_AGENT = (

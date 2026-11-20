@@ -444,7 +444,7 @@ def score(link, band: str = UNSPECIFIED, priority_key: str | None = None) -> int
     return max(value, 0)
 
 
-def playable(link, band: str = UNSPECIFIED) -> bool:
+def playable(link, band: str = UNSPECIFIED, mega_decrypt: bool = False) -> bool:
     """Can our one player actually start this copy?
 
     An iframe is excluded even though it is a real link: it is only viewable by
@@ -452,7 +452,13 @@ def playable(link, band: str = UNSPECIFIED) -> bool:
     to remove. ``url`` counts because our resolver turns it into a stream.
     A state of dead/broken/gone/expired answers False whatever the kind or the
     projected ``playable`` boolean claims — a verdict measured against the
-    endpoint outranks a label written at ingest (audit critical 10)."""
+    endpoint outranks a label written at ingest (audit critical 10).
+
+    ``mega_decrypt`` names a client that declared it can decrypt MEGA copies
+    on-device (POST /api/v2/play ``mega_decrypt``): such a copy plays through
+    the app's decrypting proxy, so it counts as playable for that client —
+    and never for one that did not declare it, whose static verdict below
+    still says False."""
     row = link if isinstance(link, dict) else dict(link)
     state = str(row.get("status") or row.get("state") or "").lower()
     if state in UNPLAYABLE_STATES or state in QUARANTINED_STATES:
@@ -460,12 +466,14 @@ def playable(link, band: str = UNSPECIFIED) -> bool:
     kind = str(row.get("kind") or row.get("playback_type") or "").lower()
     if kind in ("iframe", "embed", "external"):
         return False
+    if mega_decrypt and str(row.get("decrypt") or "").strip().lower() == "aes-ctr":
+        return True
     if row.get("playable") is not None and isinstance(row.get("playable"), bool):
         return bool(row["playable"]) and kind != "download"
     return kind in ("direct", "url", "resolve") or bool(row.get("streamable"))
 
 
-def for_release(release, links) -> dict:
+def for_release(release, links, mega_decrypt: bool = False) -> dict:
     """Collapse one print's links into one winner per band.
 
     Returns ``{"tiers": [...], "auto": {...}}`` where each tier is exactly what a
@@ -500,7 +508,7 @@ def for_release(release, links) -> dict:
         ((score(link, band, pkey), index, link) for index, link in enumerate(candidates)),
         key=lambda item: (-item[0], item[1]))
     winner = scored[0]
-    play_winner = next((item for item in scored if playable(item[2], band)), None)
+    play_winner = next((item for item in scored if playable(item[2], band, mega_decrypt=mega_decrypt)), None)
     # The print's stored audio languages — the rung's own words for what you
     # will hear, never a title-guessed language. Empty when the column is
     # empty: the row then shows no audio line rather than an invented one.
@@ -541,7 +549,7 @@ def for_release(release, links) -> dict:
     # rather than discarded (zero data loss). A play tier only fails over to
     # something that plays; a download-only tier fails over to other copies.
     pool = [item[2] for item in scored
-            if item is not chosen and (playable(item[2], band) if play_winner else True)]
+            if item is not chosen and (playable(item[2], band, mega_decrypt=mega_decrypt) if play_winner else True)]
     tier["backups"] = pool[:BACKUP_LIMIT]
     auto = {"band": band, "playable": bool(play_winner)} if play_winner else None
     return {"tiers": [tier], "auto": auto}
@@ -609,7 +617,7 @@ def _same_link(left, right) -> bool:
     return False
 
 
-def merge(ladders) -> dict:
+def merge(ladders, mega_decrypt: bool = False) -> dict:
     """Merge per-print ladders into one quality switch for the whole title.
 
     Two prints in the same band (the usual case: the same movie scraped from two
@@ -641,7 +649,7 @@ def merge(ladders) -> dict:
     for key, tier in by_band.items():
         rest = [item for item in offered[key] if not _same_link(item, tier["link"])]
         if tier["playable"]:
-            rest = [item for item in rest if playable(item, key)]
+            rest = [item for item in rest if playable(item, key, mega_decrypt=mega_decrypt)]
         rest.sort(key=lambda item: (-score(item, key), str(item.get("stream_id") or "")))
         tier["backups"] = rest[:BACKUP_LIMIT]
     tiers = sorted(by_band.values(), key=lambda tier: band_rank(tier["band"]))

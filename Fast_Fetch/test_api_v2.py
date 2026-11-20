@@ -2913,6 +2913,48 @@ ROUTE_TESTS = {
     "enrich": ("V2LiveFillTests", "test_enrich_fills_a_work_and_persists"),
 }
 
+class V2PlayMegaDecryptTests(V2WireFixture):
+    """Client-side decrypt (mega): POST /api/v2/play serves a mega-only
+    print as playable only when the caller declares `mega_decrypt: true`.
+
+    The corpus holds the case already: "Brave Orchard" is a single
+    `mirror_download` link (`service='mega'`, kind `download_only`)."""
+
+    def _mega_release(self):
+        return self._one(
+            "SELECT r.id FROM cat_releases r JOIN cat_links l ON l.release_id = r.id"
+            " WHERE l.resource_id = 'BO-MIRROR'")
+
+    def test_mega_only_print_is_download_only_without_the_flag(self):
+        reply = self.post("/api/v2/play", {"release_id": self._mega_release()})
+        self.assertIn(reply.status, (200, 409))
+        if reply.status == 200:
+            self.assertEqual(reply.json["reason"], "download_only")
+            self.assertFalse(reply.json["playable"])
+
+    def test_mega_only_print_plays_with_the_flag(self):
+        reply = self.post("/api/v2/play",
+                          {"release_id": self._mega_release(),
+                           "mega_decrypt": True})
+        self.assertEqual(reply.status, 200, reply.json)
+        self.assertTrue(reply.json["playable"])
+        self.assertIsNone(reply.json["reason"])
+        winner = reply.json["tiers"][0]["link"]
+        self.assertEqual(winner.get("decrypt"), "aes-ctr")
+        self.assert_clean(reply.json, label="mega play")
+
+    def test_a_string_true_does_not_enable_mega_decrypt(self):
+        # Only an explicit JSON `true` counts: a client that cannot
+        # decrypt on-device must never be served a mega winner, whatever
+        # it sends.
+        reply = self.post("/api/v2/play",
+                          {"release_id": self._mega_release(),
+                           "mega_decrypt": "true"})
+        self.assertIn(reply.status, (200, 409))
+        if reply.status == 200:
+            self.assertFalse(reply.json["playable"])
+
+
 _TEST_CLASSES = {name: obj for name, obj in list(globals().items())
                  if isinstance(obj, type) and issubclass(obj, unittest.TestCase)
                  and obj is not unittest.TestCase}

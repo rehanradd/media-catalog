@@ -297,4 +297,57 @@ class V2CatalogWireTest {
         assertEquals(1500000000L, resp.fileSizeBytes)
         assertEquals(3600L, resp.expiresIn)
     }
+
+    @Test
+    fun `a decrypting link decodes its scheme and the ladder plays it`() {
+        val link = gson.fromJson(
+            """{"link_id": 9, "stream_id": "s.mega", "playability": "download",
+                "playable": false, "group": 1, "state": "active", "dead": false,
+                "decrypt": "aes-ctr"}""",
+            WireDetailLink::class.java,
+        )
+        assertEquals("aes-ctr", link.decrypt)
+        // The server says this copy is download-only — but the client can
+        // decrypt it, so the ladder offers Play, not only Keep.
+        val groups = buildOptionGroups(
+            listOf(WireDetailPrint(releaseId = 1L, workId = 1L, resolution = "1080p", links = listOf(link))),
+            baseUrl,
+        )
+        assertEquals(1, groups.size)
+        val tier = groups.first().tiers.first()
+        assertEquals("1080p", tier.band)
+        assertEquals("play", tier.mode)
+        assertTrue(tier.playable)
+        assertEquals("aes-ctr", tier.link?.decrypt)
+    }
+
+    @Test
+    fun `a play candidate carries its decrypt scheme into the rendition`() {
+        val candidate = gson.fromJson(
+            """{"link_id": 5, "stream_id": "s.mega", "playable": true, "decrypt": "aes-ctr"}""",
+            WirePlayCandidate::class.java,
+        )
+        assertEquals("aes-ctr", candidate.toDomain(baseUrl, "1080p").decrypt)
+    }
+
+    @Test
+    fun `a resolve answer carries the decrypt fields`() {
+        val resp = gson.fromJson(
+            """{"ok": true, "stream_id": "s.mega", "decrypt": "aes-ctr",
+                "decrypt_node_id": "78QnEaBK",
+                "decrypt_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}""",
+            WireResolveResponse::class.java,
+        )
+        assertEquals("aes-ctr", resp.decrypt)
+        assertEquals("78QnEaBK", resp.decryptNodeId)
+        assertEquals("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", resp.decryptKey)
+    }
+
+    @Test
+    fun `the play request declares the decrypt capability, and only when set`() {
+        assertTrue(gson.toJson(WirePlayRequest(releaseId = 7, megaDecrypt = true))
+            .contains("\"mega_decrypt\":true"))
+        assertFalse(gson.toJson(WirePlayRequest(releaseId = 7))
+            .contains("\"mega_decrypt\":true"))
+    }
 }

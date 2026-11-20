@@ -959,6 +959,14 @@ def _link_view(row, evidence: dict | None, secret: str = "") -> dict:
         "last_evidence_at": measured.get("probed_at") if measured else link.get("last_evidence_at"),
         "probe_error": measured.get("error") if measured else None,
     }
+    if str(link.get("service") or "").strip().lower() == "mega":
+        # Client-side decrypt (mega): the only marker the app needs to know
+        # this copy plays through its decrypting proxy instead of a plain
+        # redirect. Derived from the row's own `service` — no site, no host
+        # name, no URL — and only ever the scheme "aes-ctr": a client that
+        # does not know the word ignores it, and the copy stays
+        # download-only for it. Non-mega views are byte-identical to before.
+        view["decrypt"] = "aes-ctr"
     return view
 
 
@@ -2734,7 +2742,7 @@ def _segments_for_play(conn, *, work_id, season, episode, is_movie, coverage_typ
 
 @public_edge
 def play_bundle(conn, *, release_id, episode_id=None, include_adult=False,
-                legacy_release_id=True) -> dict:
+                legacy_release_id=True, mega_decrypt: bool = False) -> dict:
     """Ordered failover candidates for one print (optionally for one episode of it).
 
     Order: streamable best-first (rank_score), then alternates, then links needing a
@@ -2848,7 +2856,10 @@ def play_bundle(conn, *, release_id, episode_id=None, include_adult=False,
     alternates = [l for l in candidates if l["group"] in (_GROUP_RESOLVE, _GROUP_WEBVIEW)]
     download_options = [l for l in candidates
                         if l["group"] == _GROUP_DOWNLOAD or l["playability"] == "download"]
-    playable = [l for l in candidates if not l["dead"] and l["group"] <= _GROUP_RESOLVE]
+    playable = [l for l in candidates
+                if not l["dead"] and (l["group"] <= _GROUP_RESOLVE
+                                      or (mega_decrypt
+                                          and str(l.get("decrypt") or "").strip().lower() == "aes-ctr"))]
     protocol = None
     if stream_candidates:
         protocol = stream_candidates[0]["protocol"]
@@ -2858,7 +2869,7 @@ def play_bundle(conn, *, release_id, episode_id=None, include_adult=False,
     ladder = tiers.for_release(
         {"quality": print_view.get("resolution") or print_view.get("quality_label"),
          "codec": print_view.get("codec"), "size": print_view.get("size_bytes")},
-        candidates)
+        candidates, mega_decrypt=mega_decrypt)
     for tier in ladder["tiers"]:
         # Same rule as the v1 ladder: the runner-ups leave as handles only, so a
         # silent failover never widens what one response discloses.

@@ -628,6 +628,16 @@ data class StreamResponse(
     /** Seconds our handle stays valid; null = durable. */
     @SerializedName("expires_in")
     val expiresIn: Long? = null,
+    /** Client-side decrypt scheme: "aes-ctr" when this copy's bytes are ciphertext
+     * the app must decrypt on-device. Null/absent = plain bytes. The value names
+     * the scheme, never the hoster. */
+    val decrypt: String? = null,
+    /** Opaque node id for the decrypting proxy to mint the ciphertext URL. */
+    @SerializedName("decrypt_node_id")
+    val decryptNodeId: String? = null,
+    /** The link key, memory-only: never logged, never persisted, never banked. */
+    @SerializedName("decrypt_key")
+    val decryptKey: String? = null,
     val cached: Boolean? = null,
     val refreshed: Boolean? = null,
     val error: String? = null,

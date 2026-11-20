@@ -360,6 +360,10 @@ data class WireDetailLink(
     val scoreScale: String? = null,
     @SerializedName("last_evidence_at")
     val lastEvidenceAt: String? = null,
+    /** Client-side decrypt scheme ("aes-ctr") when this copy's bytes are
+     * ciphertext the app must decrypt on-device. Null/absent = plain bytes.
+     * The value names the scheme, never the hoster. */
+    val decrypt: String? = null,
 ) {
     /**
      * A v1-shaped [SourceDetail]: the detail screen, the player and the
@@ -499,6 +503,12 @@ data class WireResolveResponse(
     @SerializedName("expires_in")
     val expiresIn: Long? = null,
     val refreshed: Boolean? = null,
+    /** Client-side decrypt scheme ("aes-ctr"), carried into [StreamResponse]. */
+    val decrypt: String? = null,
+    @SerializedName("decrypt_node_id")
+    val decryptNodeId: String? = null,
+    @SerializedName("decrypt_key")
+    val decryptKey: String? = null,
 )
 
 /**
@@ -683,13 +693,22 @@ internal fun buildOptionGroups(prints: List<WireDetailPrint>, baseUrl: String): 
             val links = bandPrints.flatMap { print ->
                 print.links.map { link -> print to link }
             }.filter { (_, link) -> !link.streamId.isNullOrBlank() }
-            val playable = links.filter { (_, link) -> link.dead != true && link.playable != false }
+            // A link is playable when the server says so — or when it carries a
+            // client-side decrypt scheme this app can run ("aes-ctr"): the
+            // server's `playable` stays false for such a copy, because an old
+            // client that cannot decrypt must never be offered it.
+            val playable = links.filter { (_, link) ->
+                (link.dead != true && link.playable != false) ||
+                    link.decrypt?.lowercase() == "aes-ctr"
+            }
             val ordered = (playable.ifEmpty { links }).sortedWith(
                 compareByDescending<Pair<WireDetailPrint, WireDetailLink>> { (_, link) -> link.rankScore ?: 0 }
                     .thenByDescending { (_, link) -> link.speedMbps ?: 0.0 },
             )
             val winner = ordered.firstOrNull()
-            val winnerPlayable = winner != null && winner.second.dead != true && winner.second.playable != false
+            val winnerPlayable = winner != null && winner.second.dead != true &&
+                (winner.second.playable != false ||
+                    winner.second.decrypt?.lowercase() == "aes-ctr")
             LadderTier(
                 band = band,
                 quality = winner?.first?.resolution,
@@ -710,6 +729,7 @@ internal fun buildOptionGroups(prints: List<WireDetailPrint>, baseUrl: String): 
                         fileSizeBytes = link.sizeBytes,
                         mimeType = link.contentType,
                         label = link.label,
+                        decrypt = link.decrypt,
                     )
                 },
                 backupHandles = ordered.drop(1).mapNotNull { (_, link) -> link.streamId },

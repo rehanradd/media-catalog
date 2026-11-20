@@ -346,6 +346,13 @@ def record_resolved_cache(conn: sqlite3.Connection, link_id: int,
     url = data.get("url")
     if not url:
         return None
+    if str(data.get("decrypt") or "").strip().lower() == "aes-ctr":
+        # Client-side decrypt (mega): the copy has no playable URL to bank —
+        # the ciphertext URL is useless without the key, and the key must
+        # never be stored. A mega resolve carries no `url` today so the
+        # check above already refuses it; this guard makes the law
+        # independent of that, so a future shape cannot bank it by accident.
+        return None
     if data.get("stale"):
         # v1's frozen-URL envelope (success+stale): a URL we could NOT
         # re-resolve is never bankable, whoever the caller is. The pool's

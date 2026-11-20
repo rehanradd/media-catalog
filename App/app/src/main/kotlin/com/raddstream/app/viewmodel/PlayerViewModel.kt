@@ -96,6 +96,8 @@ import com.raddstream.app.data.LocalResumeRepository
 import com.raddstream.app.data.isLocalResumeUri
 import com.raddstream.app.data.ServerSettingsRepository
 import com.raddstream.app.data.cache.ConnectivityProbe
+import com.raddstream.app.data.cache.MegaProxyHolder
+import com.raddstream.app.data.cache.MegaStartError
 import com.raddstream.app.data.cache.NetworkClass
 import com.raddstream.app.data.downloads.SmartDownloadsRunner
 import com.raddstream.app.data.local.WatchHistoryDao
@@ -1025,6 +1027,37 @@ class PlayerViewModel @Inject constructor(
     // ── Play entry points ────────────────────────────────────────────────────────
 
     /**
+     * The decrypting-copy start: resolve the descriptor for [streamId], start
+     * the decrypting proxy, and return the loopback URL the player should play.
+     * Null when the copy cannot start — the reason is already shown to the
+     * viewer as plain words, so the caller simply does not begin a bundle.
+     * The proxy start mints and fetches over the network, so it runs on IO,
+     * never on the main thread the play entry runs on.
+     */
+    private suspend fun resolveDecryptPlayUrl(streamId: String): String? {
+        val descriptor = try {
+            catalogRepository.resolveStream(streamId)
+        } catch (_: Exception) {
+            null
+        }
+        if (descriptor == null || descriptor.decrypt?.lowercase() != "aes-ctr") {
+            _events.emit(PlayerEvent.Message("This copy could not be opened right now. Try another quality."))
+            return null
+        }
+        val loopback = withContext(Dispatchers.IO) { MegaProxyHolder.start(descriptor) }
+        if (loopback != null) return loopback
+        val message = when (MegaProxyHolder.lastError) {
+            MegaStartError.Quota -> "MEGA's free limit is used up for now — this copy needs a few hours before it can play again. Try another quality."
+            MegaStartError.Dead -> "This copy is gone from MEGA. Try another quality."
+            MegaStartError.BadKey -> "This copy could not be opened. Try another quality."
+            MegaStartError.Network -> "MEGA did not answer right now. Check your connection and try again."
+            MegaStartError.NotMega, null -> "This copy could not be opened right now. Try another quality."
+        }
+        _events.emit(PlayerEvent.Message(message))
+        return null
+    }
+
+    /**
      * Route path `player/{streamId}/{title}`: one opaque handle of ours. The address the
      * player loads is our own redirector for that handle, built here — never a URL that
      * came from a scraper, and never one that names where the file lives.
@@ -1052,14 +1085,23 @@ class PlayerViewModel @Inject constructor(
                 )
                 return@launch
             }
-            val playUrl = withVipPass(
-                streamRedirectUrl(apiProvider.currentBaseUrl(), streamId),
-                // Session 123: the VIP pass rides the URL because the player
-                // follows the 302 outside this process — a header cannot ride
-                // along, and the sync key must never be handed to a file host
-                // on a redirect. A guest or free account sends no pass.
-                syncAccountRepository.currentVipPass(),
-            )
+            val playUrl = if (store.peekDecrypt(streamId)?.lowercase() == "aes-ctr") {
+                // Client-side decrypt: this copy's bytes are ciphertext, and the
+                // redirector has nothing to serve for it. Resolve the descriptor,
+                // start the decrypting proxy, and play its loopback URL. A start
+                // failure is a plain-words message, never a play of ciphertext —
+                // and no bundle begins, so the player never sits on a dead rung.
+                resolveDecryptPlayUrl(streamId) ?: return@launch
+            } else {
+                withVipPass(
+                    streamRedirectUrl(apiProvider.currentBaseUrl(), streamId),
+                    // Session 123: the VIP pass rides the URL because the player
+                    // follows the 302 outside this process — a header cannot ride
+                    // along, and the sync key must never be handed to a file host
+                    // on a redirect. A guest or free account sends no pass.
+                    syncAccountRepository.currentVipPass(),
+                )
+            }
             // Runner-ups of this rung, staged by the detail screen: handles only, so a
             // 403 mid-play costs one silent hop instead of a dialog and a quality drop.
             // The manifest MIME, staged by the Live TV screen for a channel: without
@@ -3195,6 +3237,9 @@ class PlayerViewModel @Inject constructor(
         settingsJob?.cancel()
         bingeResolveJob?.cancel()
         bingePrefetchJob?.cancel()
+        // The decrypting proxy holds the link key in memory: dropping the
+        // player drops the key with it, and the loopback socket closes.
+        MegaProxyHolder.stop()
         _player.value = null
         controller?.removeListener(playerListener)
         controller?.release()

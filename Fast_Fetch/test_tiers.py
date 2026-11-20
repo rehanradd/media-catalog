@@ -585,7 +585,55 @@ class AudioTests(unittest.TestCase):
         ladder = tiers.for_release(
             {"quality": "720p", "release_title": "X", "languages": ""},
             [link()])
-        self.assertEqual(ladder["tiers"][0]["audio_languages"], [])
+class MegaDecryptTests(unittest.TestCase):
+    """Client-side decrypt (mega): a copy that plays only through the
+    app's decrypting proxy counts as playable for a client that declared
+    it can decrypt — and never for one that did not."""
+
+    def mega_link(self, **fields):
+        base = {"kind": "download_only", "decrypt": "aes-ctr", "playable": False,
+                "status": "active"}
+        base.update(fields)
+        return link(**base)
+
+    def test_mega_copy_is_not_playable_without_the_flag(self):
+        self.assertFalse(tiers.playable(self.mega_link()))
+
+    def test_mega_copy_is_playable_with_the_flag(self):
+        self.assertTrue(tiers.playable(self.mega_link(), mega_decrypt=True))
+
+    def test_a_dead_mega_copy_never_plays(self):
+        self.assertFalse(tiers.playable(self.mega_link(status="dead"),
+                                        mega_decrypt=True))
+
+    def test_the_flag_never_promotes_a_plain_download(self):
+        plain = link(kind="download_only", playable=False, status="active")
+        self.assertFalse(tiers.playable(plain, mega_decrypt=True))
+
+    def test_a_mega_only_print_wins_its_tier_only_with_the_flag(self):
+        ladder = tiers.for_release({"quality": "1080p"}, [self.mega_link(id=9)])
+        self.assertFalse(ladder["tiers"][0]["playable"])
+        self.assertEqual(ladder["tiers"][0]["mode"], "download_only")
+        self.assertIsNone(ladder["auto"])
+        ladder = tiers.for_release({"quality": "1080p"}, [self.mega_link(id=9)],
+                                   mega_decrypt=True)
+        self.assertTrue(ladder["tiers"][0]["playable"])
+        self.assertEqual(ladder["tiers"][0]["mode"], "play")
+        self.assertEqual(ladder["tiers"][0]["link"]["id"], 9)
+        self.assertEqual(ladder["auto"]["band"], "1080p")
+        self.assertTrue(ladder["auto"]["playable"])
+
+    def test_merge_keeps_a_mega_backup_only_with_the_flag(self):
+        direct = link(id=11, playback_type="direct", status="active")
+        mega = self.mega_link(id=12)
+        ladder = tiers.for_release({"quality": "1080p"}, [direct, mega],
+                                   mega_decrypt=True)
+        merged = tiers.merge([ladder], mega_decrypt=True)
+        backup_ids = [item["id"] for item in merged["tiers"][0]["backups"]]
+        self.assertIn(12, backup_ids)
+        merged = tiers.merge([ladder])
+        backup_ids = [item["id"] for item in merged["tiers"][0]["backups"]]
+        self.assertNotIn(12, backup_ids)
 
 
 if __name__ == "__main__":

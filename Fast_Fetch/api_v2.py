@@ -2221,7 +2221,7 @@ def _same_coverage_sibling_prints(conn, named_release_id, *, operator):
     return []
 
 
-def _release_has_unfailed_candidate(conn, release_id) -> bool:
+def _release_has_unfailed_candidate(conn, release_id, mega_decrypt: bool = False) -> bool:
     """Session 113: does this print hold a playable-classified copy the
     negative cache has NOT freshly failed?
 
@@ -2273,7 +2273,18 @@ def _release_has_unfailed_candidate(conn, release_id) -> bool:
             # playable from this bundle, whatever its group claims.
             continue
         if catalog_api._link_group(row) > catalog_api._GROUP_RESOLVE:
-            continue
+            # A mega copy is download-only by group, but it plays through
+            # the app's decrypting proxy for a client that declared it
+            # can decrypt — so it counts as an unfailed candidate for
+            # that client, and never for one that did not declare it.
+            # The row is recognised by its mega.nz URL, not by a service
+            # column: `cat_links.service` is not guaranteed on every table
+            # (older/test fixtures lack it), and the URL is already
+            # selected — the same test `fast_fetch._is_mega_row` uses.
+            if not (mega_decrypt
+                    and ("mega.nz" in str(row["final_url"] or "").lower()
+                         or "mega.nz" in str(row["url"] or "").lower())):
+                continue
         if str(row["state"]) in tiers.UNPLAYABLE_STATES:
             continue
         failed_at = row["last_failed_at"]
@@ -2585,7 +2596,7 @@ def _band_order(conn, release_ids):
 
 
 def _play_first_playable(conn, release_ids, *, episode_id, include_adult,
-                         is_vip=False, operator=False):
+                         is_vip=False, operator=False, mega_decrypt: bool = False):
     """Session 109: walk a work/episode's prints, best first, cat ids only.
 
     Returns the first bundle with a playable candidate. When no print
@@ -2625,11 +2636,13 @@ def _play_first_playable(conn, release_ids, *, episode_id, include_adult,
     for release_id in release_ids:
         bundle = catalog_api.play_bundle(
             conn, release_id=int(release_id), episode_id=episode_id,
-            include_adult=include_adult, legacy_release_id=False)
+            include_adult=include_adult, legacy_release_id=False,
+            mega_decrypt=mega_decrypt)
         if first is None:
             first = bundle
         if (bundle.get("ok") and bundle.get("playable")
-                and _release_has_unfailed_candidate(conn, int(release_id))
+                and _release_has_unfailed_candidate(conn, int(release_id),
+                                                    mega_decrypt=mega_decrypt)
                 and not _bundle_is_gated(conn, bundle, is_vip=is_vip,
                                          operator=operator)):
             if first_acceptable is None:
@@ -2825,6 +2838,10 @@ def route_play(handler, conn, body: dict, *, rid: str, path: str, operator: bool
     # The caller's VIP capability, read once: the gate below is the same
     # question at three points, and it must not change mid-route.
     is_vip = _request_is_vip(handler.headers, query or {}, secret=secret)
+    # The caller's MEGA capability, read once like the VIP flag: only an
+    # explicit JSON `true` counts — a client that cannot decrypt on-device
+    # must never be served a mega winner, whatever it sends.
+    mega_decrypt = body.get("mega_decrypt") is True
     # Salaar (2026-11-12): a release_id in the body is a legacy id ONLY when
     # the caller says so. A v2 detail hands the app cat ids (its prints carry
     # `release_id` from `cat_releases`), and translating one as legacy
@@ -2885,7 +2902,8 @@ def route_play(handler, conn, body: dict, *, rid: str, path: str, operator: bool
         bundle = _play_first_playable(conn, candidate_ids,
                                       episode_id=episode_id,
                                       include_adult=bool(operator),
-                                      is_vip=is_vip, operator=operator)
+                                      is_vip=is_vip, operator=operator,
+                                      mega_decrypt=mega_decrypt)
     else:
         # Session 110: a bare release_id names one print — build its bundle
         # first (legacy translation applies to the NAMED print only) and
@@ -2901,7 +2919,8 @@ def route_play(handler, conn, body: dict, *, rid: str, path: str, operator: bool
         bundle = catalog_api.play_bundle(conn, release_id=int(release_id),
                                          episode_id=episode_id,
                                          include_adult=bool(operator),
-                                         legacy_release_id=legacy_release_id)
+                                         legacy_release_id=legacy_release_id,
+                                         mega_decrypt=mega_decrypt)
         named_cat_id = bundle.get("release_id") if bundle.get("ok") else None
         if named_cat_id is not None:
             # Session 110: walk when the named print has no playable
@@ -2915,7 +2934,8 @@ def route_play(handler, conn, body: dict, *, rid: str, path: str, operator: bool
             # is exactly today's, on the print the caller asked for.
             needs_walk = (not bundle.get("playable")
                           or not _release_has_unfailed_candidate(
-                              conn, int(named_cat_id)))
+                              conn, int(named_cat_id),
+                              mega_decrypt=mega_decrypt))
             if needs_walk:
                 # Player Fix v2: prefer a VERIFIED sibling when one exists
                 # (a copy with a fresh banked resolution); otherwise the
@@ -2930,11 +2950,12 @@ def route_play(handler, conn, body: dict, *, rid: str, path: str, operator: bool
                             conn, int(named_cat_id), operator=operator)):
                     sibling_bundle = catalog_api.play_bundle(
                         conn, release_id=sibling_id, episode_id=episode_id,
-                        include_adult=bool(operator), legacy_release_id=False)
+                        include_adult=bool(operator), legacy_release_id=False,
+                        mega_decrypt=mega_decrypt)
                     if (sibling_bundle.get("ok")
                             and sibling_bundle.get("playable")
                             and _release_has_unfailed_candidate(
-                                conn, sibling_id)
+                                conn, sibling_id, mega_decrypt=mega_decrypt)
                             and not _bundle_is_gated(
                                 conn, sibling_bundle, is_vip=is_vip,
                                 operator=operator)):

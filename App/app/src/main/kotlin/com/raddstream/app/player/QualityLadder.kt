@@ -49,6 +49,9 @@ data class QualityOption(
      * cannot be reclassified as "download only" by a caller that forgot the field.
      */
     val isProviderPage: Boolean,
+    /** Client-side decrypt scheme ("aes-ctr") when this rung's bytes are
+     * ciphertext the app must decrypt on-device. Null/absent = plain bytes. */
+    val decrypt: String? = null,
 ) {
     /** A rung you can only keep: the card says it out loud instead of failing quietly. */
     val downloadOnly: Boolean get() = !playsHere && !isProviderPage
@@ -347,6 +350,7 @@ object QualityLadder {
             resumable = winner.isResumableLink,
             copies = copies,
             audioLanguages = audioLanguages,
+            decrypt = winner.decrypt,
             streamCategory = streamCategoryFor(winner.mimeType, winner.bestUrl),
             // The ladder's copy of a link carries `kind` and no `playability` (that is the
             // `ladder_link` projection, not the full one), so the rung's page verdict comes from

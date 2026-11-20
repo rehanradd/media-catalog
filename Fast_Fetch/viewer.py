@@ -421,6 +421,17 @@ def download_descriptor(source_id: int, res: dict, base_url: str = "",
         "resumable": bool(res.get("is_resumable")),
         "expires_in": stream_expires_in(res),
     }
+    if str(res.get("decrypt") or "").strip().lower() == "aes-ctr":
+        # Client-side decrypt (mega): the descriptor carries the node id and
+        # the link key so the app can mint the ciphertext URL and decrypt
+        # on-device. No upstream URL is ever named here — the key is the only
+        # thing the app needs, and it travels only in this per-press answer.
+        # The field names are scheme-neutral on purpose: the public wire
+        # never names the hoster, so the value is the scheme ("aes-ctr"),
+        # not the service.
+        descriptor["decrypt"] = "aes-ctr"
+        descriptor["decrypt_node_id"] = res.get("decrypt_node_id")
+        descriptor["decrypt_key"] = res.get("decrypt_key")
     if base_url:
         descriptor["download_url"] = (f"{base_url.rstrip('/')}/api/v1/download"
                                       f"?id={token}&redirect=1")
@@ -8668,6 +8679,27 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         })
                     else:
                         self.send_json(res)
+            elif res.get("success") and str(res.get("decrypt") or "").strip().lower() == "aes-ctr":
+                # Client-side decrypt (mega): there is no URL to redirect
+                # to — the ciphertext URL is useless without the key, and
+                # the key travels only in this per-press descriptor. Both
+                # redirect values answer the descriptor; the app mints the
+                # ciphertext URL itself and decrypts on-device.
+                if not full:
+                    self.send_json({
+                        "success": True,
+                        "stream_id": source_ref,
+                        "kind": res.get("playback_type") or "url",
+                        "mime_type": res.get("mime_type"),
+                        "file_size_bytes": res.get("file_size_bytes"),
+                        "resumable": bool(res.get("is_resumable")),
+                        "expires_in": stream_expires_in(res),
+                        "decrypt": "aes-ctr",
+                        "decrypt_node_id": res.get("decrypt_node_id"),
+                        "decrypt_key": res.get("decrypt_key"),
+                    })
+                else:
+                    self.send_json(res)
             else:
                 self.send_json(res if full else _plain_stream_error(
                     "no_playable_source"), status=404)
@@ -8871,6 +8903,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self.send_header("Connection", "close")
                     self.end_headers()
                 elif full:
+                    self.send_json(res)
+                else:
+                    self.send_json(download_descriptor(int(source_id), res, base_url,
+                                                       token=source_ref))
+            elif res.get("success") and str(res.get("decrypt") or "").strip().lower() == "aes-ctr":
+                # Client-side decrypt (mega): no URL exists to redirect to.
+                # The descriptor carries the node id + key; the app downloads
+                # clear bytes through its decrypting proxy.
+                if full:
                     self.send_json(res)
                 else:
                     self.send_json(download_descriptor(int(source_id), res, base_url,

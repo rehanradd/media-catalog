@@ -7,14 +7,14 @@
 
 ## ✅ Open items — index (q3, 2026-10-30; pointers only)
 
-1. **This file is a pointer, not a history** 135 session files (132 dated + 3 undated) cover
+1. **This file is a pointer, not a history** 136 session files (133 dated + 3 undated) cover
 
    every one of them verbatim: [`checkpoints/README.md`](checkpoints/README.md). Nothing was
    deleted, reworded, or summarized. The count is `ls Fast_Fetch/checkpoints/*.md` minus `README.md`,
    and `Fast_Fetch/test_docs_invariants.py` checks the number written here against that listing — a
    stale count in an index is its own defect, so it is now a tested claim rather than prose.
-   (2026-10-30 rotation: 173; the 2026-10-20 → 2026-11-05 bulk, 128 files, moved to the trash bin
-   2026-11-17; `HANDOFF_audit.md` archived into `checkpoints/` instead.)
+   (2026-10-30 rotation: 173; 2026-10-20 → 2026-11-05 bulk (128), trashed 2026-11-17;
+   `HANDOFF_audit.md` archived.)
 2. Newest lane work, read those files directly: `checkpoints/README.md` lists them newest first.
 3. The old "Current Operational State" / "Next Action Items" text is **historic** — it predates
    tonight's work and must not be quoted as current. Kept verbatim in
@@ -71,6 +71,7 @@
 ## Rotated session history
 
 The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete index.
+- [2026-11-20 - Mega decrypt](checkpoints/20261120-mega-client-decrypt.md)
 - [2026-11-20 — Scale fix #1: per-user rate-limit keys](checkpoints/20261120-scale-real-ip.md): `client_ip()` reads `CF-Connecting-IP` from loopback only (X-Real-IP/XFF fallback unchanged); no limit numbers changed. nginx patch (22 Cloudflare `set_real_ip_from` + header, `nginx -t` ok on a patched copy of live config) applies at gate time. 56x503 on remote-config are cold-cache refills, not the gate restart. Gate 111/111 local; CI pending.
 - [2026-11-20 — Phase C SexTB importer: NO IMPORTER](checkpoints/20261120-phasec-sextb-importer.md): sextb.net alive but geo/IP-walled from all server egress (homepage/sitemap/video URL all 403 "Access Restricted"); no fetchable surface, so no importer built — hollow importers forbidden. Unblocks: real-browser HAR from an allowed region, WARP egress test, or earned clearance.
 - [2026-11-20 — Server slices S1/S2/S3](checkpoints/20261120-server-slices-s1s2s3.md): shared redact placeholder/genre source, v1 curates genres, print_label title fallback, gate-time backfill ready; full gate BLOCKED on hatch sandbox write block (EPERM).

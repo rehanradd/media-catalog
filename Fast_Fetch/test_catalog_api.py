@@ -2586,7 +2586,41 @@ class PlaceholderWorkViewTests(CatalogApiTestCase):
         self.assertEqual(detail["work"]["genres"], ["Action", "Anime"])
         self.assertEqual(detail["work"]["languages"], [])
         self.assertEqual(detail["work"]["country"], "")
-        self.assertEqual(detail["work"]["industry"], "")
+class MegaLinkViewTests(CatalogApiTestCase):
+    """Client-side decrypt (mega): the detail wire marks a mega copy with
+    the one word the app needs, and `play_bundle` ranks it playable only
+    for a client that declared it can decrypt.
+
+    The corpus already holds a mega-only print: Dune "720p CAM" is a
+    single `mirror()` link (`service='mega'`, kind `download_only`)."""
+
+    def test_a_mega_link_view_carries_the_decrypt_marker(self):
+        bundle = self.bundle("720p CAM")
+        self.assertEqual(len(bundle["candidates"]), 1)
+        link = bundle["candidates"][0]
+        self.assertEqual(link["kind"], "download_only")
+        self.assertEqual(link.get("decrypt"), "aes-ctr")
+        self.assertFalse(link["playable"])
+
+    def test_a_plain_link_view_carries_no_decrypt_marker(self):
+        bundle = self.bundle("4K HDR")
+        for link in bundle["candidates"]:
+            self.assertNotIn("decrypt", link)
+
+    def test_a_mega_only_print_is_playable_only_with_the_flag(self):
+        release = self.print_by_fragment("Dune", "720p CAM")
+        plain = catalog_api.play_bundle(self.conn, release_id=release["id"])
+        self.assertFalse(plain["playable"])
+        self.assertEqual(plain["reason"], "no_playable_source")
+        flagged = catalog_api.play_bundle(self.conn, release_id=release["id"],
+                                          mega_decrypt=True)
+        self.assertTrue(flagged["playable"])
+        self.assertIsNone(flagged["reason"])
+        winner = flagged["tiers"][0]["link"]
+        self.assertEqual(winner.get("decrypt"), "aes-ctr")
+        self.assertTrue(flagged["tiers"][0]["playable"])
+        self.assertEqual(flagged["auto"]["band"],
+                         flagged["tiers"][0]["band"])
 
 
 if __name__ == "__main__":

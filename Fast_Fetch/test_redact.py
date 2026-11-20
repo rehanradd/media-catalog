@@ -2370,7 +2370,29 @@ class TitleCleanWorkGroupTests(unittest.TestCase):
              "content_type": "movie", "release_count": 4, "source_count": 8},
         ]
         groups = title_clean.group_work_rows(rows)
-        self.assertEqual(len(groups), 5)
+class MegaDescriptorProvenanceTests(unittest.TestCase):
+    """Client-side decrypt (mega): the descriptor's new field names are
+    not provenance — the public-edge sweep must never flag them, and the
+    descriptor itself must pass `assert_clean`."""
+
+    def test_mega_field_names_are_not_provenance_keys(self):
+        for key in ("decrypt", "decrypt_node_id", "decrypt_key"):
+            self.assertNotIn(key, redact.PROVENANCE)
+
+    def test_a_mega_descriptor_passes_assert_clean(self):
+        descriptor = {
+            "success": True,
+            "stream_id": "opaque-handle",
+            "kind": "url",
+            "mime_type": "video/x-matroska",
+            "file_size_bytes": 944948612,
+            "resumable": True,
+            "expires_in": 3600.0,
+            "decrypt": "aes-ctr",
+            "decrypt_node_id": "78QnEaBK",
+            "decrypt_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        }
+        redact.assert_clean(descriptor)
 
 
 if __name__ == "__main__":

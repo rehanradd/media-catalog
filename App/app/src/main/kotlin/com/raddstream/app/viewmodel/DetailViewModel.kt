@@ -1691,6 +1691,11 @@ class DetailViewModel @Inject constructor(
             return
         }
         PlayerSessionStore.Instance.stageFailover(effective.streamId, effective.backupHandles)
+        // Client-side decrypt: the rung's marker rides with the handle, so the
+        // player knows to resolve the descriptor and start the decrypting
+        // proxy instead of playing the redirector (which has no bytes for
+        // such a copy). The scheme only — never a node id, never a key.
+        PlayerSessionStore.Instance.stageDecrypt(effective.streamId, effective.decrypt)
         stageAutoLadder(effective)
         stageSyncScope(
             streamId = effective.streamId,
@@ -1964,6 +1969,7 @@ class DetailViewModel @Inject constructor(
             kind = null,
             playability = winner.playability,
             score = winner.linkScore,
+            decrypt = winner.decrypt,
         )
         // Session 153: stage the gated ladder's rungs for the winner's band
         // before playing, so a 402 on this print steps down to the next rung
@@ -2012,6 +2018,11 @@ class DetailViewModel @Inject constructor(
         if (backupHandles.isNotEmpty()) {
             PlayerSessionStore.Instance.stageFailover(link.streamId, backupHandles)
         }
+        // Client-side decrypt: the link's marker rides with the handle, so the
+        // player knows to resolve the descriptor and start the decrypting
+        // proxy instead of playing the redirector. The scheme only — never a
+        // node id, never a key.
+        PlayerSessionStore.Instance.stageDecrypt(link.streamId, link.decrypt)
         val scope = stageSyncScope(
             link.streamId,
             season,

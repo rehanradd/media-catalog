@@ -8,6 +8,8 @@ import android.os.Build
 import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import com.google.gson.Gson
+import com.raddstream.app.data.cache.MegaProxyHolder
+import com.raddstream.app.data.cache.MegaStartError
 import com.raddstream.app.network.ApiProvider
 import com.raddstream.app.network.buildRaddGson
 import com.raddstream.app.network.downloadRedirectUrl
@@ -228,10 +230,25 @@ class DeviceDownloadsRepository @Inject constructor(
 
         val cleanTitle = title.trim().ifBlank { "Video" }
         val cleanLabel = printLabel.trim()
-        val entry = DeviceDownloadEntity(
-            id = UUID.randomUUID().toString(),
-            handle = handle,
-            url = withVipPass(
+        // Client-side decrypt: this copy's bytes are ciphertext, and the
+        // download endpoint answers the descriptor for it, not a 302. Start
+        // the decrypting proxy and download clear bytes from its loopback
+        // URL. A start failure is a plain refusal — never a download of
+        // ciphertext. One proxy serves the whole process: starting a
+        // DIFFERENT decrypting copy later stops this one, so a mega download
+        // interrupted that way fails and can be resumed, not silently saved
+        // as garbage.
+        val downloadUrl = if (meta.decrypt?.lowercase() == "aes-ctr") {
+            MegaProxyHolder.start(meta) ?: return@withContext DeviceDownloadResult.Refused(
+                when (MegaProxyHolder.lastError) {
+                    MegaStartError.Quota -> "MEGA's free limit is used up for now — this copy needs a few hours. Try another version."
+                    MegaStartError.Dead -> "This copy is gone from MEGA. Try another version."
+                    MegaStartError.Network -> "MEGA did not answer right now. Check your connection and try again."
+                    else -> "This copy could not be opened. Try another version."
+                },
+            )
+        } else {
+            withVipPass(
                 // 2026-11-12 rework: in-app downloads fetch through our own
                 // `/api/v1/download` endpoint, not the play redirector and
                 // never a browser — the server 302s to the file and the
@@ -240,7 +257,12 @@ class DeviceDownloadsRepository @Inject constructor(
                 // Session 123: the same VIP pass rides the download URL, so
                 // a VIP download of a premium print saves instead of 402ing.
                 syncAccountRepository.currentVipPass(),
-            ),
+            )
+        }
+        val entry = DeviceDownloadEntity(
+            id = UUID.randomUUID().toString(),
+            handle = handle,
+            url = downloadUrl,
             title = cleanTitle,
             printLabel = cleanLabel,
             mimeType = mime,

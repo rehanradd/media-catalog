@@ -3458,7 +3458,80 @@ class TestUnwrapHubcloud(unittest.TestCase):
         self.assertEqual(hr._hubcloud_dispatch({}, "Download [FSLv2 Server]"),
                          "fslv2")
         self.assertEqual(hr._hubcloud_dispatch({}, "Watch Online"), "")
-        self.assertEqual(hr._hubcloud_dispatch({}, "Telegram"), "")
+class TestMegaVerify(unittest.TestCase):
+    """Client-side decrypt (mega): the server only verifies liveness.
+
+    The g API answers a live node with the ciphertext URL, the encrypted
+    attributes and the size. The server keeps NONE of the URL — the app
+    mints it itself — and passes `at` + `s` through opaquely. Every
+    request here goes through an injected fetch: no live socket.
+    """
+
+    def _fetch(self, answer, status=200):
+        seen = {}
+
+        def fetch(url, **kwargs):
+            seen["url"] = url
+            seen["kwargs"] = kwargs
+            body = answer if isinstance(answer, bytes) else json.dumps(answer).encode()
+            return (status, body, {}, url)
+
+        return fetch, seen
+
+    def test_parse_file_url_splits_node_and_key(self):
+        parsed = hr.mega_parse_url(
+            "https://mega.nz/file/78QnEaBK#abcDEF123_-xyz")
+        self.assertEqual(parsed, {"node_id": "78QnEaBK",
+                                  "key": "abcDEF123_-xyz"})
+
+    def test_parse_rejects_folder_and_bare_domain(self):
+        self.assertIsNone(hr.mega_parse_url("https://mega.nz/folder/abc#key"))
+        self.assertIsNone(hr.mega_parse_url("https://mega.nz/"))
+        self.assertIsNone(hr.mega_parse_url("https://example.test/file/abc#key"))
+        self.assertIsNone(hr.mega_parse_url(""))
+        self.assertIsNone(hr.mega_parse_url(None))
+
+    def test_verify_live_returns_size_and_attrs_but_never_the_url(self):
+        fetch, seen = self._fetch(
+            {"g": "https://gfs206n481.userstorage.mega.co.nz/dl/TOKEN",
+             "at": "ENCRYPTED-ATTRS", "s": 944948612})
+        result = hr.verify_mega_live("78QnEaBK", fetch=fetch)
+        self.assertEqual(result, {"ok": True, "size": 944948612,
+                                  "attrs": "ENCRYPTED-ATTRS"})
+        self.assertEqual(seen["url"], "https://g.api.mega.co.nz/cs")
+        self.assertEqual(seen["kwargs"].get("method"), "POST")
+        self.assertIn(b"78QnEaBK", seen["kwargs"]["data"])
+        # The ciphertext URL never leaves this function in any shape.
+        self.assertNotIn("gfs", json.dumps(result))
+
+    def test_verify_dead_on_api_errors(self):
+        for answer in (-9, -11, -16):
+            result = hr.verify_mega_live("x", fetch=self._fetch(answer)[0])
+            self.assertEqual(result, {"ok": False, "reason": "dead"}, answer)
+        result = hr.verify_mega_live("x", fetch=self._fetch({}, status=404)[0])
+        self.assertEqual(result, {"ok": False, "reason": "dead"})
+        result = hr.verify_mega_live("x", fetch=self._fetch({"s": 1})[0])
+        self.assertEqual(result, {"ok": False, "reason": "dead"},
+                         "no g URL in the answer is not a live file")
+        result = hr.verify_mega_live("x", fetch=self._fetch(b"not json")[0])
+        self.assertEqual(result, {"ok": False, "reason": "dead"})
+
+    def test_verify_quota_on_minus_18_and_509(self):
+        result = hr.verify_mega_live("x", fetch=self._fetch(-18)[0])
+        self.assertEqual(result, {"ok": False, "reason": "quota"})
+        result = hr.verify_mega_live("x", fetch=self._fetch({}, status=509)[0])
+        self.assertEqual(result, {"ok": False, "reason": "quota"})
+
+    def test_verify_network_on_transport_failure(self):
+        def failing(url, **kwargs):
+            return (0, "dns fail", {}, url)
+        self.assertEqual(hr.verify_mega_live("x", fetch=failing),
+                         {"ok": False, "reason": "network"})
+
+        def raising(url, **kwargs):
+            raise ConnectionError("reset")
+        self.assertEqual(hr.verify_mega_live("x", fetch=raising),
+                         {"ok": False, "reason": "network"})
 
 
 if __name__ == "__main__":

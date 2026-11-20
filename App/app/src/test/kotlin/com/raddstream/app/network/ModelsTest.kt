@@ -329,6 +329,47 @@ class ModelsTest {
     }
 
     @Test
+    fun `stream response carries the decrypt scheme and key, never a hoster name`() {
+        val json = """
+            {
+              "success": true,
+              "stream_id": "s1.mega",
+              "kind": "url",
+              "mime_type": "video/x-matroska",
+              "file_size_bytes": 944948612,
+              "resumable": true,
+              "expires_in": 3600,
+              "decrypt": "aes-ctr",
+              "decrypt_node_id": "78QnEaBK",
+              "decrypt_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+            }
+        """.trimIndent()
+
+        val response = gson.fromJson(json, StreamResponse::class.java)
+
+        assertTrue(response.success)
+        assertEquals("s1.mega", response.streamId)
+        assertEquals("aes-ctr", response.decrypt)
+        assertEquals("78QnEaBK", response.decryptNodeId)
+        assertEquals("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", response.decryptKey)
+        assertEquals(944948612L, response.fileSizeBytes)
+        // No field on the model names the hoster: the wire is scheme-neutral.
+        assertEquals(emptyList<String>(), StreamResponse::class.java.declaredFields
+            .map { it.name }.filter { it.contains("mega", ignoreCase = true) })
+    }
+
+    @Test
+    fun `stream response without decrypt fields decodes to plain bytes`() {
+        val response = gson.fromJson(
+            """{"success": true, "stream_id": "s1.plain", "kind": "direct"}""",
+            StreamResponse::class.java,
+        )
+        assertNull(response.decrypt)
+        assertNull(response.decryptNodeId)
+        assertNull(response.decryptKey)
+    }
+
+    @Test
     fun `live tv channels response maps snake case names and the signed handle`() {
         val json = """
             {

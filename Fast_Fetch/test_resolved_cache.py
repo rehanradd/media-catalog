@@ -1652,5 +1652,30 @@ class PruneTests(unittest.TestCase):
                          "the prune's own deletes must roll back with it")
 
 
+class TestMegaNoBanking(unittest.TestCase):
+    """Client-side decrypt (mega): a mega resolve is never banked.
+
+    The copy has no playable URL — the ciphertext URL is useless without
+    the key, and the key must never be stored. The guard holds even when
+    the resolve carries a URL-shaped field, so a future shape cannot bank
+    it by accident."""
+
+    def test_a_mega_resolve_with_a_url_is_still_never_banked(self):
+        conn = fresh_conn()
+        stored = resolved_cache.record_resolved_cache(
+            conn, 77, file_resolve(decrypt="aes-ctr",
+                                   url="https://gfs.example.test/dl/TOKEN"))
+        self.assertIsNone(stored)
+        self.assertIsNone(resolved_cache.lookup_cache(conn, 77))
+
+    def test_a_mega_resolve_without_a_url_is_a_noop(self):
+        conn = fresh_conn()
+        stored = resolved_cache.record_resolved_cache(
+            conn, 77, {"success": True, "decrypt": "aes-ctr",
+                       "decrypt_node_id": "78QnEaBK", "decrypt_key": "KEY"})
+        self.assertIsNone(stored)
+        self.assertIsNone(resolved_cache.lookup_cache(conn, 77))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

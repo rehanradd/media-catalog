@@ -585,6 +585,9 @@ class CatalogRepository @Inject constructor(
             resumable = response.resumable,
             expiresIn = response.expiresIn,
             refreshed = response.refreshed,
+            decrypt = response.decrypt,
+            decryptNodeId = response.decryptNodeId,
+            decryptKey = response.decryptKey,
         )
     }
 
@@ -631,6 +634,9 @@ class CatalogRepository @Inject constructor(
                     // map. The caller names the universe; the default stays
                     // legacy, for the v1 detail that hands those out.
                     legacyReleaseId = legacyReleaseId,
+                    // This client decrypts aes-ctr copies on-device, so the
+                    // server may rank such a copy as the winner for it.
+                    megaDecrypt = true,
                 ),
                 authorization = authorization,
             )

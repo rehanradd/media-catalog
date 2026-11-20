@@ -82,6 +82,9 @@ data class RankedLink(
     /** Derived from the served verdict only — no hostname lookup exists in this app. */
     val playability: Playability,
     val score: Int,
+    /** Client-side decrypt scheme ("aes-ctr") when this copy's bytes are
+     * ciphertext the app must decrypt on-device. Null/absent = plain bytes. */
+    val decrypt: String? = null,
 ) {
     /** Presentable by our one player: our handle, our address, and the server says it streams. */
     val playableHere: Boolean

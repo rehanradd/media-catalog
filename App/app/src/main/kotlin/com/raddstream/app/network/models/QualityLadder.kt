@@ -45,6 +45,9 @@ data class LadderLink(
     val mimeType: String? = null,
     /** Ours: "Fast direct" | "Standard". */
     val label: String? = null,
+    /** Client-side decrypt scheme ("aes-ctr") when this copy's bytes are
+     * ciphertext the app must decrypt on-device. Null/absent = plain bytes. */
+    val decrypt: String? = null,
 ) {
     val bestUrl: String? get() = playUrl?.trim()?.takeIf { WireText.isHttpUrl(it) }
     val isEphemeral: Boolean get() = isTemporary == true

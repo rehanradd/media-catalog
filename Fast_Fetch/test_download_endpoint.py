@@ -22,12 +22,13 @@ import urllib.request
 from pathlib import Path
 from unittest import mock
 
-sys.path.insert(0, str(Path(__file__).parent.resolve()))
+sys.path.insert(0, str(Path(__file__).parent.resolve() / "importers"))
 
 import accounts        # noqa: E402
 import admin_panel     # noqa: E402
 import engagement      # noqa: E402
 import fast_fetch      # noqa: E402
+import host_resolvers  # noqa: E402
 import redact          # noqa: E402
 import viewer          # noqa: E402
 
@@ -620,6 +621,87 @@ class DownloadEndpointTests(unittest.TestCase):
         self.assertEqual(viewer.download_filename("abcdefghijklmnop",
                                                   'video/x-evil"\r\nX: y'),
                          "radd-abcdefghijkl.bin")
+
+    # ---- client-side decrypt (mega) --------------------------------------- #
+    MEGA_URL = ("https://mega.nz/file/78QnEaBK#"
+                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+
+    def _mega_id(self):
+        mega_id = _ingest(self.conn, "Mega Film", is_18_plus=0,
+                          direct_url=self.MEGA_URL)
+        self.conn.execute(
+            "UPDATE download_sources SET service = 'mega', final_url = ?, "
+            "is_temporary = 1, mime_type = 'video/x-matroska' WHERE id = ?",
+            (self.MEGA_URL, mega_id))
+        self.conn.commit()
+        return mega_id
+
+    def _verify(self, verdict):
+        return mock.patch.object(host_resolvers, "verify_mega_live",
+                                 return_value=verdict)
+
+    def test_mega_download_descriptor_carries_node_and_key_not_a_url(self):
+        mega_id = self._mega_id()
+        token = self.token(mega_id)
+        with self._verify({"ok": True, "size": 944948612,
+                           "attrs": "ENCRYPTED-ATTRS"}):
+            status, _headers, raw = self.fetch(
+                self.public_url, f"/api/v1/download?id={token}&redirect=0")
+        self.assertEqual(status, 200, raw)
+        body = json.loads(raw)
+        self.assertTrue(body["success"])
+        self.assertEqual(body["stream_id"], token)
+        self.assertEqual(body["decrypt"], "aes-ctr")
+        self.assertEqual(body["decrypt_node_id"], "78QnEaBK")
+        self.assertEqual(body["decrypt_key"],
+                         "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+        self.assertEqual(body["file_size_bytes"], 944948612)
+        text = raw.decode("utf-8", "replace")
+        self.assertNotIn("mega", text)
+        self.assertNotIn("mega.nz", text)
+        self.assertNotIn("g.api.mega.co.nz", text)
+        self.assertNotIn("gfs", text)
+
+    def test_mega_stream_descriptor_carries_node_and_key(self):
+        mega_id = self._mega_id()
+        token = self.token(mega_id)
+        with self._verify({"ok": True, "size": 944948612,
+                           "attrs": "ENCRYPTED-ATTRS"}):
+            status, _headers, raw = self.fetch(
+                self.public_url, f"/api/v1/stream?id={token}&redirect=0")
+        self.assertEqual(status, 200, raw)
+        body = json.loads(raw)
+        self.assertTrue(body["success"])
+        self.assertEqual(body["stream_id"], token)
+        self.assertEqual(body["decrypt"], "aes-ctr")
+        self.assertEqual(body["decrypt_node_id"], "78QnEaBK")
+        self.assertEqual(body["decrypt_key"],
+                         "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+
+    def test_mega_stream_redirect_1_answers_the_descriptor_not_a_302(self):
+        # There is no URL to redirect to — the ciphertext URL is useless
+        # without the key, so even redirect=1 answers the descriptor.
+        mega_id = self._mega_id()
+        token = self.token(mega_id)
+        with self._verify({"ok": True, "size": 944948612,
+                           "attrs": "ENCRYPTED-ATTRS"}):
+            status, headers, raw = self.fetch(
+                self.public_url, f"/api/v1/stream?id={token}&redirect=1",
+                follow=False)
+        self.assertEqual(status, 200, raw)
+        self.assertNotIn("Location", headers)
+        self.assertEqual(json.loads(raw)["decrypt"], "aes-ctr")
+
+    def test_mega_quota_and_dead_answer_no_playable_source(self):
+        mega_id = self._mega_id()
+        token = self.token(mega_id)
+        for verdict in ({"ok": False, "reason": "quota"},
+                        {"ok": False, "reason": "dead"}):
+            with self._verify(verdict):
+                status, _headers, raw = self.fetch(
+                    self.public_url, f"/api/v1/stream?id={token}&redirect=0")
+            self.assertEqual(status, 404, verdict)
+            self.assertEqual(json.loads(raw)["error"], "no_playable_source")
 
 
 if __name__ == "__main__":

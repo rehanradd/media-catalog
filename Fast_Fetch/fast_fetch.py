@@ -7985,7 +7985,16 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
     # a Range read's byte count is the range length, not a file size, so
     # file_size_bytes keeps its stored value); a failing probe, or a
     # playlist for a download caller, forces the fresh re-resolve below.
-    if not needs_refresh and src.get("final_url"):
+    # A MEGA address is never a playable URL (the page is HTML, the file
+    # bytes are ciphertext), so the cached probe below would only fail on
+    # it and record a `probe_failed` the copy does not deserve — and the
+    # next press would then skip the dispatch entirely on that record.
+    # Skip the cached probe for mega rows: the dispatch verifies the node
+    # through the g API instead.
+    _is_mega_row = ((src.get("service") or "").strip().lower() == "mega"
+                    or "mega.nz" in (src.get("final_url") or "").lower()
+                    or "mega.nz" in (src.get("source_url") or "").lower())
+    if not needs_refresh and not _is_mega_row and src.get("final_url"):
         # Host registry (2026-11-18): probe and serve the rewritten
         # address; the stored row keeps the old host until the remap gate.
         _cached_live = _rewrite_host(src["final_url"])
@@ -8179,6 +8188,61 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                 pass
             if stage1_tried and not _stage1_failed:
                 pass
+            elif (service == "mega" or "mega.nz" in source_u.lower()
+                  or "mega.nz" in cached_u.lower()):
+                # Client-side decrypt (mega, Phase C decision 2026-11-20):
+                # the bytes MEGA serves are AES-CTR ciphertext, so no URL
+                # here is ever playable — the app fetches the ciphertext
+                # and decrypts on-device. This branch verifies the node is
+                # still alive via the g API and returns the descriptor
+                # fields the app needs (node id + fragment key + encrypted
+                # attrs + size), short-circuiting the URL-shaped dispatch
+                # below: there is no fresh_url to gate-probe, and a mega
+                # success must never be recorded as a failure or banked.
+                _mega = None
+                if hr is not None:
+                    _mega_url = (source_u if "mega.nz" in source_u.lower()
+                                 else cached_u)
+                    _mega = hr.mega_parse_url(_mega_url)
+                if _mega is not None:
+                    _unwrap_branch_taken = True
+                    _mega_verdict = hr.verify_mega_live(_mega["node_id"])
+                    if _mega_verdict.get("ok"):
+                        # The cached probe above can only fail on a MEGA
+                        # address (the page is HTML, the bytes ciphertext),
+                        # so a record it left names a probe that was never
+                        # going to pass — not this copy. A verified-live
+                        # node clears it, or the next press would skip the
+                        # dispatch on a stale refusal.
+                        _clear_resolve_failure(src["id"])
+                        return {
+                            "success": True,
+                            "id": src["id"],
+                            "decrypt": "aes-ctr",
+                            "decrypt_node_id": _mega["node_id"],
+                            "decrypt_key": _mega["key"],
+                            "decrypt_attrs": _mega_verdict.get("attrs") or "",
+                            "playback_type": "url",
+                            "mime_type": src.get("mime_type"),
+                            "file_size_bytes": _mega_verdict.get("size"),
+                            "is_resumable": True,
+                            "is_temporary": False,
+                            "cached": False,
+                            "refreshed": True,
+                            "unprobed": False,
+                            "service": src["service"],
+                            "source_name": src["source_name"],
+                            **_expiry_fields(src),
+                        }
+                    # A dead node is a measured verdict about this copy:
+                    # the fall-through records it and the circuit may
+                    # strike on it (probe_fail_cause stays "not_media").
+                    # Quota and network are NOT about the link — MEGA's
+                    # free budget, or our side — so the fall-through must
+                    # record nothing and the circuit must not strike.
+                    if _mega_verdict.get("reason") in ("quota", "network"):
+                        _last_failure_verdict = {"http_status": 0}
+                        probe_fail_cause = None
             elif (service in ("fsl_r2", "hubcloud_10g", "hubcloud")
                     or "hubcloud" in source_u.lower() or "hubcloud" in cached_u.lower()):
                 _unwrap_branch_taken = True

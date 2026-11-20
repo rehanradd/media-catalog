@@ -387,6 +387,11 @@ data class WirePlayRequest(
     val device: String? = null,
     @SerializedName("legacy_release_id")
     val legacyReleaseId: Boolean? = null,
+    /** Declares this client can decrypt aes-ctr copies on-device. Only an
+     * explicit true counts server-side; a client that never sends it can
+     * never be served such a winner. */
+    @SerializedName("mega_decrypt")
+    val megaDecrypt: Boolean = false,
 )
 
 /**
@@ -638,6 +643,8 @@ data class WirePlayCandidate(
     val scoreScale: String? = null,
     @SerializedName("last_evidence_at")
     val lastEvidenceAt: String? = null,
+    /** Client-side decrypt scheme ("aes-ctr"), carried into [Rendition]. */
+    val decrypt: String? = null,
     /** Subtitle tracks the server harvested for this link (Gap A3); empty when none were. */
     val tracks: List<WireSubtitleTrack> = emptyList(),
 ) {
@@ -660,6 +667,7 @@ data class WirePlayCandidate(
         resumable = resumable == true,
         headers = emptyMap(),
         tracks = tracks.map { it.toDomain() },
+        decrypt = decrypt,
     )
 }
 

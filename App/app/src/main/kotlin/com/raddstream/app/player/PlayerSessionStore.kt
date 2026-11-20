@@ -412,6 +412,36 @@ class PlayerSessionStore(
     fun peekFailover(streamId: String): List<String> = stagedFailovers[streamId].orEmpty()
 
     /**
+     * The client-side decrypt scheme of the copy a launched handle plays,
+     * staged by the detail screen and read by the player when it opens the
+     * handle ("aes-ctr" when the bytes are ciphertext the app must decrypt
+     * on-device). The SCHEME only — never a node id, never a key: the player
+     * resolves the descriptor for the handle itself and the key travels only
+     * in that per-press answer.
+     *
+     * Same discipline as [stageFailover]: in memory only, nothing survives a
+     * process death. A playback launched any other way simply has no entry,
+     * so it builds exactly as before — a plain copy plays through the
+     * redirector, and a decrypting copy reached without its marker is
+     * treated as plain (the descriptor is only asked for when the marker
+     * says decrypt, so no extra round-trip is paid on a normal press).
+     */
+    private val stagedDecrypts = LinkedHashMap<String, String>()
+
+    fun stageDecrypt(streamId: String, decrypt: String?) {
+        if (streamId.isBlank()) return
+        stagedDecrypts.remove(streamId)
+        val scheme = decrypt?.trim()?.lowercase()
+        if (!scheme.isNullOrBlank()) stagedDecrypts[streamId] = scheme
+        while (stagedDecrypts.size > MAX_STAGED_FAILOVERS) {
+            stagedDecrypts.remove(stagedDecrypts.keys.first())
+        }
+    }
+
+    /** Read without consuming: re-opening the same rung still gets its marker. */
+    fun peekDecrypt(streamId: String): String? = stagedDecrypts[streamId]
+
+    /**
      * The manifest MIME a launched handle's bytes are, staged by the Live TV
      * screen next to the runner-ups of the launched rung and read by the
      * player when it opens the handle.

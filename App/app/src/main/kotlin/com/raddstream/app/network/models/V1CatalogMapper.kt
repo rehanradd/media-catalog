@@ -257,6 +257,7 @@ object V1CatalogMapper {
             playability = if (playable) Playability.STREAM else Playability.NONE,
             qualityLabel = "",
             ephemeral = stream.expiresIn != null || source.isEphemeral,
+            decrypt = stream.decrypt,
         )
     }
 
