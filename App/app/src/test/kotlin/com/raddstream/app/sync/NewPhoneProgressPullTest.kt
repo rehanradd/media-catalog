@@ -19,7 +19,6 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -68,7 +67,14 @@ import org.robolectric.RobolectricTestRunner
  * fake-server death were all ruled out — so the fix does not chase it: the
  * test now pins the provider ([PinnedApiProvider]), so `current()` never
  * reads DataStore at all and no call in this class can reach production,
- * whatever the saved URL does. The earlier fixes stay as hygiene: setUp
+ * whatever the saved URL does. `setUp` asserts the pin (`currentBaseUrl()`
+ * equals the fake URL), not the saved URL — the first version asserted the
+ * saved read-back, and run 44693428362 proved that read itself is the
+ * flaky surface: the stale-row test's setUp saved the fake URL and the next
+ * read returned the production default. That read-back IS the URL-flip
+ * trigger, caught in the act — the DataStore `serverUrl` read can return
+ * the brand default immediately after a write — and the original flaky
+ * test now passes with the pin in place. The earlier fixes stay as hygiene: setUp
  * starts each test signed out, the second test asserts `quickSignIn`
  * succeeds, and the first pull goes through [pullWithOneRetry] — one bounded
  * re-pull, taken only when the server actually holds rows this device has not
@@ -122,17 +128,24 @@ class NewPhoneProgressPullTest {
         // would then proceed even if quickSignIn failed. The URL above is already
         // re-saved per test; the key is the remaining leak.
         settings.saveSyncKey(null)
-        // Fail-fast: the saved URL must BE the fake. Run 44690607619 proved a
-        // device can resolve the production default instead — its quick-sign-in
-        // POST landed on the live service and its list GETs 503'd — so a
-        // silent wrong URL reads as a misleading pull count, not as a URL
-        // problem. This assert turns any recurrence into a clear message.
-        assertEquals(
-            "server URL must stay pinned to the fake server, not production",
-            fakeUrl,
-            settings.serverUrl.first(),
-        )
         apiProvider = PinnedApiProvider(settings, fakeUrl)
+        // Fail-fast: the provider handed to the devices must be pinned to the
+        // fake server. The saved URL is NOT asserted here — deliberately. Run
+        // 44693428362 proved why: the stale-row test's setUp saved the fake
+        // URL and the very next read returned the production default
+        // (`https://radd-stream.ccwu.cc`), failing this assert. That read-back
+        // IS the URL-flip trigger, caught in the act: the DataStore
+        // `serverUrl` read can return the brand default immediately after a
+        // write, intermittently — which is exactly how device B's `current()`
+        // reached production in run 44690607619. Asserting on that read would
+        // reintroduce the flake into the test itself. The pin makes the saved
+        // value irrelevant to every call in this class, so the assert checks
+        // the pin, not the store.
+        assertEquals(
+            "provider must stay pinned to the fake server, not production",
+            fakeUrl,
+            apiProvider.currentBaseUrl(),
+        )
     }
 
     @After
