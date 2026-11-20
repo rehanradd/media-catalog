@@ -352,9 +352,15 @@ cleanup() {
 trap cleanup EXIT
 
 # Tap a search-result row by its title text. The search field itself holds
-# the same query text and sits higher in the dump, so the FIRST match would
-# tap the field, not the result — take the LAST match, which is a result
-# row (suggestions are gone once the query is submitted).
+# the same query text, so a bare text match can tap the field instead of
+# the row — run 44707017527 proved it: the field was the LAST (only) exact
+# match in the dump, the tap re-focused it, the keyboard reopened, and the
+# detail page never opened (07-detail.png is still the Search screen; 07
+# and 08 byte-identical). Skip EditText nodes entirely, and scroll the
+# list when the row is not on screen yet — the One Piece series sits below
+# the fold in the Series section, and a LazyColumn only composes visible
+# rows, so a below-the-fold row is not in the dump at all until it
+# scrolls into view.
 tap_result() {
   local want="$1" tries=0
   while [ "$tries" -lt 10 ]; do
@@ -370,6 +376,11 @@ except Exception:
     sys.exit(0)
 last = None
 for n in root.iter('node'):
+    # Never match the search field: it holds the query text too, and
+    # tapping it just re-focuses the keyboard (run 44707017527).
+    cls = n.get('class') or ''
+    if cls == 'android.widget.EditText' or cls.endswith('EditText'):
+        continue
     if (n.get('text') or '') == want or (n.get('content-desc') or '') == want:
         b = n.get('bounds', '')
         nums = b.replace('[', ' ').replace(']', ' ').replace(',', ' ').split()
@@ -385,7 +396,11 @@ PY
       adb shell input tap $XY
       return 0
     fi
-    echo "tap_result '$want' try $((tries + 1))/10: not found" >&2
+    echo "tap_result '$want' try $((tries + 1))/10: not found — scrolling list" >&2
+    # The row may be below the fold (LazyColumn only composes visible
+    # rows); one swipe up per retry brings it into view. The first swipe
+    # may only dismiss the keyboard — the retries keep scrolling.
+    adb shell input swipe 540 1600 540 600 400
     tries=$((tries + 1))
     sleep 3
   done
