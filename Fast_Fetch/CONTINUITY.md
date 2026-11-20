@@ -71,6 +71,7 @@
 ## Rotated session history
 
 The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete index.
+- **2026-11-21 — vcloud.beer → vcloud.my registry move:** domain-doctor proved the redirect live (beer 301/302s to my, my serves 200); pair added as evidence "prober", verified_by domain-doctor-20261121, 237,014 rows. Seed counts 31→32 hosts, 29→30 live domains, prober 5→6, rows 1,010,359→1,247,373; rewrite pinned in test_host_only_swap. test_host_registry 32/32 + test_database 242 green locally. DB remap of the 237,014 rows happens at the next gate.
 - [2026-11-21 — Fleet lock hardening](checkpoints/20261121-fleet-lock-hardening.md): Nov 13 run died on the first INSERT (`database is locked`, default 5 s timeout, no retry); catalog connects now use timeout=30 plus a bounded retry (3 attempts, 0.5/1.0 s) on the audit writes; 5 new lock tests, 21/21 green locally.
 - **2026-11-21 — Registry test stale expectations:** prober learned 5 moves after the Nov 18 seed (doodstream added; filebee, new4.filepress.baby, vd.1xplayer reclassified; vikingfile.com added after the domain-doctor run). Seed counts 29→31 hosts, 27→29 live domains; evidence 15→14 confirmed, 9→7 unconfirmed, prober == 5; vd.1xplayer rewrite target geffe448mik.com → asrmo449ddj.com; rows 1,010,359 unchanged. Full module 32/32 green against the live registry; the live registry sync follows in the same branch.
 - [2026-11-20 — Simkl director](checkpoints/20261120-simkl-director.md): director string wired after tmdb; live proof The Matrix fills "Lana Wachowski"; 24 + 90 tests green locally.
@@ -79,7 +80,6 @@ The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete i
 - [2026-11-20 — GDFlix clearance re-earning loop](checkpoints/20261120-gdflix-clearance-loop.md): loop earning cf_clearance for new10.gdflix.io before the 15-min ceiling; resolve path marks a challenged host due; 24 tests, Backend CI pending.
 - [2026-11-20 — init_db busy fix](checkpoints/20261120-init-db-busy.md): hot-path `init_db_once()` + bounded busy retry; `init_db()` repair semantics unchanged.
 - [2026-11-20 - Mega decrypt](checkpoints/20261120-mega-client-decrypt.md)
-- [2026-11-20 — Scale fix #1: per-user rate-limit keys](checkpoints/20261120-scale-real-ip.md): `client_ip()` reads `CF-Connecting-IP` from loopback only (X-Real-IP/XFF fallback unchanged); no limit numbers changed. nginx patch (22 Cloudflare `set_real_ip_from` + header, `nginx -t` ok on a patched copy of live config) applies at gate time. 56x503 on remote-config are cold-cache refills, not the gate restart.
 ## Moved out (reference prose, verbatim)
 
 - ✍️ Incoming Agent Checklist → `../docs/SPEC_INCOMING_AGENT_CHECKLIST.md` (294 lines) — the onboarding procedure, unchanged

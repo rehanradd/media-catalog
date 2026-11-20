@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "updated_at": "2026-11-20T19:30:27Z",
+  "updated_at": "2026-11-20T21:09:00Z",
   "hosts": {
     "hubcloud.ist": {
       "current_domain": "hubcloud.mov",
@@ -681,6 +681,27 @@
         {
           "domain": "vik1ngf1le.online",
           "seen_from": "2026-11-20T19:30:27Z"
+        }
+      ]
+    },
+    "vcloud.beer": {
+      "current_domain": "vcloud.my",
+      "evidence": "prober",
+      "status": "active",
+      "last_verified": "2026-11-20T19:36:00Z",
+      "verified_by": "domain-doctor-20261121",
+      "rows_affected": 237014,
+      "known_mirrors": [
+        "https://vcloud.my"
+      ],
+      "rotation_history": [
+        {
+          "domain": "vcloud.beer",
+          "seen_until": "2026-11-20T19:36:00Z"
+        },
+        {
+          "domain": "vcloud.my",
+          "seen_from": "2026-11-20T19:36:00Z"
         }
       ]
     }
