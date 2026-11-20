@@ -100,6 +100,11 @@ MANDATORY_RUN = (
     # ceiling, verified offline green on the lane (24 tests) before it
     # became a step.
     "test_clearance_loop.py",
+    # Duration backfill (2026-11-20): the EXTINF-sum / header-parse
+    # prober + the resolved_cache-driven batch job + the gate-apply SQL,
+    # verified offline green on the lane (59 tests) before it became
+    # a step.
+    "test_duration_backfill.py",
 )
 
 

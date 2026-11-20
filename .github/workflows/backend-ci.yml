@@ -548,6 +548,15 @@ jobs:
       - name: 🧪 test_backfill_categories.py
         run: python3 -S Fast_Fetch/test_backfill_categories.py
 
+      # Duration backfill (2026-11-20): the EXTINF-sum / header-parse
+      # prober + the resolved_cache-driven batch job (HLS first, batches
+      # of 100, staging table, 10% ffprobe truth sampling, hard guards
+      # against a running sweep/backup) + the NULL-only gate-apply SQL.
+      # Offline, stdlib, fake fetchers + temp-file DBs, no network; the
+      # live runs are parent-gated with a backup first.
+      - name: 🧪 test_duration_backfill.py
+        run: python3 -S Fast_Fetch/test_duration_backfill.py
+
       - name: 🧪 test_fleet_worker.py
         run: python3 -S Fast_Fetch/test_fleet_worker.py
 
