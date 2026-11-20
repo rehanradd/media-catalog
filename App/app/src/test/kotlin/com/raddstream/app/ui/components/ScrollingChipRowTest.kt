@@ -1,6 +1,7 @@
 package com.raddstream.app.ui.components
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.snapping.SnapLayoutInfoProvider
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -10,6 +11,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Text
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -185,23 +187,26 @@ class ScrollingChipRowTest {
         // A swipe produces a drag but no fling velocity here, so
         // performFling is never called and the snap never runs. The
         // test therefore builds the same snap behaviour the row builds
-        // (rememberSnapFlingBehavior over the same hoisted state) and
+        // (the same Start provider over the same hoisted state) and
         // drives it from a LaunchedEffect. That pins the snap
         // settlement for this row's state; the row's own wiring — it
-        // passes rememberSnapFlingBehavior(state) to its LazyRow — is
-        // the one-liner in ScrollingChipRow.kt. The gesture path (a
-        // real swipe -> fling -> snap) is a device-verification item,
-        // not something Robolectric can prove.
+        // passes rememberSnapFlingBehavior(provider) to its LazyRow —
+        // is in ScrollingChipRow.kt. The gesture path (a real swipe ->
+        // fling -> snap) is a device-verification item, not something
+        // Robolectric can prove.
         //
-        // CORRECTION (fixup 10): the Center theory was wrong for THIS
-        // Compose version (1.7) — there is no SnapPosition type and no
-        // snapPosition parameter here at all (fixup 9 did not compile:
-        // "Unresolved reference 'SnapPosition'"). The current docs'
-        // Center default describes a NEWER Compose, not 1.7. What 1.7's
-        // snap actually targets is settled by this test's diagnostic
-        // print, not by the docs: if the list settles mid-list at a
-        // nonzero offset, 1.7 does not snap to Start either, and the
-        // assertion (not the source) is what must change.
+        // ROOT CAUSE (fixup 11, from the 1.6.8 sources): this project
+        // uses foundation 1.6.8 (BOM 2024.06.00 pins it there — NOT
+        // 1.7.0), and 1.6.8's rememberSnapFlingBehavior defaults to
+        // CenterToCenter: it snaps an item's CENTER to the viewport
+        // center. That is why the list settled mid-list at offset 36
+        // (run 44664168979) and offset 0 was never the settled state.
+        // The row and this test now build their provider with the
+        // shared ChipRowSnapPosition (Start: position returns 0), so
+        // the snap lands a chip flush at the row's start edge — the
+        // audit item and the KDoc both intend that. (There is no
+        // SnapPosition type in 1.6.8; the 1.7 SnapPosition.Start form
+        // tried in fixup 9 does not compile here.)
         //
         // The fling velocity is 600px/s on purpose: it moves the list
         // ~200px, well past the first chip (so the index assertion means
@@ -215,10 +220,14 @@ class ScrollingChipRowTest {
         compose.setContent {
             RaddStreamTheme {
                 // The snap behaviour, built exactly the way the row
-                // builds its own (same function, same state) — driven
-                // from the LaunchedEffect below because a Robolectric
-                // swipe produces no fling.
-                val snapBehavior = rememberSnapFlingBehavior(state)
+                // builds its own: the same Start provider (shared
+                // ChipRowSnapPosition) over the same hoisted state —
+                // driven from the LaunchedEffect below because a
+                // Robolectric swipe produces no fling.
+                val snapLayoutInfoProvider = remember(state) {
+                    SnapLayoutInfoProvider(state, positionInLayout = ChipRowSnapPosition)
+                }
+                val snapBehavior = rememberSnapFlingBehavior(snapLayoutInfoProvider)
                 Box(Modifier.width(200.dp)) {
                     ScrollingChipRow(
                         state = state,

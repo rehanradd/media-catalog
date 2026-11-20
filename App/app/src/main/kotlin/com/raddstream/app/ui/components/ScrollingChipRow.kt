@@ -3,6 +3,8 @@ package com.raddstream.app.ui.components
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.snapping.SnapLayoutInfoProvider
+import androidx.compose.foundation.gestures.snapping.SnapPositionInLayout
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,6 +26,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SelectableChipColors
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -61,6 +64,19 @@ import androidx.compose.ui.unit.dp
  * that happens to share the name), AudioBadgeChipRow (poster-card badges),
  * Detail's lone quality-picker chip, and Detail's cast FlowRow.
  */
+/**
+ * The chip rows snap a chip flush to the row's start edge (audit #1).
+ * 1.6.8's rememberSnapFlingBehavior defaults to CenterToCenter, which
+ * centers a chip in the viewport — wrong for a filter strip — so the row
+ * builds its provider with this Start position instead. A Start position
+ * returns 0: the item's start aligns with the layout's start. (1.7
+ * renamed this API to SnapPosition.Start; do not "simplify" this to a
+ * SnapPosition import — it does not exist in 1.6.8, and fixup 9 proved
+ * it does not compile.) Shared with the snap test so the row and the
+ * test can never drift apart on the position.
+ */
+internal val ChipRowSnapPosition = SnapPositionInLayout { _, _, _, _, _ -> 0 }
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ScrollingChipRow(
@@ -74,6 +90,12 @@ fun ScrollingChipRow(
     fadeTestTag: String? = null,
     content: LazyListScope.() -> Unit,
 ) {
+    // The snap provider is remembered so the fling behaviour is not
+    // recreated on every recomposition — a fresh provider object would
+    // rebuild it mid-fling.
+    val snapLayoutInfoProvider = remember(state) {
+        SnapLayoutInfoProvider(state, positionInLayout = ChipRowSnapPosition)
+    }
     Box(modifier = modifier.fillMaxWidth()) {
         var rowModifier = Modifier.fillMaxWidth()
         if (rowTestTag != null) rowModifier = rowModifier.testTag(rowTestTag)
@@ -83,10 +105,7 @@ fun ScrollingChipRow(
             contentPadding = contentPadding,
             horizontalArrangement = Arrangement.spacedBy(horizontalSpacing),
             verticalAlignment = verticalAlignment,
-            // Note: this Compose version (1.7) has no snapPosition
-            // parameter on rememberSnapFlingBehavior and no SnapPosition
-            // type — do not add one; it does not compile (fixup 9).
-            flingBehavior = rememberSnapFlingBehavior(state),
+            flingBehavior = rememberSnapFlingBehavior(snapLayoutInfoProvider),
         ) {
             content()
         }
