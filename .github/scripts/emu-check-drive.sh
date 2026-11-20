@@ -204,6 +204,27 @@ ui_has_text() {
   grep -qi "$1" /tmp/ui.xml
 }
 
+# One fresh dump, classified for the detail settle wait (run 44726083176):
+# "error" — "Couldn't load this title" is on screen; "loaded" — real body
+# content is on screen (the "Play" action or the "Seasons" header,
+# neither of which the skeleton ever paints) or the skeleton is gone
+# (its testTags — "detailPlaySkeleton" on the body skeleton,
+# "detailSkeletonHero" on the full-page one — are resource-ids in the
+# dump while the body is still loading); "loading" — anything else,
+# including a failed or empty dump. A dead dump reads as "loading",
+# never as "loaded": the wait then burns its budget instead of
+# misreading a dead dump as a body.
+detail_state() {
+  rm -f /tmp/ui.xml
+  timeout 20 adb shell uiautomator dump "$UI_DUMP" >/dev/null 2>&1
+  adb pull -q "$UI_DUMP" /tmp/ui.xml 2>/dev/null || { echo "loading"; return; }
+  [ -s /tmp/ui.xml ] || { echo "loading"; return; }
+  if grep -qi "Couldn't load this title" /tmp/ui.xml; then echo "error"; return; fi
+  if grep -q 'text="Play"\|text="Seasons"' /tmp/ui.xml; then echo "loaded"; return; fi
+  if ! grep -q 'detailPlaySkeleton\|detailSkeletonHero' /tmp/ui.xml; then echo "loaded"; return; fi
+  echo "loading"
+}
+
 # Poll until the app is in the foreground ($1 = timeout seconds).
 # Dismisses ANR dialogs as they appear. Returns 1 on timeout or on a
 # stuck ANR — the caller fails the run.
@@ -551,37 +572,78 @@ sleep 4
 tap_result "One Piece" || { echo "FAIL: no 'One Piece' result to open" >&2; exit 1; }
 sleep 6
 screenshot "07-detail.png"
-# Detail-load error guard (run 44722458634): the tap WORKED and 07 IS the
-# detail page, but the BODY failed to load — "Couldn't load this title"
-# with Retry / Back to browse / Report broken stream (One Piece's v2
-# payload is 3.8 MB: 23 seasons, 1,065 episodes; ApiProvider.kt's 60 s
-# read budget was sized for a 441 KB payload). The error screen has
-# nothing to scroll, so the swipe below changes nothing and 08 comes out
-# byte-identical to 07 — the frozen-screen guard then misfires on a
-# legitimate error state. When the error is on screen, tap Retry once
-# and wait for the retry (up to the 60 s read budget); if the detail
-# still fails, record the load failure and CONTINUE to Live TV /
-# Downloads / Settings instead of aborting the whole run. A genuinely
-# frozen screen (no error state, no scroll change) still fails below.
+# Detail settle wait (run 44726083176): the tap WORKED and 07 IS the
+# detail page, but the 6 s sleep after the tap is not enough for the
+# 3.8 MB v2 body on the emulator's slow link — 07 caught the body
+# mid-load (grey skeleton bars; logcat compiling DetailBodySkeleton
+# seconds before the FAIL, zero SocketTimeout lines) and the swipe
+# below changed nothing, so 08 came out byte-identical to 07 and the
+# frozen-screen guard misfired. Wait up to ~60 s for the detail to
+# SETTLE before swiping: poll for the error (existing Retry path), for
+# real body content, or for the skeleton being gone. If it is still
+# loading after the budget, record DETAIL-STILL-LOADING and CONTINUE
+# to Live TV / Downloads / Settings instead of aborting the whole run.
+# A genuinely frozen screen (loaded content present, swipe changes
+# nothing) still fails via the unchanged guard below.
 DETAIL_FAILED=0
-if ui_has_text "Couldn't load this title"; then
-  echo "Detail: 'Couldn't load this title' on screen — tapping Retry once" >&2
-  tap_text "Retry" || true
-  RETRY_OK=0
-  for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
-    sleep 5
-    if ! ui_has_text "Couldn't load this title"; then RETRY_OK=1; break; fi
-  done
-  if [ "$RETRY_OK" -eq 1 ]; then
-    echo "Detail: retry cleared the error — re-screenshotting 07" >&2
-    screenshot "07-detail.png"
-  else
-    echo "DETAIL-LOAD-FAILED: 'Couldn't load this title' persisted after one Retry (One Piece v2 payload is 3.8 MB; see ApiProvider.kt 60 s budget) — continuing to Live TV / Downloads / Settings" >&2
-    cp /tmp/ui.xml "$OUT/detail-load-failed-ui.xml" 2>/dev/null || true
-    DETAIL_FAILED=1
-  fi
+SETTLED=0
+WAITED=0
+RETRIED=0
+for SETTLE_TRY in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  STATE="$(detail_state)"
+  case "$STATE" in
+    loaded)
+      SETTLED=1
+      break
+      ;;
+    error)
+      if [ "$RETRIED" -eq 1 ]; then
+        echo "DETAIL-LOAD-FAILED: 'Couldn't load this title' came back after one Retry — continuing to Live TV / Downloads / Settings" >&2
+        cp /tmp/ui.xml "$OUT/detail-load-failed-ui.xml" 2>/dev/null || true
+        DETAIL_FAILED=1
+        break
+      fi
+      RETRIED=1
+      WAITED=1
+      echo "Detail: 'Couldn't load this title' on screen — tapping Retry once" >&2
+      tap_text "Retry" || true
+      RETRY_OK=0
+      for RETRY_TRY in 1 2 3 4 5 6 7 8 9 10 11 12; do
+        sleep 5
+        if ! ui_has_text "Couldn't load this title"; then RETRY_OK=1; break; fi
+      done
+      if [ "$RETRY_OK" -eq 1 ]; then
+        echo "Detail: retry cleared the error — waiting for the body to settle" >&2
+        # Fall through to the next settle poll instead of re-shooting
+        # 07 at once: the body may still be skeleton-loading.
+      else
+        echo "DETAIL-LOAD-FAILED: 'Couldn't load this title' persisted after one Retry (One Piece v2 payload is 3.8 MB; see ApiProvider.kt 60 s budget) — continuing to Live TV / Downloads / Settings" >&2
+        cp /tmp/ui.xml "$OUT/detail-load-failed-ui.xml" 2>/dev/null || true
+        DETAIL_FAILED=1
+        break
+      fi
+      ;;
+    *)
+      # Still loading — poll again.
+      WAITED=1
+      sleep 5
+      ;;
+  esac
+done
+if [ "$DETAIL_FAILED" -eq 0 ] && [ "$SETTLED" -eq 0 ]; then
+  echo "DETAIL-STILL-LOADING: detail body still skeleton-loading after ~60 s (One Piece v2 payload is 3.8 MB; see ApiProvider.kt 60 s budget) — continuing to Live TV / Downloads / Settings" >&2
+  cp /tmp/ui.xml "$OUT/detail-still-loading-ui.xml" 2>/dev/null || true
+  DETAIL_FAILED=1
 fi
 if [ "$DETAIL_FAILED" -eq 0 ]; then
+  if [ "$WAITED" -eq 1 ]; then
+    # The first 07 caught the skeleton — re-shoot with the loaded body.
+    # Skipped when the body was already loaded at the first 07: an
+    # identical re-shot would trip screenshot()'s own byte-identical
+    # guard on a healthy screen.
+    echo "Detail: body settled — re-screenshotting 07" >&2
+    screenshot "07-detail.png"
+  fi
   adb shell input swipe 540 1600 540 600 400
   sleep 3
   screenshot "08-detail-scrolled.png"
