@@ -1,0 +1,33 @@
+[Unit]
+Description=GDFlix clearance re-earning loop: earn cf_clearance for new10.gdflix.io before the 15-min ceiling (Phase C)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/radd-stream
+# The live catalog path, the same value radd-stream.service carries. The
+# loop reads it through RADD_DB_PATH at import (config.py freezes DB_PATH),
+# so it must be set here rather than left to a --db flag.
+Environment=RADD_DB_PATH=/home/ubuntu/radd-stream-data/merged_catalog_20261025.db
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+# One pass over the configured hosts: earn where due, skip where fresh or
+# backed off. The loop never hammers Cloudflare — a tight retry loop risks
+# a longer block — so attempts are capped with backoff (60s/300s/900s/1h)
+# and the stdlib earner makes exactly one GET per due host per pass.
+# Nice=19 + idle IO class (the same deprioritisation as the backup and
+# prefetch units) keeps it from stealing CPU or disk from the live API.
+# The timer is the loop, the runner is --once only; a pass that earns
+# nothing still exits 0 so a challenge is never a failed unit.
+ExecStart=/usr/bin/python3 -S /opt/radd-stream/Fast_Fetch/clearance_loop.py --once
+Nice=19
+IOSchedulingClass=idle
+TimeoutStartSec=600
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

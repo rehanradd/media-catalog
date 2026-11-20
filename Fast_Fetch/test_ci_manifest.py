@@ -92,6 +92,11 @@ MANDATORY_RUN = (
     # Phase C multiup (2026-11-20): mirror-hub unwrap, verified offline green
     # on the lane (18 tests) before it became a step.
     "test_multiup_unwrap.py",
+    # GDFlix clearance re-earning loop (Phase C, 2026-11-20): the timer
+    # loop that earns cf_clearance for new10.gdflix.io before the 15-min
+    # ceiling, verified offline green on the lane (24 tests) before it
+    # became a step.
+    "test_clearance_loop.py",
 )
 
 

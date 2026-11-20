@@ -187,6 +187,15 @@ try:
 except ImportError:  # pragma: no cover - legacy tree without the store
     _hclear = None
 
+# Clearance re-earning loop (Phase C, 2026-11-20): the timer loop that
+# earns a fresh clearance before the 15-min ceiling. Same guarded import:
+# if the module is absent the engine still runs, and the resolve path
+# simply never marks a host due.
+try:
+    import clearance_loop as _cloop
+except ImportError:  # pragma: no cover - legacy tree without the loop
+    _cloop = None
+
 
 def _clearance_store():
     """A ``HostClearance`` bound to this process's ``DB_PATH``, or None.
@@ -200,6 +209,29 @@ def _clearance_store():
         return _hclear.HostClearance(DB_PATH)
     except Exception:
         return None
+
+
+def _request_clearance_reearn(url):
+    """Mark the host of ``url`` due for a clearance re-earn. Never raises.
+
+    The resolve path calls this when a gdflix fetch fails or serves a
+    challenge page: the timer loop picks the host up on its next pass.
+    A host that is fresh or inside a backoff window is untouched, and a
+    missing loop module means "no trigger" — the resolve proceeds
+    exactly as before.
+    """
+    if _cloop is None:
+        return
+    try:
+        host = ""
+        if _hclear is not None:
+            host = _hclear.normalize_host(url)
+        if not host:
+            host = urllib.parse.urlparse(url).hostname or ""
+        if host:
+            _cloop.request_reearn(DB_PATH, host)
+    except Exception:
+        return
 
 # Subtitle tracks (Gap A3): the resolver's subtitle URLs, persisted per
 # ledger link so the next bundle carries them as `tracks[]`. Same guarded
@@ -3489,8 +3521,14 @@ def unwrap_gdflix(gdflix_url: str, clearance=None) -> tuple[str, str, int]:
                                         max_retries=RESOLVE_UNWRAP_MAX_RETRIES,
                                         clearance=clearance)
     except Exception:
+        # The fetch never answered: the stored clearance (if any) is
+        # stale or the host is challenging — ask the loop to re-earn.
+        _request_clearance_reearn(gdflix_url)
         return gdflix_url, res_id, 0
     if code != 200 or not page:
+        # A non-200 / empty page is the same signal: the clearance the
+        # request rode (if any) did not get us in.
+        _request_clearance_reearn(gdflix_url)
         return gdflix_url, res_id, 0
 
     # Thin redirect wrapper: <body onload="location.replace('…')">.
@@ -3612,6 +3650,11 @@ def unwrap_gdflix(gdflix_url: str, clearance=None) -> tuple[str, str, int]:
                             return bot_direct, res_id, 1
                     except Exception:
                         pass
+    # No button yielded a link. Mark the host due ONLY when the page we
+    # got is a challenge interstitial — a clean page with no buttons is
+    # a dead page, not a clearance problem, and must not re-earn.
+    if _hclear is not None and _hclear.is_challenge_response(200, body=page):
+        _request_clearance_reearn(gdflix_url)
     return gdflix_url, res_id, 0
 
 

@@ -1,0 +1,16 @@
+[Unit]
+Description=GDFlix clearance re-earning loop every 5 minutes (Phase C)
+
+[Timer]
+# Every 5 minutes: the H4 R8 clearance ceiling is 15 minutes, and the loop
+# re-earns when under 3 minutes of life remain, so a 5-minute cadence keeps
+# a fresh clearance available for resolves without ever polling hot. The
+# run is one bounded GET per due host at most, Nice=19 + idle IO, so it
+# shares a slot with anything else on the box; the runner also never
+# overlaps the daily backup (it only reads the clearance store).
+OnCalendar=*:0/5
+RandomizedDelaySec=30
+Persistent=true
+
+[Install]
+WantedBy=timers.target

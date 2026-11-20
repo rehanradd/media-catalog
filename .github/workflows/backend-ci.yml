@@ -516,6 +516,15 @@ jobs:
       - name: 🧪 test_gdflix_unwrap.py
         run: python3 -S Fast_Fetch/test_gdflix_unwrap.py
 
+      # The gdflix clearance re-earning loop (Phase C, 2026-11-20): a
+      # timer-driven loop that earns cf_clearance for new10.gdflix.io from
+      # the server's own egress and re-earns before the 15-min ceiling, so
+      # resolves reuse a fresh clearance instead of hitting the Cloudflare
+      # managed challenge cold. Offline, stdlib, in-memory/scratch
+      # fixtures + a loopback stub server, no network.
+      - name: 🧪 test_clearance_loop.py
+        run: python3 -S Fast_Fetch/test_clearance_loop.py
+
       # Gap A7 (prefetch run mode): the worker + its systemd timer/service +
       # runbook, tested offline against a scratch DB with a stubbed resolver.
       # Offline, stdlib, in-memory/scratch fixtures, no network.
