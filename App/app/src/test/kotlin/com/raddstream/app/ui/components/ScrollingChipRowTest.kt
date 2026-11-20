@@ -178,13 +178,19 @@ class ScrollingChipRowTest {
         // make the content ~3x the viewport, so the swipe lands
         // mid-list where a snap CAN align an item flush.
         //
-        // The swipe is fast (100ms) on purpose too: the default 300ms
-        // swipe never produced a fling under Robolectric in any of the
-        // three runs — the settled offset was the drag-rest position in
-        // all of them — so a faster swipe is the remaining lever for
-        // producing fling velocity. If this still settles nonzero, the
-        // gesture produces no fling at all under Robolectric and the
-        // test needs a programmatic fling, not a faster swipe.
+        // The swipe is 200ms on purpose: the 100ms swipe in fixup 3 DID
+        // produce a fling — the list flew to maxScroll, and the settled
+        // offset 16 is exactly maxScroll geometry (content 1280px,
+        // viewport 400px, maxScroll 880px, item 8 at 864px: 880-864=16) —
+        // but the fling overshot the end, where the snap clamps and no
+        // item can sit flush. 200ms halves the velocity and the fling
+        // distance, so the list lands mid-list where the snap CAN align
+        // an item flush. (The earlier note claiming the default 300ms
+        // swipe "never produced a fling" was unproven: the five-chip
+        // runs were drag-pinned at maxScroll, where a fling would have
+        // been indistinguishable from no fling.) If this still settles
+        // nonzero, the fling distance — not the velocity — is the
+        // remaining variable, and the test needs a shorter swipe.
         //
         // A fling + snap takes virtual time: advance well past any fling
         // duration so the assertions read the SETTLED state, not a
@@ -210,7 +216,7 @@ class ScrollingChipRowTest {
                 }
             }
         }
-        compose.onNodeWithTag("test-snap-row").performTouchInput { swipeLeft(durationMillis = 100) }
+        compose.onNodeWithTag("test-snap-row").performTouchInput { swipeLeft(durationMillis = 200) }
         compose.mainClock.advanceTimeBy(3000)
         compose.waitForIdle()
         assertTrue(state.firstVisibleItemIndex > 0)

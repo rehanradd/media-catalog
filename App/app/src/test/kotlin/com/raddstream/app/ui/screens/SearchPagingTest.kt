@@ -8,6 +8,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.dp
 import androidx.paging.LoadState
 import androidx.paging.LoadStates
@@ -183,10 +184,19 @@ class SearchPagingTest {
         // against a state that may not have landed yet. It still fails
         // if the footer never appears — a missing retry row is not
         // papered over, it is waited for.
+        //
+        // The footer is composed but sits below the visible area: the
+        // LazyColumn composes a buffer beyond its viewport, so the node
+        // exists (waitUntil passes — fixup 3's endOfPagination refresh
+        // made the Error persist) while assertIsDisplayed fails (the
+        // row is clipped out of view). Scroll it into view first, the
+        // way a viewer scrolls to reach the retry row; if the node is
+        // already visible this is a no-op.
         compose.waitUntil(timeoutMillis = 5_000) {
             compose.onAllNodesWithText("Could not load more.")
                 .fetchSemanticsNodes().isNotEmpty()
         }
+        compose.onNodeWithText("Could not load more.").performScrollTo()
         compose.onNodeWithText("Could not load more.").assertIsDisplayed()
     }
 
