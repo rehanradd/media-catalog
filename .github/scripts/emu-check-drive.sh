@@ -482,6 +482,13 @@ sleep 3
 adb shell input keyevent 66
 sleep 6
 screenshot "06-search-results.png"
+# The app groups Movies first, Series after — the exact One Piece series sits
+# ~27th of 34 on page 1, a few rows past what tap_result's 10 swipes reach
+# (run 44710440096: 10/10 "not found — scrolling list"). Filter to Series
+# first so the row is on screen at once; tap_result's EditText skip + scroll
+# stay as the safety net.
+tap_text "Series" || { echo "FAIL: Series chip not found" >&2; exit 1; }
+sleep 4
 tap_result "One Piece" || { echo "FAIL: no 'One Piece' result to open" >&2; exit 1; }
 sleep 6
 screenshot "07-detail.png"
