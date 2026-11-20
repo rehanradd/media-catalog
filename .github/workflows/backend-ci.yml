@@ -325,6 +325,13 @@ jobs:
       - name: 🧪 test_title_clean.py
         run: python3 -S Fast_Fetch/test_title_clean.py
 
+      # The conservative live dedup fold (guided-list item 16): exact
+      # title+year plus a shared language/industry/cast/director/imdb/tmdb
+      # token; guards refuse ties, type mismatches, conflicting IDs and
+      # 18+ disagreements. Offline, stdlib, :memory: SQLite only.
+      - name: 🧪 test_dedup_fold.py
+        run: python3 -S Fast_Fetch/test_dedup_fold.py
+
       - name: 🧪 test_evidence_writeback.py
         run: python3 -S Fast_Fetch/test_evidence_writeback.py
 
