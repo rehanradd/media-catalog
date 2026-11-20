@@ -5,6 +5,7 @@ import coil.ImageLoader
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import coil.request.CachePolicy
+import com.raddstream.app.images.WsrvFallbackInterceptor
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -45,6 +46,12 @@ import javax.inject.Singleton
  *   an explicit `.size(width, width)` on every request — the spec's
  *   "size() resolvers" already exist, verified, not re-added.
  * - No Coil 3 migration: everything here exists in the pinned 2.6.0.
+ *
+ * What the wsrv slice adds (2026-11-20): the loader carries
+ * [WsrvFallbackInterceptor] — poster loads go to the wsrv.nl resize
+ * proxy first, and a failed proxy fetch retries once with the direct
+ * URL. The interceptor is the whole fallback; nothing else in this
+ * module knows about the proxy.
  */
 @Module
 @InstallIn(SingletonComponent::class)
@@ -83,5 +90,6 @@ object ImageLoaderModule {
                     .build()
             }
             .diskCachePolicy(CachePolicy.ENABLED)
+            .components { add(WsrvFallbackInterceptor()) }
             .build()
 }

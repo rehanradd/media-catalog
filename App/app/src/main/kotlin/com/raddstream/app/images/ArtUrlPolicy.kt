@@ -50,6 +50,21 @@ object ArtUrlPolicy {
 
     private const val GOOGLE_USER_CONTENT_SUFFIX = ".googleusercontent.com"
 
+    /**
+     * The public image proxy poster loads route through
+     * ([PosterUrlPolicy.wsrvFor]): a free resize proxy, not a catalog
+     * source. It is NOT in [PUBLIC_IMAGE_HOSTS] — that list mirrors the
+     * server's `redact.PUBLIC_IMAGE_HOSTS`, and the server never sees a
+     * wsrv.nl URL (it only ever serves TMDB URLs or its own `/api/v1/art`
+     * handles). The proxy only ever fetches the public CDN or neutral
+     * upload URL the app would otherwise fetch directly, so it learns
+     * nothing new — and the app never builds a wsrv URL from a signed art
+     * handle or a scraper upstream address. A lookalike host
+     * (wsrv.nl.evil.com) is still refused: this is an exact-host match,
+     * like the rest.
+     */
+    val IMAGE_PROXY_HOSTS: Set<String> = setOf("wsrv.nl")
+
     /** True when Coil may fetch [url]: our server, a public CDN, or a neutral upload host. */
     fun isAllowed(url: String?, serverHost: String?): Boolean {
         if (url.isNullOrBlank()) return false
@@ -60,6 +75,7 @@ object ArtUrlPolicy {
         val host = uri.host?.lowercase()?.trimEnd('.') ?: return false
         if (host == serverHost.lowercase().trimEnd('.')) return true
         if (host in PUBLIC_IMAGE_HOSTS) return true
+        if (host in IMAGE_PROXY_HOSTS) return true
         if (host in NEUTRAL_UPLOAD_HOSTS) return true
         if (host == "googleusercontent.com" || host.endsWith(GOOGLE_USER_CONTENT_SUFFIX)) return true
         return false

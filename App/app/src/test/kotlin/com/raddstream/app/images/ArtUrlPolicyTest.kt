@@ -40,6 +40,27 @@ class ArtUrlPolicyTest {
     }
 
     @Test
+    fun `a wsrv proxy url is allowed`() {
+        assertTrue(
+            ArtUrlPolicy.isAllowed(
+                "https://wsrv.nl/?url=https%3A%2F%2Fimage.tmdb.org%2Ft%2Fp%2Fw500%2Fabc.jpg&w=500&output=webp&q=72",
+                serverHost,
+            ),
+        )
+    }
+
+    @Test
+    fun `a wsrv lookalike host is blocked`() {
+        assertFalse(
+            ArtUrlPolicy.isAllowed(
+                "https://wsrv.nl.evil.com/?url=https%3A%2F%2Fimage.tmdb.org%2Ft%2Fp%2Fw500%2Fabc.jpg",
+                serverHost,
+            ),
+        )
+        assertFalse(ArtUrlPolicy.isAllowed("https://notwsrv.nl/abc.jpg", serverHost))
+    }
+
+    @Test
     fun `a neutral upload host is allowed`() {
         assertTrue(ArtUrlPolicy.isAllowed("https://i.imgur.com/abc.jpg", serverHost))
         assertTrue(ArtUrlPolicy.isAllowed("https://iili.io/abc.jpg", serverHost))

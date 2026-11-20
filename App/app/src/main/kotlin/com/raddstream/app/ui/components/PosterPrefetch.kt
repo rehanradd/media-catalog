@@ -18,13 +18,13 @@ import kotlinx.coroutines.flow.first
  * prefetch in the app.
  *
  * The rule is the hero's rule, unchanged: the request is built exactly like
- * the tile's own ([CatalogImage]) — the same TMDB sizing rewrite, the same
- * host allowlist, the same metered gate — so prefetched bytes are the bytes
- * the tile will show, and a metered connection the viewer never granted
- * image loading to fetches nothing. Coil dedupes an in-flight request for
- * the same URL, so this never double-fetches a tile that is already
- * loading. Never throws: a prefetch is an optimisation, and a failed one
- * must leave the screen exactly as it was.
+ * the tile's own ([CatalogImage]) — the same TMDB sizing + wsrv proxy
+ * rewrite, the same host allowlist, the same metered gate — so prefetched
+ * bytes are the bytes the tile will show, and a metered connection the
+ * viewer never granted image loading to fetches nothing. Coil dedupes an
+ * in-flight request for the same URL, so this never double-fetches a tile
+ * that is already loading. Never throws: a prefetch is an optimisation,
+ * and a failed one must leave the screen exactly as it was.
  */
 
 /** Home rails: first two posters per visible rail, capped. */
@@ -60,7 +60,7 @@ internal suspend fun prefetchPosterArt(context: Context, urls: List<String>, max
         val serverHost = ArtUrlPolicy.hostOf(serverSettingsRepository(context).serverUrl.first())
         val loader = context.imageLoader
         clean.forEach { url ->
-            val sized = PosterUrlPolicy.sizedForTile(url, sizing.posterMaxWidthPx)
+            val sized = PosterUrlPolicy.displayUrl(url, sizing.posterMaxWidthPx)
             if (!ArtUrlPolicy.isAllowed(sized, serverHost)) return@forEach
             loader.enqueue(
                 ImageRequest.Builder(context)
