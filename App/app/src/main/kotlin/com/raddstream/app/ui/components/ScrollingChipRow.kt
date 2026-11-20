@@ -75,6 +75,7 @@ import androidx.compose.ui.unit.dp
  * it does not compile.) Shared with the snap test so the row and the
  * test can never drift apart on the position.
  */
+@OptIn(ExperimentalFoundationApi::class)
 internal val ChipRowSnapPosition = SnapPositionInLayout { _, _, _, _, _ -> 0 }
 
 @OptIn(ExperimentalFoundationApi::class)
