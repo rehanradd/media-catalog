@@ -35,6 +35,7 @@ name: 🐍 Backend CI — Stdlib Python Tests
 #                                             writes the input DB)
 #     - Fast_Fetch/test_site_scout.py        (site discovery / spec phases)
 #     - Fast_Fetch/test_backup_manager.py    (offsite backup tooling)
+#     - Fast_Fetch/test_auto_crawl_cron.py  (autocrawl cycle: a failing step fails the cycle; no HF backup step)
 #     - Fast_Fetch/test_usage_stats.py       (operator counters + token gate)
 #     - Fast_Fetch/test_playback_beacon.py  (playback beacon: host × network quality counters)
 #     - Fast_Fetch/test_operator_isolation.py(two real loopback servers, socket-level
@@ -578,6 +579,13 @@ jobs:
 
       - name: 🧪 test_backup_manager.py
         run: python3 -S Fast_Fetch/test_backup_manager.py
+
+      # The 6-hourly autocrawl cycle: a failing step must fail the cycle and
+      # never print COMPLETED SUCCESSFULLY; the HF backup step is gone (the
+      # full backup refuses to start on this disk; the daily slim timer owns
+      # the off-VM copy). Offline, stdlib, stub python3 via env overrides.
+      - name: 🧪 test_auto_crawl_cron.py
+        run: python3 -S Fast_Fetch/test_auto_crawl_cron.py
 
       # The operator counters: aggregates-only schema proofs, the increment-on-write
       # rule, and the fail-closed token gate. Offline, stdlib, no network.
