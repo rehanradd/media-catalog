@@ -1455,6 +1455,7 @@ internal fun buildDownloadsForYouSection(
 ): HomeSection? {
     val posts = entries
         .filter { it.handle in liveHandles }
+        .sortedByDescending { it.fetchedAt }
         .mapNotNull { entry -> pool.firstOrNull { it.id == entry.postId } }
         .distinctBy { it.id }
         .take(maxItems)
