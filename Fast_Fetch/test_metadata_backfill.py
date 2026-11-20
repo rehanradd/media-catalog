@@ -19,6 +19,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import os
 import sqlite3
 import sys
 import tempfile
@@ -507,6 +508,113 @@ class CinemetaClientTests(unittest.TestCase):
         source.http = FakeHttp({})
         self.assertIsNone(source.lookup({"title": "Dune", "content_type": "movie"}))
         self.assertEqual(source.http.calls, [])
+
+
+class SimklClientTests(unittest.TestCase):
+    """Simkl — the Phase-2 fallback after TMDb (probe 2026-11-20: 86/100
+    on no-rating works, vs TMDb 26/68 completed calls). Payloads are the
+    real summary shapes (The Matrix /movies, Breaking Bad /tv)."""
+
+    MATRIX = {
+        "title": "The Matrix", "year": 1999, "runtime": 136,
+        "overview": "Set in the 22nd century, a hacker joins the rebellion.",
+        "genres": ["Action", "Science Fiction"],
+        "ratings": {"simkl": {"rating": 8.6, "votes": 13222},
+                    "imdb": {"rating": 8.7, "votes": 2295151}},
+        "poster": "80/8008234e702d8ed33",
+        "fanart": "12/12560269d5c490d440",
+        "ids": {"simkl": 53992, "tmdb": "603", "imdb": "tt0133093"},
+    }
+
+    def _source(self, routes):
+        cache = mb.ResponseCache(None)
+        source = mb.SimklSource(cache)
+        source.http = FakeHttp(routes)
+        return source
+
+    def test_movie_by_imdb_id(self):
+        with patch.dict("os.environ", {"SIMKL_CLIENT_ID": "test-key"}):
+            source = self._source({"api.simkl.com": self.MATRIX})
+            meta = source.lookup({"imdb_id": "tt0133093",
+                                  "content_type": "movie", "seasons": 0})
+        self.assertIsNotNone(meta)
+        self.assertEqual(meta.get("rating"), 8.7)  # the IMDb rating wins
+        self.assertEqual(meta.get("synopsis"), self.MATRIX["overview"])
+        self.assertEqual(meta.get("poster"),
+                         "https://simkl.in/posters/80/8008234e702d8ed33_m.jpg")
+        self.assertEqual(meta.get("backdrop"),
+                         ["https://simkl.in/fanart/12/12560269d5c490d440_medium.jpg"])
+        self.assertEqual(meta.get("year"), 1999)
+        self.assertEqual(meta.get("genres"), ["Action", "Science Fiction"])
+        self.assertEqual(meta.get("tmdb_id"), "603")
+        self.assertIsNone(meta.get("cast"))  # Simkl summaries carry no cast
+        self.assertTrue(source.http.calls[0].startswith(
+            "https://api.simkl.com/movies/tt0133093?"))
+
+    def test_series_uses_tv_endpoint(self):
+        with patch.dict("os.environ", {"SIMKL_CLIENT_ID": "test-key"}):
+            source = self._source({"api.simkl.com": {
+                "title": "Breaking Bad", "year": 2008,
+                "ratings": {"imdb": {"rating": 9.5, "votes": 1}},
+                "poster": "97/978264e8bbc2303",
+                "ids": {"tmdb": "1396", "imdb": "tt0903747"}}})
+            meta = source.lookup({"imdb_id": "tt0903747",
+                                  "content_type": "series", "seasons": 5})
+        self.assertIsNotNone(meta)
+        self.assertEqual(meta.get("rating"), 9.5)
+        self.assertTrue(source.http.calls[0].startswith(
+            "https://api.simkl.com/tv/tt0903747?"))
+
+    def test_list_response_is_the_first_match(self):
+        with patch.dict("os.environ", {"SIMKL_CLIENT_ID": "test-key"}):
+            source = self._source({"api.simkl.com": [self.MATRIX]})
+            meta = source.lookup({"imdb_id": "tt0133093",
+                                  "content_type": "movie", "seasons": 0})
+        self.assertIsNotNone(meta)
+        self.assertEqual(meta.get("rating"), 8.7)
+
+    def test_simkl_only_rating_is_marked_simkl(self):
+        with patch.dict("os.environ", {"SIMKL_CLIENT_ID": "test-key"}):
+            source = self._source({"api.simkl.com": {
+                "title": "Obscure", "year": 2019,
+                "ratings": {"simkl": {"rating": 6.4, "votes": 12}}}})
+            meta = source.lookup({"imdb_id": "tt9999999",
+                                  "content_type": "movie", "seasons": 0})
+        self.assertIsNotNone(meta)
+        self.assertEqual(meta.get("rating"), 6.4)
+        self.assertEqual(meta.sources.get("rating"), "simkl")
+
+    def test_no_imdb_id_means_no_lookup(self):
+        source = self._source({"api.simkl.com": self.MATRIX})
+        self.assertIsNone(source.lookup({"title": "The Matrix",
+                                         "content_type": "movie"}))
+        self.assertEqual(source.http.calls, [])
+
+    def test_unknown_imdb_id_raises_like_every_source(self):
+        with patch.dict("os.environ", {"SIMKL_CLIENT_ID": "test-key"}):
+            source = self._source({})
+            with self.assertRaises(mb.UpstreamError):
+                source.lookup({"imdb_id": "tt0000000",
+                               "content_type": "movie", "seasons": 0})
+
+    def test_disabled_without_a_key(self):
+        cache = mb.ResponseCache(None)
+        source = mb.SimklSource(cache)
+        with patch.dict("os.environ", {}, clear=False):
+            if "SIMKL_CLIENT_ID" in os.environ:
+                del os.environ["SIMKL_CLIENT_ID"]
+            self.assertFalse(source.enabled)
+
+    def test_wiring_after_tmdb(self):
+        names = [cls.NAME for cls in mb.SOURCE_CLASSES]
+        self.assertIn("simkl", names)
+        for field in ("rating", "synopsis", "poster", "backdrop",
+                      "year", "genres", "tmdb_id"):
+            chain = mb.FIELD_SOURCES[field]
+            self.assertIn("simkl", chain)
+            self.assertEqual(chain[chain.index("tmdb") + 1], "simkl",
+                             "%s: simkl must sit right after tmdb" % field)
+        self.assertNotIn("simkl", mb.FIELD_SOURCES["cast"])  # TMDb-only
 
 
 class AnilistGuardTests(unittest.TestCase):

@@ -7,7 +7,7 @@
 
 ## ✅ Open items — index (q3, 2026-10-30; pointers only)
 
-1. **This file is a pointer, not a history** 144 session files (141 dated + 3 undated) cover
+1. **This file is a pointer, not a history** 145 session files (142 dated + 3 undated) cover
 
    every one of them verbatim: [`checkpoints/README.md`](checkpoints/README.md). Nothing was
    deleted, reworded, or summarized. The count is `ls Fast_Fetch/checkpoints/*.md` minus `README.md`,
@@ -71,6 +71,7 @@
 ## Rotated session history
 
 The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete index.
+- [2026-11-20 — Simkl enricher](checkpoints/20261120-simkl-enricher.md): SimklSource after TMDb; probe 86/100 vs TMDb 26/68; 23 + 90 tests green, CI pending.
 - [2026-11-20 — Duration backfill job](checkpoints/20261120-duration-backfill.md): EXTINF-sum + header-first prober, resolved_cache batches of 100, staging table + NULL-only gate apply; 59 tests green locally.
 - [2026-11-20 — GDFlix clearance re-earning loop](checkpoints/20261120-gdflix-clearance-loop.md): loop earning cf_clearance for new10.gdflix.io before the 15-min ceiling; resolve path marks a challenged host due; 24 tests, Backend CI pending.
 - [2026-11-20 — init_db busy fix](checkpoints/20261120-init-db-busy.md): hot-path `init_db_once()` + bounded busy retry; `init_db()` repair semantics unchanged.

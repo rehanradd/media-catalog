@@ -29,14 +29,19 @@ Order of sources (site metadata is primary, per the standing order)
    * rating: OMDb (real IMDb rating) > Cinemeta (imdbRating) > MDBList
      (aggregated) > TMDb vote_average (a real TMDb score, NOT an IMDb one —
      recorded as source ``tmdb`` in the report and in a SQL comment) >
-     Trakt > AniList / Kitsu (anime only, averageScore / 100)
-   * synopsis: TMDb overview > Cinemeta > TVMaze summary > AniList / Kitsu
-   * poster: TMDb poster_path > Cinemeta > Fanart.tv > AniList / Kitsu cover
+     Simkl (IMDb rating when it has one, else its own score — recorded
+     as source ``simkl``) > Trakt > AniList / Kitsu (anime only,
+     averageScore / 100)
+   * synopsis: TMDb overview > Simkl overview > Cinemeta > TVMaze summary >
+     AniList / Kitsu
+   * poster: TMDb poster_path > Simkl poster > Cinemeta > Fanart.tv >
+     AniList / Kitsu cover
    * cast: TMDb credits (top 8) > TVMaze cast > AniList characters >
      Cinemeta cast
    * director: TMDb credits (job=Director) > OMDb > Cinemeta > IMDb crew
    * year / ids: TMDb (release_date / first_air_date, external_ids) >
-     Cinemeta year > TVMaze premiered > AniList startDate
+     Simkl year / ids.tmdb > Cinemeta year > TVMaze premiered > AniList
+     startDate
 
 Safety (the law for this module)
 --------------------------------
@@ -95,6 +100,8 @@ imdb-datasets      none          daily TSV download    NON-COMMERCIAL ONLY
 tmdb               TMDB_API_KEY  ~40 req/s (soft)      free key NON-COMMERCIAL
                    or BEARER     cache max 6 months    (agreement needed once
                                                         the app earns revenue)
+simkl              SIMKL_CLIENT  gentle, ~3 req/s      free key, app
+                   _ID                               registration
 omdb               OMDB_API_KEY  1,000 req/day free    content CC BY-NC 4.0
                                                         (Patreon tiers lift it)
 mdblist            MDBLIST_KEY   1,000 req/day free    aggregates other APIs
@@ -104,7 +111,8 @@ fanart             FANART_KEY    ~2 req/s, unlimited   artwork only
 
 Keys come from the environment only (never a file, never a log):
 ``TMDB_API_KEY`` / ``TMDB_BEARER_TOKEN``, ``OMDB_API_KEY``,
-``MDBLIST_API_KEY``, ``TRAKT_CLIENT_ID``, ``FANART_API_KEY``.
+``MDBLIST_API_KEY``, ``TRAKT_CLIENT_ID``, ``FANART_API_KEY``,
+``SIMKL_CLIENT_ID``.
 A source with no key is skipped and named in the report — the run still
 fills everything the keyless sources can reach.
 
@@ -158,6 +166,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 import config  # noqa: E402  (repo convention: DB_PATH / staging_db_path)
+import simkl_enricher  # noqa: E402  (Simkl Phase-2 fallback extraction)
 
 # ── constants ──────────────────────────────────────────────────────────────
 
@@ -199,16 +208,16 @@ DEFAULT_BATCH_SIZE = 100  # streaming: posts written per staging-SQL batch.
 # Per-field source order for the API pass (keyless sources first where they
 # can answer; a source that returns a field stops the chain for that field).
 FIELD_SOURCES = {
-    "rating": ("omdb", "cinemeta", "mdblist", "tmdb", "trakt", "anilist", "kitsu"),
-    "synopsis": ("tmdb", "cinemeta", "tvmaze", "anilist", "kitsu", "jikan"),
-    "poster": ("tmdb", "cinemeta", "fanart", "anilist", "kitsu", "jikan"),
-    "backdrop": ("tmdb", "cinemeta", "fanart"),
+    "rating": ("omdb", "cinemeta", "mdblist", "tmdb", "simkl", "trakt", "anilist", "kitsu"),
+    "synopsis": ("tmdb", "simkl", "cinemeta", "tvmaze", "anilist", "kitsu", "jikan"),
+    "poster": ("tmdb", "simkl", "cinemeta", "fanart", "anilist", "kitsu", "jikan"),
+    "backdrop": ("tmdb", "simkl", "cinemeta", "fanart"),
     "cast": ("tmdb", "tvmaze", "anilist", "cinemeta"),
     "director": ("tmdb", "omdb", "cinemeta"),
-    "year": ("tmdb", "cinemeta", "tvmaze", "anilist", "kitsu"),
-    "tmdb_id": ("tmdb",),
+    "year": ("tmdb", "simkl", "cinemeta", "tvmaze", "anilist", "kitsu"),
+    "tmdb_id": ("tmdb", "simkl"),
     "imdb_id": ("tmdb", "omdb", "mdblist", "trakt"),
-    "genres": ("tmdb", "cinemeta", "anilist", "kitsu"),
+    "genres": ("tmdb", "simkl", "cinemeta", "anilist", "kitsu"),
 }
 
 # Anime-only sources: consulted only when the work looks animated.
@@ -1272,6 +1281,57 @@ class TmdbSource(Source):
         return None
 
 
+class SimklSource(Source):
+    """Simkl — the Phase-2 fallback after TMDb. Needs SIMKL_CLIENT_ID
+    (the "Radd Stream" app, AUTH V2, registered 2026-11-20).
+
+    Looked up by IMDb id only — exact identity, so no title guard is
+    needed: ``/movies|/tv|/anime/:imdb``. Gives the real IMDb rating when
+    Simkl has one, else its own Simkl score (recorded as source simkl,
+    never as an IMDb score — the same honesty rule as TMDb's
+    vote_average); overview, poster, fanart, year, genres, runtime, and
+    the TMDb id for the cross-link. No cast in the summary shape — cast
+    stays TMDb-only. Probe 2026-11-20 on 100 no-rating works: Simkl
+    86/100 found, TMDb 26/68 completed calls on the same 100.
+
+    Some lookups answer with a list of matches instead of one object;
+    ``simkl_enricher`` takes the first dict element (the probe crashed
+    on this shape once). A 404 for an unknown IMDb id raises
+    UpstreamError, same as every other source's miss path."""
+
+    NAME = "simkl"
+    ENV_VAR = "SIMKL_CLIENT_ID"
+    MIN_INTERVAL = 0.35  # the probe's pacing; Simkl publishes no hard limit
+
+    def _headers(self) -> dict:
+        return {"simkl-api-key": self.key, "Content-Type": "application/json"}
+
+    def lookup(self, query: dict) -> Metadata | None:
+        imdb_id = query.get("imdb_id")
+        if not imdb_id:
+            return None
+        endpoint = simkl_enricher.endpoint_for(
+            series=is_series_like(query.get("content_type"),
+                                   query.get("seasons")),
+            anime=bool(query.get("animated")))
+        url = simkl_enricher.lookup_url(self.key, endpoint, imdb_id)
+        payload = self.cached(f"{endpoint}:{imdb_id}",
+                              lambda: self.http.get_json(url, headers=self._headers()))
+        data = simkl_enricher.extract_metadata(payload)
+        if not data:
+            return None
+        out = Metadata()
+        out.set("rating", data.get("rating"), self.NAME)
+        out.set("synopsis", data.get("overview"), self.NAME)
+        out.set("poster", data.get("poster"), self.NAME)
+        if data.get("fanart"):
+            out.set("backdrop", [data["fanart"]], self.NAME)
+        out.set("year", data.get("year"), self.NAME)
+        out.set("genres", data.get("genres"), self.NAME)
+        out.set("tmdb_id", data.get("tmdb_id"), self.NAME)
+        return out if not out.is_empty() else None
+
+
 class OmdbSource(Source):
     """OMDb — the IMDb rating itself, plus RT / Metacritic in the same
     payload. Needs OMDB_API_KEY. Free tier: 1,000 requests/day, so the run
@@ -1699,7 +1759,7 @@ class FanartSource(Source):
 
 
 SOURCE_CLASSES = (
-    CinemetaSource, TmdbSource, OmdbSource, TvmazeSource, AnilistSource,
+    CinemetaSource, TmdbSource, SimklSource, OmdbSource, TvmazeSource, AnilistSource,
     KitsuSource, JikanSource, MdblistSource, TraktSource, FanartSource,
 )
 

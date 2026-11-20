@@ -456,6 +456,13 @@ jobs:
       - name: 🧪 test_metadata_backfill.py
         run: python3 -S Fast_Fetch/test_metadata_backfill.py
 
+      # Simkl Phase-2 fallback enricher: pure extraction (list-shaped
+      # answers, verified poster/fanart URL suffixes, IMDb-beats-Simkl
+      # rating) + SimklSource wired right after TMDb. Offline, stdlib,
+      # fake HTTP client, no network, no key.
+      - name: 🧪 test_simkl_enricher.py
+        run: python3 -S Fast_Fetch/test_simkl_enricher.py
+
       # Skip Intro / Skip Recap segments (MX #4): TheIntroDB v3 parsing,
       # the segments backfill (fake HTTP client, staging SQL only), and
       # the `play_bundle` wire with the pack-offset shift/omit rules.
