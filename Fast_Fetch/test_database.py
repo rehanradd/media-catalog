@@ -3686,12 +3686,12 @@ seg-00002.ts
             res["url"], "https://i-arch-400.example/stream2/index.m3u8")
         self.assertTrue(res["refreshed"])
         self.assertTrue(res["is_temporary"], "a signed master is never permanent")
-        # Host registry (2026-11-18): the unwrapper receives the
-        # rewritten host (geffe448mik.com); the stored row keeps
-        # vd.1xplayer.com until the remap gate runs.
+        # Host registry (prober reclassified 2026-11-20): the unwrapper
+        # receives the rewritten host (asrmo449ddj.com); the stored row
+        # keeps vd.1xplayer.com until the remap gate runs.
         self.assertEqual(resolvers.calls,
                          [("1xplayer",
-                           "https://geffe448mik.com/play/ftt4479696?tr=2",
+                           "https://asrmo449ddj.com/play/ftt4479696?tr=2",
                            True)])
 
     def test_resolve_live_source_unwraps_a_moviebox_detail_to_its_signed_mp4(self):
