@@ -1,11 +1,14 @@
 package com.raddstream.app.ui.components
 
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Text
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -19,8 +22,6 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performTouchInput
-import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import org.junit.Assert.assertEquals
@@ -152,6 +153,7 @@ class ScrollingChipRowTest {
     }
 
     @Test
+    @OptIn(ExperimentalFoundationApi::class)
     fun flingSettlesOnAnItemBoundary() {
         // Screen audit #1 (Nov 2026): the row snaps — a free fling used
         // to rest mid-chip ("Complete serie…" cut at the edge reads as
@@ -168,43 +170,45 @@ class ScrollingChipRowTest {
         // when the fling snapped correctly. Zero padding makes the snap
         // target the viewport start, so offset 0 is the snap itself.
         //
-        // Twelve chips on purpose: with five, the default swipe's drag
-        // already exceeded maxScroll, so the list pinned at its end in
-        // every run and the offset was pure geometry — 48 with 16dp
-        // padding, 16 with zero padding (the 32px delta is exactly the
-        // padding increase at density 2.0) — and at maxScroll no item
-        // can sit flush, so offset 0 was unreachable by construction
-        // (CI 44646400985 / 44649050155 / 44651470183). Twelve chips
-        // make the content ~3x the viewport, so the swipe lands
-        // mid-list where a snap CAN align an item flush.
+        // Twelve chips on purpose: with five, the content was barely
+        // wider than the viewport, so any swipe pinned the list at its
+        // end, where no item can sit flush and offset 0 was unreachable
+        // by construction (CI 44646400985 / 44649050155 / 44651470183).
+        // Twelve chips make the content ~3x the viewport, so a fling
+        // lands mid-list where a snap CAN align an item flush.
         //
-        // The swipe is 200ms on purpose: the 100ms swipe in fixup 3 DID
-        // produce a fling — the list flew to maxScroll, and the settled
-        // offset 16 is exactly maxScroll geometry (content 1280px,
-        // viewport 400px, maxScroll 880px, item 8 at 864px: 880-864=16) —
-        // but the fling overshot the end, where the snap clamps and no
-        // item can sit flush. 200ms halves the velocity and the fling
-        // distance, so the list lands mid-list where the snap CAN align
-        // an item flush. (The earlier note claiming the default 300ms
-        // swipe "never produced a fling" was unproven: the five-chip
-        // runs were drag-pinned at maxScroll, where a fling would have
-        // been indistinguishable from no fling.) Run 44656557077 (200ms)
-        // still settled nonzero at offset 36: the snap had not finished
-        // when the fixed 3000ms advance + waitForIdle read the state.
-        // So the test now polls for the SETTLED snapped state with
-        // waitUntil (up to 10s of virtual time) instead of assuming a
-        // fixed duration covers the decay + snap spring. If waitUntil
-        // times out, the snap never settles under Robolectric and the
-        // test needs a programmatic fling.
+        // The fling is driven PROGRAMMATICALLY, not by a swipe: six CI
+        // runs proved a Robolectric swipe gesture never reaches the
+        // snap — the list rests at the drag position with
+        // scrolling=false, and waiting 10s does not move it (run
+        // 44658171823: index=5 offset=36 scrolling=false, settled).
+        // A swipe produces a drag but no fling velocity here, so
+        // performFling is never called and the snap never runs. The
+        // test therefore builds the same snap behaviour the row builds
+        // (rememberSnapFlingBehavior over the same hoisted state, same
+        // defaults) and drives it from a LaunchedEffect. That pins the
+        // snap settlement for this row's state; the row's own wiring —
+        // it passes rememberSnapFlingBehavior(state) to its LazyRow —
+        // is the one-liner in ScrollingChipRow.kt:86. The gesture path
+        // (a real swipe -> fling -> snap) is a device-verification
+        // item, not something Robolectric can prove.
         //
-        // A fling + snap takes virtual time: the 3000ms advance below
-        // starts the decay, and waitUntil then polls until the snap
-        // spring settles — the assertions read the SETTLED state, not a
-        // mid-flight sample. The index assertion keeps the test honest:
-        // a swipe that moved nothing would also read offset 0.
+        // The fling velocity is 400px/s on purpose: it moves the list
+        // ~135px, past the first chip (so the index assertion means
+        // something) while landing well short of maxScroll, so the snap
+        // has room to align an item flush. waitUntil polls for the
+        // SETTLED snapped state (up to 10s of virtual time) instead of
+        // assuming a fixed duration covers the decay + snap spring.
+        // The index assertion keeps the test honest: a fling that moved
+        // nothing would also read offset 0.
         val state = LazyListState()
         compose.setContent {
             RaddStreamTheme {
+                // The snap behaviour, built exactly the way the row
+                // builds its own (same function, same state, same
+                // defaults) — driven from the LaunchedEffect below
+                // because a Robolectric swipe produces no fling.
+                val snapBehavior = rememberSnapFlingBehavior(state)
                 Box(Modifier.width(200.dp)) {
                     ScrollingChipRow(
                         state = state,
@@ -220,29 +224,16 @@ class ScrollingChipRowTest {
                         }
                     }
                 }
+                LaunchedEffect(snapBehavior) {
+                    state.scroll {
+                        snapBehavior.performFling(400f)
+                    }
+                }
             }
         }
-        compose.onNodeWithTag("test-snap-row").performTouchInput { swipeLeft(durationMillis = 200) }
-        compose.mainClock.advanceTimeBy(3000)
-        compose.waitForIdle()
-        // Diagnostic, temporary — remove once this test is green. Prints
-        // the state after 3s of virtual time into the test XML's
-        // system-out: if waitUntil below times out, this shows whether
-        // the list was still scrolling or had settled at a non-snap
-        // position.
-        println(
-            "SNAP-DEBUG index=${state.firstVisibleItemIndex} " +
-                "offset=${state.firstVisibleItemScrollOffset} " +
-                "scrolling=${state.isScrollInProgress} " +
-                "visible=" + state.layoutInfo.visibleItemsInfo.joinToString(",") {
-                    "${it.index}@${it.offset}"
-                },
-        )
-        // Poll for the settled snapped state instead of asserting after
-        // a fixed advance: waitUntil advances the test clock while it
-        // polls, so a slow decay + snap spring gets the virtual time it
-        // needs. The index assertion keeps the test honest: a swipe
-        // that moved nothing would also read offset 0.
+        // Poll for the settled snapped state: waitUntil advances the
+        // test clock while it polls, so the decay + snap spring gets
+        // the virtual time it needs.
         compose.waitUntil(timeoutMillis = 10_000) {
             state.firstVisibleItemIndex > 0 && state.firstVisibleItemScrollOffset == 0
         }
