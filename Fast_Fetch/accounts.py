@@ -1344,8 +1344,9 @@ def _trial_answer(device: str, row, vip_until: float, *, sync_key=None,
 def _trial_ip_hash(client_ip):
     """SHA-256 of the caller's network address, or None when there is none.
 
-    The route passes what `redact.client_ip` saw (the address nginx's
-    `X-Real-IP` carried, or the socket peer); a direct library caller passes
+    The route passes what `redact.client_ip` saw (CF-Connecting-IP behind
+    Cloudflare, else the address nginx's `X-Real-IP` carried, or the socket
+    peer); a direct library caller passes
     nothing, and then no budget is charged — the budget is an edge control,
     and a caller with no address has no address to count."""
     text = str(client_ip or "").strip()

@@ -1785,6 +1785,18 @@ def client_ip(handler) -> str:
     did come through the proxy we ship). A direct hit on :8080 from anywhere else
     trusts no forwarded header at all.
 
+    Cloudflare sits in front of nginx now, and that changed what `$remote_addr`
+    is: it is the Cloudflare edge IP, shared by every user behind that edge, so
+    `X-Real-IP` keys one bucket per edge instead of per user (browse = 1 req/s
+    for all of them — scale bottleneck #1, 2026-11-20). Cloudflare sets
+    `CF-Connecting-IP` to the real user address on every request it proxies, and
+    nginx passes it through untouched (`proxy_params` sets `X-Real-IP`/`XFF` but
+    clears nothing), so it is read FIRST, before `X-Real-IP`. Once the nginx
+    `real_ip` patch lands, `$remote_addr` — and therefore `X-Real-IP` — is the
+    same user address and the order stops mattering; until then this is what
+    makes the buckets per-user. Same trust boundary as `X-Real-IP`: loopback
+    peer only.
+
     This is not a trust decision about the response any more: the same leftmost
     read meant a Pakistani carrier-NAT user behind a shared proxy could be
     throttled by a stranger's chosen string, while the stranger went free.
@@ -1792,6 +1804,9 @@ def client_ip(handler) -> str:
     peer = str(getattr(handler, "client_address", ("",))[0] or "")
     if peer and peer not in ("127.0.0.1", "::1"):
         return peer
+    connecting = str(handler.headers.get("CF-Connecting-IP") or "").strip()
+    if connecting:
+        return connecting
     real = str(handler.headers.get("X-Real-IP") or "").strip()
     if real:
         return real

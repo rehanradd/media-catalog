@@ -35,3 +35,10 @@ One more bullet left the index in the second H4 R10 fixup rebase
 budget (12,081 bytes before this rotation).
 
 - [2026-11-19 — H4 R5 shared streaming cache](checkpoints/20261119-h4-shared-cache.md): demand ledger + sibling-band warm + prefetch --demand; 33 tests green locally, Backend CI pending.
+
+- [B2 episode_guide — 2026-11-19](checkpoints/20261119-b2-episode-guide.md)
+- [2026-11-19 — H4 R6 direct-file preference](checkpoints/20261119-h4-direct-file.md): measured mime corrects the ingest label in tiers.score, candidate_order_sql, and the verify pass (+0.10 fresh banked-file nudge); 17 tests green locally, Backend CI pending.
+
+Two more bullets left the index in the scale real-IP lane (2026-11-20),
+moved verbatim to bring CONTINUITY.md under its 12,000-byte budget
+(11,892 bytes before this rotation, 446-byte new bullet).

@@ -779,6 +779,43 @@ class RateLimiterTests(unittest.TestCase):
             self.assertTrue(limiter.check("browse", "203.0.113.7")["allowed"])
         self.assertFalse(limiter.check("browse", "203.0.113.7")["allowed"])
 
+    def test_cf_connecting_ip_is_the_per_user_key_behind_cloudflare(self):
+        # Scale bottleneck #1 (2026-11-20): nginx has no real_ip config, so
+        # X-Real-IP is the Cloudflare edge IP and every user behind one edge
+        # shared one bucket (browse = 1 req/s for all of them). Cloudflare
+        # sets CF-Connecting-IP to the real user address; nginx passes it
+        # through untouched. It is read first, loopback peer only.
+        class _Handler:
+            def __init__(self, peer, **headers):
+                self.client_address = (peer, 41234)
+                self.headers = dict(headers)
+
+        edge = "172.68.174.168"
+        user_a, user_b = "203.0.113.11", "203.0.113.22"
+        # Two users behind one edge are two buckets, not one.
+        for user in (user_a, user_b):
+            self.assertEqual(
+                redact.client_ip(_Handler(
+                    "127.0.0.1",
+                    **{"CF-Connecting-IP": user,
+                       "X-Real-IP": edge,
+                       "X-Forwarded-For": f"{user}, {edge}"})), user)
+        limiter = redact.RateLimiter(limits={"browse": (2, 60.0)})
+        for _ in range(2):
+            self.assertTrue(limiter.check("browse", user_a)["allowed"])
+        self.assertFalse(limiter.check("browse", user_a)["allowed"])
+        # The other user still has their own budget.
+        self.assertTrue(limiter.check("browse", user_b)["allowed"])
+        # From a non-loopback peer the header is ignored, like X-Real-IP.
+        direct = _Handler("198.51.100.9",
+                          **{"CF-Connecting-IP": user_a,
+                             "X-Real-IP": user_a,
+                             "X-Forwarded-For": user_a})
+        self.assertEqual(redact.client_ip(direct), "198.51.100.9")
+        # Absent header falls back to X-Real-IP exactly as before.
+        self.assertEqual(redact.client_ip(_Handler(
+            "127.0.0.1", **{"X-Real-IP": edge})), edge)
+
 
 class WarmBucketTests(unittest.TestCase):
     """Warm presses (`redirect=0`) pay the warm bucket, never play.
