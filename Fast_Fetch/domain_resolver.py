@@ -280,11 +280,18 @@ def get_active_base_url(site_name: str, fallback_default: str | None = None,
     Pure read, no network — this is the one-line pattern every importer uses
     at crawl start (the hindilinks4u/toonworld4all pattern). The hardcoded
     DEFAULT_BASE_URL is only the fallback when the registry has no entry.
+
+    A retired site is refused outright (""), even when a fallback is passed:
+    the registry still carries its last base (hdtvb is retired yet lists
+    https://hdutv.com), and the fallback would resurrect it for ingestion.
     """
     reg = load_registry(registry_path)
     site_info = reg.get("sites", {}).get(site_name)
-    if site_info and site_info.get("active_base_url"):
-        return site_info["active_base_url"]
+    if site_info:
+        if str(site_info.get("status") or "").lower() == "retired":
+            return ""
+        if site_info.get("active_base_url"):
+            return site_info["active_base_url"]
     return fallback_default or ""
 
 
@@ -859,6 +866,9 @@ def resolve_if_dead(site_name: str, registry_path: str | Path | None = None,
     reg = load_registry(registry_path)
     entry = reg.get("sites", {}).get(site_name)
     if not entry:
+        return ""
+    # A retired site is never healed: no probe, no chain, no retry base.
+    if str(entry.get("status") or "").lower() == "retired":
         return ""
     entry.setdefault("site_name", site_name)
     result = probe_endpoint(entry, entry.get("active_base_url", ""), fetcher=fetcher)

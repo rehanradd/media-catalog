@@ -351,9 +351,11 @@ def registry_live_domains() -> dict[str, str]:
     """site_name -> live base URL from domain_registry.json; {} on any failure.
 
     Entries with status == "down" are skipped (a measured death must not
-    shadow the DB); a missing status counts as untested, not down. Never
-    raises — a broken registry must degrade to the old static+DB behavior,
-    not break every scraper."""
+    shadow the DB); entries with status == "retired" are skipped too (a
+    retired site is never served, even though the registry still carries
+    its last base — hdtvb lists https://hdutv.com). A missing status counts
+    as untested, not down. Never raises — a broken registry must degrade
+    to the old static+DB behavior, not break every scraper."""
     try:
         data = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
     except Exception:
@@ -362,7 +364,7 @@ def registry_live_domains() -> dict[str, str]:
     for name, entry in (data.get("sites") or {}).items():
         if not isinstance(entry, dict):
             continue
-        if str(entry.get("status") or "").lower() == "down":
+        if str(entry.get("status") or "").lower() in ("down", "retired"):
             continue
         base = str(entry.get("active_base_url") or "").rstrip("/")
         if base.startswith("https://"):

@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "updated_at": "2026-11-20T21:12:34Z",
+  "updated_at": "2026-11-20T22:30:00Z",
   "hosts": {
     "hubcloud.ist": {
       "current_domain": "hubcloud.mov",
@@ -808,6 +808,90 @@
       "rows_affected": 351,
       "known_mirrors": [],
       "rotation_history": []
+    },
+    "vegamovies.lease": {
+      "current_domain": "vegamovies.latino",
+      "evidence": "prober",
+      "status": "active",
+      "last_verified": "2026-11-20T22:30:00Z",
+      "verified_by": "domain-doctor-20261121",
+      "rows_affected": 0,
+      "known_mirrors": [
+        "https://vegamovies.latino"
+      ],
+      "rotation_history": [
+        {
+          "domain": "vegamovies.lease",
+          "seen_until": "2026-11-20T22:30:00Z"
+        },
+        {
+          "domain": "vegamovies.latino",
+          "seen_from": "2026-11-20T22:30:00Z"
+        }
+      ]
+    },
+    "new1.ssrmovies.page": {
+      "current_domain": "site4.ssrmovies.page",
+      "evidence": "prober",
+      "status": "active",
+      "last_verified": "2026-11-20T22:30:00Z",
+      "verified_by": "domain-doctor-20261121",
+      "rows_affected": 0,
+      "known_mirrors": [
+        "https://site4.ssrmovies.page"
+      ],
+      "rotation_history": [
+        {
+          "domain": "new1.ssrmovies.page",
+          "seen_until": "2026-11-20T22:30:00Z"
+        },
+        {
+          "domain": "site4.ssrmovies.page",
+          "seen_from": "2026-11-20T22:30:00Z"
+        }
+      ]
+    },
+    "new12.hdhub4u.cl": {
+      "current_domain": "new15.hdhub4u.cl",
+      "evidence": "prober",
+      "status": "active",
+      "last_verified": "2026-11-20T22:30:00Z",
+      "verified_by": "domain-doctor-20261121",
+      "rows_affected": 0,
+      "known_mirrors": [
+        "https://new15.hdhub4u.cl"
+      ],
+      "rotation_history": [
+        {
+          "domain": "new12.hdhub4u.cl",
+          "seen_until": "2026-11-20T22:30:00Z"
+        },
+        {
+          "domain": "new15.hdhub4u.cl",
+          "seen_from": "2026-11-20T22:30:00Z"
+        }
+      ]
+    },
+    "rogmovies.asia": {
+      "current_domain": "rogmovies.beauty",
+      "evidence": "prober",
+      "status": "active",
+      "last_verified": "2026-11-20T22:30:00Z",
+      "verified_by": "domain-doctor-20261121",
+      "rows_affected": 0,
+      "known_mirrors": [
+        "https://rogmovies.beauty"
+      ],
+      "rotation_history": [
+        {
+          "domain": "rogmovies.asia",
+          "seen_until": "2026-11-20T22:30:00Z"
+        },
+        {
+          "domain": "rogmovies.beauty",
+          "seen_from": "2026-11-20T22:30:00Z"
+        }
+      ]
     }
   }
 }

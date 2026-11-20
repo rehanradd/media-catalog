@@ -108,6 +108,19 @@ class TestRegistryLiveDomains(unittest.TestCase):
                 self.assertEqual(ff.registry_live_domains(),
                                  {"vegamovies": "https://new1.vegamovies.lease"})
 
+    def test_retired_site_is_not_served(self):
+        # hdtvb is retired yet lists https://hdutv.com: the overlay must
+        # not serve it. (The scrubber still harvests its strings — that
+        # pin lives in TestNeedleSuperset.test_retired_rows_are_still_harvested.)
+        sites = {"hdtvb": {"active_base_url": "https://hdutv.com",
+                           "status": "retired"},
+                 "vegamovies": {"active_base_url": "https://vegamovies.latino",
+                                "status": "active"}}
+        with _temp_registry(sites) as reg:
+            with mock.patch.object(ff, "REGISTRY_PATH", reg):
+                self.assertEqual(ff.registry_live_domains(),
+                                 {"vegamovies": "https://vegamovies.latino"})
+
     def test_down_status_is_not_preferred(self):
         sites = {"rogmovies": {"active_base_url": "https://rogmovies.one",
                                "status": "down"}}

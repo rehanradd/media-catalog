@@ -549,6 +549,16 @@ class ResolveIfDeadTests(unittest.TestCase):
         self.assertEqual(got, "https://ssrmovies.surf")
         tmp.cleanup()
 
+    def test_retired_site_returns_empty_without_probing(self):
+        # A retired site is never healed: no probe call, no chain, "".
+        tmp, path = temp_registry({"hdtvb": site_entry(
+            active_base_url="https://hdutv.com", status="retired")})
+        stub = StubFetch({})
+        self.assertEqual(dr.resolve_if_dead("hdtvb", registry_path=path,
+                                            fetcher=stub), "")
+        self.assertEqual(len(stub.calls), 0)
+        tmp.cleanup()
+
 
 class RegistryTests(unittest.TestCase):
     def test_get_active_base_url_fallback(self):
@@ -560,6 +570,16 @@ class RegistryTests(unittest.TestCase):
                                                 registry_path=path),
                          "https://fallback.test")
         self.assertEqual(dr.get_active_base_url("nosuchsite", registry_path=path), "")
+        tmp.cleanup()
+
+    def test_get_active_base_url_retired_returns_empty(self):
+        # hdtvb is retired yet lists https://hdutv.com: the guard refuses
+        # it outright, and the fallback must not resurrect it either.
+        tmp, path = temp_registry({"hdtvb": site_entry(
+            active_base_url="https://hdutv.com", status="retired")})
+        self.assertEqual(dr.get_active_base_url("hdtvb", "https://fallback.test",
+                                                registry_path=path), "")
+        self.assertEqual(dr.get_active_base_url("hdtvb", registry_path=path), "")
         tmp.cleanup()
 
     def test_registry_v2_round_trip(self):

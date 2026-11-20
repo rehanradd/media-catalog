@@ -5,8 +5,8 @@ Offline, stdlib, no network: every HTTP hop goes through an injected
 fake fetcher. Real DNS is never touched.
 
 Pinned here:
-* the seeded registry loads: 38 entries (34 moved pairs + 4 dead hosts),
-  34 live domains, and the four dead hosts are recorded, not rewritten;
+* the seeded registry loads: 42 entries (38 moved pairs + 4 dead hosts),
+  38 live domains, and the four dead hosts are recorded, not rewritten;
 * rewrite_url swaps ONLY the host (scheme/port/path/query/fragment
   preserved) and falls back to the stored URL for unknown, dead, or
   already-current hosts;
@@ -76,13 +76,15 @@ class TestSeededRegistry(unittest.TestCase):
         reg = hr.load_registry()
         hosts = reg["hosts"]
         self.assertEqual(reg["version"], "2.0")
-        self.assertEqual(len(hosts), 38)  # 34 moved pairs + 4 dead hosts
-        self.assertEqual(len(hr.live_domains()), 34)
+        self.assertEqual(len(hosts), 42)  # 38 moved pairs + 4 dead hosts
+        self.assertEqual(len(hr.live_domains()), 38)
         # The audit's headline said 26 pairs; the enumerated lists sum to
         # 29, and the pair row counts sum to exactly the audit's 1,010,359.
         # The vcloud move (domain-doctor 2026-11-21, 237,014 rows) and the
         # subdomain lane (2026-11-21, 4 moves + 9,297 rows, 2 DNS-dead)
-        # bring the total to 1,256,670.
+        # bring the total to 1,256,670. The registry-refresh lane
+        # (2026-11-21, vegamovies/ssrmovies/hdhub4u/rogmovies) adds 4
+        # moves with 0 rows on the old hosts, so the total is unchanged.
         rows = sum(h.get("rows_affected", 0) for h in hosts.values()
                    if h.get("status") == "active")
         self.assertEqual(rows, 1256670)
@@ -98,8 +100,10 @@ class TestSeededRegistry(unittest.TestCase):
         self.assertEqual(by_evidence["audit-dead-sample"], 3)
         self.assertEqual(by_evidence["audit-dead"], 4)
         # 5 prober-learned moves + vcloud.beer, proven by the
-        # domain-doctor's live probe (beer 301/302s to my, my serves 200).
-        self.assertEqual(by_evidence["prober"], 6)
+        # domain-doctor's live probe (beer 301/302s to my, my serves 200),
+        # + 4 registry-refresh moves (vegamovies/ssrmovies/hdhub4u/
+        # rogmovies, 2026-11-21, each probed live from the Oracle VM).
+        self.assertEqual(by_evidence["prober"], 10)
 
     def test_pixel_excluded(self):
         # Both sides 400 (expired tokens): never a mapping, never rewritten.
@@ -133,6 +137,20 @@ class TestRewrite(unittest.TestCase):
         self.assertEqual(
             hr.rewrite_url("https://www.mp4moviez.deal/post/1"),
             "https://www.mp4moviez.computer/post/1")
+        # Registry-refresh lane (2026-11-21, all four probed live from
+        # the Oracle VM): the moved site bases rewrite at serve time.
+        self.assertEqual(
+            hr.rewrite_url("https://vegamovies.lease/post/1"),
+            "https://vegamovies.latino/post/1")
+        self.assertEqual(
+            hr.rewrite_url("https://new1.ssrmovies.page/post/1"),
+            "https://site4.ssrmovies.page/post/1")
+        self.assertEqual(
+            hr.rewrite_url("https://new12.hdhub4u.cl/post/1"),
+            "https://new15.hdhub4u.cl/post/1")
+        self.assertEqual(
+            hr.rewrite_url("https://rogmovies.asia/post/1"),
+            "https://rogmovies.beauty/post/1")
         self.assertEqual(
             hr.rewrite_url("https://vd.1xplayer.com/embed/1"),
             "https://asrmo449ddj.com/embed/1")  # prober reclassified 2026-11-20 (was geffe448mik.com)

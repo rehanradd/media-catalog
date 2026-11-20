@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "updated_at": "2026-11-09T20:35:00Z",
+  "updated_at": "2026-11-20T22:30:00Z",
   "sites": {
     "10xflix": {
       "active_base_url": "https://10xflix.asia",
@@ -208,13 +208,15 @@
       "notes": "filmyzilla75/74 301 to filmyzilla80; thefilmyzilla.in redirects to HQ (filmyzillahq.in, second live shape)."
     },
     "hdhub4u": {
-      "active_base_url": "https://new12.hdhub4u.cl",
-      "last_verified": "2026-11-08T09:46:30Z",
+      "active_base_url": "https://new15.hdhub4u.cl",
+      "last_verified": "2026-11-20T22:30:00Z",
       "verified_by": "sitemap",
       "known_mirrors": [
+        "https://new15.hdhub4u.cl",
         "https://new12.hdhub4u.cl",
         "https://new11.hdhub4u.cl",
-        "https://hdhub4us.co.in"
+        "https://hdhub4us.co.in",
+        "https://hdhub4u.fr"
       ],
       "github_keys": {
         "saurabh": "hdhub4u",
@@ -251,12 +253,17 @@
         },
         {
           "domain": "https://new12.hdhub4u.cl",
-          "seen_from": "2026-11-08"
+          "seen_from": "2026-11-08",
+          "seen_until": "2026-11-20T22:30:00Z"
+        },
+        {
+          "domain": "https://new15.hdhub4u.cl",
+          "seen_from": "2026-11-20T22:30:00Z"
         }
       ],
-      "last_checked": "2026-11-08T09:46:30Z",
+      "last_checked": "2026-11-20T22:30:00Z",
       "sitemap_endpoint": "/sitemap.xml",
-      "notes": "hdhub4u.fans is a landing page, new3/new2.hdhub4u.free dead — dropped. hdhub4us.co.in is a live variant (user-found 2026-11-08)."
+      "notes": "hdhub4u.fans is a landing page, new3/new2.hdhub4u.free dead — dropped. hdhub4us.co.in is a live variant (user-found 2026-11-08). new15 current since 2026-11-20 (new12 301s to new15; tracker h4.suncdn.org/host/ agrees new15; hdhub4u.fr is a landing page, not the content base)."
     },
     "hdtvb": {
       "active_base_url": "https://hdutv.com",
@@ -405,10 +412,11 @@
       "api_endpoint": "/wp-json/wp/v2/posts"
     },
     "rogmovies": {
-      "active_base_url": "https://rogmovies.asia",
-      "last_verified": "2026-11-08T09:47:27Z",
+      "active_base_url": "https://rogmovies.beauty",
+      "last_verified": "2026-11-20T22:30:00Z",
       "verified_by": "sitemap",
       "known_mirrors": [
+        "https://rogmovies.beauty",
         "https://rogmovies.asia"
       ],
       "github_keys": {
@@ -425,7 +433,9 @@
         "asia",
         "wtf",
         "vip",
-        "club"
+        "club",
+        "autos",
+        "beauty"
       ],
       "api_type": "xml_sitemap",
       "status": "active",
@@ -436,18 +446,24 @@
         },
         {
           "domain": "https://rogmovies.asia",
-          "seen_from": "2026-11-08"
+          "seen_from": "2026-11-08",
+          "seen_until": "2026-11-20T22:30:00Z"
+        },
+        {
+          "domain": "https://rogmovies.beauty",
+          "seen_from": "2026-11-20T22:30:00Z"
         }
       ],
-      "last_checked": "2026-11-08T09:47:27Z",
+      "last_checked": "2026-11-20T22:30:00Z",
       "sitemap_endpoint": "/sitemap.xml",
-      "notes": "rogmovies.one/.quest are a vegamovies doorway now, not rogmovies — dropped. Live base found by the user 2026-11-08."
+      "notes": "rogmovies.one/.quest are a vegamovies doorway now, not rogmovies — dropped. Live base found by the user 2026-11-08. Moved twice Nov 2026: .asia → .autos → .beauty (3 redirects); sitemap live, generated Nov 20, 2026 9:48 pm."
     },
     "ssrmovies": {
-      "active_base_url": "https://new1.ssrmovies.page",
-      "last_verified": "2026-11-08T09:47:27Z",
+      "active_base_url": "https://site4.ssrmovies.page",
+      "last_verified": "2026-11-20T22:30:00Z",
       "verified_by": "wp-json",
       "known_mirrors": [
+        "https://site4.ssrmovies.page",
         "https://new1.ssrmovies.page",
         "https://ssrmovies.surf",
         "https://ssrmovies.quest",
@@ -464,7 +480,8 @@
       ],
       "prefixes": [
         "",
-        "new1"
+        "new1",
+        "site4"
       ],
       "api_type": "wp_rest_api",
       "status": "active",
@@ -475,17 +492,23 @@
         },
         {
           "domain": "https://new1.ssrmovies.page",
-          "seen_from": "2026-11-08"
+          "seen_from": "2026-11-08",
+          "seen_until": "2026-11-20T22:30:00Z"
+        },
+        {
+          "domain": "https://site4.ssrmovies.page",
+          "seen_from": "2026-11-20T22:30:00Z"
         }
       ],
-      "last_checked": "2026-11-08T09:47:27Z",
+      "last_checked": "2026-11-20T22:30:00Z",
       "api_endpoint": "/wp-json/wp/v2/posts"
     },
     "vegamovies": {
-      "active_base_url": "https://vegamovies.lease",
-      "last_verified": "2026-11-08T09:47:30Z",
+      "active_base_url": "https://vegamovies.latino",
+      "last_verified": "2026-11-20T22:30:00Z",
       "verified_by": "sitemap",
       "known_mirrors": [
+        "https://vegamovies.latino",
         "https://vegamovies.lease",
         "https://new1.vegamovies.lease",
         "https://1vegamovies.shop"
@@ -504,7 +527,8 @@
         "gallery",
         "shop",
         "market",
-        "nl"
+        "nl",
+        "latino"
       ],
       "prefixes": [
         "",
@@ -520,10 +544,15 @@
         },
         {
           "domain": "https://vegamovies.lease",
-          "seen_from": "2026-11-08"
+          "seen_from": "2026-11-08",
+          "seen_until": "2026-11-20T22:30:00Z"
+        },
+        {
+          "domain": "https://vegamovies.latino",
+          "seen_from": "2026-11-20T22:30:00Z"
         }
       ],
-      "last_checked": "2026-11-08T09:47:30Z",
+      "last_checked": "2026-11-20T22:30:00Z",
       "sitemap_endpoint": "/sitemap.xml"
     },
     "world4ufree": {
