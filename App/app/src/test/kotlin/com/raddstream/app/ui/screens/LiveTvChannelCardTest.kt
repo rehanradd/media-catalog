@@ -4,8 +4,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.hasContentDescription
-import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.network.models.LiveTvChannel
 import com.raddstream.app.ui.theme.RaddStreamTheme
@@ -149,6 +149,14 @@ class LiveTvChannelCardTest {
         // Pakistan") leaves the same blank second line a long meta fills
         // — uniform card heights, full triple readable. Without minLines
         // the short card's meta is one line tall and the row staggers.
+        //
+        // The tag lives inside Card(onClick = …), a clickable that merges
+        // its descendants' semantics into the card node — so the merged
+        // tree has no meta node at all (CI 44646400985 found 0 nodes) and
+        // the lookup searches the unmerged tree (A4-F2 fixup 3, same tag).
+        // Unlike the wrap pin fixup 69356fcc removed, this pin does not
+        // need anything to wrap: minLines = 2 makes both metas two lines
+        // tall at any font metric, so the equality holds in Robolectric.
         val short = LiveTvChannel(
             id = 1,
             name = "Geo News",
@@ -183,7 +191,8 @@ class LiveTvChannelCardTest {
                 }
             }
         }
-        val metas = compose.onAllNodes(hasTestTag("liveTv_channelMeta")).fetchSemanticsNodes()
+        val metas = compose.onAllNodesWithTag("liveTv_channelMeta", useUnmergedTree = true)
+            .fetchSemanticsNodes()
         assertEquals(2, metas.size)
         assertEquals(metas[0].boundsInRoot.height, metas[1].boundsInRoot.height, 0.01f)
     }

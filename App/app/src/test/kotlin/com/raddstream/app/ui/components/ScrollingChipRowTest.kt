@@ -1,6 +1,7 @@
 package com.raddstream.app.ui.components
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -23,6 +24,7 @@ import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -157,12 +159,24 @@ class ScrollingChipRowTest {
         // first visible item sits flush at the row's start edge, so its
         // scroll offset is 0. The state is hoisted so the test can read
         // the settled offset after the fling animation finishes.
+        //
+        // The row runs with zero content padding here on purpose: the
+        // production rows carry 16dp of start padding, and the snap
+        // behaviour lands the item flush at the CONTENT edge — so with
+        // padding, the previous chip's tail still peeks into the 16dp
+        // start zone and firstVisibleItemScrollOffset reads nonzero
+        // (CI 44646400985: 48) even though the fling snapped correctly.
+        // Zero padding makes the snap target the viewport start, so
+        // offset 0 is the snap itself, not the padding. The index
+        // assertion keeps the test honest: a swipe that moved nothing
+        // would also read offset 0.
         val state = LazyListState()
         compose.setContent {
             RaddStreamTheme {
                 Box(Modifier.width(200.dp)) {
                     ScrollingChipRow(
                         state = state,
+                        contentPadding = PaddingValues(0.dp),
                         rowTestTag = "test-snap-row",
                     ) {
                         items(listOf("Complete series", "Documentaries", "Science Fiction", "Action", "Drama")) { label ->
@@ -178,6 +192,7 @@ class ScrollingChipRowTest {
         }
         compose.onNodeWithTag("test-snap-row").performTouchInput { swipeLeft() }
         compose.waitForIdle()
+        assertTrue(state.firstVisibleItemIndex > 0)
         assertEquals(0, state.firstVisibleItemScrollOffset)
     }
 }
