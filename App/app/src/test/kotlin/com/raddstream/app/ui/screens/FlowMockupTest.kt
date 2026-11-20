@@ -57,7 +57,7 @@ class FlowMockupTest {
         onTestConnection: () -> Unit = {},
         onRetryDefault: () -> Unit = {},
         onRevealUrlField: () -> Unit = {},
-        onConnected: () -> Unit = {},
+        onConnected: (askRegion: Boolean) -> Unit = {},
     ) {
         compose.setContent {
             RaddStreamTheme {

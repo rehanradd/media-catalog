@@ -87,7 +87,7 @@ internal fun SetupScreenContent(
     onTestConnection: () -> Unit,
     onRetryDefault: () -> Unit,
     onRevealUrlField: () -> Unit,
-    onConnected: () -> Unit,
+    onConnected: (askRegion: Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -197,7 +197,9 @@ internal fun SetupScreenContent(
         // no address to type and no dead end.
         if (!state.isConnected) {
             Spacer(Modifier.height(8.dp))
-            TextButton(onClick = onConnected) {
+            // Offline means saved titles only: no region question now —
+            // the launch gate still asks on a later launch if unanswered.
+            TextButton(onClick = { onConnected(false) }) {
                 Text("Continue offline — saved titles only")
             }
         }
