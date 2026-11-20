@@ -226,7 +226,16 @@ class ScrollingChipRowTest {
                 }
                 LaunchedEffect(snapBehavior) {
                     state.scroll {
-                        snapBehavior.performFling(400f)
+                        // TargetedFlingBehavior (what
+                        // rememberSnapFlingBehavior returns in this
+                        // Compose version): performFling takes the
+                        // remaining-distance callback too. The 1-arg
+                        // form does not resolve here (compile error in
+                        // run 44659478756: "Unresolved reference
+                        // 'performFling'").
+                        with(snapBehavior) {
+                            performFling(400f) { }
+                        }
                     }
                 }
             }
