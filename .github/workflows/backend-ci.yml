@@ -274,6 +274,13 @@ jobs:
       - name: 🧪 test_database.py
         run: python3 -S Fast_Fetch/test_database.py
 
+      # The init_db busy fix (gate 2026-11-20): once-per-process hot path
+      # (init_db_once) for resolve/save/redirect, bounded busy retry on
+      # init_db, repair semantics of init_db unchanged. Offline, stdlib,
+      # temp-file SQLite only.
+      - name: 🧪 test_init_db_busy.py
+        run: python3 -S Fast_Fetch/test_init_db_busy.py
+
       - name: 🧪 test_series_filter.py
         run: python3 -S Fast_Fetch/test_series_filter.py
 

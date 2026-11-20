@@ -443,7 +443,7 @@ def refresh_domains() -> dict[str, str]:
 
 def set_domain(name: str, url: str) -> None:
     """Updates a domain in the database."""
-    init_db()
+    init_db_once()
     clean_url = url.rstrip("/")
     with get_db() as conn:
         conn.execute("""
@@ -1639,8 +1639,104 @@ CREATE INDEX IF NOT EXISTS idx_post_artwork_post
 
 
 def init_db(db_path: Path | None = None) -> None:
+    """Full schema init: DDL + defaults + migrations + backfills.
+
+    This is also a REPAIR step, and callers rely on that: dropping a
+    table, adding a column, or filing a post without its post_sources
+    row and then calling ``init_db()`` again must heal it (pinned by
+    ``test_database.py``: backfill-after-drop, skip-when-complete with
+    incremental backfill, index-after-column). It therefore runs the
+    whole body on every call — use ``init_db_once()`` on hot paths
+    instead. A busy database is retried, bounded (see below); any other
+    failure raises at once.
+    """
     with _DB_WRITE_LOCK:
-        _init_db(db_path)
+        _init_db_with_retry(db_path)
+
+
+def init_db_once(db_path: Path | None = None) -> None:
+    """Initialise once per process per database file; a no-op after.
+
+    The hot-path form of :func:`init_db`, for callers that run on every
+    press / save / redirect (``resolve_live_source``,
+    ``_save_scraped_data``, ``set_domain``): the full init — a fresh
+    connection, a whole DDL script, defaults INSERTs, migrations, and
+    two full-table scans — used to run on every one of those calls, and
+    under write contention the defaults INSERT failed with "database is
+    locked" after the 30 s busy_timeout (gate 2026-11-20, three times
+    during live press probes 08:03-08:12). Once a file has been
+    initialised in this process there is nothing left to do, so later
+    calls return without touching the database at all.
+
+    The guard keys on file identity (resolved path + device + inode),
+    not just the path, because a gate swap renames a new file over the
+    path — the new file must be initialised even though the path is the
+    same. A path with no file identity (``:memory:``, a missing file)
+    is never cached: every connection to it is a fresh database.
+    Callers that NEED the repair semantics — startup, CLI,
+    maintenance, tests — must call :func:`init_db`, not this.
+    """
+    with _DB_WRITE_LOCK:
+        effective = db_path if db_path is not None else DB_PATH
+        identity = _db_identity(effective)
+        if identity is not None and identity in _INIT_DB_DONE:
+            return  # already initialised in this process: no DDL, no contention
+        init_db(db_path)
+        identity = _db_identity(effective)
+        if identity is not None:
+            _INIT_DB_DONE.add(identity)
+
+
+#: Databases this process has already initialised (via `init_db_once`),
+#: by file identity (resolved path, device, inode).
+_INIT_DB_DONE: set[tuple[str, int, int]] = set()
+
+#: Retries for a busy init, with the sleeps between attempts. The 30 s
+#: busy_timeout stays the live value (never weakened); this only covers
+#: the case where one statement waits it out — a transient spike from
+#: the sweep or a long writer — and the whole body is idempotent
+#: (IF NOT EXISTS / INSERT OR IGNORE / conditional ALTERs / the
+#: marker-based backfill), so re-running it is safe.
+_INIT_DB_MAX_ATTEMPTS = 3
+_INIT_DB_RETRY_DELAYS = (0.5, 1.0)
+
+
+def _db_identity(db_path):
+    """(resolved path, device, inode) for a database file, or None if it
+    has no stable file identity (`:memory:`, a missing file)."""
+    if db_path is None:
+        return None
+    if str(db_path) == ":memory:":
+        return None
+    try:
+        resolved = Path(db_path).resolve()
+    except (OSError, RuntimeError):
+        return None
+    try:
+        st = os.stat(resolved)
+    except OSError:
+        return None
+    return (str(resolved), st.st_dev, st.st_ino)
+
+
+def _init_db_with_retry(db_path: Path | None = None) -> None:
+    """Run `_init_db`, retrying a busy database a bounded number of
+    times. Only "database is locked" is retried — any other failure
+    raises at once, exactly as before."""
+    last_error = None
+    for attempt in range(1, _INIT_DB_MAX_ATTEMPTS + 1):
+        try:
+            _init_db(db_path)
+            return
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc).lower():
+                raise
+            last_error = exc
+            if attempt < _INIT_DB_MAX_ATTEMPTS:
+                print(f"[init_db] database is locked, retrying "
+                      f"({attempt}/{_INIT_DB_MAX_ATTEMPTS}) ...")
+                time.sleep(_INIT_DB_RETRY_DELAYS[attempt - 1])
+    raise last_error
 
 
 def _backfill_post_sources(conn, floor_id) -> None:
@@ -6475,7 +6571,7 @@ def _save_scraped_data(data: dict, *, ensure_db: bool = True,
     canonical_key = ledger_canonical_key(clean_title, year, data.get("canonical_key"))
 
     if ensure_db:
-        init_db()
+        init_db_once()
     with get_db() as conn:
         # Reserve the SQLite writer before matching, so another process cannot
         # insert a competing canonical record between lookup and insertion.
@@ -7869,7 +7965,7 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
     """
     if want not in ("watch", "download", "either"):
         want = "either"
-    init_db()
+    init_db_once()
     # H4 R8: one shared clearance store for this resolve — the protected-host
     # unwraps below reuse the host's stored clearance instead of paying it
     # again, and a challenge invalidates it at once. None means "no store".
