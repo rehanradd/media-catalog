@@ -119,6 +119,49 @@ DEFAULT_PANEL_DB = os.environ.get(
 LOAD_CEILING = 4.0
 LOAD_POLL_SECONDS = 15.0
 
+#: Catalog busy timeout (seconds) — the live value (`fast_fetch.get_db`
+#: uses the same 30 s). The default 5 s died on 2026-11-13: the very
+#: first INSERT in `record_run_start` raised `database is locked`
+#: because the continuous fast-probe sweep held the catalog's write
+#: lock, and the run lost a day (self-healed the next day by design).
+CATALOG_BUSY_TIMEOUT = 30.0
+
+#: Bounded retries for a locked catalog on audit writes: 3 attempts,
+#: 0.5 s then 1.0 s between them (same shape as
+#: `fast_fetch._init_db_with_retry`). Routing through `init_db_once`
+#: does not fit — that helper initialises the fast_fetch schema, and
+#: importing fast_fetch here would drag the whole engine into the
+#: worker; the audit writes are one INSERT / UPDATE each, so a local
+#: retry is the smaller change.
+AUDIT_WRITE_MAX_ATTEMPTS = 3
+AUDIT_WRITE_RETRY_DELAYS = (0.5, 1.0)
+
+
+def _catalog_connect(catalog_db):
+    """Open the catalog with the live 30 s busy timeout."""
+    return sqlite3.connect(str(catalog_db), timeout=CATALOG_BUSY_TIMEOUT)
+
+
+def _audit_write(conn, sql, params):
+    """Execute one audit write, retrying a locked database a bounded
+    number of times. Only "database is locked" is retried — any other
+    failure raises at once. The failed attempt is rolled back before
+    the next try so no half-open transaction survives it."""
+    last_error = None
+    for attempt in range(1, AUDIT_WRITE_MAX_ATTEMPTS + 1):
+        try:
+            cur = conn.execute(sql, params)
+            conn.commit()
+            return cur
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc).lower():
+                raise
+            last_error = exc
+            conn.rollback()
+            if attempt < AUDIT_WRITE_MAX_ATTEMPTS:
+                time.sleep(AUDIT_WRITE_RETRY_DELAYS[attempt - 1])
+    raise last_error
+
 
 def fleet_command(site, mode, limit, *, python="python3", base_dir=None):
     """The argv for one validated fleet run — exactly the panel's fleet_command.
@@ -195,27 +238,27 @@ def pick_stalest(panel_conn):
 def record_run_start(catalog_conn, site, mode, limit, *, now: int | None = None) -> int:
     """Reserve the audit row for a run. Returns the audit id."""
     now = now if now is not None else int(time.time())
-    cur = catalog_conn.execute(
+    cur = _audit_write(
+        catalog_conn,
         "INSERT INTO admin_fleet_audit (crawler_id, action, status, started_at, detail) "
         "VALUES (?,?,?,?,?)",
         (site, "run", "running", now, "mode %s limit %d" % (mode, limit)))
-    catalog_conn.commit()
     return int(cur.lastrowid)
 
 
 def record_run_pid(catalog_conn, audit_id: int, pid: int) -> None:
-    catalog_conn.execute(
+    _audit_write(
+        catalog_conn,
         "UPDATE admin_fleet_audit SET pid=? WHERE id=?", (int(pid), audit_id))
-    catalog_conn.commit()
 
 
 def record_run_finish(catalog_conn, audit_id: int, *, status: str,
                       exit_code: int, now: int | None = None) -> None:
     now = now if now is not None else int(time.time())
-    catalog_conn.execute(
+    _audit_write(
+        catalog_conn,
         "UPDATE admin_fleet_audit SET status=?, finished_at=?, exit_code=? WHERE id=?",
         (status, now, int(exit_code), audit_id))
-    catalog_conn.commit()
 
 
 def mark_crawler_synced(panel_conn, site, *, now: int | None = None,
@@ -252,7 +295,7 @@ def run_one(site, mode, limit, *, catalog_db, panel_db, base_dir,
                 "command": command, "status": "yielded",
                 "reason": "load stayed above %.1f" % load_ceiling}
 
-    catalog_conn = sqlite3.connect(str(catalog_db))
+    catalog_conn = _catalog_connect(catalog_db)
     panel_conn = sqlite3.connect(str(panel_db))
     try:
         audit_id = record_run_start(catalog_conn, site, mode, limit)
@@ -276,7 +319,7 @@ def run_one(site, mode, limit, *, catalog_db, panel_db, base_dir,
                                     stdout=sink, stderr=subprocess.STDOUT,
                                     start_new_session=True)
             pid = int(proc.pid)
-            catalog_conn = sqlite3.connect(str(catalog_db))
+            catalog_conn = _catalog_connect(catalog_db)
             try:
                 record_run_pid(catalog_conn, audit_id, pid)
             finally:
@@ -285,7 +328,7 @@ def run_one(site, mode, limit, *, catalog_db, panel_db, base_dir,
             exit_code = int(proc.returncode)
 
     status = "done" if exit_code == 0 else "failed"
-    catalog_conn = sqlite3.connect(str(catalog_db))
+    catalog_conn = _catalog_connect(catalog_db)
     panel_conn = sqlite3.connect(str(panel_db))
     try:
         record_run_finish(catalog_conn, audit_id, status=status, exit_code=exit_code)

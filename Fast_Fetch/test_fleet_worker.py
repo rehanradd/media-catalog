@@ -7,6 +7,8 @@ import os
 import sqlite3
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -243,6 +245,150 @@ class RunOneTests(unittest.TestCase):
 
     def test_wait_for_quiet_machine_returns_true_when_quiet(self):
         self.assertTrue(fw.wait_for_quiet_machine(9999, max_wait_seconds=1))
+
+
+class LockedCatalogTests(unittest.TestCase):
+    """Nov 13 2026-11-13: the very first INSERT in `record_run_start`
+    died with `database is locked` (default 5 s busy timeout, no retry)
+    while the fast-probe sweep held the catalog's write lock. The run
+    lost a day. These tests prove the hardening: a 30 s busy timeout on
+    the catalog connection plus a bounded retry on the audit writes."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.catalog_db = Path(self.tmp.name) / "catalog.db"
+        self.panel_db = Path(self.tmp.name) / "admin_v2.db"
+        self.log_dir = Path(self.tmp.name) / "logs"
+        make_catalog_db(self.catalog_db)
+        make_panel_db(self.panel_db, [("dramadog", None), ("rogmovies", None)])
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_catalog_connect_uses_30s_busy_timeout(self):
+        conn = fw._catalog_connect(self.catalog_db)
+        try:
+            timeout_ms = conn.execute("PRAGMA busy_timeout").fetchone()[0]
+        finally:
+            conn.close()
+        self.assertEqual(timeout_ms, 30000)
+
+    def test_record_run_start_retries_a_locked_database(self):
+        # Hold an exclusive lock on the catalog, release it after 0.3 s,
+        # and call record_run_start on a connection with NO busy timeout
+        # (timeout=0) so the first attempt really raises "database is
+        # locked" instead of waiting it out — this proves the retry, not
+        # just the timeout. Attempt 1 fails at once, the 0.5 s retry
+        # delay lands after the release, attempt 2 succeeds.
+        locker = sqlite3.connect(str(self.catalog_db), check_same_thread=False)
+        locker.execute("BEGIN EXCLUSIVE")
+        locker.execute(
+            "INSERT INTO admin_fleet_audit (crawler_id, action, status, "
+            "started_at, detail) VALUES ('locker','run','running',0,'')")
+        release = threading.Timer(0.3, lambda: (locker.rollback(), locker.close()))
+        release.start()
+        try:
+            conn = sqlite3.connect(str(self.catalog_db), timeout=0)
+            try:
+                started = time.monotonic()
+                audit_id = fw.record_run_start(conn, "dramadog", "sync", 10)
+                elapsed = time.monotonic() - started
+            finally:
+                conn.close()
+        finally:
+            release.cancel()
+            try:
+                locker.close()
+            except sqlite3.Error:
+                pass
+        self.assertEqual(audit_id, 1)  # the locker's INSERT was rolled
+        # back, so its rowid was never consumed — the retry's row is id 1
+        self.assertGreaterEqual(elapsed, 0.4)  # waited out one retry delay
+        conn = sqlite3.connect(str(self.catalog_db))
+        try:
+            row = conn.execute(
+                "SELECT crawler_id, status FROM admin_fleet_audit WHERE id=1"
+            ).fetchone()
+        finally:
+            conn.close()
+        self.assertEqual(row, ("dramadog", "running"))
+
+    def test_record_run_start_still_raises_when_the_lock_never_clears(self):
+        # A lock held past all 3 attempts must still fail — the retry is
+        # bounded, not infinite — and it must raise the lock error, not
+        # swallow it.
+        locker = sqlite3.connect(str(self.catalog_db), check_same_thread=False)
+        locker.execute("BEGIN EXCLUSIVE")
+        try:
+            conn = sqlite3.connect(str(self.catalog_db), timeout=0)
+            try:
+                started = time.monotonic()
+                with self.assertRaises(sqlite3.OperationalError) as caught:
+                    fw.record_run_start(conn, "dramadog", "sync", 10)
+                elapsed = time.monotonic() - started
+            finally:
+                conn.close()
+        finally:
+            locker.rollback()
+            locker.close()
+        self.assertIn("locked", str(caught.exception).lower())
+        self.assertGreaterEqual(elapsed, 1.4)  # 0.5 s + 1.0 s delays
+        self.assertLess(elapsed, 10.0)
+
+    def test_non_lock_error_raises_at_once_without_retry(self):
+        # Only "database is locked" is retried; any other failure (here
+        # a missing table) raises immediately, with no retry sleeps.
+        missing = Path(self.tmp.name) / "empty.db"
+        conn = sqlite3.connect(str(missing))
+        try:
+            started = time.monotonic()
+            with self.assertRaises(sqlite3.OperationalError) as caught:
+                fw.record_run_start(conn, "dramadog", "sync", 10)
+            elapsed = time.monotonic() - started
+        finally:
+            conn.close()
+        self.assertIn("no such table", str(caught.exception))
+        self.assertLess(elapsed, 0.4)
+
+    def test_run_one_survives_a_brief_lock(self):
+        # End to end: the sweep holds the catalog's write lock for ~0.4 s
+        # while run_one starts. The 30 s busy timeout makes the first
+        # INSERT wait it out, so the run completes instead of dying.
+        def hold_lock():
+            locker = sqlite3.connect(str(self.catalog_db))
+            try:
+                locker.execute("BEGIN EXCLUSIVE")
+                locker.execute(
+                    "INSERT INTO admin_fleet_audit (crawler_id, action, "
+                    "status, started_at, detail) "
+                    "VALUES ('locker','run','running',0,'')")
+                time.sleep(0.4)
+                locker.rollback()
+            finally:
+                locker.close()
+
+        holder = threading.Thread(target=hold_lock)
+        holder.start()
+        time.sleep(0.05)  # let the holder take the lock first
+        try:
+            calls = []
+
+            def runner(command, log_path):
+                calls.append(command)
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                log_path.write_text("fake crawler output\n")
+                return 0
+
+            result = fw.run_one(
+                "dramadog", "sync", 10, catalog_db=self.catalog_db,
+                panel_db=self.panel_db, base_dir="/opt/radd-stream/Fast_Fetch",
+                log_dir=self.log_dir, load_ceiling=9999,
+                max_wait_seconds=1, runner=runner)
+        finally:
+            holder.join(timeout=10)
+        self.assertEqual(result["status"], "done")
+        self.assertEqual(result["audit_id"], 1)
+        self.assertEqual(len(calls), 1)
 
 
 if __name__ == "__main__":
