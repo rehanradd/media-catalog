@@ -226,15 +226,15 @@ class ScrollingChipRowTest {
                 }
                 LaunchedEffect(snapBehavior) {
                     state.scroll {
-                        // TargetedFlingBehavior (what
-                        // rememberSnapFlingBehavior returns in this
-                        // Compose version): performFling takes the
-                        // remaining-distance callback too. The 1-arg
-                        // form does not resolve here (compile error in
-                        // run 44659478756: "Unresolved reference
-                        // 'performFling'").
+                        // The with() is load-bearing: the direct call
+                        // snapBehavior.performFling(400f) does not
+                        // resolve here (compile error in run 44659478756:
+                        // "Unresolved reference 'performFling'"), while
+                        // the with() form does — performFling is the
+                        // 1-arg FlingBehavior form (the 2-arg form tried
+                        // in fixup 7 fails with "Too many arguments").
                         with(snapBehavior) {
-                            performFling(400f) { }
+                            performFling(400f)
                         }
                     }
                 }
