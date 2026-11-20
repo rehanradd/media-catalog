@@ -207,13 +207,17 @@ ui_has_text() {
 # One fresh dump, classified for the detail settle wait (run 44726083176):
 # "error" — "Couldn't load this title" is on screen; "loaded" — real body
 # content is on screen (the "Play" action or the "Seasons" header,
-# neither of which the skeleton ever paints) or the skeleton is gone
-# (its testTags — "detailPlaySkeleton" on the body skeleton,
-# "detailSkeletonHero" on the full-page one — are resource-ids in the
-# dump while the body is still loading); "loading" — anything else,
-# including a failed or empty dump. A dead dump reads as "loading",
-# never as "loaded": the wait then burns its budget instead of
-# misreading a dead dump as a body.
+# neither of which the skeleton ever paints); "loading" — anything else,
+# including a failed or empty dump, and including a screen whose skeleton
+# testTags are simply absent. Run 44729564687 proved the absence means
+# nothing: the skeleton testTags ("detailPlaySkeleton" on the body
+# skeleton, "detailSkeletonHero" on the full-page one) do NOT surface as
+# greppable resource-ids in the uiautomator dump on this emulator, so the
+# old fallback ("no skeleton tags → loaded") read a skeleton screen as
+# loaded on the first poll, the swipe changed nothing, and the
+# byte-identical guard tripped FAIL. Only POSITIVE evidence counts as
+# loaded now; a dead dump reads as "loading", never as "loaded": the wait
+# then burns its budget instead of misreading a dead dump as a body.
 detail_state() {
   rm -f /tmp/ui.xml
   timeout 20 adb shell uiautomator dump "$UI_DUMP" >/dev/null 2>&1
@@ -221,7 +225,6 @@ detail_state() {
   [ -s /tmp/ui.xml ] || { echo "loading"; return; }
   if grep -qi "Couldn't load this title" /tmp/ui.xml; then echo "error"; return; fi
   if grep -q 'text="Play"\|text="Seasons"' /tmp/ui.xml; then echo "loaded"; return; fi
-  if ! grep -q 'detailPlaySkeleton\|detailSkeletonHero' /tmp/ui.xml; then echo "loaded"; return; fi
   echo "loading"
 }
 
