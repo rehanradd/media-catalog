@@ -1,7 +1,6 @@
 package com.raddstream.app.ui.components
 
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.gestures.snapping.SnapPosition
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -186,39 +185,40 @@ class ScrollingChipRowTest {
         // A swipe produces a drag but no fling velocity here, so
         // performFling is never called and the snap never runs. The
         // test therefore builds the same snap behaviour the row builds
-        // (rememberSnapFlingBehavior over the same hoisted state, with
-        // the same snapPosition) and drives it from a LaunchedEffect.
-        // That pins the snap settlement for this row's state; the row's
-        // own wiring — it passes rememberSnapFlingBehavior(state,
-        // snapPosition = SnapPosition.Start) to its LazyRow — is the
-        // one-liner in ScrollingChipRow.kt:86. The gesture path (a real
-        // swipe -> fling -> snap) is a device-verification item, not
-        // something Robolectric can prove.
+        // (rememberSnapFlingBehavior over the same hoisted state) and
+        // drives it from a LaunchedEffect. That pins the snap
+        // settlement for this row's state; the row's own wiring — it
+        // passes rememberSnapFlingBehavior(state) to its LazyRow — is
+        // the one-liner in ScrollingChipRow.kt. The gesture path (a
+        // real swipe -> fling -> snap) is a device-verification item,
+        // not something Robolectric can prove.
         //
-        // The snapPosition is Start EXPLICITLY here and in the row:
-        // the default is Center, and that was the root cause of eight
-        // failing CI runs — the row was center-snapping, so offset 0
-        // was never the settled state and the waitUntil for it timed
-        // out every time (run 44661783465). A filter strip must rest
-        // with a chip flush at the start edge; Center is for
-        // carousels, not chip rows.
+        // CORRECTION (fixup 10): the Center theory was wrong for THIS
+        // Compose version (1.7) — there is no SnapPosition type and no
+        // snapPosition parameter here at all (fixup 9 did not compile:
+        // "Unresolved reference 'SnapPosition'"). The current docs'
+        // Center default describes a NEWER Compose, not 1.7. What 1.7's
+        // snap actually targets is settled by this test's diagnostic
+        // print, not by the docs: if the list settles mid-list at a
+        // nonzero offset, 1.7 does not snap to Start either, and the
+        // assertion (not the source) is what must change.
         //
-        // The fling velocity is 400px/s on purpose: it moves the list
-        // ~135px, past the first chip (so the index assertion means
-        // something) while landing well short of maxScroll, so the snap
-        // has room to align an item flush. waitUntil polls for the
-        // SETTLED snapped state (up to 10s of virtual time) instead of
-        // assuming a fixed duration covers the decay + snap spring.
-        // The index assertion keeps the test honest: a fling that moved
-        // nothing would also read offset 0.
+        // The fling velocity is 600px/s on purpose: it moves the list
+        // ~200px, well past the first chip (so the index assertion means
+        // something) while landing short of maxScroll, so the snap has
+        // room to align an item flush. waitUntil polls for the SETTLED
+        // snapped state (up to 10s of virtual time) instead of assuming
+        // a fixed duration covers the decay + snap spring. The index
+        // assertion keeps the test honest: a fling that moved nothing
+        // would also read offset 0.
         val state = LazyListState()
         compose.setContent {
             RaddStreamTheme {
                 // The snap behaviour, built exactly the way the row
-                // builds its own (same function, same state, same
-                // snapPosition = Start) — driven from the LaunchedEffect
-                // below because a Robolectric swipe produces no fling.
-                val snapBehavior = rememberSnapFlingBehavior(state, snapPosition = SnapPosition.Start)
+                // builds its own (same function, same state) — driven
+                // from the LaunchedEffect below because a Robolectric
+                // swipe produces no fling.
+                val snapBehavior = rememberSnapFlingBehavior(state)
                 Box(Modifier.width(200.dp)) {
                     ScrollingChipRow(
                         state = state,
@@ -244,12 +244,27 @@ class ScrollingChipRowTest {
                         // 1-arg FlingBehavior form (the 2-arg form tried
                         // in fixup 7 fails with "Too many arguments").
                         with(snapBehavior) {
-                            performFling(400f)
+                            performFling(600f)
                         }
                     }
                 }
             }
         }
+        // Let the composition and the LaunchedEffect fling run, then
+        // print the settled state into the test XML's system-out. If
+        // waitUntil below times out, this shows whether the fling moved
+        // the list at all (index 0 = it did not) and what offset the
+        // snap actually settles at (nonzero mid-list = 1.7 does not
+        // snap to Start). Temporary diagnostic — remove once green.
+        compose.waitForIdle()
+        println(
+            "SNAP-DEBUG index=${state.firstVisibleItemIndex} " +
+                "offset=${state.firstVisibleItemScrollOffset} " +
+                "scrolling=${state.isScrollInProgress} " +
+                "visible=" + state.layoutInfo.visibleItemsInfo.joinToString(",") {
+                    "${it.index}@${it.offset}"
+                },
+        )
         // Poll for the settled snapped state: waitUntil advances the
         // test clock while it polls, so the decay + snap spring gets
         // the virtual time it needs.
