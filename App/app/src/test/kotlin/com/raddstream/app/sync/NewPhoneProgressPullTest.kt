@@ -7,6 +7,8 @@ import com.raddstream.app.data.ServerSettingsRepository
 import com.raddstream.app.data.local.AppDatabase
 import com.raddstream.app.data.local.SyncedProgressEntity
 import com.raddstream.app.network.ApiProvider
+import com.raddstream.app.network.RaddStreamApi
+import com.raddstream.app.network.normalizeServerUrl
 import java.io.ByteArrayOutputStream
 import java.net.InetAddress
 import java.net.ServerSocket
@@ -17,6 +19,7 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -52,20 +55,27 @@ import org.robolectric.RobolectricTestRunner
  * completed. The stamp comparison is NOT the culprit — the stamp round-trips
  * exactly (millis/1000 → JSON → fake → JSON → Double; `incoming > stored` is
  * false for equal stamps, verified by round-trip), and the second-pull assert
- * never ran. Two test-side causes share the blame: (a) the pull is best-effort
- * over real loopback sockets, and on a loaded runner a single pass can miss —
- * the failing test took 1.31 s against 0.18 s / 0.09 s for its siblings, on a
- * run whose suite hit the 45-minute job timeout; (b) the sign-in state leaks
- * across test methods — the ApplicationProvider DataStore is shared, so a key
- * saved by an earlier method leaves the next test signed in before it signs
- * in, and `syncNow()` can then proceed even if `quickSignIn` failed. The
- * fixes are test-side only: [setUp] starts each test signed out, the second
- * test asserts `quickSignIn` succeeds, and the first pull goes through
- * [pullWithOneRetry] — one bounded re-pull, taken only when the server
- * actually holds rows this device has not pulled, so a real merge bug still
- * fails (the same merge runs on the retry and returns 0 twice) and the
- * second-pull assert keeps its meaning: after a proven pull, a second sync
- * must pull nothing.
+ * never ran. The first fix (setUp key-clear, quickSignIn assert,
+ * [pullWithOneRetry]) could not rescue it either: run 44690607619 failed the
+ * same way, and the production nginx log proved why — at 11:56:14 PKT, the
+ * exact second of that failure, the GitHub runner IP posted
+ * `/api/v2/account` → 200 on the LIVE service and `GET
+ * /api/v2/account/favorites` → 503. Device B's `ApiProvider` resolved to the
+ * production default instead of the fake URL: its quick-sign-in POST went to
+ * production (which opened a library around the unknown key, hence SignedIn)
+ * and its list GETs 503'd (hence `completed=false`). The URL-flip trigger
+ * stays unproven — key collision, session fallback, `forServer` cache and
+ * fake-server death were all ruled out — so the fix does not chase it: the
+ * test now pins the provider ([PinnedApiProvider]), so `current()` never
+ * reads DataStore at all and no call in this class can reach production,
+ * whatever the saved URL does. The earlier fixes stay as hygiene: setUp
+ * starts each test signed out, the second test asserts `quickSignIn`
+ * succeeds, and the first pull goes through [pullWithOneRetry] — one bounded
+ * re-pull, taken only when the server actually holds rows this device has not
+ * pulled, so a real merge bug still fails (the same merge runs on the retry
+ * and returns 0 twice) and the second-pull assert keeps its meaning: after a
+ * proven pull, a second sync must pull nothing. A wrong server is no longer
+ * a failure mode the retry has to cover — the pin removes it.
  *
  * The fake is a hand-rolled HTTP/1.1 server on a plain `ServerSocket`, not a mock: the
  * real Retrofit client, the real Gson wire models and the real Room DAOs all run, so a
@@ -104,20 +114,53 @@ class NewPhoneProgressPullTest {
         server = FakeSyncServer(::handleRequest, serverEvents::add).apply { start() }
         val context = ApplicationProvider.getApplicationContext<Context>()
         settings = ServerSettingsRepository(context)
-        settings.saveServerUrl("http://127.0.0.1:${server.port}/")
+        val fakeUrl = "http://127.0.0.1:${server.port}/"
+        settings.saveServerUrl(fakeUrl)
         // Each test starts signed out: the ApplicationProvider DataStore is shared
         // across the test methods in this class, so a key saved by an earlier method
         // would leave the next test signed in before it signs in — and syncNow()
         // would then proceed even if quickSignIn failed. The URL above is already
         // re-saved per test; the key is the remaining leak.
         settings.saveSyncKey(null)
-        apiProvider = ApiProvider(settings)
+        // Fail-fast: the saved URL must BE the fake. Run 44690607619 proved a
+        // device can resolve the production default instead — its quick-sign-in
+        // POST landed on the live service and its list GETs 503'd — so a
+        // silent wrong URL reads as a misleading pull count, not as a URL
+        // problem. This assert turns any recurrence into a clear message.
+        assertEquals(
+            "server URL must stay pinned to the fake server, not production",
+            fakeUrl,
+            settings.serverUrl.first(),
+        )
+        apiProvider = PinnedApiProvider(settings, fakeUrl)
     }
 
     @After
     fun tearDown() {
         databases.forEach { it.close() }
         if (::server.isInitialized) server.stop()
+    }
+
+    /**
+     * A provider pinned to the fake server (Session 157 pattern): `current()`
+     * answers the real Retrofit client built for the fake URL, and never reads
+     * DataStore — so no call in this class can reach production, whatever the
+     * saved URL does at the moment a device syncs. The real Retrofit client,
+     * the real Gson wire models and the real Room DAOs still run; only the
+     * URL resolution is pinned, and URL resolution itself is already pinned by
+     * `ApiProviderBaseUrlTest`. `currentBaseUrl()` is pinned the same way, so
+     * no future caller in this class can leak through the other read either.
+     */
+    private class PinnedApiProvider(
+        settings: ServerSettingsRepository,
+        fakeUrl: String,
+    ) : ApiProvider(settings) {
+        private val pinnedBaseUrl: String = normalizeServerUrl(fakeUrl)
+        private val pinnedApi: RaddStreamApi = forServer(pinnedBaseUrl)
+
+        override suspend fun current(): RaddStreamApi = pinnedApi
+
+        override suspend fun currentBaseUrl(): String = pinnedBaseUrl
     }
 
     /** One device: its own Room mirror, sharing the account server with the other device. */
@@ -169,11 +212,12 @@ class NewPhoneProgressPullTest {
      * with the list GETs never logged by the fake server, while `syncNow()` still
      * reported completed. The re-pull is taken ONLY when the server actually holds
      * rows for this key, so it cannot mask a real merge bug: a broken merge
-     * returns 0 on the retry as well, and the test still fails. It also cannot
-     * rescue a systematically wrong server — a retry goes to the same client, so
-     * a wrong-server run still fails honestly. Only a transient transport miss is
-     * rescued, which is the flake class. The second sync in the test below never
-     * retries: after a proven pull it must pull nothing.
+     * returns 0 on the retry as well, and the test still fails. A systematically
+     * wrong server is no longer a mode the retry has to cover — the pinned
+     * provider ([PinnedApiProvider]) makes it impossible — so only a transient
+     * transport miss is rescued, which is the remaining flake class. The second
+     * sync in the test below never retries: after a proven pull it must pull
+     * nothing.
      */
     private suspend fun pullWithOneRetry(device: SyncAccountRepository, key: String): SyncReport {
         val first = device.syncNow()
