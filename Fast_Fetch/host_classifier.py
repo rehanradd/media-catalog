@@ -234,6 +234,10 @@ _SERVICE_TABLE: Dict[str, Tuple[str, str]] = {
     "hubcdn": (CATEGORY_BRIDGE, "hubcdn"),
     "fastdl": (CATEGORY_DIRECT_FILE, "fastdl"),
     "fastdl-beer": (CATEGORY_DIRECT_FILE, "fastdl"),
+    # Hubdrive: same precedent — the label maps direct_file, but the AND
+    # rule still caps an unresolved bridge-page row at B; only a row whose
+    # final_url is a real file (after the resolver ran) mints A.
+    "hubdrive": (CATEGORY_DIRECT_FILE, "hubdrive"),
     "gofile": (CATEGORY_DIRECT_FILE, "gofile"),
     "1fichier": (CATEGORY_DIRECT_FILE, "1fichier"),
     "megaup": (CATEGORY_DIRECT_FILE, "megaup"),

@@ -9,7 +9,12 @@ fresh at play time):
 - watch: iqsmart chain (StreamHG), modiplay backends (StreamHG + Vidrift
   + Vidara), vidrift direct, vidbolt, filmu movies, vibuxer signed HLS route.
 - download: PixelDrain (resumable) and fastdl.beer (real file, NOT
-  resumable — it ranks below every resumable host).
+  resumable — it ranks below every resumable host); hubdrive (ajax
+  direct-download — needs the operator's RADD_HUBDRIVE_CRYPT login cookie,
+  without it the ajax answers 408 and the copy fails
+  "hubdrive_needs_cookie", never dead) and megaup (button link after a
+  6 s wait, no-redirect Location; unreachable from Oracle egress
+  2026-11-21, so unproven live).
 
 Rules this module enforces, wherever it is used:
 
@@ -49,6 +54,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
@@ -65,7 +71,7 @@ FILE_PROBE_BYTES = 512
 #: backend: resolve_copy returns the backend it actually resolved to.
 STAGE1_BACKENDS = frozenset({
     "streamhg", "vidrift", "vidbolt", "vidly", "vibuxer",
-    "pixeldrain", "fastdl-beer", "vidara",
+    "pixeldrain", "fastdl-beer", "vidara", "hubdrive", "megaup",
 })
 
 #: Independence groups: two copies in one group are one backup, not two.
@@ -78,17 +84,19 @@ INDEPENDENCE_GROUP = {
     "pixeldrain": "pixeldrain",
     "fastdl-beer": "fastdl-beer",
     "vidara": "vidara",
+    "hubdrive": "hubdrive",
+    "megaup": "megaup",
 }
 
 #: Watch tie-break order between backends (only after probe evidence).
 WATCH_PREFERENCE = (
     "streamhg", "vidrift", "vidbolt", "vidly", "vibuxer",
-    "vidara", "pixeldrain", "fastdl-beer",
+    "vidara", "pixeldrain", "fastdl-beer", "hubdrive", "megaup",
 )
 
 #: Download order: resumable first (handled by the sort), then this order.
 #: fastdl.beer is last on purpose — its files ignore Range.
-DOWNLOAD_PREFERENCE = ("pixeldrain", "fastdl-beer")
+DOWNLOAD_PREFERENCE = ("pixeldrain", "fastdl-beer", "hubdrive", "megaup")
 
 _MEDIA_SUFFIXES = (
     ".mp4", ".m4v", ".mkv", ".webm", ".mov", ".avi", ".wmv", ".flv",
@@ -128,52 +136,101 @@ def download_extension_for(mime_type, url: str = "") -> str:
 
 
 class FetchResult:
-    """One HTTP exchange, body already capped. status 0 == transport failure."""
+    """One HTTP exchange, body already capped. status 0 == transport failure.
+
+    ``headers`` keys are lower-cased; ``set_cookies`` is the raw
+    Set-Cookie list (hubdrive's page sets session cookies the ajax call
+    re-presents)."""
 
     def __init__(self, status=0, content_type="", body=b"", headers=None,
-                 final_url="", error=""):
+                 final_url="", error="", set_cookies=None):
         self.status = status
         self.content_type = content_type or ""
         self.body = body or b""
         self.headers = headers or {}
         self.final_url = final_url or ""
         self.error = error or ""
+        self.set_cookies = list(set_cookies or [])
 
     def text(self) -> str:
         return self.body.decode("utf-8", errors="ignore")
+
+
+def _set_cookies(headers) -> list:
+    """Raw Set-Cookie values from a response's headers (all of them)."""
+    try:
+        values = headers.get_all("Set-Cookie") or []
+    except Exception:
+        values = []
+    return [value for value in values if value]
+
+
+def _cookies_from_set_cookie(values) -> dict:
+    """name=value pairs from Set-Cookie headers (attributes dropped)."""
+    out = {}
+    for raw in values or []:
+        pair = (raw or "").split(";", 1)[0]
+        if "=" in pair:
+            name, value = pair.split("=", 1)
+            name = name.strip()
+            if name:
+                out[name] = value.strip()
+    return out
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Redirect handler that never follows: a 3xx then surfaces as an
+    HTTPError carrying the Location header (megaup's button link)."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 def default_fetch(url: str, referer: str | None = None, method: str = "GET",
                   range_bytes: tuple[int, int] | None = None,
                   data: dict | None = None,
                   json_data: dict | None = None,
-                  timeout: float = DEFAULT_TIMEOUT) -> FetchResult:
+                  timeout: float = DEFAULT_TIMEOUT,
+                  cookies: dict | None = None,
+                  headers: dict | None = None,
+                  follow_redirects: bool = True) -> FetchResult:
     """Real network fetch: capped reads, redirects followed, no JS, no login.
 
     ``data`` sends a form-encoded POST body; ``json_data`` sends a JSON
     POST body (vidara's /api/stream requires JSON — a form-encoded body
     answers 400 "Missing or invalid filecode", measured 2026-11-21).
+    ``cookies`` sends a Cookie header (hubdrive's crypt cookie, from the
+    operator's RADD_HUBDRIVE_CRYPT — never a hardcoded value). ``headers``
+    adds extra request headers. ``follow_redirects=False`` leaves a 3xx
+    un-followed so the caller can read its Location header.
     """
-    headers = {"User-Agent": USER_AGENT}
+    req_headers = {"User-Agent": USER_AGENT}
     if referer:
-        headers["Referer"] = referer
+        req_headers["Referer"] = referer
+    if cookies:
+        req_headers["Cookie"] = "; ".join(
+            f"{name}={value}" for name, value in cookies.items())
+    if headers:
+        req_headers.update(headers)
     if range_bytes is not None:
-        headers["Range"] = f"bytes={range_bytes[0]}-{range_bytes[1]}"
+        req_headers["Range"] = f"bytes={range_bytes[0]}-{range_bytes[1]}"
     body_data = None
     if json_data is not None:
         body_data = json.dumps(json_data).encode()
-        headers["Content-Type"] = "application/json"
+        req_headers["Content-Type"] = "application/json"
         if method == "GET":
             method = "POST"
     elif data is not None:
         body_data = urllib.parse.urlencode(data).encode()
-        headers["Content-Type"] = "application/x-www-form-urlencoded"
+        req_headers["Content-Type"] = "application/x-www-form-urlencoded"
         if method == "GET":
             method = "POST"
-    req = urllib.request.Request(url, headers=headers, method=method,
+    req = urllib.request.Request(url, headers=req_headers, method=method,
                                  data=body_data)
+    opener = (urllib.request.build_opener() if follow_redirects
+              else urllib.request.build_opener(_NoRedirect()))
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with opener.open(req, timeout=timeout) as resp:
             body = resp.read(MAX_BODY_BYTES + 1)[:MAX_BODY_BYTES + 1]
             return FetchResult(
                 status=resp.status,
@@ -181,15 +238,20 @@ def default_fetch(url: str, referer: str | None = None, method: str = "GET",
                 body=body,
                 headers={k.lower(): v for k, v in resp.headers.items()},
                 final_url=resp.geturl(),
+                set_cookies=_set_cookies(resp.headers),
             )
     except urllib.error.HTTPError as exc:
         try:
             body = exc.read(MAX_BODY_BYTES + 1)[:MAX_BODY_BYTES + 1]
         except Exception:
             body = b""
+        hdrs = {}
+        if exc.headers is not None:
+            hdrs = {k.lower(): v for k, v in exc.headers.items()}
         return FetchResult(status=exc.code, content_type="",
-                           body=body, headers={},
-                           error=f"http_{exc.code}")
+                           body=body, headers=hdrs,
+                           error=f"http_{exc.code}",
+                           set_cookies=_set_cookies(exc.headers))
     except Exception as exc:  # timeout, DNS, reset, empty reply: transport
         return FetchResult(status=0, error=f"transport:{type(exc).__name__}")
 
@@ -351,6 +413,13 @@ def classify_backend(url_a: str = "", url_b: str = "") -> str:
             return "pixeldrain"
         if host.endswith("fastdl.beer"):
             return "fastdl-beer"
+        # hubdrive rotates TLDs (.pics, .blog, .bar, .in, ...) — match the
+        # bare name, never a longer host that merely starts with it.
+        if host == "hubdrive" or host.startswith("hubdrive.") or ".hubdrive." in host:
+            return "hubdrive"
+        if host in ("megaup.net", "megaup.mobi") or host.endswith(
+                (".megaup.net", ".megaup.mobi")):
+            return "megaup"
         if host == "embed.vidrift.net":
             return "vidrift"
         if host == "vidbolt.xyz":
@@ -853,6 +922,139 @@ def _unwrap_fastdl(saved_url: str, fetch) -> tuple:
                             "kind_hint": "file"}], None
 
 
+#: HubDrive's direct-download ajax only answers for a logged-in session:
+#: the HUBDRIVE_CRYPT cookie is minted by a browser login, never by this
+#: module, and never stored here. The operator supplies it as
+#: RADD_HUBDRIVE_CRYPT; without it the ajax answers 408 and the copy
+#: fails "hubdrive_needs_cookie" — an unmet requirement, never a dead file.
+def hubdrive_crypt_cookie() -> str | None:
+    value = (os.environ.get("RADD_HUBDRIVE_CRYPT") or "").strip()
+    return value or None
+
+
+def _scrape_btn_primary_link(html: str) -> str:
+    """href of the first .btn-primary anchor (either attribute order)."""
+    body = html or ""
+    for pattern in (
+        r"""<a[^>]*class=["'][^"']*btn-primary[^"']*["'][^>]*href=["']([^"']+)["']""",
+        r"""<a[^>]*href=["']([^"']+)["'][^>]*class=["'][^"']*btn-primary[^"']*["']""",
+    ):
+        match = re.search(pattern, body, re.I)
+        if match:
+            return match.group(1).strip()
+    return ""
+
+
+def _unwrap_hubdrive(saved_url: str, fetch, cookies: dict | None = None) -> tuple:
+    """hubdrive file page -> ajax direct-download -> download-page button.
+
+    Port of nurlresolver hubdrive.ts (MIT): GET the /file/<id> page, POST
+    /ajax.php?ajax=direct-download with form id=<id> (X-Requested-With),
+    follow the returned file page to its .btn-primary link. Measured
+    2026-11-21 from Oracle egress: the page answers 200 with a real
+    title and the ajax endpoint answers JSON — but without the login
+    HUBDRIVE_CRYPT cookie the ajax answers {"code": 408, "title":
+    "Direct Download Unavailable"}. A cookie-jar replay of every
+    Set-Cookie the hops set still 408s (the hops set none), so the cookie
+    is a login credential, not a session one: it must come from the
+    operator (RADD_HUBDRIVE_CRYPT). Without any crypt cookie presented
+    the failure is "hubdrive_needs_cookie"; with one and still no file
+    it is "hubdrive_unverified".
+    """
+    supplied = dict(cookies or {})
+    if not supplied:
+        env_cookie = hubdrive_crypt_cookie()
+        if env_cookie:
+            supplied = {"HUBDRIVE_CRYPT": env_cookie}
+    page = fetch(saved_url, cookies=supplied or None)
+    if page.status != 200:
+        return "hubdrive", [], ("blocked" if page.status == 403 else
+                                "transport" if page.status == 0 else "unverified")
+    final_url = page.final_url or saved_url
+    file_id = urllib.parse.urlsplit(final_url).path.rstrip("/").rsplit("/", 1)[-1]
+    if not file_id.isdigit():
+        file_id = urllib.parse.urlsplit(saved_url).path.rstrip("/").rsplit("/", 1)[-1]
+    if not file_id.isdigit():
+        return "hubdrive", [], "unverified"
+    origin = urllib.parse.urlsplit(final_url)
+    ajax_url = f"{origin.scheme}://{origin.netloc}/ajax.php?ajax=direct-download"
+    jar = _cookies_from_set_cookie(page.set_cookies)
+    jar.update(supplied)
+    presented_crypt = any("crypt" in name.lower() for name in jar)
+    api = fetch(ajax_url, referer=final_url, method="POST",
+                data={"id": file_id},
+                headers={"accept": "application/json",
+                         "X-Requested-With": "XMLHttpRequest"},
+                cookies=jar or None)
+    if api.status != 200:
+        return "hubdrive", [], ("blocked" if api.status == 403 else
+                                "transport" if api.status == 0 else "hubdrive_unverified")
+    try:
+        payload = json.loads(api.text()) or {}
+    except Exception:
+        return "hubdrive", [], "hubdrive_unverified"
+    code = str(payload.get("code") or "")
+    file_page = payload.get("file") or ""
+    if code != "200" or not file_page:
+        if not presented_crypt:
+            return "hubdrive", [], "hubdrive_needs_cookie"
+        return "hubdrive", [], "hubdrive_unverified"
+    file_url = urllib.parse.urljoin(f"{origin.scheme}://{origin.netloc}/", file_page)
+    resp = fetch(file_url, referer=final_url, cookies=jar or None)
+    if resp.status != 200:
+        return "hubdrive", [], ("blocked" if resp.status == 403 else
+                                "transport" if resp.status == 0 else "hubdrive_unverified")
+    link = _scrape_btn_primary_link(resp.text())
+    if not link:
+        return "hubdrive", [], "hubdrive_unverified"
+    direct = urllib.parse.urljoin(resp.final_url or file_url, link)
+    return "hubdrive", [{"url": direct, "referer": resp.final_url or file_url,
+                         "kind_hint": "file"}], None
+
+
+#: Megaup's button link only works after the site's countdown: the
+#: resolver waits 6 s (nurlresolver's wait) before following it.
+_MEGAUP_WAIT_SECONDS = 6.0
+
+
+def _unwrap_megaup(saved_url: str, fetch, sleep=None) -> tuple:
+    """megaup file page -> download button -> no-redirect Location.
+
+    Port of nurlresolver megaup.ts (MIT): GET the file page, take the
+    ``btn btn-default`` href, wait 6 s, follow it without following
+    redirects and read the Location — that is the file. A page that
+    lands on error.html is a removed file ("dead_file", the site's own
+    words: "File has been removed due to inactivity"). Measured
+    2026-11-21 from Oracle egress: megaup.net resets the connection
+    and megaup.mobi fails TLS verification, so the chain is unproven
+    live from this box — fixture tests only.
+    """
+    if sleep is None:
+        sleep = time.sleep
+    page = fetch(saved_url)
+    if page.status != 200:
+        return "megaup", [], ("blocked" if page.status == 403 else
+                              "transport" if page.status == 0 else "unverified")
+    if urllib.parse.urlsplit(page.final_url or saved_url).path.endswith("error.html"):
+        return "megaup", [], "dead_file"
+    match = re.search(
+        r"""class=["']btn btn-default["']\s+href=["']([^"']+)["']""",
+        page.text())
+    if not match:
+        return "megaup", [], "unverified"
+    button_url = urllib.parse.urljoin(page.final_url or saved_url,
+                                      match.group(1).strip())
+    sleep(_MEGAUP_WAIT_SECONDS)
+    resp = fetch(button_url, referer=page.final_url or saved_url,
+                 follow_redirects=False)
+    link = (resp.headers or {}).get("location") or ""
+    if not link:
+        return "megaup", [], "unverified"
+    direct = urllib.parse.urljoin(button_url, link)
+    return "megaup", [{"url": direct, "referer": page.final_url or saved_url,
+                       "kind_hint": "file"}], None
+
+
 # ── resolve + rank ───────────────────────────────────────────────────────────
 
 def _fail_result(backend: str, failure: str) -> dict:
@@ -888,6 +1090,10 @@ def resolve_copy(saved_url: str, fetch=default_fetch, probe=None) -> dict:
         backend, candidates, failure = _unwrap_pixeldrain(saved_url, fetch)
     elif backend0 == "fastdl-beer":
         backend, candidates, failure = _unwrap_fastdl(saved_url, fetch)
+    elif backend0 == "hubdrive":
+        backend, candidates, failure = _unwrap_hubdrive(saved_url, fetch)
+    elif backend0 == "megaup":
+        backend, candidates, failure = _unwrap_megaup(saved_url, fetch)
     else:
         return _fail_result(backend0, "unknown_backend")
     if failure:
@@ -952,7 +1158,8 @@ def select_watch(copies: list) -> tuple:
 
 def select_download(copies: list) -> tuple:
     """Winner + up to 2 backups for download: single files only, and only
-    the stage-1 download backends (PixelDrain resumable, fastdl.beer not).
+    the stage-1 download backends (PixelDrain resumable; fastdl.beer,
+    hubdrive, megaup not).
     A vidrift direct file is a watch candidate here, not a download winner:
     its download path is still provisional and stays open, not assumed."""
     passing = [c for c in (copies or [])

@@ -8101,7 +8101,8 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
             _cached_backend = _ch_backend(src["final_url"],
                                           src.get("source_url") or "")
             if _cached_backend in ("streamhg", "vidrift", "vidbolt", "vidly",
-                                   "vibuxer", "pixeldrain", "fastdl-beer"):
+                                   "vibuxer", "pixeldrain", "fastdl-beer",
+                                   "hubdrive", "megaup"):
                 # Host registry (2026-11-18): classify on the ORIGINAL
                 # stored address (the backend map knows the old names),
                 # but probe and serve the rewritten one.
@@ -8328,7 +8329,8 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
             _hit_backend = "unknown"
         stage1_tried = _hit_backend in ("streamhg", "modiplay", "vidrift",
                                         "vidbolt", "vidly", "vibuxer",
-                                        "pixeldrain", "fastdl-beer")
+                                        "pixeldrain", "fastdl-beer",
+                                        "hubdrive", "megaup")
         _cached_probe_failed_url = _rewrite_host(src.get("final_url") or source_u)
     else:
         try:
@@ -8349,7 +8351,8 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                 _dispatch_backend = _ch_backend2(source_u, cached_u)
                 if _dispatch_backend in ("streamhg", "modiplay", "vidrift",
                                          "vidbolt", "vidly", "vibuxer",
-                                         "pixeldrain", "fastdl-beer"):
+                                         "pixeldrain", "fastdl-beer",
+                                         "hubdrive", "megaup"):
                     stage1_tried = True
                     _dispatch_input = source_u
                     if _ch_backend2(source_u) in ("unknown", "filesforever"):

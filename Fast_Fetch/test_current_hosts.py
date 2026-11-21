@@ -17,15 +17,36 @@ measured live shapes (Oracle VM probes, 2026-11-21):
   ``streaming_url``; a form-encoded body answers 400.
 - vidrift TV embeds answer ``"orionStreams":null`` — no_streams, honest.
 
+Hubdrive + megaup (2026-11-21, port of nurlresolver hubdrive.ts /
+megaup.ts, MIT) — fixtures are the measured live shapes (Oracle VM
+probes, 2026-11-21):
+
+- hubdrive: GET ``/file/<id>`` answers 200 (real title, ajax.php in the
+  page) after a .pics -> .blog redirect and sets NO cookies; POST
+  ``/ajax.php?ajax=direct-download`` form ``id`` with
+  ``X-Requested-With`` answers 200 JSON ``{"code": 408, "title":
+  "Direct Download Unavailable", ...}`` without the login
+  HUBDRIVE_CRYPT cookie — the cookie is a browser-login credential, so
+  the resolver reads it from RADD_HUBDRIVE_CRYPT and fails
+  "hubdrive_needs_cookie" without it, never dead. The happy path
+  (code "200" + file page -> .btn-primary href) is fixture-only.
+- megaup: the file page carries ``class='btn btn-default' href='...'``;
+  after a 6 s wait the button is followed without redirects and the
+  Location header is the file; a page landing on error.html is a
+  removed file ("dead_file"). megaup.net resets the connection from
+  Oracle egress (megaup.mobi fails TLS), so the chain is unproven live.
+
 No network, stdlib only.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 BASE_DIR = Path(__file__).parent.resolve()
 if str(BASE_DIR) not in sys.path:
@@ -105,9 +126,11 @@ VIDRIFT_EMBED_URL = "https://embed.vidrift.net/embed/movie/11667"
 VIDARA_API_URL = "https://vidara.to/api/stream"
 
 
-def _html(body: str, status: int = 200) -> FetchResult:
+def _html(body: str, status: int = 200, final_url: str = "",
+          set_cookies: list | None = None) -> FetchResult:
     return FetchResult(status=status, content_type="text/html",
-                       body=body.encode(), final_url="")
+                       body=body.encode(), final_url=final_url,
+                       set_cookies=set_cookies)
 
 
 def _ok_probe(url, referer, kind):
@@ -115,6 +138,12 @@ def _ok_probe(url, referer, kind):
             "mime": "application/vnd.apple.mpegurl", "size": None,
             "resumable": False, "renditions": [(1280, 720)],
             "failure": None}
+
+
+def _ok_file_probe(url, referer, kind):
+    return {"ok": True, "kind": "file",
+            "mime": "video/x-matroska", "size": 123456,
+            "resumable": True, "renditions": [], "failure": None}
 
 
 class StubFetch:
@@ -125,9 +154,12 @@ class StubFetch:
         self.calls = []
 
     def __call__(self, url, referer=None, method="GET", range_bytes=None,
-                 data=None, json_data=None, timeout=None):
+                 data=None, json_data=None, timeout=None, cookies=None,
+                 headers=None, follow_redirects=True):
         self.calls.append((url, {"referer": referer, "method": method,
-                                 "data": data, "json_data": json_data}))
+                                 "data": data, "json_data": json_data,
+                                 "cookies": cookies, "headers": headers,
+                                 "follow_redirects": follow_redirects}))
         return self.mapping.get(url, FetchResult(status=404))
 
 
@@ -301,6 +333,287 @@ class VidaraBackendRegistryTests(unittest.TestCase):
         self.assertEqual(current_hosts.INDEPENDENCE_GROUP["vidara"],
                          "vidara")
         self.assertIn("vidara", current_hosts.WATCH_PREFERENCE)
+
+
+# ── hubdrive + megaup (2026-11-21) ───────────────────────────────────────────
+
+HD_SAVED = "https://hubdrive.pics/file/2194260094"
+HD_FINAL = "https://hubdrive.blog/file/2194260094"
+HD_AJAX = "https://hubdrive.blog/ajax.php?ajax=direct-download"
+HD_FILE_PAGE_URL = "https://hubdrive.blog/download/2194260094"
+HD_CDN = "https://cdn.example.com/Kingsman.mkv"
+HD_PAGE = (
+    "<html><head><title>HubDrive | Kingsman.The.Secret.Service.2014.480p"
+    ".BluRay.Hindi.English.DD2.0.x264.ESubs.mkv</title></head><body>"
+    '<form action="/ajax.php?ajax=direct-download">direct-download</form>'
+    "</body></html>"
+)
+HD_AJAX_OK = json.dumps({"code": "200", "file": HD_FILE_PAGE_URL})
+# Verbatim measured answer without the login cookie (Oracle VM, 2026-11-21).
+HD_AJAX_408 = json.dumps({
+    "code": 408, "title": "Direct Download Unavailable",
+    "file": ("We couldn't generate a direct download link. "
+             "Please try another download method."),
+})
+HD_FILE_PAGE = (
+    '<div class="card-body"><a class="card-body btn-primary" '
+    f'href="{HD_CDN}">Download</a></div>'
+)
+HD_FILE_PAGE_REVERSED = (
+    '<div class="card-body"><a href="'
+    f'{HD_CDN}" class="btn btn-primary">Download</a></div>'
+)
+
+MU_SAVED = ("https://megaup.net/34cd8461f0137ef599d99e1843705c88/"
+            "Girl_Interrupted_(1999).mkv")
+MU_BUTTON = "https://megaup.net/dl/abc123"
+MU_CDN = "https://cdn.example.com/Girl_Interrupted.mkv"
+MU_PAGE = (
+    "<html><body><a class='btn btn-default' "
+    f"href='{MU_BUTTON}'>Download</a></body></html>"
+)
+
+
+class HubdriveUnwrapTests(unittest.TestCase):
+    def setUp(self):
+        # The env cookie must not leak between tests.
+        self._saved_env = os.environ.pop("RADD_HUBDRIVE_CRYPT", None)
+        self.addCleanup(self._restore_env)
+
+    def _restore_env(self):
+        if self._saved_env is None:
+            os.environ.pop("RADD_HUBDRIVE_CRYPT", None)
+        else:
+            os.environ["RADD_HUBDRIVE_CRYPT"] = self._saved_env
+
+    def _happy_fetch(self):
+        return StubFetch({
+            HD_SAVED: _html(HD_PAGE, final_url=HD_FINAL),
+            HD_AJAX: _html(HD_AJAX_OK),
+            HD_FILE_PAGE_URL: _html(HD_FILE_PAGE,
+                                   final_url=HD_FILE_PAGE_URL),
+        })
+
+    def test_happy_path_with_explicit_cookie(self):
+        fetch = self._happy_fetch()
+        backend, cands, failure = current_hosts._unwrap_hubdrive(
+            HD_SAVED, fetch, cookies={"HUBDRIVE_CRYPT": "test-cookie"})
+        self.assertIsNone(failure, (backend, failure))
+        self.assertEqual(backend, "hubdrive")
+        self.assertEqual(len(cands), 1)
+        self.assertEqual(cands[0]["url"], HD_CDN)
+        self.assertEqual(cands[0]["kind_hint"], "file")
+        self.assertEqual(cands[0]["referer"], HD_FILE_PAGE_URL)
+        ajax_calls = [c for c in fetch.calls if c[0] == HD_AJAX]
+        self.assertEqual(len(ajax_calls), 1)
+        self.assertEqual(ajax_calls[0][1]["method"], "POST")
+        self.assertEqual(ajax_calls[0][1]["data"], {"id": "2194260094"})
+        self.assertEqual(ajax_calls[0][1]["headers"]["X-Requested-With"],
+                         "XMLHttpRequest")
+        self.assertEqual(ajax_calls[0][1]["cookies"]["HUBDRIVE_CRYPT"],
+                         "test-cookie")
+
+    def test_env_cookie_is_read_when_no_cookie_arg(self):
+        os.environ["RADD_HUBDRIVE_CRYPT"] = "env-crypt-value"
+        fetch = self._happy_fetch()
+        backend, cands, failure = current_hosts._unwrap_hubdrive(
+            HD_SAVED, fetch)
+        self.assertIsNone(failure, (backend, failure))
+        ajax_calls = [c for c in fetch.calls if c[0] == HD_AJAX]
+        self.assertEqual(ajax_calls[0][1]["cookies"]["HUBDRIVE_CRYPT"],
+                         "env-crypt-value")
+
+    def test_ajax_408_without_cookie_is_needs_cookie(self):
+        # Measured live shape: no login cookie -> 408, and the copy is
+        # an unmet requirement, never a dead file. The file page is
+        # never fetched.
+        fetch = StubFetch({
+            HD_SAVED: _html(HD_PAGE, final_url=HD_FINAL),
+            HD_AJAX: _html(HD_AJAX_408),
+        })
+        backend, cands, failure = current_hosts._unwrap_hubdrive(
+            HD_SAVED, fetch)
+        self.assertEqual((backend, cands, failure),
+                         ("hubdrive", [], "hubdrive_needs_cookie"))
+        self.assertEqual(len(fetch.calls), 2)
+
+    def test_ajax_408_with_cookie_is_unverified(self):
+        fetch = StubFetch({
+            HD_SAVED: _html(HD_PAGE, final_url=HD_FINAL),
+            HD_AJAX: _html(HD_AJAX_408),
+        })
+        backend, cands, failure = current_hosts._unwrap_hubdrive(
+            HD_SAVED, fetch, cookies={"HUBDRIVE_CRYPT": "stale-cookie"})
+        self.assertEqual((backend, cands, failure),
+                         ("hubdrive", [], "hubdrive_unverified"))
+
+    def test_non_numeric_file_id_is_unverified(self):
+        fetch = StubFetch({
+            "https://hubdrive.blog/file/abc": _html(
+                HD_PAGE, final_url="https://hubdrive.blog/file/abc"),
+        })
+        backend, cands, failure = current_hosts._unwrap_hubdrive(
+            "https://hubdrive.blog/file/abc", fetch)
+        self.assertEqual((backend, cands, failure),
+                         ("hubdrive", [], "unverified"))
+        self.assertEqual(len(fetch.calls), 1)
+
+    def test_page_403_is_blocked(self):
+        fetch = StubFetch({HD_SAVED: _html("", status=403)})
+        backend, cands, failure = current_hosts._unwrap_hubdrive(
+            HD_SAVED, fetch)
+        self.assertEqual((backend, cands, failure),
+                         ("hubdrive", [], "blocked"))
+
+    def test_file_page_without_button_is_unverified(self):
+        fetch = StubFetch({
+            HD_SAVED: _html(HD_PAGE, final_url=HD_FINAL),
+            HD_AJAX: _html(HD_AJAX_OK),
+            HD_FILE_PAGE_URL: _html("<html><body>No link here.</body></html>",
+                                   final_url=HD_FILE_PAGE_URL),
+        })
+        backend, cands, failure = current_hosts._unwrap_hubdrive(
+            HD_SAVED, fetch, cookies={"HUBDRIVE_CRYPT": "test-cookie"})
+        self.assertEqual((backend, cands, failure),
+                         ("hubdrive", [], "hubdrive_unverified"))
+
+    def test_btn_primary_attribute_order(self):
+        fetch = StubFetch({
+            HD_SAVED: _html(HD_PAGE, final_url=HD_FINAL),
+            HD_AJAX: _html(HD_AJAX_OK),
+            HD_FILE_PAGE_URL: _html(HD_FILE_PAGE_REVERSED,
+                                   final_url=HD_FILE_PAGE_URL),
+        })
+        backend, cands, failure = current_hosts._unwrap_hubdrive(
+            HD_SAVED, fetch, cookies={"HUBDRIVE_CRYPT": "test-cookie"})
+        self.assertIsNone(failure, (backend, failure))
+        self.assertEqual(cands[0]["url"], HD_CDN)
+
+
+class MegaupUnwrapTests(unittest.TestCase):
+    def test_happy_path(self):
+        slept = []
+
+        def fake_sleep(seconds):
+            slept.append(seconds)
+
+        fetch = StubFetch({
+            MU_SAVED: _html(MU_PAGE, final_url=MU_SAVED),
+            MU_BUTTON: FetchResult(status=302,
+                                   headers={"location": MU_CDN}),
+        })
+        backend, cands, failure = current_hosts._unwrap_megaup(
+            MU_SAVED, fetch, sleep=fake_sleep)
+        self.assertIsNone(failure, (backend, failure))
+        self.assertEqual(backend, "megaup")
+        self.assertEqual(len(cands), 1)
+        self.assertEqual(cands[0]["url"], MU_CDN)
+        self.assertEqual(cands[0]["kind_hint"], "file")
+        self.assertEqual(cands[0]["referer"], MU_SAVED)
+        self.assertEqual(slept, [6.0])
+        button_calls = [c for c in fetch.calls if c[0] == MU_BUTTON]
+        self.assertEqual(len(button_calls), 1)
+        self.assertFalse(button_calls[0][1]["follow_redirects"])
+
+    def test_error_html_is_dead_file(self):
+        fetch = StubFetch({
+            MU_SAVED: _html("<html><body>File has been removed due to "
+                            "inactivity.</body></html>",
+                            final_url="https://megaup.net/error.html"),
+        })
+        backend, cands, failure = current_hosts._unwrap_megaup(
+            MU_SAVED, fetch, sleep=lambda s: None)
+        self.assertEqual((backend, cands, failure),
+                         ("megaup", [], "dead_file"))
+        self.assertEqual(len(fetch.calls), 1)
+
+    def test_no_button_is_unverified(self):
+        fetch = StubFetch({
+            MU_SAVED: _html("<html><body>No download button.</body></html>",
+                            final_url=MU_SAVED),
+        })
+        backend, cands, failure = current_hosts._unwrap_megaup(
+            MU_SAVED, fetch, sleep=lambda s: None)
+        self.assertEqual((backend, cands, failure),
+                         ("megaup", [], "unverified"))
+
+    def test_button_without_location_is_unverified(self):
+        fetch = StubFetch({
+            MU_SAVED: _html(MU_PAGE, final_url=MU_SAVED),
+            MU_BUTTON: _html("<html><body>wait...</body></html>"),
+        })
+        backend, cands, failure = current_hosts._unwrap_megaup(
+            MU_SAVED, fetch, sleep=lambda s: None)
+        self.assertEqual((backend, cands, failure),
+                         ("megaup", [], "unverified"))
+
+    def test_page_403_is_blocked(self):
+        fetch = StubFetch({MU_SAVED: _html("", status=403)})
+        backend, cands, failure = current_hosts._unwrap_megaup(
+            MU_SAVED, fetch, sleep=lambda s: None)
+        self.assertEqual((backend, cands, failure),
+                         ("megaup", [], "blocked"))
+
+
+class HubdriveMegaupRegistryTests(unittest.TestCase):
+    def test_both_are_stage1_backends(self):
+        for backend in ("hubdrive", "megaup"):
+            self.assertIn(backend, current_hosts.STAGE1_BACKENDS)
+            self.assertEqual(current_hosts.INDEPENDENCE_GROUP[backend],
+                             backend)
+            self.assertIn(backend, current_hosts.WATCH_PREFERENCE)
+            self.assertIn(backend, current_hosts.DOWNLOAD_PREFERENCE)
+
+    def test_classify_hubdrive_tlds(self):
+        for host in ("hubdrive.pics", "hubdrive.blog", "hubdrive.bar",
+                     "hubdrive.in", "www.hubdrive.blog"):
+            self.assertEqual(
+                current_hosts.classify_backend(f"https://{host}/file/1"),
+                "hubdrive", host)
+
+    def test_classify_megaup_hosts(self):
+        for host in ("megaup.net", "megaup.mobi", "www.megaup.net"):
+            self.assertEqual(
+                current_hosts.classify_backend(f"https://{host}/abc/file.mkv"),
+                "megaup", host)
+
+    def test_classify_lookalikes_are_unknown(self):
+        self.assertEqual(current_hosts.classify_backend(
+            "https://megaup.com/abc/file.mkv"), "unknown")
+        self.assertEqual(current_hosts.classify_backend(
+            "https://hubdrivecdn.com/file/1"), "unknown")
+
+    def test_resolve_copy_hubdrive_end_to_end(self):
+        os.environ["RADD_HUBDRIVE_CRYPT"] = "env-crypt-value"
+        self.addCleanup(os.environ.pop, "RADD_HUBDRIVE_CRYPT")
+        fetch = StubFetch({
+            HD_SAVED: _html(HD_PAGE, final_url=HD_FINAL),
+            HD_AJAX: _html(HD_AJAX_OK),
+            HD_FILE_PAGE_URL: _html(HD_FILE_PAGE,
+                                   final_url=HD_FILE_PAGE_URL),
+        })
+        res = current_hosts.resolve_copy(HD_SAVED, fetch=fetch,
+                                         probe=_ok_file_probe)
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["backend"], "hubdrive")
+        self.assertEqual(res["group"], "hubdrive")
+        self.assertEqual(res["kind"], "file")
+        self.assertEqual(res["url"], HD_CDN)
+
+    def test_resolve_copy_megaup_end_to_end(self):
+        fetch = StubFetch({
+            MU_SAVED: _html(MU_PAGE, final_url=MU_SAVED),
+            MU_BUTTON: FetchResult(status=302,
+                                   headers={"location": MU_CDN}),
+        })
+        with mock.patch("time.sleep"):
+            res = current_hosts.resolve_copy(MU_SAVED, fetch=fetch,
+                                             probe=_ok_file_probe)
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["backend"], "megaup")
+        self.assertEqual(res["group"], "megaup")
+        self.assertEqual(res["kind"], "file")
+        self.assertEqual(res["url"], MU_CDN)
 
 
 if __name__ == "__main__":

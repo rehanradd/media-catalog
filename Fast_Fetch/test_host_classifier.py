@@ -390,6 +390,16 @@ class TestStoragePredicates(unittest.TestCase):
         self.assertFalse(hc.is_bridge_category("", service="cineverse"))
         self.assertTrue(hc.is_bridge_category("", service="hubcloud"))
 
+    @unittest.skipUnless(HAS_RC, _RC_REASON)
+    def test_hubdrive_service_label_maps_direct_file(self):
+        # Same precedent as fastdl-beer: the label maps direct_file, but
+        # an unresolved bridge-page row still caps at B — the AND rule
+        # needs a direct-file host too (see TestTaxonomyCollisionGuard).
+        self.assertTrue(hc.is_direct_file("", service="hubdrive"))
+        self.assertEqual(
+            _rc._derive_category({"service": "hubdrive"},
+                                 "https://hubdrive.pics/file/123"), "B")
+
     def test_is_bridge_category_scoped_to_C(self):
         self.assertFalse(hc.is_bridge_category("https://pixeldrain.com/u/X"))
         self.assertFalse(hc.is_bridge_category("https://unknown.example/x"))
