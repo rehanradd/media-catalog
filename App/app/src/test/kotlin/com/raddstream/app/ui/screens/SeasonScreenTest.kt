@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -29,9 +28,10 @@ import org.robolectric.RobolectricTestRunner
  * Detail redesign (Nov 2026): the season sub-page is plain numbered
  * tiles. The screen itself needs the shared DetailViewModel, which
  * tests never construct — so this file renders the tile and pack-row
- * pieces the page is made of: the grid renders, a dimmed tile does
- * nothing when tapped, a playable tile plays, and the pack row says
- * what it is and offers its own Play.
+ * pieces the page is made of: the grid renders, a dimmed tile's tap
+ * reaches the handler (the screen answers "no working copy"), a
+ * playable tile plays, and the pack row says what it is and offers
+ * its own Play.
  */
 @RunWith(RobolectricTestRunner::class)
 class SeasonScreenTest {
@@ -107,12 +107,16 @@ class SeasonScreenTest {
     }
 
     @Test
-    fun dimmedTileHasNoTapAction() {
-        // A number with no playable file stays on screen dimmed — and
-        // tapping it must do nothing: its click is disabled, so the
-        // node reads as not enabled.
-        tileRow()
-        compose.onNodeWithText("3").assertIsNotEnabled()
+    fun dimmedTileTapReachesTheHandler() {
+        // 2-button detail (Nov 2026): a dimmed tile is tappable now —
+        // the tap reaches the handler, and the season screen answers
+        // "Episode 3 has no working copy" instead of doing nothing.
+        // The tile itself only owns the tap; the message lives in the
+        // ViewModel's onUnplayableEpisodeTapped.
+        var tapped: Int? = null
+        tileRow(onClick = { tapped = it })
+        compose.onNodeWithText("3").performClick()
+        assertEquals(3, tapped)
     }
 
     @Test

@@ -304,8 +304,9 @@ class DetailRedesignTest {
         // to attach to yet (the same shape as
         // similarRailIsCalledMoreLikeThis). Making that scroll work
         // from anywhere needs a list-state scroll by index — flagged
-        // as a follow-up, not this slice.
-        compose.onNodeWithText("Similar").assertIsDisplayed()
+        // as a follow-up, not this slice. The row itself sits below
+        // the taller stacked buttons, so scroll it into view first.
+        compose.onNodeWithText("Similar").performScrollTo().assertIsDisplayed()
     }
 
 }

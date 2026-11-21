@@ -319,11 +319,14 @@ class TwoButtonDetailTest {
         )
         assertEquals(1 to 2, nextUnwatchedEpisode(layout(), progress))
         // Episode 3 has no playable print, so it is never next.
+        // Every playable episode watched: re-watch from the start.
+        // (S2 E1 is playable too, so it is marked watched as well —
+        // otherwise it, not the re-watch, is next.)
         val allWatched = mapOf(
             (1 to 1) to EpisodeProgress(fraction = 1f, watched = true, remainingLabel = null),
             (1 to 2) to EpisodeProgress(fraction = 1f, watched = true, remainingLabel = null),
+            (2 to 1) to EpisodeProgress(fraction = 1f, watched = true, remainingLabel = null),
         )
-        // Every playable episode watched: re-watch from the start.
         assertEquals(1 to 1, nextUnwatchedEpisode(layout(), allWatched))
         // One season only: the season screen's Play Season.
         assertEquals(2 to 1, nextUnwatchedEpisode(layout(), emptyMap(), season = 2))
