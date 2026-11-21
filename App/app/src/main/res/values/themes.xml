@@ -38,5 +38,20 @@
         <item name="android:windowBackground">@drawable/launch_background</item>
         <item name="android:statusBarColor">#00000000</item>
         <item name="android:navigationBarColor">#00000000</item>
+        <!--
+          AppCompat theme colors. The platform Material parent defines
+          android:colorPrimary but NOT the AppCompat colorPrimary attribute, so
+          any AppCompat widget that resolves it (MediaRouteButton does, in
+          MediaRouterThemeHelper.getControllerColor) got 0 — transparent — and
+          ColorUtils.calculateContrast threw IllegalArgumentException
+          ("background can not be translucent: #0"), crashing every detail
+          screen that composed the Cast button (Robo v11, 3 crashes). These
+          are opaque brand colors, so the resolution can never be 0 again.
+          Like the items above, they must be repeated in values-v23 and
+          values-v27, whose styles replace this one wholesale.
+        -->
+        <item name="colorPrimary">@color/radd_current</item>
+        <item name="colorPrimaryDark">@color/radd_current_700</item>
+        <item name="colorAccent">@color/radd_current</item>
     </style>
 </resources>

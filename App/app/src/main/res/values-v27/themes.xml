@@ -15,5 +15,11 @@
         <item name="android:navigationBarColor">#00000000</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+        <!-- AppCompat theme colors — see values/themes.xml: MediaRouteButton resolves
+             colorPrimary and throws on a transparent (0) value, crashing the detail
+             screen's Cast button. Repeated here because this style replaces the base. -->
+        <item name="colorPrimary">@color/radd_current</item>
+        <item name="colorPrimaryDark">@color/radd_current_700</item>
+        <item name="colorAccent">@color/radd_current</item>
     </style>
 </resources>
