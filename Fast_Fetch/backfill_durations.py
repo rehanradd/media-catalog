@@ -227,6 +227,10 @@ def ensure_staging_table(conn):
 def select_batch(conn, limit, now=None):
     """Fresh, unprobed, resolvable cache rows: HLS first, then direct.
 
+    Within each kind, newest-resolved first — a freshly banked link is
+    the most likely to still be alive (batch 1 probed oldest-first and
+    got 5% yield: 75/100 HTTP 410). Rows with no resolved_at sort last.
+
     Fresh means the cached URL is still inside its verified window —
     a stale row is the resolver's job, not this job's. Orphan cache rows
     (link gone from download_sources) are excluded, as are ``viewer``
@@ -243,7 +247,8 @@ def select_batch(conn, limit, now=None):
         " WHERE rc.kind IN ('file', 'playlist')"
         " AND (rc.expires_at IS NULL OR rc.expires_at > ?)"
         + staged +
-        " ORDER BY (rc.kind = 'playlist') DESC, rc.link_id LIMIT ?",
+        " ORDER BY (rc.kind = 'playlist') DESC, rc.resolved_at DESC,"
+        " rc.link_id LIMIT ?",
         (now, limit)).fetchall()
     return [{"link_id": r[0], "url": r[1], "kind": r[2]} for r in rows]
 

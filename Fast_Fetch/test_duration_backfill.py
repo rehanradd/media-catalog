@@ -397,15 +397,16 @@ def make_db():
          (1001, "site.example", 2, "https://site.example/p2"),
          (1002, "site.example", 3, "https://site.example/p3")])
     conn.executemany(
-        "INSERT INTO resolved_cache (link_id, url, kind, expires_at)"
-        " VALUES (?, ?, ?, ?)",
-        [(100, "https://cdn.example/a.m3u8", "playlist", now + 3600),
-         (101, "https://cdn.example/b.mkv", "file", now + 3600),
-         (102, "https://cdn.example/c.mp4", "file", now + 3600),
-         (103, "https://cdn.example/d.mkv", "file", now + 3600),
-         (104, "https://cdn.example/e.mkv", "file", now - 10),
-         (105, "https://cdn.example/f.mkv", "file", now + 3600),
-         (106, "https://cdn.example/g", "viewer", now + 3600)])
+        "INSERT INTO resolved_cache (link_id, url, kind, expires_at,"
+        " resolved_at) VALUES (?, ?, ?, ?, ?)",
+        [(100, "https://cdn.example/a.m3u8", "playlist", now + 3600,
+          now - 300),
+         (101, "https://cdn.example/b.mkv", "file", now + 3600, now - 100),
+         (102, "https://cdn.example/c.mp4", "file", now + 3600, now - 200),
+         (103, "https://cdn.example/d.mkv", "file", now + 3600, now - 50),
+         (104, "https://cdn.example/e.mkv", "file", now - 10, now - 10),
+         (105, "https://cdn.example/f.mkv", "file", now + 3600, now - 400),
+         (106, "https://cdn.example/g", "viewer", now + 3600, now - 400)])
     conn.commit()
     return conn, tmp.name
 
@@ -730,13 +731,22 @@ class SelectionTests(unittest.TestCase):
     def test_fresh_rows_only_hls_first(self):
         rows = select_batch(self.conn, 100)
         ids = [r["link_id"] for r in rows]
-        # 100 (playlist) first, then files; stale 104, orphan 105 and
-        # viewer 106 are all excluded.
-        self.assertEqual(ids, [100, 101, 102, 103])
+        # 100 (playlist) first, then files newest-resolved first
+        # (103 @ now-50, 101 @ now-100, 102 @ now-200); stale 104,
+        # orphan 105 and viewer 106 are all excluded.
+        self.assertEqual(ids, [100, 103, 101, 102])
+
+    def test_newest_resolved_first_within_kind(self):
+        # Newest banked link first: batch 1 probed oldest-first and got
+        # 5% yield (75/100 HTTP 410); the prototype drove newest-first
+        # and got 60%.
+        rows = select_batch(self.conn, 100)
+        self.assertEqual([r["link_id"] for r in rows],
+                         [100, 103, 101, 102])
 
     def test_limit_is_honoured(self):
         rows = select_batch(self.conn, 2)
-        self.assertEqual([r["link_id"] for r in rows], [100, 101])
+        self.assertEqual([r["link_id"] for r in rows], [100, 103])
 
     def test_already_probed_rows_are_excluded(self):
         backfill_durations.ensure_staging_table(self.conn)
@@ -744,7 +754,7 @@ class SelectionTests(unittest.TestCase):
                   "playlist", 6102.0)
         self.conn.commit()
         rows = select_batch(self.conn, 100)
-        self.assertEqual([r["link_id"] for r in rows], [101, 102, 103])
+        self.assertEqual([r["link_id"] for r in rows], [103, 101, 102])
 
     def test_batch_counts(self):
         fresh, stale, probed = backfill_durations.batch_counts(self.conn)
@@ -880,12 +890,15 @@ class RunTests(unittest.TestCase):
         self.assertEqual(row, (None, "duration-disagreement"))
 
     def test_truth_sampling_agrees(self):
+        # Truth-checks every 2nd success (truth_sample=0.5): under
+        # newest-first ordering the successes are 100, 103, 101, 102,
+        # so the 2nd and 4th (d.mkv, c.mp4) are the truth-checked ones.
         stats, code = run(self.path, apply=True, limit=100,
                           journal_path=self.journal,
                           probe=_run_probe(self._mapping()),
                           truth=fake_ffprobe({
-                              "https://cdn.example/b.mkv": 6102.034,
-                              "https://cdn.example/d.mkv": 2759.061}),
+                              "https://cdn.example/d.mkv": 2759.061,
+                              "https://cdn.example/c.mp4": 4908.758}),
                           truth_sample=0.5, guard_reasons=[])
         self.assertEqual(code, 0)
         self.assertEqual(stats["truth_checked"], 2)
@@ -925,15 +938,16 @@ class RunTests(unittest.TestCase):
 
     def test_429_parks_the_host(self):
         mapping = self._mapping()
-        mapping["https://cdn.example/b.mkv"] = ("http429", 120)
+        mapping["https://cdn.example/d.mkv"] = ("http429", 120)
         stats, code = run(self.path, apply=True, limit=100,
                           journal_path=self.journal,
                           probe=_run_probe(mapping),
                           truth=fake_ffprobe({}), guard_reasons=[])
         self.assertEqual(code, 0)
-        # b.mkv (429) parks cdn.example, so c.mp4 and d.mkv on the same
-        # host are skipped without a fetch; only the playlist (probed
-        # before the park) succeeds.
+        # d.mkv (429) is the first file probed after the playlist under
+        # newest-first ordering, so it parks cdn.example and b.mkv and
+        # c.mp4 on the same host are skipped without a fetch; only the
+        # playlist (probed before the park) succeeds.
         self.assertEqual(stats["ok"], 1)
         self.assertEqual(stats["failed"], 1)
         self.assertEqual(stats["host_parked"], 2)
