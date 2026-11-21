@@ -5,11 +5,8 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.raddstream.app.ui.theme.RaddStreamTheme
-import com.raddstream.app.viewmodel.KeepTarget
-import com.raddstream.app.viewmodel.PendingKeep
 import com.raddstream.app.viewmodel.PendingSeasonKeep
 import com.raddstream.app.viewmodel.SeasonKeepItem
-import com.raddstream.app.viewmodel.keepConfirmLine
 import com.raddstream.app.viewmodel.seasonKeepConfirmLine
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -19,10 +16,16 @@ import org.robolectric.RobolectricTestRunner
 
 /**
  * The Stitch sheets/dialogs mockups (dialogs-mockup-20261115): the
- * consent card, the two keep confirms, the report rows and the update
- * dialog — each pinned against its mockup, with real data from the code,
- * never the mockup's example numbers. The check-in circles and sheet
- * tests were removed 2026-11-17 with the coins/check-in removal.
+ * consent card, the report rows and the update dialog — each pinned
+ * against its mockup, with real data from the code, never the mockup's
+ * example numbers. The check-in circles and sheet tests were removed
+ * 2026-11-17 with the coins/check-in removal.
+ *
+ * 2-button detail (Nov 2026): the two keep confirms are gone — the
+ * movie confirm and the season confirm both died with their dialogs,
+ * because the sheet row IS the confirmation now. What survives is the
+ * season line itself: the whole-season sheet row still reads "12
+ * episodes · 4.20 GB · Wi-Fi only", so its test stays.
  */
 @RunWith(RobolectricTestRunner::class)
 class DialogsMockupTest {
@@ -68,78 +71,7 @@ class DialogsMockupTest {
         assertEquals(true, skipped)
     }
 
-    // ── keep confirms ──
-
-    private fun pendingKeep(sizeBytes: Long? = 1_300_000_000L) = PendingKeep(
-        handle = "handle",
-        printLabel = "1080p",
-        title = "Salaar",
-        sizeBytes = sizeBytes,
-        resumable = true,
-        target = KeepTarget.DeviceFile,
-    )
-
-    @Test
-    fun keepConfirmLineJoinsTitleQualitySizeAndWifi() {
-        assertEquals(
-            "Salaar · 1080p · 1.30 GB · Wi-Fi only",
-            keepConfirmLine(pendingKeep(), wifiOnly = true),
-        )
-        assertEquals(
-            "Salaar · 1080p · 1.30 GB",
-            keepConfirmLine(pendingKeep(), wifiOnly = false),
-        )
-        assertEquals(
-            "Salaar · 1080p · Size unknown · Wi-Fi only",
-            keepConfirmLine(pendingKeep(sizeBytes = null), wifiOnly = true),
-        )
-    }
-
-    @Test
-    fun keepConfirmLineDropsABlankQualityLabel() {
-        // Dev-cleanup (Nov 2026): a print with no quality label leaves no
-        // dangling separator in the confirm line.
-        assertEquals(
-            "Salaar · 1.30 GB · Wi-Fi only",
-            keepConfirmLine(pendingKeep().copy(printLabel = ""), wifiOnly = true),
-        )
-    }
-
-    @Test
-    fun keepConfirmShowsOneLineAndDownloadButton() {
-        var confirmed = false
-        compose.setContent {
-            RaddStreamTheme {
-                KeepConfirmDialog(
-                    pending = pendingKeep(),
-                    wifiOnly = true,
-                    onConfirm = { confirmed = true },
-                    onDismiss = {},
-                )
-            }
-        }
-        compose.onNodeWithText("Download this title?").assertIsDisplayed()
-        compose.onNodeWithText("Salaar · 1080p · 1.30 GB · Wi-Fi only").assertIsDisplayed()
-        compose.onNodeWithText("Download", substring = false).performClick()
-        assertEquals(true, confirmed)
-        compose.onNodeWithText("Cancel").assertIsDisplayed()
-    }
-
-    @Test
-    fun keepConfirmOmitsWifiOnlyWhenSwitchIsOff() {
-        compose.setContent {
-            RaddStreamTheme {
-                KeepConfirmDialog(
-                    pending = pendingKeep(),
-                    wifiOnly = false,
-                    onConfirm = {},
-                    onDismiss = {},
-                )
-            }
-        }
-        compose.onNodeWithText("Salaar · 1080p · 1.30 GB").assertIsDisplayed()
-        compose.onNodeWithText("Wi-Fi only").assertDoesNotExist()
-    }
+    // ── season line (the whole-season sheet row) ──
 
     private fun pendingSeason(lockedCount: Int = 0) = PendingSeasonKeep(
         seasonNumber = 2,
@@ -173,41 +105,6 @@ class DialogsMockupTest {
                 wifiOnly = false,
             ),
         )
-    }
-
-    @Test
-    fun seasonKeepConfirmShowsCountLineAndButtons() {
-        var confirmed = false
-        compose.setContent {
-            RaddStreamTheme {
-                SeasonKeepConfirmDialog(
-                    pending = pendingSeason(),
-                    wifiOnly = true,
-                    onConfirm = { confirmed = true },
-                    onDismiss = {},
-                )
-            }
-        }
-        compose.onNodeWithText("Download season 2?").assertIsDisplayed()
-        compose.onNodeWithText("12 episodes · 4.20 GB · Wi-Fi only").assertIsDisplayed()
-        compose.onNodeWithText("Download", substring = false).performClick()
-        assertEquals(true, confirmed)
-        compose.onNodeWithText("Cancel").assertIsDisplayed()
-    }
-
-    @Test
-    fun seasonKeepConfirmNamesLockedEpisodes() {
-        compose.setContent {
-            RaddStreamTheme {
-                SeasonKeepConfirmDialog(
-                    pending = pendingSeason(lockedCount = 2),
-                    wifiOnly = true,
-                    onConfirm = {},
-                    onDismiss = {},
-                )
-            }
-        }
-        compose.onNodeWithText("2 episodes need VIP and won't download.").assertIsDisplayed()
     }
 
     // ── update dialog ──

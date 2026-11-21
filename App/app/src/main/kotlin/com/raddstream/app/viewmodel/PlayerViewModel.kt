@@ -2055,6 +2055,13 @@ class PlayerViewModel @Inject constructor(
                     streamId = it.streamId,
                     backupHandles = it.backupHandles,
                     label = it.title,
+                    // 2-button detail (Nov 2026): the in-player quality
+                    // sheet shows the size when the server named one, and
+                    // the format in plain words — the binge handoff's
+                    // rungs carry them too, or a series episode reached
+                    // through "Next" would show neither.
+                    sizeBytes = it.sizeBytes,
+                    isHls = isHlsOption(it),
                 )
             }
         val title = detail.cleanTitle?.takeIf { it.isNotBlank() } ?: detail.title

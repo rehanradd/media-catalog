@@ -42,8 +42,6 @@ import com.raddstream.app.network.models.PanelDisclaimer
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.network.models.PostDetail
 import com.raddstream.app.network.models.ReleaseDetail
-import com.raddstream.app.player.LadderForScope
-import com.raddstream.app.player.QualityOption
 import com.raddstream.app.ui.components.LiveTvLoadingSkeleton
 import com.raddstream.app.ui.components.PosterGridSkeleton
 import com.raddstream.app.ui.components.SearchResultsSkeleton
@@ -313,32 +311,6 @@ class NestedScrollCrashTest {
         ),
     ).workPrints
 
-    private fun detailRungs() = RungActions(
-        ladder = LadderForScope(
-            options = listOf(
-                QualityOption(
-                    band = "720p",
-                    title = "HD - X264",
-                    streamId = "h-720p",
-                    playUrl = "http://127.0.0.1:8080/api/v1/stream?id=h-720p",
-                    sizeBytes = null,
-                    backupHandles = emptyList(),
-                    playsHere = true,
-                    resumable = false,
-                    copies = 1,
-                    isProviderPage = false,
-                    audioLanguages = emptyList(),
-                ),
-            ),
-            autoBand = "720p",
-            downloadOnlyBands = emptyList(),
-        ),
-        selectedBand = null,
-        onPlay = {},
-        onKeep = {},
-        tierLabel = { "Standard" },
-    )
-
     private fun detailContent(
         isSeries: Boolean = false,
         seasons: List<SeasonGroup> = emptyList(),
@@ -353,14 +325,18 @@ class NestedScrollCrashTest {
                     capabilities = emptyList(),
                     isSeries = isSeries,
                     resume = null,
-                    onPlayResume = {},
                     includedPill = null,
                     deadEndReason = deadEndReason,
+                    // 2-button detail (Nov 2026): the dead end's reason
+                    // reaches the page as the Play button's hint — the
+                    // ViewModel puts it there — so the helper models
+                    // that instead of passing a rung card.
+                    playLabel = "Play",
+                    playEnabled = deadEndReason == null,
+                    playHint = deadEndReason,
+                    downloadLabel = "Download",
+                    downloadEnabled = true,
                     onOpenSeason = {},
-                    onPlayPrint = {},
-                    onOpenExternal = {},
-                    onKeep = {},
-                    rungs = detailRungs(),
                     onActorClick = {},
                     similarTitles = samplePosts("", 71, listOf("Pathaan", "Animal", "Salaar")),
                     onPostClick = {},

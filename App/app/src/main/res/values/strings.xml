@@ -134,6 +134,21 @@
     <string name="detail_download_only">Download only — this copy can\'t play here.</string>
     <string name="detail_quality_auto_plays">Auto plays the best picture your plan can hold.</string>
     <string name="detail_quality_select_download">Select download quality</string>
+    <!-- 2-button detail (Nov 2026): the two buttons and the Quality Sheet
+         read from here, so the words are the same everywhere — the dead
+         end's retry, the press-in-flight guard, the sheet titles, and the
+         locked/dead row words. -->
+    <string name="detail_try_again">Try again</string>
+    <string name="detail_starting">Starting…</string>
+    <string name="detail_sheet_choose_play">Choose quality to play</string>
+    <string name="detail_sheet_choose_save">Choose quality to save</string>
+    <string name="detail_sheet_choose_what_save">Choose what to save</string>
+    <string name="detail_sheet_vip_only">VIP only</string>
+    <string name="detail_sheet_no_working_link">No working link</string>
+    <string name="detail_download_episode">Download an episode</string>
+    <string name="detail_download_episode_hint">Tap an episode to save it now. Tick more than one to save them all at the same quality.</string>
+    <string name="detail_size_unknown">Size unknown</string>
+    <string name="detail_latest_episode">Latest episode</string>
     <!-- Detail redesign (Nov 2026): Cast lives on the Detail page now — the
          button's description. Named detail_*, not player_*: the player copy
          test owns the player_* vocabulary and scans PlayerScreen only. -->

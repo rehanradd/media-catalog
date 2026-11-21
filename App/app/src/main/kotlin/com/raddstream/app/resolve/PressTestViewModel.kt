@@ -64,7 +64,8 @@ import okhttp3.Request
  *   server's winner for a print, while this test presses one sampled
  *   link by its own handle — the v1 fallback the detail takes when the
  *   bundle is unavailable.
- * - Download: Detail's confirmKeep calls
+ * - Download: Detail's `keep` (2-button detail, Nov 2026: the sheet row
+ *   IS the confirmation, no dialog) calls
  *   [DeviceDownloadsRepository.enqueue] — this harness calls the same
  *   [DeviceDownloadsRepository.enqueue] with the same handle.
  *

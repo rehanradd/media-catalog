@@ -1,19 +1,10 @@
 package com.raddstream.app.ui.screens
 
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.ui.test.assertCountEquals
-import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.onRoot
-import androidx.compose.ui.test.performTouchInput
-import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.network.models.PostDetail
-import com.raddstream.app.player.LadderForScope
-import com.raddstream.app.player.QualityLadder
-import com.raddstream.app.player.QualityOption
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.ResumePoint
 import org.junit.Rule
@@ -24,9 +15,14 @@ import org.robolectric.RobolectricTestRunner
 /**
  * Detail redesign (Nov 2026): the SponsorCard and the VipSourcesCard are
  * deleted from Detail — the lock is a VIP badge on the rung itself, never
- * a second card. These tests pin that no upsell card can ever appear on
- * Detail, while the rung's own VIP tier pill still shows where a locked
- * rung can appear.
+ * a second card.
+ *
+ * 2-button detail (Nov 2026): the rung cards are gone too, so the lock
+ * moved again — into the Quality Sheet, where a locked row shows greyed
+ * with a lock and "VIP only" (pinned by TwoButtonDetailTest's sheet-row
+ * tests, which build the rows the sheet renders). What this file still
+ * pins: no upsell card, and no VIP text at all, can ever appear on the
+ * detail page itself — the page is two buttons, a story, and the title.
  */
 @RunWith(RobolectricTestRunner::class)
 class DetailPaywallTest {
@@ -35,8 +31,8 @@ class DetailPaywallTest {
     val compose = createComposeRule()
 
     // A playable title with no prints at all: the resume point alone makes
-    // it playable, so the upsell question turns only on the ladder —
-    // no print fixture is needed to judge it.
+    // it playable, so the upsell question turns only on the page — no
+    // print fixture is needed to judge it.
     private val post = PostDetail(
         id = 1,
         title = "Jawan",
@@ -54,29 +50,10 @@ class DetailPaywallTest {
         language = "Hindi",
     )
 
-    private fun option(band: String, title: String) = QualityOption(
-        band = band,
-        // The rung title is sanitized at the server-tier crossing point
-        // in production (QualityLadder.sanitizeRungTitle), so the
-        // fixture sanitizes too — the pill's description names the
-        // title the viewer actually sees, not the raw server label.
-        title = QualityLadder.sanitizeRungTitle(band, title),
-        streamId = "h-$band",
-        playUrl = "http://127.0.0.1:8080/api/v1/stream?id=h-$band",
-        sizeBytes = null,
-        backupHandles = emptyList(),
-        playsHere = true,
-        resumable = false,
-        copies = 1,
-        isProviderPage = false,
-        audioLanguages = emptyList(),
-    )
-
     private fun content(
-        tierLabel: (QualityOption) -> String,
         // The included pill the ViewModel would produce for this state:
-        // "VIP" when a rung is locked, null when the gate is off and
-        // nothing is locked (free launch).
+        // "VIP" when a locked quality exists, null when the gate is off
+        // and nothing is locked (free launch).
         includedPill: String? = "VIP",
     ) {
         compose.setContent {
@@ -88,23 +65,12 @@ class DetailPaywallTest {
                     capabilities = emptyList(),
                     isSeries = false,
                     resume = ResumePoint(season = 1, episode = 3, positionMs = 1_000_000L, durationMs = 5_000_000L),
-                    onPlayResume = {},
                     includedPill = includedPill,
+                    playLabel = "Resume S1:E3 · 720p",
+                    playEnabled = true,
+                    downloadLabel = "Download",
+                    downloadEnabled = true,
                     onOpenSeason = {},
-                    onPlayPrint = {},
-                    onOpenExternal = {},
-                    onKeep = {},
-                    rungs = RungActions(
-                        ladder = LadderForScope(
-                            options = listOf(option("720p", "HD - X264"), option("1080p", "Full HD · X264")),
-                            autoBand = "720p",
-                            downloadOnlyBands = emptyList(),
-                        ),
-                        selectedBand = null,
-                        onPlay = {},
-                        onKeep = {},
-                        tierLabel = tierLabel,
-                    ),
                     onActorClick = {},
                     reloadError = null,
                     onRetryReload = {},
@@ -119,38 +85,20 @@ class DetailPaywallTest {
 
     @Test
     fun noVipUpsellCardEverShowsOnDetail() {
-        // Even with a VIP-tiered rung in the ladder, neither upsell card
-        // may appear: the rung's own pill is the lock now.
-        content(tierLabel = { if (it.band == "1080p") "VIP" else "Standard" })
+        // Even with a VIP pill on the title, neither upsell card may
+        // appear: the lock lives in the Quality Sheet now, not on
+        // this page.
+        content()
         compose.onNodeWithText("Go VIP").assertDoesNotExist()
         compose.onNodeWithText("4K and 1080p are part of VIP").assertDoesNotExist()
     }
 
     @Test
-    fun rungVipTierPillStillShows() {
-        content(tierLabel = { if (it.band == "1080p") "VIP" else "Standard" })
-        // The card sits below the fold once the utility row is above
-        // it, so its pills are not composed until the list scrolls
-        // near it — swipe until the rung title composes (the same
-        // shape as DetailRedesignTest's series tests), then the pills
-        // exist to count. The card is one LazyColumn item, so when
-        // the title composes, both rows' pills are there.
-        for (i in 0 until 5) {
-            if (compose.onAllNodesWithText("1080p Full HD").fetchSemanticsNodes().isNotEmpty()) break
-            compose.onRoot().performTouchInput { swipeUp() }
-        }
-        compose.onAllNodes(hasContentDescription("VIP tier, 1080p Full HD"))
-            .assertCountEquals(1)
-        compose.onAllNodes(hasContentDescription("Standard tier, 720p HD"))
-            .assertCountEquals(1)
-    }
-
-    @Test
     fun freeLaunchDetailShowsNoPremiumAtAll() {
-        // Free launch: gate OFF means every rung is Standard — no VIP
-        // text anywhere on the page, cards or pills. The ViewModel
-        // produces no included pill either when the gate is off.
-        content(tierLabel = { "Standard" }, includedPill = null)
+        // Free launch: gate OFF means nothing is locked — no VIP text
+        // anywhere on the page, cards or pills. The ViewModel produces
+        // no included pill either when the gate is off.
+        content(includedPill = null)
         compose.onNodeWithText("Go VIP").assertDoesNotExist()
         compose.onNodeWithText("4K and 1080p are part of VIP").assertDoesNotExist()
         compose.onNodeWithText("VIP").assertDoesNotExist()

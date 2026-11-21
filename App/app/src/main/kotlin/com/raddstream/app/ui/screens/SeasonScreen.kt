@@ -8,6 +8,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,6 +25,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -30,7 +33,9 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -38,7 +43,9 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -52,6 +59,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -59,9 +67,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.raddstream.app.player.QualityOption
 import com.raddstream.app.ui.layout.CardGeometry
+import com.raddstream.app.viewmodel.BatchEpisodeTarget
 import com.raddstream.app.viewmodel.DetailNavigationEvent
 import com.raddstream.app.viewmodel.DetailViewModel
+import com.raddstream.app.viewmodel.EpisodeDownloadRow
 import com.raddstream.app.viewmodel.EpisodeProgress
 import com.raddstream.app.viewmodel.SeasonGroup
 
@@ -130,6 +141,10 @@ fun SeasonScreen(
     /** A link the server calls a page: show the provider's own page rather than fail quietly. */
     onOpenProviderPage: (streamId: String, title: String) -> Unit = { _, _ -> },
     onOpenDownloads: () -> Unit = {},
+    /** 2-button detail (Nov 2026): play a file already on this device ("✓ Downloaded"). */
+    onPlayLocal: (uri: String, title: String) -> Unit = { _, _ -> },
+    /** 2-button detail (Nov 2026): jump to another season of this title, when it has more than one. */
+    onOpenSeason: (Int) -> Unit = {},
     viewModel: DetailViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -188,11 +203,17 @@ fun SeasonScreen(
     LaunchedEffect(viewModel.navEvents) {
         viewModel.navEvents.collect { event ->
             when (event) {
-                is DetailNavigationEvent.PlayStream -> onPlayStream(event.streamId, event.title)
-                is DetailNavigationEvent.OpenProviderPage ->
+                is DetailNavigationEvent.PlayStream -> {
+                    viewModel.clearPlayStarting()
+                    onPlayStream(event.streamId, event.title)
+                }
+                is DetailNavigationEvent.OpenProviderPage -> {
+                    viewModel.clearPlayStarting()
                     onOpenProviderPage(event.streamId, event.title)
+                }
                 is DetailNavigationEvent.OpenExternal -> openInExternalPlayer(context, event.playUrl)
-                is DetailNavigationEvent.DownloadStarted -> onOpenDownloads()
+                is DetailNavigationEvent.PlayLocal -> onPlayLocal(event.uri, event.title)
+                is DetailNavigationEvent.OpenDownloads -> onOpenDownloads()
                 is DetailNavigationEvent.DownloadNeedsPermission ->
                     downloadWithStoragePermission { viewModel.retryLastDownload() }
             }
@@ -201,7 +222,16 @@ fun SeasonScreen(
 
     LaunchedEffect(state.actionMessage) {
         state.actionMessage?.let { msg ->
-            snackbarHostState.showSnackbar(msg)
+            // 2-button detail (Nov 2026): the snackbar carries the action
+            // the ViewModel named ("See downloads" / "Free space") — a tap
+            // opens Downloads, and nothing ever navigates away on its own.
+            val result = snackbarHostState.showSnackbar(
+                message = msg,
+                actionLabel = state.snackbarActionLabel,
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                viewModel.onSnackbarAction()
+            }
             viewModel.clearActionMessage()
         }
     }
@@ -290,6 +320,22 @@ fun SeasonScreen(
             else -> {
                 val tiles = seasonTiles(season, state.episodeProgress)
                 val packPrint = season.packedPrints.maxByOrNull { it.rankKey }
+                val seasons = state.layout?.seasons ?: emptyList()
+                // 2-button detail (Nov 2026): 50 tiles per page — a 1,000+
+                // episode season is 20+ pages, and one long list is a
+                // scroll nobody finishes. The page resets when the
+                // season changes.
+                val pageSize = 50
+                val pageCount = (tiles.size + pageSize - 1) / pageSize
+                var page by remember(seasonNumber) { mutableStateOf(0) }
+                val pageTiles = if (pageCount > 1) tiles.drop(page * pageSize).take(pageSize) else tiles
+                val latestPlayable = tiles.lastOrNull { it.playable }?.number
+                // The episode sheet's own state: whether it is open, and
+                // which rows are ticked for a batch download. It lives
+                // here, on this screen — the quality sheet it opens lives
+                // in the shared ViewModel, like the detail page's.
+                var showEpisodeSheet by remember(seasonNumber) { mutableStateOf(false) }
+                var selectedEpisodes by remember(seasonNumber) { mutableStateOf<Set<Pair<Int, Int>>>(emptySet()) }
                 // Detail redesign (Nov 2026): the tiles are rows of six in
                 // a LazyColumn, not a LazyVerticalGrid — the catalog grid
                 // rule owns every grid's columns (CatalogGridColumns), and
@@ -302,26 +348,93 @@ fun SeasonScreen(
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    // The season's download moved here from the old season
-                    // header: one whole-season download, confirmed in the
-                    // same dialog the Detail page uses. Downloads are
-                    // locked in Kids Mode, so there is no button to tap.
-                    if (!state.kidsMode) {
-                        item {
-                            OutlinedButton(
-                                onClick = { viewModel.requestKeepSeason(season) },
+                    // 2-button detail (Nov 2026): two buttons at the top —
+                    // Play Season (the next unwatched episode, 1 tap) and
+                    // Download Season (the sheet's whole-season row).
+                    // Downloads are locked in Kids Mode, so there is no
+                    // Download button to tap there.
+                    item {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Button(
+                                onClick = { viewModel.playSeason(season.number) },
+                                enabled = !state.playStarting,
                                 // Detail review (Nov 2026, P1): the 48dp touch-target floor.
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .heightIn(min = 48.dp),
                             ) {
                                 Icon(
-                                    Icons.Default.Download,
+                                    Icons.Default.PlayArrow,
                                     contentDescription = null,
                                     modifier = Modifier.size(18.dp),
                                 )
                                 Spacer(Modifier.size(8.dp))
-                                Text("Download season")
+                                Text(if (state.playStarting) stringResource(R.string.detail_starting) else viewModel.seasonPlayLabel(season.number))
+                            }
+                            if (!state.kidsMode) {
+                                OutlinedButton(
+                                    onClick = { viewModel.openDownloadSeasonSheet(season) },
+                                    // Detail review (Nov 2026, P1): the 48dp touch-target floor.
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = 48.dp),
+                                ) {
+                                    Icon(
+                                        Icons.Default.Download,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                    Spacer(Modifier.size(8.dp))
+                                    Text("Download season")
+                                }
+                            }
+                        }
+                    }
+                    // 2-button detail (Nov 2026): jump between seasons
+                    // without going back to the detail page.
+                    if (seasons.size > 1) {
+                        item {
+                            Row(
+                                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                seasons.forEach { other ->
+                                    FilterChip(
+                                        selected = other.number == season.number,
+                                        onClick = { if (other.number != season.number) onOpenSeason(other.number) },
+                                        label = { Text("Season ${other.number}") },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    // 2-button detail (Nov 2026): page tabs and the
+                    // latest episode, for seasons too long to scroll.
+                    if (pageCount > 1) {
+                        item {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(
+                                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    for (p in 0 until pageCount) {
+                                        val first = tiles[p * pageSize].number
+                                        val last = tiles[((p + 1) * pageSize).coerceAtMost(tiles.size) - 1].number
+                                        FilterChip(
+                                            selected = p == page,
+                                            onClick = { page = p },
+                                            label = { Text("$first–$last") },
+                                        )
+                                    }
+                                }
+                                latestPlayable?.let { latest ->
+                                    TextButton(
+                                        onClick = { viewModel.playEpisode(season.number, latest) },
+                                        modifier = Modifier.heightIn(min = 48.dp),
+                                    ) {
+                                        Text(stringResource(R.string.detail_latest_episode))
+                                    }
+                                }
                             }
                         }
                     }
@@ -343,7 +456,7 @@ fun SeasonScreen(
                             )
                         }
                     }
-                    items(tiles.chunked(6), key = { row -> "tile-row-${row.first().number}" }) { row ->
+                    items(pageTiles.chunked(6), key = { row -> "tile-row-${row.first().number}" }) { row ->
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             row.forEach { tile ->
                                 EpisodeTile(
@@ -351,6 +464,11 @@ fun SeasonScreen(
                                     onClick = {
                                         if (tile.playable) {
                                             viewModel.playEpisode(season.number, tile.number)
+                                        } else {
+                                            // 2-button detail (Nov 2026): a
+                                            // dimmed tile says so instead of
+                                            // doing nothing.
+                                            viewModel.onUnplayableEpisodeTapped(tile.number)
                                         }
                                     },
                                     modifier = Modifier.weight(1f),
@@ -364,26 +482,87 @@ fun SeasonScreen(
                             }
                         }
                     }
+                    // 2-button detail (Nov 2026): per-episode download —
+                    // a button under the tiles opens the episode sheet.
+                    if (!state.kidsMode && tiles.isNotEmpty()) {
+                        item {
+                            OutlinedButton(
+                                onClick = { showEpisodeSheet = true },
+                                // Detail review (Nov 2026, P1): the 48dp touch-target floor.
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 48.dp),
+                            ) {
+                                Icon(
+                                    Icons.Default.Download,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Spacer(Modifier.size(8.dp))
+                                Text(stringResource(R.string.detail_download_episode))
+                            }
+                        }
+                    }
+                }
+                // The episode sheet, and the shared quality sheet it (and
+                // the Download Season button) opens.
+                if (showEpisodeSheet) {
+                    EpisodeDownloadSheet(
+                        rows = viewModel.episodeDownloadRows(season.number),
+                        selected = selectedEpisodes,
+                        onToggle = { row ->
+                            val key = row.season to row.episode
+                            selectedEpisodes = if (selectedEpisodes.contains(key)) {
+                                selectedEpisodes - key
+                            } else {
+                                selectedEpisodes + key
+                            }
+                        },
+                        onDownloadOne = { row ->
+                            showEpisodeSheet = false
+                            downloadWithStoragePermission {
+                                viewModel.downloadEpisode(row.season, row.episode)
+                            }
+                        },
+                        onDownloadSelected = {
+                            val targets = selectedEpisodes
+                                .map { (s, e) -> BatchEpisodeTarget(s, e) }
+                                .sortedWith(compareBy({ it.season }, { it.episode }))
+                            showEpisodeSheet = false
+                            selectedEpisodes = emptySet()
+                            viewModel.openBatchDownloadSheet(targets)
+                        },
+                        onDismiss = { showEpisodeSheet = false },
+                    )
+                }
+                state.qualitySheet?.let { sheet ->
+                    DetailQualitySheet(
+                        sheet = sheet,
+                        onPlayOption = { option -> viewModel.playSheetOption(option) },
+                        onDownloadOption = { option ->
+                            downloadWithStoragePermission { viewModel.downloadSheetOption(option) }
+                        },
+                        onSeriesRow = { kind ->
+                            downloadWithStoragePermission { viewModel.downloadSeriesRow(kind) }
+                        },
+                        onBatchBand = { band -> viewModel.startBatchDownload(band) },
+                        onLockedRow = viewModel::onLockedQualityRow,
+                        onDismiss = viewModel::dismissQualitySheet,
+                    )
                 }
             }
         }
-    }
-
-    state.pendingSeasonKeep?.let { pending ->
-        SeasonKeepConfirmDialog(
-            pending = pending,
-            wifiOnly = state.wifiOnlyDownloads,
-            onConfirm = { viewModel.confirmKeepSeason() },
-            onDismiss = { viewModel.dismissKeepSeason() },
-        )
     }
 }
 
 /**
  * One numbered tile: the number, centred. The next episode to watch is
  * filled jade; one already watched carries a small jade tick; a number
- * with no playable file is dimmed and does nothing when tapped — it
- * stays on screen so the numbers stay true.
+ * with no playable file is dimmed and stays on screen so the numbers
+ * stay true — and it is still tappable, so it can say so in plain words
+ * ("Episode 5 has no working copy") instead of doing nothing.
+ * 2-button detail (Nov 2026): the tap decision lives with the caller,
+ * which is why the tile never disables itself.
  */
 @Composable
 internal fun EpisodeTile(
@@ -408,7 +587,6 @@ internal fun EpisodeTile(
                 if (tile.isNext) jade else MaterialTheme.colorScheme.surface,
             )
             .clickable(
-                enabled = tile.playable,
                 onClick = onClick,
                 role = Role.Button,
             ),
@@ -431,6 +609,105 @@ internal fun EpisodeTile(
                     .size(14.dp),
                 tint = jade,
             )
+        }
+    }
+}
+
+/**
+ * 2-button detail (Nov 2026): the "Download an episode" sheet — one
+ * row per episode that has a file: its number, the size the server
+ * named (never invented), and a tick when it is already saved. Tap a
+ * row to save that episode at once (2 taps total: this button, then
+ * the row); tick the checkbox to pick episodes for one batch download
+ * instead — the Download button below opens the quality sheet once,
+ * for all of them. No long-press, no tiny download icon on a tile.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun EpisodeDownloadSheet(
+    rows: List<EpisodeDownloadRow>,
+    selected: Set<Pair<Int, Int>>,
+    onToggle: (EpisodeDownloadRow) -> Unit,
+    onDownloadOne: (EpisodeDownloadRow) -> Unit,
+    onDownloadSelected: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    PlayerSheet(onDismiss = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.detail_download_episode),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = stringResource(R.string.detail_download_episode_hint),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(8.dp))
+            for (row in rows) {
+                val key = row.season to row.episode
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .clickable(onClick = { onDownloadOne(row) }, role = Role.Button),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(
+                        checked = selected.contains(key),
+                        onCheckedChange = { onToggle(row) },
+                    )
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(vertical = 8.dp),
+                    ) {
+                        Text(
+                            text = "Episode ${row.episode}",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = row.sizeBytes?.let { QualityOption.formatBytes(it) } ?: stringResource(R.string.detail_size_unknown),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (row.downloaded) {
+                        Icon(
+                            Icons.Default.Check,
+                            contentDescription = "Saved",
+                            modifier = Modifier
+                                .padding(end = 16.dp)
+                                .size(18.dp),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+            }
+            if (selected.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = onDownloadSelected,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp),
+                ) {
+                    Text(
+                        "Download ${selected.size} episode${if (selected.size == 1) "" else "s"}",
+                    )
+                }
+            }
         }
     }
 }

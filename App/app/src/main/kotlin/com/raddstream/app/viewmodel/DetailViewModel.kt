@@ -1,6 +1,7 @@
 package com.raddstream.app.viewmodel
 
 import android.content.Context
+import android.os.StatFs
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -145,7 +146,9 @@ data class DetailUiState(
     val region: String = UserRegion.DEFAULT,
     /** The ladder is always the whole work's now: the per-episode quality
      * cards left with the episode rows (detail redesign, Nov 2026), and a
-     * series picks its picture in the player. */
+     * series picks its picture in the player. The per-episode ladder for
+     * in-player switching is resolved on demand instead — see
+     * [DetailViewModel.ladderForEpisode] (2-button detail, P1 fix). */
     /** null / [LadderForScope.AUTO] = let the ladder's own pointer choose the rung. */
     val selectedBand: String? = LadderForScope.AUTO,
     /** The ledger's answer, mirrored so the quality gate and its upsell read one fact. */
@@ -208,19 +211,51 @@ data class DetailUiState(
      */
     val includedPill: String? = null,
     /**
-     * A download the viewer has been asked to confirm, with the size and the
-     * quality in front of them. Null when nothing is waiting — the download
-     * only starts on Confirm.
+     * 2-button detail (Nov 2026): the open quality sheet, or null when
+     * closed. The sheet is the only place quality is ever chosen — the
+     * two buttons never ask twice.
      */
-    val pendingKeep: PendingKeep? = null,
+    val qualitySheet: QualitySheetState? = null,
     /**
-     * A whole season the viewer has been asked to confirm, with the
-     * episode count and the total size in front of them. Null when
-     * nothing is waiting — like [pendingKeep], nothing downloads until
-     * Confirm, and each episode still goes through the same keep
-     * routing (engine for HLS, device file otherwise) at confirm time.
+     * 2-button detail (Nov 2026): true between a Play tap and the player
+     * opening (or a plain failure message). The second tap is ignored
+     * while it is true, and the button reads "Starting…".
      */
-    val pendingSeasonKeep: PendingSeasonKeep? = null,
+    val playStarting: Boolean = false,
+    /**
+     * 2-button detail (Nov 2026): the local file for each downloaded
+     * handle (READY rows with a localUri), so a "✓ Downloaded" button
+     * can play the saved file instead of starting a new download.
+     */
+    val downloadedLocalUris: Map<String, String> = emptyMap(),
+    /**
+     * 2-button detail (Nov 2026): the two buttons, computed in
+     * [DetailViewModel.publishPrimaryActions] from the same state the
+     * decision tree reads — so the label, the enabled state and what
+     * the tap does can never disagree.
+     */
+    val playLabel: String = "Play",
+    val playEnabled: Boolean = false,
+    /** The plain line under Play: why it is greyed, or where it will play. */
+    val playHint: String? = null,
+    val downloadLabel: String = "Download",
+    val downloadEnabled: Boolean = false,
+    /** The plain line under Download: why it is greyed, or what it will save. */
+    val downloadHint: String? = null,
+    /**
+     * 2-button detail (Nov 2026): the local file the Download button
+     * plays when it reads "✓ Downloaded" — null when nothing for this
+     * title is on the device yet.
+     */
+    val downloadedUri: String? = null,
+    /**
+     * 2-button detail (Nov 2026): the snackbar's action button — the
+     * label on it, and what it does. Null = no action. The download
+     * snackbar's "See downloads" / "Free space" both land on the
+     * Downloads screen; nothing ever auto-navigates away from detail.
+     */
+    val snackbarActionLabel: String? = null,
+    val snackbarAction: SnackbarAction? = null,
     /**
      * The viewer's own Wi-Fi-only downloads switch, mirrored so the keep
      * confirm can say "Wi-Fi only" only when it is actually on. On by
@@ -235,15 +270,18 @@ data class DetailUiState(
 )
 
 /**
- * A download waiting for the viewer's Confirm. The size comes from the one
- * metadata ask that also decides which download system owns the copy, so
- * the dialog never guesses it; null means the server did not name a size,
- * and the dialog says "Size unknown" instead of inventing one.
+ * A download about to start. The size comes from the one metadata ask
+ * that also decides which download system owns the copy, so the start
+ * never guesses it; null means the server did not name a size, and the
+ * download proceeds without one. 2-button detail (Nov 2026): the sheet
+ * row is the confirmation, so nothing waits on this any more — keep()
+ * hands it straight to the starter.
  *
- * Public because it is part of the public [DetailUiState] shape (and of the
- * screen's confirm dialog): a public state class cannot expose an internal
- * type, and neither can its own `target` — so [KeepTarget] is public too.
+ * Public because it is part of the public [DetailUiState] shape: a
+ * public state class cannot expose an internal type, and neither can
+ * its own `target` — so [KeepTarget] is public too.
  */
+
 data class PendingKeep(
     val handle: String,
     val printLabel: String,
@@ -372,25 +410,12 @@ fun keepSizeLabel(sizeBytes: Long?): String =
     sizeBytes?.takeIf { it > 0 }?.let { CacheAffordance.formatBytes(it) } ?: "Size unknown"
 
 /**
- * The single-download confirm's one line: title, quality, size, and the
- * Wi-Fi-only note only when the viewer's own switch is on. "Salaar ·
- * 1080p · 1.30 GB · Wi-Fi only" (CacheAffordance prints GB with two
- * decimals); a size the server never named says so instead of inventing one.
- * A print with no quality label leaves no dangling separator: blank parts
- * are dropped, so the line reads "Salaar · 1.30 GB · Wi-Fi only".
- */
-fun keepConfirmLine(pending: PendingKeep, wifiOnly: Boolean): String {
-    val parts = listOf(pending.title, pending.printLabel, keepSizeLabel(pending.sizeBytes))
-        .filter { it.isNotBlank() } +
-        if (wifiOnly) listOf("Wi-Fi only") else emptyList()
-    return parts.joinToString(" · ")
-}
-
-/**
  * The season-download confirm's one line: how many episodes, their total
  * size, and the Wi-Fi-only note only when the viewer's own switch is on.
  * "12 episodes · 4.20 GB · Wi-Fi only"; a total no episode named says so
- * instead of inventing one.
+ * instead of inventing one. 2-button detail (Nov 2026): the dialog is
+ * gone, but this line still names the whole-season row in the Download
+ * sheet — same words, same honesty.
  */
 fun seasonKeepConfirmLine(pending: PendingSeasonKeep, wifiOnly: Boolean): String {
     val count = "${pending.items.size} episode${if (pending.items.size == 1) "" else "s"}"
@@ -406,6 +431,12 @@ fun seasonKeepConfirmLine(pending: PendingSeasonKeep, wifiOnly: Boolean): String
  */
 private const val PAGE_NOT_A_FILE =
     "This source is a page on the provider's site, not a file — open it instead of keeping it."
+
+/** 2-button detail (Nov 2026): what the snackbar's action button does. */
+enum class SnackbarAction {
+    /** Open the Downloads screen — for "See downloads" and "Free space" alike. */
+    SEE_DOWNLOADS,
+}
 
 sealed class DetailNavigationEvent {
     /** Navigate by OPAQUE HANDLE only — a URL in a route would live in the back stack. */
@@ -423,8 +454,19 @@ sealed class DetailNavigationEvent {
      */
     data class OpenProviderPage(val streamId: String, val title: String) : DetailNavigationEvent()
 
-    /** A download Android accepted: its public file is already moving, so show Downloads. */
-    data class DownloadStarted(val label: String) : DetailNavigationEvent()
+    /**
+     * 2-button detail (Nov 2026): play a file already on this device
+     * ("✓ Downloaded" on the Download button). The local Uri travels
+     * the route — it is our own file, never an upstream address.
+     */
+    data class PlayLocal(val uri: String, val title: String) : DetailNavigationEvent()
+
+    /**
+     * 2-button detail (Nov 2026): open the Downloads screen from a
+     * snackbar action ("See downloads" / "Free space"). Downloads
+     * never auto-navigate away from detail — only this tap does.
+     */
+    data object OpenDownloads : DetailNavigationEvent()
 
     /** A legacy device must grant storage before a public download can start. */
     data object DownloadNeedsPermission : DetailNavigationEvent()
@@ -570,8 +612,20 @@ class DetailViewModel @Inject constructor(
                             }
                             .map { it.handle }
                             .toSet(),
+                        // 2-button detail (Nov 2026): the local file per
+                        // downloaded handle, so "✓ Downloaded" plays it.
+                        downloadedLocalUris = rows
+                            .filter { row ->
+                                row.state == DeviceDownloadState.READY &&
+                                    row.handle.isNotBlank() &&
+                                    !row.localUri.isNullOrBlank()
+                            }
+                            .associate { it.handle to it.localUri!! },
                     )
                 }
+                // The Download button flips to "✓ Downloaded" the moment
+                // the file lands — its label is computed, not stored.
+                publishPrimaryActions()
             }
         }
     }
@@ -773,6 +827,10 @@ class DetailViewModel @Inject constructor(
                 deadEndKeepPrint = deadEndKeepPrint(gatedPrints, premiumAccess, freeQualityCap),
             )
         }
+        // 2-button detail (Nov 2026): the two buttons are computed from
+        // the same gated layout — labels, enabled state and the tap
+        // decision can never disagree about what this viewer may take.
+        publishPrimaryActions()
         loadResume()
     }
 
@@ -787,12 +845,14 @@ class DetailViewModel @Inject constructor(
             // No work identity, so no history to look up — the lookup is
             // settled with "never watched", not left hanging.
             _uiState.update { it.copy(resumeLoaded = true) }
+            publishPrimaryActions()
             return
         }
         viewModelScope.launch {
             val rows = runCatching { watchHistoryDao.findWork(workRef) }.getOrNull()
             if (rows == null) {
                 _uiState.update { it.copy(resumeLoaded = true) }
+                publishPrimaryActions()
                 return@launch
             }
             val resume = resumePointFor(rows)
@@ -807,6 +867,9 @@ class DetailViewModel @Inject constructor(
                     episodeProgress = episodeProgressFor(rows),
                 )
             }
+            // 2-button detail (Nov 2026): the Play label flips to Resume
+            // the moment history answers — it is computed, not stored.
+            publishPrimaryActions()
         }
     }
 
@@ -816,6 +879,639 @@ class DetailViewModel @Inject constructor(
         val print = resumePrintFor(layout, _uiState.value.resume) ?: return
         playPrint(print)
     }
+
+    // ------------------------------------------------------------------
+    // 2-button detail (Nov 2026)
+    //
+    // The detail page has exactly two buttons — Play and Download — and
+    // the quality sheet is the only place quality is ever chosen. The
+    // helpers these entry points share live in TwoButtonDetail.kt.
+    // ------------------------------------------------------------------
+
+    /**
+     * P1 fix: the ladder for one episode, resolved from the detail's own
+     * option groups and gated the same way the whole-work ladder is.
+     * The detail ladder is built whole-work scope, so for a
+     * multi-episode series it is EMPTY and nothing staged from it arms
+     * the in-player switch — this is the ladder a series episode
+     * actually plays from, and the one [playV2Bundle] stages.
+     */
+    fun ladderForEpisode(season: Int, episode: Int): LadderForScope {
+        val groups = rawDetail?.optionGroups ?: return LadderForScope.EMPTY
+        return ladderForEpisodeScope(groups, season, episode, premiumAccess, freeQualityCap)
+    }
+
+    /**
+     * The two buttons, computed from the same state the decision tree
+     * reads — labels, enabled state and hints can never disagree with
+     * what the tap does. Called whenever the inputs change: detail
+     * load, entitlement change, resume landing, download landing.
+     */
+    private fun publishPrimaryActions() {
+        val state = _uiState.value
+        val layout = state.layout
+        val resume = state.resume.takeIf { state.resumePlayable }
+        val bestPrint = layout?.let { bestPlayablePrintOf(it, premiumAccess, freeQualityCap) }
+        val allPrints = layout?.let {
+            it.workPrints +
+                it.seasons.flatMap { season -> season.episodes.flatMap { e -> e.prints } + season.packedPrints }
+        }.orEmpty()
+        val providerOnly = bestPrint == null && allPrints.any { it.opensProviderPage }
+        val canPlay = resume != null || bestPrint != null
+
+        // --- Play -------------------------------------------------------
+        var playLabel: String
+        var playHint: String? = null
+        when {
+            resume != null -> {
+                val band = resumePrintFor(layout, resume)?.resolution?.wire
+                playLabel = if (band != null) "${resume.label} · $band" else resume.label
+            }
+            layout?.isSeriesLike == true -> {
+                val next = nextUnwatchedEpisode(layout, state.episodeProgress)
+                if (next == null) {
+                    playLabel = "Play"
+                    playHint = state.deadEndReason ?: "No working link right now. Try again later."
+                } else {
+                    val (season, episode) = next
+                    val band = ladderForEpisode(season, episode)
+                        .let { it.effectiveAutoBand ?: it.autoBand }
+                        ?: episodePlayPrint(layout, season, episode)?.resolution?.wire
+                    playLabel = if (band != null) "Play S$season E$episode · $band" else "Play S$season E$episode"
+                }
+            }
+            state.ladder.options.any { isHlsOption(it) && it.playsHere && it.streamId.isNotBlank() } -> {
+                // HLS available: the button names Auto, because that is
+                // what the tap starts — the quality changes in-player.
+                playLabel = "Play · Auto"
+                playHint = "Plays instantly, quality changes while playing."
+            }
+            else -> {
+                val band = state.ladder.let { it.effectiveAutoBand ?: it.autoBand }
+                    ?: bestPrint?.resolution?.wire
+                playLabel = if (band != null) "Play · $band" else "Play"
+            }
+        }
+        if (providerOnly) {
+            playLabel = "Watch on the provider's page"
+            playHint = "This title plays on the provider's own page, with its own player and ads."
+        }
+        val playEnabled = canPlay || providerOnly
+        if (!playEnabled) {
+            playHint = state.deadEndReason ?: "No working link right now. Try again later."
+        }
+
+        // --- Download ---------------------------------------------------
+        val downloadedUri = downloadedUriForTitle()
+        val downloadLabel = if (downloadedUri != null) "✓ Downloaded" else "Download"
+        val downloadEnabled = when {
+            state.kidsMode -> false
+            layout == null -> false
+            layout.isSeriesLike -> {
+                val next = nextUnwatchedEpisode(layout, state.episodeProgress)
+                next != null && (
+                    ladderForEpisode(next.first, next.second).options
+                        .any { it.streamId.isNotBlank() && !it.isProviderPage } ||
+                        episodeHasKeepable(layout, next.first, next.second)
+                    )
+            }
+            else -> state.ladder.options.any { it.streamId.isNotBlank() && !it.isProviderPage } ||
+                state.deadEndKeepPrint != null
+        }
+        val downloadHint = when {
+            state.kidsMode -> "Downloads are off in Kids Mode."
+            downloadedUri != null -> "Saved on this device — tap to play it."
+            layout?.isSeriesLike == true -> "Save the next episode or the whole season."
+            !downloadEnabled -> "Nothing to save for this title."
+            else -> null
+        }
+
+        _uiState.update {
+            it.copy(
+                playLabel = playLabel,
+                playEnabled = playEnabled,
+                playHint = playHint,
+                downloadLabel = downloadLabel,
+                downloadEnabled = downloadEnabled,
+                downloadHint = downloadHint,
+                downloadedUri = downloadedUri,
+            )
+        }
+    }
+
+    /** True when one episode has a copy this viewer may keep. */
+    private fun episodeHasKeepable(layout: ReleaseLayout, season: Int, episode: Int): Boolean =
+        layout.seasons.firstOrNull { it.number == season }
+            ?.episodes?.firstOrNull { it.numberWithinSeason == episode }
+            ?.prints?.any { print -> print.links.any { it.keepable } } ?: false
+
+    /**
+     * The local file the Download button plays when it reads "✓
+     * Downloaded": a copy of this title already on this device. For a
+     * series it is the next episode's copy only — an earlier episode's
+     * file must never answer a tap that means "the next one".
+     */
+    fun downloadedUriForTitle(): String? {
+        val state = _uiState.value
+        val layout = state.layout ?: return null
+        val handles = if (layout.isSeriesLike) {
+            val next = nextUnwatchedEpisode(layout, state.episodeProgress) ?: return null
+            episodePlayPrint(layout, next.first, next.second)?.links?.map { it.streamId }.orEmpty()
+        } else {
+            val prints = layout.workPrints +
+                layout.seasons.flatMap { season -> season.episodes.flatMap { e -> e.prints } + season.packedPrints }
+            prints.flatMap { it.links }.map { it.streamId }
+        }
+        return handles.firstNotNullOfOrNull { state.downloadedLocalUris[it] }
+    }
+
+    /**
+     * The Play button's one entry point. The decision tree (§6.2):
+     * resume first, then the next unwatched episode for a series, then
+     * the ladder for a movie — HLS plays at once on Auto, one direct
+     * file plays at once, two or more direct files open the sheet.
+     * Nothing playable leaves the button greyed; this function is only
+     * reached while it is enabled.
+     */
+    fun playPrimary() {
+        if (_uiState.value.playStarting) return
+        val state = _uiState.value
+        if (state.resume != null && state.resumePlayable) {
+            _uiState.update { it.copy(playStarting = true) }
+            playResume()
+            return
+        }
+        val layout = state.layout ?: run {
+            _uiState.update { it.copy(actionMessage = "No working link right now. Try again later.") }
+            return
+        }
+        if (layout.isSeriesLike) {
+            val next = nextUnwatchedEpisode(layout, state.episodeProgress) ?: run {
+                _uiState.update { it.copy(actionMessage = "No working link right now. Try again later.") }
+                return
+            }
+            playEpisodeDecision(next.first, next.second)
+            return
+        }
+        val ladder = state.ladder
+        val playable = ladder.options.filter { it.playsHere && !it.isProviderPage && it.streamId.isNotBlank() }
+        if (playable.isNotEmpty()) {
+            if (playable.any { isHlsOption(it) }) {
+                // HLS available: play directly on Auto, 1 tap; the
+                // quality switches in the player, not here.
+                _uiState.update { it.copy(playStarting = true) }
+                playBest()
+                return
+            }
+            if (playable.size == 1) {
+                _uiState.update { it.copy(playStarting = true) }
+                playLadder(playable.first())
+                return
+            }
+            openSheet(QualitySheetMode.PLAY, ladder, null, null)
+            return
+        }
+        // Nothing on the ladder plays here: a provider page still opens,
+        // a ladder-less title falls back to its best print, and a title
+        // with nothing at all says so.
+        val provider = ladder.options.firstOrNull { it.isProviderPage }
+        if (provider != null) {
+            playLadder(provider)
+            return
+        }
+        _uiState.update { it.copy(playStarting = true) }
+        playBest()
+    }
+
+    /**
+     * Play one episode: its best print, 1 tap, when it has one copy or
+     * an HLS stream — or the sheet when it has two or more direct
+     * files. A series episode with no per-episode ladder at all still
+     * plays (the player picks the picture); the in-player switch is
+     * armed from the episode ladder inside [playV2Bundle] when one
+     * exists, and stays unarmed when it does not — that gap is a known
+     * limitation, recorded in the Phase 1 checkpoint.
+     */
+    private fun playEpisodeDecision(season: Int, episode: Int) {
+        val ladder = ladderForEpisode(season, episode)
+        val playable = ladder.options.filter { it.playsHere && !it.isProviderPage && it.streamId.isNotBlank() }
+        if (playable.isEmpty() || playable.any { isHlsOption(it) } || playable.size == 1) {
+            _uiState.update { it.copy(playStarting = true) }
+            playEpisode(season, episode)
+            return
+        }
+        openSheet(QualitySheetMode.PLAY, ladder, season, episode)
+    }
+
+    /** Open the quality sheet in one mode, for one ladder and scope. */
+    private fun openSheet(mode: QualitySheetMode, ladder: LadderForScope, season: Int?, episode: Int?) {
+        _uiState.update {
+            it.copy(
+                qualitySheet = QualitySheetState(
+                    mode = mode,
+                    ladder = ladder,
+                    recommendedBand = recommendedBandFor(ladder, mode, premiumAccess, freeQualityCap),
+                    season = season,
+                    episode = episode,
+                    rows = sheetRowsFor(ladder, mode, premiumAccess, freeQualityCap),
+                    title = _uiState.value.post?.let { post -> post.cleanTitle ?: post.title },
+                ),
+            )
+        }
+    }
+
+    /** A sheet row tapped in PLAY mode: close the sheet, start the copy. */
+    fun playSheetOption(option: QualityOption) {
+        val sheet = _uiState.value.qualitySheet ?: return
+        _uiState.update { it.copy(qualitySheet = null) }
+        if (option.isProviderPage) {
+            playLadder(option, ladder = sheet.ladder, season = sheet.season, episode = sheet.episode)
+            return
+        }
+        _uiState.update { it.copy(playStarting = true) }
+        playLadder(option, ladder = sheet.ladder, season = sheet.season, episode = sheet.episode)
+    }
+
+    /** A sheet row tapped in DOWNLOAD mode: close the sheet, start the keep. */
+    fun downloadSheetOption(option: QualityOption) {
+        _uiState.update { it.copy(qualitySheet = null) }
+        keepRung(option)
+    }
+
+    /** The sheet dismissed without choosing: nothing started. */
+    fun dismissQualitySheet() {
+        _uiState.update { it.copy(qualitySheet = null) }
+    }
+
+    /**
+     * A locked (VIP) row tapped in the quality sheet. There is no
+     * dedicated VIP upgrade sheet in the app yet, so the tap closes
+     * the sheet and the existing upsell line answers instead — the
+     * locked row is never hidden, and the tap never silently steps
+     * down to a free copy the viewer did not choose.
+     */
+    fun onLockedQualityRow() {
+        _uiState.update {
+            it.copy(
+                qualitySheet = null,
+                actionMessage = VipQualityGate.lockedMessage(freeQualityCap),
+            )
+        }
+    }
+
+    /**
+     * The Download button's one entry point. A title already on this
+     * device plays its saved file, never a new download. Otherwise the
+     * Download sheet decides (§6.3).
+     */
+    fun onDownloadPrimary() {
+        val state = _uiState.value
+        if (state.kidsMode) {
+            _uiState.update { it.copy(actionMessage = "Downloads are locked in Kids Mode.") }
+            return
+        }
+        val uri = state.downloadedUri
+        if (uri != null) {
+            viewModelScope.launch {
+                _navEvents.emit(
+                    DetailNavigationEvent.PlayLocal(
+                        uri,
+                        state.post?.let { it.cleanTitle ?: it.title } ?: "Stream",
+                    ),
+                )
+            }
+            return
+        }
+        openDownloadSheet()
+    }
+
+    /**
+     * The Download sheet. A movie: one keepable quality starts at once
+     * (1 tap), two or more open the quality rows (2 taps). A series:
+     * the next episode and the whole season instead of quality rows —
+     * the rows name their own quality, so no second choice is needed.
+     */
+    fun openDownloadSheet() {
+        val state = _uiState.value
+        val layout = state.layout ?: run {
+            _uiState.update { it.copy(actionMessage = "Nothing to save for this title.") }
+            return
+        }
+        if (layout.isSeriesLike) {
+            val next = nextUnwatchedEpisode(layout, state.episodeProgress) ?: run {
+                _uiState.update { it.copy(actionMessage = "Nothing to save for this title.") }
+                return
+            }
+            val season = layout.seasons.firstOrNull { it.number == next.first } ?: run {
+                _uiState.update { it.copy(actionMessage = "Nothing to save for this title.") }
+                return
+            }
+            val ladder = ladderForEpisode(next.first, next.second)
+            val plan = seasonKeepPlan(season, premiumAccess, freeQualityCap)
+            val band = recommendedBandFor(ladder, QualitySheetMode.DOWNLOAD, premiumAccess, freeQualityCap)
+            val option = band?.let { ladder.optionFor(it) } ?: ladder.autoOption
+            val nextRow = option?.let {
+                SeriesDownloadRow(
+                    kind = SeriesDownloadKind.NEXT_EPISODE,
+                    label = "Next episode",
+                    detail = "S${next.first} E${next.second} · ${bandDisplayName(it.band)}" +
+                        (it.sizeBytes?.takeIf { bytes -> bytes > 0 }?.let { bytes -> " · ${QualityOption.formatBytes(bytes)}" } ?: ""),
+                )
+            }
+            val wholeRow = if (plan.items.isEmpty()) {
+                null
+            } else {
+                SeriesDownloadRow(
+                    kind = SeriesDownloadKind.WHOLE_SEASON,
+                    label = "Whole season",
+                    detail = seasonKeepConfirmLine(
+                        PendingSeasonKeep(season.number, plan.items, plan.lockedCount, plan.totalSizeBytes),
+                        wifiOnlyDownloads,
+                    ),
+                )
+            }
+            if (nextRow == null && wholeRow == null) {
+                _uiState.update { it.copy(actionMessage = "Nothing to save for this title.") }
+                return
+            }
+            _uiState.update {
+                it.copy(
+                    qualitySheet = QualitySheetState(
+                        mode = QualitySheetMode.DOWNLOAD,
+                        ladder = ladder,
+                        recommendedBand = band,
+                        season = next.first,
+                        episode = next.second,
+                        nextEpisodeRow = nextRow,
+                        wholeSeasonRow = wholeRow,
+                        wholeSeasonPlan = plan,
+                        wholeSeasonNumber = next.first,
+                        title = state.post?.let { post -> post.cleanTitle ?: post.title },
+                    ),
+                )
+            }
+            return
+        }
+        val ladder = state.ladder
+        val keepable = ladder.options.filter { !it.isProviderPage && it.streamId.isNotBlank() }
+        if (keepable.isEmpty()) {
+            // No ladder, or a ladder with nothing keepable: the dead
+            // end's best keepable print, or nothing at all.
+            val print = state.deadEndKeepPrint
+            if (print != null) {
+                keepPrint(print)
+            } else {
+                _uiState.update { it.copy(actionMessage = "Nothing to save for this title.") }
+            }
+            return
+        }
+        if (keepable.size == 1) {
+            keepRung(keepable.first())
+            return
+        }
+        openSheet(QualitySheetMode.DOWNLOAD, ladder, null, null)
+    }
+
+    /** A series row tapped in the Download sheet: next episode, or the whole season. */
+    fun downloadSeriesRow(kind: SeriesDownloadKind) {
+        val sheet = _uiState.value.qualitySheet ?: return
+        _uiState.update { it.copy(qualitySheet = null) }
+        when (kind) {
+            SeriesDownloadKind.NEXT_EPISODE -> {
+                val option = sheet.recommendedBand?.let { sheet.ladder.optionFor(it) }
+                    ?: sheet.ladder.autoOption
+                if (option == null) {
+                    _uiState.update { it.copy(actionMessage = "Nothing to save for this episode.") }
+                    return
+                }
+                keepRung(option)
+            }
+            SeriesDownloadKind.WHOLE_SEASON -> {
+                val plan = sheet.wholeSeasonPlan
+                val number = sheet.wholeSeasonNumber
+                if (plan == null || number == null) return
+                startSeasonDownload(plan, number)
+            }
+        }
+    }
+
+    /**
+     * The episode sheet's row tap: download that episode at once, at
+     * the recommended quality — the row IS the confirmation (2 taps
+     * total: "Download an episode", then the episode).
+     */
+    fun downloadEpisode(season: Int, episode: Int) {
+        val ladder = ladderForEpisode(season, episode)
+        val band = recommendedBandFor(ladder, QualitySheetMode.DOWNLOAD, premiumAccess, freeQualityCap)
+        val option = band?.let { ladder.optionFor(it) } ?: ladder.autoOption
+        if (option == null) {
+            _uiState.update { it.copy(actionMessage = "Nothing to save for this episode.") }
+            return
+        }
+        keepRung(option)
+    }
+
+    /**
+     * Batch download (Phase 1): the episodes the viewer ticked in the
+     * episode sheet, at one quality. The sheet offers only the bands
+     * every ticked episode has a copy in — a band missing from one
+     * episode is not offered, so the batch never starts half a season.
+     */
+    fun openBatchDownloadSheet(targets: List<BatchEpisodeTarget>) {
+        if (targets.isEmpty()) return
+        val ladders = targets.map { ladderForEpisode(it.season, it.episode) }
+        val bands = SHEET_BAND_ORDER.filter { band ->
+            ladders.all { ladder ->
+                ladder.options.any { it.band == band && it.streamId.isNotBlank() && !it.isProviderPage }
+            }
+        }
+        if (bands.isEmpty()) {
+            _uiState.update { it.copy(actionMessage = "These episodes have no quality in common to save.") }
+            return
+        }
+        val recommended = if ("720p" in bands) "720p" else bands.first()
+        _uiState.update {
+            it.copy(
+                qualitySheet = QualitySheetState(
+                    mode = QualitySheetMode.DOWNLOAD,
+                    ladder = LadderForScope.EMPTY,
+                    recommendedBand = recommended,
+                    batchEpisodes = targets,
+                    batchBands = bands,
+                    title = _uiState.value.post?.let { post -> post.cleanTitle ?: post.title },
+                ),
+            )
+        }
+    }
+
+    /** Start the ticked episodes at one quality, and say how many started. */
+    fun startBatchDownload(band: String) {
+        val sheet = _uiState.value.qualitySheet ?: return
+        val targets = sheet.batchEpisodes ?: return
+        _uiState.update { it.copy(qualitySheet = null) }
+        if (_uiState.value.kidsMode) {
+            _uiState.update { it.copy(actionMessage = "Downloads are locked in Kids Mode.") }
+            return
+        }
+        if (DataSaver.wifiOnlyBlocks(wifiOnlyDownloads, onWifi)) {
+            _uiState.update {
+                it.copy(actionMessage = "Wi-Fi only is on — connect to Wi-Fi to download this title. You can change it in Settings.")
+            }
+            return
+        }
+        viewModelScope.launch {
+            var started = 0
+            var refused = 0
+            var spaceBlocked: FreeSpaceVerdict.NotEnough? = null
+            for (target in targets) {
+                val ladder = ladderForEpisode(target.season, target.episode)
+                val option = ladder.optionFor(band) ?: ladder.autoOption
+                if (option == null || isLocked(option) || option.isProviderPage) {
+                    refused++
+                    continue
+                }
+                val meta = runCatching { catalogRepository.resolveStream(option.streamId) }.getOrNull()
+                val targetKind = if (meta != null && meta.success) keepTargetFor(meta.mimeType) else KeepTarget.DeviceFile
+                val title = _uiState.value.post?.let { post -> post.cleanTitle ?: post.title } ?: "Stream"
+                if (targetKind == KeepTarget.EngineHls) {
+                    if (keepViaEngine(option.streamId, option.title, title, option.sizeBytes, meta?.resumable ?: false, quiet = true)) {
+                        started++
+                    } else {
+                        refused++
+                    }
+                    continue
+                }
+                when (val room = deviceFileRoom(option.sizeBytes)) {
+                    is FreeSpaceVerdict.NotEnough -> {
+                        if (spaceBlocked == null) spaceBlocked = room
+                        refused++
+                        continue
+                    }
+                    is FreeSpaceVerdict.Ok -> Unit
+                }
+                when (deviceDownloads.enqueue(option.streamId, title, option.title)) {
+                    is DeviceDownloadResult.Enqueued -> started++
+                    is DeviceDownloadResult.NeedsPermission -> {
+                        _navEvents.emit(DetailNavigationEvent.DownloadNeedsPermission)
+                        return@launch
+                    }
+                    is DeviceDownloadResult.Refused -> refused++
+                }
+            }
+            val blocked = spaceBlocked
+            when {
+                started > 0 -> {
+                    _uiState.update {
+                        it.copy(
+                            actionMessage = if (refused > 0) {
+                                "$started of ${targets.size} episodes started downloading."
+                            } else {
+                                "${targets.size} episodes started downloading."
+                            },
+                            snackbarActionLabel = "See downloads",
+                            snackbarAction = SnackbarAction.SEE_DOWNLOADS,
+                        )
+                    }
+                }
+                blocked != null -> {
+                    _uiState.update {
+                        it.copy(
+                            actionMessage = notEnoughSpaceMessage(blocked.neededBytes, blocked.freeBytes),
+                            snackbarActionLabel = "Free space",
+                            snackbarAction = SnackbarAction.SEE_DOWNLOADS,
+                        )
+                    }
+                }
+                refused > 0 -> {
+                    _uiState.update { it.copy(actionMessage = "These episodes could not start downloading.") }
+                }
+            }
+        }
+    }
+
+    /** The season screen's Play Season: the next unwatched episode, 1 tap. */
+    fun playSeason(seasonNumber: Int) {
+        if (_uiState.value.playStarting) return
+        val layout = _uiState.value.layout ?: return
+        val next = nextUnwatchedEpisode(layout, _uiState.value.episodeProgress, seasonNumber) ?: run {
+            _uiState.update { it.copy(actionMessage = "No working link right now. Try again later.") }
+            return
+        }
+        playEpisodeDecision(next.first, next.second)
+    }
+
+    /** The season screen's Play Season label: the next episode's quality, when one is named. */
+    fun seasonPlayLabel(seasonNumber: Int): String {
+        val layout = _uiState.value.layout ?: return "Play Season"
+        val next = nextUnwatchedEpisode(layout, _uiState.value.episodeProgress, seasonNumber)
+            ?: return "Play Season"
+        val band = ladderForEpisode(next.first, next.second)
+            .let { it.effectiveAutoBand ?: it.autoBand }
+            ?: episodePlayPrint(layout, next.first, next.second)?.resolution?.wire
+        return if (band != null) "Play Season · $band" else "Play Season"
+    }
+
+    /**
+     * The season screen's "Download an episode" sheet rows: one per
+     * episode that has a file, with the size the server named (never
+     * invented) and whether the episode is already on this device.
+     */
+    fun episodeDownloadRows(seasonNumber: Int): List<EpisodeDownloadRow> {
+        val state = _uiState.value
+        val layout = state.layout ?: return emptyList()
+        val season = layout.seasons.firstOrNull { it.number == seasonNumber } ?: return emptyList()
+        return season.episodes.mapNotNull { episode ->
+            val number = episode.numberWithinSeason
+            if (episode.prints.isEmpty()) return@mapNotNull null
+            val print = episodePlayPrint(layout, seasonNumber, number)
+            val ladder = ladderForEpisode(seasonNumber, number)
+            val size = ladder.autoOption?.sizeBytes?.takeIf { it > 0 }
+                ?: print?.sizeBytes?.takeIf { it > 0 }
+            val downloaded = print?.links?.any { link ->
+                state.downloadedHandles.contains(link.streamId)
+            } ?: false
+            EpisodeDownloadRow(seasonNumber, number, size, downloaded)
+        }
+    }
+
+    /** A dimmed tile tapped: say so in plain words, instead of doing nothing. */
+    fun onUnplayableEpisodeTapped(episode: Int) {
+        _uiState.update { it.copy(actionMessage = "Episode $episode has no working copy.") }
+    }
+
+    /** [Try again] on the dead end: reload this title. */
+    fun tryAgainPlay() = loadDetail()
+
+    /** The snackbar's action button: open the Downloads screen. */
+    fun onSnackbarAction() {
+        if (_uiState.value.snackbarAction == SnackbarAction.SEE_DOWNLOADS) {
+            viewModelScope.launch { _navEvents.emit(DetailNavigationEvent.OpenDownloads) }
+        }
+    }
+
+    /**
+     * The Play guard ends when the detail comes back — a failed
+     * playback must never leave the button reading "Starting…". The
+     * screen calls this on resume.
+     */
+    fun clearPlayStarting() {
+        _uiState.update { it.copy(playStarting = false) }
+    }
+
+    /**
+     * The device-file free-space check. The file needs its own size
+     * plus a 500 MB floor; when the server named no size, only the
+     * floor is checked. A storage read that fails assumes room — the
+     * download's own failure is the honest answer then, not a false
+     * "not enough space".
+     */
+    private fun deviceFileRoom(sizeBytes: Long?): FreeSpaceVerdict =
+        freeSpaceVerdictFor(externalFreeBytes(), sizeBytes)
+
+    private fun externalFreeBytes(): Long = runCatching {
+        val dir = appContext.getExternalFilesDir(null) ?: return Long.MAX_VALUE
+        StatFs(dir.path).availableBytes
+    }.getOrDefault(Long.MAX_VALUE)
 
     private fun observeFavorite() {
         if (resolvedPostId <= 0) return
@@ -974,6 +1670,11 @@ class DetailViewModel @Inject constructor(
     }
 
     fun loadDetail() {
+        // 2-button detail (Nov 2026): a new title (or a [Try again]) ends
+        // any in-flight Play guard and closes the sheet — a stale
+        // "Starting…" or a sheet for the old title must never survive
+        // the reload.
+        _uiState.update { it.copy(playStarting = false, qualitySheet = null) }
         if (postId < 0 && workId < 0) {
             _uiState.update { it.copy(isLoading = false, error = "This title could not be opened.") }
             return
@@ -1189,7 +1890,17 @@ class DetailViewModel @Inject constructor(
     }
 
     fun clearActionMessage() {
-        _uiState.update { it.copy(actionMessage = null) }
+        // 2-button detail (Nov 2026): the snackbar going away also ends
+        // the "Starting…" guard and drops its action — a new Play tap
+        // after a failure must work, and a stale action must not linger.
+        _uiState.update {
+            it.copy(
+                actionMessage = null,
+                playStarting = false,
+                snackbarActionLabel = null,
+                snackbarAction = null,
+            )
+        }
     }
 
     /** A rung this app cannot present is downloaded, and the row says so — no hidden failure. */
@@ -1273,38 +1984,41 @@ class DetailViewModel @Inject constructor(
         viewModelScope.launch {
             // One metadata ask decides which download system owns this copy. A failed
             // ask falls through to the device path, which refuses with the same words it
-            // always used — no new failure shape for a server that cannot answer. The
-            // download does NOT start here: the size and the quality go in front of the
-            // viewer first, and only Confirm starts either system.
+            // always used — no new failure shape for a server that cannot answer.
+            // 2-button detail (Nov 2026): the sheet row IS the confirmation —
+            // there is no second dialog, so the download starts here.
             val meta = runCatching { catalogRepository.resolveStream(handle) }.getOrNull()
             val target = if (meta != null && meta.success) {
                 keepTargetFor(meta.mimeType)
             } else {
                 KeepTarget.DeviceFile
             }
-            _uiState.update {
-                it.copy(
-                    pendingKeep = PendingKeep(
-                        handle = handle,
-                        printLabel = printLabel,
-                        title = workTitle,
-                        sizeBytes = meta?.fileSizeBytes?.takeIf { it > 0 },
-                        resumable = meta?.resumable ?: false,
-                        target = target,
-                    ),
-                )
-            }
+            startKeep(
+                PendingKeep(
+                    handle = handle,
+                    printLabel = printLabel,
+                    title = workTitle,
+                    sizeBytes = meta?.fileSizeBytes?.takeIf { it > 0 },
+                    resumable = meta?.resumable ?: false,
+                    target = target,
+                ),
+            )
         }
     }
 
-    /** The viewer confirmed the size and the quality: start whichever system owns the copy. */
-    fun confirmKeep() {
-        val pending = _uiState.value.pendingKeep ?: return
-        _uiState.update { it.copy(pendingKeep = null) }
-        // Session 123: the gate again, at confirm time — the Wi-Fi state can
-        // change while the dialog is open, and the confirm is the moment the
-        // bytes would actually start. A viewer who walked out of Wi-Fi range
-        // while reading the size hears why nothing started.
+    /**
+     * 2-button detail (Nov 2026): start the download a sheet row chose.
+     * The device-file path checks free space first (the engine path
+     * already checks its own storage): the size plus a 500 MB floor must
+     * fit, or the viewer hears the real numbers and gets a "Free space"
+     * button to the Downloads screen instead of a download that dies
+     * halfway. Nothing auto-navigates away from detail — the snackbar
+     * offers "See downloads" instead.
+     */
+    private fun startKeep(pending: PendingKeep) {
+        // Session 123: the gate again, at start time — the Wi-Fi state can
+        // change while the metadata ask is in flight, and the start is the
+        // moment the bytes would actually begin.
         if (DataSaver.wifiOnlyBlocks(wifiOnlyDownloads, onWifi)) {
             _uiState.update {
                 it.copy(actionMessage = "Wi-Fi only is on — connect to Wi-Fi to download this title. You can change it in Settings.")
@@ -1316,10 +2030,31 @@ class DetailViewModel @Inject constructor(
                 keepViaEngine(pending.handle, pending.printLabel, pending.title, pending.sizeBytes, pending.resumable)
                 return@launch
             }
+            when (val room = deviceFileRoom(pending.sizeBytes)) {
+                is FreeSpaceVerdict.NotEnough -> {
+                    lastDownload = null
+                    _uiState.update {
+                        it.copy(
+                            actionMessage = notEnoughSpaceMessage(room.neededBytes, room.freeBytes),
+                            snackbarActionLabel = "Free space",
+                            snackbarAction = SnackbarAction.SEE_DOWNLOADS,
+                        )
+                    }
+                    return@launch
+                }
+                is FreeSpaceVerdict.Ok -> Unit
+            }
             when (val outcome = deviceDownloads.enqueue(pending.handle, pending.title, pending.printLabel)) {
                 is DeviceDownloadResult.Enqueued -> {
                     lastDownload = null
-                    _navEvents.emit(DetailNavigationEvent.DownloadStarted(pending.printLabel))
+                    val size = pending.sizeBytes?.takeIf { it > 0 }?.let { " · ${QualityOption.formatBytes(it)}" } ?: ""
+                    _uiState.update {
+                        it.copy(
+                            actionMessage = "Downloading ${pending.printLabel}$size",
+                            snackbarActionLabel = "See downloads",
+                            snackbarAction = SnackbarAction.SEE_DOWNLOADS,
+                        )
+                    }
                 }
                 is DeviceDownloadResult.NeedsPermission ->
                     _navEvents.emit(DetailNavigationEvent.DownloadNeedsPermission)
@@ -1331,20 +2066,13 @@ class DetailViewModel @Inject constructor(
         }
     }
 
-    /** The viewer declined the download: nothing started, nothing to clean up except the ask. */
-    fun dismissKeep() {
-        lastDownload = null
-        _uiState.update { it.copy(pendingKeep = null) }
-    }
-
     /**
-     * Ask to download a whole season: one best copy per episode, with
-     * the count and the total size in front of the viewer first. Nothing
-     * downloads here — [confirmKeepSeason] is the only starter, exactly
-     * like the single-download dialog. A season with nothing keepable
-     * says so instead of opening an empty dialog.
+     * 2-button detail (Nov 2026): open the Download sheet for one
+     * season — one row, "Whole season", with the episode count and the
+     * total size in front of the viewer. The row IS the confirmation;
+     * [startSeasonDownload] starts it.
      */
-    fun requestKeepSeason(season: SeasonGroup) {
+    fun openDownloadSeasonSheet(season: SeasonGroup) {
         // MX #7 — Kids Lock: downloads are a locked surface.
         if (_uiState.value.kidsMode) {
             _uiState.update { it.copy(actionMessage = "Downloads are locked in Kids Mode.") }
@@ -1355,36 +2083,42 @@ class DetailViewModel @Inject constructor(
             _uiState.update { it.copy(actionMessage = "Nothing to download in this season yet.") }
             return
         }
+        val row = SeriesDownloadRow(
+            kind = SeriesDownloadKind.WHOLE_SEASON,
+            label = "Whole season",
+            detail = seasonKeepConfirmLine(
+                PendingSeasonKeep(season.number, plan.items, plan.lockedCount, plan.totalSizeBytes),
+                wifiOnlyDownloads,
+            ),
+        )
         _uiState.update {
             it.copy(
-                pendingSeasonKeep = PendingSeasonKeep(
-                    seasonNumber = season.number,
-                    items = plan.items,
-                    lockedCount = plan.lockedCount,
-                    totalSizeBytes = plan.totalSizeBytes,
+                qualitySheet = QualitySheetState(
+                    mode = QualitySheetMode.DOWNLOAD,
+                    ladder = LadderForScope.EMPTY,
+                    recommendedBand = null,
+                    season = season.number,
+                    wholeSeasonRow = row,
+                    wholeSeasonPlan = plan,
+                    wholeSeasonNumber = season.number,
+                    title = _uiState.value.post?.let { post -> post.cleanTitle ?: post.title },
                 ),
             )
         }
     }
 
-    /** The viewer declined the season download: nothing started. */
-    fun dismissKeepSeason() {
-        _uiState.update { it.copy(pendingSeasonKeep = null) }
-    }
-
     /**
-     * The viewer confirmed the season: each episode goes through the
-     * same keep routing a single download would (engine for HLS, device
-     * file otherwise), decided per handle from the one metadata ask —
-     * so a season of mixed files and playlists still lands in the right
-     * system. The Wi-Fi gate is checked again here, at the moment bytes
-     * would actually start, like [confirmKeep]. One refusal never stops
-     * the rest: a refused episode is counted, and the message at the end
-     * says how many of the season actually started.
+     * 2-button detail (Nov 2026): start a whole-season download. Each
+     * episode goes through the same keep routing a single download would
+     * (engine for HLS, device file otherwise), decided per handle from
+     * the one metadata ask — so a season of mixed files and playlists
+     * still lands in the right system. The Wi-Fi gate is checked at the
+     * moment bytes would actually start. One refusal never stops the
+     * rest: a refused episode is counted, and the message at the end
+     * says how many of the season actually started. The snackbar offers
+     * "See downloads" instead of navigating away.
      */
-    fun confirmKeepSeason() {
-        val pending = _uiState.value.pendingSeasonKeep ?: return
-        _uiState.update { it.copy(pendingSeasonKeep = null) }
+    fun startSeasonDownload(plan: SeasonKeepPlan, seasonNumber: Int) {
         if (DataSaver.wifiOnlyBlocks(wifiOnlyDownloads, onWifi)) {
             _uiState.update {
                 it.copy(actionMessage = "Wi-Fi only is on — connect to Wi-Fi to download this title. You can change it in Settings.")
@@ -1394,15 +2128,27 @@ class DetailViewModel @Inject constructor(
         viewModelScope.launch {
             var started = 0
             var refused = 0
-            for (item in pending.items) {
-                // The same one-ask decision confirmKeep makes per copy:
+            var spaceBlocked: FreeSpaceVerdict.NotEnough? = null
+            for (item in plan.items) {
+                // The same one-ask decision keep() makes per copy:
                 // the metadata answer decides which system owns it.
                 val meta = runCatching { catalogRepository.resolveStream(item.handle) }.getOrNull()
                 val target = if (meta != null && meta.success) keepTargetFor(meta.mimeType) else KeepTarget.DeviceFile
                 if (target == KeepTarget.EngineHls) {
-                    keepViaEngine(item.handle, item.printLabel, item.title, item.sizeBytes, meta?.resumable ?: false)
-                    started++
+                    if (keepViaEngine(item.handle, item.printLabel, item.title, item.sizeBytes, meta?.resumable ?: false, quiet = true)) {
+                        started++
+                    } else {
+                        refused++
+                    }
                     continue
+                }
+                when (val room = deviceFileRoom(item.sizeBytes)) {
+                    is FreeSpaceVerdict.NotEnough -> {
+                        if (spaceBlocked == null) spaceBlocked = room
+                        refused++
+                        continue
+                    }
+                    is FreeSpaceVerdict.Ok -> Unit
                 }
                 when (deviceDownloads.enqueue(item.handle, item.title, item.printLabel)) {
                     is DeviceDownloadResult.Enqueued -> started++
@@ -1413,19 +2159,33 @@ class DetailViewModel @Inject constructor(
                     is DeviceDownloadResult.Refused -> refused++
                 }
             }
-            if (started > 0) {
-                _uiState.update {
-                    it.copy(
-                        actionMessage = if (refused > 0) {
-                            "Season ${pending.seasonNumber}: $started of ${pending.items.size} episodes started downloading."
-                        } else {
-                            "Season ${pending.seasonNumber} started downloading."
-                        },
-                    )
+            val blocked = spaceBlocked
+            when {
+                started > 0 -> {
+                    _uiState.update {
+                        it.copy(
+                            actionMessage = if (refused > 0) {
+                                "Season $seasonNumber: $started of ${plan.items.size} episodes started downloading."
+                            } else {
+                                "Season $seasonNumber started downloading."
+                            },
+                            snackbarActionLabel = "See downloads",
+                            snackbarAction = SnackbarAction.SEE_DOWNLOADS,
+                        )
+                    }
                 }
-                _navEvents.emit(DetailNavigationEvent.DownloadStarted("Season ${pending.seasonNumber}"))
-            } else if (refused > 0) {
-                _uiState.update { it.copy(actionMessage = "Season ${pending.seasonNumber} could not start downloading.") }
+                blocked != null -> {
+                    _uiState.update {
+                        it.copy(
+                            actionMessage = notEnoughSpaceMessage(blocked.neededBytes, blocked.freeBytes),
+                            snackbarActionLabel = "Free space",
+                            snackbarAction = SnackbarAction.SEE_DOWNLOADS,
+                        )
+                    }
+                }
+                refused > 0 -> {
+                    _uiState.update { it.copy(actionMessage = "Season $seasonNumber could not start downloading.") }
+                }
             }
         }
     }
@@ -1434,6 +2194,13 @@ class DetailViewModel @Inject constructor(
      * Keep one HLS title through the in-app keep engine: it fetches the playlist's
      * segments from our redirector and plays them back offline. Adopt pins the row,
      * so the sweeper never ages out a file the Downloads list calls kept.
+     *
+     * 2-button detail (Nov 2026): returns true when a download actually
+     * started (the old caller counted a failed engine keep as started).
+     * [quiet] is for the season/batch loops, which report one total at
+     * the end instead of one message per episode. The engine path
+     * already checks its own storage; the device-file path's free-space
+     * check lives in [startKeep] / [startSeasonDownload].
      */
     private suspend fun keepViaEngine(
         handle: String,
@@ -1441,18 +2208,19 @@ class DetailViewModel @Inject constructor(
         title: String,
         sizeBytes: Long?,
         resumable: Boolean,
-    ) {
+        quiet: Boolean = false,
+    ): Boolean {
         val engine = CacheEngineHolder.engine
         if (engine == null) {
             lastDownload = null
-            _uiState.update { it.copy(actionMessage = "Download engine not wired into this build yet") }
-            return
+            if (!quiet) _uiState.update { it.copy(actionMessage = "Download engine not wired into this build yet") }
+            return false
         }
         val baseUrl = runCatching { apiProvider.currentBaseUrl() }.getOrNull()
         if (baseUrl == null) {
             lastDownload = null
-            _uiState.update { it.copy(actionMessage = "Connect to a catalog server before downloading.") }
-            return
+            if (!quiet) _uiState.update { it.copy(actionMessage = "Connect to a catalog server before downloading.") }
+            return false
         }
         val url = withVipPass(
             streamRedirectUrl(baseUrl, handle),
@@ -1490,29 +2258,47 @@ class DetailViewModel @Inject constructor(
         when (result) {
             is KeepResult.Stored, is KeepResult.OnlyPlayableInApp -> {
                 lastDownload = null
-                _navEvents.emit(DetailNavigationEvent.DownloadStarted(printLabel))
+                if (!quiet) {
+                    val size = sizeBytes?.takeIf { it > 0 }?.let { " · ${QualityOption.formatBytes(it)}" } ?: ""
+                    _uiState.update {
+                        it.copy(
+                            actionMessage = "Downloading $printLabel$size",
+                            snackbarActionLabel = "See downloads",
+                            snackbarAction = SnackbarAction.SEE_DOWNLOADS,
+                        )
+                    }
+                }
+                return true
             }
             is KeepResult.StorageFull -> {
                 lastDownload = null
-                _uiState.update {
-                    it.copy(
-                        actionMessage = "Not enough space to keep this title — needs " +
-                            CacheAffordance.formatBytes(result.requiredBytes) + ", " +
-                            CacheAffordance.formatBytes(result.availableBytes) + " free.",
-                    )
+                if (!quiet) {
+                    _uiState.update {
+                        it.copy(
+                            actionMessage = "Not enough space to keep this title — needs " +
+                                CacheAffordance.formatBytes(result.requiredBytes) + ", " +
+                                CacheAffordance.formatBytes(result.availableBytes) + " free.",
+                            snackbarActionLabel = "Free space",
+                            snackbarAction = SnackbarAction.SEE_DOWNLOADS,
+                        )
+                    }
                 }
+                return false
             }
             is KeepResult.Failed -> {
                 lastDownload = null
-                _uiState.update { it.copy(actionMessage = result.message) }
+                if (!quiet) _uiState.update { it.copy(actionMessage = result.message) }
+                return false
             }
             is KeepResult.Interrupted -> {
                 lastDownload = null
-                _uiState.update { it.copy(actionMessage = "Download paused — it will resume on its own.") }
+                if (!quiet) _uiState.update { it.copy(actionMessage = "Download paused — it will resume on its own.") }
+                return false
             }
             KeepResult.EngineNotWired -> {
                 lastDownload = null
-                _uiState.update { it.copy(actionMessage = "Download engine not wired into this build yet") }
+                if (!quiet) _uiState.update { it.copy(actionMessage = "Download engine not wired into this build yet") }
+                return false
             }
         }
     }
@@ -1708,14 +2494,28 @@ class DetailViewModel @Inject constructor(
      * dialog, and a viewer who chose Auto can be moved along these same rungs by the
      * measured throughput — while the navigation route still carries one opaque handle only.
      */
-    fun playLadder(option: QualityOption, external: Boolean = false) {
+    /**
+     * Play one rung of a ladder. [ladder] is the ladder the rung came
+     * from — the whole-work ladder for a movie, the episode's own ladder
+     * for a series (2-button detail, P1 fix) — and [season]/[episode]
+     * are the scope the rung belongs to, so the resume point and the
+     * in-player switch are armed for the episode actually playing, not
+     * for the whole work.
+     */
+    fun playLadder(
+        option: QualityOption,
+        external: Boolean = false,
+        ladder: LadderForScope = _uiState.value.ladder,
+        season: Int? = null,
+        episode: Int? = null,
+    ) {
         // Salaar (2026-11-12): a locked rung steps down to the best free rung
         // before any lock is shown — the lock is only the answer when no free
         // rung can play. A tap on 4K that would 402 at press time starts the
         // best free picture instead of burning the player's whole start
         // budget on copies that cannot play.
         val effective = if (isLocked(option)) {
-            stepDownRung(_uiState.value.ladder, option, premiumAccess, freeQualityCap)
+            stepDownRung(ladder, option, premiumAccess, freeQualityCap)
                 ?: run {
                     _uiState.update { it.copy(actionMessage = VipQualityGate.lockedMessage(freeQualityCap)) }
                     return
@@ -1732,25 +2532,25 @@ class DetailViewModel @Inject constructor(
         // resume point to write and no position for Auto to hop to. Staging it would put an HTML
         // page in the failover list the player walks when a CDN refuses.
         if (effective.isProviderPage) {
-            _uiState.update { it.copy(selectedBand = effective.band) }
+            _uiState.update { it.copy(selectedBand = effective.band, playStarting = false) }
             viewModelScope.launch {
                 _navEvents.emit(DetailNavigationEvent.OpenProviderPage(effective.streamId, title))
             }
             return
         }
         PlayerSessionStore.Instance.stageFailover(effective.streamId, effective.backupHandles)
-        stageAutoLadder(effective)
+        stageAutoLadder(effective, ladder)
         stageSyncScope(
             streamId = effective.streamId,
-            // Detail redesign (Nov 2026): the rung card is the movie's —
-            // a series has no card on this page any more, so the scope is
-            // always the whole work.
-            season = null,
-            episode = null,
+            // 2-button detail (Nov 2026, P1 fix): the scope is the
+            // episode the rung belongs to — a series episode's resume
+            // point belongs to the episode, not the whole work.
+            season = season,
+            episode = episode,
             // Every rung of this scope's ladder plus each rung's runner-ups: Auto moves
             // playback onto another address without coming back through this screen, and a
             // resume point belongs to the episode, not to whichever address served it.
-            backupHandles = _uiState.value.ladder.options.flatMap { listOf(it.streamId) + it.backupHandles },
+            backupHandles = ladder.options.flatMap { listOf(it.streamId) + it.backupHandles },
         )
         _uiState.update { it.copy(selectedBand = effective.band) }
         viewModelScope.launch {
@@ -1775,12 +2575,24 @@ class DetailViewModel @Inject constructor(
      * hand-picked band is a decision, and a decision outranks any throughput estimate: the
      * director then reports the rung and never moves it.
      */
-    private fun stageAutoLadder(option: QualityOption) {
-        val ladder = _uiState.value.ladder
+    private fun stageAutoLadder(option: QualityOption, ladder: LadderForScope = _uiState.value.ladder) {
         val auto = isAutoRung(ladder, option)
         val rungs = ladder.options
             .filter { it.playsHere && it.streamId.isNotBlank() && it.band.isNotBlank() }
-            .map { LadderRung(band = it.band, streamId = it.streamId, backupHandles = it.backupHandles, label = it.title) }
+            .map {
+                LadderRung(
+                    band = it.band,
+                    streamId = it.streamId,
+                    backupHandles = it.backupHandles,
+                    label = it.title,
+                    // 2-button detail (Nov 2026): the in-player quality
+                    // sheet shows the size when the server named one, and
+                    // the format in plain words — never invented, never
+                    // guessed. Null size means the row omits it.
+                    sizeBytes = it.sizeBytes,
+                    isHls = isHlsOption(it),
+                )
+            }
         PlayerSessionStore.Instance.stageAutoLadder(
             streamId = option.streamId,
             rungs = rungs,
@@ -2020,7 +2832,18 @@ class DetailViewModel @Inject constructor(
         // that reached the player burned the whole start budget. The winner's
         // band is the print's resolution band; a rung with no band match
         // stages nothing, and the player falls back to its own failover.
-        rungForBand(_uiState.value.ladder, print.resolution.wire)?.let { stageAutoLadder(it) }
+        // 2-button detail (Nov 2026, P1 fix): the whole-work ladder is
+        // EMPTY for a multi-episode series, so staging from it armed no
+        // switch at all. Resolve the ladder for this print's own episode
+        // instead — a pack (one file for the whole season) keeps the old
+        // behaviour, because another episode's copies would be the wrong
+        // content at a different quality.
+        val scopeLadder = if (print.season != null && print.episodeFrom != null && !print.isPacked) {
+            ladderForEpisode(print.season, print.episodeFrom)
+        } else {
+            _uiState.value.ladder
+        }
+        rungForBand(scopeLadder, print.resolution.wire)?.let { stageAutoLadder(it, scopeLadder) }
         playLink(link, external, print.season, print.episodeFrom)
         return true
     }

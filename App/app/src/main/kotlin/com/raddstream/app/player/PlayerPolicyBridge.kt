@@ -168,6 +168,19 @@ data class LadderRung(
     val backupHandles: List<String> = emptyList(),
     /** The server's own quality-only caption for this rung ("Full HD · X264"); null = show the band. */
     val label: String? = null,
+    /**
+     * 2-button detail (Nov 2026): the measured size of this rung's file,
+     * for the in-player quality sheet. Null when the server never named
+     * one — the sheet omits the size rather than inventing it.
+     */
+    val sizeBytes: Long? = null,
+    /**
+     * 2-button detail (Nov 2026): whether this rung is an HLS playlist
+     * stream (plays in this app only) or a direct file (plays in any
+     * app). Null when the copy was never probed — the sheet claims
+     * neither rather than guessing.
+     */
+    val isHls: Boolean? = null,
 ) {
     val usable: Boolean get() = band.isNotBlank() && streamId.isNotBlank()
 }

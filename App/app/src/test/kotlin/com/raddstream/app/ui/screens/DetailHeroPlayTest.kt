@@ -2,22 +2,15 @@ package com.raddstream.app.ui.screens
 
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
-import com.raddstream.app.network.models.CoverageType
-import com.raddstream.app.network.models.LinkState
-import com.raddstream.app.network.models.Playability
 import com.raddstream.app.network.models.PostDetail
-import com.raddstream.app.network.models.ReleaseLabelParsing
-import com.raddstream.app.player.LadderForScope
-import com.raddstream.app.player.QualityOption
 import com.raddstream.app.ui.theme.RaddStreamTheme
-import com.raddstream.app.viewmodel.RankedLink
-import com.raddstream.app.viewmodel.RankedPrint
-import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -28,8 +21,16 @@ import org.robolectric.RobolectricTestRunner
  * that can actually start here, not the best-ranked print. Before the
  * fix the hero hid Play whenever only the best print could not play
  * here — while the ladder below still offered Play on another rung, so
- * the two regions disagreed about the same title. These tests pin the
- * state matrix, including which print a hero Play press actually plays.
+ * the two regions disagreed about the same title.
+ *
+ * 2-button detail (Nov 2026): that disagreement is now structurally
+ * impossible — there is ONE Play button, and its label, enabled state
+ * and hint all come from the ViewModel's single decision, which print
+ * to play. These tests pin what the page itself can pin: the button
+ * names the quality the ViewModel chose, the tap fires the one primary
+ * action, and a title with nothing playable shows a greyed Play with
+ * its reason in plain words — never a hidden Play, never a second
+ * Play somewhere else on the page.
  */
 @RunWith(RobolectricTestRunner::class)
 class DetailHeroPlayTest {
@@ -54,81 +55,37 @@ class DetailHeroPlayTest {
         language = "Hindi",
     )
 
-    private fun print(releaseId: Int, quality: String, playable: Boolean) = RankedPrint(
-        releaseId = releaseId,
-        rawTitle = "$quality copy",
-        descriptor = ReleaseLabelParsing.describe("Jawan $quality WEB-DL", quality),
-        languages = listOf("Hindi"),
-        sizeBytes = 1_400_000_000L,
-        coverage = CoverageType.WHOLE_WORK,
-        season = null,
-        episodeFrom = null,
-        episodeTo = null,
-        // One healthy, directly playable link makes the print playable
-        // here; no links makes it download-only.
-        links = if (playable) {
-            listOf(
-                RankedLink(
-                    streamId = "h-$releaseId",
-                    linkId = releaseId,
-                    health = LinkState.ACTIVE,
-                    ephemeral = false,
-                    resumable = true,
-                    playUrl = "http://example.invalid/play/$releaseId",
-                    label = "Fast direct",
-                    kind = "direct",
-                    playability = Playability.STREAM,
-                    score = 100,
-                ),
-            )
-        } else {
-            emptyList()
-        },
-    )
-
-    private fun option(band: String, title: String) = QualityOption(
-        band = band,
-        title = title,
-        streamId = "h-$band",
-        playUrl = "http://127.0.0.1:8080/api/v1/stream?id=h-$band",
-        sizeBytes = null,
-        backupHandles = emptyList(),
-        playsHere = true,
-        resumable = false,
-        copies = 1,
-        isProviderPage = false,
-        audioLanguages = emptyList(),
-    )
-
     private fun content(
-        workPrints: List<RankedPrint>,
-        ladder: LadderForScope,
+        playLabel: String = "Play",
+        playEnabled: Boolean = true,
+        onPlayPrimary: () -> Unit = {},
+        downloadLabel: String = "Download",
+        downloadEnabled: Boolean = true,
+        playHint: String? = null,
+        downloadHint: String? = null,
         deadEndReason: String? = null,
-        onPlayPrint: (RankedPrint) -> Unit = {},
+        onTryAgain: () -> Unit = {},
     ) {
         compose.setContent {
             RaddStreamTheme {
                 DetailContent(
                     post = post,
                     seasons = emptyList(),
-                    workPrints = workPrints,
+                    workPrints = emptyList(),
                     capabilities = emptyList(),
                     isSeries = false,
                     resume = null,
-                    onPlayResume = {},
                     includedPill = null,
                     deadEndReason = deadEndReason,
+                    playLabel = playLabel,
+                    playEnabled = playEnabled,
+                    onPlayPrimary = onPlayPrimary,
+                    downloadLabel = downloadLabel,
+                    downloadEnabled = downloadEnabled,
+                    playHint = playHint,
+                    downloadHint = downloadHint,
+                    onTryAgain = onTryAgain,
                     onOpenSeason = {},
-                    onPlayPrint = onPlayPrint,
-                    onOpenExternal = {},
-                    onKeep = {},
-                    rungs = RungActions(
-                        ladder = ladder,
-                        selectedBand = null,
-                        onPlay = {},
-                        onKeep = {},
-                        tierLabel = { "Standard" },
-                    ),
                     onActorClick = {},
                     reloadError = null,
                     onRetryReload = {},
@@ -141,80 +98,62 @@ class DetailHeroPlayTest {
         }
     }
 
-    private fun ladder() = LadderForScope(
-        options = listOf(option("720p", "720p HD")),
-        autoBand = "720p",
-        downloadOnlyBands = emptyList(),
-    )
-
     @Test
-    fun playableBestShowsPlayAndPlaysIt() {
-        val played = mutableListOf<Int>()
+    fun playButtonNamesTheQualityAndFiresPrimary() {
+        var fired = false
         content(
-            workPrints = listOf(print(releaseId = 2160, quality = "2160p", playable = true)),
-            ladder = ladder(),
-            onPlayPrint = { played += it.releaseId },
+            playLabel = "Play · 720p",
+            onPlayPrimary = { fired = true },
         )
-        compose.onNodeWithText("Play").assertIsDisplayed().performClick()
-        assertEquals(listOf(2160), played)
+        compose.onNodeWithText("Play · 720p").assertIsDisplayed().assertIsEnabled().performClick()
+        assertTrue(fired)
     }
 
     @Test
-    fun playableNonBestShowsPlayAndPlaysIt() {
-        // The best-ranked print (2160p) cannot play here; the 720p print
-        // below it can. The hero used to hide Play entirely in this
-        // state while the ladder still offered it — the contradiction.
-        val played = mutableListOf<Int>()
-        content(
-            workPrints = listOf(
-                print(releaseId = 2160, quality = "2160p", playable = false),
-                print(releaseId = 720, quality = "720p", playable = true),
-            ),
-            ladder = ladder(),
-            onPlayPrint = { played += it.releaseId },
-        )
-        compose.onNodeWithText("Play").assertIsDisplayed().performClick()
-        assertEquals(listOf(720), played)
-        compose.onNodeWithText("Not available to stream yet — download it instead.")
-            .assertDoesNotExist()
+    fun playButtonNamesTheResumePoint() {
+        content(playLabel = "Resume · 23 min left · 720p")
+        compose.onNodeWithText("Resume · 23 min left · 720p").assertIsDisplayed()
     }
 
     @Test
-    fun downloadOnlyShowsReasonNotPlay() {
+    fun downloadOnlyShowsReasonAndGreyedPlay() {
+        val reason = "No working sources right now — download is available."
         content(
-            workPrints = listOf(print(releaseId = 2160, quality = "2160p", playable = false)),
-            ladder = ladder(),
-            deadEndReason = "No working sources right now — download is available.",
+            playEnabled = false,
+            playHint = reason,
+            deadEndReason = reason,
+            downloadEnabled = true,
         )
-        compose.onNodeWithText("No working sources right now — download is available.")
-            .assertIsDisplayed()
-        compose.onNodeWithText("Play").assertDoesNotExist()
-        compose.onNodeWithText("Download").assertIsDisplayed()
+        compose.onNodeWithText(reason).assertIsDisplayed()
+        compose.onNodeWithText("Play").assertIsNotEnabled()
+        compose.onNodeWithText("Download").assertIsDisplayed().assertIsEnabled()
+        compose.onNodeWithText("Try again").assertIsDisplayed()
     }
 
     @Test
     fun downloadOnlyFallsBackToNoteWhenReasonMissing() {
         content(
-            workPrints = listOf(print(releaseId = 2160, quality = "2160p", playable = false)),
-            ladder = ladder(),
+            playEnabled = false,
+            playHint = "No working link right now. Try again later.",
             deadEndReason = null,
         )
-        compose.onNodeWithText("Not available to stream yet — download it instead.")
+        compose.onNodeWithText("No working link right now. Try again later.")
             .assertIsDisplayed()
-        compose.onNodeWithText("Play").assertDoesNotExist()
+        compose.onNodeWithText("Play").assertIsNotEnabled()
+        // No reason, no way out on this page — [Try again] only appears
+        // when the page knows a reason to retry from.
+        compose.onNodeWithText("Try again").assertDoesNotExist()
     }
 
     @Test
-    fun noPrintsShowsDisabledDownloadNotPlay() {
+    fun noPrintsShowsDisabledDownloadAndGreyedPlay() {
         content(
-            workPrints = emptyList(),
-            ladder = LadderForScope(
-                options = emptyList(),
-                autoBand = null,
-                downloadOnlyBands = emptyList(),
-            ),
+            playEnabled = false,
+            downloadEnabled = false,
+            downloadHint = "Nothing to save for this title.",
         )
-        compose.onNodeWithText("Play").assertDoesNotExist()
+        compose.onNodeWithText("Play").assertIsNotEnabled()
         compose.onNodeWithText("Download").assertIsDisplayed().assertIsNotEnabled()
+        compose.onNodeWithText("Nothing to save for this title.").assertIsDisplayed()
     }
 }

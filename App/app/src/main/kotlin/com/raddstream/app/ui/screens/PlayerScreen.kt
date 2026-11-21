@@ -4514,8 +4514,19 @@ private fun QualitySheet(state: PlayerUiState, vm: PlayerViewModel) {
                     title = rung.label?.takeIf { it.isNotBlank() } ?: rung.band.uppercase(),
                     // The cost shows before the tap (plan §5 step 9) — the "Playing"
                     // word only joins it when this rung is the one playing now.
+                    // 2-button detail (Nov 2026): the size when the server
+                    // named one (never invented), and the format in plain
+                    // words — "plays in this app" for a playlist stream,
+                    // "plays in any app" for a direct file. A rung whose
+                    // copy was never probed claims neither.
                     detail = listOfNotNull(
                         qualityCostPerHour(rung.band),
+                        rung.sizeBytes?.takeIf { it > 0 }?.let { QualityOption.formatBytes(it) },
+                        when (rung.isHls) {
+                            true -> "plays in this app"
+                            false -> "plays in any app"
+                            null -> null
+                        },
                         if (selected) stringResource(R.string.player_playing) else null,
                     ).joinToString(" · ").takeIf { it.isNotEmpty() },
                     selected = selected,

@@ -60,7 +60,6 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsActive
-import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.ThumbDown
@@ -79,6 +78,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -92,7 +92,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -106,7 +105,6 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -126,15 +124,11 @@ import com.raddstream.app.network.models.Post
 import com.raddstream.app.network.models.PostDetail
 import com.raddstream.app.network.models.WireText
 import com.raddstream.app.network.models.parseCastNames
-import com.raddstream.app.ui.components.AudioBadge
 import com.raddstream.app.ui.components.CapabilityChip
-import com.raddstream.app.ui.components.CamBadge
 import com.raddstream.app.ui.components.CatalogImage
-import com.raddstream.app.ui.components.CenteredMockupDialog
 import com.raddstream.app.ui.components.DetailBodySkeleton
 import com.raddstream.app.ui.components.DetailSkeleton
 import com.raddstream.app.ui.components.ErrorState
-import com.raddstream.app.ui.components.HdrBadge
 import com.raddstream.app.ui.components.ImageFallbackCard
 import com.raddstream.app.ui.components.InlineLoadFailure
 import com.raddstream.app.ui.components.PosterRailSkeleton
@@ -144,37 +138,30 @@ import com.raddstream.app.ui.components.MediaRail
 import com.raddstream.app.ui.components.Pill
 import com.raddstream.app.ui.components.PosterCard
 import com.raddstream.app.ui.components.UserWords
-import com.raddstream.app.ui.components.PrintQualityBadge
-import com.raddstream.app.ui.components.PrintSourceBadge
-import com.raddstream.app.ui.components.QualityRungCard
 import com.raddstream.app.ui.components.RatingBadge
 import com.raddstream.app.ui.components.SectionHeader
-import com.raddstream.app.ui.components.SubtitleBadge
-import com.raddstream.app.ui.components.audioBadgeText
-import com.raddstream.app.ui.components.hdrBadgeText
 import com.raddstream.app.ui.components.prefetchPosterArt
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.components.ScrollingChipRow
-import com.raddstream.app.ui.components.sourceBadgeText
-import com.raddstream.app.ui.components.subtitleBadgeText
 import com.raddstream.app.ui.layout.CardGeometry
-import com.raddstream.app.player.LadderForScope
 import com.raddstream.app.player.QualityOption
-import com.raddstream.app.player.preferredAudioLanguages
 import com.raddstream.app.ui.navigation.DeepLinks
 import com.raddstream.app.ui.theme.PressHaptics
 import com.raddstream.app.ui.theme.pressScale
 import com.raddstream.app.ui.theme.rememberArtworkAccent
 import com.raddstream.app.viewmodel.DetailNavigationEvent
 import com.raddstream.app.viewmodel.DetailViewModel
-import com.raddstream.app.viewmodel.PendingKeep
-import com.raddstream.app.viewmodel.PendingSeasonKeep
+import com.raddstream.app.viewmodel.QualitySheetMode
+import com.raddstream.app.viewmodel.QualitySheetRow
+import com.raddstream.app.viewmodel.QualitySheetState
 import com.raddstream.app.viewmodel.RankedPrint
 import com.raddstream.app.viewmodel.ResumePoint
 import com.raddstream.app.viewmodel.SeasonGroup
+import com.raddstream.app.viewmodel.SeriesDownloadKind
+import com.raddstream.app.viewmodel.SeriesDownloadRow
+import com.raddstream.app.viewmodel.bandDisplayName
+import com.raddstream.app.viewmodel.bestForLine
 import com.raddstream.app.viewmodel.formatRuntimeMinutes
-import com.raddstream.app.viewmodel.keepConfirmLine
-import com.raddstream.app.viewmodel.seasonKeepConfirmLine
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -185,6 +172,8 @@ fun DetailScreen(
     /** A link the server calls a page: show the provider's own page rather than fail quietly. */
     onOpenProviderPage: (streamId: String, title: String) -> Unit = { _, _ -> },
     onOpenDownloads: () -> Unit = {},
+    /** 2-button detail (Nov 2026): play a file already on this device ("✓ Downloaded"). */
+    onPlayLocal: (uri: String, title: String) -> Unit = { _, _ -> },
     /** Detail redesign (Nov 2026): a season row opens its sub-page. */
     onOpenSeason: (Int) -> Unit = {},
     /** An actor chip in the cast row: open that actor's titles in Search. */
@@ -193,8 +182,10 @@ fun DetailScreen(
     onPostClick: (Post) -> Unit = {},
     /** Detail review (Nov 2026, P1): the audio line opens Languages. */
     onOpenLanguages: () -> Unit = {},
-    /** Session 121 (P-26): the hero's Watch Now — start the best print once the title loads. */
-    autoplay: Boolean = false,
+    // 2-button detail (Nov 2026): autoplay on detail open is OFF — the
+    // viewer presses Play, once, and the player starts. (The hero's
+    // Watch Now and the shuffle Play Something land here too, on the
+    // two buttons, instead of starting playback on arrival.)
     viewModel: DetailViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -253,11 +244,20 @@ fun DetailScreen(
     LaunchedEffect(viewModel.navEvents) {
         viewModel.navEvents.collect { event ->
             when (event) {
-                is DetailNavigationEvent.PlayStream -> onPlayStream(event.streamId, event.title)
-                is DetailNavigationEvent.OpenProviderPage ->
+                is DetailNavigationEvent.PlayStream -> {
+                    // 2-button detail (Nov 2026): playback is under way, so
+                    // the "Starting…" guard ends here — coming back from a
+                    // failed player must never leave Play stuck on it.
+                    viewModel.clearPlayStarting()
+                    onPlayStream(event.streamId, event.title)
+                }
+                is DetailNavigationEvent.OpenProviderPage -> {
+                    viewModel.clearPlayStarting()
                     onOpenProviderPage(event.streamId, event.title)
+                }
                 is DetailNavigationEvent.OpenExternal -> openInExternalPlayer(context, event.playUrl)
-                is DetailNavigationEvent.DownloadStarted -> onOpenDownloads()
+                is DetailNavigationEvent.PlayLocal -> onPlayLocal(event.uri, event.title)
+                is DetailNavigationEvent.OpenDownloads -> onOpenDownloads()
                 is DetailNavigationEvent.DownloadNeedsPermission ->
                     downloadWithStoragePermission { viewModel.retryLastDownload() }
             }
@@ -266,44 +266,17 @@ fun DetailScreen(
 
     LaunchedEffect(state.actionMessage) {
         state.actionMessage?.let { msg ->
-            snackbarHostState.showSnackbar(msg)
+            // 2-button detail (Nov 2026): the snackbar carries the action
+            // the ViewModel named ("See downloads" / "Free space") — a tap
+            // opens Downloads, and nothing ever navigates away on its own.
+            val result = snackbarHostState.showSnackbar(
+                message = msg,
+                actionLabel = state.snackbarActionLabel,
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                viewModel.onSnackbarAction()
+            }
             viewModel.clearActionMessage()
-        }
-    }
-
-    // Session 121 (P-26): the hero's Watch Now. Once per title, when the title has
-    // loaded: the best print starts, and a title with nothing playable (or a locked
-    // print) simply stays here with the reason in front of the viewer — `playBest`
-    // never navigates, so there is nothing to unwind.
-    // Home-tab-after-failed-playback (Nov 2026): the once-per-title latch MUST
-    // survive this screen leaving the composition. A plain `remember` is
-    // discarded when Navigation Compose takes Detail off screen for the
-    // Player, so coming back from a failed playback reset the latch and the
-    // effect below re-fired at once — the post is already loaded and the
-    // resume lookup already landed in the surviving ViewModel — and the
-    // failed player re-opened within a frame. Every exit from the player
-    // was undone before the viewer could reach a tab, which is exactly
-    // "tapping Home does nothing". `rememberSaveable` keeps the latch in
-    // the back-stack entry's saved state, so a return never re-plays; a
-    // different title is a different entry, so its own autoplay is untouched.
-    // Session 123 (DE-1): autoplay respects Resume — a title the viewer left
-    // halfway through restarts from where they left off, not from the
-    // beginning. `playResume` is the same path the Resume card's own button
-    // takes, so the behaviour is identical either way in. The effect waits
-    // for `resumeLoaded`: the resume lookup reads the local history in its
-    // own coroutine and lands after the title does, so deciding on `post`
-    // alone would almost always decide before the answer existed and play
-    // from the beginning anyway.
-    // The latch sits here, above the effect that reads it: it must be
-    // rememberSaveable, not plain remember (see the note above) — a plain
-    // remember is discarded when Detail leaves the composition for the
-    // Player, so returning from a failed playback re-fired this effect.
-    var autoPlayedFor by rememberSaveable { mutableStateOf<Int?>(null) }
-    LaunchedEffect(state.post?.id, state.resumeLoaded, autoplay) {
-        val post = state.post ?: return@LaunchedEffect
-        if (autoplay && state.resumeLoaded && autoPlayedFor != post.id) {
-            autoPlayedFor = post.id
-            if (state.resume != null && state.resumePlayable) viewModel.playResume() else viewModel.playBest()
         }
     }
 
@@ -555,30 +528,28 @@ fun DetailScreen(
                 capabilities = state.layout?.capabilities ?: emptyList(),
                 isSeries = state.layout?.isSeriesLike ?: false,
                 resume = state.resume.takeIf { state.resumePlayable },
-                onPlayResume = viewModel::playResume,
                 /** Phase 7 (D1): "Start over" — forget where viewing stopped. */
                 onStartOver = viewModel::removeProgress,
                 includedPill = state.includedPill,
                 deadEndReason = state.deadEndReason,
-                // MX #7 — Kids Lock: the dead-end Download button stays out
-                // of kids mode — downloads are a locked surface.
-                deadEndKeepPrint = state.deadEndKeepPrint.takeIf { !state.kidsMode },
-                onPlayPrint = { print -> viewModel.playPrint(print, external = false) },
-                onOpenExternal = { print -> viewModel.playPrint(print, external = true) },
-                onKeep = { print -> downloadWithStoragePermission { viewModel.keepPrint(print) } },
+                // 2-button detail (Nov 2026): exactly two buttons — Play
+                // and Download — and the labels, the enabled state and the
+                // hints all come from the ViewModel, computed from the same
+                // state the tap decision reads. The quality cards and the
+                // print cards are gone from this page.
+                playLabel = state.playLabel,
+                playEnabled = state.playEnabled,
+                playStarting = state.playStarting,
+                onPlayPrimary = viewModel::playPrimary,
+                downloadLabel = state.downloadLabel,
+                downloadEnabled = state.downloadEnabled,
+                onDownloadPrimary = { downloadWithStoragePermission { viewModel.onDownloadPrimary() } },
+                playHint = state.playHint,
+                downloadHint = state.downloadHint,
+                onTryAgain = viewModel::tryAgainPlay,
                 // Detail redesign (Nov 2026): a season row opens its
                 // sub-page — the episode list no longer lives here.
                 onOpenSeason = onOpenSeason,
-                rungs = RungActions(
-                    ladder = state.ladder,
-                    selectedBand = state.selectedBand,
-                    onPlay = viewModel::playLadder,
-                    onKeep = { option -> downloadWithStoragePermission { viewModel.keepRung(option) } },
-                    tierLabel = viewModel::tierLabelFor,
-                    isLocked = viewModel::isLocked,
-                    // Audit #32: the card leads with the viewer's own audio.
-                    preferredAudio = preferredAudioLanguages(state.region),
-                ),
                 onActorClick = onActorClick,
                 similarTitles = state.similarTitles,
                 similarLoading = state.similarLoading,
@@ -608,28 +579,6 @@ fun DetailScreen(
         }
     }
 
-    state.pendingKeep?.let { pending ->
-        KeepConfirmDialog(
-            pending = pending,
-            wifiOnly = state.wifiOnlyDownloads,
-            onConfirm = viewModel::confirmKeep,
-            onDismiss = viewModel::dismissKeep,
-            // UI-fix P1-D9: the coins Direct Link row is gone — it opened the
-            // browser in the middle of a download (the one remaining external-
-            // browser route on the download path). It returns only when a bought
-            // credit can download in-app through the same DownloadService.
-        )
-    }
-
-    state.pendingSeasonKeep?.let { pending ->
-        SeasonKeepConfirmDialog(
-            pending = pending,
-            wifiOnly = state.wifiOnlyDownloads,
-            onConfirm = viewModel::confirmKeepSeason,
-            onDismiss = viewModel::dismissKeepSeason,
-        )
-    }
-
     if (showReportDialog) {
         ReportBrokenStreamDialog(
             isSubmitting = state.isReportingIssue,
@@ -638,6 +587,25 @@ fun DetailScreen(
                 showReportDialog = false
             },
             onDismiss = { showReportDialog = false },
+        )
+    }
+
+    // 2-button detail (Nov 2026): the quality sheet — the only place
+    // quality is ever chosen. One component, two modes; the sheet closes
+    // the moment a row is tapped, and the action starts at once.
+    state.qualitySheet?.let { sheet ->
+        DetailQualitySheet(
+            sheet = sheet,
+            onPlayOption = { option -> viewModel.playSheetOption(option) },
+            onDownloadOption = { option ->
+                downloadWithStoragePermission { viewModel.downloadSheetOption(option) }
+            },
+            onSeriesRow = { kind ->
+                downloadWithStoragePermission { viewModel.downloadSeriesRow(kind) }
+            },
+            onBatchBand = { band -> viewModel.startBatchDownload(band) },
+            onLockedRow = viewModel::onLockedQualityRow,
+            onDismiss = viewModel::dismissQualitySheet,
         )
     }
 }
@@ -729,77 +697,6 @@ internal fun ReportBrokenStreamSheetBody(
 }
 
 /**
- * The size and the quality before the download starts. The size is the one
- * the metadata ask measured — never a guess — and when the server named no
- * size the dialog says so instead of inventing one. Nothing downloads until
- * Confirm; Cancel leaves nothing behind.
- */
-@Composable
-internal fun KeepConfirmDialog(
-    pending: PendingKeep,
-    wifiOnly: Boolean,
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    CenteredMockupDialog(
-        onDismissRequest = onDismiss,
-        icon = Icons.Default.Download,
-        title = "Download this title?",
-        primaryLabel = "Download",
-        onPrimary = onConfirm,
-        secondaryLabel = "Cancel",
-        onSecondary = onDismiss,
-    ) {
-        Text(
-            keepConfirmLine(pending, wifiOnly),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-        )
-    }
-}
-
-/**
- * The whole season before the download starts: how many episodes will
- * actually download, their total size, and how many of the season this
- * viewer may not keep (VIP-only copies). Nothing downloads until
- * Confirm; Cancel leaves nothing behind — the same contract as the
- * single-download dialog above.
- */
-@Composable
-internal fun SeasonKeepConfirmDialog(
-    pending: PendingSeasonKeep,
-    wifiOnly: Boolean,
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    CenteredMockupDialog(
-        onDismissRequest = onDismiss,
-        icon = Icons.Default.Download,
-        title = "Download season ${pending.seasonNumber}?",
-        primaryLabel = "Download",
-        onPrimary = onConfirm,
-        secondaryLabel = "Cancel",
-        onSecondary = onDismiss,
-    ) {
-        Text(
-            seasonKeepConfirmLine(pending, wifiOnly),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-        )
-        if (pending.lockedCount > 0) {
-            Text(
-                "${pending.lockedCount} episode${if (pending.lockedCount == 1) "" else "s"} need${if (pending.lockedCount == 1) "s" else ""} VIP and won't download.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-            )
-        }
-    }
-}
-
-/**
  * The title this screen paints for a detail row: the server's display
  * title first, then the clean title, then the raw title — each stripped
  * of the year/language/type suffix the meta line already states (see
@@ -826,31 +723,6 @@ internal fun detailDisplayTitle(post: Post): String =
         contentType = post.contentType,
         languages = WireText.listOf(post.language),
     )
-
-/**
- * The quality switch and the download card as one bundle: the same rows render under the work
- * and under an episode, so a series never inherits another episode's links by accident.
- *
- * Internal (not private) so the Paparazzi snapshots can build a Detail page from fake
- * state — the same reason DetailContent is internal.
- */
-internal data class RungActions(
-    val ladder: LadderForScope,
-    val selectedBand: String?,
-    val onPlay: (QualityOption) -> Unit,
-    val onKeep: (QualityOption) -> Unit,
-    /** The tier each rung requires ("VIP" / "Standard"), from the ViewModel. */
-    val tierLabel: (QualityOption) -> String,
-    /**
-     * Detail review (Nov 2026, P1): true when this viewer may not take
-     * the rung — the gate reserves its band or label — so the rung's
-     * Download disables instead of offering a download the tap would
-     * refuse. From the ViewModel's [DetailViewModel.isLocked].
-     */
-    val isLocked: (QualityOption) -> Boolean = { false },
-    /** The viewer's preferred audio languages (audit #32) — empty orders nothing. */
-    val preferredAudio: Set<String> = emptySet(),
-)
 
 /**
  * The detail page's content padding, safe for landscape (Samsung RTL
@@ -1000,7 +872,6 @@ internal fun DetailContent(
     isSeries: Boolean,
     /** The latest scope this device stopped in, if it has a print to play — else null. */
     resume: ResumePoint?,
-    onPlayResume: () -> Unit,
     /** Phase 7 (D1): "Start over" — forget where viewing stopped, on the server and locally. */
     onStartOver: () -> Unit = {},
     /** What this viewer can watch of this title, as a pill — null when it has no prints. */
@@ -1008,24 +879,30 @@ internal fun DetailContent(
     /** Why this title cannot be played, in the viewer's words — null when it can. */
     deadEndReason: String? = null,
     /**
-     * Detail review (Nov 2026, P1): the dead end's Download target — the
-     * best keepable print for this viewer, from the ViewModel. Null when
-     * none is keepable, so the dead-end Download disables; test fixtures
-     * that want an enabled Download must pass the print they expect it
-     * to target — a null here never falls back to the best-ranked print.
+     * 2-button detail (Nov 2026): the two buttons, computed by the
+     * ViewModel from the same state the tap decision reads — the label
+     * names the quality ("Play · 720p" / "Resume S1:E3 · 23 min left ·
+     * 720p" / "Play · Auto"), the hint says why a greyed button is
+     * greyed, and [onTryAgain] reloads the title from the dead end.
+     * [playStarting] is the press-in-flight guard: while true the Play
+     * button reads "Starting…" and a second tap is ignored.
      */
-    deadEndKeepPrint: RankedPrint? = null,
-    onPlayPrint: (RankedPrint) -> Unit,
-    onOpenExternal: (RankedPrint) -> Unit,
-    onKeep: (RankedPrint) -> Unit,
+    playLabel: String = "Play",
+    playEnabled: Boolean = false,
+    playStarting: Boolean = false,
+    onPlayPrimary: () -> Unit = {},
+    downloadLabel: String = "Download",
+    downloadEnabled: Boolean = false,
+    onDownloadPrimary: () -> Unit = {},
+    playHint: String? = null,
+    downloadHint: String? = null,
+    onTryAgain: () -> Unit = {},
     /**
      * Detail redesign (Nov 2026): a season row opens that season's
      * sub-page, where the episodes live as plain numbered tiles. The
      * episode list no longer lives on this page at all.
      */
     onOpenSeason: (Int) -> Unit,
-    /** The quality switch and the download card, as one bundle the movie card can reuse. */
-    rungs: RungActions,
     /** An actor chip in the cast row: open that actor's titles in Search. */
     onActorClick: (String) -> Unit = {},
     similarTitles: List<Post> = emptyList(),
@@ -1063,16 +940,6 @@ internal fun DetailContent(
     contentPadding: PaddingValues,
 ) {
     val allPrints = (workPrints + seasons.flatMap { it.episodes.flatMap { e -> e.prints } } + seasons.flatMap { it.packedPrints })
-    val bestPrint = allPrints.maxByOrNull { it.rankKey }
-    // Detail review (Nov 2026, P0): the hero's Play target — the best
-    // print that can actually start here. The hero shows AND plays this
-    // print; the keep/download target stays the best-ranked print
-    // (`bestPrint` above), unchanged.
-    val heroPrint = heroPlayablePrint(allPrints) ?: bestPrint
-    // UI-fix P1-D2: the file list folds to 3 until the viewer asks for all.
-    // It only renders when the quality ladder cannot fold the title at all
-    // (no option groups from the server) — the ladder is the choice then.
-    var showAllFiles by remember { mutableStateOf(false) }
     // The dead end's way out: the similar rail is the last item on the
     // page, and the requester is what scrolls it into view from the
     // actions above. Owned here, so the button and the rail agree.
@@ -1118,35 +985,32 @@ internal fun DetailContent(
         item {
             PrimaryActions(
                 modifier = pageSides,
-                // Detail review (Nov 2026, P0): the hero's Play must be the
-                // best print that can actually start here — the ladder's Auto
-                // rung — not the best-ranked print. The old shape hid Play
-                // when only the best print could not play here, while the
-                // ladder below still offered Play on another rung: the two
-                // regions disagreed about the same title. When nothing plays
-                // here the fallback is the best-ranked print, so the
-                // download-only and provider-page branches below read exactly
-                // as before. This is the same decision `playBest` makes
-                // (`bestPlayablePrintOf` on the gated layout), so the hero
-                // button and autoplay can never disagree either.
-                bestPrint = heroPrint,
-                hasAnyPrint = allPrints.isNotEmpty(),
+                // 2-button detail (Nov 2026): the label, the enabled
+                // state and the hints all come from the ViewModel — the
+                // same state the tap decision reads, so the button and
+                // the tap can never disagree about this title.
+                playLabel = playLabel,
+                playEnabled = playEnabled,
+                playStarting = playStarting,
+                onPlayPrimary = onPlayPrimary,
+                downloadLabel = downloadLabel,
+                downloadEnabled = downloadEnabled,
+                onDownloadPrimary = onDownloadPrimary,
+                playHint = playHint,
+                downloadHint = downloadHint,
+                onTryAgain = onTryAgain,
                 resume = resume,
-                onPlayResume = onPlayResume,
-                onPlay = { heroPrint?.let(onPlayPrint) },
-                onKeep = { deadEndKeepPrint?.let(onKeep) },
                 onStartOver = onStartOver,
                 deadEndReason = deadEndReason,
-                deadEndKeepPrint = deadEndKeepPrint,
             )
         }
 
         // Detail redesign (Nov 2026): the story comes first — Netflix and
         // Disney+ both put the synopsis directly under the actions, and
         // ours buried it under a quality ladder and two upsell cards.
-        // The ladder moves below the synopsis; the cards are gone (the
-        // rung's own VIP pill is the lock, and the hero's included pill
-        // already states the tier).
+        // 2-button detail (Nov 2026): the ladder is gone from this page
+        // entirely — quality is chosen in the sheet, never here — and the
+        // hero's included pill already states the tier.
         val synopsis = post.synopsis?.takeIf { it.isNotBlank() }
         if (synopsis != null) {
             item { Box(pageSides) { ExpandableSynopsis(text = UserWords.stripSectionMarkers(synopsis)) } }
@@ -1264,25 +1128,6 @@ internal fun DetailContent(
             }
         }
 
-        // One row per quality band, exactly as the server collapsed the copies of this
-        // title: the viewer picks a picture, never a server, and never a list of links.
-        // Detail redesign (Nov 2026): a series has no quality card on this page any
-        // more — its picture is picked in the player. A movie keeps its card here.
-        if (!isSeries && !rungs.ladder.isEmpty) {
-            item {
-                QualityRungCard(
-                    modifier = pageSides,
-                    ladder = rungs.ladder,
-                    selectedBand = rungs.selectedBand,
-                    onPlayRung = rungs.onPlay,
-                    onKeepRung = rungs.onKeep,
-                    tierLabel = rungs.tierLabel,
-                    isLocked = rungs.isLocked,
-                    preferredAudio = rungs.preferredAudio,
-                )
-            }
-        }
-
         // A cam warning is a quality fact, not a count: the version
         // summary that used to carry it is gone, but a title whose only
         // copies are cam recordings must still say so in plain words.
@@ -1304,66 +1149,6 @@ internal fun DetailContent(
         val cast = parseCastNames(post.castNames)
         if (cast.isNotEmpty()) {
             item { Box(pageSides) { CastSection(cast = cast, onActorClick = onActorClick) } }
-        }
-
-        if (!isSeries) {
-            // The ladder already folds one best copy per band, so the
-            // version list is gone — except when the server sent no
-            // ladder at all for this title, in which case the prints
-            // below are the only choice the viewer has.
-            if (workPrints.isNotEmpty() && rungs.ladder.isEmpty) {
-                // UI-fix P1-D2: a title can carry a long list of near-identical
-                // file cards (Salaar has 10 posts). Show at most 3, with
-                // "Show all files" for the rest — this list only renders
-                // when the server sent no ladder to fold the choice.
-                val shownPrints = if (showAllFiles) workPrints else workPrints.take(3)
-                val workCopies = copyNumbers(workPrints)
-                items(shownPrints, key = { "print-${it.releaseId}" }) { print ->
-                    Box(pageSides) {
-                        PrintCard(
-                            print = print,
-                            onPlayPrint = onPlayPrint,
-                            onOpenExternal = onOpenExternal,
-                            onKeep = onKeep,
-                            copyIndex = workCopies[print.releaseId]?.first ?: 1,
-                            copyTotal = workCopies[print.releaseId]?.second ?: 1,
-                        )
-                    }
-                }
-                // Detail review (Nov 2026, P1): the count is the work's
-                // true total, not the capped list's length — the
-                // truncation note above already says only the first
-                // 1,000 are listed.
-                val fileCount = if (post.isTruncated) post.totalReleases else workPrints.size
-                if (workPrints.size > 3) {
-                    item {
-                        Box(pageSides) {
-                            TextButton(
-                                onClick = { showAllFiles = !showAllFiles },
-                                // Detail review (Nov 2026, P1): the 48dp
-                                // touch-target floor — the same floor the
-                                // synopsis, cast and episode expanders
-                                // carry. The zero side padding stays: it
-                                // keeps the label aligned with the body
-                                // text above it.
-                                modifier = Modifier.heightIn(min = 48.dp),
-                                // Detail review (Nov 2026, P1): a TextButton's
-                                // default 12dp side padding indents the label
-                                // ~28dp from the body text above it — the
-                                // expander reads as a nested item, not a row
-                                // of this list. Zero it here and on the
-                                // synopsis, cast and episode expanders below.
-                                contentPadding = PaddingValues(0.dp),
-                            ) {
-                                Text(
-                                    if (showAllFiles) "Show fewer files"
-                                    else "Show all ${"%,d".format(fileCount)} files",
-                                )
-                            }
-                        }
-                    }
-                }
-            }
         }
 
         // Detail review (Nov 2026, P1): the similar rail loads after the
@@ -1777,145 +1562,113 @@ private fun DetailCastButton() {
 }
 
 /**
- * Detail review (Nov 2026, P0): the hero's Play target — the best print
- * that can actually start here, or null when none can. The best-ranked
- * print is not the answer: on a gated title it can be a 4K print this
- * viewer may not play, while a 720p print below it plays fine. Pure so
- * DetailHeroPlayTest pins the matrix (playable best / playable non-best /
- * download-only / no prints).
+ * 2-button detail (Nov 2026): exactly two buttons — Play (filled,
+ * first) and Download (outlined, directly below). The label names the
+ * quality, the hint under a button says why it is greyed or what it
+ * will do, and both are at least 48dp. The quality choice lives in
+ * the sheet, never here. A dead end greys Play, says why in plain
+ * words, and offers [Try again] — the viewer is never left at a wall
+ * with no way out. The name stays `PrimaryActions` and both buttons
+ * keep `heightIn(min = 48.dp)`: SkeletonParityTest reads the source
+ * for both.
  */
-internal fun heroPlayablePrint(prints: List<RankedPrint>): RankedPrint? =
-    prints.filter { it.playableHere }.maxByOrNull { it.rankKey }
-
 @Composable
 private fun PrimaryActions(
     modifier: Modifier = Modifier,
-    bestPrint: RankedPrint?,
-    hasAnyPrint: Boolean,
-    /** The latest scope this device stopped in — null shows plain Play. */
-    resume: ResumePoint?,
-    onPlayResume: () -> Unit,
-    onPlay: () -> Unit,
-    onKeep: () -> Unit,
+    /** The Play label from the ViewModel: "Play · 720p", "Resume S1:E3 · 23 min left · 720p", "Play · Auto". */
+    playLabel: String,
+    playEnabled: Boolean,
+    /** The press-in-flight guard: while true Play reads "Starting…" and a second tap is ignored. */
+    playStarting: Boolean,
+    onPlayPrimary: () -> Unit,
+    /** The Download label: "Download", or "✓ Downloaded" when the file is already on this device. */
+    downloadLabel: String,
+    downloadEnabled: Boolean,
+    onDownloadPrimary: () -> Unit,
+    /** The plain line under Play: why it is greyed, or where it will play. */
+    playHint: String? = null,
+    /** The plain line under Download: why it is greyed, or what it will save. */
+    downloadHint: String? = null,
+    /** The dead end's way out: reload this title. */
+    onTryAgain: () -> Unit = {},
+    /** The latest scope this device stopped in — only "Start over" reads it now. */
+    resume: ResumePoint? = null,
     /** Phase 7 (D1): forget where viewing stopped — only offered while a resume exists. */
-    onStartOver: () -> Unit,
+    onStartOver: () -> Unit = {},
     /** Why this title cannot be played, in the viewer's words — null when it can. */
     deadEndReason: String? = null,
-    /**
-     * Detail review (Nov 2026, P1): the dead end's Download target — the
-     * best keepable print for this viewer. Null disables the button: the
-     * best-ranked print is not a fallback, because on a gated title it
-     * can be a locked copy or a provider page.
-     */
-    deadEndKeepPrint: RankedPrint? = null,
 ) {
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        // UI-fix P1-D1: the hero button plays video, nothing else. A title
-        // whose only option is the provider's own page gets a secondary row
-        // instead — the big green button must never open a web page.
-        val canPlayHere = resume != null || bestPrint?.playableHere == true
-        val providerOnly = resume == null && bestPrint != null &&
-            !bestPrint.playableHere && bestPrint.opensProviderPage
-        if (canPlayHere) {
-            // Hero Play Button (full width). UI-fix P1-X1: press scale +
-            // haptic on the primary action.
-            val playSource = remember { MutableInteractionSource() }
-            PressHaptics(playSource)
-            Button(
-                onClick = if (resume != null) onPlayResume else onPlay,
-                interactionSource = playSource,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 48.dp)
-                    .pressScale(playSource),
-                // D-29: a disabled Play keeps the same shape and language as the
-                // enabled one — a tonal fill, not a dead grey slab. The reason it
-                // cannot start rides right under the button, so the tonal state
-                // is never mistaken for a working one.
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                ),
-            ) {
-                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = resume?.label ?: "Play",
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        } else if (providerOnly) {
-            OutlinedButton(
-                onClick = onPlay,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 48.dp),
-            ) {
-                Icon(Icons.Default.OpenInNew, contentDescription = null, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = "Watch on the provider's page",
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
+        // UI-fix P1-X1: press scale + haptic on the primary action.
+        val playSource = remember { MutableInteractionSource() }
+        PressHaptics(playSource)
+        Button(
+            onClick = onPlayPrimary,
+            enabled = playEnabled && !playStarting,
+            interactionSource = playSource,
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .pressScale(playSource),
+            // D-29: a disabled Play keeps the same shape and language as the
+            // enabled one — a tonal fill, not a dead grey slab. The reason it
+            // cannot start rides right under the button, so the tonal state
+            // is never mistaken for a working one.
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.primary,
+                disabledContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                disabledContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+            ),
+        ) {
+            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(8.dp))
             Text(
-                text = "This title plays on the provider's own page, with its own player and ads.",
+                text = if (playStarting) stringResource(R.string.detail_starting) else playLabel,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        playHint?.let { hint ->
+            Text(
+                text = hint,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-        } else {
-            // No playable copy: Play is hidden, never a dead button — and
-            // Download becomes the primary, full-width and green, with the
-            // reason in plain words. When no print exists at all there is
-            // nothing to download either, so the button stays disabled and
-            // the sentence stays out (it would promise a download that
-            // does not exist).
-            // Detail redesign (Nov 2026): the bare sentence is replaced by
-            // the reason the ViewModel worked out — no sources, only VIP
-            // copies, or no working source — plus a way out: the similar
-            // rail below, instead of a dead end.
-            // Detail review (Nov 2026, P1): the button targets the best
-            // KEEPABLE print for this viewer — not the best-ranked one,
-            // which may be a locked copy or a provider page — and it
-            // disables when none is keepable, instead of offering a
-            // download the tap would refuse.
-            if (deadEndReason != null) {
-                Text(
-                    text = deadEndReason,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            } else if (hasAnyPrint) {
-                Text(
-                    text = stringResource(R.string.detail_not_available_stream),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Button(
-                onClick = onKeep,
-                enabled = deadEndKeepPrint != null,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 48.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    disabledContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                    disabledContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                ),
+        }
+        // The dead end's way out, under the reason: reload the title.
+        if (!playEnabled && deadEndReason != null) {
+            TextButton(
+                onClick = onTryAgain,
+                modifier = Modifier.heightIn(min = 48.dp),
             ) {
-                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = "Download",
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Text(stringResource(R.string.detail_try_again))
             }
+        }
+
+        OutlinedButton(
+            onClick = onDownloadPrimary,
+            enabled = downloadEnabled,
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp),
+        ) {
+            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = downloadLabel,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        downloadHint?.let { hint ->
+            Text(
+                text = hint,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
 
         // Phase 7 (D1): only while a resume exists — after "Start over" the
@@ -1927,6 +1680,281 @@ private fun PrimaryActions(
                 modifier = Modifier.heightIn(min = 48.dp),
             ) {
                 Text("Start over")
+            }
+        }
+    }
+}
+
+/**
+ * 2-button detail (Nov 2026): the quality sheet — one component, two
+ * modes, in the shared [PlayerSheet] container. One row per quality
+ * band, best first, with the Auto row on top in PLAY mode only. Each
+ * row names its quality in plain words, shows the size when the server
+ * named one (never invented), the data per hour in PLAY mode, and a
+ * "Best for" line. Exactly one row carries the Recommended badge — the
+ * Auto row in PLAY, 720p in DOWNLOAD. Locked rows show greyed with a
+ * lock and "VIP only" and answer with the upsell when tapped; dead
+ * rows show "No working link" and cannot be tapped. Host names, site
+ * names, URLs, codec and HLS/m3u8 words never appear. A series
+ * Download sheet shows its two rows at the top instead of quality
+ * rows; a batch sheet shows the bands every ticked episode shares.
+ * The sheet closes the moment a row is tapped — the row IS the
+ * confirmation — and the action starts at once. (Named
+ * DetailQualitySheet because the player's own in-player sheet already
+ * owns the name QualitySheet in this package.)
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun DetailQualitySheet(
+    sheet: QualitySheetState,
+    onPlayOption: (QualityOption) -> Unit,
+    onDownloadOption: (QualityOption) -> Unit,
+    onSeriesRow: (SeriesDownloadKind) -> Unit,
+    onBatchBand: (String) -> Unit,
+    onLockedRow: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    PlayerSheet(onDismiss = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = when {
+                    sheet.batchBands != null -> stringResource(R.string.detail_sheet_choose_save)
+                    sheet.nextEpisodeRow != null || sheet.wholeSeasonRow != null -> stringResource(R.string.detail_sheet_choose_what_save)
+                    sheet.mode == QualitySheetMode.PLAY -> stringResource(R.string.detail_sheet_choose_play)
+                    else -> stringResource(R.string.detail_sheet_choose_save)
+                },
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+            sheet.title?.let { title ->
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.height(4.dp))
+            sheet.nextEpisodeRow?.let { row ->
+                DetailQualitySeriesRow(row = row, onClick = { onSeriesRow(row.kind) })
+            }
+            sheet.wholeSeasonRow?.let { row ->
+                DetailQualitySeriesRow(row = row, onClick = { onSeriesRow(row.kind) })
+            }
+            val bands = sheet.batchBands
+            if (bands != null) {
+                for (band in bands) {
+                    DetailQualityBatchRow(
+                        band = band,
+                        isRecommended = band == sheet.recommendedBand,
+                        onClick = { onBatchBand(band) },
+                    )
+                }
+                Text(
+                    text = "Saves ${sheet.batchEpisodes?.size ?: 0} episodes at the same quality.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else if (sheet.nextEpisodeRow == null && sheet.wholeSeasonRow == null) {
+                for (row in sheet.rows) {
+                    DetailQualityRowView(
+                        row = row,
+                        onClick = {
+                            val option = row.option ?: return@DetailQualityRowView
+                            if (sheet.mode == QualitySheetMode.PLAY) onPlayOption(option)
+                            else onDownloadOption(option)
+                        },
+                        onLocked = onLockedRow,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** One quality row of the detail sheet: plain words, real numbers only. */
+@Composable
+private fun DetailQualityRowView(
+    row: QualitySheetRow,
+    onClick: () -> Unit,
+    onLocked: () -> Unit,
+) {
+    Surface(
+        onClick = { if (row.isLocked) onLocked() else onClick() },
+        enabled = !row.isDead,
+        shape = RoundedCornerShape(16.dp),
+        color = if (row.isRecommended) MaterialTheme.colorScheme.primaryContainer
+        else MaterialTheme.colorScheme.surfaceVariant,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = row.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    if (row.isRecommended) {
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = "★ Recommended",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                    if (row.isLocked) {
+                        Spacer(Modifier.width(8.dp))
+                        Icon(
+                            Icons.Default.Lock,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            text = stringResource(R.string.detail_sheet_vip_only),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                val details = listOfNotNull(row.sizeLine, row.dataPerHour)
+                    .takeIf { it.isNotEmpty() }?.joinToString(" · ")
+                details?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                row.bestFor?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                row.copiesNote?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                row.downloadNote?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (row.isDead) {
+                    Text(
+                        text = stringResource(R.string.detail_sheet_no_working_link),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** One of the two top rows of a series Download sheet. */
+@Composable
+private fun DetailQualitySeriesRow(
+    row: SeriesDownloadRow,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = row.label,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = row.detail,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Icon(
+                Icons.Default.Download,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** One band row of a batch sheet: the band every ticked episode shares. */
+@Composable
+private fun DetailQualityBatchRow(
+    band: String,
+    isRecommended: Boolean,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(16.dp),
+        color = if (isRecommended) MaterialTheme.colorScheme.primaryContainer
+        else MaterialTheme.colorScheme.surfaceVariant,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = bandDisplayName(band),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    if (isRecommended) {
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = "★ Recommended",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+                bestForLine(band)?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
     }
@@ -2074,23 +2102,6 @@ internal fun thumbActionLabel(thumb: Int, which: Int): String =
         which == 1 -> "Like this title"
         else -> "Dislike this title"
     }
-
-/**
- * Whether this print gets the viewer somewhere: our player can start a file, or the provider's own
- * page can be opened. One owner, so the hero button and the release-row button never disagree about
- * whether a tapped row does something.
- */
-private val RankedPrint.canStart: Boolean get() = playableHere || opensProviderPage
-
-/** The button's word. A page is OPENED, a file is played, and a cam says so while it does. */
-private fun RankedPrint.playLabel(): String = when {
-    playableHere -> "Play"
-    // Not "Open": a one-word verb hid that this leaves the app's player for the
-    // provider's own page, with its player and its ads. The button says where
-    // the tap goes, so the viewer chooses it knowingly.
-    opensProviderPage -> "Opens the provider's page"
-    else -> "Play"
-}
 
 @Composable
 private fun ExpandableSynopsis(text: String) {
@@ -2269,173 +2280,6 @@ internal fun audioSubtitleLine(prints: List<RankedPrint>): String? {
             append("Subtitles: ").append(subtitles.joinToString(", "))
         }
     }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun PrintCard(
-    print: RankedPrint,
-    onPlayPrint: (RankedPrint) -> Unit,
-    onOpenExternal: (RankedPrint) -> Unit,
-    onKeep: (RankedPrint) -> Unit,
-    /** 1-based position among this list's prints at the same quality. */
-    copyIndex: Int = 1,
-    /** How many prints in this list share the quality. 1 of 1 needs no word. */
-    copyTotal: Int = 1,
-) {
-    // Robo run 2: two prints at one quality announced identically — "Play
-    // 720p", "Download video", "Open in external player", "Picture quality
-    // 720p" — once per print. The version number makes each print's actions
-    // distinct, and the badge facts move into the Play button's spoken label,
-    // so the badges stay paint-only instead of repeating on every card. The
-    // visible Play text is unchanged (CL-4); only what is spoken grows.
-    val copySuffix = if (copyTotal > 1) ", version $copyIndex" else ""
-    val playText = "${print.playLabel()}${print.qualityLabel?.let { " $it" } ?: ""}"
-    val spokenPlay = playText + copySuffix + print.spokenBadgeFacts()
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surface)
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            // Paint-only (the quality is spoken on the Play button below): a
-            // clearing modifier passed INTO the badge would lose to Pill's own
-            // semantics, so the badges sit inside a cleared wrapper instead.
-            Row(
-                modifier = Modifier.clearAndSetSemantics { },
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                PrintQualityBadge(print = print)
-                if (print.isCam) CamBadge()
-            }
-            Spacer(Modifier.weight(1f))
-            print.bestOptionLabel?.let {
-                // Robo run 6: two prints at one quality announced the same
-                // "Standard · Plays here" line — the label is the tier plus
-                // the playability, and neither names the print. The spoken
-                // line carries the print's own facts (codec/size) and its
-                // copy number, so each card speaks differently; the painted
-                // text stays the short label. The run-3 pattern (the rung's
-                // subtext carries its quality in its spoken name).
-                Text(
-                    text = it,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.semantics {
-                        contentDescription = printSpokenLabel(print, copyIndex, copyTotal)
-                    },
-                )
-            }
-        }
-
-        if (print.detailLine.isNotBlank()) {
-            Text(print.detailLine, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-
-        // The tier's own facts, as badges rather than one run-on sentence: a 4K HDR
-        // WEB-DL print and its audio/subtitle story read in a glance here.
-        // Paint-only: the same facts are spoken once, on the Play button below.
-        FlowRow(
-            modifier = Modifier.clearAndSetSemantics { },
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            HdrBadge(print = print)
-            PrintSourceBadge(print = print)
-            AudioBadge(print = print)
-            SubtitleBadge(print = print)
-        }
-
-        if (print.isCam) {
-            Text(
-                "This is a cam/bootleg recording — low quality.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-            )
-        }
-
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            Button(
-                onClick = { onPlayPrint(print) },
-                enabled = print.canStart,
-                modifier = Modifier
-                    .weight(1f)
-                    // F32 (Batch B): M3 buttons are 40dp tall by default and
-                    // Robo measured this row's Play at 28dp in run 0 — under
-                    // the 48dp touch-target floor. The row's buttons carry
-                    // the floor themselves.
-                    .heightIn(min = 48.dp)
-                    .semantics(mergeDescendants = true) { contentDescription = spokenPlay },
-            ) {
-                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                // CL-4: every print's Play button said bare "Play", so three
-                // prints announced identically. The verb stays (a provider page
-                // still says where the tap goes); the quality makes each one
-                // distinct. The PrimaryActions hero button above keeps bare
-                // "Play" — it is the single hero action.
-                Text(playText, modifier = Modifier.clearAndSetSemantics { })
-            }
-            OutlinedButton(
-                onClick = { onKeep(print) },
-                modifier = Modifier.heightIn(min = 48.dp),
-            ) {
-                Icon(Icons.Default.Download, contentDescription = print.qualityLabel?.let { "Download $it video$copySuffix" } ?: "Download video$copySuffix")
-            }
-            if (print.playableHere) {
-                IconButton(onClick = { onOpenExternal(print) }, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.Default.OpenInNew, contentDescription = print.qualityLabel?.let { "Open $it in external player$copySuffix" } ?: "Open in external player$copySuffix",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-        }
-
-        // The disabled Play above is silent about why: a print the server
-        // only offers for download says so in words, under its own buttons.
-        if (!print.canStart) {
-            Text(
-                text = stringResource(R.string.detail_download_only),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
-/**
- * Copy numbers within one quality, keyed by releaseId: the first 1080p print
- * is version 1 of 2, the second version 2 of 2, and a print alone at its quality is
- * version 1 of 1 (no suffix — nothing to distinguish it from). Prints with no
- * quality label group together under a null key; they still count apart.
- */
-private fun copyNumbers(prints: List<RankedPrint>): Map<Int, Pair<Int, Int>> {
-    val totals = prints.groupingBy { it.qualityLabel }.eachCount()
-    val seen = mutableMapOf<String?, Int>()
-    return prints.associate { print ->
-        val index = (seen[print.qualityLabel] ?: 0) + 1
-        seen[print.qualityLabel] = index
-        print.releaseId to (index to (totals[print.qualityLabel] ?: 1))
-    }
-}
-
-/**
- * The print's badge facts as one spoken tail — the same words the badges paint
- * ("High dynamic range DV", "Source WEB-DL", "Audio Hindi + English audio",
- * "Subtitles English"), or "" when it carries none. The quality itself is not
- * repeated here: the Play label already says it.
- */
-private fun RankedPrint.spokenBadgeFacts(): String {
-    val facts = listOfNotNull(
-        hdrBadgeText(hdr)?.let { "High dynamic range $it" },
-        sourceBadgeText(sourceTag)?.let { "Source $it" },
-        audioBadgeText(dualAudio, languages)?.let { "Audio $it" },
-        subtitleBadgeText(subtitlesAvailable, subtitlesExternal, subtitlesHardcoded, subtitleLangs),
-    )
-    return if (facts.isEmpty()) "" else facts.joinToString(prefix = ", ", separator = ", ")
 }
 
 // ── Platform helpers (share keeps the app's own copy honest) ────────────────

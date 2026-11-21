@@ -288,11 +288,11 @@ internal fun RowScope.BottomNavTab(
  * post id, exactly as before. The sentinel itself must never be navigated to:
  * the detail screen reads it as "no post".
  */
-private fun NavHostController.navigateToPost(post: Post, autoplay: Boolean = false) {
+private fun NavHostController.navigateToPost(post: Post) {
     val route = if (post.workId != null) {
-        Screen.Detail.createRouteForWork(post.workId, autoplay)
+        Screen.Detail.createRouteForWork(post.workId)
     } else {
-        Screen.Detail.createRoute(post.id, autoplay)
+        Screen.Detail.createRoute(post.id)
     }
     // Session 157 (S4): one tap, one detail. A double-tap on a poster must
     // not stack two identical detail entries — the second entry's ViewModel
@@ -582,15 +582,16 @@ fun RaddStreamNavGraph(
                     },
                     searchEnabled = features.search,
                     onPostClick = { post -> navController.navigateToPost(post) },
-                    // Session 121 (P-26): the hero's Watch Now opens the title and
-                    // starts it, instead of only opening the title.
+                    // 2-button detail (Nov 2026): the hero's Watch Now
+                    // opens the title on its two buttons — autoplay on
+                    // detail open is OFF, so the viewer presses Play.
                     onWatchNowClick = { post ->
-                        navController.navigateToPost(post, autoplay = true)
+                        navController.navigateToPost(post)
                     },
                     // REA #4: the "Play Something" shuffle — the Home row
-                    // header's pick, opened and started at once.
+                    // header's pick, opened on its two buttons.
                     onPlaySomethingClick = { post ->
-                        navController.navigateToPost(post, autoplay = true)
+                        navController.navigateToPost(post)
                     },
                     onBrowseType = { type -> navController.navigate(Screen.Browse.createRoute(type)) },
                     // A facet chip on Home lands on Search with the filter
@@ -858,7 +859,6 @@ fun RaddStreamNavGraph(
                 ),
             ) { backStackEntry ->
                 DetailScreen(
-                    autoplay = backStackEntry.arguments?.getBoolean(Screen.Detail.ARG_AUTOPLAY) ?: false,
                     onBackClick = { navController.popBackStack() },
                     onPlayStream = { streamId, title ->
                         navController.navigate(Screen.Player.createRoute(streamId, title)) {
@@ -871,6 +871,13 @@ fun RaddStreamNavGraph(
                         }
                     },
                     onOpenDownloads = { navController.navigate(Screen.Downloads.route) },
+                    // 2-button detail (Nov 2026): play a file already on
+                    // this device ("✓ Downloaded" on the Download button).
+                    onPlayLocal = { uri, title ->
+                        navController.navigate(Screen.PlayerLocal.createRoute(uri, title)) {
+                            launchSingleTop = true
+                        }
+                    },
                     // Detail redesign (Nov 2026): a season row opens the
                     // season's own sub-page. The work id rides along for
                     // a v2 row, exactly as on this route.
@@ -928,6 +935,26 @@ fun RaddStreamNavGraph(
                         }
                     },
                     onOpenDownloads = { navController.navigate(Screen.Downloads.route) },
+                    // 2-button detail (Nov 2026): play a file already on
+                    // this device ("✓ Downloaded" on the Download button).
+                    onPlayLocal = { uri, title ->
+                        navController.navigate(Screen.PlayerLocal.createRoute(uri, title)) {
+                            launchSingleTop = true
+                        }
+                    },
+                    // 2-button detail (Nov 2026): jump to another season
+                    // of this title, from its chips. The post/work ids
+                    // ride this entry's own arguments.
+                    onOpenSeason = { season ->
+                        val postId = backStackEntry.arguments?.getInt(Screen.DetailSeason.ARG_POST_ID) ?: 0
+                        val workId = backStackEntry.arguments?.getLong(Screen.DetailSeason.ARG_WORK_ID) ?: -1L
+                        val route = if (workId != -1L) {
+                            Screen.DetailSeason.createRouteForWork(workId, season)
+                        } else {
+                            Screen.DetailSeason.createRoute(postId, season, workId)
+                        }
+                        navController.navigate(route)
+                    },
                     viewModel = hiltViewModel(parentEntry),
                 )
             }
@@ -972,15 +999,15 @@ fun RaddStreamNavGraph(
                         }
                     },
                     // REA #4: the give-up card's "Play Something" — the
-                    // shuffle's pick, opened with autoplay and leaving the
-                    // dead player behind, exactly as a post-play tile does.
-                    // Back from that Detail never drops the viewer back
-                    // into the failed player.
+                    // shuffle's pick, opened on its two buttons and leaving
+                    // the dead player behind, exactly as a post-play tile
+                    // does. Back from that Detail never drops the viewer
+                    // back into the failed player.
                     onPlaySomethingClick = { post ->
                         val route = if (post.workId != null) {
-                            Screen.Detail.createRouteForWork(post.workId, true)
+                            Screen.Detail.createRouteForWork(post.workId)
                         } else {
-                            Screen.Detail.createRoute(post.id, true)
+                            Screen.Detail.createRoute(post.id)
                         }
                         navController.navigate(route) {
                             launchSingleTop = true

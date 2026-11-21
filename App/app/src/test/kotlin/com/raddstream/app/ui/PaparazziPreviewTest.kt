@@ -33,13 +33,11 @@ import com.raddstream.app.network.models.Post
 import com.raddstream.app.network.models.PostDetail
 import com.raddstream.app.network.models.ReleaseLabelParsing
 import com.raddstream.app.network.models.currentCalendarYear
-import com.raddstream.app.player.LadderForScope
 import com.raddstream.app.player.LadderRung
 import com.raddstream.app.player.PlaybackInfo
 import com.raddstream.app.player.PlaybackRendition
 import com.raddstream.app.player.PlayerUiState
 import com.raddstream.app.player.PrintInfo
-import com.raddstream.app.player.QualityOption
 import com.raddstream.app.ui.components.PosterCard
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.screens.DetailContent
@@ -58,7 +56,6 @@ import com.raddstream.app.ui.screens.Hud
 import com.raddstream.app.ui.screens.MyListEmptyContent
 import com.raddstream.app.ui.screens.TopBar
 import com.raddstream.app.ui.screens.SearchContent
-import com.raddstream.app.ui.screens.RungActions
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.EpisodeGroup
 import com.raddstream.app.viewmodel.HomeSection
@@ -86,7 +83,8 @@ import org.junit.Test
  *
  * Each screen gets its own stateless content composable fed with fake state:
  * `HomeContent` (extracted from HomeScreen), `DetailContent` (made
- * internal with its `RungActions` bundle), `SearchContent` (extracted
+ * internal; 2-button detail, Nov 2026: two buttons, no rung cards),
+ * `SearchContent` (extracted
  * from SearchScreen) and the player chrome (`TopBar`, `CenterSpinner`,
  * `EdgeHud`, `BottomControls`, `KeepChip` — all internal with callbacks).
  * The volume dialog is not shot: it opens only on a long-press, which a
@@ -451,38 +449,6 @@ class PaparazziPreviewTest {
             ),
         )
 
-    private fun fakeOption(band: String, title: String = band, playsHere: Boolean = true) =
-        QualityOption(
-            band = band,
-            title = title,
-            streamId = "h-$band",
-            playUrl = "http://example.invalid/$band",
-            sizeBytes = 1_400_000_000L,
-            backupHandles = emptyList(),
-            playsHere = playsHere,
-            resumable = true,
-            copies = 3,
-            isProviderPage = false,
-        )
-
-    private val movieRungs = RungActions(
-        ladder = LadderForScope(
-            options = listOf(
-                fakeOption("2160p", "4K Ultra HD", playsHere = false),
-                fakeOption("1080p", "1080p Full HD"),
-                fakeOption("720p", "720p HD"),
-                fakeOption("480p", "480p"),
-            ),
-            autoBand = "1080p",
-            downloadOnlyBands = listOf("2160p"),
-        ),
-        selectedBand = null,
-        onPlay = {},
-        onKeep = {},
-        tierLabel = { if (it.band == "2160p") "VIP" else "Standard" },
-        preferredAudio = setOf("Hindi"),
-    )
-
     private val jawanDetail = PostDetail(
         id = 1,
         title = "Jawan",
@@ -518,13 +484,14 @@ class PaparazziPreviewTest {
                     capabilities = listOf("Hindi audio", "English subtitles"),
                     isSeries = false,
                     resume = null,
-                    onPlayResume = {},
                     includedPill = "VIP",
+                    // 2-button detail (Nov 2026): the page shows two
+                    // buttons, not rung cards — the golden records them.
+                    playLabel = "Play · 1080p",
+                    playEnabled = true,
+                    downloadLabel = "Download",
+                    downloadEnabled = true,
                     onOpenSeason = {},
-                    onPlayPrint = {},
-                    onOpenExternal = {},
-                    onKeep = {},
-                    rungs = movieRungs,
                     similarTitles = listOf(salaars, mclintock),
                     reloadError = null,
                     onRetryReload = {},
@@ -548,13 +515,12 @@ class PaparazziPreviewTest {
                     capabilities = listOf("Hindi audio", "English subtitles"),
                     isSeries = false,
                     resume = null,
-                    onPlayResume = {},
                     includedPill = "VIP",
                     onOpenSeason = {},
-                    onPlayPrint = {},
-                    onOpenExternal = {},
-                    onKeep = {},
-                    rungs = movieRungs,
+                    playLabel = "Play · 1080p",
+                    playEnabled = true,
+                    downloadLabel = "Download",
+                    downloadEnabled = true,
                     similarTitles = listOf(salaars, mclintock),
                     reloadError = "Could not refresh this title.",
                     onRetryReload = {},
@@ -639,13 +605,14 @@ class PaparazziPreviewTest {
                     capabilities = listOf("English audio", "Hindi subtitles"),
                     isSeries = true,
                     resume = ResumePoint(season = 1, episode = 2, positionMs = 1_200_000L, durationMs = 3_000_000L),
-                    onPlayResume = {},
                     includedPill = "Free · up to 720p",
                     onOpenSeason = {},
-                    onPlayPrint = {},
-                    onOpenExternal = {},
-                    onKeep = {},
-                    rungs = movieRungs,
+                    // 2-button detail (Nov 2026): resume names the
+                    // episode and the quality; the golden records it.
+                    playLabel = "Resume S1:E2 · 720p",
+                    playEnabled = true,
+                    downloadLabel = "Download",
+                    downloadEnabled = true,
                     similarTitles = listOf(jawan, mclintock),
                     reloadError = null,
                     onRetryReload = {},

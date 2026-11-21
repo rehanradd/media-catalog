@@ -16,19 +16,11 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.unit.dp
-import com.raddstream.app.network.models.CoverageType
-import com.raddstream.app.network.models.LinkState
-import com.raddstream.app.network.models.Playability
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.network.models.PostDetail
 import com.raddstream.app.network.models.ReleaseDetail
-import com.raddstream.app.network.models.ReleaseLabelParsing
-import com.raddstream.app.player.LadderForScope
-import com.raddstream.app.player.QualityOption
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.EpisodeGroup
-import com.raddstream.app.viewmodel.RankedLink
-import com.raddstream.app.viewmodel.RankedPrint
 import com.raddstream.app.viewmodel.SeasonGroup
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -39,14 +31,16 @@ import org.robolectric.RobolectricTestRunner
 
 /**
  * Detail redesign (Nov 2026): the synopsis moves directly under the Play
- * actions with the quality ladder below it, the version list and its
- * summary are gone, the similar rail is "More Like This", a series shows
- * one simple row per season ("Season 1 — 12 episodes ›") that opens the
- * season's own numbered-tile sub-page, and a title with nothing to play
- * gets its reason in plain words plus a way out. The overflow menu itself
- * (Report moved out of the top bar) is covered by the Paparazzi
- * detailMovie golden, not here — the top bar lives in DetailScreen,
- * above the DetailContent this file can render.
+ * actions, the version list and its summary are gone, the similar rail is
+ * "More Like This", a series shows one simple row per season ("Season 1
+ * — 12 episodes ›") that opens the season's own numbered-tile sub-page,
+ * and a title with nothing to play gets its reason in plain words plus a
+ * way out. 2-button detail (Nov 2026): the page shows exactly two
+ * buttons — Play, then Download — and no quality ladder, no file cards,
+ * no "Show all files" expander. The overflow menu itself (Report moved
+ * out of the top bar) is covered by the Paparazzi detailMovie golden,
+ * not here — the top bar lives in DetailScreen, above the DetailContent
+ * this file can render.
  */
 @RunWith(RobolectricTestRunner::class)
 class DetailRedesignTest {
@@ -73,94 +67,48 @@ class DetailRedesignTest {
         language = "Hindi",
     )
 
-    private fun option(band: String, title: String) = QualityOption(
-        band = band,
-        title = title,
-        streamId = "h-$band",
-        playUrl = "http://127.0.0.1:8080/api/v1/stream?id=h-$band",
-        sizeBytes = null,
-        backupHandles = emptyList(),
-        playsHere = true,
-        resumable = false,
-        copies = 1,
-        isProviderPage = false,
-        audioLanguages = emptyList(),
-    )
-
-    private fun fakePrint(
-        releaseId: Int,
-        quality: String,
-        playability: Playability = Playability.STREAM,
-    ) = RankedPrint(
-        releaseId = releaseId,
-        rawTitle = "$quality copy",
-        descriptor = ReleaseLabelParsing.describe(
-            releaseTitle = "Jawan (2023) Hindi $quality WEB-DL",
-            quality = quality,
-        ),
-        languages = listOf("Hindi"),
-        sizeBytes = 1_400_000_000L,
-        coverage = CoverageType.WHOLE_WORK,
-        season = null,
-        episodeFrom = null,
-        episodeTo = null,
-        links = listOf(
-            RankedLink(
-                streamId = "h-$releaseId",
-                linkId = releaseId,
-                health = LinkState.ACTIVE,
-                ephemeral = false,
-                resumable = true,
-                playUrl = "http://example.invalid/play/$releaseId",
-                label = "Fast direct",
-                kind = "direct",
-                playability = playability,
-                score = 100,
-            ),
-        ),
-    )
-
     private fun content(
         isSeries: Boolean = false,
         seasons: List<SeasonGroup> = emptyList(),
         similarTitles: List<Post> = emptyList(),
         deadEndReason: String? = null,
         postDetail: PostDetail = post,
-        workPrints: List<RankedPrint> = emptyList(),
-        ladder: LadderForScope? = null,
         similarLoading: Boolean = false,
-        deadEndKeepPrint: RankedPrint? = null,
-        onKeep: (RankedPrint) -> Unit = {},
         onOpenSeason: (Int) -> Unit = {},
+        // 2-button detail (Nov 2026): the two buttons' state, as the
+        // ViewModel would compute it — the label names the quality, the
+        // enabled flag says whether the tap can start.
+        playLabel: String = "Play",
+        playEnabled: Boolean = true,
+        onPlayPrimary: () -> Unit = {},
+        downloadLabel: String = "Download",
+        downloadEnabled: Boolean = true,
+        onDownloadPrimary: () -> Unit = {},
+        playHint: String? = null,
+        downloadHint: String? = null,
+        onTryAgain: () -> Unit = {},
     ) {
         compose.setContent {
             RaddStreamTheme {
                 DetailContent(
                     post = postDetail,
                     seasons = seasons,
-                    workPrints = workPrints,
+                    workPrints = emptyList(),
                     capabilities = emptyList(),
                     isSeries = isSeries,
                     resume = null,
-                    onPlayResume = {},
                     includedPill = null,
                     deadEndReason = deadEndReason,
-                    deadEndKeepPrint = deadEndKeepPrint,
+                    playLabel = playLabel,
+                    playEnabled = playEnabled,
+                    onPlayPrimary = onPlayPrimary,
+                    downloadLabel = downloadLabel,
+                    downloadEnabled = downloadEnabled,
+                    onDownloadPrimary = onDownloadPrimary,
+                    playHint = playHint,
+                    downloadHint = downloadHint,
+                    onTryAgain = onTryAgain,
                     onOpenSeason = onOpenSeason,
-                    onPlayPrint = {},
-                    onOpenExternal = {},
-                    onKeep = onKeep,
-                    rungs = RungActions(
-                        ladder = ladder ?: LadderForScope(
-                            options = listOf(option("720p", "HD - X264")),
-                            autoBand = "720p",
-                            downloadOnlyBands = emptyList(),
-                        ),
-                        selectedBand = null,
-                        onPlay = {},
-                        onKeep = {},
-                        tierLabel = { "Standard" },
-                    ),
                     onActorClick = {},
                     similarTitles = similarTitles,
                     similarLoading = similarLoading,
@@ -177,14 +125,17 @@ class DetailRedesignTest {
     }
 
     @Test
-    fun synopsisSitsAboveTheQualityLadder() {
+    fun playButtonsSitAboveTheSynopsis() {
+        // 2-button detail (Nov 2026): the two buttons come first — Play,
+        // then Download — and the synopsis sits directly under them. The
+        // quality ladder the old test pinned here is gone with its cards.
         content()
-        compose.onNodeWithText("Quality").performScrollTo()
+        compose.onNodeWithText("Play").performScrollTo()
+        val playTop = compose.onNodeWithText("Play")
+            .fetchSemanticsNode().boundsInRoot.top
         val synopsisTop = compose.onNodeWithText(synopsis)
             .fetchSemanticsNode().boundsInRoot.top
-        val qualityTop = compose.onNodeWithText("Quality")
-            .fetchSemanticsNode().boundsInRoot.top
-        assertTrue(synopsisTop < qualityTop)
+        assertTrue(playTop < synopsisTop)
     }
 
     @Test
@@ -265,36 +216,6 @@ class DetailRedesignTest {
     }
 
     @Test
-    fun truncatedFileExpanderShowsTheTrueTotal() {
-        // Detail review (Nov 2026, P1): the file count reads the work's
-        // true total, not the capped list's length.
-        val truncated = post.copy(
-            releases = listOf(ReleaseDetail(id = 1), ReleaseDetail(id = 2)),
-            releaseTotal = 8316,
-            releasesTruncated = true,
-        )
-        content(
-            postDetail = truncated,
-            workPrints = listOf(
-                fakePrint(101, "2160p"),
-                fakePrint(102, "1080p"),
-                fakePrint(103, "720p"),
-                fakePrint(104, "480p"),
-            ),
-            ladder = LadderForScope.EMPTY,
-        )
-        // The expander is the last item of the file list, below three
-        // file cards — it is not composed until the list scrolls near
-        // it. Swipe until it appears, then bring it fully into view.
-        for (i in 0 until 5) {
-            if (compose.onAllNodesWithText("Show all 8,316 files").fetchSemanticsNodes().isNotEmpty()) break
-            compose.onRoot().performTouchInput { swipeUp() }
-        }
-        compose.onNodeWithText("Show all 8,316 files")
-            .performScrollTo().assertIsDisplayed()
-    }
-
-    @Test
     fun similarSkeletonStandsInWhileTheRailLoads() {
         // Detail review (Nov 2026, P1): the similar rail loads after the
         // page — while it does, a rail skeleton stands in its place, so
@@ -314,38 +235,33 @@ class DetailRedesignTest {
     }
 
     @Test
-    fun deadEndDownloadTargetsTheBestKeepablePrint() {
-        // Detail review (Nov 2026, P1): the dead end's Download targets
-        // the 720p copy this viewer may keep, not the best-ranked 4K
-        // copy — and it stays enabled while any copy is keepable.
-        var kept: RankedPrint? = null
-        val prints = listOf(
-            fakePrint(1, "2160p", Playability.DOWNLOAD),
-            fakePrint(2, "720p", Playability.DOWNLOAD),
-        )
+    fun deadEndDownloadStartsTheDownload() {
+        // 2-button detail (Nov 2026): the dead end's Download stays
+        // enabled while any copy is keepable, and the tap starts the
+        // download — which copy, and at which quality, is the
+        // ViewModel's decision, not this composable's, so the tap is
+        // what this test pins.
+        var started = false
         content(
             deadEndReason = "No working sources right now — download is available.",
-            workPrints = prints,
-            ladder = LadderForScope.EMPTY,
-            deadEndKeepPrint = prints[1],
-            onKeep = { kept = it },
+            onDownloadPrimary = { started = true },
         )
         compose.onNodeWithText("Download").performScrollTo().assertIsEnabled().performClick()
-        assertEquals(2, kept?.releaseId)
+        assertTrue(started)
     }
 
     @Test
     fun deadEndDownloadDisablesWhenNothingIsKeepable() {
-        // Detail review (Nov 2026, P1): a title with only a linkless
-        // print has no Download target — the button disables instead of
-        // offering a download the tap would refuse.
-        val noLinkPrint = fakePrint(1, "720p", Playability.DOWNLOAD).copy(links = emptyList())
+        // 2-button detail (Nov 2026): a title with nothing to save
+        // shows a greyed Download — the tap is refused by the button,
+        // not by a dialog after it.
         content(
             deadEndReason = "No working sources right now.",
-            workPrints = listOf(noLinkPrint),
-            ladder = LadderForScope.EMPTY,
+            downloadEnabled = false,
+            downloadHint = "Nothing to save for this title.",
         )
         compose.onNodeWithText("Download").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithText("Nothing to save for this title.").assertIsDisplayed()
     }
 
     @Test
@@ -353,13 +269,20 @@ class DetailRedesignTest {
         content(
             deadEndReason = "No sources for this title yet.",
             similarTitles = listOf(Post(id = 2, title = "Jawan 2")),
+            playEnabled = false,
+            playHint = "No working link right now. Try again later.",
         )
         compose.onNodeWithText("No sources for this title yet.").performScrollTo().assertIsDisplayed()
         // Detail review (Nov 2026, P1): the standalone "Browse similar
         // titles" link is gone — the way out moved into the utility row
         // under the synopsis as the Similar action.
         compose.onNodeWithText("Browse similar titles").assertDoesNotExist()
-        compose.onNodeWithText("Play").assertDoesNotExist()
+        // 2-button detail (Nov 2026): the dead end still shows the Play
+        // button — greyed, with its reason — plus a [Try again] that
+        // reloads the title. It is never hidden.
+        compose.onNodeWithText("Play").assertIsNotEnabled()
+        compose.onNodeWithText("No working link right now. Try again later.").assertIsDisplayed()
+        compose.onNodeWithText("Try again").assertIsDisplayed()
         // Detail review (Nov 2026, P1): the Similar action lives in the
         // utility row now. Its scroll-to-rail is the same bringIntoView
         // the link used — and it cannot be proven from the top of the
