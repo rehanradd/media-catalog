@@ -67,6 +67,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.raddstream.app.R
 import com.raddstream.app.player.QualityOption
 import com.raddstream.app.ui.layout.CardGeometry
 import com.raddstream.app.viewmodel.BatchEpisodeTarget
