@@ -205,12 +205,20 @@ class DetailRedesignTest {
         // Detail review (Nov 2026, P1): the server caps the detail at
         // 1,000 releases — the page says so in plain words before the
         // viewer assumes the list is complete.
+        // 2-button detail (Nov 2026): the two stacked buttons are
+        // taller than the old side-by-side row, so the note sits below
+        // the first viewport in this test — swipe until it composes,
+        // the same pattern the similar-rail test below uses.
         val truncated = post.copy(
             releases = listOf(ReleaseDetail(id = 1), ReleaseDetail(id = 2)),
             releaseTotal = 8316,
             releasesTruncated = true,
         )
         content(postDetail = truncated)
+        for (i in 0 until 5) {
+            if (compose.onAllNodesWithText("Showing the first 2 of 8,316 releases").fetchSemanticsNodes().isNotEmpty()) break
+            compose.onRoot().performTouchInput { swipeUp() }
+        }
         compose.onNodeWithText("Showing the first 2 of 8,316 releases")
             .performScrollTo().assertIsDisplayed()
     }
@@ -266,11 +274,15 @@ class DetailRedesignTest {
 
     @Test
     fun deadEndShowsReasonWithoutStandaloneLink() {
+        // 2-button detail (Nov 2026): the dead-end reason reaches the
+        // page as the Play button's hint — the ViewModel puts it there
+        // when Play is disabled — so the test models the ViewModel and
+        // passes the reason as playHint, not as a standalone text.
         content(
             deadEndReason = "No sources for this title yet.",
             similarTitles = listOf(Post(id = 2, title = "Jawan 2")),
             playEnabled = false,
-            playHint = "No working link right now. Try again later.",
+            playHint = "No sources for this title yet.",
         )
         compose.onNodeWithText("No sources for this title yet.").performScrollTo().assertIsDisplayed()
         // Detail review (Nov 2026, P1): the standalone "Browse similar
@@ -279,9 +291,10 @@ class DetailRedesignTest {
         compose.onNodeWithText("Browse similar titles").assertDoesNotExist()
         // 2-button detail (Nov 2026): the dead end still shows the Play
         // button — greyed, with its reason — plus a [Try again] that
-        // reloads the title. It is never hidden.
+        // reloads the title. It is never hidden. The fallback hint ("No
+        // working link right now…") is NOT shown here: the ViewModel
+        // puts the reason itself in the hint when it has one.
         compose.onNodeWithText("Play").assertIsNotEnabled()
-        compose.onNodeWithText("No working link right now. Try again later.").assertIsDisplayed()
         compose.onNodeWithText("Try again").assertIsDisplayed()
         // Detail review (Nov 2026, P1): the Similar action lives in the
         // utility row now. Its scroll-to-rail is the same bringIntoView
