@@ -354,6 +354,9 @@ jobs:
       - name: 🧪 test_dedup_fold.py
         run: python3 -S Fast_Fetch/test_dedup_fold.py
 
+      - name: 🧪 test_onepiece_identity_fold.py
+        run: python3 -S Fast_Fetch/test_onepiece_identity_fold.py
+
       - name: 🧪 test_evidence_writeback.py
         run: python3 -S Fast_Fetch/test_evidence_writeback.py
 

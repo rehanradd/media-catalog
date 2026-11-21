@@ -1925,8 +1925,15 @@ class ContractGuardTests(CatalogApiTestCase):
         cursor = catalog_api.encode_cursor(sort_value=42, work_id=7, sort="quality",
                                           order="desc", fingerprint="abc123")
         decoded = catalog_api.decode_cursor(cursor)
+        # "e" is the sort-expression version (0 = every `_sort_expr`
+        # order; 1 = the relevance expression a text search orders by).
         self.assertEqual(decoded, {"v": 42, "i": 7, "s": "quality", "o": "desc",
-                                   "f": "abc123"})
+                                   "f": "abc123", "e": 0})
+        self.assertEqual(catalog_api.decode_cursor(
+            catalog_api.encode_cursor(sort_value=126, work_id=7344,
+                                      sort="trending", order="desc",
+                                      fingerprint="abc123",
+                                      expr_version=1))["e"], 1)
         self.assertIsNone(catalog_api.decode_cursor("%%%"))
         self.assertIsNone(catalog_api.decode_cursor(""))
 
@@ -2414,6 +2421,188 @@ class SearchDedupTests(CatalogApiTestCase):
         self.assertEqual(catalog_api._dedupe_search_items(single), single)
         broken = [{"title": "No id here"}]
         self.assertEqual(catalog_api._dedupe_search_items(broken), broken)
+
+
+class OnePieceIdentityUnitTests(unittest.TestCase):
+    """One Piece identity cluster, 21 Nov 2026 — hand-built :memory: DB.
+
+    The pipeline fixtures above cannot mint the exact trending /
+    relevance split the live cluster has (work 7344: relevance 126,
+    trending 236; a prefix match: relevance 81, trending 237.4), so
+    these tests insert the projection rows directly, with the live
+    works' ids, titles, years and scores. The values below are the
+    live ones, reduced: trending = stream*40 + download*10 + sites*15
+    + min(prints,40)*2 + bqs/10 + min(eps,100); relevance is
+    `_relevance()` — exact title 100, prefix 60, containment 40,
+    all-tokens 20, bqs//100. D's title starts with the query, so it
+    scores prefix (83) above C's containment (64).
+    """
+
+    def setUp(self):
+        self.conn = sqlite3.connect(":memory:")
+        self.conn.row_factory = sqlite3.Row
+        catalog_api._register_udfs(self.conn)
+        self.conn.execute(
+            "CREATE TABLE cat_works (id INTEGER PRIMARY KEY, title TEXT,"
+            " original_title TEXT, genres TEXT, is_18_plus INTEGER DEFAULT 0,"
+            " year INTEGER, work_type TEXT, is_animated INTEGER DEFAULT 0,"
+            " imdb_rating REAL, languages TEXT, country TEXT, industry TEXT,"
+            " site_count INTEGER DEFAULT 0, episode_count INTEGER DEFAULT 0,"
+            " release_count INTEGER DEFAULT 0, max_resolution TEXT,"
+            " best_quality_score INTEGER DEFAULT 0,"
+            " available_stream INTEGER DEFAULT 0,"
+            " available_download INTEGER DEFAULT 0,"
+            " identity_suspect INTEGER DEFAULT 0, entitlement_model TEXT,"
+            " first_seen_at REAL, updated_at REAL, work_key TEXT,"
+            " imdb_id TEXT, tmdb_id TEXT, synopsis TEXT, poster_url TEXT,"
+            " backdrop_urls TEXT, runtime_minutes INTEGER, tvdb_id TEXT,"
+            " source_rev INTEGER)")
+        self.conn.execute(
+            "CREATE TABLE cat_work_aliases (work_id INTEGER, alias TEXT,"
+            " locale TEXT, source_site TEXT, kind TEXT,"
+            " PRIMARY KEY (work_id, alias, source_site))")
+        self.conn.execute(
+            "CREATE TABLE cat_seasons (id INTEGER PRIMARY KEY,"
+            " work_id INTEGER, number INTEGER, season_type TEXT)")
+        self.conn.execute(
+            "CREATE TABLE cat_review_queue (id INTEGER PRIMARY KEY,"
+            " work_id INTEGER, release_id INTEGER, kind TEXT, detail TEXT,"
+            " resolved_at REAL)")
+        self.conn.execute(
+            "CREATE TABLE cat_links (id INTEGER PRIMARY KEY,"
+            " work_id INTEGER, release_id INTEGER, state TEXT,"
+            " playability TEXT)")
+        # (id, title, year, work_type, sites, prints, bqs, eps)
+        # A = work 7344, B = work 7345, C = the Lego prefix match,
+        # D = a One Piece film. Trending: C 245 > B 233 > A 161.5 > D 130.
+        # Relevance: A 126 > B 125 > D 83 > C 64.
+        works = [
+            (7344, "One Piece", 2026, "series", 1, 17, 605, 2),
+            (7345, "One Piece", 2023, "series", 3, 44, 580, 0),
+            (61, "Lego One Piece (TV Mini Series)", 2026, "anime", 5, 32, 400, 16),
+            (65809, "One Piece The Movie (2000) Dual Audio", 2000, "movie",
+             2, 10, 300, 0),
+        ]
+        for wid, title, year, wtype, sites, prints, bqs, eps in works:
+            self.conn.execute(
+                "INSERT INTO cat_works (id, title, year, work_type,"
+                " site_count, release_count, best_quality_score,"
+                " episode_count, available_stream, available_download,"
+                " work_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?)",
+                (wid, title, year, wtype, sites, prints, bqs, eps,
+                 f"{wtype}:{title}:{year}"))
+        self.conn.commit()
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_same_title_work_beats_a_higher_trending_prefix_match(self):
+        # Before the fix the page was cut by trending, so limit=1
+        # returned the Lego prefix match (trending 245) and the exact
+        # title work 7344 (relevance 126, trending 161.5) never appeared.
+        found = catalog_api.search(self.conn, q="one piece", limit=1)
+        self.assertEqual([item["id"] for item in found["items"]], [7344])
+        self.assertEqual(found["items"][0]["relevance"], 126)
+
+    def test_top_rows_are_stable_across_limits(self):
+        # The same query at limit 2, 5 and 10 must agree on the first
+        # two rows: the top-N is a prefix of the top-M. Before the fix
+        # limit=2 returned the trending leaders and limit=10 re-sorted
+        # a different set, so 7344 appeared at one limit and not the other.
+        small = catalog_api.search(self.conn, q="one piece", limit=2)
+        wide = catalog_api.search(self.conn, q="one piece", limit=10)
+        self.assertEqual([item["id"] for item in small["items"]],
+                         [7344, 7345])
+        self.assertEqual([item["id"] for item in wide["items"]][:2],
+                         [7344, 7345])
+        self.assertEqual(
+            [item["relevance"] for item in wide["items"]],
+            [126, 125, 83, 64])
+
+    def test_relevance_cursor_pages_without_repeating_or_skipping(self):
+        first = catalog_api.search(self.conn, q="one piece", limit=2)
+        self.assertTrue(first["has_more"])
+        second = catalog_api.search(
+            self.conn, q="one piece", limit=2, cursor=first["next_cursor"])
+        self.assertEqual([item["id"] for item in second["items"]],
+                         [65809, 61])
+        self.assertEqual(
+            {item["id"] for item in first["items"]}
+            & {item["id"] for item in second["items"]}, set())
+
+    def test_cursor_from_the_old_trending_order_is_rejected(self):
+        # A cursor minted before the relevance order carries a trending
+        # sort value (version 0); paging from it under the relevance
+        # expression would skip or repeat rows, so it is rejected.
+        import base64
+        import json
+        first = catalog_api.search(self.conn, q="one piece", limit=2)
+        raw = json.loads(base64.urlsafe_b64decode(
+            first["next_cursor"] + "=" * (-len(first["next_cursor"]) % 4)))
+        self.assertEqual(raw["e"], 1)
+        raw["e"] = 0
+        old = base64.urlsafe_b64encode(
+            json.dumps(raw, sort_keys=True).encode("utf-8")
+        ).decode("ascii").rstrip("=")
+        rejected = catalog_api.search(
+            self.conn, q="one piece", limit=2, cursor=old)
+        self.assertFalse(rejected["ok"])
+        self.assertEqual(rejected["error"]["code"], "cursor_invalid")
+
+    def test_misparsed_label_mints_no_phantom_episode(self):
+        # Release 172681 live: "One Piece (2026) 1080P [3.9GB] WEB-DL",
+        # single_episode, season NULL, no stored range. Before the fix
+        # its coverage read episode_first=1080, episode_last=2026 and
+        # its play-ladder scope was (None, 1080) — a phantom episode.
+        release = {
+            "id": 172681, "work_id": 7344,
+            "label": "One Piece (2026) 1080P [3.9GB] WEB-DL",
+            "episode_range": "", "coverage_type": "single_episode",
+            "season_number": None, "part_number": None,
+            "resolution": "1080p", "quality_label": "Full HD",
+            "source_tag": "unknown", "codec": "h264", "bit_depth": 8,
+            "hdr": "[]", "container": "mkv", "edition": "unknown",
+            "print_version": 1, "release_group": None,
+            "size_bytes": 3900000000, "size_per_episode_bytes": 0,
+            "audio_languages": '["Hindi", "English"]',
+            "audio_channels": "5.1", "audio_codecs": '["dd"]',
+            "dual_audio": 1, "subtitle_mode": "external",
+            "subtitle_languages": '["English"]', "watermarked": 0,
+            "flags": "[]", "quality_score": 605,
+        }
+        view = catalog_api._print_view(None, release, {}, "One Piece")
+        self.assertIsNone(view["coverage"]["episode_first"])
+        self.assertIsNone(view["coverage"]["episode_last"])
+        self.assertEqual(catalog_api._print_scope(view), (None, None))
+
+    def test_genuine_ranges_and_episodes_still_parse(self):
+        # The strict parse must not throw out real ranges or episodes
+        # along with the resolution numbers.
+        ranged = {
+            "id": 1, "work_id": 1, "label": "Flip (2023) WEB-DL E01-04",
+            "episode_range": "1-4", "coverage_type": "episode_range",
+            "season_number": 2, "part_number": None,
+            "resolution": "1080p", "quality_label": "Full HD",
+            "source_tag": "unknown", "codec": "h264", "bit_depth": 8,
+            "hdr": "[]", "container": "mkv", "edition": "unknown",
+            "print_version": 1, "release_group": None, "size_bytes": 0,
+            "size_per_episode_bytes": 0, "audio_languages": "[]",
+            "audio_channels": None, "audio_codecs": "[]", "dual_audio": 0,
+            "subtitle_mode": "none", "subtitle_languages": "[]",
+            "watermarked": 0, "flags": "[]", "quality_score": 100,
+        }
+        view = catalog_api._print_view(None, ranged, {}, "Flip")
+        self.assertEqual((view["coverage"]["episode_first"],
+                          view["coverage"]["episode_last"]), (1, 4))
+        self.assertEqual(catalog_api._print_scope(view), (2, "range:1-4"))
+        single = dict(ranged, id=2,
+                      label="Flip S02E05 (2023) 1080p WEB-DL",
+                      episode_range="", coverage_type="single_episode")
+        view = catalog_api._print_view(None, single, {}, "Flip")
+        self.assertEqual((view["coverage"]["episode_first"],
+                          view["coverage"]["episode_last"]), (5, 5))
+        self.assertEqual(catalog_api._print_scope(view), (2, 5))
+
 
 class PlaceholderValueTests(unittest.TestCase):
     """Dev-cleanup (2026-11-18, C1–C3, C5): the shared placeholder /

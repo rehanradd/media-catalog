@@ -322,6 +322,47 @@ def _detect_episode_range(text: str) -> str:
     return ""
 
 
+def episode_range_bounds(text: str) -> tuple[int, int]:
+    """(lo, hi) the episode range — or the one episode — `text` names, else (0, 0).
+
+    The same parse the projector mints `episode_range` from, in the same
+    order, so a read layer using this can never claim a range the
+    projection did not mint:
+
+    1. a stored ``"N-M"`` pair (the minted format — the whole text is
+       just the pair), both ends 1..999;
+    2. an explicit range — ``SxxEyy-zz``, ``Ep``/``E`` ``x-y``, or a
+       bracketed ``(x-y)`` — both ends 1..999;
+    3. one episode marker — ``SxxEyy`` / ``Eyy`` / ``Episode yy`` —
+       as ``(ep, ep)``, 1..999. The ``^``-anchored first pattern reads
+       the explicit episode column, which is empty here, exactly as
+       `describe` does when the ledger carries no episode column.
+
+    A bare label's other numbers are NOT an episode range: ``"One
+    Piece (2026) 1080P [3.9GB] WEB-DL"`` used to read ``(1080, 2026)``
+    and mint a phantom episode 1080 in the play ladder. Resolution
+    (1080p), year (2026) and size (3.9GB) never match an arm above.
+
+    Episodes >= 1000 never parse here — the 1..999 bound is shared
+    with the projector and the app, so the wire, the stored range and
+    the client agree; lifting it is a separate fix across all three,
+    not a silent widening here.
+    """
+    clean = _squash(text or "")
+    if not clean:
+        return 0, 0
+    pair = re.fullmatch(r"(\d{1,3})\s*-\s*(\d{1,3})", clean)
+    if pair:
+        lo, hi = int(pair.group(1)), int(pair.group(2))
+        return min(lo, hi), max(lo, hi)
+    ranged = _detect_episode_range(clean)
+    if ranged:
+        lo, hi = ranged.split("-", 1)
+        return int(lo), int(hi)
+    episode = _detect_index("", clean, _EPISODE_PATTERNS, 999)
+    return (episode, episode) if episode else (0, 0)
+
+
 def _detect_index(column: str, text: str, patterns, limit: int) -> int:
     """First number the explicit column names, then the label; 0 means none."""
     for field, pattern in zip((column, text, text, text), patterns):

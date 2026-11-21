@@ -7,7 +7,7 @@
 
 ## ✅ Open items — index (q3, 2026-10-30; pointers only)
 
-1. **This file is a pointer, not a history** 148 session files (145 dated + 3 undated) cover
+1. **This file is a pointer, not a history** 149 session files (146 dated + 3 undated) cover
 
    every one of them verbatim: [`checkpoints/README.md`](checkpoints/README.md). Nothing was
    deleted, reworded, or summarized. The count is `ls Fast_Fetch/checkpoints/*.md` minus `README.md`,
@@ -71,10 +71,9 @@
 ## Rotated session history
 
 The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete index.
+- **2026-11-21 — One Piece identity cluster:** catalog_api read "One Piece (2026) 1080P" as eps 1080–2026 and _print_scope minted phantom seasons; search cut the page by trending before relevance re-sort (7344 missed a 5-row page). Fix: release_descriptor.episode_range_bounds (projector's parse) + SQL relevance ordering with a versioned cursor. Migration onepiece_identity_fold.sql (gate-owned, unrun): 7344/7345/1242 → 69654, 307 → 58940; 21 posts. Tests: catalog_api 177/177, onepiece_identity_fold 8/8 (new) + CI step. Full note: `20261121-onepiece-identity.md`.
 - **2026-11-21 — Registry §2 (MovieBox + wp_family):** probed live from the Oracle VM: themoviebox.xyz 200, aoneroom POST /subject/filter 200, moviehax/animeworld/hindidubbedmovies/hindianimeszone 200 + sitemaps/wp-json 200, thebollyflix.gen.in -> io.in (403 Cloudflare, unverifiable). Registries 27->33 sites, 42->49 hosts (45 live, rows 1,415,996). New radd-domain-probe timer daily 10:30, own timer. Nginx DRAFT header removed (lines 1-32), no reload. Panel: 9xmovies REAL move (to 9xmovie.cologne); other 4 stale/false positives. Importer registry wiring still open.
 - **2026-11-21 — bbupload resolver (getdownload ajax):** `_unwrap_bbupload` (bridge page → GET /ajax.php?action=getdownload&data=<slug> → superduperload.site/get/<token>; no cookie/wait/captcha; null FileName/filesize = dead_file; superduperload URL passes through). `classify_probe` now accepts video magic under ANY non-HTML mime (the file host answers image/png on genuine Matroska bytes) — real PNGs still unverified. Registered in STAGE1_BACKENDS, preference lists, classify_backend, fast_fetch tuples, host_classifier (bridge + direct-file rows, service labels; AND rule: bridge row caps B, resolved file mints A). Tests: test_current_hosts 33→51, test_probe_classify 18→23, test_host_classifier 75→77. Live proof (Oracle egress): resolve_copy ok on BG863REX + 1UPSHVRN (file, video/x-matroska, resumable=False) and on the minted superduperload URL; one transient html_shell on 1UPSHVRN, passed on re-run.
-- **2026-11-21 — 1fichier TrueLink port (stdlib-only, fixture tests):** `truelink_1fichier.py` `_unwrap_1fichier` (GET page → POST hidden form a=1 → scrape `a.btn-general`; 404 = dead_file, 403 = blocked, warnings → wait/bad_password/premium/needs_password/needs_validation). Port of TrueLink 1.4.8 fichier.py + nurlresolver fichier.js. No registration edits (parent wires it after the bbupload lane lands). Tests: test_truelink_1fichier 25/25 offline; CI step added. Live proof waits on the WARP-in-production decision (Oracle IP locked #350, never probed).
-- **2026-11-21 — Duration backfill newest-first:** select_batch orders (kind='playlist') DESC, resolved_at DESC, link_id (NULL resolved_at sorts last). Batch 1 probed oldest-first: 5% yield, 75/100 HTTP 410; prototype newest-first got 60%. Fixture + new test_newest_resolved_first_within_kind; two RunTests re-based, assertions unchanged. test_duration_backfill 67/67 green; pre-push pass. Batch 2 next on staging copy.
 ## Moved out (reference prose, verbatim)
 
 - ✍️ Incoming Agent Checklist → `../docs/SPEC_INCOMING_AGENT_CHECKLIST.md` (294 lines) — the onboarding procedure, unchanged

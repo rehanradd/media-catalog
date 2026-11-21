@@ -416,6 +416,72 @@ class ReleaseDescriptorTests(unittest.TestCase):
         self.assertEqual(rd.describe("Chernobyl (2019) 1080p WEB-DL Mini Series")[
             "scope"], "miniseries")
 
+    def test_episode_range_bounds_agrees_with_describe(self):
+        """`episode_range_bounds` is the read layer's view of `describe`.
+
+        One Piece 21 Nov 2026: the old first-two-numbers parse read
+        ``(1080, 2026)`` off ``"One Piece (2026) 1080P [3.9GB] WEB-DL"``
+        and minted a phantom episode 1080 in the play ladder. Resolution,
+        year and size numbers are not an episode range; only a stored
+        pair, an explicit range, or one episode marker counts.
+        """
+        cases = {
+            # Stored pairs (the minted format) pass through as-is.
+            "1-12": (1, 12),
+            "01-06": (1, 6),
+            "1-6": (1, 6),
+            # Explicit ranges.
+            "Flip (2023) WEB-DL E01-04": (1, 4),
+            "Flip (2023) EP(07-12) WEB-DL": (7, 12),
+            "Flip S04E01 to E06 WEB-DL": (1, 6),
+            # One episode marker reads as (ep, ep).
+            "Flip S02E05 (2023) 1080p WEB-DL": (5, 5),
+            "One Piece Episode 5 1080p": (5, 5),
+            # The One Piece negatives: resolution / year / size are not episodes.
+            "One Piece (2026) 1080P [3.9GB] WEB-DL": (0, 0),
+            "One Piece (2026) 720P [4GB] WEB-DL": (0, 0),
+            "One Piece 2026 S02 Complete NF Dual Audio Hindi (ORG 5.1) "
+            "1080p 720p 480p WEB-DL x264 Multi Subs": (0, 0),
+            "One Piece S2": (0, 0),
+            "": (0, 0),
+            "1080p": (0, 0),
+            "2026": (0, 0),
+            # A 4-digit episode is beyond the shared 1..999 bound.
+            "One Piece Episode 1080 1080p": (0, 0),
+        }
+        for label, expected in cases.items():
+            with self.subTest(label=label):
+                self.assertEqual(rd.episode_range_bounds(label), expected)
+        self.assertEqual(rd.episode_range_bounds(None), (0, 0))
+        # The truncation is the projector's own behaviour, pinned here
+        # rather than hidden: "E1-E4000" reads its second number as the
+        # three digits "400", so describe() mints "1-400" and the bounds
+        # agree with it instead of inventing a second rule.
+        self.assertEqual(rd.episode_range_bounds("E1-E4000"), (1, 400))
+        self.assertEqual(rd.describe("E1-E4000")["episode_range"], "1-400")
+        # Property: for every label, the bounds are exactly what
+        # describe() (empty episode column, as the read layer has) says.
+        # The bare stored pairs are excluded here on purpose: describe()
+        # never sees a bare pair as input (it mints it), so only the
+        # explicit cases above pin that arm.
+        labels = [label for label in cases
+                  if label not in ("1-12", "01-06", "1-6")] + [
+            "Campus Beats (2026) Hindi ORG S07EP(01-06) Web Series HDRip",
+            "Lucifer S04 (2019) (Hindi + English) Dual Audio Completed",
+            "Dune (2021) 2160p DV HDR10+ WEB-DL",
+        ]
+        for label in labels:
+            parsed = rd.describe(label)
+            if parsed["episode_range"]:
+                lo, hi = parsed["episode_range"].split("-", 1)
+                expected = (int(lo), int(hi))
+            elif parsed["episode"]:
+                expected = (parsed["episode"], parsed["episode"])
+            else:
+                expected = (0, 0)
+            with self.subTest(label=label):
+                self.assertEqual(rd.episode_range_bounds(label), expected)
+
     def test_every_watermark_marker_is_recognised(self):
         for marker in rd.WATERMARK_MARKERS:
             p = rd.describe(f"Masaan (2015) 1080p WEB-DL x265 {marker}")

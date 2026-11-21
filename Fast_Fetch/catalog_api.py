@@ -59,6 +59,7 @@ import catalog_v2
 import did_you_mean
 import mood_search
 import redact
+import release_descriptor
 import subtitle_tracks
 import tiers
 import title_clean
@@ -293,19 +294,17 @@ def _clamp_limit(limit, default=DEFAULT_LIMIT, ceiling=MAX_LIMIT) -> int:
 
 
 def _episode_range_bounds(text) -> tuple[int, int]:
-    """(lo, hi) from '1-6', 'EP(01-06)', 'E1-E4000', '' — (0, 0) when unparseable."""
-    if text in (None, ""):
-        return 0, 0
-    numbers = re.findall(r"\d+", str(text))
-    if not numbers:
-        return 0, 0
-    lo = int(numbers[0])
-    hi = int(numbers[1]) if len(numbers) > 1 else lo
-    if hi < lo:
-        lo, hi = hi, lo
-    if hi - lo > 2000:
-        return lo, lo
-    return lo, hi
+    """(lo, hi) the episode range — or the one episode — the label names.
+
+    One definition of "episode range" for the whole read layer: the
+    projector's own parse (`release_descriptor.episode_range_bounds`),
+    so the wire can never claim a range the projection did not mint.
+    The previous first-two-numbers read took resolution, year and size
+    numbers as episodes — "One Piece (2026) 1080P [3.9GB] WEB-DL"
+    read (1080, 2026) and minted a phantom episode 1080 in the play
+    ladder (`_print_scope`) and in episode matching.
+    """
+    return release_descriptor.episode_range_bounds(text or "")
 
 
 def _adult_clause(alias: str) -> str:
@@ -400,9 +399,17 @@ def _fingerprint(where_sql: str, params: dict) -> str:
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:12]
 
 
-def encode_cursor(*, sort_value, work_id: int, sort: str, order: str, fingerprint: str) -> str:
+def encode_cursor(*, sort_value, work_id: int, sort: str, order: str, fingerprint: str,
+                  expr_version: int = 0) -> str:
+    # "e" is the sort-expression version: 0 is every `_sort_expr` order,
+    # 1 is the relevance expression a text search orders by. A cursor
+    # minted under one expression cannot page under the other — its
+    # sort value belongs to a different scale — so `_run_listing`
+    # rejects a version mismatch exactly as it rejects a fingerprint
+    # mismatch. Cursors minted before this field existed carry no "e"
+    # and read as 0, which is the version their order still is.
     raw = json.dumps({"v": sort_value, "i": int(work_id), "s": sort, "o": order,
-                      "f": fingerprint}, sort_keys=True)
+                      "f": fingerprint, "e": int(expr_version)}, sort_keys=True)
     return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii").rstrip("=")
 
 
@@ -452,6 +459,52 @@ def _sort_expr(sort: str) -> str:
         "title": "radd_norm(COALESCE(w.title, ''))",
         "updated": "COALESCE(w.updated_at, 0)",
     }[sort]
+
+
+def _relevance_expr(query_norm: str, tokens: list[str], params: dict) -> str:
+    """SQL mirror of `_relevance()`: the sort expression a text search orders by.
+
+    One Piece 21 Nov 2026: the page used to be cut by trending and only
+    then re-sorted by relevance in Python, so a same-title work with the
+    #2 relevance score but a mid trending score (work 7344: relevance
+    126, trending 236) missed a 5-row page that a lower-relevance work
+    (relevance 81, trending 237.4) took by 1.4 points — the same query
+    returned different top rows at limit 5 and limit 50. Ordering by
+    this expression in SQL makes the top-N a prefix of the top-M for
+    any N < M, and the Python re-sort below it becomes a re-assertion
+    of the same order instead of a second, contradictory one.
+
+    The arms match `_relevance()` term for term: exact title (or title
+    + year) 100, prefix 60, containment 40, else 10; +20 when every
+    token is in the title; quality capped at 1000 and integer-divided
+    by 100; rating doubled and rounded. Two deliberate notes: the
+    rating term uses SQLite `ROUND`, which rounds halves away from
+    zero while Python's `round` rounds them to even — the two can only
+    differ on an exact .5 of rating*2, which a one-decimal IMDb rating
+    can never produce; and `radd_norm` is the `normalize_text` UDF,
+    so the SQL title is the same string `_relevance()` scores.
+    The expression is total and never NULL (every arm COALESCEs), so
+    the keyset comparison and the fixed `id ASC` tiebreak still hold.
+    """
+    params["rqn"] = query_norm
+    token_terms = []
+    for index, token in enumerate(tokens):
+        key = f"rqt{index}"
+        params[key] = token
+        token_terms.append(f"instr(radd_norm(w.title), :{key}) > 0")
+    all_tokens = " AND ".join(token_terms) if token_terms else "1"
+    return (
+        "(CASE"
+        " WHEN radd_norm(w.title) = :rqn"
+        " OR TRIM(radd_norm(w.title) || ' '"
+        " || COALESCE(CAST(w.year AS TEXT), 'None')) = :rqn THEN 100"
+        " WHEN instr(radd_norm(w.title), :rqn) = 1 THEN 60"
+        " WHEN instr(radd_norm(w.title), :rqn) > 0 THEN 40"
+        " ELSE 10 END"
+        f" + CASE WHEN {all_tokens} THEN 20 ELSE 0 END"
+        " + CAST(MIN(COALESCE(w.best_quality_score, 0), 1000) AS INTEGER) / 100"
+        " + ROUND(COALESCE(w.imdb_rating, 0) * 2))"
+    )
 
 
 # ── facet filters (shared by browse + search) ────────────────────────────────
@@ -1410,6 +1463,15 @@ def _run_listing(conn, *, sort, order, limit, include_adult, cursor,
     clauses.extend(facet_clauses)
     params = dict(facet_params)
     expr = _sort_expr(sort)
+    # A text search orders by relevance, not by trending: `_relevance_expr`
+    # is the SQL mirror of `_relevance()`, applied here so the LIMIT cuts
+    # the relevance order instead of cutting trending and re-sorting
+    # afterwards (see `_relevance_expr`). A plain browse keeps its
+    # `_sort_expr` order and version 0.
+    expr_version = 0
+    if query_norm:
+        expr = _relevance_expr(query_norm, query_tokens, params)
+        expr_version = 1
 
     like_clauses: list[str] = []
     if query_tokens:
@@ -1429,6 +1491,16 @@ def _run_listing(conn, *, sort, order, limit, include_adult, cursor,
         # rows, so it is rejected instead of trusted.
         return {"ok": False, "error": {"code": "cursor_invalid",
                                        "message": "Cursor belongs to a different filter set"}}
+    if cursor is not None:
+        cursor_expr_version = cursor.get("e", 0)
+        if not isinstance(cursor_expr_version, int) or isinstance(cursor_expr_version, bool):
+            cursor_expr_version = 0
+        if cursor_expr_version != expr_version:
+            # A cursor minted under the other sort expression carries a
+            # sort value on a different scale; paging from it would skip
+            # or repeat rows, so it is rejected instead of trusted.
+            return {"ok": False, "error": {"code": "cursor_invalid",
+                                           "message": "Cursor belongs to a different sort order"}}
 
     if query_tokens and use_fts_match:
         # The FTS clause replaces the LIKEs for execution (the fingerprint
@@ -1489,10 +1561,18 @@ def _run_listing(conn, *, sort, order, limit, include_adult, cursor,
             (SELECT COUNT(*) FROM cat_review_queue q WHERE q.work_id = w.id
               AND q.resolved_at IS NULL) AS open_reviews
         """ + "," + _AVAIL_COLS
-        marks = ", ".join("?" for _ in page_ids)
+        # Named id marks, not "?": the sort expression may itself carry
+        # named parameters (the relevance expression binds :rqn/:rqtN),
+        # and one statement cannot mix positional with named bindings.
+        # The extra keys in `params` (LIKE, FTS, keyset) are ignored
+        # here — sqlite3 only binds the names the statement uses.
+        marks = ", ".join(f":pid{i}" for i in range(len(page_ids)))
+        step2_params = dict(params)
+        step2_params.update({f"pid{i}": pid
+                             for i, pid in enumerate(page_ids)})
         rows = conn.execute(
             f"SELECT {select_cols}, {expr} AS __sk FROM cat_works w"
-            f" WHERE w.id IN ({marks})", page_ids).fetchall()
+            f" WHERE w.id IN ({marks})", step2_params).fetchall()
         # Step 2 has no ORDER BY: impose the step-1 page order in Python.
         by_id = {int(r["id"]): r for r in rows}
         rows = [by_id[pid] for pid in page_ids if pid in by_id]
@@ -1511,7 +1591,8 @@ def _run_listing(conn, *, sort, order, limit, include_adult, cursor,
     next_cursor = None
     if has_more and rows:
         next_cursor = encode_cursor(sort_value=rows[-1]["__sk"], work_id=rows[-1]["id"],
-                                   sort=sort, order=order, fingerprint=fingerprint)
+                                   sort=sort, order=order, fingerprint=fingerprint,
+                                   expr_version=expr_version)
     count_params = {key: value for key, value in params.items()
                     if key not in ("lim", "cv", "cid")}
     # 2026-11-15, search speed: the exact COUNT re-scans the whole match set
