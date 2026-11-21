@@ -135,8 +135,8 @@ class EnhancementAudioProcessorTest {
         val out = feedPcm16(processor, samples)
         assertEquals(samples.size * 2, out.size)
         samples.forEachIndexed { i, (s, _) ->
-            assertEquals("sample $i", s.toInt(), out[i * 2].toInt(), 4)
-            assertEquals("sample $i right", s.toInt(), out[i * 2 + 1].toInt(), 4)
+            assertEquals("sample $i", s.toLong(), out[i * 2].toLong(), 4L)
+            assertEquals("sample $i right", s.toLong(), out[i * 2 + 1].toLong(), 4L)
         }
     }
 
@@ -153,7 +153,7 @@ class EnhancementAudioProcessorTest {
         // (it would catch a missing gain, off by ~16,000 LSB).
         samples.forEachIndexed { i, (s, _) ->
             val expected = ((s / 32768f * 2f).coerceIn(-1f, 1f) * 32767f).toInt()
-            assertEquals("sample $i", expected, out[i * 2].toInt(), 40)
+            assertEquals("sample $i", expected.toLong(), out[i * 2].toLong(), 40L)
         }
     }
 
@@ -214,8 +214,8 @@ class EnhancementAudioProcessorTest {
         val out1 = drainShorts(processor)
         assertEquals(2, out1.size)
         // Tolerance is the old float tolerance (1e-4) in LSBs, plus 1 LSB.
-        assertEquals((0.25f * 32767).toInt(), out1[0].toInt(), 4)
-        assertEquals((-0.25f * 32767).toInt(), out1[1].toInt(), 4)
+        assertEquals((0.25f * 32767).toLong(), out1[0].toLong(), 4L)
+        assertEquals((-0.25f * 32767).toLong(), out1[1].toLong(), 4L)
         // The remaining 2 bytes complete the second frame.
         val second = ByteBuffer.allocate(2).order(ByteOrder.nativeOrder()).apply {
             putShort((-0.5f * 32767).toInt().toShort())
@@ -224,8 +224,8 @@ class EnhancementAudioProcessorTest {
         processor.queueInput(second)
         val out2 = drainShorts(processor)
         assertEquals(2, out2.size)
-        assertEquals((0.5f * 32767).toInt(), out2[0].toInt(), 4)
-        assertEquals((-0.5f * 32767).toInt(), out2[1].toInt(), 4)
+        assertEquals((0.5f * 32767).toLong(), out2[0].toLong(), 4L)
+        assertEquals((-0.5f * 32767).toLong(), out2[1].toLong(), 4L)
     }
 
     @Test
@@ -236,8 +236,8 @@ class EnhancementAudioProcessorTest {
         // After a seek the old state is a thump, not continuity: silence
         // in must be silence out, from the very first sample.
         val out = feedPcm16(processor, listOf(0.toShort() to 0.toShort()))
-        assertEquals(0, out[0].toInt())
-        assertEquals(0, out[1].toInt())
+        assertEquals(0L, out[0].toLong())
+        assertEquals(0L, out[1].toLong())
     }
 
     @Test
@@ -247,8 +247,8 @@ class EnhancementAudioProcessorTest {
         processor.setSettings(AudioEnhancementSettings(dspGain = 2f))
         val out = feedPcm16(processor, listOf(16384.toShort() to 16384.toShort()))
         // Half scale at 200% is full scale: 16384/32768 * 2 = 1.0 → 32767.
-        assertEquals(32767, out[0].toInt(), 2)
-        assertEquals(32767, out[1].toInt(), 2)
+        assertEquals(32767L, out[0].toLong(), 2L)
+        assertEquals(32767L, out[1].toLong(), 2L)
     }
 
     @Test(expected = AudioProcessor.UnhandledAudioFormatException::class)

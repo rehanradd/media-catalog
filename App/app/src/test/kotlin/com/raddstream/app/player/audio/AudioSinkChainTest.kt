@@ -7,9 +7,7 @@ import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.SonicAudioProcessor
 import androidx.media3.common.audio.ToInt16PcmAudioProcessor
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.exoplayer.audio.ChannelMappingAudioProcessor
 import androidx.media3.exoplayer.audio.SilenceSkippingAudioProcessor
-import androidx.media3.exoplayer.audio.TrimmingAudioProcessor
 import com.google.common.collect.ImmutableList
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -34,6 +32,13 @@ import org.robolectric.RobolectricTestRunner
  * audio-bearing title failed with `ERROR_CODE_AUDIO_TRACK_INIT_FAILED`,
  * on every device. These tests pin that the pipeline configures cleanly
  * for both decoder paths and stays 16-bit end to end.
+ *
+ * The sink's full int pipeline is `[ToInt16, ChannelMapping, Trimming,
+ * Enhancement, Delay, SilenceSkipping, Sonic]` — ChannelMapping and
+ * Trimming are omitted here because they are package-private in Media3
+ * 1.3.1 and not instantiable from a test; both pass stereo through
+ * unchanged (no channel map set, no trim), so the chain below is the
+ * faithful one for the stereo case.
  */
 @OptIn(UnstableApi::class)
 @RunWith(RobolectricTestRunner::class)
@@ -42,15 +47,13 @@ class AudioSinkChainTest {
     private val sampleRate = 48_000
     private val channels = 2
 
-    /** The sink's int pipeline, in the sink's order. */
+    /** The sink's int pipeline, in the sink's order (see the class doc). */
     private fun sinkPipeline(): AudioProcessingPipeline {
         val enhancement = EnhancementAudioProcessor()
         enhancement.setSettings(AudioEnhancementSettings.DEFAULT)
         return AudioProcessingPipeline(
             ImmutableList.of(
                 ToInt16PcmAudioProcessor(),
-                ChannelMappingAudioProcessor(),
-                TrimmingAudioProcessor(),
                 enhancement,
                 DelayAudioProcessor(),
                 SilenceSkippingAudioProcessor(),
