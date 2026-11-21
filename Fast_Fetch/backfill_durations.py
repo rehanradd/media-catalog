@@ -134,18 +134,34 @@ def current_load():
         return 0.0
 
 
-def service_active(name):
-    """True when a systemd service is active; False anywhere else.
+#: ``systemctl is-active`` states in which the unit's process is
+#: running (or starting/stopping) — for guard purposes all of them
+#: mean "yield". ``activating`` exits 3, the same code as ``inactive``,
+#: so an exit-code check alone misses a sweep that is still starting
+#: up; the state word has to be read from stdout.
+_ACTIVE_SERVICE_STATES = frozenset(
+    ("active", "activating", "reloading", "deactivating"))
 
-    A box without systemctl (a dev machine, a container) answers False —
+
+def service_active(name):
+    """True when a systemd service is running; False anywhere else.
+
+    The state word is read from ``systemctl is-active`` stdout
+    (stripped, case-insensitive). Only a genuinely stopped service —
+    ``inactive``, ``failed``, ``unknown`` — counts as inactive. A box
+    without systemctl (a dev machine, a container) answers False —
     the job simply has no neighbour to yield to there.
     """
     try:
-        return subprocess.run(
-            ["systemctl", "is-active", "--quiet", name],
-            check=False, timeout=10).returncode == 0
+        result = subprocess.run(
+            ["systemctl", "is-active", name],
+            check=False, timeout=10, capture_output=True, text=True)
     except (OSError, subprocess.SubprocessError):
         return False
+    state = (result.stdout or "").strip().lower()
+    if state:
+        return state in _ACTIVE_SERVICE_STATES
+    return result.returncode == 0
 
 
 def _proc_cmdlines():

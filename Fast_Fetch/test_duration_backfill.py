@@ -33,11 +33,13 @@ import tempfile
 import unittest
 import urllib.error
 from pathlib import Path
+from unittest import mock
 
 import backfill_durations
 import duration_probe
 from backfill_durations import (
-    _HostThrottle, check_guards, probe_one, run, select_batch)
+    _HostThrottle, check_guards, probe_one, run, select_batch,
+    service_active)
 from duration_probe import (
     parse_media_playlist, parse_master_playlist, parse_mkv, parse_mp4,
     probe_direct, probe_hls, probe_url)
@@ -1021,6 +1023,60 @@ class GuardTests(unittest.TestCase):
         reasons = check_guards(load=0.5, check_service=lambda n: False,
                                cmdlines=cmdlines)
         self.assertEqual(reasons, [])
+
+
+class ServiceActiveTests(unittest.TestCase):
+    """service_active() reads the state word, not the exit code.
+
+    Regression: ``systemctl is-active`` exits 3 for ``activating`` —
+    the same code as ``inactive`` — so the old ``returncode == 0``
+    check let a sweep that was still starting up slip past the guard
+    (2026-11-21 gate: the duration backfill dry-ran while the
+    fast_probe sweep was running).
+    """
+
+    def _fake_run(self, stdout, returncode=3):
+        result = mock.Mock()
+        result.stdout = stdout
+        result.returncode = returncode
+        return mock.patch.object(
+            backfill_durations.subprocess, "run",
+            return_value=result)
+
+    def test_active_is_active(self):
+        with self._fake_run("active\n", returncode=0):
+            self.assertTrue(service_active("radd-link-sweep.service"))
+
+    def test_activating_is_active(self):
+        with self._fake_run("activating\n", returncode=3):
+            self.assertTrue(service_active("radd-link-sweep.service"))
+
+    def test_activating_case_and_whitespace(self):
+        with self._fake_run("  Activating \n", returncode=3):
+            self.assertTrue(service_active("radd-link-sweep.service"))
+
+    def test_reloading_and_deactivating_are_active(self):
+        for state in ("reloading", "deactivating"):
+            with self._fake_run(state + "\n", returncode=3):
+                self.assertTrue(service_active("radd-link-sweep.service"))
+
+    def test_inactive_failed_unknown_are_inactive(self):
+        for state in ("inactive", "failed", "unknown"):
+            with self._fake_run(state + "\n", returncode=3):
+                self.assertFalse(
+                    service_active("radd-link-sweep.service"))
+
+    def test_empty_stdout_falls_back_to_exit_code(self):
+        with self._fake_run("", returncode=0):
+            self.assertTrue(service_active("radd-link-sweep.service"))
+        with self._fake_run("", returncode=3):
+            self.assertFalse(service_active("radd-link-sweep.service"))
+
+    def test_missing_systemctl_is_inactive(self):
+        with mock.patch.object(
+                backfill_durations.subprocess, "run",
+                side_effect=OSError("no systemctl")):
+            self.assertFalse(service_active("radd-link-sweep.service"))
 
 
 # ---------------------------------------------------------------- apply SQL
