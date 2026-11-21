@@ -1002,6 +1002,13 @@ jobs:
       - name: 🧪 test_current_hosts.py
         run: python3 -S Fast_Fetch/test_current_hosts.py
 
+      # 1fichier TrueLink port (2026-11-21): GET file page, POST its hidden
+      # form (a=1), scrape a.btn-general for the direct link. Offline —
+      # fixtures built from the TrueLink/nurlresolver reference selectors,
+      # no live probe (Oracle IP locked, #350).
+      - name: 🧪 test_truelink_1fichier.py
+        run: python3 -S Fast_Fetch/test_truelink_1fichier.py
+
       # Multiup mirror hub (Phase C, 2026-11-20): GET download page, POST its
       # CSRF token to /en/mirror/<id>, unwrap the best mirror (gofile, then
       # mixdrop). Offline — canned pages via the _http seam, stub resolvers.
