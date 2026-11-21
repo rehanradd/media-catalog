@@ -137,6 +137,10 @@ _HOST_TABLE: Tuple[Tuple[str, str, str], ...] = (
     ("gofile.io", CATEGORY_DIRECT_FILE, "gofile"),
     ("1fichier.com", CATEGORY_DIRECT_FILE, "1fichier"),
     ("megaup.net", CATEGORY_DIRECT_FILE, "megaup"),
+    # superduperload.site is bbupload's file host: the getdownload ajax
+    # mints https://superduperload.site/get/<token>, which serves the
+    # file itself (measured 2026-11-21, Oracle egress).
+    ("superduperload.site", CATEGORY_DIRECT_FILE, "bbupload"),
     ("vikingfile.com", CATEGORY_DIRECT_FILE, "vikingfile"),
     ("desiupload.co", CATEGORY_DIRECT_FILE, "desiupload"),
     ("hexload.com", CATEGORY_DIRECT_FILE, "hexload"),
@@ -184,6 +188,11 @@ _HOST_TABLE: Tuple[Tuple[str, str, str], ...] = (
     # gets the strict dotted marker — not the bare-label treatment the
     # documented TLD-rotating families get.
     ("hubcdn.io", CATEGORY_BRIDGE, "hubcdn"),
+    # download.bbupload.to is the bbupload file-page host: a stable
+    # registered domain (every catalog row uses it, no TLD rotation
+    # proven), so it gets the strict dotted marker — the bridge page
+    # needs the getdownload ajax to yield the superduperload file.
+    ("download.bbupload.to", CATEGORY_BRIDGE, "bbupload"),
     ("nexdrive", CATEGORY_BRIDGE, "nexdrive"),
     ("mobilejsr", CATEGORY_BRIDGE, "mobilejsr"),
     ("linkszilla", CATEGORY_BRIDGE, "linkszilla"),
@@ -238,6 +247,12 @@ _SERVICE_TABLE: Dict[str, Tuple[str, str]] = {
     # rule still caps an unresolved bridge-page row at B; only a row whose
     # final_url is a real file (after the resolver ran) mints A.
     "hubdrive": (CATEGORY_DIRECT_FILE, "hubdrive"),
+    # bbupload: same precedent — the label maps direct_file, but the AND
+    # rule still caps an unresolved bridge-page row at B; only a row whose
+    # final_url is a real file (after the resolver ran) mints A. The
+    # superduperload label is the file host the resolver mints.
+    "bbupload": (CATEGORY_DIRECT_FILE, "bbupload"),
+    "superduperload": (CATEGORY_DIRECT_FILE, "bbupload"),
     "gofile": (CATEGORY_DIRECT_FILE, "gofile"),
     "1fichier": (CATEGORY_DIRECT_FILE, "1fichier"),
     "megaup": (CATEGORY_DIRECT_FILE, "megaup"),

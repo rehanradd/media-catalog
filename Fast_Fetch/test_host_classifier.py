@@ -103,6 +103,15 @@ class TestCategoryA(unittest.TestCase):
         c = hc.classify("https://fastdlserver.site/f/abc")
         self.assertNotEqual(c.category, hc.CATEGORY_DIRECT_FILE)
 
+    def test_superduperload_is_bbupload_direct_file(self):
+        # The file host the bbupload getdownload ajax mints (measured
+        # 2026-11-21): a direct file under the bbupload backend.
+        c = hc.classify("https://superduperload.site/get/9f8e7d6c5b4a")
+        self.assertEqual(c.category, hc.CATEGORY_DIRECT_FILE)
+        self.assertEqual(c.letter, "A")
+        self.assertEqual(c.backend, "bbupload")
+        self.assertEqual(c.source, "host")
+
     def test_gofile_and_classic_hosts(self):
         for url, backend in (
             ("https://gofile.io/d/abc", "gofile"),
@@ -199,6 +208,7 @@ class TestCategoryC(unittest.TestCase):
             ("https://vegadrive.xyz/f/abc", "vegadrive"),
             ("https://direct-cloud.to/x", "direct-cloud"),
             ("https://vcloud.vote/embed-abc", "vcloud"),
+            ("https://download.bbupload.to/download?v=BG863REX", "bbupload"),
         )
         for url, backend in cases:
             with self.subTest(url=url):
@@ -400,6 +410,22 @@ class TestStoragePredicates(unittest.TestCase):
             _rc._derive_category({"service": "hubdrive"},
                                  "https://hubdrive.pics/file/123"), "B")
 
+    @unittest.skipUnless(HAS_RC, _RC_REASON)
+    def test_bbupload_service_label_maps_direct_file(self):
+        # Same precedent as hubdrive: the label maps direct_file, but
+        # an unresolved bridge-page row still caps at B — the AND rule
+        # needs a direct-file host too. A resolved superduperload row
+        # (label + file host agree) mints A.
+        self.assertTrue(hc.is_direct_file("", service="bbupload"))
+        self.assertTrue(hc.is_direct_file("", service="superduperload"))
+        self.assertEqual(
+            _rc._derive_category({"service": "bbupload"},
+                                 "https://download.bbupload.to/download?v=X"),
+            "B")
+        self.assertEqual(
+            _rc._derive_category({"service": "superduperload"},
+                                 "https://superduperload.site/get/abc"), "A")
+
     def test_is_bridge_category_scoped_to_C(self):
         self.assertFalse(hc.is_bridge_category("https://pixeldrain.com/u/X"))
         self.assertFalse(hc.is_bridge_category("https://unknown.example/x"))
@@ -517,6 +543,8 @@ class TestCategoryACrossCheckWithResolvedCache(unittest.TestCase):
          "SHAPE-REJECTED (order qoder14_viewerA): mega downloads need the "
          "client-side fragment key, which never reaches the server — even "
          "label+host agreement must not earn the 24h horizon."),
+        ("superduperload.site", "https://superduperload.site/get/abc",
+         "superduperload", "A", "label+host agree"),
     )
 
     # Degenerate single-evidence rows: each must cap at B, by verdict above.
@@ -545,7 +573,7 @@ class TestCategoryACrossCheckWithResolvedCache(unittest.TestCase):
         # suite stayed OK (illusion proven, then pinned). Counts are today's
         # literals; a deliberate row addition updates these numbers in the
         # same commit.
-        self.assertEqual(len(self.CROSS_CHECK), 18)
+        self.assertEqual(len(self.CROSS_CHECK), 19)
         self.assertEqual(len(self.SINGLE_EVIDENCE_ROWS), 7)
 
     def test_every_category_a_marker_has_a_cross_check_row(self):

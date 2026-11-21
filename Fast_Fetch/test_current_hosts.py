@@ -616,5 +616,226 @@ class HubdriveMegaupRegistryTests(unittest.TestCase):
         self.assertEqual(res["url"], MU_CDN)
 
 
+# ── bbupload (2026-11-21) ───────────────────────────────────────────────────
+
+BB_SAVED = "https://download.bbupload.to/download?v=BG863REX"
+BB_AJAX = ("https://download.bbupload.to/ajax.php"
+           "?action=getdownload&data=BG863REX")
+BB_FILE = "https://superduperload.site/get/9f8e7d6c5b4a"
+# Verbatim measured answers (Oracle VM egress, 2026-11-21): the live file
+# is Fall.2.Deadpoint.2026.1080p (4,212,416,206 bytes); a bogus slug
+# still answers status ok, with null name/size — the dead signal.
+BB_AJAX_OK = json.dumps({
+    "status": "ok",
+    "data": {"FileName": "Fall.2.Deadpoint.2026.1080p.CAMRip.HIN.ENG"
+                         ".1XBET.mkv",
+             "filesize": 4212416206, "downloadUrl": BB_FILE},
+})
+BB_AJAX_DEAD = json.dumps({
+    "status": "ok",
+    "data": {"FileName": None, "filesize": None,
+             "downloadUrl": "https://superduperload.site/get/deadbeef"},
+})
+BB_PAGE_WITH_SLUG = (
+    '<html><head><script>var slug = "1UPSHVRN";</script></head><body>'
+    "</body></html>"
+)
+BB_AJAX_1UP = ("https://download.bbupload.to/ajax.php"
+               "?action=getdownload&data=1UPSHVRN")
+BB_AJAX_1UP_OK = json.dumps({
+    "status": "ok",
+    "data": {"FileName": "Fall.2.Deadpoint.2026.720p.mkv",
+             "filesize": 610331802,
+             "downloadUrl": "https://superduperload.site/get/1uptoken"},
+})
+
+
+def _json(body: str, status: int = 200) -> FetchResult:
+    return FetchResult(status=status, content_type="application/json",
+                       body=body.encode())
+
+
+class BbuploadUnwrapTests(unittest.TestCase):
+    def test_happy_path_uses_v_param_without_page_fetch(self):
+        fetch = StubFetch({BB_AJAX: _json(BB_AJAX_OK)})
+        backend, cands, failure = current_hosts._unwrap_bbupload(
+            BB_SAVED, fetch)
+        self.assertIsNone(failure, (backend, failure))
+        self.assertEqual(backend, "bbupload")
+        self.assertEqual(len(cands), 1)
+        self.assertEqual(cands[0]["url"], BB_FILE)
+        self.assertEqual(cands[0]["kind_hint"], "file")
+        self.assertEqual(cands[0]["referer"], BB_SAVED)
+        # The file page itself is never fetched: the slug is in the URL.
+        self.assertEqual(len(fetch.calls), 1)
+        self.assertEqual(fetch.calls[0][0], BB_AJAX)
+        self.assertEqual(fetch.calls[0][1]["method"], "GET")
+        self.assertEqual(fetch.calls[0][1]["referer"], BB_SAVED)
+        self.assertEqual(fetch.calls[0][1]["headers"]["X-Requested-With"],
+                         "XMLHttpRequest")
+        self.assertEqual(fetch.calls[0][1]["headers"]["Accept"],
+                         "application/json")
+
+    def test_protocol_relative_url_is_normalized(self):
+        fetch = StubFetch({BB_AJAX: _json(BB_AJAX_OK)})
+        backend, cands, failure = current_hosts._unwrap_bbupload(
+            "//download.bbupload.to/download?v=BG863REX", fetch)
+        self.assertIsNone(failure, (backend, failure))
+        self.assertEqual(cands[0]["url"], BB_FILE)
+
+    def test_string_filesize_is_accepted(self):
+        # Live variance (Oracle VM, 2026-11-21): the 1080p ajax answers
+        # filesize as an int, the 720p one as the string "610331802".
+        # The unwrapper checks truthiness, never the type.
+        fetch = StubFetch({BB_AJAX: _json(json.dumps({
+            "status": "ok",
+            "data": {"FileName": "film.mkv", "filesize": "610331802",
+                     "downloadUrl": BB_FILE}}))})
+        backend, cands, failure = current_hosts._unwrap_bbupload(
+            BB_SAVED, fetch)
+        self.assertIsNone(failure, (backend, failure))
+        self.assertEqual(cands[0]["url"], BB_FILE)
+
+    def test_missing_v_param_reads_slug_from_page(self):
+        fetch = StubFetch({
+            "https://download.bbupload.to/download":
+                _html(BB_PAGE_WITH_SLUG),
+            BB_AJAX_1UP: _json(BB_AJAX_1UP_OK),
+        })
+        backend, cands, failure = current_hosts._unwrap_bbupload(
+            "https://download.bbupload.to/download", fetch)
+        self.assertIsNone(failure, (backend, failure))
+        self.assertEqual(cands[0]["url"],
+                         "https://superduperload.site/get/1uptoken")
+        self.assertEqual(len(fetch.calls), 2)
+
+    def test_page_without_slug_is_unverified(self):
+        fetch = StubFetch({
+            "https://download.bbupload.to/download":
+                _html("<html><body>No slug here.</body></html>"),
+        })
+        backend, cands, failure = current_hosts._unwrap_bbupload(
+            "https://download.bbupload.to/download", fetch)
+        self.assertEqual((backend, cands, failure),
+                         ("bbupload", [], "unverified"))
+        self.assertEqual(len(fetch.calls), 1)
+
+    def test_null_filename_is_dead_file(self):
+        # The site's own removed-file signal: status ok, null name/size
+        # — even though a downloadUrl is present, it serves an empty
+        # HTML body, so the copy is dead, never unverified.
+        fetch = StubFetch({BB_AJAX: _json(BB_AJAX_DEAD)})
+        backend, cands, failure = current_hosts._unwrap_bbupload(
+            BB_SAVED, fetch)
+        self.assertEqual((backend, cands, failure),
+                         ("bbupload", [], "dead_file"))
+
+    def test_ajax_403_is_blocked(self):
+        fetch = StubFetch({BB_AJAX: _json("", status=403)})
+        backend, cands, failure = current_hosts._unwrap_bbupload(
+            BB_SAVED, fetch)
+        self.assertEqual((backend, cands, failure),
+                         ("bbupload", [], "blocked"))
+
+    def test_ajax_transport_is_transport(self):
+        fetch = StubFetch({BB_AJAX: FetchResult(status=0)})
+        backend, cands, failure = current_hosts._unwrap_bbupload(
+            BB_SAVED, fetch)
+        self.assertEqual((backend, cands, failure),
+                         ("bbupload", [], "transport"))
+
+    def test_bad_json_is_bbupload_unverified(self):
+        fetch = StubFetch({BB_AJAX: _json("not json at all")})
+        backend, cands, failure = current_hosts._unwrap_bbupload(
+            BB_SAVED, fetch)
+        self.assertEqual((backend, cands, failure),
+                         ("bbupload", [], "bbupload_unverified"))
+
+    def test_status_not_ok_is_bbupload_unverified(self):
+        fetch = StubFetch({BB_AJAX: _json(
+            json.dumps({"status": "error", "data": None}))})
+        backend, cands, failure = current_hosts._unwrap_bbupload(
+            BB_SAVED, fetch)
+        self.assertEqual((backend, cands, failure),
+                         ("bbupload", [], "bbupload_unverified"))
+
+    def test_missing_download_url_is_bbupload_unverified(self):
+        fetch = StubFetch({BB_AJAX: _json(json.dumps({
+            "status": "ok",
+            "data": {"FileName": "film.mkv", "filesize": 123,
+                     "downloadUrl": ""}}))})
+        backend, cands, failure = current_hosts._unwrap_bbupload(
+            BB_SAVED, fetch)
+        self.assertEqual((backend, cands, failure),
+                         ("bbupload", [], "bbupload_unverified"))
+
+    def test_superduperload_url_passes_through(self):
+        # Already resolved (the importer banks these as final_url): no
+        # fetch at all, the file URL is the candidate.
+        fetch = StubFetch({})
+        backend, cands, failure = current_hosts._unwrap_bbupload(
+            BB_FILE, fetch)
+        self.assertIsNone(failure, (backend, failure))
+        self.assertEqual(backend, "bbupload")
+        self.assertEqual(cands, [{"url": BB_FILE, "referer": BB_FILE,
+                                  "kind_hint": "file"}])
+        self.assertEqual(fetch.calls, [])
+
+    def test_page_403_on_slug_fallback_is_blocked(self):
+        fetch = StubFetch({
+            "https://download.bbupload.to/download":
+                _html("", status=403),
+        })
+        backend, cands, failure = current_hosts._unwrap_bbupload(
+            "https://download.bbupload.to/download", fetch)
+        self.assertEqual((backend, cands, failure),
+                         ("bbupload", [], "blocked"))
+
+
+class BbuploadRegistryTests(unittest.TestCase):
+    def test_bbupload_is_a_stage1_backend(self):
+        self.assertIn("bbupload", current_hosts.STAGE1_BACKENDS)
+        self.assertEqual(current_hosts.INDEPENDENCE_GROUP["bbupload"],
+                         "bbupload")
+        self.assertIn("bbupload", current_hosts.WATCH_PREFERENCE)
+        self.assertIn("bbupload", current_hosts.DOWNLOAD_PREFERENCE)
+
+    def test_classify_bridge_and_file_hosts(self):
+        self.assertEqual(
+            current_hosts.classify_backend(BB_SAVED), "bbupload")
+        self.assertEqual(
+            current_hosts.classify_backend(
+                "https://download.bbupload.to/watch?v=1UPSHVRN"),
+            "bbupload")
+        self.assertEqual(
+            current_hosts.classify_backend(BB_FILE), "bbupload")
+
+    def test_classify_lookalikes_are_unknown(self):
+        self.assertEqual(current_hosts.classify_backend(
+            "https://download.bbupload.to.evil.com/download?v=X"), "unknown")
+        self.assertEqual(current_hosts.classify_backend(
+            "https://notbbupload.to/download?v=X"), "unknown")
+        self.assertEqual(current_hosts.classify_backend(
+            "https://superduperload.example/get/x"), "unknown")
+
+    def test_resolve_copy_bbupload_end_to_end(self):
+        fetch = StubFetch({BB_AJAX: _json(BB_AJAX_OK)})
+        res = current_hosts.resolve_copy(BB_SAVED, fetch=fetch,
+                                         probe=_ok_file_probe)
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["backend"], "bbupload")
+        self.assertEqual(res["group"], "bbupload")
+        self.assertEqual(res["kind"], "file")
+        self.assertEqual(res["url"], BB_FILE)
+
+    def test_resolve_copy_superduperload_end_to_end(self):
+        fetch = StubFetch({})
+        res = current_hosts.resolve_copy(BB_FILE, fetch=fetch,
+                                         probe=_ok_file_probe)
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["backend"], "bbupload")
+        self.assertEqual(res["url"], BB_FILE)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

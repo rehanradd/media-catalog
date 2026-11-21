@@ -138,6 +138,53 @@ class ClassifyProbeOctetStreamTests(unittest.TestCase):
         self.assertTrue(verdict["resumable"])
 
 
+class ClassifyProbeLyingMimeTests(unittest.TestCase):
+    """bbupload (2026-11-21): superduperload answers 200 ``image/png``
+    on genuine Matroska bytes (EBML magic ``1a45dfa3``, DocType
+    matroska, measured from Oracle egress). The bytes prove the
+    container whatever the header claims — except an HTML page, which
+    the shell check below must still catch."""
+
+    def test_image_png_with_ebml_passes_as_matroska(self):
+        verdict = classify_probe(
+            _result(status=200, content_type="image/png", body=EBML_BODY,
+                    headers={}),
+            "https://superduperload.site/get/9f8e7d6c5b4a")
+        self.assertTrue(verdict["ok"], verdict)
+        self.assertEqual(verdict["kind"], "file")
+        self.assertEqual(verdict["mime"], "video/x-matroska")
+        # The host honors ranges only via a ?range= query param, never
+        # via the Range header: a plain 200 is not resumable.
+        self.assertFalse(verdict["resumable"])
+        self.assertIsNone(verdict["failure"])
+
+    def test_image_png_with_ftyp_passes_as_mp4(self):
+        verdict = classify_probe(
+            _result(status=200, content_type="image/png", body=MP4_BODY,
+                    headers={}),
+            "https://superduperload.site/get/9f8e7d6c5b4a")
+        self.assertTrue(verdict["ok"], verdict)
+        self.assertEqual(verdict["mime"], "video/mp4")
+
+    def test_image_png_with_real_png_bytes_stays_unverified(self):
+        # A genuine PNG is not a video: the magic sniff must not bless
+        # every image/png answer, only one whose bytes prove a container.
+        verdict = classify_probe(
+            _result(status=200, content_type="image/png", body=RANDOM_BODY,
+                    headers={}),
+            "https://superduperload.site/get/9f8e7d6c5b4a")
+        self.assertFalse(verdict["ok"])
+        self.assertEqual(verdict["failure"], "unverified")
+
+    def test_text_html_with_ebml_is_still_html_shell(self):
+        verdict = classify_probe(
+            _result(status=200, content_type="text/html", body=EBML_BODY,
+                    headers={}),
+            "https://superduperload.site/get/9f8e7d6c5b4a")
+        self.assertFalse(verdict["ok"])
+        self.assertEqual(verdict["failure"], "html_shell")
+
+
 class ProbeMediaWiringTests(unittest.TestCase):
     def test_probe_media_accepts_ebml_octet_stream_file(self):
         """The function the resolver actually calls: a Range probe of the
@@ -168,6 +215,24 @@ class ProbeMediaWiringTests(unittest.TestCase):
             R2_URL, kind_hint="file", fetch=fake_fetch)
         self.assertFalse(verdict["ok"])
         self.assertEqual(verdict["failure"], "unverified")
+
+    def test_probe_media_accepts_image_png_ebml_file(self):
+        """The bbupload file shape the resolver actually probes: a
+        Range probe of a superduperload URL answers 200 image/png on
+        EBML bytes and must pass as a non-resumable file."""
+        def fake_fetch(url, referer=None, range_bytes=None, **_kw):
+            self.assertEqual(range_bytes, (0, 512))
+            return FetchResult(
+                status=200, content_type="image/png",
+                body=EBML_BODY, headers={}, final_url=url)
+
+        verdict = current_hosts.probe_media(
+            "https://superduperload.site/get/9f8e7d6c5b4a",
+            kind_hint="file", fetch=fake_fetch)
+        self.assertTrue(verdict["ok"], verdict)
+        self.assertEqual(verdict["kind"], "file")
+        self.assertEqual(verdict["mime"], "video/x-matroska")
+        self.assertFalse(verdict["resumable"])
 
 
 if __name__ == "__main__":

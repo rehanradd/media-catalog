@@ -14,7 +14,11 @@ fresh at play time):
   without it the ajax answers 408 and the copy fails
   "hubdrive_needs_cookie", never dead) and megaup (button link after a
   6 s wait, no-redirect Location; unreachable from Oracle egress
-  2026-11-21, so unproven live).
+  2026-11-21, so unproven live); bbupload (ajax getdownload — no
+  cookie, no wait, no captcha; a removed file still answers ok with
+  null FileName/filesize, so that is the dead signal; the file host
+  answers image/png on genuine Matroska bytes and honors ranges only
+  via a ?range= query param, so not resumable).
 
 Rules this module enforces, wherever it is used:
 
@@ -72,6 +76,7 @@ FILE_PROBE_BYTES = 512
 STAGE1_BACKENDS = frozenset({
     "streamhg", "vidrift", "vidbolt", "vidly", "vibuxer",
     "pixeldrain", "fastdl-beer", "vidara", "hubdrive", "megaup",
+    "bbupload",
 })
 
 #: Independence groups: two copies in one group are one backup, not two.
@@ -86,17 +91,22 @@ INDEPENDENCE_GROUP = {
     "vidara": "vidara",
     "hubdrive": "hubdrive",
     "megaup": "megaup",
+    "bbupload": "bbupload",
 }
 
 #: Watch tie-break order between backends (only after probe evidence).
 WATCH_PREFERENCE = (
     "streamhg", "vidrift", "vidbolt", "vidly", "vibuxer",
     "vidara", "pixeldrain", "fastdl-beer", "hubdrive", "megaup",
+    "bbupload",
 )
 
 #: Download order: resumable first (handled by the sort), then this order.
-#: fastdl.beer is last on purpose — its files ignore Range.
-DOWNLOAD_PREFERENCE = ("pixeldrain", "fastdl-beer", "hubdrive", "megaup")
+#: fastdl.beer is last on purpose — its files ignore Range. bbupload is
+#: last with it: its file host honors ranges only via a ?range= query
+#: param, never via the Range header, so the probe reports resumable=False.
+DOWNLOAD_PREFERENCE = ("pixeldrain", "fastdl-beer", "hubdrive", "megaup",
+                       "bbupload")
 
 _MEDIA_SUFFIXES = (
     ".mp4", ".m4v", ".mkv", ".webm", ".mov", ".avi", ".wmv", ".flv",
@@ -350,7 +360,18 @@ def classify_probe(result: FetchResult, url: str = "") -> dict:
     if status in (200, 206) and (_is_video_mime(ct) or
                                  (ct == "application/octet-stream" and
                                   (urllib.parse.urlsplit(url).path.lower().endswith(_MEDIA_SUFFIXES)
-                                   or magic_mime is not None))):
+                                   or magic_mime is not None)) or
+                                 # A file host that lies about the mime:
+                                 # bbupload's superduperload answers
+                                 # image/png on genuine Matroska bytes
+                                 # (measured 2026-11-21, Oracle egress:
+                                 # EBML magic 1a45dfa3 at offset 0, DocType
+                                 # matroska). The bytes prove the container
+                                 # whatever the header claims — except an
+                                 # HTML page, which the shell check below
+                                 # must still catch.
+                                 (magic_mime is not None and
+                                  "text/html" not in ct)):
         ranges = (headers.get("accept-ranges") or "").lower()
         resumable = status == 206 or "bytes" in ranges
         return {"ok": True, "kind": "file",
@@ -420,6 +441,16 @@ def classify_backend(url_a: str = "", url_b: str = "") -> str:
         if host in ("megaup.net", "megaup.mobi") or host.endswith(
                 (".megaup.net", ".megaup.mobi")):
             return "megaup"
+        # bbupload: the bridge page lives on download.bbupload.to (a
+        # stable registered domain — no TLD rotation proven, so the
+        # dotted match, not the bare-label hubdrive treatment); the
+        # resolved file is served from superduperload.site.
+        if host in ("bbupload.to", "download.bbupload.to") or host.endswith(
+                ".bbupload.to"):
+            return "bbupload"
+        if host == "superduperload.site" or host.endswith(
+                ".superduperload.site"):
+            return "bbupload"
         if host == "embed.vidrift.net":
             return "vidrift"
         if host == "vidbolt.xyz":
@@ -1055,6 +1086,77 @@ def _unwrap_megaup(saved_url: str, fetch, sleep=None) -> tuple:
                        "kind_hint": "file"}], None
 
 
+_BBUPLOAD_AJAX = "https://download.bbupload.to/ajax.php"
+_BBUPLOAD_SLUG_RE = re.compile(r"""var\s+slug\s*=\s*["']([^"']+)["']""")
+
+
+def _unwrap_bbupload(saved_url: str, fetch) -> tuple:
+    """bbupload file page -> getdownload ajax -> superduperload file.
+
+    Measured 2026-11-21 from Oracle egress: GET
+    ``/ajax.php?action=getdownload&data=<slug>`` (slug = the ``v``
+    query param, also ``var slug`` in the page) answers 200 JSON
+    ``{"status": "ok", "data": {"FileName": ..., "filesize": ...,
+    "downloadUrl": "https://superduperload.site/get/<token>"}}`` with
+    no cookie, no wait and no captcha — the page's reCAPTCHA call is
+    commented out and the 20 s countdown gates only the browser UI.
+    A removed file still answers ``status: "ok"`` but with
+    ``FileName``/``filesize`` null: that is the site's own dead-file
+    signal ("dead_file"). The downloadUrl serves genuine Matroska
+    bytes under a lying ``image/png`` content type (see
+    classify_probe), and honors ranges only via the ``?range=``
+    query param, so the copy probes ``resumable=False``.
+    A superduperload URL is already resolved (the importer banks
+    these as final_url), so it passes straight through.
+    """
+    cleaned = clean_url(saved_url)
+    if cleaned.startswith("//"):
+        cleaned = "https:" + cleaned
+    host = _host_of(cleaned)
+    if host == "superduperload.site" or host.endswith(".superduperload.site"):
+        return "bbupload", [{"url": cleaned, "referer": cleaned,
+                             "kind_hint": "file"}], None
+    query = urllib.parse.parse_qs(urllib.parse.urlsplit(cleaned).query)
+    slug = (query.get("v") or [None])[0]
+    if not slug:
+        # No v param: fetch the page once and read var slug from it.
+        page = fetch(cleaned)
+        if page.status != 200:
+            return "bbupload", [], ("blocked" if page.status == 403 else
+                                    "transport" if page.status == 0 else
+                                    "unverified")
+        match = _BBUPLOAD_SLUG_RE.search(page.text())
+        if not match:
+            return "bbupload", [], "unverified"
+        slug = match.group(1)
+    ajax_url = (_BBUPLOAD_AJAX + "?action=getdownload&data=" +
+                urllib.parse.quote(slug, safe=""))
+    resp = fetch(ajax_url, referer=cleaned,
+                 headers={"X-Requested-With": "XMLHttpRequest",
+                          "Accept": "application/json"})
+    if resp.status != 200:
+        return "bbupload", [], ("blocked" if resp.status == 403 else
+                                "transport" if resp.status == 0 else
+                                "bbupload_unverified")
+    try:
+        payload = json.loads(resp.text())
+    except (ValueError, TypeError):
+        return "bbupload", [], "bbupload_unverified"
+    if not isinstance(payload, dict) or payload.get("status") != "ok":
+        return "bbupload", [], "bbupload_unverified"
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return "bbupload", [], "bbupload_unverified"
+    if not data.get("FileName") or not data.get("filesize"):
+        # Removed file: the site still answers ok, with null name/size.
+        return "bbupload", [], "dead_file"
+    url = data.get("downloadUrl") or ""
+    if not url:
+        return "bbupload", [], "bbupload_unverified"
+    return "bbupload", [{"url": url, "referer": cleaned,
+                         "kind_hint": "file"}], None
+
+
 # ── resolve + rank ───────────────────────────────────────────────────────────
 
 def _fail_result(backend: str, failure: str) -> dict:
@@ -1094,6 +1196,8 @@ def resolve_copy(saved_url: str, fetch=default_fetch, probe=None) -> dict:
         backend, candidates, failure = _unwrap_hubdrive(saved_url, fetch)
     elif backend0 == "megaup":
         backend, candidates, failure = _unwrap_megaup(saved_url, fetch)
+    elif backend0 == "bbupload":
+        backend, candidates, failure = _unwrap_bbupload(saved_url, fetch)
     else:
         return _fail_result(backend0, "unknown_backend")
     if failure:
