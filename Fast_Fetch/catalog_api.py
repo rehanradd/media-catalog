@@ -1973,10 +1973,223 @@ def _annotate_print_verification(conn, prints, *, now: float | None = None) -> N
                                  "verified_at": None}
 
 
+def _print_scope(print_view: dict) -> tuple:
+    """The (season, episode) scope one print stands for — the v1 ladder rule.
+
+    A series must not offer S02E05's 1080p copy when the user is playing
+    S01E01, so prints merge only inside their own scope, exactly as
+    `viewer._option_groups` groups legacy releases by their (season,
+    episode). A movie print is whole-work scope (None, None). A range
+    print keeps its range as its scope (never a single episode inside
+    it); a season pack is its season's scope; a parts print is its own
+    part; an unresolvable coverage is its own scope so it can never
+    lend its band to another episode.
+    """
+    coverage = print_view.get("coverage") or {}
+    season = coverage.get("season_number")
+    kind = str(coverage.get("type") or "")
+    first = coverage.get("episode_first")
+    last = coverage.get("episode_last")
+    if kind == "whole_work":
+        return (None, None)
+    if kind == "single_episode":
+        return (season, first)
+    if kind == "episode_range":
+        return (season, f"range:{first}-{last}")
+    if kind == "season_pack":
+        return (season, None)
+    if kind == "parts":
+        return (season, f"part:{coverage.get('part_number')}")
+    return (season, f"unresolved:{print_view.get('release_id')}")
+
+
+def _fresh_verified_at(conn, ledger_ids, *, now: float | None = None) -> dict:
+    """{ledger link id: resolved_at} for fresh banked resolutions only.
+
+    The same acceptance `_annotate_print_verification` applies per print:
+    a `resolved_cache` row the re-verify clock still honours
+    (`reverify_after` in the future), under the failure cap, for a file
+    or playlist, not IP-bound, resolved inside the 600 s freshness
+    window. Fail-open: any error answers {} (no stamp), never a guess.
+    """
+    import resolved_cache
+    import serve_verify
+    import time as _time
+    moment = _time.time() if now is None else float(now)
+    ids = [int(lid) for lid in (ledger_ids or []) if lid is not None]
+    if not ids:
+        return {}
+    try:
+        marks = ", ".join("?" for _ in ids)
+        rows = conn.execute(
+            f"SELECT link_id, resolved_at FROM resolved_cache"
+            f" WHERE link_id IN ({marks})"
+            f" AND reverify_after > ? AND fail_count < ?"
+            f" AND kind IN ('file', 'playlist')"
+            f" AND (ip_bound IS NULL OR ip_bound = 0)",
+            (*ids, moment, resolved_cache.MAX_FAIL_COUNT)).fetchall()
+    except Exception:      # noqa: BLE001 — fail-open: nothing fresh
+        return {}
+    fresh: dict[int, float] = {}
+    for row in rows:
+        try:
+            resolved_at = float(row["resolved_at"])
+        except (TypeError, ValueError):
+            continue
+        if 0 <= moment - resolved_at <= serve_verify.VERIFIED_FRESHNESS_S:
+            lid = int(row["link_id"])
+            if lid not in fresh or resolved_at > fresh[lid]:
+                fresh[lid] = resolved_at
+    return fresh
+
+
+def _annotate_tier_verified_at(conn, tiers, *, now: float | None = None) -> None:
+    """Stamp each merged tier's winner link with its own `verified_at`.
+
+    The stamp is the v1 ladder's meaning (redact `ladder_link`): the epoch
+    second the SERVED link was last verified playable — a fresh banked
+    resolution for that link's ledger id, never its print's freshest copy.
+    A winner with no fresh banked resolution carries None (the app treats
+    a missing stamp as unverified and re-asks); a winner with no ledger id
+    has no pressable handle and likewise carries None. The winner dicts
+    are copied first, so the stamp never leaks into the print's own link
+    list or the play bundle's candidate list.
+    """
+    winners = [tier.get("link") for tier in tiers if tier.get("link")]
+    cat_ids = [link.get("link_id") for link in winners
+               if link.get("link_id") is not None]
+    ledger_by_cat: dict[int, int] = {}
+    if cat_ids:
+        try:
+            marks = ", ".join("?" for _ in cat_ids)
+            for row in conn.execute(
+                    f"SELECT id, ledger_link_id FROM cat_links"
+                    f" WHERE id IN ({marks})", cat_ids).fetchall():
+                if row["ledger_link_id"] is not None:
+                    ledger_by_cat[int(row["id"])] = int(row["ledger_link_id"])
+        except Exception:      # noqa: BLE001 — fail-open: no stamps
+            ledger_by_cat = {}
+    fresh = _fresh_verified_at(
+        conn, list(ledger_by_cat.values()), now=now) if ledger_by_cat else {}
+    for link in winners:
+        ledger_id = ledger_by_cat.get(int(link["link_id"])) \
+            if link.get("link_id") is not None else None
+        link["verified_at"] = fresh.get(ledger_id) if ledger_id else None
+
+
+def merged_ladder_for_prints(conn, prints, *, mega_decrypt: bool = False,
+                             gated_bands=(), preferred_audio=(),
+                             now: float | None = None) -> dict:
+    """One merged quality ladder for exactly these prints (2-button Phase 2).
+
+    Each print's copies collapse to one winner per band through
+    `tiers.for_release`, then `tiers.merge` folds same-band prints into
+    one row per quality — the same two calls v1's `_option_groups`
+    makes, so the v2 ladder and the v1 ladder cannot disagree about a
+    band. The caller names the prints: the /play route passes the walk's
+    candidate prints (capped at 5); the detail builder passes one scope's
+    prints (see `merged_ladders_by_scope`).
+
+    Every tier carries what the detail Quality Sheet and the in-player
+    switch need, and nothing the client must not see: `gated` (this
+    band is premium for this caller — the band list is the caller's, so
+    a VIP or operator caller passes () and nothing is gated),
+    `alternates_count` (copies folded into the row, minus the winner —
+    the silent failover pool stays handles-only in `backup_handles`),
+    `download_url` (our own `/api/v1/download` template for the winner
+    handle, None when the winner has no pressable handle), and
+    `verified_at` on the winner link (a fresh banked resolution for
+    that link, else None). Tiers sort free before gated, preferred
+    audio first inside each class, best band first; `auto` is the best
+    playable free tier, in the `play_bundle` shape
+    (`{"band", "playable"}`), or None when no free tier plays.
+    """
+    wanted_audio = {str(a).strip().lower()
+                    for a in (preferred_audio or []) if str(a).strip()}
+    gated = set(gated_bands or ())
+    ladders = []
+    for print_view in prints or []:
+        ladder = tiers.for_release(
+            {"quality": print_view.get("resolution")
+             or print_view.get("quality_label"),
+             "codec": print_view.get("codec"),
+             "size": print_view.get("size_bytes")},
+            _sort_links(list(print_view.get("links") or [])),
+            mega_decrypt=mega_decrypt)
+        if ladder["tiers"]:
+            ladders.append(ladder)
+    if not ladders:
+        return {"tiers": [], "auto": None, "download_only_bands": []}
+    merged = tiers.merge(ladders, mega_decrypt=mega_decrypt)
+    for tier in merged["tiers"]:
+        # Copy the winner: the stamp below must not mutate the print's
+        # own link list or the play bundle's candidates, which share
+        # this dict.
+        if tier.get("link") is not None:
+            tier["link"] = dict(tier["link"])
+        tier["gated"] = tier["band"] in gated
+        tier["preferred_audio"] = bool(
+            wanted_audio and any(
+                str(lang).strip().lower() in wanted_audio
+                for lang in tier.get("audio_languages") or []))
+        tier["alternates_count"] = max(int(tier.get("copies") or 0) - 1, 0)
+        stream_id = (tier.get("link") or {}).get("stream_id")
+        tier["download_url"] = (
+            f"/api/v1/download?id={stream_id}" if stream_id else None)
+        backups = tier.pop("backups", None) or []
+        tier["backup_handles"] = [str(item["stream_id"]) for item in backups
+                                  if item.get("stream_id")]
+    _annotate_tier_verified_at(conn, merged["tiers"], now=now)
+    merged["tiers"].sort(key=lambda tier: (
+        bool(tier.get("gated")), not bool(tier.get("preferred_audio")),
+        tiers.band_rank(tier["band"])))
+    playable_free = [tier for tier in merged["tiers"]
+                     if tier.get("playable") and not tier.get("gated")]
+    if playable_free:
+        best = max(playable_free, key=lambda tier: (
+            bool(tier.get("preferred_audio")),
+            tiers.score(tier["link"], tier["band"]),
+            -tiers.band_rank(tier["band"])))
+        auto = {"band": best["band"], "playable": True}
+    else:
+        auto = None
+    return {"tiers": merged["tiers"], "auto": auto,
+            "download_only_bands": merged["download_only_bands"]}
+
+
+def merged_ladders_by_scope(conn, prints, *, mega_decrypt: bool = False,
+                            gated_bands=(), preferred_audio=(),
+                            now: float | None = None) -> list:
+    """One merged ladder per (season, episode) scope (2-button Phase 2).
+
+    The v2 detail answer: a movie is one scope, a series episode is its
+    own scope, a season pack is its season's scope — the same grouping
+    v1's `_option_groups` returns, so the app reads one shape on both
+    paths. Groups sort in viewing order (`tiers.scope_sort_key`).
+    Scopes whose prints hold no ladder (every copy quarantined) are
+    skipped, never served empty.
+    """
+    by_scope: dict[tuple, list] = {}
+    for print_view in prints or []:
+        by_scope.setdefault(_print_scope(print_view), []).append(print_view)
+    groups = []
+    for (season, episode), scope_prints in by_scope.items():
+        ladder = merged_ladder_for_prints(
+            conn, scope_prints, mega_decrypt=mega_decrypt,
+            gated_bands=gated_bands, preferred_audio=preferred_audio,
+            now=now)
+        if not ladder["tiers"]:
+            continue
+        groups.append({"season": season, "episode": episode, **ladder})
+    groups.sort(key=lambda group: tiers.scope_sort_key(
+        group["season"], group["episode"]))
+    return groups
+
+
 @public_edge
 def work_detail(conn, *, work_id=None, work_key=None, slug=None, url=None,
                 include_adult=False, fields=None, include_provenance=False,
-                max_prints: int | None = None) -> dict:
+                max_prints: int | None = None, gated_bands=()) -> dict:
     """The full nested catalog answer for one work.
 
     Shape: identity (imdb/tmdb/tvdb + aliases), seasons -> episodes
@@ -1988,6 +2201,17 @@ def work_detail(conn, *, work_id=None, work_key=None, slug=None, url=None,
     `print_groups` with `coverage_type` and every print's links ordered by
     `rank_score`, entitlement, availability, and flags (`identity_suspect` is
     surfaced, never silently merged).
+
+    2-button Phase 2: `quality_ladder` (also under the v1 name
+    `option_groups`) is one merged ladder per (season, episode) scope —
+    the same shape v1's `_option_groups` returns, so the app reads one
+    shape on both paths — and `work.best_quality` is the work's best
+    band, derived from `max_resolution` via `tiers.band_of` (a derived
+    field, never a stored column). `gated_bands` names the bands that
+    are premium for this caller (the route passes the gate bands when
+    the gate is on and the caller is neither VIP nor operator, else
+    ()); a gated tier still travels, marked, so the sheet can offer the
+    VIP upsell instead of hiding the band.
 
     Which site a title came from, and the page it was scraped from, are not part of
     this shape: `include_provenance=True` (operator port only) puts them back under
@@ -2022,6 +2246,10 @@ def work_detail(conn, *, work_id=None, work_key=None, slug=None, url=None,
     # carries whether a copy was just verified live. Fail-open: the
     # annotation never breaks the detail answer.
     _annotate_print_verification(conn, prints)
+    # 2-button Phase 2: one merged ladder per scope, over the same capped
+    # prints the detail already ships.
+    quality_ladder = merged_ladders_by_scope(
+        conn, prints, gated_bands=gated_bands)
     print_index = {p["release_id"]: p for p in prints}
     if prints_truncated:
         link_total = conn.execute(
@@ -2166,6 +2394,7 @@ def work_detail(conn, *, work_id=None, work_key=None, slug=None, url=None,
             "episode_count": work.get("episode_count"),
             "season_count": len(seasons),
             "quality_max": work.get("max_resolution") or "unknown",
+            "best_quality": tiers.band_of(work.get("max_resolution")),
             "best_quality_score": work.get("best_quality_score"),
             "first_seen_at": work.get("first_seen_at"),
             "updated_at": work.get("updated_at"),
@@ -2183,6 +2412,8 @@ def work_detail(conn, *, work_id=None, work_key=None, slug=None, url=None,
         "parts": parts,
         "prints": prints,
         "print_groups": _group_prints(prints, parts, seasons),
+        "quality_ladder": quality_ladder,
+        "option_groups": quality_ladder,
         "availability": {
             "stream": bool(streamable),
             "download": bool(downloadable),

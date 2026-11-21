@@ -2008,5 +2008,103 @@ class LanguageBridgeProjectionTests(ProjectionTestCase):
         self.assertEqual(after, before)
 
 
+class WorkDetailLadderTests(ProjectionTestCase):
+    """2-button Phase 2: the detail answer serves the merged ladder per scope."""
+
+    @staticmethod
+    def _cdn(tag):
+        return {"source_name": "CDN", "service": "google_cdn", "resource_id": tag,
+                "source_url": f"https://video-downloads.googleusercontent.com/{tag}",
+                "final_url": f"https://video-downloads.googleusercontent.com/{tag}",
+                "playback_type": "direct", "is_temporary": 0, "status": "active"}
+
+    def _twin_movie(self, *, clean_title="Twin Film", year=2024):
+        self.add_post("hdhub4u", "https://hdhub4u.test/twin-film/",
+                      clean_title=clean_title, year=year, releases=[
+            {"release_title": f"{clean_title} 1080p WEB-DL", "quality": "1080p",
+             "sources": [self._cdn("twin-1080p")]},
+            {"release_title": f"{clean_title} 720p", "quality": "720p",
+             "sources": [self._cdn("twin-720p")]},
+        ])
+        self.project()
+        work = self.works(clean_title, year)[0]
+        return catalog_api.work_detail(self.conn, work_id=work["id"])
+
+    def test_movie_detail_merges_two_prints_into_one_ladder(self):
+        detail = self._twin_movie()
+        ladder = detail["quality_ladder"]
+        self.assertEqual(detail["option_groups"], ladder,
+                         "option_groups is the v1 name for the same ladder")
+        self.assertEqual(len(ladder), 1, "a movie is one whole-work scope")
+        group = ladder[0]
+        self.assertIsNone(group["season"])
+        self.assertIsNone(group["episode"])
+        self.assertEqual([t["band"] for t in group["tiers"]],
+                         ["1080p", "720p"])
+        self.assertEqual(group["auto"]["band"], "1080p",
+                         "best playable band is the auto pick")
+        for tier in group["tiers"]:
+            self.assertFalse(tier["gated"])
+            self.assertEqual(tier["alternates_count"], 0,
+                             "one copy per print, no alternates")
+            self.assertEqual(tier["backup_handles"], [])
+            self.assertTrue(tier["download_url"].startswith(
+                "/api/v1/download?id="), tier)
+        self.assertEqual(detail["work"]["best_quality"], "1080p")
+
+    def test_series_detail_ladders_are_per_episode_scope(self):
+        self.add_post("hdhub4u", "https://hdhub4u.test/twin-beats/",
+                      clean_title="Twin Beats", year=2024, content_type="series",
+                      releases=[
+            {"release_title": "Twin Beats S01E01-E02 1080p", "quality": "1080p",
+             "season": "1", "episode": "01-02", "sources": [self._cdn("beats-1080p")]},
+            {"release_title": "Twin Beats S01E01-E02 720p", "quality": "720p",
+             "season": "1", "episode": "01-02", "sources": [self._cdn("beats-720p")]},
+            {"release_title": "Twin Beats S01E03-E04 720p", "quality": "720p",
+             "season": "1", "episode": "03-04", "sources": [self._cdn("beats-720p-2")]},
+        ])
+        self.project()
+        work = self.works("Twin Beats", 2024)[0]
+        detail = catalog_api.work_detail(self.conn, work_id=work["id"])
+        ladder = detail["quality_ladder"]
+        self.assertEqual(len(ladder), 2,
+                         "a range print never lends its band to another episode")
+        self.assertEqual(ladder[0]["season"], 1)
+        self.assertEqual(ladder[0]["episode"], "range:1-2")
+        self.assertEqual([t["band"] for t in ladder[0]["tiers"]],
+                         ["1080p", "720p"])
+        self.assertEqual(ladder[1]["episode"], "range:3-4")
+        self.assertEqual([t["band"] for t in ladder[1]["tiers"]], ["720p"])
+
+    def test_gated_bands_mark_tiers_without_hiding_them(self):
+        self._twin_movie()
+        work = self.works("Twin Film", 2024)[0]
+        detail = catalog_api.work_detail(
+            self.conn, work_id=work["id"], gated_bands=("1080p",))
+        group = detail["quality_ladder"][0]
+        self.assertEqual([t["band"] for t in group["tiers"]],
+                         ["720p", "1080p"], "free tiers sort before gated ones")
+        self.assertFalse(group["tiers"][0]["gated"])
+        self.assertTrue(group["tiers"][1]["gated"])
+        self.assertEqual(group["auto"]["band"], "720p",
+                         "auto is the best PLAYABLE (non-gated) tier")
+        self.assertEqual(detail["work"]["best_quality"], "1080p",
+                         "best_quality is derived, not gated")
+
+    def test_best_quality_derives_from_max_resolution(self):
+        self.add_post("hdhub4u", "https://hdhub4u.test/small-film/",
+                      clean_title="Small Film", year=2024, releases=[
+            {"release_title": "Small Film 480p", "quality": "480p",
+             "sources": [self._cdn("small-480p")]},
+        ])
+        self.project()
+        work = self.works("Small Film", 2024)[0]
+        detail = catalog_api.work_detail(self.conn, work_id=work["id"])
+        self.assertEqual(detail["work"]["best_quality"], "480p")
+        self.assertEqual(
+            [t["band"] for t in detail["quality_ladder"][0]["tiers"]],
+            ["480p"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

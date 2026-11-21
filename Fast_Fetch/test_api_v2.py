@@ -1107,6 +1107,96 @@ class V2PlayQualityGateTests(V2WireFixture):
                          "the mint and the press must gate the same bands")
 
 
+# ── 1c2. /play merged tiers (2-button Phase 2) ─────────────────────────────
+
+class V2PlayMergedTiersTests(V2WireFixture):
+    """The /play bundle's tiers cover the whole target, not just the chosen print.
+
+    Before Phase 2 the bundle carried only the print the walk chose, so the
+    Quality Sheet saw one band on a two-print work. The merge runs the
+    walk's own candidates (cap 5) through `tiers.merge`, the same call the
+    detail ladder makes, and the bundle's `auto` is the best PLAYABLE tier
+    of the merged ladder — never a gated band, never a dead print.
+    """
+
+    def enable_gate(self):
+        import admin_panel
+        admin_panel._ensure_monetization(self.conn)
+        self.conn.execute(
+            "UPDATE app_remote_config SET feature_quality_gate = 1 WHERE id = 1")
+        self.conn.commit()
+
+    def test_work_play_merges_the_target_prints_into_one_ladder(self):
+        _best, sibling = self._twin_prints("Twin Prints")
+        reply = self.post("/api/v2/play", {"work_id": self.twin_work_id})
+        self.assertEqual(reply.status, 200, reply.json)
+        self.assertTrue(reply.json["playable"])
+        self.assertEqual(reply.json["release_id"], sibling,
+                         "the walk still chooses the live 720p print")
+        self.assertEqual([t["band"] for t in reply.json["tiers"]],
+                         ["1080p", "720p"],
+                         "the dead 1080p print still lends its band")
+        self.assertFalse(reply.json["tiers"][0]["playable"])
+        self.assertTrue(reply.json["tiers"][1]["playable"])
+        self.assertEqual(reply.json["auto"]["band"], "720p",
+                         "auto is the best band that actually plays")
+        for tier in reply.json["tiers"]:
+            self.assertIn("gated", tier)
+            self.assertIn("alternates_count", tier)
+            self.assertIn("download_url", tier)
+            self.assertIn("backup_handles", tier)
+            self.assertFalse(tier["gated"], "the gate is off in this fixture")
+        self.assertTrue(reply.json["tiers"][1]["download_url"].startswith(
+            "/api/v1/download?id="))
+
+    def test_gated_work_play_marks_the_gated_tier_and_keeps_it(self):
+        self.enable_gate()
+        _best, sibling = self._twin_prints("Gated Twins")
+        reply = self.post("/api/v2/play", {"work_id": self.gated_work_id})
+        self.assertEqual(reply.status, 200, reply.json)
+        self.assertTrue(reply.json["playable"])
+        self.assertEqual(reply.json["release_id"], sibling)
+        self.assertEqual([t["band"] for t in reply.json["tiers"]],
+                         ["720p", "1080p"], "free tiers sort before gated ones")
+        self.assertFalse(reply.json["tiers"][0]["gated"])
+        self.assertTrue(reply.json["tiers"][1]["gated"],
+                        "the 1080p band is gated, and still travels, marked")
+        self.assertEqual(reply.json["auto"]["band"], "720p")
+
+    def test_verified_at_stamps_a_banked_winner_and_is_none_without_one(self):
+        reply = self.post("/api/v2/play",
+                          {"work_id": self.work_ids["Dune Protocol"]})
+        self.assertEqual(reply.status, 200, reply.json)
+        self.assertEqual([t["band"] for t in reply.json["tiers"]], ["1080p"])
+        self.assertIsNone(reply.json["tiers"][0]["link"]["verified_at"],
+                          "no banked resolution yet")
+        ledger_id = self._one(
+            "SELECT id FROM download_sources WHERE resource_id = 'DUNE-CDN'")
+        now = time.time()
+        self.conn.execute(
+            "INSERT INTO resolved_cache (link_id, url, category, kind,"
+            " resolved_at, expires_at, reverify_after, fail_count, ip_bound)"
+            " VALUES (?, ?, 'A', 'file', ?, ?, ?, 0, 0)",
+            (ledger_id,
+             "https://video-downloads.googleusercontent.com/DUNE-CDN",
+             now, now + 3600, now + 600))
+        self.conn.commit()
+        reply = self.post("/api/v2/play",
+                          {"work_id": self.work_ids["Dune Protocol"]})
+        self.assertEqual(reply.json["tiers"][0]["link"]["verified_at"], now)
+
+    def test_detail_serves_the_merged_ladder_and_best_quality(self):
+        reply = self.get(f"/api/v2/works/{self.twin_work_id}")
+        self.assertEqual(reply.status, 200, reply.json)
+        ladder = reply.json["quality_ladder"]
+        self.assertEqual(reply.json["option_groups"], ladder,
+                         "option_groups is the v1 name for the same ladder")
+        self.assertEqual(len(ladder), 1)
+        self.assertEqual([t["band"] for t in ladder[0]["tiers"]],
+                         ["1080p", "720p"])
+        self.assertEqual(reply.json["work"]["best_quality"], "1080p")
+
+
 # ── 1d. release_id play fallback: same coverage only ─────────────────────
 
 class V2PlayReleasePrintFallbackTests(V2WireFixture):

@@ -1764,14 +1764,27 @@ def route_get(handler, path: str, query: dict, *, db_path, operator: bool,
                 problem(handler, code="not_found", rid=rid, instance=path,
                         detail="No such v2 route.")
                 return True
+            # 2-button Phase 2: the detail ladder marks the gate bands
+            # only for a caller the gate actually binds (free, non-operator).
+            # The VIP bit joins the memo seed, so a free caller's body is
+            # never served to a VIP caller or the reverse; the gate state
+            # itself is memoised up to the 1 h body TTL, the same staleness
+            # the memo already accepts for the verification stamps.
+            _detail_is_vip = _request_is_vip(
+                handler.headers, query, secret=secret)
+            _detail_gated = (GATED_QUALITY_BANDS
+                             if (_gate_is_on(conn) and not _detail_is_vip
+                                 and not operator) else ())
             send_detail(handler,
                         build=lambda: catalog_api.work_detail(
                             conn, work_id=ident, include_adult=bool(operator),
                             fields=_q_list(query, "fields") or None,
                             include_provenance=bool(operator),
-                            max_prints=catalog_api.DETAIL_MAX_PRINTS),
+                            max_prints=catalog_api.DETAIL_MAX_PRINTS,
+                            gated_bands=_detail_gated),
                         rid=rid, path=path, cache=CACHE_DETAIL,
-                        etag_seed=f"work|{ident}|{_q(query, 'fields')}",
+                        etag_seed=f"work|{ident}|{_q(query, 'fields')}"
+                        f"|vip={1 if _detail_is_vip else 0}",
                         rev=versions, last_modified=stamp,
                         operator=operator,
                         not_found_detail="No such work in the catalog.",
@@ -2792,6 +2805,47 @@ def route_enrich(handler, conn, body: dict, *, rid: str, path: str,
     }, rid=rid, cache=CACHE_NO_STORE, operator=operator)
 
 
+def _merged_play_ladder(conn, release_ids, *, episode_id, include_adult,
+                        is_vip: bool, operator: bool,
+                        mega_decrypt: bool = False) -> dict | None:
+    """The /play bundle's tiers, merged across the candidate prints (2-button Phase 2).
+
+    The walk already chose ONE print to play; the quality switch still needs
+    every band the target holds, so the candidate prints' ladders (the walk's
+    own candidates, capped at `_candidate_cap()` — 5 by default) merge
+    through `catalog_api.merged_ladder_for_prints`, the same call the
+    detail ladder makes. Returns None when no candidate print builds a
+    ladder (the caller then keeps the bundle's own tiers, exactly as
+    before); otherwise the merged `{"tiers", "auto",
+    "download_only_bands"}` — `auto` in the bundle's own shape
+    (`{"band", "playable"}`).
+
+    Gating is the caller's: the gate bands apply only when the gate is on
+    and the caller is neither VIP nor operator — the same decision
+    `_bundle_is_gated` makes per print, and equivalent to it here because
+    every merged tier's winner comes from a release this call just read.
+    A gated tier still travels, marked, so the sheet can offer the VIP
+    upsell. This helper never runs on a refused mint: the caller skips
+    the merge outright when the bundle's reason is
+    `premium_quality_requires_vip`, so no handle can leak through it.
+    """
+    ids = [int(rid) for rid in (release_ids or [])][:_candidate_cap()]
+    gated_bands = (GATED_QUALITY_BANDS
+                   if (_gate_is_on(conn) and not is_vip and not operator)
+                   else ())
+    prints = []
+    for rid in ids:
+        detail = catalog_api.release_detail(
+            conn, release_id=rid, include_adult=include_adult)
+        if detail.get("ok"):
+            prints.append(detail["print"])
+    if not prints:
+        return None
+    merged = catalog_api.merged_ladder_for_prints(
+        conn, prints, mega_decrypt=mega_decrypt, gated_bands=gated_bands)
+    return merged if merged["tiers"] else None
+
+
 def route_play(handler, conn, body: dict, *, rid: str, path: str, operator: bool,
                query=None, secret: str = "") -> None:
     """POST /play — one PlayBundle for a work, a print or an episode (§8.1, §9, S11).
@@ -2897,6 +2951,12 @@ def route_play(handler, conn, body: dict, *, rid: str, path: str, operator: bool
                     detail="One of `release_id`, `episode_id` or `work_id` is required.")
         return
 
+    # 2-button Phase 2: the merge candidates, whichever path chose the
+    # bundle — the derived walk's ids, or the named print plus its
+    # same-coverage siblings. Initialised here so the merge below never
+    # reads an unbound name on the path that did not set them.
+    named_cat_id = None
+    sibling_ids: list[int] = []
     if candidate_ids:
         # A derived target: walk its prints, best first (Session 109).
         bundle = _play_first_playable(conn, candidate_ids,
@@ -2923,6 +2983,11 @@ def route_play(handler, conn, body: dict, *, rid: str, path: str, operator: bool
                                          mega_decrypt=mega_decrypt)
         named_cat_id = bundle.get("release_id") if bundle.get("ok") else None
         if named_cat_id is not None:
+            # 2-button Phase 2: the same-coverage siblings are the merge
+            # candidates too — computed once, used by the walk below and
+            # by the merged tiers after the gate refusal.
+            sibling_ids = _same_coverage_sibling_prints(
+                conn, int(named_cat_id), operator=operator)
             # Session 110: walk when the named print has no playable
             # candidate. Session 113: ALSO walk when it claims playable
             # but every playable copy carries a fresh negative-cache
@@ -2945,9 +3010,7 @@ def route_play(handler, conn, body: dict, *, rid: str, path: str, operator: bool
                 # print for want of a warm-up.
                 acceptable = None
                 verified = None
-                for sibling_id in _band_order(
-                        conn, _same_coverage_sibling_prints(
-                            conn, int(named_cat_id), operator=operator)):
+                for sibling_id in _band_order(conn, sibling_ids):
                     sibling_bundle = catalog_api.play_bundle(
                         conn, release_id=sibling_id, episode_id=episode_id,
                         include_adult=bool(operator), legacy_release_id=False,
@@ -2995,6 +3058,33 @@ def route_play(handler, conn, body: dict, *, rid: str, path: str, operator: bool
         bundle.pop("recommended_link_id", None)
         if isinstance(bundle.get("auto"), dict):
             bundle["auto"]["playable"] = False
+    # 2-button Phase 2: the bundle's tiers cover the whole target, not just
+    # the chosen print — merge the candidate prints' ladders (cap 5) so the
+    # Quality Sheet sees every band. This runs AFTER the mint refusal
+    # above, and NEVER on a refused mint: a gated chosen print answers
+    # with emptied tiers and no handle anywhere
+    # (test_bare_gated_release_id_mints_no_handles), so the merge is
+    # skipped outright when the reason is premium_quality_requires_vip.
+    # A derived target merges its walk candidates; a named print merges
+    # itself with its same-coverage siblings. When the merge builds
+    # nothing (no candidate print yields a ladder) the bundle keeps its
+    # own tiers, exactly as before.
+    if bundle.get("reason") == "premium_quality_requires_vip":
+        merged = None
+    else:
+        if candidate_ids:
+            merge_ids = candidate_ids
+        elif named_cat_id is not None:
+            merge_ids = [int(named_cat_id)] + sibling_ids
+        else:
+            merge_ids = []
+        merged = _merged_play_ladder(
+            conn, merge_ids, episode_id=episode_id,
+            include_adult=bool(operator), is_vip=is_vip, operator=operator,
+            mega_decrypt=mega_decrypt)
+    if merged is not None:
+        bundle["tiers"] = merged["tiers"]
+        bundle["auto"] = merged["auto"]
     prefer = str(body.get("prefer") or "quality").strip().lower()
     if prefer not in PREFER_VALUES:
         prefer = "quality"
