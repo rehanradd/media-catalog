@@ -374,5 +374,67 @@ class CliTests(RunnerTestCase):
         self.assertEqual(kwargs["db_path"], str(self.db_path))
 
 
+class ServiceActiveTests(unittest.TestCase):
+    """service_active() reads the state word, not the exit code.
+
+    Regression: ``systemctl is-active`` exits 3 for ``activating`` —
+    the same code as ``inactive`` — so the old ``returncode == 0``
+    check let a neighbour that was still starting up slip past the
+    guard (same hole as backfill_durations, fixed on main 5199f81f).
+    """
+
+    def _fake_run(self, stdout, returncode=3):
+        result = unittest.mock.Mock()
+        result.stdout = stdout
+        result.returncode = returncode
+        return unittest.mock.patch.object(
+            link_state_runner.subprocess, "run",
+            return_value=result)
+
+    def test_active_is_active(self):
+        with self._fake_run("active\n", returncode=0):
+            self.assertTrue(
+                link_state_runner.service_active("radd-prefetch.service"))
+
+    def test_activating_is_active(self):
+        with self._fake_run("activating\n", returncode=3):
+            self.assertTrue(
+                link_state_runner.service_active("radd-prefetch.service"))
+
+    def test_activating_case_and_whitespace(self):
+        with self._fake_run("  Activating \n", returncode=3):
+            self.assertTrue(
+                link_state_runner.service_active("radd-prefetch.service"))
+
+    def test_reloading_and_deactivating_are_active(self):
+        for state in ("reloading", "deactivating"):
+            with self._fake_run(state + "\n", returncode=3):
+                self.assertTrue(
+                    link_state_runner.service_active(
+                        "radd-prefetch.service"))
+
+    def test_inactive_failed_unknown_are_inactive(self):
+        for state in ("inactive", "failed", "unknown"):
+            with self._fake_run(state + "\n", returncode=3):
+                self.assertFalse(
+                    link_state_runner.service_active(
+                        "radd-prefetch.service"))
+
+    def test_empty_stdout_falls_back_to_exit_code(self):
+        with self._fake_run("", returncode=0):
+            self.assertTrue(
+                link_state_runner.service_active("radd-prefetch.service"))
+        with self._fake_run("", returncode=3):
+            self.assertFalse(
+                link_state_runner.service_active("radd-prefetch.service"))
+
+    def test_missing_systemctl_is_inactive(self):
+        with unittest.mock.patch.object(
+                link_state_runner.subprocess, "run",
+                side_effect=OSError("no systemctl")):
+            self.assertFalse(
+                link_state_runner.service_active("radd-prefetch.service"))
+
+
 if __name__ == "__main__":
     unittest.main()
