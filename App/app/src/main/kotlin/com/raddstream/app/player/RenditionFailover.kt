@@ -155,8 +155,9 @@ sealed class FailoverDecision {
      * Retry the SAME rendition once with the software (FFmpeg) decoder before hopping
      * to another copy. The service reloads the same rendition at the same position;
      * the player was built with EXTENSION_RENDERER_MODE_PREFER, so the fresh prepare
-     * re-runs renderer selection with the FFmpeg audio renderer first for the
-     * formats it knows (AC-3, E-AC-3, DTS, TrueHD, MLP). One per rendition: a
+     * re-runs renderer selection with the FFmpeg audio renderer first. (It claims
+     * AAC and the other common formats too, not only AC-3/E-AC-3/DTS/TrueHD/MLP —
+     * see the MX #1 comment at PlaybackService.buildPlayer.) One per rendition: a
      * second decode failure falls through to the ordinary hop path. No backoff —
      * the decoder is the problem, not the network, so waiting buys nothing.
      */

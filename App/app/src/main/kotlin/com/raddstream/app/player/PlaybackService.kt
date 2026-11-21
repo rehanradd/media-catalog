@@ -325,13 +325,19 @@ class PlaybackService : MediaSessionService() {
             }
         }
         // MX idea #1 (2026-11-18): the FFmpeg software audio decoder. PREFER
-        // puts FfmpegAudioRenderer ahead of MediaCodecAudioRenderer — but it
-        // only ever claims the formats the FFmpeg build knows (AC-3, E-AC-3,
-        // DTS, TrueHD, MLP; see FfmpegLibrary.supportsFormat), so AAC/MP3
-        // and everything else stays on the hardware decoder exactly as
-        // before. Without the AAR the factory loads nothing extra (the
-        // extension is reflection-loaded and silently skipped when absent),
-        // so a build without FFmpeg plays exactly as today.
+        // puts FfmpegAudioRenderer ahead of MediaCodecAudioRenderer. The
+        // Jellyfin FFmpeg build claims MORE than the exotic formats — AAC,
+        // MP3, FLAC, Opus included (Robo v11, Discover Pakistan, 2026-11-20:
+        // it decoded the AAC stream) — so most audio goes through FFmpeg
+        // and comes out as float PCM. That is safe ONLY because the sink
+        // chain stays 16-bit end to end: ToInt16PcmAudioProcessor converts
+        // the float before EnhancementAudioProcessor, which preserves its
+        // input encoding (see that class — it used to force float output,
+        // which made the 16-bit-only SilenceSkippingAudioProcessor throw
+        // and broke every audio-bearing title). Without the AAR the factory
+        // loads nothing extra (the extension is reflection-loaded and
+        // silently skipped when absent), so a build without FFmpeg plays
+        // exactly as today.
         renderersFactory.setExtensionRendererMode(
             DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER,
         )
@@ -956,7 +962,9 @@ class PlaybackService : MediaSessionService() {
                 // no backoff, the decoder is the problem, not the network.
                 // The player was built with EXTENSION_RENDERER_MODE_PREFER,
                 // so the fresh prepare re-runs renderer selection with the
-                // FFmpeg audio renderer first for the formats it knows.
+                // FFmpeg audio renderer first. (It claims AAC and the other
+                // common formats too, not only AC-3/DTS — see the MX #1
+                // comment at buildPlayer.)
                 store.appendFailover(listOf(decision.record))
                 pendingResumeMs = preservePositionMs.takeIf { it > 0 }
                 loadRendition(bundle, decision.index)

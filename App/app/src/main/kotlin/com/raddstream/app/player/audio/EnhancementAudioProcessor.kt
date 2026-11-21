@@ -23,16 +23,24 @@ import java.nio.ByteBuffer
  * Shape of the chain (per sample, per channel):
  *
  *   input PCM (16/24/32-bit int or float) → float → ×[dspGain] → 5 RBJ
- *   biquads ([EqChain]) → [softClip] → float out
+ *   biquads ([EqChain]) → [softClip] → output in the INPUT's encoding
+ *   (16-bit in → 16-bit out, float in → float out; 24/32-bit in → 16-bit
+ *   out).
  *
- * The output format is always PCM float at the input's channel count and
- * sample rate, so the format never changes at runtime and a gain or EQ
- * move applies live on the next buffer — no reconfigure, no restart, no
- * rebuild. At unity gain and flat EQ the chain is the identity in exact
- * float arithmetic (a 0 dB biquad reduces to `y[n] = x[n]`), so a player
- * that never touches the feature sounds exactly as it did — the only
- * change is the int→float→int round-trip downstream, a 1-LSB-level
- * difference at most.
+ * The output encoding follows the input on purpose — it must. Media3's
+ * `DefaultAudioSink` always appends `SilenceSkippingAudioProcessor` after
+ * our processors, and that processor is 16-bit PCM only: its `onConfigure`
+ * throws `UnhandledAudioFormatException` on anything else, even when
+ * skip-silence is disabled (the app never enables it). The first version
+ * of this processor always returned float, so every audio-bearing title
+ * failed at sink configure with `ERROR_CODE_AUDIO_TRACK_INIT_FAILED`
+ * (Robo v11, Discover Pakistan, 2026-11-20: float 48 kHz stereo from the
+ * FFmpeg AAC decoder). The int→float→int round-trip for 16-bit input is a
+ * 1-LSB-level difference at most, and a gain or EQ move still applies live
+ * on the next buffer — no reconfigure, no restart, no rebuild. At unity
+ * gain and flat EQ the chain is the identity in exact float arithmetic
+ * (a 0 dB biquad reduces to `y[n] = x[n]`), so a player that never touches
+ * the feature sounds exactly as it did.
  *
  * Threading: the playback thread owns `queueInput`/`onConfigure`/`onFlush`
  * (and therefore the [EqChain] state); the UI thread owns [setSettings],
@@ -96,9 +104,21 @@ class EnhancementAudioProcessor : BaseAudioProcessor() {
         chainGains = eqGains
         chainEnabled = eqEnabled
         stashLength = 0
-        // NOTE: AudioFormat's constructor is (sampleRate, channelCount,
-        // encoding) — the order reads backwards against the field order.
-        return AudioProcessor.AudioFormat(sampleRate, channels, C.ENCODING_PCM_FLOAT)
+        // The output encoding follows the input: 16-bit stays 16-bit, float
+        // stays float, 24/32-bit int down-converts to 16-bit. It MUST NOT
+        // always be float: Media3's DefaultAudioSink always appends the
+        // 16-bit-only SilenceSkippingAudioProcessor after our processors,
+        // and a float output throws UnhandledAudioFormatException at sink
+        // configure time (Robo v11, Discover Pakistan — every audio-bearing
+        // title failed, on every device). NOTE: AudioFormat's constructor
+        // is (sampleRate, channelCount, encoding) — the order reads
+        // backwards against the field order.
+        val outputEncoding = if (encoding == C.ENCODING_PCM_FLOAT) {
+            C.ENCODING_PCM_FLOAT
+        } else {
+            C.ENCODING_PCM_16BIT
+        }
+        return AudioProcessor.AudioFormat(sampleRate, channels, outputEncoding)
     }
 
     private fun effectiveGains(): List<Float> =
@@ -136,7 +156,13 @@ class EnhancementAudioProcessor : BaseAudioProcessor() {
         }
         val consumedBytes = wholeFrames * bytesPerFrame
         val consumedFromInput = consumedBytes - stashLength
-        val output = replaceOutputBuffer(wholeFrames * channels * FLOAT_BYTES)
+        // The output is written in the OUTPUT encoding (see onConfigure):
+        // shorts for a 16-bit output, floats for a float output. A 16-bit
+        // sample is the soft-clipped value clamped to ±1.0 first — softClip
+        // can reach ±2.0 under a 200% boost, and an unclamped short would
+        // wrap. This is the same clamp ToInt16PcmAudioProcessor applies.
+        val outEncoding = outputAudioFormat.encoding
+        val output = replaceOutputBuffer(wholeFrames * channels * bytesPerSample(outEncoding))
         val frame = FloatArray(channels)
         val gain = dspGain
         var streamPos = 0
@@ -147,7 +173,14 @@ class EnhancementAudioProcessor : BaseAudioProcessor() {
             }
             for (ch in 0 until channels) frame[ch] *= gain
             chain.processFrame(frame)
-            for (ch in 0 until channels) output.putFloat(softClip(frame[ch]))
+            for (ch in 0 until channels) {
+                val processed = softClip(frame[ch])
+                if (outEncoding == C.ENCODING_PCM_FLOAT) {
+                    output.putFloat(processed)
+                } else {
+                    output.putShort((processed.coerceIn(-1f, 1f) * Short.MAX_VALUE).toInt().toShort())
+                }
+            }
         }
         output.flip()
         // Advance past the consumed input bytes, then keep the trailing
@@ -253,9 +286,5 @@ class EnhancementAudioProcessor : BaseAudioProcessor() {
     override fun onReset() {
         chain = null
         stashLength = 0
-    }
-
-    private companion object {
-        const val FLOAT_BYTES: Int = 4
     }
 }
