@@ -119,6 +119,7 @@ import errno
 import http.client
 import json
 import queue
+import re
 import socket
 import sqlite3
 import ssl
@@ -645,6 +646,123 @@ def _needs_get_fallback(host: str, status: int, error: str, verdict: str | None)
     return False
 
 
+# ── mixdrop resolver fallback ──────────────────────────────────────────────────
+#
+# Mixdrop's file page answers a bare HEAD with 302 to a survey site
+# (survey-twist.com) and its embed page answers a bare GET with a JS
+# challenge ("Loading..." + a JWT redirect) — the same challenge for a live
+# file and for a file that does not exist (measured 2026-11-22 on the Oracle
+# VM: a fabricated id gets the identical challenge page). So no bare probe
+# can verdict a mixdrop link: HEAD 302 earns no verdict
+# (``payload_for_head`` returns None for any 3xx) and the ranged-GET
+# fallback never fires (302 is not in ``HEAD_UNSUPPORTED_STATUSES``).
+# The only thing that can tell a live mixdrop file from a dead one is the
+# resolver (``importers/host_resolvers.py::unwrap_mxdrop``), which completes
+# the challenge, unpacks MDCore.wurl and Range-probes the byte endpoint.
+# So when the bare probe earns no verdict for a mixdrop URL, the sweep
+# routes it through the resolver instead of leaving it unverified.
+# The resolver is loaded lazily (same pattern as fast_fetch._embed_resolvers):
+# importing it at module top level would couple the sweep to the importers
+# package graph. Deliberately NOT done by extending the ranged-GET fallback
+# to 3xx: the ranged GET to mixdrop returns 200 survey-page HTML, so a
+# naive "200 = active" would mark dead mixdrop links active.
+_MIXDROP_HOST_RE = re.compile(r"""(?:^|\.)(?:mxdrop|mixdrop)\.[a-z]{2,}$""",
+                              re.I)
+_MIXDROP_FILE_PAGE_RE = re.compile(
+    r"""^(https?://[^/]+)/f/([A-Za-z0-9_-]+)/?$""")
+_MIXDROP_EMBED_PATH_RE = re.compile(
+    r"""^/(?:e|embed)/[A-Za-z0-9_-]+/?$""", re.I)
+
+_HOST_RESOLVERS = None  # None = not loaded yet; False = load failed
+
+
+def _load_host_resolvers():
+    """Lazily import ``importers/host_resolvers.py`` (or None if unavailable)."""
+    global _HOST_RESOLVERS
+    if _HOST_RESOLVERS is None:
+        directory = str(Path(__file__).resolve().parent / "importers")
+        if directory not in sys.path:
+            sys.path.insert(0, directory)
+        try:
+            import host_resolvers
+        except (ImportError, OSError, SyntaxError):
+            _HOST_RESOLVERS = False
+            return None
+        _HOST_RESOLVERS = host_resolvers
+    return _HOST_RESOLVERS or None
+
+
+def _is_mixdrop_url(url: str) -> bool:
+    """True when *url* is on a mixdrop/mxdrop host (any TLD).
+
+    A hostname is a mixdrop host only when it IS mixdrop.<tld> /
+    mxdrop.<tld> or a subdomain of one — a bare substring match would
+    also catch lookalikes like notmixdrop.example or mixdrop.evil.example.
+    """
+    host = target_host(url or "")
+    return bool(_MIXDROP_HOST_RE.search(host))
+
+
+def _mixdrop_embed_url(url: str) -> str:
+    """A mixdrop file page -> its embed URL; an embed URL passes through.
+
+    Returns "" when *url* is not a mixdrop file-page or embed URL.
+    """
+    if not _is_mixdrop_url(url):
+        return ""
+    parts = urllib.parse.urlsplit(url)
+    if _MIXDROP_EMBED_PATH_RE.match(parts.path or "/"):
+        return url
+    match = _MIXDROP_FILE_PAGE_RE.match(url)
+    if match:
+        return f"{match.group(1)}/e/{match.group(2)}"
+    return ""
+
+
+def _mixdrop_verdict(url: str, *, resolvers=None,
+                     spacing_s: float | None = None):
+    """A mixdrop URL -> (verdict, http_status, error) via the resolver.
+
+    Returns (None, 0, "") when the resolver cannot determine liveness
+    (not a mixdrop URL, no embed form, resolver unavailable, unwrap raised,
+    or the unwrap status is "unknown"/"unverified"/"error"). Only a resolver
+    status of "active" / "dead" / "blocked" becomes a verdict; "blocked"
+    maps to EXPIRED (a host refusal, not the link's death — the same mapping
+    ``link_state.classify`` applies to 401/403/429).
+
+    The unwrap runs inside ``link_health.host_gate`` so consecutive mixdrop
+    unwraps keep the sweep's per-host spacing (mixdrop rate-limits rapid
+    requests) instead of hammering the host.
+    """
+    embed = _mixdrop_embed_url(url)
+    if not embed:
+        return None, 0, ""
+    if resolvers is None:
+        resolvers = _load_host_resolvers()
+    if resolvers is None:
+        return None, 0, ""
+    if spacing_s is None:
+        spacing_s = link_health.DEFAULT_HOST_SPACING_S
+    try:
+        with link_health.host_gate(
+                embed, spacing_s=spacing_s,
+                jitter_s=link_health.DEFAULT_HOST_JITTER_S):
+            result = resolvers.unwrap_mxdrop(embed, verify=True)
+    except Exception:
+        return None, 0, ""
+    if not isinstance(result, dict):
+        return None, 0, ""
+    status = str(result.get("status") or "")
+    http_status = int(result.get("http_status") or 0)
+    if status == "active":
+        return link_state.STATUS_ACTIVE, http_status, ""
+    if status == "dead":
+        return link_state.STATUS_DEAD, http_status, ""
+    if status == "blocked":
+        return link_state.STATUS_EXPIRED, http_status, ""
+    return None, 0, ""
+
+
 def _record_move(url: str, final_url: str, stats: dict) -> None:
     """One host-only redirect observation for the self-healing registry.
 
@@ -903,7 +1021,8 @@ class VerdictWriter(threading.Thread):
 
 def _probe_host(host: str, groups: list[dict], *, session_factory=None,
                 timeout: float, spacing_s: float | None,
-                headers: dict, out_queue=None, clearance=None) -> dict:
+                headers: dict, out_queue=None, clearance=None,
+                resolvers=None) -> dict:
     """Probe one host's distinct URLs, strictly serially, in id order.
 
     Returns per-host stats. When ``out_queue`` is given, verdicts are
@@ -971,6 +1090,17 @@ def _probe_host(host: str, groups: list[dict], *, session_factory=None,
                     _record_move(url, g_final, stats)
             else:
                 verdict = None
+        if verdict is None and _is_mixdrop_url(url):
+            # Mixdrop: the bare probe cannot verdict (file page 302s to a
+            # survey; the embed page is a JS challenge that a dead file
+            # answers identically). Route through the resolver, which
+            # completes the challenge and Range-probes the byte endpoint.
+            # A resolver verdict replaces no_verdict; a resolver that
+            # cannot determine leaves the row alone.
+            r_verdict, r_status, r_error = _mixdrop_verdict(
+                url, resolvers=resolvers, spacing_s=spacing_s)
+            if r_verdict is not None:
+                verdict, status, error = r_verdict, r_status, r_error
         if verdict is None:
             stats["no_verdict"] += 1
             continue

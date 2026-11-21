@@ -733,6 +733,195 @@ class GetFallbackTests(unittest.TestCase):
         self.assertEqual(merged["by_status"], {"active": 1, "dead": 1})
 
 
+# ── mixdrop resolver fallback ────────────────────────────────────────────────
+
+class MixdropResolverFallbackTests(unittest.TestCase):
+    # Measured 2026-11-22 on the Oracle VM: a bare HEAD to a mixdrop file
+    # page answers 302 to survey-twist.com, and a bare GET to the embed
+    # page answers the same JS challenge ("Loading..." + JWT redirect) for a
+    # live file and for a fabricated id alike. So no bare probe can verdict
+    # a mixdrop link — the sweep recorded 0/187 verdicts over 6 batches —
+    # and only the resolver (which completes the challenge, unpacks
+    # MDCore.wurl and Range-probes the byte endpoint) can tell live from
+    # dead. The fallback fires ONLY when the bare probe earns no verdict
+    # for a mixdrop URL; every other host and every HEAD verdict is
+    # untouched.
+
+    def _fake_resolvers(self, status, http_status=0):
+        resolvers = unittest.mock.Mock()
+        resolvers.unwrap_mxdrop.return_value = {
+            "status": status, "http_status": http_status,
+            "final_url": ("https://mxcontent.example/v.mp4"
+                          if status == "active" else ""),
+        }
+        return resolvers
+
+    def _run(self, host, groups, mapping, resolvers):
+        log = []
+        factory = _make_factory(_status_map(mapping), log)
+        registry = unittest.mock.Mock()
+        registry.record_redirect.return_value = {"count": 0, "applied": False}
+        with unittest.mock.patch.object(fast_probe, "host_registry", registry):
+            stats = fast_probe._probe_host(
+                host, groups, session_factory=factory, timeout=5.0,
+                spacing_s=0.0, headers=fast_probe.probe_headers(),
+                out_queue=None, resolvers=resolvers)
+        return stats, log
+
+    def _one(self, url):
+        return [{"url": url, "row_ids": [1], "stored": None}]
+
+    def test_mixdrop_host_matcher(self):
+        for host in ("mixdrop.vc", "mixdrop.is", "mixdrop.ag", "mixdrop.co",
+                     "mixdrop.top", "mixdrop.click", "mixdrop.to",
+                     "mxdrop.click", "www.mixdrop.vc", "MIXDROP.VC"):
+            self.assertTrue(fast_probe._is_mixdrop_url(
+                f"https://{host}/f/abc123"), host)
+        for url in ("https://streamtape.com/v/abc",
+                    "https://vidhide.com/e/abc",
+                    "https://notmixdrop.example/f/abc",
+                    "https://mixdrop.evil.example/f/abc",
+                    ""):
+            self.assertFalse(fast_probe._is_mixdrop_url(url), url)
+
+    def test_mixdrop_embed_url_rewrite(self):
+        self.assertEqual(
+            fast_probe._mixdrop_embed_url("https://mixdrop.vc/f/wnz90jk7swr16m"),
+            "https://mixdrop.vc/e/wnz90jk7swr16m")
+        self.assertEqual(
+            fast_probe._mixdrop_embed_url("https://mixdrop.is/f/dkxln6k9clnpe1/"),
+            "https://mixdrop.is/e/dkxln6k9clnpe1")
+        # An embed URL passes through unchanged.
+        self.assertEqual(
+            fast_probe._mixdrop_embed_url("https://mixdrop.vc/e/wnz90jk7swr16m"),
+            "https://mixdrop.vc/e/wnz90jk7swr16m")
+        # Not a mixdrop URL, or not a file-page/embed path: no embed form.
+        self.assertEqual(
+            fast_probe._mixdrop_embed_url("https://streamtape.com/v/abc"), "")
+        self.assertEqual(
+            fast_probe._mixdrop_embed_url("https://mixdrop.vc/x/abc"), "")
+        self.assertEqual(fast_probe._mixdrop_embed_url(""), "")
+
+    def test_mixdrop_verdict_mapping(self):
+        url = "https://mixdrop.vc/f/wnz90jk7swr16m"
+        active = self._fake_resolvers("active", 206)
+        self.assertEqual(
+            fast_probe._mixdrop_verdict(url, resolvers=active, spacing_s=0.0),
+            (link_state.STATUS_ACTIVE, 206, ""))
+        dead = self._fake_resolvers("dead", 404)
+        self.assertEqual(
+            fast_probe._mixdrop_verdict(url, resolvers=dead, spacing_s=0.0),
+            (link_state.STATUS_DEAD, 404, ""))
+        blocked = self._fake_resolvers("blocked", 403)
+        self.assertEqual(
+            fast_probe._mixdrop_verdict(url, resolvers=blocked, spacing_s=0.0),
+            (link_state.STATUS_EXPIRED, 403, ""))
+        # Unknown / unverified / error: no verdict — the row stays eligible.
+        for status in ("unknown", "unverified", "error", "js_required"):
+            fake = self._fake_resolvers(status, 0)
+            self.assertEqual(
+                fast_probe._mixdrop_verdict(url, resolvers=fake, spacing_s=0.0),
+                (None, 0, ""), status)
+        # An unwrapper that raises, or a non-dict verdict: no verdict.
+        raising = unittest.mock.Mock()
+        raising.unwrap_mxdrop.side_effect = RuntimeError("boom")
+        self.assertEqual(
+            fast_probe._mixdrop_verdict(url, resolvers=raising, spacing_s=0.0),
+            (None, 0, ""))
+        bad = unittest.mock.Mock()
+        bad.unwrap_mxdrop.return_value = "not-a-dict"
+        self.assertEqual(
+            fast_probe._mixdrop_verdict(url, resolvers=bad, spacing_s=0.0),
+            (None, 0, ""))
+        # Not a mixdrop URL, or a resolver that cannot be loaded: no verdict.
+        self.assertEqual(
+            fast_probe._mixdrop_verdict(
+                "https://streamtape.com/v/abc",
+                resolvers=self._fake_resolvers("active", 206), spacing_s=0.0),
+            (None, 0, ""))
+        with unittest.mock.patch.object(
+                fast_probe, "_load_host_resolvers", return_value=None):
+            self.assertEqual(
+                fast_probe._mixdrop_verdict(url, spacing_s=0.0),
+                (None, 0, ""))
+
+    @_public_dns
+    def test_mixdrop_head_302_resolver_active(self):
+        # The production shape: HEAD 302 earns no verdict, the resolver
+        # proves the file live. The row is verdicted active, not no_verdict.
+        mapping = {("mixdrop.vc", "/f/wnz90jk7swr16m", "HEAD"):
+                   (302, {}, False)}
+        url = "https://mixdrop.vc/f/wnz90jk7swr16m"
+        stats, _log = self._run(
+            "mixdrop.vc", self._one(url), mapping,
+            self._fake_resolvers("active", 206))
+        self.assertEqual(stats["by_status"], {"active": 1})
+        self.assertEqual(stats["no_verdict"], 0)
+        self.assertEqual(stats["results"][url], ("active", 206, ""))
+
+    @_public_dns
+    def test_mixdrop_head_302_resolver_dead(self):
+        # A dead mixdrop file is marked dead — never active — even though
+        # the bare probe cannot see it.
+        mapping = {("mixdrop.vc", "/f/wnz90jk7swr16m", "HEAD"):
+                   (302, {}, False)}
+        url = "https://mixdrop.vc/f/wnz90jk7swr16m"
+        stats, _log = self._run(
+            "mixdrop.vc", self._one(url), mapping,
+            self._fake_resolvers("dead", 404))
+        self.assertEqual(stats["by_status"], {"dead": 1})
+        self.assertEqual(stats["no_verdict"], 0)
+        self.assertEqual(stats["results"][url], ("dead", 404, ""))
+
+    @_public_dns
+    def test_mixdrop_head_302_resolver_unknown_leaves_row_alone(self):
+        mapping = {("mixdrop.vc", "/f/wnz90jk7swr16m", "HEAD"):
+                   (302, {}, False)}
+        url = "https://mixdrop.vc/f/wnz90jk7swr16m"
+        stats, _log = self._run(
+            "mixdrop.vc", self._one(url), mapping,
+            self._fake_resolvers("unknown", 0))
+        self.assertEqual(stats["by_status"], {})
+        self.assertEqual(stats["no_verdict"], 1)
+        self.assertNotIn(url, stats["results"])
+
+    @_public_dns
+    def test_mixdrop_head_302_resolver_raises_leaves_row_alone(self):
+        mapping = {("mixdrop.vc", "/f/wnz90jk7swr16m", "HEAD"):
+                   (302, {}, False)}
+        url = "https://mixdrop.vc/f/wnz90jk7swr16m"
+        raising = unittest.mock.Mock()
+        raising.unwrap_mxdrop.side_effect = RuntimeError("boom")
+        stats, _log = self._run("mixdrop.vc", self._one(url), mapping, raising)
+        self.assertEqual(stats["by_status"], {})
+        self.assertEqual(stats["no_verdict"], 1)
+
+    @_public_dns
+    def test_non_mixdrop_head_302_stays_no_verdict(self):
+        # A non-mixdrop HEAD 302 is unchanged: no resolver call, no verdict.
+        mapping = {("streamtape.com", "/v/abc", "HEAD"): (302, {}, False)}
+        url = "https://streamtape.com/v/abc"
+        resolvers = self._fake_resolvers("active", 206)
+        stats, _log = self._run("streamtape.com", self._one(url), mapping,
+                                resolvers)
+        self.assertEqual(stats["by_status"], {})
+        self.assertEqual(stats["no_verdict"], 1)
+        resolvers.unwrap_mxdrop.assert_not_called()
+
+    @_public_dns
+    def test_mixdrop_head_200_never_resolves(self):
+        # A HEAD verdict stands: the resolver only fires on no_verdict.
+        mapping = {("mixdrop.vc", "/f/wnz90jk7swr16m", "HEAD"):
+                   (200, {}, False)}
+        url = "https://mixdrop.vc/f/wnz90jk7swr16m"
+        resolvers = self._fake_resolvers("dead", 404)
+        stats, _log = self._run("mixdrop.vc", self._one(url), mapping,
+                                resolvers)
+        self.assertEqual(stats["by_status"], {"active": 1})
+        self.assertEqual(stats["results"][url], ("active", 200, ""))
+        resolvers.unwrap_mxdrop.assert_not_called()
+
+
 # ── single writer ────────────────────────────────────────────────────────────
 
 class WriterTests(unittest.TestCase):
