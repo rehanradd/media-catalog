@@ -505,7 +505,7 @@ internal fun optimisticDetailFromPost(post: Post): PostDetail = PostDetail(
 @HiltViewModel
 class DetailViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
-    @ApplicationContext appContext: Context,
+    @ApplicationContext private val appContext: Context,
     private val catalogRepository: CatalogRepository,
     private val favoritesRepository: FavoritesRepository,
     private val followedSeriesRepository: FollowedSeriesRepository,
@@ -924,7 +924,7 @@ class DetailViewModel @Inject constructor(
         var playHint: String? = null
         when {
             resume != null -> {
-                val band = resumePrintFor(layout, resume)?.resolution?.wire
+                val band = layout?.let { resumePrintFor(it, resume)?.resolution?.wire }
                 playLabel = if (band != null) "${resume.label} · $band" else resume.label
             }
             layout?.isSeriesLike == true -> {
