@@ -1,0 +1,30 @@
+[Unit]
+Description=Daily domain-registry probe: verify every site base, record moves (registry §2)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/radd-stream
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+# No-arg CLI runs probe_all_sites() (domain_resolver.py:1022): cheap and
+# content-verified — cached base + known mirrors per site, 8s per probe.
+# That is the whole point of this timer: it keeps the registry current.
+# `resolve-all` runs the expensive full discovery chain instead and must
+# never be put on a timer. probe_all_sites writes the registry itself
+# (atomic temp-file + fsync + os.replace in save_registry), so this unit
+# owns the live registry file while it runs; it never touches the DB.
+# 33 sites at a few probes each finishes in minutes; the 30-minute start
+# timeout is headroom for slow hosts, not an expectation.
+ExecStart=/usr/bin/python3 -S /opt/radd-stream/Fast_Fetch/domain_resolver.py
+Nice=19
+IOSchedulingClass=idle
+TimeoutStartSec=1800
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,17 @@
+[Unit]
+Description=Daily domain-registry probe at 10:30, clear of every other job (registry §2)
+
+[Timer]
+# Daily 10:30, its OWN timer — never piggybacked on the link sweep.
+# Clear of the link sweep (02,08,14,20:30), the prefetch timer
+# (00,06,12,18:30), the daily backup (~03:40-06:30), the fleet job
+# (03:30), autocrawl (02:00), host-roots (Sun 01:33), themoviebox-sync
+# (05:00), prefetch-fill (18:00) and topup (21:03). The probe is light
+# (8s per probe, registry-only writes), so the 10-minute random delay is
+# jitter, not load spreading.
+OnCalendar=*-*-* 10:30:00
+RandomizedDelaySec=600
+Persistent=true
+
+[Install]
+WantedBy=timers.target

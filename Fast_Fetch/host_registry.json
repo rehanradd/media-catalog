@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "updated_at": "2026-11-20T22:30:00Z",
+  "updated_at": "2026-11-21T16:00:00Z",
   "hosts": {
     "hubcloud.ist": {
       "current_domain": "hubcloud.mov",
@@ -890,6 +890,129 @@
         {
           "domain": "rogmovies.beauty",
           "seen_from": "2026-11-20T22:30:00Z"
+        }
+      ]
+    },
+    "themoviebox.xyz": {
+      "current_domain": "themoviebox.xyz",
+      "evidence": "prober",
+      "status": "active",
+      "last_verified": "2026-11-21T16:00:00Z",
+      "verified_by": "registry-s2-20261121",
+      "rows_affected": 159326,
+      "known_mirrors": [
+        "https://themoviebox.xyz"
+      ],
+      "rotation_history": [
+        {
+          "domain": "themoviebox.xyz",
+          "seen_from": "2026-11-21"
+        }
+      ]
+    },
+    "h5-api.aoneroom.com": {
+      "current_domain": "h5-api.aoneroom.com",
+      "evidence": "prober",
+      "status": "active",
+      "last_verified": "2026-11-21T16:00:00Z",
+      "verified_by": "registry-s2-20261121",
+      "rows_affected": 0,
+      "known_mirrors": [
+        "https://h5-api.aoneroom.com"
+      ],
+      "rotation_history": [
+        {
+          "domain": "h5-api.aoneroom.com",
+          "seen_from": "2026-11-21"
+        }
+      ]
+    },
+    "moviehax.run": {
+      "current_domain": "moviehax.run",
+      "evidence": "prober",
+      "status": "active",
+      "last_verified": "2026-11-21T16:00:00Z",
+      "verified_by": "registry-s2-20261121",
+      "rows_affected": 0,
+      "known_mirrors": [
+        "https://moviehax.run"
+      ],
+      "rotation_history": [
+        {
+          "domain": "moviehax.run",
+          "seen_from": "2026-11-21"
+        }
+      ]
+    },
+    "thebollyflix.gen.in": {
+      "current_domain": "thebollyflix.io.in",
+      "evidence": "audit-unconfirmed",
+      "status": "active",
+      "last_verified": "2026-11-21T16:00:00Z",
+      "verified_by": "registry-s2-20261121",
+      "rows_affected": 0,
+      "known_mirrors": [
+        "https://thebollyflix.io.in"
+      ],
+      "rotation_history": [
+        {
+          "domain": "thebollyflix.gen.in",
+          "seen_until": "2026-11-21"
+        },
+        {
+          "domain": "thebollyflix.io.in",
+          "seen_from": "2026-11-21"
+        }
+      ]
+    },
+    "animeworld.live": {
+      "current_domain": "animeworld.live",
+      "evidence": "prober",
+      "status": "active",
+      "last_verified": "2026-11-21T16:00:00Z",
+      "verified_by": "registry-s2-20261121",
+      "rows_affected": 0,
+      "known_mirrors": [
+        "https://animeworld.live"
+      ],
+      "rotation_history": [
+        {
+          "domain": "animeworld.live",
+          "seen_from": "2026-11-21"
+        }
+      ]
+    },
+    "hindidubbedmovies.pk": {
+      "current_domain": "hindidubbedmovies.pk",
+      "evidence": "prober",
+      "status": "active",
+      "last_verified": "2026-11-21T16:00:00Z",
+      "verified_by": "registry-s2-20261121",
+      "rows_affected": 0,
+      "known_mirrors": [
+        "https://hindidubbedmovies.pk"
+      ],
+      "rotation_history": [
+        {
+          "domain": "hindidubbedmovies.pk",
+          "seen_from": "2026-11-21"
+        }
+      ]
+    },
+    "hindianimeszone.com": {
+      "current_domain": "hindianimeszone.com",
+      "evidence": "prober",
+      "status": "active",
+      "last_verified": "2026-11-21T16:00:00Z",
+      "verified_by": "registry-s2-20261121",
+      "rows_affected": 0,
+      "known_mirrors": [
+        "https://hindianimeszone.com"
+      ],
+      "rotation_history": [
+        {
+          "domain": "hindianimeszone.com",
+          "seen_from": "2026-11-21"
         }
       ]
     }

@@ -5,8 +5,8 @@ Offline, stdlib, no network: every HTTP hop goes through an injected
 fake fetcher. Real DNS is never touched.
 
 Pinned here:
-* the seeded registry loads: 42 entries (38 moved pairs + 4 dead hosts),
-  38 live domains, and the four dead hosts are recorded, not rewritten;
+* the seeded registry loads: 49 entries (45 active + 4 dead hosts),
+  39 moved pairs, and the four dead hosts are recorded, not rewritten;
 * rewrite_url swaps ONLY the host (scheme/port/path/query/fragment
   preserved) and falls back to the stored URL for unknown, dead, or
   already-current hosts;
@@ -76,8 +76,11 @@ class TestSeededRegistry(unittest.TestCase):
         reg = hr.load_registry()
         hosts = reg["hosts"]
         self.assertEqual(reg["version"], "2.0")
-        self.assertEqual(len(hosts), 42)  # 38 moved pairs + 4 dead hosts
-        self.assertEqual(len(hr.live_domains()), 38)
+        self.assertEqual(len(hosts), 49)  # 45 active + 4 dead hosts
+        # live_domains() counts MOVED pairs only (current_domain != host):
+        # 6 of the 7 §2 hosts are no-move entries (current_domain == host),
+        # so only thebollyflix (gen.in -> io.in) joins the moved set.
+        self.assertEqual(len(hr.live_domains()), 39)
         # The audit's headline said 26 pairs; the enumerated lists sum to
         # 29, and the pair row counts sum to exactly the audit's 1,010,359.
         # The vcloud move (domain-doctor 2026-11-21, 237,014 rows) and the
@@ -85,9 +88,13 @@ class TestSeededRegistry(unittest.TestCase):
         # bring the total to 1,256,670. The registry-refresh lane
         # (2026-11-21, vegamovies/ssrmovies/hdhub4u/rogmovies) adds 4
         # moves with 0 rows on the old hosts, so the total is unchanged.
+        # The registry §2 lane (2026-11-21) adds 7 hosts: themoviebox
+        # (159,326 rows, service-column count) + 6 with 0 rows (the
+        # aoneroom API host and 5 wp_family sites never merged into the
+        # catalog), so the total becomes 1,415,996.
         rows = sum(h.get("rows_affected", 0) for h in hosts.values()
                    if h.get("status") == "active")
-        self.assertEqual(rows, 1256670)
+        self.assertEqual(rows, 1415996)
 
     def test_seed_evidence_states(self):
         reg = hr.load_registry()
@@ -96,14 +103,19 @@ class TestSeededRegistry(unittest.TestCase):
         for h in hosts.values():
             by_evidence[h["evidence"]] = by_evidence.get(h["evidence"], 0) + 1
         self.assertEqual(by_evidence["audit-confirmed"], 15)
-        self.assertEqual(by_evidence["audit-unconfirmed"], 10)
+        self.assertEqual(by_evidence["audit-unconfirmed"], 11)
         self.assertEqual(by_evidence["audit-dead-sample"], 3)
         self.assertEqual(by_evidence["audit-dead"], 4)
         # 5 prober-learned moves + vcloud.beer, proven by the
         # domain-doctor's live probe (beer 301/302s to my, my serves 200),
         # + 4 registry-refresh moves (vegamovies/ssrmovies/hdhub4u/
-        # rogmovies, 2026-11-21, each probed live from the Oracle VM).
-        self.assertEqual(by_evidence["prober"], 10)
+        # rogmovies, 2026-11-21, each probed live from the Oracle VM),
+        # + 6 registry §2 hosts (themoviebox, the aoneroom API host,
+        # moviehax/animeworld/hindidubbedmovies/hindianimeszone, each
+        # probed live 2026-11-21). The 7th §2 host, thebollyflix, is
+        # audit-unconfirmed: the old root really redirects, but the new
+        # root 403s under Cloudflare from the Oracle VM.
+        self.assertEqual(by_evidence["prober"], 16)
 
     def test_pixel_excluded(self):
         # Both sides 400 (expired tokens): never a mapping, never rewritten.
