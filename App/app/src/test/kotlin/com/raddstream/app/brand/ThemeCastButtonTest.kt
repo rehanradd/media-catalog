@@ -23,7 +23,7 @@ import java.util.Properties
  * discoverable, i.e. whenever `DetailViewModel.castAvailable` is true.
  *
  * Plain JUnit4 on the JVM, same style as BrandDriftTest: it parses the three
- * themes.xml files from disk and resolves `@color/*` references through
+ * themes.xml files from disk and resolves `@color` references through
  * brand.properties, so it runs with no Robolectric and no Android runtime.
  * It fails when any of the three theme files (values, values-v23, values-v27
  * — each replaces the others wholesale) drops an AppCompat color, or when
