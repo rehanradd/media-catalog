@@ -305,7 +305,12 @@ class DetailRedesignTest {
         // similarRailIsCalledMoreLikeThis). Making that scroll work
         // from anywhere needs a list-state scroll by index — flagged
         // as a follow-up, not this slice. The row itself sits below
-        // the taller stacked buttons, so scroll it into view first.
+        // the taller stacked buttons, outside the first composition
+        // — swipe until it composes, then bring it into view.
+        for (i in 0 until 5) {
+            if (compose.onAllNodesWithText("Similar").fetchSemanticsNodes().isNotEmpty()) break
+            compose.onRoot().performTouchInput { swipeUp() }
+        }
         compose.onNodeWithText("Similar").performScrollTo().assertIsDisplayed()
     }
 
