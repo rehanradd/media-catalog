@@ -4523,8 +4523,8 @@ private fun QualitySheet(state: PlayerUiState, vm: PlayerViewModel) {
                         qualityCostPerHour(rung.band),
                         rung.sizeBytes?.takeIf { it > 0 }?.let { QualityOption.formatBytes(it) },
                         when (rung.isHls) {
-                            true -> "plays in this app"
-                            false -> "plays in any app"
+                            true -> stringResource(R.string.player_plays_in_this_app)
+                            false -> stringResource(R.string.player_plays_in_any_app)
                             null -> null
                         },
                         if (selected) stringResource(R.string.player_playing) else null,

@@ -127,11 +127,9 @@
     <string name="dead_link_browse_similar">Browse similar titles</string>
     <!-- Detail review (Nov 2026): the two contradictory hero/quality lines,
          moved out of hardcoded literals so the words are the same everywhere. -->
-    <string name="detail_not_available_stream">Not available to stream yet — download it instead.</string>
     <!-- Dev-cleanup (Nov 2026): a print the server only offers for download
          says so in words, under its own buttons — "copy" is the word the app
          already uses for one version of a title, "print" is catalog jargon. -->
-    <string name="detail_download_only">Download only — this copy can\'t play here.</string>
     <string name="detail_quality_auto_plays">Auto plays the best picture your plan can hold.</string>
     <string name="detail_quality_select_download">Select download quality</string>
     <!-- 2-button detail (Nov 2026): the two buttons and the Quality Sheet
@@ -191,6 +189,8 @@
     <string name="player_quality_auto">Auto (recommended)</string>
     <string name="player_quality_auto_detail">Chosen from what your connection is actually moving</string>
     <string name="player_playing">Playing</string>
+    <string name="player_plays_in_this_app">plays in this app</string>
+    <string name="player_plays_in_any_app">plays in any app</string>
     <string name="player_quality_note">Switching keeps your position. Auto follows your connection and may move between these on its own.</string>
     <string name="player_sleep_fading">Fading out — %1$s left</string>
     <string name="player_sleep_minutes">%1$d minutes</string>
