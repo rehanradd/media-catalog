@@ -66,6 +66,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from truelink_1fichier import _unwrap_1fichier
+
 USER_AGENT = "Mozilla/5.0"
 DEFAULT_TIMEOUT = 15.0
 MAX_BODY_BYTES = 524288
@@ -76,7 +78,7 @@ FILE_PROBE_BYTES = 512
 STAGE1_BACKENDS = frozenset({
     "streamhg", "vidrift", "vidbolt", "vidly", "vibuxer",
     "pixeldrain", "fastdl-beer", "vidara", "hubdrive", "megaup",
-    "bbupload",
+    "bbupload", "1fichier",
 })
 
 #: Independence groups: two copies in one group are one backup, not two.
@@ -92,13 +94,14 @@ INDEPENDENCE_GROUP = {
     "hubdrive": "hubdrive",
     "megaup": "megaup",
     "bbupload": "bbupload",
+    "1fichier": "1fichier",
 }
 
 #: Watch tie-break order between backends (only after probe evidence).
 WATCH_PREFERENCE = (
     "streamhg", "vidrift", "vidbolt", "vidly", "vibuxer",
     "vidara", "pixeldrain", "fastdl-beer", "hubdrive", "megaup",
-    "bbupload",
+    "bbupload", "1fichier",
 )
 
 #: Download order: resumable first (handled by the sort), then this order.
@@ -106,7 +109,7 @@ WATCH_PREFERENCE = (
 #: last with it: its file host honors ranges only via a ?range= query
 #: param, never via the Range header, so the probe reports resumable=False.
 DOWNLOAD_PREFERENCE = ("pixeldrain", "fastdl-beer", "hubdrive", "megaup",
-                       "bbupload")
+                       "bbupload", "1fichier")
 
 _MEDIA_SUFFIXES = (
     ".mp4", ".m4v", ".mkv", ".webm", ".mov", ".avi", ".wmv", ".flv",
@@ -448,6 +451,11 @@ def classify_backend(url_a: str = "", url_b: str = "") -> str:
         if host in ("bbupload.to", "download.bbupload.to") or host.endswith(
                 ".bbupload.to"):
             return "bbupload"
+        # 1fichier: direct file host, no TLD rotation proven — exact +
+        # dotted-suffix match on 1fichier.com only, so lookalikes such as
+        # 1fichier.com.evil.com and not1fichier.com stay unknown.
+        if host == "1fichier.com" or host.endswith(".1fichier.com"):
+            return "1fichier"
         if host == "superduperload.site" or host.endswith(
                 ".superduperload.site"):
             return "bbupload"
@@ -1198,6 +1206,11 @@ def resolve_copy(saved_url: str, fetch=default_fetch, probe=None) -> dict:
         backend, candidates, failure = _unwrap_megaup(saved_url, fetch)
     elif backend0 == "bbupload":
         backend, candidates, failure = _unwrap_bbupload(saved_url, fetch)
+    elif backend0 == "1fichier":
+        # No password plumbing exists anywhere in the repo, so password=None
+        # at dispatch; a password-protected file fails "needs_password".
+        backend, candidates, failure = _unwrap_1fichier(saved_url, fetch,
+                                                        password=None)
     else:
         return _fail_result(backend0, "unknown_backend")
     if failure:

@@ -837,5 +837,99 @@ class BbuploadRegistryTests(unittest.TestCase):
         self.assertEqual(res["url"], BB_FILE)
 
 
+T1F_SAVED = "https://1fichier.com/?a1b2c3d4e5f6g7h8"
+T1F_DIRECT = ("https://o-1.1fichier.com/a1b2c3d4e5f6g7h8/"
+              "My.Movie.2024.mkv")
+
+# Fixture shapes mirror test_truelink_1fichier.py (built from the
+# reference selectors, never probed live — the Oracle IP is LOCKED,
+# error #350): the file page carries the premium title table plus the
+# first form's hidden fields; the POST answer carries the btn-general link.
+T1F_PAGE_OK = (
+    '<html><head><title>My.Movie.2024.mkv - 1fichier.com</title></head>'
+    '<body><table class="premium">'
+    '<tr><td class="normal">2.1 Go</td>'
+    '<td class="normal">My.Movie.2024.mkv</td></tr>'
+    '<tr><td class="normal">Added 2026-11-20</td></tr>'
+    "</table>"
+    '<form action="/other-path" method="post">'
+    '<input type="hidden" name="a" value="1" />'
+    '<input type="submit" class="btn-general" value="Download" />'
+    "</form></body></html>"
+)
+
+T1F_POST_OK = (
+    "<html><body><p>Your download is ready.</p>"
+    '<a class="ok btn-general btn-orange" href="'
+    + T1F_DIRECT + '">Download My.Movie.2024.mkv</a>'
+    "</body></html>"
+)
+
+
+class _OneFichierFetch:
+    """GET returns the file page, POST returns the ready page.
+
+    1fichier GETs and POSTs the same URL, so the URL-keyed StubFetch
+    cannot serve both bodies; this stub switches on the method instead.
+    """
+
+    def __init__(self, page, post):
+        self.page = page
+        self.post = post
+        self.calls = []
+
+    def __call__(self, url, referer=None, method="GET", data=None,
+                 **kwargs):
+        self.calls.append((url, method, data))
+        return self.post if method == "POST" else self.page
+
+
+class FichierRegistryTests(unittest.TestCase):
+    def test_1fichier_is_a_stage1_backend(self):
+        self.assertIn("1fichier", current_hosts.STAGE1_BACKENDS)
+        self.assertEqual(current_hosts.INDEPENDENCE_GROUP["1fichier"],
+                         "1fichier")
+        self.assertIn("1fichier", current_hosts.WATCH_PREFERENCE)
+        self.assertIn("1fichier", current_hosts.DOWNLOAD_PREFERENCE)
+
+    def test_classify_exact_and_subdomain(self):
+        self.assertEqual(
+            current_hosts.classify_backend(T1F_SAVED), "1fichier")
+        self.assertEqual(
+            current_hosts.classify_backend(
+                "https://www.1fichier.com/?a1b2c3d4e5f6g7h8"),
+            "1fichier")
+
+    def test_classify_lookalikes_are_unknown(self):
+        self.assertEqual(current_hosts.classify_backend(
+            "https://1fichier.com.evil.com/?a1b2c3d4e5f6g7h8"), "unknown")
+        self.assertEqual(current_hosts.classify_backend(
+            "https://not1fichier.com/?a1b2c3d4e5f6g7h8"), "unknown")
+
+    def test_resolve_copy_1fichier_end_to_end(self):
+        fetch = _OneFichierFetch(_html(T1F_PAGE_OK), _html(T1F_POST_OK))
+        res = current_hosts.resolve_copy(T1F_SAVED, fetch=fetch,
+                                         probe=_ok_file_probe)
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["backend"], "1fichier")
+        self.assertEqual(res["group"], "1fichier")
+        self.assertEqual(res["kind"], "file")
+        self.assertEqual(res["url"], T1F_DIRECT)
+        posts = [c for c in fetch.calls if c[1] == "POST"]
+        self.assertEqual(len(posts), 1)
+        # The hidden form fields are posted, and no password plumbing
+        # exists anywhere, so no "pass" field is ever sent.
+        self.assertEqual(posts[0][2], {"a": "1"})
+
+    def test_resolve_copy_1fichier_404_is_dead(self):
+        fetch = StubFetch({})
+        res = current_hosts.resolve_copy(T1F_SAVED, fetch=fetch,
+                                         probe=_ok_file_probe)
+        self.assertFalse(res["ok"])
+        self.assertEqual(res["backend"], "1fichier")
+        self.assertEqual(res["failure"], "dead_file")
+        self.assertTrue(res["failure_dead"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

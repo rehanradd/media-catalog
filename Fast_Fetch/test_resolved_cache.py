@@ -795,7 +795,7 @@ class TestUnprobedIsNotEvidence(unittest.TestCase):
     """Crown order qoder12_unprobed. The failure circuit may only open on
     MEASURED evidence: a probe that reached upstream and came back without
     media. When the resolver's dispatch chain matches no unpacker branch
-    (1fichier, nexdrive — zero branches exist), nothing was
+    (clicknupload, nexdrive — zero branches exist), nothing was
     contacted, nothing was measured, and incrementing `fail_count` on every
     request is fabricated evidence that circuit-breaks the row one-way: only
     a fresh resolve can re-close it, and for this class no fresh resolve is
@@ -880,7 +880,7 @@ class TestUnprobedIsNotEvidence(unittest.TestCase):
 
     def test_resolver_fallthrough_marks_the_answer_unprobed_for_real(self):
         """Not my prose — the shipped boundary: a scratch DB with links
-        whose services have no unpacker branch (1fichier for v2, nexdrive
+        whose services have no unpacker branch (clicknupload for v2, nexdrive
         for v1; the chain cannot touch the network here), resolve v2 and
         v1 must both carry unprobed=True in the refusal envelope. Rebased
         onto main: the branch's vidbolt/cineverse fixtures are cracked
@@ -916,7 +916,7 @@ class TestUnprobedIsNotEvidence(unittest.TestCase):
             conn.execute(
                 "INSERT INTO download_sources (id, release_id, service, "
                 "source_url, final_url, playback_type, is_temporary, status) "
-                "VALUES (42, 1, '1fichier', 'https://1fichier.com/?abc123', "
+                "VALUES (42, 1, 'clicknupload', 'https://clicknupload.cam/abc123', "
                 "'https://dash-hls-bridge.johndoesjkc.workers.dev/?url=https"
                 "%3A%2F%2Fsacdn.local%2Fmaster.m3u8&Policy=zz', "
                 "'iframe', 1, 'expired')")
