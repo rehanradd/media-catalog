@@ -1181,5 +1181,43 @@ class EngineTests(unittest.TestCase):
                          "http://big.example/b.mp4")
 
 
+
+class ConnectTimeoutTests(unittest.TestCase):
+    """_CachedHTTPConnection.connect never dials with no timeout.
+
+    A connection built with the default timeout (the
+    socket._GLOBAL_DEFAULT_TIMEOUT sentinel) used to pass timeout=None to
+    create_connection, which blocks forever on a blackhole host — a whole
+    sweep batch stalled on mixdrop.co's SYN blackhole this way.
+    """
+
+    def _dial_timeout(self, *args, **kwargs):
+        seen = {}
+        fake_sock = unittest.mock.Mock()
+
+        def fake_create(addr, timeout=None, source_address=None):
+            seen["timeout"] = timeout
+            return fake_sock
+
+        with unittest.mock.patch.object(
+                fast_probe, "resolve_sockaddr",
+                return_value=("93.184.216.34", 80)):
+            with unittest.mock.patch("socket.create_connection",
+                                     side_effect=fake_create):
+                conn = fast_probe._CachedHTTPConnection(*args, **kwargs)
+                conn.connect()
+        return seen["timeout"]
+
+    def test_default_timeout_dials_with_prober_budget(self):
+        self.assertEqual(self._dial_timeout("example.com", 80),
+                         fast_probe.DEFAULT_TIMEOUT)
+
+    def test_explicit_none_dials_with_prober_budget(self):
+        self.assertEqual(self._dial_timeout("example.com", 80, timeout=None),
+                         fast_probe.DEFAULT_TIMEOUT)
+
+    def test_explicit_timeout_passes_through(self):
+        self.assertEqual(self._dial_timeout("example.com", 80, timeout=3.5), 3.5)
+
 if __name__ == "__main__":
     unittest.main()

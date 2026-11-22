@@ -337,7 +337,13 @@ class _CachedHTTPConnection(http.client.HTTPConnection):
         if self._tunnel_host:
             return super().connect()
         sockaddr = resolve_sockaddr(self.host, self.port)
-        timeout = None if self.timeout is socket._GLOBAL_DEFAULT_TIMEOUT else self.timeout
+        # Never dial with no timeout: the global-default sentinel (or an
+        # explicit None) would make create_connection block forever on a
+        # blackhole host (mixdrop.co 104.247.81.99 silently drops SYNs and
+        # stalled whole sweep batches). Fall back to the prober budget.
+        timeout = self.timeout
+        if timeout is None or timeout is socket._GLOBAL_DEFAULT_TIMEOUT:
+            timeout = DEFAULT_TIMEOUT
         self.sock = socket.create_connection(sockaddr, timeout, self.source_address)
         # Stock connect() sets TCP_NODELAY best-effort; mirror it.
         try:
