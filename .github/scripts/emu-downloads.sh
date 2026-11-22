@@ -213,6 +213,48 @@ UI_AFTER="/data/local/tmp/ui-after-tap.xml"
 # apply the same pattern with a reboot return code. Also unchanged: an
 # ANR striking mid-flow inside tap_text's or wait_for_welcome_settle's
 # dump loops has no escalation yet.
+# V27 FIX (2026-11-22, run 45017212984): v26's reboot escalation FIRED
+# (dumps still failing x3 after a successful System UI restart ->
+# reboot, emulator back in ~160s) but the app NEVER reopened — the run
+# died "app never came to foreground within 180s (focus now:
+# 'com.google.android.apps.nexuslauncher')". The artifact proves why:
+# focus-timeout-dumpsys-window.txt has mCurrentFocus AND mFocusedApp on
+# the launcher, Window #2 is "Application Not Responding:
+# com.android.systemui" (present in WindowManager though invisible in
+# the screenshot), and NO com.raddstream window exists at all — while
+# focus-timeout-logcat.txt has NO FATAL/AndroidRuntime/crash, so the app
+# did not crash, it simply never launched. Root cause, three parts:
+# (1) the System UI ANR RECURRED after the reboot — a reboot restarts
+# system_server, but under TCG it re-wedges almost immediately, so the
+# reboot alone does not cure it; (2) reboot_emulator_and_relaunch
+# issued `am start` exactly ONCE and DISCARDED its output
+# (>/dev/null 2>&1 || true), but `am start` is a Binder call into
+# system_server, so a (re-)wedged system_server swallows it with no
+# error and no window — and the script then waited 180s passively for a
+# launch that never happened, never retrying it; (3) when the relaunch
+# failed, wait_for_ui_ready did NOT reset its budget (reset only on
+# success), and the reboot alone (~160s boot + 180s focus wait) already
+# exceeded the 180s budget, so the run failed instantly with no retry.
+# Fix: NEW launch_app_retry() — clears a System UI ANR BEFORE the first
+# launch (restart_systemui, the proven v25 SIGKILL path), captures the
+# `am start` output instead of discarding it, re-issues `am start`
+# while no app process exists (up to 3 attempts), does NOT relaunch
+# while the app process IS running but unfocused (still cold-starting),
+# and re-checks for a System UI ANR every ~30s, restarting System UI
+# once if one appears mid-wait. The app process is checked with
+# `pidof`, which needs no system_server and no uiautomator dump.
+# reboot_emulator_and_relaunch and restart_app both use it now (both had
+# the same single blind `am start` shape). wait_for_ui_ready also resets
+# its budget after a FAILED reboot attempt now, so a failed relaunch
+# gets a fresh retry window instead of dying on a stale clock (bounded:
+# `rebooted` still blocks any further reboot in the call). dump_ui()
+# removes the stale on-device dump before each run, so a killed dump
+# cannot leave a partial file for the next "successful" dump to recover
+# as unparseable XML, and the parse-failure log now carries the byte
+# count. Known limitation (still): wait_for_anr_clear's dump-failure
+# branch has no reboot escalation; an ANR striking mid-flow inside
+# tap_text's or wait_for_welcome_settle's dump loops has no escalation
+# yet.
 DUMP_TIMEOUT=60
 # Set by screenshot(): name + md5 of the previous frame, for the
 # byte-identical frozen-screen check.
@@ -230,6 +272,12 @@ PREV_MD5=""
 # dump failure is diagnosable from the run log.
 dump_ui() {
   rm -f /tmp/ui.xml /tmp/dump.err
+  # V27: remove the STALE on-device dump first — a dump killed mid-write
+  # (exit 137) leaves a partial file behind, and a later uiautomator run
+  # that fails to write but exits 0 would leave that partial file in
+  # place for the pull/cat to "recover" as unparseable XML. Starting from
+  # no file means a recovered file is always from THIS dump.
+  adb shell rm -f "$UI_DUMP" 2>/dev/null || true
   timeout "$DUMP_TIMEOUT" adb shell uiautomator dump "$UI_DUMP" > /tmp/dump.err 2>&1
   local rc=$?
   if [ "$rc" -eq 124 ]; then
@@ -260,7 +308,10 @@ dump_ui() {
     echo "dump_ui: pulled ui.xml is empty" >&2
     return 1
   fi
-  python3 -c "import xml.etree.ElementTree as ET; ET.parse('/tmp/ui.xml')" 2>/dev/null || { echo "dump_ui: pulled ui.xml does not parse as XML" >&2; return 1; }
+  if ! python3 -c "import xml.etree.ElementTree as ET; ET.parse('/tmp/ui.xml')" 2>/dev/null; then
+    echo "dump_ui: pulled ui.xml does not parse as XML ($(wc -c < /tmp/ui.xml) bytes)" >&2
+    return 1
+  fi
   return 0
 }
 
@@ -406,7 +457,16 @@ PY
           dump_failures=0
           start=$(date +%s)
         else
-          echo "wait_for_ui_ready: emulator reboot failed — continuing dump retries" >&2
+          # V27: a failed relaunch used to fail the run instantly — the
+          # reboot alone (~160s boot + 180s focus wait) already exceeds
+          # the budget, so the check below fired before any retry. Reset
+          # the budget anyway: the reboot is a fresh system state, and
+          # the loop gets a new window to retry dumps / detect the ANR /
+          # restart the app instead of dying on a stale clock. Bounded:
+          # `rebooted` blocks any further reboot in this call.
+          echo "wait_for_ui_ready: emulator reboot failed — resetting the ${budget}s budget and continuing dump retries" >&2
+          dump_failures=0
+          start=$(date +%s)
         fi
       fi
     fi
@@ -685,8 +745,9 @@ restart_app() {
     adb shell am force-stop "$APP_PKG" 2>/dev/null || true
   fi
   sleep 2
-  adb shell am start -n "$MAIN_ACTIVITY" >/dev/null 2>&1 || true
-  if wait_for_app_focus 60; then
+  # V27: same retrying launch as the post-reboot path — a single blind
+  # `am start` is swallowed when system_server is wedged.
+  if launch_app_retry 60; then
     echo "restart_app: app is in foreground after restart" >&2
     return 0
   fi
@@ -710,6 +771,88 @@ escalate_systemui() {
     return 2
   fi
   return 1
+}
+
+# Launch the app and get it to the foreground, retrying while the system
+# is wedged. V27 (run 45017212984): reboot_emulator_and_relaunch issued
+# `am start` exactly ONCE and discarded its output, then waited passively
+# for focus. But the System UI ANR RECURRED after the reboot (the
+# "Application Not Responding: com.android.systemui" window was back by
+# the focus timeout, and no raddstream window existed at all) — and `am
+# start` is a Binder call into system_server, so a (re-)wedged
+# system_server swallows it with no error and no window. The single
+# launch was gone, the 180s wait was wasted, and the run failed. This
+# function: (a) clears a System UI ANR BEFORE the first launch
+# (restart_systemui, the proven v25 SIGKILL path — a reboot alone does
+# not cure a system_server that re-wedges on every boot); (b) captures
+# the `am start` output instead of discarding it, so a failed launch is
+# visible in the log; (c) re-issues `am start` while no app process
+# exists (up to 3 attempts — a launch swallowed by a wedged
+# system_server must be retried, but not forever); (d) does NOT
+# relaunch while the app process IS running but not yet focused (it is
+# still cold-starting under TCG — relaunching would restart the clock);
+# (e) re-checks for a System UI ANR every ~30s and restarts System UI
+# once if one appears mid-wait. The app process is checked with
+# `pidof`, which needs no system_server and no uiautomator dump, so it
+# still answers while the dump path is dead. Bounded to $1 seconds
+# (default 180). Returns 0 when the app is focused, 1 on timeout (with
+# the focus-timeout diagnostics saved into $OUT).
+launch_app_retry() {
+  local budget="${1:-180}" start now launches=0 sysui_restarted=0 last_anr_check=0 app_pid="" anr_kind="" launch_out=""
+  start=$(date +%s)
+  last_anr_check=$start
+  # (a) Clear a post-reboot System UI ANR before the first launch.
+  anr_kind=$(detect_anr_light) || anr_kind=""
+  if [ "$anr_kind" = "systemui" ]; then
+    echo "launch_app_retry: System UI ANR present before launch — restarting System UI first" >&2
+    sysui_restarted=1
+    restart_systemui || echo "launch_app_retry: System UI restart failed — will still try to launch" >&2
+  fi
+  while true; do
+    if is_app_focused; then
+      echo "launch_app_retry: app is in foreground (focus: $(focused_pkg))" >&2
+      return 0
+    fi
+    # (c)/(d) Relaunch only if the app process is not running at all.
+    app_pid=$(timeout 10 adb shell pidof "$APP_PKG" 2>/dev/null | tr -d '\r' | awk '{print $1}' || true)
+    if [ -z "$app_pid" ]; then
+      if [ "$launches" -lt 3 ]; then
+        launches=$((launches + 1))
+        # (b) Capture the launch result — never discard it: a launch
+        # swallowed by a wedged system_server prints an "Error:" line.
+        launch_out=$(timeout 30 adb shell am start -n "$MAIN_ACTIVITY" 2>&1 || true)
+        echo "launch_app_retry: launch attempt $launches/3: $(echo "$launch_out" | head -n 2 | tr '\n' ' ')" >&2
+      else
+        echo "launch_app_retry: no app process and launch attempts exhausted ($launches/3)" >&2
+      fi
+    else
+      echo "launch_app_retry: app process running (pid $app_pid) but not focused yet" >&2
+    fi
+    now=$(date +%s)
+    if [ $((now - start)) -ge "$budget" ]; then
+      echo "FAIL: app never came to foreground within ${budget}s (focus now: '$(focused_pkg)')" >&2
+      adb exec-out screencap -p > "$OUT/focus-timeout.png" 2>/dev/null || true
+      adb shell dumpsys window > "$OUT/focus-timeout-dumpsys-window.txt" 2>/dev/null || true
+      adb logcat -d -t 300 2>/dev/null | grep -i -E 'raddstream|AndroidRuntime|FATAL|crash' > "$OUT/focus-timeout-logcat.txt" || true
+      return 1
+    fi
+    # (e) Recheck for a System UI ANR every ~30s; if one appears,
+    # restart System UI once and allow fresh launch attempts.
+    # ANR_RECHECK_SECS lets the synthetic tests use 0 (check every
+    # iteration); production defaults to 30.
+    if [ $((now - last_anr_check)) -ge "${ANR_RECHECK_SECS:-30}" ] && [ "$sysui_restarted" -eq 0 ]; then
+      last_anr_check=$now
+      anr_kind=$(detect_anr_light) || anr_kind=""
+      if [ "$anr_kind" = "systemui" ]; then
+        echo "launch_app_retry: System UI ANR appeared mid-wait — restarting System UI and relaunching" >&2
+        sysui_restarted=1
+        if restart_systemui; then
+          launches=0
+        fi
+      fi
+    fi
+    sleep 15
+  done
 }
 
 # Reboot the emulator and relaunch the app — the last resort when
@@ -741,8 +884,12 @@ reboot_emulator_and_relaunch() {
     return 1
   fi
   echo "reboot_emulator_and_relaunch: boot completed in ~${waited}s — relaunching the app" >&2
-  adb shell am start -n "$MAIN_ACTIVITY" >/dev/null 2>&1 || true
-  if wait_for_app_focus 180; then
+  # V27: the old single blind `am start` + passive focus wait is gone —
+  # a System UI ANR can recur after the reboot and swallow the launch,
+  # so the relaunch retries it (launch_app_retry) instead of waiting
+  # 180s for a launch that never happened. RELAUNCH_BUDGET lets the
+  # synthetic tests use a short budget; production defaults to 180.
+  if launch_app_retry "${RELAUNCH_BUDGET:-180}"; then
     echo "reboot_emulator_and_relaunch: app is in foreground after reboot" >&2
     return 0
   fi
@@ -980,8 +1127,9 @@ assert_app_focused() {
   if is_app_focused; then return 0; fi
   echo "App not focused before '$step' (focus: '$(focused_pkg)') — dismissing ANR and relaunching" >&2
   dismiss_anr || true
-  adb shell am start -n "$MAIN_ACTIVITY" >/dev/null 2>&1 || true
-  if wait_for_app_focus 60; then return 0; fi
+  # V27: same retrying launch as the other paths — a single blind
+  # `am start` is swallowed when system_server is wedged.
+  if launch_app_retry 60; then return 0; fi
   echo "FAIL: app not in foreground before '$step'; refusing to screenshot the launcher" >&2
   return 1
 }
