@@ -78,8 +78,17 @@ def _measured_kind(row) -> str | None:
 #: are accepted: the ledger's own words (`url`, `iframe`) and the public ones
 #: `viewer.link_view` puts on a link (`resolve`, `external` — we never write the
 #: word "embed" into a response, because a hoster in this catalog is named that).
+#: HLS-first (user order 2026-11-22): an adaptive manifest outranks a progressive
+#: file for streaming — the player adapts bitrate, seeks and resumes on segments,
+#: while a single MP4 must be fetched in order. The projection's kinds
+#: (`hls_manifest`, `dash_manifest`) therefore sit above `direct`. The 10-point
+#: edge is inside the 30-point kind gap the service bonus is sized against, so
+#: a heavily-verified direct copy can still win on evidence; HLS wins among
+#: comparable copies, which is the order the user asked for.
 KIND_WEIGHT = {
     "direct": 100,
+    "hls_manifest": 110,
+    "dash_manifest": 110,
     "url": 70,
     "resolve": 70,
     "download": 30,
@@ -383,16 +392,32 @@ def score(link, band: str = UNSPECIFIED, priority_key: str | None = None) -> int
     # mislabelled bridge (the hubcloud fail-open shape: the unwrap hands back
     # the HTML landing page) — it ranks as a link that must be resolved. A
     # "url" label on a URL that serves video bytes IS a direct file — it ranks
-    # as one. A playlist is a stream either way, so a "direct" playlist ranks
-    # as a link. The correction REPLACES the kind weight, so it can never
+    # as one. The correction REPLACES the kind weight, so it can never
     # exceed the 30-point kind gap the service bonus is sized against;
     # download and iframe weights are untouched (playability is not this
     # slice's to overturn), and an unmeasured link keeps its label.
     measured = _measured_kind(row)
     if measured == "direct" and kind in ("url", "resolve"):
         value = KIND_WEIGHT["direct"]
-    elif measured in ("url", "page") and kind == "direct":
+    elif measured == "page" and kind == "direct":
         value = KIND_WEIGHT["url"]
+    # HLS-first (user order 2026-11-22): an adaptive manifest outranks a
+    # progressive file for streaming. The projection's kind says so
+    # ('hls_manifest'/'dash_manifest'), and so does a measured playlist MIME
+    # on a 'direct'-labelled row — so a "direct" playlist is no longer
+    # demoted to 'url' (70) as the old comment below said; it promotes
+    # above a file instead. A page is still demoted (the branch above):
+    # only a manifest promotes, never a landing page. The promotion is a
+    # max, so it never demotes a link that already scores higher, and
+    # dead/expired handling below still applies — a dead manifest scores 0,
+    # an expired one trails any live copy. Known quirk: the projection
+    # also stamps 'hls_manifest' on any URL/title containing the bare word
+    # "playlist" (27 MovieBox detail pages) and a stale probe can record a
+    # playlist MIME on a page (20 MovieBox detail pages); those promote too,
+    # but they resolve to a playable MP4 through the unwrapper, so playback
+    # is unaffected — tightening the projection marker is a separate job.
+    if kind in ("hls_manifest", "dash_manifest") or measured == "url":
+        value = max(value, KIND_WEIGHT["hls_manifest"])
     state = str(row.get("status") or row.get("state") or "").lower()
     if state in ("active", "live", "ok"):
         value += 40
@@ -470,7 +495,7 @@ def playable(link, band: str = UNSPECIFIED, mega_decrypt: bool = False) -> bool:
         return True
     if row.get("playable") is not None and isinstance(row.get("playable"), bool):
         return bool(row["playable"]) and kind != "download"
-    return kind in ("direct", "url", "resolve") or bool(row.get("streamable"))
+    return kind in ("direct", "url", "resolve", "hls_manifest", "dash_manifest") or bool(row.get("streamable"))
 
 
 def for_release(release, links, mega_decrypt: bool = False) -> dict:

@@ -59,12 +59,20 @@ class ScoreCorrectionTests(unittest.TestCase):
         self.assertEqual(tiers.score(page, "1080p"),
                          tiers.score(plain, "1080p"))
 
-    def test_a_direct_playlist_ranks_as_a_link_not_a_file(self):
+    def test_a_direct_playlist_ranks_above_a_file_not_as_a_link(self):
+        # HLS-first (user order 2026-11-22): a "direct" label on a playlist
+        # is an adaptive manifest, not a mislabelled file — it promotes
+        # above a direct file instead of demoting to a link. This replaces
+        # the old test_a_direct_playlist_ranks_as_a_link_not_a_file, whose
+        # premise (playlist == url weight) the order reverses.
         playlist = link(id=7, playback_type="direct",
                         mime_type="application/vnd.apple.mpegurl")
         plain_url = link(id=8, playback_type="url")
-        self.assertEqual(tiers.score(playlist, "1080p"),
-                         tiers.score(plain_url, "1080p"))
+        direct = link(id=9, playback_type="direct")
+        self.assertGreater(tiers.score(playlist, "1080p"),
+                           tiers.score(plain_url, "1080p"))
+        self.assertGreater(tiers.score(playlist, "1080p"),
+                           tiers.score(direct, "1080p"))
 
     def test_unknown_and_octet_stream_mimes_change_nothing(self):
         for mime in (None, "", "application/octet-stream", "image/png"):

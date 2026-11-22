@@ -88,6 +88,58 @@ class WinnerTests(unittest.TestCase):
         self.assertNotIn("cdn", label.lower())
 
 
+class HlsFirstTests(unittest.TestCase):
+    """User order 2026-11-22: an HLS link is served first when a title has
+    one, MP4/direct as fallback. MovieBox itself serves MP4 only (no .m3u8
+    anywhere on the site — verified 2026-11-22), so this ordering is a
+    general serve-path change, not a MovieBox-only one: 20,650 catalog rows
+    already carry an .m3u8 final URL."""
+
+    def test_an_hls_manifest_beats_a_direct_file_at_the_same_band(self):
+        hls = link(id=10, kind="hls_manifest")
+        direct = link(id=11, playback_type="direct")
+        self.assertGreater(tiers.score(hls, "1080p"), tiers.score(direct, "1080p"))
+        ladder = tiers.for_release({"quality": "1080p"}, [direct, hls])
+        self.assertEqual(ladder["tiers"][0]["link"]["id"], 10)
+
+    def test_a_direct_file_labelled_playlist_promotes_above_a_file(self):
+        # v1 rows carry no projection kind: the only HLS signal is the
+        # measured playlist MIME on a 'direct'-labelled row.
+        playlist = link(id=12, playback_type="direct",
+                        mime_type="application/vnd.apple.mpegurl")
+        direct = link(id=13, playback_type="direct")
+        self.assertGreater(tiers.score(playlist, "1080p"),
+                           tiers.score(direct, "1080p"))
+
+    def test_a_dead_hls_manifest_still_scores_zero(self):
+        dead_hls = link(id=14, kind="hls_manifest", status="dead")
+        live_direct = link(id=15, playback_type="direct")
+        self.assertEqual(tiers.score(dead_hls, "1080p"), 0)
+        self.assertGreater(tiers.score(live_direct, "1080p"),
+                           tiers.score(dead_hls, "1080p"))
+
+    def test_an_expired_hls_manifest_trails_a_live_direct_file(self):
+        expired_hls = link(id=16, kind="hls_manifest", status="expired")
+        live_direct = link(id=17, playback_type="direct")
+        self.assertLess(tiers.score(expired_hls, "1080p"),
+                        tiers.score(live_direct, "1080p"))
+
+    def test_a_page_labelled_direct_still_demotes_to_a_link(self):
+        # The HLS promotion must not rescue a landing page: a 'direct'
+        # label on a URL that serves a page still ranks as a link.
+        page = link(id=18, playback_type="direct", mime_type="text/html")
+        direct = link(id=19, playback_type="direct")
+        self.assertLess(tiers.score(page, "1080p"), tiers.score(direct, "1080p"))
+
+    def test_an_hls_manifest_is_playable(self):
+        self.assertTrue(tiers.playable({"kind": "hls_manifest"}))
+        self.assertTrue(tiers.playable({"kind": "dash_manifest"}))
+        ladder = tiers.for_release({"quality": "720p"},
+                                   [link(id=20, kind="hls_manifest")])
+        self.assertTrue(ladder["tiers"][0]["playable"])
+        self.assertEqual(ladder["tiers"][0]["mode"], "play")
+
+
 class BandServicePriorityTests(unittest.TestCase):
     """Phase C item 4: the §5 measured per-band priority (grand-scale probe,
     14,089 links, 2026-11-13). The bonus orders copies of the SAME kind by
