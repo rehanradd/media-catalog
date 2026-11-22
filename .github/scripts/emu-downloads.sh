@@ -288,6 +288,56 @@ UI_AFTER="/data/local/tmp/ui-after-tap.xml"
 # process ever dying. Known limitation (still): an ANR striking
 # mid-flow inside tap_text's or wait_for_welcome_settle's dump loops
 # has no escalation yet.
+# V30 FIX (2026-11-22, run 45029753115): the v29 run failed in a 12th
+# mode — and the parent's correction (from the full log + the artifact,
+# decoded) shows TWO mechanisms, not one. (1) The 180s budget EXPIRED
+# DURING the app restart. The budget reset at the reboot recovery
+# 14:22:21 ("recovered via emulator reboot — resetting the 180s
+# budget") → expiry 14:25:21. The app ANR was detected 14:25:26 (5s
+# PAST expiry), restart_app returned success at 14:25:55 ("app is in
+# foreground after restart"), and FAIL fired at 14:25:55 immediately
+# after restart_app returned — ZERO dump attempts on the fresh app.
+# The budget check sits at the loop bottom, after the escalation
+# branches, and only a reboot reset `start`; a successful app restart
+# did not. Fix: a successful restart_app in wait_for_ui_ready now
+# resets the budget exactly like a reboot (both the pre-reboot and
+# the v28 post-reboot branches). Bounded: app_restarted is once per
+# call, so the budget resets at most once this way per call. The reset
+# is also the render grace period the parent asked for: the timeout
+# screenshot was PURE BLACK (1080x2400, 1 colour) — the restarted app
+# had focus but had rendered nothing, consistent with still starting
+# up, not a stuck ANR dialog. A fresh 180s window lets it render; a
+# black frame is never treated as an ANR (the FAIL line says "no dump
+# with text nodes", never "ANR still present"). (2) The dump tool
+# itself is wedged. uiautomator dump failed exit 137 six times in a
+# row (tries 6–11) with NO ANR visible via dumpsys (14:23:21,
+# 14:24:18) — the script just retried dumps until the budget died.
+# Exit 137 is NOT the DUMP_TIMEOUT kill (timeout 60 gives exit 124 +
+# "TIMED OUT"); the dumps died in ~27–36s with empty stderr, so
+# uiautomator was SIGKILLed on-device (likely the low memory killer
+# under TCG pressure: boot 776s, install ~90s, first launch 44s). A
+# reboot does NOT clear it — tries 6–11 were AFTER the reboot. Fix:
+# dump_ui() now records the failure kind (DUMP_FAIL_KIND: exit137 /
+# timeout / pull / nonxml / empty / parse / ok) and, on exit 137,
+# captures low-memory-killer evidence (dmesg + logcat, bounded, saved
+# to /tmp/dump-lmk.err and logged) so the next diagnosis is grounded,
+# not guessed. wait_for_ui_ready tracks consecutive exit-137 failures
+# (exit137_failures) and, when they reach 2 with no ANR via dumpsys,
+# runs reset_dump_tool() once per call: kill any lingering uiautomator
+# process (a wedged dump may leave one holding the UiAutomation
+# service) and remove the stale on-device dump, then retry. If the
+# reset does not clear the wedge (no lingering process, or dumps still
+# fail 137), the existing escalations still run in order (last-resort
+# System UI restart, reboot) and the timeout verdict stays honest.
+# CORRECTION: the v29 anr-clear path is still UNTESTED —
+# wait_for_anr_clear NEVER RAN in run 45029753115 (grep count 0); the
+# failure was entirely inside wait_for_ui_ready. Its tests stay as
+# regressions; do not claim it is proven until a run reaches that
+# phase.
+# Known limitation (still, v30): a System UI restart inside
+# wait_for_anr_clear does not reset that call's budget (the app-restart
+# site there returns 0 on success, so it cannot hit the same expiry —
+# only the System UI sites could, and the 300s budget has not bitten).
 DUMP_TIMEOUT=60
 # Set by screenshot(): name + md5 of the previous frame, for the
 # byte-identical frozen-screen check.
@@ -302,8 +352,33 @@ PREV_MD5=""
 # out after ${DUMP_TIMEOUT}s", any other nonzero exit logs the device's
 # own error text, and a pull failure is logged separately. Callers must
 # NOT silence this function's stderr — the whole point is that the next
-# dump failure is diagnosable from the run log.
+# dump failure is diagnosable from the run log. Also sets DUMP_FAIL_KIND
+# (the failure kind: ok / timeout / exit137 / exit<N> / pull / nonxml /
+# empty / parse) and DUMP_RC (the uiautomator exit code, 0 when the dump
+# itself succeeded) so callers can tell an exit-137 dump wedge from any
+# other failure (V30).
+# Capture low-memory-killer evidence after a uiautomator dump is SIGKILLed
+# (exit 137). V30 (run 45029753115): the dumps died in ~27–36s with empty
+# stderr — not the DUMP_TIMEOUT kill (that is exit 124) — so uiautomator
+# was SIGKILLed on-device, likely the low memory killer under TCG
+# pressure. dmesg + logcat are the ground truth; without them the next
+# diagnosis is a guess. Bounded (10s each) and best-effort: a wedged
+# adbd must not stall the caller, and an empty capture is itself
+# evidence (logged as "no LMK evidence"). Saved to /tmp/dump-lmk.err
+# (latest capture wins) so the timeout path can attach it to $OUT.
+capture_lmk_evidence() {
+  : > /tmp/dump-lmk.err
+  timeout 10 adb shell dmesg 2>/dev/null | grep -i -E 'lowmemorykiller|oom|killed process' | tail -n 5 >> /tmp/dump-lmk.err 2>/dev/null || true
+  timeout 10 adb logcat -d -t 300 2>/dev/null | grep -i -E 'lowmemorykiller|killing.*uiautomator' | tail -n 5 >> /tmp/dump-lmk.err 2>/dev/null || true
+  if [ -s /tmp/dump-lmk.err ]; then
+    echo "dump_ui: LMK evidence: $(head -c 200 /tmp/dump-lmk.err | tr '\n' ' ')" >&2
+  else
+    echo "dump_ui: no LMK evidence in dmesg/logcat (dmesg may need root, or the killer left no trace)" >&2
+  fi
+}
 dump_ui() {
+  DUMP_FAIL_KIND="ok"
+  DUMP_RC=0
   rm -f /tmp/ui.xml /tmp/dump.err
   # V27: remove the STALE on-device dump first — a dump killed mid-write
   # (exit 137) leaves a partial file behind, and a later uiautomator run
@@ -313,12 +388,26 @@ dump_ui() {
   adb shell rm -f "$UI_DUMP" 2>/dev/null || true
   timeout "$DUMP_TIMEOUT" adb shell uiautomator dump "$UI_DUMP" > /tmp/dump.err 2>&1
   local rc=$?
+  DUMP_RC="$rc"
   if [ "$rc" -eq 124 ]; then
+    DUMP_FAIL_KIND="timeout"
     echo "dump_ui: uiautomator dump TIMED OUT after ${DUMP_TIMEOUT}s (system_server slow under TCG?)" >&2
     return 1
   fi
   if [ "$rc" -ne 0 ]; then
-    echo "dump_ui: uiautomator dump failed (exit $rc): $(head -c 300 /tmp/dump.err | tr '\n' ' ')" >&2
+    if [ "$rc" -eq 137 ]; then
+      # V30 (run 45029753115): exit 137 is SIGKILL, NOT the timeout kill
+      # (that is exit 124) — the dumps died in ~27–36s with empty
+      # stderr, so uiautomator was killed on-device, likely the low
+      # memory killer under TCG pressure. Capture the evidence now so
+      # the next diagnosis is grounded, not guessed.
+      DUMP_FAIL_KIND="exit137"
+      echo "dump_ui: uiautomator dump killed (exit 137, SIGKILL — likely low-memory killer under TCG pressure)" >&2
+      capture_lmk_evidence
+    else
+      DUMP_FAIL_KIND="exit$rc"
+      echo "dump_ui: uiautomator dump failed (exit $rc): $(head -c 300 /tmp/dump.err | tr '\n' ' ')" >&2
+    fi
     return 1
   fi
   if ! adb pull -q "$UI_DUMP" /tmp/ui.xml 2>/dev/null; then
@@ -332,6 +421,7 @@ dump_ui() {
     # seconds when the channel works.
     echo "dump_ui: dump wrote $UI_DUMP but pull failed — retrying via exec-out cat" >&2
     if ! timeout 30 adb exec-out cat "$UI_DUMP" > /tmp/ui.xml 2>/dev/null || [ ! -s /tmp/ui.xml ]; then
+      DUMP_FAIL_KIND="pull"
       echo "dump_ui: dump wrote $UI_DUMP but pull AND cat both failed" >&2
       return 1
     fi
@@ -347,12 +437,14 @@ dump_ui() {
     # the device, not a pull failure. A REAL recovered dump still
     # counts as a success (its ANR presence is checked by the caller).
     if ! head -c 20 /tmp/ui.xml | grep -qE '^<\?xml|^<hierarchy'; then
+      DUMP_FAIL_KIND="nonxml"
       echo "dump_ui: exec-out cat returned non-XML ($(wc -c < /tmp/ui.xml) bytes; head: $(head -c 120 /tmp/ui.xml | tr '\n' ' ')) — file missing on device, not a pull failure" >&2
       return 1
     fi
     echo "dump_ui: dump recovered via exec-out cat" >&2
   fi
   if [ ! -s /tmp/ui.xml ]; then
+    DUMP_FAIL_KIND="empty"
     echo "dump_ui: pulled ui.xml is empty" >&2
     return 1
   fi
@@ -368,8 +460,68 @@ dump_ui() {
     # bytes so the next diagnosis can see WHAT the stub is, not just
     # its size.
     echo "dump_ui: pulled ui.xml does not parse as XML ($(wc -c < /tmp/ui.xml) bytes); head: $(head -c 120 /tmp/ui.xml | tr '\n' ' ' | head -c 120)" >&2
+    DUMP_FAIL_KIND="parse"
     return 1
   fi
+  return 0
+}
+
+# Reset the uiautomator dump tool after repeated exit-137 dump failures
+# with no ANR visible (V30, run 45029753115). A reboot does NOT clear
+# this wedge — tries 6–11 in that run were AFTER the reboot and still
+# died exit 137 — so the reset targets the dump tool itself, not the
+# system: (1) kill any lingering uiautomator process, which may be
+# holding the UiAutomation service; (2) remove the stale on-device
+# dump (dump_ui does this per call, but the reset is explicit). The
+# LMK evidence for the wedge was already captured by dump_ui on the
+# exit-137 failure itself; this logs the latest capture for the run
+# log. Returns 0 always — best effort; the caller retries dumps and
+# the budget still bounds the call. If no lingering process is found
+# the wedge is NOT a stale process (fresh uiautomator processes are
+# being LMK-killed) and the caller falls through to the next
+# escalation (System UI restart / reboot).
+reset_dump_tool() {
+  echo "reset_dump_tool: resetting the dump tool after repeated exit-137 dumps with no ANR" >&2
+  if [ -s /tmp/dump-lmk.err ]; then
+    echo "reset_dump_tool: latest LMK evidence: $(head -c 200 /tmp/dump-lmk.err | tr '\n' ' ')" >&2
+  else
+    echo "reset_dump_tool: no LMK evidence captured (see dump_ui exit-137 lines)" >&2
+  fi
+  local pids pid killed=0
+  pids=$(adb shell pidof uiautomator 2>/dev/null | tr -d '\r' || true)
+  if [ -z "$pids" ]; then
+    pids=$(adb shell ps -A 2>/dev/null | grep -i 'uiautomator' | awk '{print $2}' | tr '\n' ' ' | sed 's/ *$//' || true)
+  fi
+  if [ -z "$pids" ]; then
+    # ps -A shows only the process name; a dump runs as app_process
+    # with uiautomator in its command line, so check the full cmdline.
+    pids=$(adb shell ps -Af 2>/dev/null | grep -i 'uiautomator' | grep -v -i 'grep' | awk '{print $2}' | tr '\n' ' ' | sed 's/ *$//' || true)
+  fi
+  if [ -z "$pids" ]; then
+    echo "reset_dump_tool: no lingering uiautomator process found — fresh dumps are being killed, not a stale process" >&2
+  else
+    for pid in $pids; do
+      if adb shell kill -9 "$pid" 2>/dev/null; then
+        echo "reset_dump_tool: killed lingering uiautomator pid $pid" >&2
+        killed=1
+      else
+        adb root >/dev/null 2>&1 || true
+        if adb shell kill -9 "$pid" 2>/dev/null; then
+          echo "reset_dump_tool: killed lingering uiautomator pid $pid (via root)" >&2
+          killed=1
+        else
+          echo "reset_dump_tool: could not kill lingering uiautomator pid $pid" >&2
+        fi
+        adb unroot >/dev/null 2>&1 || true
+      fi
+    done
+    if [ "$killed" -eq 0 ]; then
+      echo "reset_dump_tool: no lingering uiautomator process could be killed" >&2
+    else
+      sleep 2
+    fi
+  fi
+  adb shell rm -f "$UI_DUMP" 2>/dev/null || true
   return 0
 }
 
@@ -388,12 +540,13 @@ dump_ui() {
 # (dismiss_anr) so the wait can make progress instead of timing out on
 # a dialog.
 wait_for_ui_ready() {
-  local budget="${1:-180}" start now tries=0 dump_failures=0 sysui_restarted=0 app_restarted=0 esc=0 rebooted=0
+  local budget="${1:-180}" start now tries=0 dump_failures=0 exit137_failures=0 dump_tool_reset=0 sysui_restarted=0 app_restarted=0 esc=0 rebooted=0
   start=$(date +%s)
   while true; do
     tries=$((tries + 1))
     if dump_ui 2>/tmp/wait-dump.err; then
       dump_failures=0
+      exit137_failures=0
       local text_nodes
       text_nodes=$(python3 - "$APP_PKG" <<'PY' 2>/dev/null
 import sys, xml.etree.ElementTree as ET
@@ -420,6 +573,16 @@ PY
       fi
     else
       dump_failures=$((dump_failures + 1))
+      # V30: track consecutive exit-137 failures separately — an
+      # exit-137 dump wedge (the dump tool SIGKILLed, likely LMK) is a
+      # different failure from any other dump failure, and it gets its
+      # own escalation (reset_dump_tool) below. Any other failure kind,
+      # or a successful dump, resets the streak.
+      if [ "${DUMP_FAIL_KIND:-}" = "exit137" ]; then
+        exit137_failures=$((exit137_failures + 1))
+      else
+        exit137_failures=0
+      fi
       echo "wait_for_ui_ready try $tries: $(cat /tmp/wait-dump.err | head -c 200 | tr '\n' ' ') (consecutive dump failures: $dump_failures)" >&2
       # V24 (run 45005940365): dumps failing is itself the symptom — a
       # System UI ANR was already up, but this wait only dismissed an
@@ -469,12 +632,42 @@ PY
             app_restarted=1
             if restart_app; then
               dump_failures=0
+              exit137_failures=0
+              # V30 (run 45029753115): the budget EXPIRED DURING the app
+              # restart — the restart returned success at 14:25:55, 34s
+              # after the 14:25:21 expiry, and FAIL fired immediately
+              # after restart_app returned, with ZERO dump attempts on
+              # the fresh app. The budget check sits at the loop bottom
+              # and only a reboot reset `start`. A successful app
+              # restart is a fresh app state exactly like a reboot, so
+              # it resets the budget the same way. Bounded:
+              # app_restarted is once per call. This reset is also the
+              # render grace period: the restarted app had focus but
+              # had rendered nothing (pure-black timeout screenshot),
+              # so it gets a fresh window to render instead of dying
+              # on a stale clock.
+              echo "wait_for_ui_ready: app restarted successfully — resetting the ${budget}s budget" >&2
+              start=$(date +%s)
             else
               echo "wait_for_ui_ready: app restart failed — retrying dumps so the normal ANR path can take over" >&2
             fi
           else
             echo "wait_for_ui_ready: dumps failing x$dump_failures and app ANR detected via dumpsys — app already restarted once, retrying dumps" >&2
           fi
+        elif [ "$exit137_failures" -ge 2 ] && [ "$dump_tool_reset" -eq 0 ]; then
+          # V30 (run 45029753115): repeated exit-137 dumps with NO ANR
+          # visible via dumpsys — the dump tool itself is wedged, not
+          # an ANR. A reboot does not clear it (tries 6–11 in that run
+          # were after the reboot), so reset the dump tool instead of
+          # burning the budget on dumps that cannot succeed. Fires at
+          # most once per call (dump_tool_reset); if the wedge persists
+          # the next arm below (last-resort System UI restart) still
+          # runs, then the reboot branch.
+          echo "wait_for_ui_ready: dumps failing x$dump_failures with exit 137 and no ANR via dumpsys — resetting the dump tool" >&2
+          dump_tool_reset=1
+          reset_dump_tool
+          dump_failures=0
+          exit137_failures=0
         elif [ "$dump_failures" -ge 4 ]; then
           echo "wait_for_ui_ready: dumps failing x$dump_failures with no ANR visible via dumpsys (dumpsys may itself be wedged) — restarting System UI once as a last resort" >&2
           sysui_restarted=1
@@ -508,23 +701,40 @@ PY
         # so this fires at most once per call, alongside `rebooted`.
         local anr_kind2=""
         anr_kind2=$(detect_anr_light) || anr_kind2=""
-        echo "wait_for_ui_ready: dumps still failing x$dump_failures after a successful System UI restart (ANR now: '${anr_kind2:-none}') — rebooting the emulator" >&2
-        rebooted=1
-        if reboot_emulator_and_relaunch; then
-          echo "wait_for_ui_ready: recovered via emulator reboot — resetting the ${budget}s budget" >&2
+        if [ -z "$anr_kind2" ] && [ "$exit137_failures" -ge 2 ] && [ "$dump_tool_reset" -eq 0 ]; then
+          # V30: the failures after the System UI restart are exit 137
+          # with no ANR — the dump tool is wedged, and a reboot does
+          # NOT clear that wedge (run 45029753115: tries 6–11 were
+          # post-reboot and still died exit 137). Reset the dump tool
+          # first; if the wedge persists, this branch fires again and
+          # the reboot below still runs (dump_tool_reset blocks only
+          # the reset, never the reboot).
+          echo "wait_for_ui_ready: dumps still failing x$dump_failures after a successful System UI restart with exit 137 and no ANR via dumpsys — resetting the dump tool instead of rebooting" >&2
+          dump_tool_reset=1
+          reset_dump_tool
           dump_failures=0
-          start=$(date +%s)
+          exit137_failures=0
         else
-          # V27: a failed relaunch used to fail the run instantly — the
-          # reboot alone (~160s boot + 180s focus wait) already exceeds
-          # the budget, so the check below fired before any retry. Reset
-          # the budget anyway: the reboot is a fresh system state, and
-          # the loop gets a new window to retry dumps / detect the ANR /
-          # restart the app instead of dying on a stale clock. Bounded:
-          # `rebooted` blocks any further reboot in this call.
-          echo "wait_for_ui_ready: emulator reboot failed — resetting the ${budget}s budget and continuing dump retries" >&2
-          dump_failures=0
-          start=$(date +%s)
+          echo "wait_for_ui_ready: dumps still failing x$dump_failures after a successful System UI restart (ANR now: '${anr_kind2:-none}') — rebooting the emulator" >&2
+          rebooted=1
+          if reboot_emulator_and_relaunch; then
+            echo "wait_for_ui_ready: recovered via emulator reboot — resetting the ${budget}s budget" >&2
+            dump_failures=0
+            exit137_failures=0
+            start=$(date +%s)
+          else
+            # V27: a failed relaunch used to fail the run instantly — the
+            # reboot alone (~160s boot + 180s focus wait) already exceeds
+            # the budget, so the check below fired before any retry. Reset
+            # the budget anyway: the reboot is a fresh system state, and
+            # the loop gets a new window to retry dumps / detect the ANR /
+            # restart the app instead of dying on a stale clock. Bounded:
+            # `rebooted` blocks any further reboot in this call.
+            echo "wait_for_ui_ready: emulator reboot failed — resetting the ${budget}s budget and continuing dump retries" >&2
+            dump_failures=0
+            exit137_failures=0
+            start=$(date +%s)
+          fi
         fi
       elif [ "$dump_failures" -ge 2 ] && [ "$rebooted" -eq 1 ]; then
         # V28 (run 45021960077): after a reboot BOTH escalation branches
@@ -554,6 +764,16 @@ PY
             app_restarted=1
             if restart_app; then
               dump_failures=0
+              exit137_failures=0
+              # V30 (run 45029753115): same budget-expiry-during-restart
+              # as the pre-reboot branch — the restart returned success
+              # 34s after the budget line and FAIL fired immediately
+              # after it, with zero dump attempts on the fresh app. A
+              # successful restart resets the budget exactly like a
+              # reboot (and is the render grace period for the fresh
+              # app, which may still be starting up).
+              echo "wait_for_ui_ready: app restarted successfully after reboot — resetting the ${budget}s budget" >&2
+              start=$(date +%s)
             else
               echo "wait_for_ui_ready: app restart failed after reboot — retrying dumps so the normal ANR path can take over" >&2
               dump_failures=0
@@ -566,8 +786,25 @@ PY
           echo "wait_for_ui_ready: dumps failing x$dump_failures after emulator reboot and System UI ANR detected via dumpsys — System UI already restarted and emulator already rebooted, nothing left to escalate; retrying dumps" >&2
           dump_failures=0
         else
-          echo "wait_for_ui_ready: dumps failing x$dump_failures after emulator reboot, no ANR visible via dumpsys — retrying dumps" >&2
-          dump_failures=0
+          if [ "$exit137_failures" -ge 2 ] && [ "$dump_tool_reset" -eq 0 ]; then
+            # V30 (run 45029753115): this is the exact arm that fired
+            # three times in the v29 run (tries 7, 9, 11 — "no ANR
+            # visible via dumpsys — retrying dumps") while uiautomator
+            # died exit 137 six times in a row. Retrying the same
+            # failing call cannot clear a wedged dump tool; reset it
+            # once per call, then retry. If the wedge persists, the
+            # loop keeps retrying within the (possibly reset) budget
+            # and the timeout verdict stays honest.
+            echo "wait_for_ui_ready: dumps failing x$dump_failures after emulator reboot with exit 137 and no ANR via dumpsys — resetting the dump tool" >&2
+            dump_tool_reset=1
+            reset_dump_tool
+            dump_failures=0
+            exit137_failures=0
+          else
+            echo "wait_for_ui_ready: dumps failing x$dump_failures after emulator reboot, no ANR visible via dumpsys — retrying dumps" >&2
+            dump_failures=0
+            exit137_failures=0
+          fi
         fi
       fi
     fi
@@ -589,6 +826,7 @@ PY
       timeout 20 adb shell dumpsys window > "$OUT/ui-ready-timeout-dumpsys-window.txt" 2>/dev/null || echo "timeout evidence: dumpsys window also failed" >&2
       adb exec-out screencap -p > "$OUT/ui-ready-timeout.png" 2>/dev/null || true
       cp /tmp/wait-dump.err "$OUT/ui-ready-timeout-dump.err" 2>/dev/null || true
+      cp /tmp/dump-lmk.err "$OUT/ui-ready-timeout-lmk.err" 2>/dev/null || true
       cp /tmp/ui.xml "$OUT/ui-ready-timeout-ui.xml" 2>/dev/null || true
       return 1
     fi
