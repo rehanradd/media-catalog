@@ -185,6 +185,34 @@ UI_AFTER="/data/local/tmp/ui-after-tap.xml"
 # only logging and retrying dumps — the v24 run's app had also ANR'd
 # (input dispatch timed out on MainActivity focus, 5028ms), and
 # restarting System UI alone cannot unstick a wedged app process.
+# V26 FIX (2026-11-22, run 45014241234): v25's SIGKILL restart WORKED
+# (System UI pid 1134 -> 3321 in 30s) but dumps STILL failed 5/5 after
+# it — 4x "dump wrote /data/local/tmp/ui.xml but pull failed" + 1x exit
+# 137 — and the run died "UI never became ready within 180s". No second
+# ANR detection or restart fired after the respawn, and the reboot
+# escalation never triggered, because it only runs when the restart
+# FAILS and the restart was counted a success. The 'system' ANR window
+# was up alongside systemui at 11:07:07Z — system_server itself wedged,
+# which fits pulls failing even after System UI respawned. Fix, two
+# parts: (1) after a successful System UI restart, 3+ consecutive dump
+# failures re-check via detect_anr_light and reboot the emulator once
+# (the v25 reboot path already exists; it is now wired to persistent
+# post-restart dump failure, not only to restart failure) — a
+# "successful" restart does NOT mean the system is healthy, and only a
+# reboot fixes a wedged system_server; the budget resets after a reboot.
+# The reboot fires at most once per wait_for_ui_ready call (a `rebooted`
+# flag, plus the `esc` return code: a reboot is only attempted when the
+# last escalation was a successful restart, never after a reboot already
+# happened or a reboot already failed). (2) dump_ui() falls back to
+# `adb exec-out cat` when the pull fails — the dump file WAS on the
+# device in 4 of 5 failures, only the file-sync pull failed.
+# Known limitation (still): wait_for_anr_clear's dump-failure branch has
+# the same shape — after its one System UI restart, persistent dump
+# failures have no reboot escalation (a nested reboot would also need
+# the caller's budget reset, which is not wired); if a run dies there,
+# apply the same pattern with a reboot return code. Also unchanged: an
+# ANR striking mid-flow inside tap_text's or wait_for_welcome_settle's
+# dump loops has no escalation yet.
 DUMP_TIMEOUT=60
 # Set by screenshot(): name + md5 of the previous frame, for the
 # byte-identical frozen-screen check.
@@ -212,7 +240,22 @@ dump_ui() {
     echo "dump_ui: uiautomator dump failed (exit $rc): $(head -c 300 /tmp/dump.err | tr '\n' ' ')" >&2
     return 1
   fi
-  adb pull -q "$UI_DUMP" /tmp/ui.xml 2>/dev/null || { echo "dump_ui: dump wrote $UI_DUMP but pull failed" >&2; return 1; }
+  if ! adb pull -q "$UI_DUMP" /tmp/ui.xml 2>/dev/null; then
+    # V26 (run 45014241234): 4 of 5 dump failures after a successful
+    # System UI restart were "dump wrote but pull failed" — the file WAS
+    # on the device, only the file-sync pull failed. Retry the read via
+    # `adb exec-out cat`, which goes through the shell channel instead
+    # of the file-sync service (exec-out avoids the shell's \r\n
+    # translation, so the XML stays parseable). Bounded to 30s so a
+    # wedged adbd cannot stall the caller; a few-KB ui.xml reads in
+    # seconds when the channel works.
+    echo "dump_ui: dump wrote $UI_DUMP but pull failed — retrying via exec-out cat" >&2
+    if ! timeout 30 adb exec-out cat "$UI_DUMP" > /tmp/ui.xml 2>/dev/null || [ ! -s /tmp/ui.xml ]; then
+      echo "dump_ui: dump wrote $UI_DUMP but pull AND cat both failed" >&2
+      return 1
+    fi
+    echo "dump_ui: dump recovered via exec-out cat" >&2
+  fi
   if [ ! -s /tmp/ui.xml ]; then
     echo "dump_ui: pulled ui.xml is empty" >&2
     return 1
@@ -236,7 +279,7 @@ dump_ui() {
 # (dismiss_anr) so the wait can make progress instead of timing out on
 # a dialog.
 wait_for_ui_ready() {
-  local budget="${1:-180}" start now tries=0 dump_failures=0 sysui_restarted=0 app_restarted=0 esc=0
+  local budget="${1:-180}" start now tries=0 dump_failures=0 sysui_restarted=0 app_restarted=0 esc=0 rebooted=0
   start=$(date +%s)
   while true; do
     tries=$((tries + 1))
@@ -337,6 +380,33 @@ PY
           else
             echo "wait_for_ui_ready: System UI restart AND emulator reboot both failed — continuing dump retries" >&2
           fi
+        fi
+      elif [ "$dump_failures" -ge 3 ] && [ "$sysui_restarted" -eq 1 ] && [ "$esc" -eq 0 ] && [ "$rebooted" -eq 0 ]; then
+        # V26 (run 45014241234): the System UI restart SUCCEEDED (pid
+        # 1134 -> 3321 in 30s) but dumps STILL failed 5/5 after it —
+        # 4x pull failed + 1x exit 137 — and the reboot escalation never
+        # fired, because it only runs when the restart FAILS and the
+        # restart was counted a success. A "successful" restart does NOT
+        # mean the system is healthy: the 'system' ANR window was up
+        # alongside systemui, i.e. system_server itself is wedged, and
+        # only a reboot fixes that. After 3 consecutive dump failures
+        # post-restart, re-check with detect_anr_light (for the log
+        # evidence — a 'system' ANR still up confirms the wedge; no ANR
+        # visible means dumpsys may itself be wedged) and reboot once.
+        # The `esc -eq 0` guard is the key: it is only true when the
+        # last escalation was a successful restart — never after a reboot
+        # already happened (esc 2) or a reboot already failed (esc 1) —
+        # so this fires at most once per call, alongside `rebooted`.
+        local anr_kind2=""
+        anr_kind2=$(detect_anr_light) || anr_kind2=""
+        echo "wait_for_ui_ready: dumps still failing x$dump_failures after a successful System UI restart (ANR now: '${anr_kind2:-none}') — rebooting the emulator" >&2
+        rebooted=1
+        if reboot_emulator_and_relaunch; then
+          echo "wait_for_ui_ready: recovered via emulator reboot — resetting the ${budget}s budget" >&2
+          dump_failures=0
+          start=$(date +%s)
+        else
+          echo "wait_for_ui_ready: emulator reboot failed — continuing dump retries" >&2
         fi
       fi
     fi
