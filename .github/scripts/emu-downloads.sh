@@ -160,6 +160,31 @@ UI_AFTER="/data/local/tmp/ui-after-tap.xml"
 # inside tap_text's or wait_for_welcome_settle's dump loops — with dumps
 # failing has no escalation yet; those loops retry until their own
 # budget. If a future run dies there, apply the same pattern.
+# V25 FIX (2026-11-22, run 45010249089): v24's detection WORKED
+# (dumpsys found the System UI ANR twice) but the restart did NOT work:
+# both attempts ended "System UI did NOT come back within 90s (pid now:
+# '1109')" — `am force-stop` never killed the process. The timeout
+# dumpsys proved why: THREE ANR windows were up at once (app +
+# systemui + "system"), i.e. system_server itself was ANR'd. `am` is a
+# Binder client of ActivityManagerService, which lives in system_server
+# — a wedged system_server never processes the force-stop, so the
+# process never dies. Fix: restart_systemui() now kills by PID with a
+# direct SIGKILL (`adb shell kill -9`), which needs no system_server at
+# all — via `adb root` first (the workflow's google_apis image is
+# userdebug, which allows it) and `adb unroot` after, falling back to
+# `am force-stop` if root is unavailable. Two more fixes from the same
+# run: (a) a FAILED restart is never retried in the same
+# wait_for_ui_ready call — v24 only set its flag on success, so two
+# 90s waits ate the whole 180s budget; (b) if the kill does not respawn
+# System UI, the call escalates to an emulator reboot + app relaunch
+# (reboot_emulator_and_relaunch), which is the only recovery when
+# system_server will not restart its own persistent app — the budget
+# resets after a reboot, since the reboot alone takes ~10 min under
+# TCG. (c) An APP ANR while dumps are failing now restarts the app
+# (restart_app: kill by PID + relaunch + wait for focus), instead of
+# only logging and retrying dumps — the v24 run's app had also ANR'd
+# (input dispatch timed out on MainActivity focus, 5028ms), and
+# restarting System UI alone cannot unstick a wedged app process.
 DUMP_TIMEOUT=60
 # Set by screenshot(): name + md5 of the previous frame, for the
 # byte-identical frozen-screen check.
@@ -211,7 +236,7 @@ dump_ui() {
 # (dismiss_anr) so the wait can make progress instead of timing out on
 # a dialog.
 wait_for_ui_ready() {
-  local budget="${1:-180}" start now tries=0 dump_failures=0 sysui_restarted=0
+  local budget="${1:-180}" start now tries=0 dump_failures=0 sysui_restarted=0 app_restarted=0 esc=0
   start=$(date +%s)
   while true; do
     tries=$((tries + 1))
@@ -257,26 +282,60 @@ PY
       # consecutive failures → restart System UI once as a last resort
       # (dumpsys may itself be wedged; every observed dump wedge was a
       # System UI ANR). Once per call, like the v23 rule.
+      # V25 (run 45010249089): a FAILED System UI restart must never be
+      # retried in the same call — v24 only set sysui_restarted on
+      # success, so two 90s waits ate the whole 180s budget. The flag
+      # is set BEFORE the escalation now. On a failed restart the call
+      # escalates to an emulator reboot (escalate_systemui), and the
+      # budget resets after a reboot since the reboot alone takes
+      # ~10 min under TCG. An app ANR now restarts the app
+      # (restart_app) once per call instead of only being logged — the
+      # v24 run's app had ANR'd too (input dispatch timed out on
+      # MainActivity focus, 5028ms), and a Wait tap needs dump
+      # coordinates, so the normal path cannot take over while dumps
+      # fail.
       if [ "$dump_failures" -ge 2 ] && [ "$sysui_restarted" -eq 0 ]; then
         local anr_kind=""
         anr_kind=$(detect_anr_light) || anr_kind=""
         if [ "$anr_kind" = "systemui" ]; then
           echo "wait_for_ui_ready: dumps failing x$dump_failures and System UI ANR detected via dumpsys — restarting System UI" >&2
-          if restart_systemui; then
-            sysui_restarted=1
+          sysui_restarted=1
+          escalate_systemui
+          esc=$?
+          if [ "$esc" -eq 0 ]; then
             dump_failures=0
+          elif [ "$esc" -eq 2 ]; then
+            echo "wait_for_ui_ready: recovered via emulator reboot — resetting the ${budget}s budget" >&2
+            dump_failures=0
+            start=$(date +%s)
           else
-            echo "wait_for_ui_ready: System UI restart failed — continuing dump retries" >&2
+            echo "wait_for_ui_ready: System UI restart AND emulator reboot both failed — continuing dump retries" >&2
           fi
         elif [ "$anr_kind" = "app" ]; then
-          echo "wait_for_ui_ready: dumps failing x$dump_failures and app ANR detected via dumpsys — cannot tap Wait without dump coordinates, retrying dumps so the normal ANR path can take over" >&2
+          if [ "$app_restarted" -eq 0 ]; then
+            echo "wait_for_ui_ready: dumps failing x$dump_failures and app ANR detected via dumpsys — restarting the app" >&2
+            app_restarted=1
+            if restart_app; then
+              dump_failures=0
+            else
+              echo "wait_for_ui_ready: app restart failed — retrying dumps so the normal ANR path can take over" >&2
+            fi
+          else
+            echo "wait_for_ui_ready: dumps failing x$dump_failures and app ANR detected via dumpsys — app already restarted once, retrying dumps" >&2
+          fi
         elif [ "$dump_failures" -ge 4 ]; then
           echo "wait_for_ui_ready: dumps failing x$dump_failures with no ANR visible via dumpsys (dumpsys may itself be wedged) — restarting System UI once as a last resort" >&2
-          if restart_systemui; then
-            sysui_restarted=1
+          sysui_restarted=1
+          escalate_systemui
+          esc=$?
+          if [ "$esc" -eq 0 ]; then
             dump_failures=0
+          elif [ "$esc" -eq 2 ]; then
+            echo "wait_for_ui_ready: recovered via emulator reboot — resetting the ${budget}s budget" >&2
+            dump_failures=0
+            start=$(date +%s)
           else
-            echo "wait_for_ui_ready: System UI restart failed — continuing dump retries" >&2
+            echo "wait_for_ui_ready: System UI restart AND emulator reboot both failed — continuing dump retries" >&2
           fi
         fi
       fi
@@ -475,23 +534,46 @@ detect_anr_light() {
 
 # Restart System UI (com.android.systemui) and wait for it to come
 # back. Used when a System UI ANR will not clear with Wait taps (see
-# wait_for_anr_clear). am force-stop works from the shell user (it holds
-# FORCE_STOP_PACKAGES) and bypasses the starved input path entirely
-# (binder, not input) — unlike a tap, it does not need the frozen
-# process to handle anything. System UI is a persistent app, so the
-# system restarts it; poll pidof until a (new) PID appears, bounded to
-# 90s so the caller still has budget left to re-dump and verify.
-# Returns 0 if a System UI process is running afterwards, 1 otherwise.
-# Logs the old and new PIDs so a failed restart is diagnosable. Even if
-# System UI does not come back, the ANR dialog is gone (the process it
-# complained about died) and the app itself keeps running — the caller
-# re-dumps to confirm rather than assuming.
+# wait_for_anr_clear) or when dumps keep failing under a System UI ANR
+# (see wait_for_ui_ready). V25 (run 45010249089): the v23/v24
+# `am force-stop` NEVER killed the process — pid stayed 1109 through
+# two 90s waits. The timeout dumpsys proved why: THREE ANR windows
+# were up at once (app + systemui + "system"), i.e. system_server
+# itself was ANR'd. `am` is a Binder client of ActivityManagerService,
+# which lives in system_server — a wedged system_server never
+# processes the force-stop, so the process never dies. A SIGKILL is a
+# direct kernel signal: it needs no system_server at all. But the shell
+# user (uid 2000) cannot signal a system-uid (1000) process, so this
+# runs `adb root` first (the workflow's google_apis image is userdebug,
+# which allows it — Play Store images do not) and `adb unroot` after,
+# so later commands behave exactly as before. If root is unavailable
+# the kill fails and this falls back to `am force-stop`. System UI is
+# a persistent app, so system_server restarts it once it recovers;
+# poll pidof until a NEW pid appears, bounded to 60s (a healthy
+# restart takes seconds; 90s was too long — two failed waits ate the
+# whole 180s wait_for_ui_ready budget in run 45010249089). Returns 0
+# if a System UI process is running afterwards with a new pid, 1
+# otherwise. Logs the old and new PIDs so a failed restart is
+# diagnosable. If this returns 1 the caller escalates to a reboot
+# (escalate_systemui) — nothing in-place can recover a system_server
+# that will not restart its own persistent app.
 restart_systemui() {
   local old_pid new_pid waited=0
   old_pid=$(adb shell pidof com.android.systemui 2>/dev/null | tr -d '\r' | awk '{print $1}' || true)
-  echo "restart_systemui: System UI pid before restart: '${old_pid:-none}' — force-stopping com.android.systemui" >&2
-  adb shell am force-stop com.android.systemui 2>/dev/null || { echo "restart_systemui: am force-stop failed" >&2; return 1; }
-  while [ "$waited" -lt 90 ]; do
+  echo "restart_systemui: System UI pid before restart: '${old_pid:-none}'" >&2
+  if [ -n "$old_pid" ]; then
+    adb root >/dev/null 2>&1 || true
+    if adb shell kill -9 "$old_pid" 2>/dev/null; then
+      echo "restart_systemui: SIGKILL sent to pid $old_pid" >&2
+    else
+      echo "restart_systemui: kill -9 failed (no root?) — falling back to am force-stop" >&2
+      adb shell am force-stop com.android.systemui 2>/dev/null || { echo "restart_systemui: am force-stop failed" >&2; adb unroot >/dev/null 2>&1 || true; return 1; }
+    fi
+    adb unroot >/dev/null 2>&1 || true
+  else
+    echo "restart_systemui: no System UI pid found — it may already be dead, waiting for it to respawn" >&2
+  fi
+  while [ "$waited" -lt 60 ]; do
     sleep 5
     waited=$((waited + 5))
     new_pid=$(adb shell pidof com.android.systemui 2>/dev/null | tr -d '\r' | awk '{print $1}' || true)
@@ -505,7 +587,96 @@ restart_systemui() {
     fi
   done
   new_pid=$(adb shell pidof com.android.systemui 2>/dev/null | tr -d '\r' | awk '{print $1}' || true)
-  echo "restart_systemui: System UI did NOT come back within 90s (pid now: '${new_pid:-none}')" >&2
+  echo "restart_systemui: System UI did NOT come back within 60s (pid now: '${new_pid:-none}')" >&2
+  return 1
+}
+
+# Restart the app itself ($APP_PKG) — for an APP ANR ("RADD Stream
+# isn't responding") while dumps are failing, so no Wait tap is
+# possible (a tap needs dump coordinates). Same kill-by-PID approach
+# as restart_systemui (force-stop goes through the possibly wedged
+# system_server): adb root + kill -9 the app pid, fall back to
+# am force-stop, then relaunch via am start and wait for focus.
+# Returns 0 if the app is in the foreground afterwards, 1 otherwise.
+restart_app() {
+  local app_pid=""
+  app_pid=$(adb shell pidof "$APP_PKG" 2>/dev/null | tr -d '\r' | awk '{print $1}' || true)
+  echo "restart_app: app pid before restart: '${app_pid:-none}'" >&2
+  if [ -n "$app_pid" ]; then
+    adb root >/dev/null 2>&1 || true
+    if adb shell kill -9 "$app_pid" 2>/dev/null; then
+      echo "restart_app: SIGKILL sent to app pid $app_pid" >&2
+    else
+      echo "restart_app: kill -9 failed (no root?) — falling back to am force-stop" >&2
+      adb shell am force-stop "$APP_PKG" 2>/dev/null || true
+    fi
+    adb unroot >/dev/null 2>&1 || true
+  else
+    adb shell am force-stop "$APP_PKG" 2>/dev/null || true
+  fi
+  sleep 2
+  adb shell am start -n "$MAIN_ACTIVITY" >/dev/null 2>&1 || true
+  if wait_for_app_focus 60; then
+    echo "restart_app: app is in foreground after restart" >&2
+    return 0
+  fi
+  echo "restart_app: app did not reach the foreground after restart" >&2
+  return 1
+}
+
+# Try to recover a wedged System UI: kill it by PID first
+# (restart_systemui), and if that does not respawn it, reboot the
+# emulator and relaunch the app (reboot_emulator_and_relaunch).
+# Returns 0 if System UI came back without a reboot, 2 if it came
+# back via a reboot, 1 if neither worked. The caller resets its
+# budget on 2 — a reboot takes ~10 min under TCG, longer than any
+# dump budget.
+escalate_systemui() {
+  if restart_systemui; then
+    return 0
+  fi
+  echo "escalate_systemui: System UI restart failed — rebooting the emulator" >&2
+  if reboot_emulator_and_relaunch; then
+    return 2
+  fi
+  return 1
+}
+
+# Reboot the emulator and relaunch the app — the last resort when
+# System UI will not respawn after a kill (system_server itself is
+# ANR'd, so no in-place recovery can work: the persistent-app restart
+# is system_server's job). adb reboot does not need system_server
+# (adbd triggers it directly), so it works even when the system is
+# wedged. Boot takes ~9 min under TCG (v24: 535s), so the boot wait
+# is bounded to 600s; the app is then relaunched and must reach the
+# foreground. Returns 0 on success, 1 otherwise. The caller resets
+# its budget after a reboot — the reboot alone took longer than any
+# dump budget.
+reboot_emulator_and_relaunch() {
+  local waited=0 booted=""
+  echo "reboot_emulator_and_relaunch: rebooting the emulator" >&2
+  adb reboot 2>/dev/null || adb shell reboot 2>/dev/null || { echo "reboot_emulator_and_relaunch: adb reboot failed" >&2; return 1; }
+  echo "reboot_emulator_and_relaunch: waiting for the device to come back" >&2
+  timeout 300 adb wait-for-device 2>/dev/null || { echo "reboot_emulator_and_relaunch: device did not come back within 300s" >&2; return 1; }
+  while [ "$waited" -lt 600 ]; do
+    sleep 10
+    waited=$((waited + 10))
+    booted=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)
+    if [ "$booted" = "1" ]; then
+      break
+    fi
+  done
+  if [ "$booted" != "1" ]; then
+    echo "reboot_emulator_and_relaunch: boot did not complete within 600s" >&2
+    return 1
+  fi
+  echo "reboot_emulator_and_relaunch: boot completed in ~${waited}s — relaunching the app" >&2
+  adb shell am start -n "$MAIN_ACTIVITY" >/dev/null 2>&1 || true
+  if wait_for_app_focus 180; then
+    echo "reboot_emulator_and_relaunch: app is in foreground after reboot" >&2
+    return 0
+  fi
+  echo "reboot_emulator_and_relaunch: app did not reach the foreground after reboot" >&2
   return 1
 }
 
