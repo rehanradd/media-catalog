@@ -287,12 +287,18 @@ internal fun RowScope.BottomNavTab(
  * is the negative work-id sentinel — so it opens by work id; a v1 row opens by
  * post id, exactly as before. The sentinel itself must never be navigated to:
  * the detail screen reads it as "no post".
+ *
+ * Home fix (Nov 2026): direct play — the rail tile's play button opens
+ * Detail with [autoplay], so the tap starts the title instead of landing
+ * on the two buttons. Detail fires its primary action once when the layout
+ * has loaded; an explicit play tap is the only route that sets it — the
+ * hero's Watch Now and the shuffle still land on the two buttons.
  */
-private fun NavHostController.navigateToPost(post: Post) {
+private fun NavHostController.navigateToPost(post: Post, autoplay: Boolean = false) {
     val route = if (post.workId != null) {
-        Screen.Detail.createRouteForWork(post.workId)
+        Screen.Detail.createRouteForWork(post.workId, autoplay = autoplay)
     } else {
-        Screen.Detail.createRoute(post.id)
+        Screen.Detail.createRoute(post.id, autoplay = autoplay)
     }
     // Session 157 (S4): one tap, one detail. A double-tap on a poster must
     // not stack two identical detail entries — the second entry's ViewModel
@@ -580,13 +586,18 @@ fun RaddStreamNavGraph(
                     onSearchQuery = { query ->
                         navController.navigate(Screen.Search.createRoute(query))
                     },
-                    searchEnabled = features.search,
                     onPostClick = { post -> navController.navigateToPost(post) },
                     // 2-button detail (Nov 2026): the hero's Watch Now
                     // opens the title on its two buttons — autoplay on
                     // detail open is OFF, so the viewer presses Play.
                     onWatchNowClick = { post ->
                         navController.navigateToPost(post)
+                    },
+                    // Home fix (Nov 2026): direct play — the rail tile's
+                    // play button opens Detail with autoplay, so the tap
+                    // starts the title instead of landing on the two buttons.
+                    onPlayClick = { post ->
+                        navController.navigateToPost(post, autoplay = true)
                     },
                     // REA #4: the "Play Something" shuffle — the Home row
                     // header's pick, opened on its two buttons.
@@ -600,8 +611,6 @@ fun RaddStreamNavGraph(
                         navController.navigate(Screen.Search.createRoute(genre = genre, industry = industry, language = language))
                     },
                     onSetupServerClick = { navController.navigate(Screen.Setup.route) },
-                    onOpenLocalFiles = { navController.navigate(Screen.LocalFiles.route) },
-                    onOpenDownloads = { navController.navigate(Screen.Downloads.route) },
                     heroMax = theme.heroMax,
                     heroAutoplay = theme.heroAutoplay && autoplayPreviews,
                     heroIntervalMs = theme.heroIntervalS * 1_000L,
@@ -859,6 +868,12 @@ fun RaddStreamNavGraph(
                 ),
             ) { backStackEntry ->
                 DetailScreen(
+                    // Home fix (Nov 2026): direct play — the rail tile's
+                    // play button opens Detail with autoplay, so the tap
+                    // starts the title once the layout has loaded. Every
+                    // other route leaves it false (the hero's Watch Now
+                    // and the shuffle land on the two buttons).
+                    autoplay = backStackEntry.arguments?.getBoolean(Screen.Detail.ARG_AUTOPLAY) ?: false,
                     onBackClick = { navController.popBackStack() },
                     onPlayStream = { streamId, title ->
                         navController.navigate(Screen.Player.createRoute(streamId, title)) {

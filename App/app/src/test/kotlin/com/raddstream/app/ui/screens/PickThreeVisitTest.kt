@@ -5,6 +5,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.HomeSection
@@ -30,6 +33,10 @@ import org.robolectric.RobolectricTestRunner
  * node from composition entirely, and the Robolectric viewport is not
  * the device's — what matters here is that the card survives the shown
  * callback and the recomposition it triggers.
+ *
+ * Home fix (Nov 2026): the card rides below the first rail now, so it
+ * starts below the fold in a lazy feed — the tests swipe it into view
+ * first (a lazy item that never composes has no node to assert on).
  */
 @RunWith(RobolectricTestRunner::class)
 class PickThreeVisitTest {
@@ -84,6 +91,12 @@ class PickThreeVisitTest {
 
         compose.waitForIdle()
 
+        // The card rides below the first rail now (home fix, Nov 2026),
+        // so it starts below the fold in a lazy feed — swipe it into view
+        // before asserting it exists.
+        compose.onRoot().performTouchInput { swipeUp() }
+        compose.waitForIdle()
+
         compose.onNodeWithText("Pick 3 you like").assertExists()
         assertTrue("display must not hide the card", state.showPickThree)
     }
@@ -107,6 +120,11 @@ class PickThreeVisitTest {
                 }
             }
         }
+        compose.waitForIdle()
+        // The card rides below the first rail now (home fix, Nov 2026),
+        // so it starts below the fold in a lazy feed — swipe it into view
+        // before asserting it exists.
+        compose.onRoot().performTouchInput { swipeUp() }
         compose.waitForIdle()
         compose.onNodeWithText("Pick 3 you like").assertExists()
 

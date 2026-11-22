@@ -11,7 +11,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import com.google.android.play.core.install.model.ActivityResult as PlayCoreActivityResult
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
@@ -30,15 +30,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.Button
@@ -60,6 +58,8 @@ import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -76,7 +76,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -116,12 +116,14 @@ import com.raddstream.app.ui.components.rememberReduceMotion
 import com.raddstream.app.ui.layout.CardGeometry
 import com.raddstream.app.ui.theme.RaddMotion
 import com.raddstream.app.update.InAppUpdate
+import kotlinx.coroutines.delay
 import com.raddstream.app.viewmodel.HomeFilter
 import com.raddstream.app.viewmodel.HomeSection
 import com.raddstream.app.viewmodel.HomeUiState
 import com.raddstream.app.viewmodel.ResumeTile
 import com.raddstream.app.viewmodel.HomeViewModel
 import com.raddstream.app.viewmodel.homeFilterMatches
+import com.raddstream.app.viewmodel.homeSyncLine
 import com.raddstream.app.viewmodel.selectHeroSection
 import com.raddstream.app.viewmodel.visibleHomeRows
 
@@ -134,11 +136,16 @@ fun HomeScreen(
     onSearchClick: () -> Unit,
     /** The search bar's submit: a query goes straight to Search with it applied. */
     onSearchQuery: (String) -> Unit = { onSearchClick() },
-    /** False when the operator's `feature_flags.search` is off: the entry point disappears. */
-    searchEnabled: Boolean = true,
     onPostClick: (Post) -> Unit = {},
     /** Session 121 (P-26): the hero's Watch Now — opens the title and starts it. */
     onWatchNowClick: (Post) -> Unit = onPostClick,
+    /**
+     * Home fix (Nov 2026): direct play — the rail tile's play button.
+     * Opens Detail with autoplay, so the tap starts the title instead of
+     * landing on the two buttons. The graph wires it to
+     * [NavHostController.navigateToPost] with autoplay.
+     */
+    onPlayClick: (Post) -> Unit = {},
     /**
      * REA #4 (Netflix, Nov 2026): the "Play Something" shuffle — a weighted
      * random pick from the "For you" pool, opened and started at once. The
@@ -154,10 +161,6 @@ fun HomeScreen(
      */
     onFacetSelected: (genre: String?, industry: String?, language: String?) -> Unit = { _, _, _ -> },
     onSetupServerClick: () -> Unit = {},
-    /** The phone's own videos (Movies/ and Download/), listed from MediaStore. */
-    onOpenLocalFiles: () -> Unit = {},
-    /** Kept-for-offline titles (Media Vault). */
-    onOpenDownloads: () -> Unit = {},
     /** The operator's hero knobs from the panel theme: 0 hides the hero slot. */
     heroMax: Int = HERO_LIMIT,
     /** M5 (home review, Nov 2026): manual-swipe by default — see [HeroCarousel]. */
@@ -230,12 +233,12 @@ fun HomeScreen(
         HomeContent(
             state = state,
             modifier = Modifier.padding(contentPadding),
-            searchEnabled = searchEnabled,
             heroMax = heroMax,
             heroAutoplay = heroAutoplay,
             heroIntervalMs = heroIntervalMs,
             onPostClick = onPostClick,
             onWatchNowClick = onWatchNowClick,
+            onPlayClick = onPlayClick,
             // REA #4: the shuffle lives on the "For you" row header — the
             // pool it draws from — and only while the row exists. A null
             // pick hides the button; the callback fires only with a title.
@@ -243,8 +246,6 @@ fun HomeScreen(
             onBrowseType = onBrowseType,
             onFacetSelected = onFacetSelected,
             onSetupServerClick = onSetupServerClick,
-            onOpenLocalFiles = onOpenLocalFiles,
-            onOpenDownloads = onOpenDownloads,
             kidsMode = kidsMode,
             onExitKidsMode = onExitKidsMode,
             onRefresh = viewModel::refresh,
@@ -311,13 +312,19 @@ fun HomeScreen(
 internal fun HomeContent(
     state: HomeUiState,
     modifier: Modifier = Modifier,
-    searchEnabled: Boolean = true,
     heroMax: Int = HERO_LIMIT,
     /** M5 (home review, Nov 2026): manual-swipe by default — see [HeroCarousel]. */
     heroAutoplay: Boolean = false,
     heroIntervalMs: Long = 8_000L,
     onPostClick: (Post) -> Unit = {},
     onWatchNowClick: (Post) -> Unit = onPostClick,
+    /**
+     * Home fix (Nov 2026): direct play — the rail tile's play button.
+     * Opens Detail with autoplay, so the tap starts the title instead of
+     * landing on the two buttons. Only the rail tiles pass it (via
+     * [HomeRailSection]); everywhere else the tile stays a doorway.
+     */
+    onPlayClick: (Post) -> Unit = {},
     /**
      * REA #4: the "Play Something" shuffle, offered only on the "For you"
      * row header — the pool it draws from. Null everywhere else, so no
@@ -327,8 +334,6 @@ internal fun HomeContent(
     onBrowseType: (String?) -> Unit = {},
     onFacetSelected: (genre: String?, industry: String?, language: String?) -> Unit = { _, _, _ -> },
     onSetupServerClick: () -> Unit = {},
-    onOpenLocalFiles: () -> Unit = {},
-    onOpenDownloads: () -> Unit = {},
     /** MX #7 — Kids Lock: the banner and the filtered view ride this flag. */
     kidsMode: Boolean = false,
     /** MX #7: the banner's Exit — the graph raises the PIN dialog. */
@@ -353,42 +358,130 @@ internal fun HomeContent(
     // The filter chips are UI-local state: they filter the rails already on
     // screen, so no ViewModel round-trip and no reload on a tap.
     var filter by remember { mutableStateOf(HomeFilter.All) }
-    // Gemini home review (Nov 2026): the pinned header floats over the
-    // scrolling rails, so it needs the scroll offset — the state lives
-    // here (not inline in the scrollable column) so the header can read it.
-    val scrollState = rememberScrollState()
+    // Home fix (Nov 2026): the feed is a LazyColumn now — the old scrolling
+    // Column composed every rail at once, so first paint waited on the whole
+    // catalog and a low-end phone held all of it in memory. The lazy list
+    // composes only the rows on screen and recycles the rest, which is the
+    // main scroll/perf fix. The header reads the lazy list's offset for its
+    // scrolled plate, where the scroll state used to live.
+    val listState = rememberLazyListState()
+    // Adaptive (Nov 2026): a tablet (expanded width, 840dp+) gets wider rail
+    // cards — the 150dp phone card leaves a tablet rail mostly empty.
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp
+    val railCardWidthDp = if (screenWidthDp >= 840) 180 else CardGeometry.RAIL_CARD_WIDTH_DP
+
+    // The feed's shared facts, computed once per state/filter — not per
+    // item, and not inside the lazy list (a LaunchedEffect inside a lazy
+    // item would restart every time the item scrolled in and out of view).
+    val anyVisible = state.visibleSections.any { it.visible }
+    val shownRows = visibleHomeRows(state.visibleSections, state.visibleContinueWatching.isNotEmpty())
+    val hasSaved = state.visibleContinueWatching.isNotEmpty() || anyVisible
+    // The banner rides the first rail that actually has rows, so it is real
+    // catalog data and not a hand-picked fake "featured" set — except a
+    // stale panel hero loses the slot to "Recently added" ([selectHeroSection]):
+    // the operator's curated list once showed 1963 films while the newest
+    // feed walked 2027s. heroMax 0 hides the slot entirely — no carousel,
+    // no skeleton — because the operator asked for no hero, not for a hero
+    // that never loads.
+    // HO-1: the hero IS that rail's presentation, so its posters are
+    // de-duplicated out of the rail below — the same six titles must
+    // not appear twice on one screen.
+    val heroSection = if (heroMax > 0) selectHeroSection(state.visibleSections, currentCalendarYear()) else null
+    val heroItems = heroSection?.items.orEmpty().take(heroMax)
+    // At most 10 rows total, CW included: a panel that publishes 12
+    // sections does not get 12 rails on a phone, and the first rails win.
+    // Audit #18: the same title never appears twice on Home. The seen
+    // set is seeded with Continue Watching and the hero, so a rail
+    // never repeats a tile or a hero poster; HO-1 (hero out of its
+    // own rail) is now a special case of the same rule, by work
+    // identity — not by row id, because one film filed twice has
+    // two row ids.
+    var seenWorks = state.visibleContinueWatching
+        .map { UserWords.workKey(it.post.workRef, it.post.displayTitle, it.post.year) }
+        .toSet() + heroItems.map { UserWords.workKey(it.workRef, it.displayTitle, it.year) }
+    // Mockup (Nov 2026): the filter chips hide non-matching rails in
+    // place — the hero, Continue Watching, Pick 3 and the library
+    // above are not rails and are never filtered, only these rows.
+    val renderedRows = shownRows.filter { homeFilterMatches(it, filter) }
+        .filter { it.visible || it.loading || it.error != null }
+        .map { section ->
+            val (kept, next) = UserWords.dedupeAcrossRails(
+                section.items,
+                seenWorks,
+            ) { post -> UserWords.workKey(post.workRef, post.displayTitle, post.year) }
+            seenWorks = next
+            section.copy(items = kept)
+        }
+
+    // Hero (Nov 2026): warm the hero art the moment the hero items are
+    // known, so first paint has art, not placeholders. The helper is a
+    // no-op for art-less items and never throws.
+    val prefetchContext = LocalContext.current
+    LaunchedEffect(heroItems) {
+        if (heroItems.isNotEmpty()) prefetchHeroArt(prefetchContext, heroItems)
+    }
+    // Feel-instant S2: warm the rails' art the moment rows are known,
+    // so scrolling into a rail finds posters, not shimmer — first two
+    // posters per visible rail, capped. The helper dedupes, and never
+    // runs on metered data the viewer never granted.
+    LaunchedEffect(state.visibleSections) {
+        val urls = homeRailPrefetchUrls(state.visibleSections)
+        if (urls.isNotEmpty()) prefetchPosterArt(prefetchContext, urls)
+    }
+
+    // Freshness (home fix, Nov 2026): "Updated X ago" — shown only when the
+    // cache is stale (older than 30 minutes) or the phone is offline, so a
+    // fresh Home carries no chrome and a stale one says so plainly. The
+    // line is [homeSyncLine]: offline names the age of the saved rows, so
+    // a stale cache never passes as fresh.
+    val nowMs = System.currentTimeMillis()
+    val syncLine = homeSyncLine(state.lastHomeSyncMs, state.isOffline, nowMs)
+    val isStale = state.lastHomeSyncMs?.let { nowMs - it > 30 * 60 * 1000L } ?: false
+    val showSyncLine = syncLine != null && (isStale || state.isOffline)
+
+    // Pull-to-refresh (home fix, Nov 2026): the refresh icon went with the
+    // top bar, so a stale Home had no user-initiated recovery — only Retry
+    // on a failed rail. A pull now calls the same refresh the ViewModel
+    // already had. The pull indicator replaces the top progress bar.
+    val pullRefreshState = rememberPullToRefreshState()
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .statusBarsPadding()
             .then(modifier),
     ) {
-        HomeHeader(scrolled = scrollState.value > 0)
+        HomeHeader(scrolled = listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0)
         // MX #7 — Kids Lock: the slim banner that says the mode is on and
         // offers the PIN-guarded way out. It sits above the scroll, next to
         // the header, so it is always in reach and never scrolls away.
         if (kidsMode) {
             KidsModeBanner(onExitKidsMode = onExitKidsMode)
         }
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .verticalScroll(scrollState),
+        PullToRefreshBox(
+            isRefreshing = state.isRefreshing,
+            onRefresh = onRefresh,
+            state = pullRefreshState,
+            modifier = Modifier.weight(1f),
         ) {
-        if (state.isRefreshing) {
-            LinearProgressIndicator(Modifier.fillMaxWidth())
-        }
-
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+        ) {
         // Mockup (Nov 2026): the filter chips ride at the top of the feed —
         // ALL / MOVIES / SERIES / ANIME / KPOP — and filter the rails in
         // place. They scroll away with the feed; the header above them stays.
-        HomeFilterRow(
-            selected = filter,
-            onSelect = { chosen -> filter = if (chosen == filter) HomeFilter.All else chosen },
-        )
+        item(key = "filter") {
+            HomeFilterRow(
+                selected = filter,
+                onSelect = { chosen -> filter = if (chosen == filter) HomeFilter.All else chosen },
+            )
+        }
         // Screenshot-fix D8 (2026-11-16): 4dp, not 8dp — the chips row is
         // 48dp already, and the gap under it is dead space before the hero.
-        Spacer(Modifier.height(4.dp))
+        item(key = "filterSpacer") {
+            Spacer(Modifier.height(4.dp))
+        }
 
         // M6 (home review, Nov 2026): the home search bar is gone. It was
         // a third door to the same place — the Search tab is the empty-query
@@ -396,234 +489,258 @@ internal fun HomeContent(
         // 2026 ships no bar on Home. The first content is the hero (or the
         // filter chips when Home has loaded before). SearchField itself stays:
         // the Search screen still uses it.
-        // Mockup (Nov 2026): the sync line is gone too — "Updated just now"
-        // is operator chrome, not something a viewer acts on. The offline
-        // banner below still covers the case that matters (no connection),
-        // and homeSyncLine stays in the ViewModel, unused for now.
 
         // The operator's channel to every phone: a broadcast shows above the
         // catalog, even when the catalog itself failed to load — that is
         // exactly when the operator has something to say.
         state.broadcasts.forEach { broadcast ->
-            BroadcastBanner(
-                broadcast = broadcast,
-                onDismiss = { onDismissBroadcast(broadcast.id) },
-            )
-            Spacer(Modifier.height(8.dp))
+            item(key = "broadcast:${broadcast.id}") {
+                BroadcastBanner(
+                    broadcast = broadcast,
+                    onDismiss = { onDismissBroadcast(broadcast.id) },
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+        }
+
+        // Freshness (home fix, Nov 2026): the "Updated X ago" line, only
+        // when the cache is stale or the phone is offline (see above).
+        if (showSyncLine) {
+            item(key = "syncLine") {
+                Text(
+                    text = syncLine ?: "",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                )
+            }
         }
 
         // Fatal error only when *every* rail failed and none has data to show.
-        val anyVisible = state.visibleSections.any { it.visible }
         if (state.fatal != null && !anyVisible) {
-            ErrorState(
-                message = state.fatal ?: "Couldn't reach the catalog.",
-                onRetry = onRefresh,
-                // Dev-cleanup (Nov 2026): Home's fatal error names its own
-                // screen instead of the shared "Something went wrong".
-                title = stringResource(R.string.home_fatal_title),
-                // The address is the one thing a person can fix themselves, and
-                // Settings is four taps away. Offer it where the failure is seen.
-                secondaryLabel = "Try a different address",
-                onSecondary = onSetupServerClick,
-            )
+            item(key = "fatal") {
+                ErrorState(
+                    message = state.fatal ?: "Couldn't reach the catalog.",
+                    onRetry = onRefresh,
+                    // Dev-cleanup (Nov 2026): Home's fatal error names its own
+                    // screen instead of the shared "Something went wrong".
+                    title = stringResource(R.string.home_fatal_title),
+                    // The address is the one thing a person can fix themselves, and
+                    // Settings is four taps away. Offer it where the failure is seen.
+                    secondaryLabel = "Try a different address",
+                    onSecondary = onSetupServerClick,
+                )
+            }
         } else {
-            // B3 (home review, Nov 2026): the Continue Watching rows are
-            // pinned under the hero, not above it — they used to sit first
-            // and only exist once resume data existed, so a fresh install
-            // never showed them and a new viewer never learned the feature
-            // is there. The rows live below the hero now; with rows they
-            // are the real rows, and without rows they are a "Start watching"
-            // placeholder whose CTA opens Browse.
-            val shownRows = visibleHomeRows(state.visibleSections, state.visibleContinueWatching.isNotEmpty())
-            val hasSaved = state.visibleContinueWatching.isNotEmpty() || anyVisible
+            // The offline strip, above the content it describes: it only
+            // renders when something saved is on screen — an offline phone
+            // with nothing saved gets the error state, not a banner over a
+            // blank page.
             if (state.isOffline && hasSaved) {
-                OfflineBanner()
-                Spacer(Modifier.height(8.dp))
+                item(key = "offline") {
+                    OfflineBanner()
+                    Spacer(Modifier.height(8.dp))
+                }
             }
-            // The banner rides the first rail that actually has rows, so it is real
-            // catalog data and not a hand-picked fake "featured" set — except a
-            // stale panel hero loses the slot to "Recently added" ([selectHeroSection]):
-            // the operator's curated list once showed 1963 films while the newest
-            // feed walked 2027s. heroMax 0 hides the slot entirely — no carousel,
-            // no skeleton — because the operator asked for no hero, not for a hero
-            // that never loads.
-            // HO-1: the hero IS that rail's presentation, so its posters are
-            // de-duplicated out of the rail below — the same six titles must
-            // not appear twice on one screen.
-            val heroSection = if (heroMax > 0) selectHeroSection(state.visibleSections, currentCalendarYear()) else null
-            val heroItems = heroSection?.items.orEmpty().take(heroMax)
-            // Hero (Nov 2026): warm the hero art the moment the hero items are
-            // known, so first paint has art, not placeholders. The helper is a
-            // no-op for art-less items and never throws.
-            val prefetchContext = LocalContext.current
-            LaunchedEffect(heroItems) {
-                if (heroItems.isNotEmpty()) prefetchHeroArt(prefetchContext, heroItems)
+            // D (home fix, Nov 2026): Continue Watching sits ABOVE the hero
+            // for returning users — the highest-intent row on Home, and it
+            // used to sit below a 320-400dp hero, below the fold on first
+            // paint. With rows they are the real rows; without rows it is
+            // the "Start watching" placeholder — but only once the catalog
+            // has landed (anyVisible) AND this device has watch history to
+            // resume (hasWatchHistory). A4-F2: on a first run the list is
+            // empty because nothing was ever watched, and the line read as
+            // an error on a populated Home (Robo matrix-12l8h97dvq326) —
+            // Pick 3 onboards a new viewer instead. A viewer who finished
+            // everything (or removed every row) still gets the line: for
+            // them "no active shows" is true, not a bug.
+            if (state.visibleContinueWatching.isNotEmpty()) {
+                item(key = "continueWatching") {
+                    Column {
+                        SectionHeader(
+                            title = "Continue watching",
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                        )
+                        // Mockup (Nov 2026): full-width rows, not a poster rail —
+                        // thumb, title, remaining label, green progress bar. Three
+                        // at most: the section is a resume list, not a catalog.
+                        // Keyed on the scope, not the work: two rows of the same
+                        // series are two different episodes.
+                        state.visibleContinueWatching.take(3).forEach { tile ->
+                            ContinueWatchingRow(
+                                tile = tile,
+                                onClick = { onPostClick(tile.post) },
+                                // Phase 7 (D1): the × removes this scope from
+                                // Continue Watching — server row first, then
+                                // the local rows, with Undo on the snackbar.
+                                onRemove = { onRemoveFromContinueWatching(tile) },
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
+                    }
+                }
+            } else if (anyVisible && state.hasWatchHistory) {
+                item(key = "startWatching") {
+                    StartWatchingPlaceholder(onBrowse = { onBrowseType(null) })
+                    Spacer(Modifier.height(8.dp))
+                }
             }
-            // Feel-instant S2: warm the rails' art the moment rows are known,
-            // so scrolling into a rail finds posters, not shimmer — first two
-            // posters per visible rail, capped. The helper dedupes, and never
-            // runs on metered data the viewer never granted.
-            LaunchedEffect(state.visibleSections) {
-                val urls = homeRailPrefetchUrls(state.visibleSections)
-                if (urls.isNotEmpty()) prefetchPosterArt(prefetchContext, urls)
-            }
+            // The hero, below Continue Watching now (see D above). The
+            // carousel is 240/280dp (home fix, Nov 2026) — down from
+            // 320/400dp — so the first rail peeks over the fold.
             if (heroMax > 0) {
                 if (heroItems.isNotEmpty()) {
-                    HeroCarousel(
-                        posts = heroItems,
+                    item(key = "hero") {
+                        HeroCarousel(
+                            posts = heroItems,
+                            onPostClick = onPostClick,
+                            onWatchNow = { post -> onWatchNowClick(post) },
+                            isFavorite = { post ->
+                                post.id in state.favoriteIds ||
+                                    (post.workRef != null && post.workRef in state.favoriteWorkRefs)
+                            },
+                            onToggleFavorite = { post -> onToggleFavorite(post) },
+                            autoplay = heroAutoplay,
+                            intervalMs = heroIntervalMs,
+                        )
+                    }
+                    // Screenshot-fix D7 (2026-11-16): 6dp, not 12dp — the
+                    // gap between the dots and the next row was the second
+                    // dead gap in the hero stack.
+                    item(key = "heroSpacer") {
+                        Spacer(Modifier.height(6.dp))
+                    }
+                } else if (state.visibleSections.any { it.loading }) {
+                    item(key = "heroSkeleton") {
+                        // Hold the hero's footprint while the first rail lands, so the page
+                        // never flashes a bare background and then jumps when it fills in.
+                        HeroSkeleton()
+                    }
+                    // D7: same 6dp as the loaded hero — the skeleton must
+                    // hold the same footprint, not a taller one.
+                    item(key = "heroSkeletonSpacer") {
+                        Spacer(Modifier.height(6.dp))
+                    }
+                }
+            }
+            // E (home fix, Nov 2026): Pick 3 rides BELOW the first rail
+            // now — it used to ride below the hero, so a new viewer met
+            // the card before any rail. The first rail is first content;
+            // the card follows it. When no rail renders (empty feed), the
+            // card rides right after the hero instead — it still onboards.
+            // The first rail is emitted here, not in the loop below, so
+            // the card sits between rail 1 and rail 2.
+            renderedRows.firstOrNull()?.let { section ->
+                item(key = "rail:${section.key}") {
+                    HomeRailSection(
+                        section = section,
+                        index = 0,
                         onPostClick = onPostClick,
-                        onWatchNow = { post -> onWatchNowClick(post) },
+                        onPlayClick = onPlayClick,
+                        itemWidthDp = railCardWidthDp,
+                        onSeeAll = {
+                            if (section.industry != null) {
+                                onFacetSelected(null, section.industry, null)
+                            } else {
+                                onBrowseType(section.type)
+                            }
+                        },
+                        // A sorted rail has no Browse equivalent (Browse takes a
+                        // type but no sort), so "See all" would silently re-sort
+                        // it to freshest-first. Offer it only where the order
+                        // survives the jump.
+                        showSeeAll = section.browseEquivalent,
+                        onRetry = { onRetrySection(section.key) },
+                        // REA #4: the shuffle rides only the "For you" header —
+                        // the pool it draws from. Every other rail passes null
+                        // and keeps its header exactly as it was.
+                        onPlaySomething = if (section.forYou) onPlaySomething else null,
+                    )
+                }
+            }
+            // Gap A6: the first-run card — one-shot, after first browse,
+            // only when CW + favorites are empty (see showPickThree). The
+            // visit latch clears when the card leaves composition: the
+            // viewer left Home, or scrolled the card out of the feed.
+            // Either way the visit is over, and the persisted shown flag
+            // keeps the card away on the next visit.
+            if (state.showPickThree) {
+                item(key = "pickThree") {
+                    DisposableEffect(Unit) {
+                        onDispose { onPickThreeVisitEnded() }
+                    }
+                    PickThreeCard(
+                        candidates = state.pickThreeCandidates,
                         isFavorite = { post ->
                             post.id in state.favoriteIds ||
                                 (post.workRef != null && post.workRef in state.favoriteWorkRefs)
                         },
                         onToggleFavorite = { post -> onToggleFavorite(post) },
-                        autoplay = heroAutoplay,
-                        intervalMs = heroIntervalMs,
+                        onPostClick = onPostClick,
+                        onDismiss = onDismissPickThree,
+                        onShown = onPickThreeShown,
                     )
-                    // Screenshot-fix D7 (2026-11-16): 6dp, not 12dp — the
-                    // gap between the dots and the next row was the second
-                    // dead gap in the hero stack.
-                    Spacer(Modifier.height(6.dp))
-                } else if (state.visibleSections.any { it.loading }) {
-                    // Hold the hero's footprint while the first rail lands, so the page
-                    // never flashes a bare background and then jumps when it fills in.
-                    HeroSkeleton()
-                    // D7: same 6dp as the loaded hero — the skeleton must
-                    // hold the same footprint, not a taller one.
-                    Spacer(Modifier.height(6.dp))
-                }
-            }
-            // B3: the Continue Watching slot is pinned here, under the hero,
-            // and always present. With rows they are the real rows; without
-            // rows it is the "Start watching" placeholder — but only once
-            // the catalog has landed (anyVisible) AND this device has
-            // watch history to resume (hasWatchHistory). A4-F2: on a first
-            // run the list is empty because nothing was ever watched, and
-            // the line read as an error on a populated Home (Robo
-            // matrix-12l8h97dvq326) — Pick 3 onboards a new viewer instead.
-            // A viewer who finished everything (or removed every row) still
-            // gets the line: for them "no active shows" is true, not a bug.
-            if (state.visibleContinueWatching.isNotEmpty()) {
-                Column {
-                    SectionHeader(
-                        title = "Continue watching",
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                    )
-                    // Mockup (Nov 2026): full-width rows, not a poster rail —
-                    // thumb, title, remaining label, green progress bar. Three
-                    // at most: the section is a resume list, not a catalog.
-                    // Keyed on the scope, not the work: two rows of the same
-                    // series are two different episodes.
-                    state.visibleContinueWatching.take(3).forEach { tile ->
-                        ContinueWatchingRow(
-                            tile = tile,
-                            onClick = { onPostClick(tile.post) },
-                            // Phase 7 (D1): the × removes this scope from
-                            // Continue Watching — server row first, then
-                            // the local rows, with Undo on the snackbar.
-                            onRemove = { onRemoveFromContinueWatching(tile) },
-                        )
-                    }
                     Spacer(Modifier.height(8.dp))
                 }
-            } else if (anyVisible && state.hasWatchHistory) {
-                StartWatchingPlaceholder(onBrowse = { onBrowseType(null) })
-                Spacer(Modifier.height(8.dp))
-            }
-            // Gap A6: the first-run card now rides BELOW the hero — a
-            // new viewer meets a movie first, and the picks are still
-            // the first thing that asks anything of them.
-            if (state.showPickThree) {
-                // The visit latch clears when the card leaves composition:
-                // the viewer left Home, or scrolled the card out of the
-                // feed. Either way the visit is over, and the persisted
-                // shown flag keeps the card away on the next visit.
-                DisposableEffect(Unit) {
-                    onDispose { onPickThreeVisitEnded() }
-                }
-                PickThreeCard(
-                    candidates = state.pickThreeCandidates,
-                    isFavorite = { post ->
-                        post.id in state.favoriteIds ||
-                            (post.workRef != null && post.workRef in state.favoriteWorkRefs)
-                    },
-                    onToggleFavorite = { post -> onToggleFavorite(post) },
-                    onPostClick = onPostClick,
-                    onDismiss = onDismissPickThree,
-                    onShown = onPickThreeShown,
-                )
-                Spacer(Modifier.height(8.dp))
             }
 
             // The free trial note, as one dismissible line below the
             // hero instead of a card above it. A dismissed note never
             // returns.
             state.trialDaysRemaining?.let { days ->
-                TrialNoteLine(
-                    daysRemaining = days,
-                    onDismiss = onDismissTrialNote,
-                )
-                Spacer(Modifier.height(8.dp))
+                item(key = "trial") {
+                    TrialNoteLine(
+                        daysRemaining = days,
+                        onDismiss = onDismissTrialNote,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
             }
 
             // A5 (user decision 04:42 PKT 20 Nov): the Browse row carries
             // only the server's facet chips now — its type jump-offs
             // (All / Movies / Series / Anime) duplicated the filter row
             // above, so they are gone; one filter row only.
-            BrowseSection(
-                facets = state.facets,
-                onFacetSelected = onFacetSelected,
-            )
-            Spacer(Modifier.height(8.dp))
-
-            // At most 10 rows total, CW included: a panel that publishes 12
-            // sections does not get 12 rails on a phone, and the first rails win.
-            // Audit #18: the same title never appears twice on Home. The seen
-            // set is seeded with Continue Watching and the hero, so a rail
-            // never repeats a tile or a hero poster; HO-1 (hero out of its
-            // own rail) is now a special case of the same rule, by work
-            // identity — not by row id, because one film filed twice has
-            // two row ids.
-            var seenWorks = state.visibleContinueWatching
-                .map { UserWords.workKey(it.post.workRef, it.post.displayTitle, it.post.year) }
-                .toSet() + heroItems.map { UserWords.workKey(it.workRef, it.displayTitle, it.year) }
-            // Mockup (Nov 2026): the filter chips hide non-matching rails in
-            // place — the hero, Continue Watching, Pick 3 and the library
-            // above are not rails and are never filtered, only these rows.
-            val renderedRows = shownRows.filter { homeFilterMatches(it, filter) }
-                .filter { it.visible || it.loading || it.error != null }
-                .map { section ->
-                    val (kept, next) = UserWords.dedupeAcrossRails(
-                        section.items,
-                        seenWorks,
-                    ) { post -> UserWords.workKey(post.workRef, post.displayTitle, post.year) }
-                    seenWorks = next
-                    section.copy(items = kept)
-                }
-            renderedRows.forEachIndexed { index, section ->
-                HomeRailSection(
-                    section = section,
-                    index = index,
-                    onPostClick = onPostClick,
-                    onSeeAll = {
-                        if (section.industry != null) {
-                            onFacetSelected(null, section.industry, null)
-                        } else {
-                            onBrowseType(section.type)
-                        }
-                    },
-                    // A sorted rail has no Browse equivalent (Browse takes a
-                    // type but no sort), so "See all" would silently re-sort
-                    // it to freshest-first. Offer it only where the order
-                    // survives the jump.
-                    showSeeAll = section.browseEquivalent,
-                    onRetry = { onRetrySection(section.key) },
-                    // REA #4: the shuffle rides only the "For you" header —
-                    // the pool it draws from. Every other rail passes null
-                    // and keeps its header exactly as it was.
-                    onPlaySomething = if (section.forYou) onPlaySomething else null,
+            item(key = "browse") {
+                BrowseSection(
+                    facets = state.facets,
+                    onFacetSelected = onFacetSelected,
                 )
+                Spacer(Modifier.height(8.dp))
+            }
+
+            // The remaining rails (rail 2 onward) — the first rail was
+            // emitted above, so Pick 3 sits between rail 1 and rail 2.
+            // The stagger index continues from 1, so the entrance
+            // animation does not restart at the first rail.
+            renderedRows.drop(1).forEachIndexed { dropIndex, section ->
+                val index = dropIndex + 1
+                item(key = "rail:${section.key}") {
+                    HomeRailSection(
+                        section = section,
+                        index = index,
+                        onPostClick = onPostClick,
+                        onPlayClick = onPlayClick,
+                        itemWidthDp = railCardWidthDp,
+                        onSeeAll = {
+                            if (section.industry != null) {
+                                onFacetSelected(null, section.industry, null)
+                            } else {
+                                onBrowseType(section.type)
+                            }
+                        },
+                        // A sorted rail has no Browse equivalent (Browse takes a
+                        // type but no sort), so "See all" would silently re-sort
+                        // it to freshest-first. Offer it only where the order
+                        // survives the jump.
+                        showSeeAll = section.browseEquivalent,
+                        onRetry = { onRetrySection(section.key) },
+                        // REA #4: the shuffle rides only the "For you" header —
+                        // the pool it draws from. Every other rail passes null
+                        // and keeps its header exactly as it was.
+                        onPlaySomething = if (section.forYou) onPlaySomething else null,
+                    )
+                }
             }
             // A filter that hides every rail is not a broken catalog — say
             // which filter came up empty, and offer the way back to everything.
@@ -632,15 +749,17 @@ internal fun HomeContent(
             if (filter != HomeFilter.All && renderedRows.isEmpty() &&
                 state.visibleSections.none { it.loading } && state.fatal == null
             ) {
-                EmptyState(
-                    title = filter.emptyMessage,
-                    message = "Try another filter, or show everything.",
-                    action = {
-                        OutlinedButton(onClick = { filter = HomeFilter.All }) {
-                            Text("Show all")
-                        }
-                    },
-                )
+                item(key = "emptyFilter") {
+                    EmptyState(
+                        title = filter.emptyMessage,
+                        message = "Try another filter, or show everything.",
+                        action = {
+                            OutlinedButton(onClick = { filter = HomeFilter.All }) {
+                                Text("Show all")
+                            }
+                        },
+                    )
+                }
             }
             // A successful empty load is a blank page today: no rails, no
             // error, nothing to tap. Say so, and point at the one fix the
@@ -649,29 +768,27 @@ internal fun HomeContent(
             if (filter == HomeFilter.All && renderedRows.isEmpty() && state.visibleContinueWatching.isEmpty() &&
                 state.visibleSections.none { it.loading } && state.fatal == null
             ) {
-                EmptyState(
-                    title = "Nothing here yet",
-                    message = "No titles to show right now.",
-                    action = {
-                        OutlinedButton(onClick = onSetupServerClick) {
-                            Text("Try a different address")
-                        }
-                    },
-                )
+                item(key = "empty") {
+                    EmptyState(
+                        title = "Nothing here yet",
+                        message = "No titles to show right now.",
+                        action = {
+                            OutlinedButton(onClick = onSetupServerClick) {
+                                Text("Try a different address")
+                            }
+                        },
+                    )
+                }
             }
-            // Mockup (Nov 2026): Your Library rides BELOW the rails now, at
-            // the bottom of the feed — the phone's own videos, and downloads.
-            // MX #7 — Kids Lock: the whole strip stays out of kids mode.
-            // The phone's own videos are unrated files, and downloads are a
-            // locked surface — neither belongs on a kid's Home.
-            if (searchEnabled && !kidsMode) {
-                LibraryStrip(
-                    onOpenLocalFiles = onOpenLocalFiles,
-                    onOpenDownloads = onOpenDownloads,
-                )
-                Spacer(Modifier.height(8.dp))
+            // Home fix (Nov 2026): the Library strip is gone. Its two doors
+            // — On this phone, Downloads — are reachable from Settings (a
+            // persistent tab), and Downloads links to Local Files too; the
+            // strip sat below all the rails, where almost no one scrolled,
+            // and its original reason (the paste-a-link door) is gone.
+            item(key = "bottomSpacer") {
+                Spacer(Modifier.height(24.dp))
             }
-            Spacer(Modifier.height(24.dp))
+        }
         }
         }
     }
@@ -1209,74 +1326,13 @@ private fun KidsModeBanner(
 }
 
 /**
- * Your Library: the phone's own videos, and kept downloads. Two doors, both
- * inside the app — no pasted-link door, no web browsing.
+ * Home fix (Nov 2026): the Library strip is gone (item 8). Its two doors —
+ * On this phone, Downloads — are reachable from Settings (a persistent
+ * tab), and Downloads links to Local Files too; the strip sat below all
+ * the rails, where almost no one scrolled, and its original reason (the
+ * paste-a-link door) is gone. The LibraryStrip and LibraryTile
+ * composables were removed with it — nothing else referenced them.
  */
-@Composable
-internal fun LibraryStrip(
-    onOpenLocalFiles: () -> Unit,
-    onOpenDownloads: () -> Unit,
-) {
-    Column(Modifier.padding(top = 4.dp)) {
-        // Audit #15: every section heading carries the 16 dp phone margin —
-        // this one used to start at x=0 with its "Y" cut off.
-        SectionHeader(title = "Your Library", modifier = Modifier.padding(horizontal = 16.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            LibraryTile(
-                label = "ON THIS PHONE",
-                icon = Icons.Default.Folder,
-                onClick = onOpenLocalFiles,
-                modifier = Modifier.weight(1f),
-            )
-            LibraryTile(
-                label = "DOWNLOADS",
-                icon = Icons.Default.Download,
-                onClick = onOpenDownloads,
-                modifier = Modifier.weight(1f),
-            )
-        }
-    }
-}
-
-@Composable
-private fun LibraryTile(
-    label: String,
-    icon: ImageVector,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-        // F30 (Batch B): the tile is a tap target with no spoken name of its
-        // own — its icon is decorative and its label is a child Text, so
-        // Robo flagged the "Your library" row as unlabeled. The merged node
-        // speaks the label. (Surface's onClick overload takes no onClickLabel
-        // in this M3 version — that parameter lives on Modifier.clickable —
-        // so the name rides on semantics instead.)
-        modifier = modifier.semantics(mergeDescendants = true) {
-            contentDescription = label
-        },
-    ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Icon(icon, contentDescription = null)
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelMedium,
-                textAlign = TextAlign.Center,
-            )
-        }
-    }
-}
 
 /**
  * UI-fix P1-H3/H4/H5: one "Browse" row of the catalog's own facet chips —
@@ -1388,6 +1444,10 @@ private fun HomeRailSection(
     section: HomeSection,
     index: Int = 0,
     onPostClick: (Post) -> Unit,
+    /** Home fix (Nov 2026): direct play — the tile's play button. */
+    onPlayClick: (Post) -> Unit = {},
+    /** Adaptive (Nov 2026): the rail's cell width — wider on a tablet. */
+    itemWidthDp: Int = CardGeometry.RAIL_CARD_WIDTH_DP,
     onSeeAll: () -> Unit,
     showSeeAll: Boolean = true,
     onRetry: () -> Unit,
@@ -1397,24 +1457,30 @@ private fun HomeRailSection(
     // UI-fix P1-X1: rails arrive staggered (index * 60 ms, fade + a short
     // rise — the Region screen's index * 90 pattern, extended to rails).
     // Reduced-motion users get a plain fade, never the rise.
+    // Home fix (Nov 2026): the entrance is spring-based now (M3 Expressive
+    // springs — [RaddMotion.defaultSpatial] for the rise,
+    // [RaddMotion.defaultEffects] for the fade), not a tween: the old
+    // tween + EmphasizedDecelerate easing was the only non-spring motion
+    // on Home. The stagger stays — a short delay before the rail becomes
+    // visible, since a spring carries no delay of its own. (A lazy item
+    // that scrolls out and back re-plays its entrance — the list recycles
+    // the slot — a subtle fade, the standard lazy-list trade.)
     val reduceMotion = rememberReduceMotion()
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        delay(index * 60L)
+        visible = true
+    }
     AnimatedVisibility(
-        visible = true,
+        visible = visible,
         enter = fadeIn(
-            animationSpec = tween(
-                durationMillis = RaddMotion.DurationDefault,
-                delayMillis = index * 60,
-            ),
+            animationSpec = if (reduceMotion) snap() else RaddMotion.defaultEffects(),
         ) + if (reduceMotion) {
             EnterTransition.None
         } else {
             slideInVertically(
                 initialOffsetY = { it / 4 },
-                animationSpec = tween(
-                    durationMillis = RaddMotion.DurationDefault,
-                    delayMillis = index * 60,
-                    easing = RaddMotion.EmphasizedDecelerate,
-                ),
+                animationSpec = RaddMotion.defaultSpatial(),
             )
         },
     ) {
@@ -1479,10 +1545,17 @@ private fun HomeRailSection(
                 )
                 val isRanked = section.sort == "trending"
                 val indexedItems = section.items.mapIndexed { itemIndex, post -> itemIndex to post }
-                MediaRail(items = indexedItems, key = { (_, post) -> post.id }) { (itemIndex, post) ->
+                MediaRail(
+                    items = indexedItems,
+                    key = { (_, post) -> post.id },
+                    itemWidthDp = itemWidthDp,
+                ) { (itemIndex, post) ->
                     PosterCard(
                         post = post,
                         onClick = { onPostClick(post) },
+                        // Home fix (Nov 2026): direct play — the tile's
+                        // play button opens Detail with autoplay.
+                        onPlayClick = { onPlayClick(post) },
                         rank = if (isRanked && itemIndex < 10) itemIndex + 1 else null,
                         // REA #2: the "For you" row's Match % rides its
                         // tiles; every other rail carries no scores, so

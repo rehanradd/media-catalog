@@ -149,26 +149,6 @@ class TextContrastTest {
     }
 
     @Test
-    fun homeLibraryTileLabelOnSurfaceVariantMeetsContrastFloor() {
-        // Robo run 10, issue 1: two low-contrast readings (1.04:1, fg
-        // #1B2E2C on bg #1C312E; 1.33:1, fg #20282A on bg #07090B) on Text
-        // nodes in the "Your library" strip — the "On this phone" /
-        // "Downloads" tiles. The reported fg
-        // #20282A is surfaceContainerHigh #1E282B to the pixel (luminance
-        // 0.0199 vs 0.0197), the bg #07090B is the background #06090B, and
-        // #1B2E2C/#1C312E sit in the shimmer placeholder range
-        // (#10191C–#1C2A2E): ATF sampled surface/shimmer pixels, not the
-        // label text. The real label is onSurfaceVariant on surfaceVariant
-        // (the tile Surface's contentColor on its own color), 7.59:1. This
-        // pair was the one Home pair no earlier test pinned.
-        val ratio = contrastRatio(RaddMistOnInk, RaddInk800)
-        assertTrue(
-            "home library tile label on surface variant is only $ratio:1, under the 4.5:1 floor",
-            ratio >= 4.5f,
-        )
-    }
-
-    @Test
     fun homePosterCardTitleOnBackgroundMeetsContrastFloor() {
         // Robo run 10, issue 3: three low-contrast readings (1.01–1.02:1)
         // on TextView[1] nodes in the Home rails — the poster card titles

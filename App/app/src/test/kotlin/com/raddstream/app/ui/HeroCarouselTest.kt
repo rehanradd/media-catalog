@@ -188,4 +188,11 @@ class HeroCarouselTest {
         assertFalse(shouldAdvanceHero(nowMs = 20_000L, lastChangeMs = 0L, intervalMs = 0L, isScrolling = false, watchNowPressed = false))
         assertFalse(shouldAdvanceHero(nowMs = 20_000L, lastChangeMs = 0L, intervalMs = -1L, isScrolling = false, watchNowPressed = false))
     }
+
+    // Home fix (Nov 2026): the viewer's pause holds the banner even after a
+    // full interval — the only way to stop a rotating banner was to leave Home.
+    @Test
+    fun holdsWhilePaused() {
+        assertFalse(shouldAdvanceHero(nowMs = 20_000L, lastChangeMs = 0L, intervalMs = 8_000L, isScrolling = false, watchNowPressed = false, paused = true))
+    }
 }

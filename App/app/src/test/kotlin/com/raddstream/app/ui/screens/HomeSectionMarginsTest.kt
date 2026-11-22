@@ -23,6 +23,10 @@ import org.robolectric.RobolectricTestRunner
  * two heading cases below are now one — the single heading still carries
  * the 16 dp margin.
  *
+ * Home fix (Nov 2026): the Library strip is gone (item 8) — its
+ * "Your Library" heading test went with it. The Browse heading is the
+ * only section heading left on Home.
+ *
  * Runs on the JVM under Robolectric because this project has no emulator
  * image. Requires an x86_64 runner (robolectric/robolectric#9166).
  */
@@ -31,16 +35,6 @@ class HomeSectionMarginsTest {
 
     @get:Rule
     val compose = createComposeRule()
-
-    @Test
-    fun libraryStripHeadingHasThePhoneMargin() {
-        compose.setContent {
-            RaddStreamTheme {
-                LibraryStrip(onOpenLocalFiles = {}, onOpenDownloads = {})
-            }
-        }
-        compose.onNodeWithText("Your Library").assertLeftPositionInRootIsEqualTo(16.dp)
-    }
 
     @Test
     fun browseSectionHeadingHasThePhoneMargin() {

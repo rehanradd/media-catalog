@@ -31,10 +31,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -151,6 +153,13 @@ fun HeroCarousel(
     // a LaunchedEffect key: restarting the effect would cancel an in-flight
     // animateScrollToPage and strand the pager between pages).
     var watchNowPressed by remember { mutableStateOf(false) }
+    // Home fix (Nov 2026): the viewer's own pause for auto-advance — a
+    // rotating banner made Watch Now a moving target, and the only way to
+    // stop it was to leave Home. The button shows only while autoplay is
+    // on; pausing also restarts the clock, so resuming gives a full
+    // interval on the slide in view. The loop reads it per tick, so the
+    // toggle takes effect without restarting the effect.
+    var paused by remember { mutableStateOf(false) }
     // Samsung RTL (v1.1.2, Issue 3): the banner rotated every 5 s and a
     // manual swipe or dot tap did not restart the clock, so the slide a
     // viewer had just chosen could be yanked away a beat later — and
@@ -191,6 +200,7 @@ fun HeroCarousel(
                     intervalMs = intervalMs,
                     isScrolling = pagerState.isScrollInProgress,
                     watchNowPressed = watchNowPressed,
+                    paused = paused,
                 )
             ) continue
             lastChangeMs = SystemClock.uptimeMillis()
@@ -244,34 +254,63 @@ fun HeroCarousel(
     }
 
     if (posts.size > 1) {
-        HeroIndicator(
-            count = posts.size,
-            current = pagerState.currentPage,
-            // Scrolling is a suspending pager call, so the dot's click launches it on the
-            // composition's scope instead of pretending the tap can wait for it inline.
-            // The tap also restarts the auto-advance clock outright: tapping the
-            // current dot changes no page, so the page effect would not see it,
-            // and without this the slide just chosen could still be yanked away
-            // a beat later (Samsung RTL v1.1.2, Issue 3).
-            onSelect = { index ->
-                lastChangeMs = SystemClock.uptimeMillis()
-                scrollScope.launch {
-                    pagerState.animateScrollToPage(index, animationSpec = RaddMotion.defaultSpatial())
-                }
-            },
-            // Below the card, on the page background: no pill behind the
-            // dots — the pill was contrast over bright artwork, and down
-            // here there is no artwork behind them.
-            // Screenshot-fix D7 (2026-11-16): 4dp above the dots, not
-            // 10dp — the dots sat in a dead gap between the hero card
-            // and the next row. The dots row itself stays 48dp (the tap
-            // floor, pinned by HeroIndicatorTest); only the dead padding
-            // around it shrinks.
-            background = false,
+        // Home fix (Nov 2026): the pause control rides beside the dots —
+        // one row, centred, 48dp tall — and only while autoplay is on.
+        // Manual-swipe (the default) has nothing to pause, so it shows
+        // no control at all. The toggle restarts the clock, so resuming
+        // gives a full interval on the slide in view.
+        Row(
             modifier = Modifier
-                .align(Alignment.CenterHorizontally)
+                .fillMaxWidth()
                 .padding(top = 4.dp),
-        )
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            HeroIndicator(
+                count = posts.size,
+                current = pagerState.currentPage,
+                // Scrolling is a suspending pager call, so the dot's click launches it on the
+                // composition's scope instead of pretending the tap can wait for it inline.
+                // The tap also restarts the auto-advance clock outright: tapping the
+                // current dot changes no page, so the page effect would not see it,
+                // and without this the slide just chosen could still be yanked away
+                // a beat later (Samsung RTL v1.1.2, Issue 3).
+                onSelect = { index ->
+                    lastChangeMs = SystemClock.uptimeMillis()
+                    scrollScope.launch {
+                        pagerState.animateScrollToPage(index, animationSpec = RaddMotion.defaultSpatial())
+                    }
+                },
+                // Below the card, on the page background: no pill behind the
+                // dots — the pill was contrast over bright artwork, and down
+                // here there is no artwork behind them.
+                // Screenshot-fix D7 (2026-11-16): 4dp above the dots, not
+                // 10dp — the dots sat in a dead gap between the hero card
+                // and the next row. The dots row itself stays 48dp (the tap
+                // floor, pinned by HeroIndicatorTest); only the dead padding
+                // around it shrinks.
+                background = false,
+            )
+            if (autoplay) {
+                IconButton(
+                    onClick = {
+                        paused = !paused
+                        lastChangeMs = SystemClock.uptimeMillis()
+                    },
+                    modifier = Modifier.size(48.dp),
+                ) {
+                    Icon(
+                        imageVector = if (paused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                        contentDescription = if (paused) {
+                            "Resume banner rotation"
+                        } else {
+                            "Pause banner rotation"
+                        },
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
     }
     }
 }
@@ -870,7 +909,8 @@ internal fun nextHeroPage(currentPage: Int, pageCount: Int): Int =
  * full [intervalMs] must have passed since the last page change or user
  * interaction ([lastChangeMs]): a manual swipe or dot tap restarts the clock,
  * so the slide just chosen is never yanked away a beat later (Samsung RTL
- * v1.1.2, Issue 3). A non-positive interval never advances on its own.
+ * v1.1.2, Issue 3). A non-positive interval never advances on its own. A
+ * paused banner never advances either (home fix, Nov 2026).
  */
 internal fun shouldAdvanceHero(
     nowMs: Long,
@@ -878,8 +918,9 @@ internal fun shouldAdvanceHero(
     intervalMs: Long,
     isScrolling: Boolean,
     watchNowPressed: Boolean,
+    paused: Boolean = false,
 ): Boolean {
-    if (isScrolling || watchNowPressed) return false
+    if (isScrolling || watchNowPressed || paused) return false
     if (intervalMs <= 0L) return false
     return nowMs - lastChangeMs >= intervalMs
 }
@@ -932,9 +973,23 @@ private val DOT_TOUCH_WIDTH: Dp = 48.dp
  * there, so the first rail still shows below it.
  */
 @Composable
+/**
+ * Home fix (Nov 2026): 240dp on a narrow phone, 280dp otherwise — down from
+ * 320/400dp. The hero dominated the first viewport and buried Continue
+ * Watching below the fold; the slide's content is ~168dp (28sp title over
+ * two lines, the meta line, 48dp buttons, 20dp bottom padding), so 240dp
+ * still fits it with room. A tablet (expanded width, 840dp+) keeps a
+ * taller banner — it has the room, and the hero is the first paint there
+ * too. [HeroSkeleton] reads this same height, so the loading footprint
+ * shrinks with it.
+ */
 private fun heroHeight(): Dp {
     val width = LocalConfiguration.current.screenWidthDp
-    return if (width < 400) 320.dp else 400.dp
+    return when {
+        width >= 840 -> 360.dp
+        width < 400 -> 240.dp
+        else -> 280.dp
+    }
 }
 
 /** Mockup (Nov 2026): the hero is a rounded inset card, 16dp in from the

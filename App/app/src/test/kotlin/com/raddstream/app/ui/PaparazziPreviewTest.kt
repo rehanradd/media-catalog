@@ -321,7 +321,7 @@ class PaparazziPreviewTest {
         sections = listOf(
             HomeSection(
                 key = "trending",
-                title = "Top 10 Today",
+                title = "Most available",
                 type = null,
                 items = homePosts,
                 sort = "trending",
@@ -380,7 +380,7 @@ class PaparazziPreviewTest {
                 HomeContent(
                     state = HomeUiState(
                         sections = listOf(
-                            HomeSection(key = "trending", title = "Top 10 Today", type = null, loading = true),
+                            HomeSection(key = "trending", title = "Most available", type = null, loading = true),
                             HomeSection(key = "bollywood", title = "Bollywood", type = "movie", loading = true),
                         ),
                     ),

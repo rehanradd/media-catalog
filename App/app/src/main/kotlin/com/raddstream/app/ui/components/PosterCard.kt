@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -36,7 +37,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -117,6 +121,15 @@ fun PosterCard(
      * Null everywhere else — no synthetic rank numbers are ever invented.
      */
     rank: Int? = null,
+    /**
+     * Home fix (Nov 2026): direct play — one tap starts the title, no Detail
+     * stop in between. Only Home rails pass it, so only they grow the play
+     * button; everywhere else the tile stays a doorway to Detail. Null means
+     * no play button. The tap opens Detail with autoplay, and Detail decides
+     * what "play" means for that title (resume, HLS, quality sheet, or the
+     * "no working link" line) — the tile never guesses playability itself.
+     */
+    onPlayClick: (() -> Unit)? = null,
     /**
      * My List review (Nov 2026): the compact meta line for the 3-up
      * starter rail — rating and year only, "★ 8.6 · 2024", no type word.
@@ -231,6 +244,13 @@ fun PosterCard(
     val pressSource = remember { MutableInteractionSource() }
     PressHaptics(pressSource)
 
+    // Home fix (Nov 2026): D-pad / remote focus. The tile is focusable by
+    // default (combinedClickable), but a focused tile painted nothing — a
+    // remote user could not see which tile was selected. A focused tile
+    // wears a primary-colour rim on its poster, the same accent the NEW
+    // pill and the hero use, so focus reads as selection everywhere.
+    var isFocused by remember { mutableStateOf(false) }
+
     // Review redesign (Nov 2026): frameless — no Card, no rim, no glow.
     // The poster paints edge-to-edge and the text sits below it on the
     // page background, so the tile reads as artwork, not as a boxed card.
@@ -239,6 +259,7 @@ fun PosterCard(
             .fillMaxWidth()
             .then(clickable)
             .pressScale(pressSource)
+            .onFocusChanged { isFocused = it.isFocused }
             .then(
                 when {
                     onClick != null && onLongClick != null ->
@@ -268,7 +289,16 @@ fun PosterCard(
                 .fillMaxWidth()
                 .aspectRatio(CardGeometry.POSTER_ASPECT)
                 .clip(RoundedCornerShape(10.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant),
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .then(
+                    if (isFocused) {
+                        Modifier.border(
+                            width = 2.dp,
+                            color = MaterialTheme.colorScheme.primary,
+                            shape = RoundedCornerShape(10.dp),
+                        )
+                    } else Modifier
+                ),
             contentAlignment = Alignment.BottomStart,
         ) {
             val posterUrl = post.posterUrl?.takeIf { it.isNotBlank() }
@@ -351,28 +381,32 @@ fun PosterCard(
             // twice. The scrim stays: the 3dp progress bar below still
             // needs contrast against bright artwork.
 
+            // Home fix (Nov 2026): big Top 10 numerals. The small "#N" chip
+            // read as a badge, not a chart position — a viewer could not tell
+            // a Top 10 rail from any other rail at a glance. The numeral is
+            // display-size at the poster's bottom-left, over the bottom
+            // scrim, with a hard shadow so it reads over any artwork — the
+            // Netflix shape, kept inside this tile (no layout change to the
+            // rail). Paint-only: the tile's one spoken sentence already says
+            // "Rank N". The NEW pill still never rides with a rank (see
+            // below), so a ranked tile shows the numeral only.
             if (rank != null && rank in 1..10) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(6.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(RaddArtScrim)
-                        .border(
-                            width = 1.dp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
-                            shape = RoundedCornerShape(8.dp),
-                        )
-                        .padding(horizontal = 7.dp, vertical = 2.dp)
-                        .clearAndSetSemantics { },
-                ) {
-                    Text(
-                        text = "#$rank",
-                        color = MaterialTheme.colorScheme.onSurface,
-                        style = MaterialTheme.typography.labelMedium,
+                Text(
+                    text = "$rank",
+                    color = MaterialTheme.colorScheme.onSurface,
+                    style = MaterialTheme.typography.displayMedium.copy(
                         fontWeight = FontWeight.ExtraBold,
-                    )
-                }
+                        shadow = Shadow(
+                            color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.6f),
+                            offset = Offset(2f, 2f),
+                            blurRadius = 6f,
+                        ),
+                    ),
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(start = 8.dp, bottom = 2.dp)
+                        .clearAndSetSemantics { },
+                )
             }
 
             // Review redesign (Nov 2026): the NEW pill is a small dark
@@ -380,7 +414,7 @@ fun PosterCard(
             // the art. It rides TopStart, where the eye lands first;
             // the Pick 3 heart owns TopStart in its rail, so there it
             // falls back to TopEnd instead. It never rides with a rank
-            // badge — a ranked tile shows the rank only (Gemini home
+            // numeral — a ranked tile shows the numeral only (Gemini home
             // review, Nov 2026: max one badge per card — #1 + NEW on a
             // narrow poster crowded the art). Paint-only, the tile's
             // one spoken sentence already says "new release".
@@ -410,8 +444,8 @@ fun PosterCard(
             // so it reads as a control and never as part of the art; the
             // button eats its own tap, so it never also opens the title
             // (same as the remove × below). TopStart: the NEW pill falls
-            // back to TopEnd when the heart is here, and a rank badge
-            // would own TopStart — the two never meet on one tile (see
+            // back to TopEnd when the heart is here, and a rank numeral
+            // would own BottomStart — the two never meet on one tile (see
             // the parameter docs).
             if (onToggleFavorite != null) {
                 IconButton(
@@ -443,6 +477,33 @@ fun PosterCard(
                         } else {
                             MaterialTheme.colorScheme.onSurface
                         },
+                        modifier = Modifier.size(24.dp),
+                    )
+                }
+            }
+
+            // Home fix (Nov 2026): direct play — the play affordance on
+            // the tile. A 48dp play button in a scrimmed circle at the
+            // poster's bottom-right, opposite the rank numeral; it eats
+            // its own tap, so it never also opens the title (same as the
+            // heart above). Only Home rails pass onPlayClick, so only
+            // they grow the button.
+            if (onPlayClick != null) {
+                IconButton(
+                    onClick = onPlayClick,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(4.dp)
+                        .size(48.dp)
+                        .background(
+                            MaterialTheme.colorScheme.scrim.copy(alpha = 0.55f),
+                            CircleShape,
+                        ),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = "Play $title",
+                        tint = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.size(24.dp),
                     )
                 }

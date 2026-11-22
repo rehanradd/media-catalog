@@ -167,7 +167,7 @@ class PanelFeedMergeTest {
     }
 
     @Test
-    fun `a panel section titled Most copies reads Top 10 Today to the viewer`() {
+    fun `a panel section titled Most copies reads Most available to the viewer`() {
         val (sections, _) = mergePanelFeed(
             builtIn,
             VipRemoteConfig(
@@ -177,12 +177,12 @@ class PanelFeedMergeTest {
         )
 
         assertEquals("panel:most_sources", sections[0].key)
-        assertEquals("Top 10 Today", sections[0].title)
+        assertEquals("Most available", sections[0].title)
         assertEquals(listOf(9), sections[0].items.map { it.id })
     }
 
     @Test
-    fun `a built-in Most copies rail reads Top 10 Today to the viewer`() {
+    fun `a built-in Most copies rail reads Most available to the viewer`() {
         val (sections, _) = mergePanelFeed(
             listOf(HomeSection(key = "most_sources", title = "Most copies", type = null, sort = "trending", items = listOf(post(9)))),
             VipRemoteConfig(),
@@ -190,8 +190,51 @@ class PanelFeedMergeTest {
         )
 
         assertEquals("most_sources", sections[0].key)
-        assertEquals("Top 10 Today", sections[0].title)
+        assertEquals("Most available", sections[0].title)
         assertEquals(listOf(9), sections[0].items.map { it.id })
+    }
+
+    @Test
+    fun `a panel rail order re-sorts the built-in rails without dropping any`() {
+        val (sections, _) = mergePanelFeed(
+            listOf(
+                HomeSection(key = "recent", title = "Recently added", type = null, items = listOf(post(1))),
+                HomeSection(key = "movie", title = "Movies", type = "movie", items = listOf(post(2))),
+                HomeSection(key = "series", title = "Series", type = "series", items = listOf(post(3))),
+            ),
+            VipRemoteConfig(homeSectionOrder = listOf("series", "recent")),
+            dismissedBroadcastIds = emptySet(),
+        )
+
+        assertEquals(listOf("series", "recent", "movie"), sections.map { it.key })
+    }
+
+    @Test
+    fun `an empty panel rail order keeps the app order`() {
+        val (sections, _) = mergePanelFeed(
+            listOf(
+                HomeSection(key = "recent", title = "Recently added", type = null, items = listOf(post(1))),
+                HomeSection(key = "movie", title = "Movies", type = "movie", items = listOf(post(2))),
+            ),
+            VipRemoteConfig(homeSectionOrder = emptyList()),
+            dismissedBroadcastIds = emptySet(),
+        )
+
+        assertEquals(listOf("recent", "movie"), sections.map { it.key })
+    }
+
+    @Test
+    fun `an unknown key in the panel rail order is ignored`() {
+        val (sections, _) = mergePanelFeed(
+            listOf(
+                HomeSection(key = "recent", title = "Recently added", type = null, items = listOf(post(1))),
+                HomeSection(key = "movie", title = "Movies", type = "movie", items = listOf(post(2))),
+            ),
+            VipRemoteConfig(homeSectionOrder = listOf("no_such_rail", "movie")),
+            dismissedBroadcastIds = emptySet(),
+        )
+
+        assertEquals(listOf("movie", "recent"), sections.map { it.key })
     }
 
     @Test

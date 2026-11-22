@@ -113,6 +113,21 @@ data class VipRemoteConfig(
      * so the rail needs no second fetch to render.
      */
     val sections: List<PanelSection> = emptyList(),
+    /**
+     * Home fix (Nov 2026): the operator's rail order, published by the admin
+     * panel and served on this same body — the section keys (built-in keys
+     * like "recent"/"movie"/"most_sources", or "panel:<key>" for a panel
+     * section) in the order Home must render them. Empty from an older
+     * deployment — the app then keeps its own order, exactly like the
+     * sections above. [mergePanelFeed] applies it to the built-in rails
+     * only: keys the list names move to the front in that order, keys it
+     * does not name keep their relative order behind them, and an unknown
+     * key is ignored — so a half-written list can never drop a rail. The
+     * panel UI to set it is a follow-up; the wire field lands first so an
+     * older panel body still decodes.
+     */
+    @SerializedName("home_section_order")
+    val homeSectionOrder: List<String> = emptyList(),
     val broadcasts: List<PanelBroadcast> = emptyList(),
     @SerializedName("hidden_work_ids")
     val hiddenWorkIds: List<Int> = emptyList(),

@@ -182,6 +182,12 @@ fun DetailScreen(
     onPostClick: (Post) -> Unit = {},
     /** Detail review (Nov 2026, P1): the audio line opens Languages. */
     onOpenLanguages: () -> Unit = {},
+    // Home fix (Nov 2026): direct play — the rail tile's play button opens
+    // Detail with autoplay, so the tap starts the title instead of landing
+    // on the two buttons. False everywhere else: the hero's Watch Now and
+    // the shuffle still land on the two buttons, and the viewer presses
+    // Play, once. An explicit play tap is the only route that sets this.
+    autoplay: Boolean = false,
     // 2-button detail (Nov 2026): autoplay on detail open is OFF — the
     // viewer presses Play, once, and the player starts. (The hero's
     // Watch Now and the shuffle Play Something land here too, on the
@@ -191,6 +197,20 @@ fun DetailScreen(
     val state by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
+    // Home fix (Nov 2026): the direct-play trigger — one shot, when the
+    // layout has loaded and Play is enabled. The layout is the gate: firing
+    // before it loads would read as "no working link". Play disabled means
+    // nothing playable was found, so there is nothing to fire — the viewer
+    // just sees the detail, with no spurious message. The latch keeps it
+    // to one fire: a recomposition, or a later layout refresh, must never
+    // start playback a second time.
+    var autoplayFired by remember { mutableStateOf(false) }
+    LaunchedEffect(autoplay, state.layout, state.playEnabled) {
+        if (autoplay && !autoplayFired && state.layout != null && state.playEnabled) {
+            autoplayFired = true
+            viewModel.playPrimary()
+        }
+    }
     var pendingPermissionAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),

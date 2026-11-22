@@ -410,6 +410,7 @@ class VipRemoteConfigTest {
                  "target": "region", "target_detail": "pakistan"}
               ],
               "hidden_work_ids": [2],
+              "home_section_order": ["series", "recent", "movie"],
               "tabs": ["settings", "home"],
               "disclaimer": {"text": "Links come from public sites. We host nothing.", "version": 3, "email": "radddao1@gmail.com"},
               "free_quality_cap": "480p",
@@ -433,6 +434,9 @@ class VipRemoteConfigTest {
         assertEquals(1, config.broadcasts[0].id)
         assertEquals("Hello", config.broadcasts[0].title)
         assertEquals("warning", config.broadcasts[1].severity)
+
+        // Home fix (Nov 2026): the panel's rail order rides this same body.
+        assertEquals(listOf("series", "recent", "movie"), config.homeSectionOrder)
         assertEquals("all", config.broadcasts[0].target)
         assertEquals("", config.broadcasts[0].targetDetail)
         assertEquals("region", config.broadcasts[1].target)

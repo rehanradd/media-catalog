@@ -77,8 +77,9 @@ class ContinueWatchingPlaceholderTest {
         // an error on a populated Home, and Pick 3 onboards a new viewer.
         setHome(HomeUiState(sections = listOf(loadedSection()), hasWatchHistory = true))
 
-        // The slot sits below the hero, so the quiet line is below the
-        // first fold — scroll it into view first.
+        // Home fix (Nov 2026): the slot sits above the hero now, so the
+        // quiet line is on first paint — scroll it into view first anyway,
+        // the same way the other tests do.
         compose.onNodeWithText("No active shows — start exploring picks").performScrollTo()
         compose.onNodeWithText("No active shows — start exploring picks").assertIsDisplayed()
         // No heading, no big card: the old "Start watching" card is gone.

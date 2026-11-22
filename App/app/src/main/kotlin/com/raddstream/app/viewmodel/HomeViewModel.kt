@@ -462,8 +462,8 @@ internal const val BECAUSE_YOU_WATCH_KEY = "because_you_watch"
  * `sort=trending` on the same live route — the server ranks by how many
  * prints and mirrors the catalog holds for a work, because the ledger has
  * no play-count column. The raw name stays here as the order's name; the
- * viewer reads "Top 10 Today" ([viewerTitleForPanelSection] maps it at
- * merge, Gemini home review Nov 2026). "Trending" stays unused because it
+ * viewer reads "Most available" ([viewerTitleForPanelSection] maps it at
+ * merge, home fix Nov 2026). "Trending" stays unused because it
  * would promise popularity data that does not exist (the same naming rule
  * SearchViewModel's [SearchSort] follows).
  */
@@ -525,28 +525,31 @@ internal fun trialNoteDaysRemaining(
  * (the Nov 2026 home review flagged the rail under the carousel reading
  * "Hero") — so that rail reads "Featured". "Most copies" reads the same way
  * (Gemini home review, Nov 2026: an internal mirror-count metric that makes
- * the app sound like a torrent index), so that rail reads "Top 10 Today".
- * The order underneath is still the server's copy-count sort — the ledger
- * has no play counts — so "Today" is editorial framing, not a measured daily
- * chart; making the ranking real (by plays) is a server follow-up. Every
- * other title passes through untouched: the operator owns the names. Pure,
- * so the mapping is assertable without a repository.
+ * the app sound like a torrent index), so that rail reads "Most available":
+ * the order underneath is still the server's copy-count sort — the ledger
+ * has no play counts — so "Top 10 Today" (the old mapping) promised a
+ * measured daily chart that does not exist; "Most available" says what the
+ * sort actually is. Making the ranking real (by plays) is a server
+ * follow-up. Every other title passes through untouched: the operator owns
+ * the names. Pure, so the mapping is assertable without a repository.
  */
 internal fun viewerTitleForPanelSection(title: String): String =
     when (title) {
         "Hero" -> "Featured"
-        "Most copies" -> "Top 10 Today"
+        "Most copies" -> "Most available"
         else -> title
     }
 
 /**
  * The operator's feed, merged over the built-in rails. Pure, so the test can pin
  * the questions that matter without a repository: panel sections first, in the
- * panel's order, then the built-in rails that no panel section owns by key; every
- * row the operator hid is dropped from both, because the server hides it too but
- * a phone must never trust one layer alone; a dismissed broadcast never returns
- * until the next app start. A panel section with no rows renders nothing — an
- * empty operator rail is not a loading state.
+ * panel's order, then the built-in rails that no panel section owns by key —
+ * re-sorted by the panel's `home_section_order` when it published one
+ * ([applyPanelRailOrder]); every row the operator hid is dropped from both,
+ * because the server hides it too but a phone must never trust one layer
+ * alone; a dismissed broadcast never returns until the next app start. A
+ * panel section with no rows renders nothing — an empty operator rail is not
+ * a loading state.
  */
 internal fun mergePanelFeed(
     current: List<HomeSection>,
@@ -581,7 +584,29 @@ internal fun mergePanelFeed(
         it.id !in dismissedBroadcastIds && it.title.isNotBlank() &&
             BroadcastTargeting.visible(it, regionId, isVip, appVersion)
     }
-    return (panelSections + builtIn) to broadcasts
+    // Home fix (Nov 2026): the panel's rail order, applied to the built-in
+    // rails — the panel sections above already ride in the panel's own
+    // order. An empty order keeps the app's order.
+    return (panelSections + applyPanelRailOrder(builtIn, config.homeSectionOrder)) to broadcasts
+}
+
+/**
+ * Home fix (Nov 2026): the panel's rail order, as a pure function so the
+ * rule is pinned in a test without a repository. The keys the operator
+ * listed move to the front in exactly that order; keys the list does not
+ * name keep their relative order behind them; a key the list names that
+ * no rail carries is ignored. The order can never drop a rail — a
+ * half-written list only re-sorts the rails it names.
+ */
+internal fun applyPanelRailOrder(
+    builtIn: List<HomeSection>,
+    order: List<String>,
+): List<HomeSection> {
+    if (order.isEmpty()) return builtIn
+    val byKey = builtIn.associateBy { it.key }
+    val ordered = order.mapNotNull { byKey[it] }
+    val orderedKeys = ordered.map { it.key }.toSet()
+    return ordered + builtIn.filter { it.key !in orderedKeys }
 }
 
 /** The built-in rail the hero falls back to when the panel's hero is stale. */

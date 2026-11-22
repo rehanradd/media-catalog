@@ -187,6 +187,11 @@ class NestedScrollCrashTest {
         // dedupes them out of the rail below, so the "Recently added"
         // header never paints — the second rail's header is the one that
         // proves the rails composed.
+        // Home fix (Nov 2026): the feed is a LazyColumn now, so a rail
+        // below the fold has no node until the list scrolls to it — swipe
+        // it into view first, then scroll to the header.
+        compose.onRoot().performTouchInput { swipeUp() }
+        compose.waitForIdle()
         compose.onNodeWithText("Most copies").performScrollTo().assertIsDisplayed()
         compose.onRoot().assertExists()
     }
@@ -208,6 +213,10 @@ class NestedScrollCrashTest {
         }
         // Same Audit #18 dedupe as above: the hero rail paints no header,
         // the second rail does.
+        // Home fix (Nov 2026): lazy feed — swipe the rail into view first
+        // (see homeRichWithHeroRailsAndContinueWatching above).
+        compose.onRoot().performTouchInput { swipeUp() }
+        compose.waitForIdle()
         compose.onNodeWithText("Most copies").performScrollTo().assertIsDisplayed()
         compose.onRoot().assertExists()
     }
