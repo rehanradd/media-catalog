@@ -3797,6 +3797,7 @@ def unwrap_hubcloud_drive(hub_drive_url: str) -> list[dict]:
     - Cloudflare R2 bucket signed stream (HTTP 206 resumable)
     - 10Gbps Server
     - PixelDrain server
+    - ZipDisk Server (Google anonymous download; zip archives)
     Returns list of source dicts.
     """
     results = []
@@ -3878,6 +3879,16 @@ def unwrap_hubcloud_drive(hub_drive_url: str) -> list[dict]:
                 "source_url": href,
                 "final_url": direct_pd,
                 "is_temporary": 0,
+            })
+        elif ("zipdisk" in clean_t.lower()
+                or "photos-web-downloads-anonymous" in h_lower):
+            results.append({
+                "source_name": "⚡ HubCloud [ZipDisk Server]",
+                "service": "hubcloud_zipdisk",
+                "resource_id": hub_drive_url.rstrip("/").split("/")[-1],
+                "source_url": hub_drive_url,
+                "final_url": href,
+                "is_temporary": 1,
             })
 
     if not results:

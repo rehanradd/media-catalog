@@ -3172,6 +3172,22 @@ HC_FSL_URL = _hc_r2_url("b26be7ab2ca58cec9372503da5e7eb9a",
 HC_PIXEL_HREF = "https://pixeldrain.dev/u/negn6f"
 HC_PIXEL_URL = "https://pixeldrain.dev/api/file/negn6f?download"
 HC_10GBPS_URL = "https://pixel.hubcloud.pw/?id=deadbeef::cafef00d"
+HC_ZIPDISK_URL = ("https://storage.googleapis.com/"
+                  "photos-web-downloads-anonymous/20261122T154917.734Z/"
+                  "4133399871716478688/50e02071-f7e0-4664-88e6-fa415ff087f5/1/"
+                  "8db86a6b-996c-440f-a652-d9ffec7e2b8a")
+HC_ZIP_HEAD = b"PK\x03\x04" + b"\x00" * 508
+HC_ZIP_HEADERS = {"content-type": "application/x-zip",
+                  "content-range": "bytes 0-511/10050698259"}
+HC_ZIPDISK_PAGE = f"""<!DOCTYPE html><html><head><title>HubCloud</title></head><body>
+<h2><div class="main" id="section2"><div class="card h6">
+<div class="card-header text-white bg-primary mb-3"> Medusa.S01.1080p.WEB-DL.Hindi.5.1-English.5.1.ESub.x264-HDHub4US.com.zip </div>
+<div class="card-body"><ul class="list-group">
+<li class="list-group-item d-flex justify-content-between align-items-center">File Size<i id="size">9.36 GB</i></li>
+<li class="list-group-item d-flex justify-content-between align-items-center">File Type<i>application/x-z</i></li>
+</ul></div></div></div></h2>
+<a href="{HC_ZIPDISK_URL}" rel="noreferrer nofollow noopener" target="_blank" class="btn btn-danger btn-lg h6">Download [ZipDisk Server]</a>
+</body></html>"""
 HC_BUZZ_HREF = "https://buzz.example.com/9f8e7d"
 HC_BUZZ_URL = "https://buzzcdn.example.com/file.mkv?token=abc"
 HC_WATCH_URL = "https://hbplay.pages.dev/?u=aHR0cHM6Ly9leGFtcGxlLmNvbS9maWxlLm1rdg=="
@@ -3419,6 +3435,52 @@ class TestUnwrapHubcloud(unittest.TestCase):
         verdict = hr.unwrap_hubcloud(HC_DRIVE_URL, fetch=fetch)
         self.assertEqual(verdict["status"], "unknown")
         self.assertEqual(verdict["final_url"], HC_10GBPS_URL)
+
+    def test_zipdisk_dispatch(self):
+        self.assertEqual(
+            hr._hubcloud_dispatch({}, "Download [ZipDisk Server]"), "zipdisk")
+        self.assertEqual(hr._hubcloud_dispatch(
+            {"href": HC_ZIPDISK_URL}, "Download"), "zipdisk")
+        self.assertEqual(
+            hr._hubcloud_dispatch({}, "Download [FSL Server]"), "fsl")
+
+    def test_zipdisk_only_page_is_served_as_download(self):
+        # Live 2026-11-23 (Oracle VM): the Medusa S01 zip's gamerxyt page
+        # carries ONLY the ZipDisk button. Before this fix the resolver
+        # ignored it ("no server buttons") and fell back to the drive URL.
+        fetch = scripted_fetch({
+            "hubcloud.pw/drive/rn_37lnqqexentk": (200, HC_DRIVE_PAGE, {}),
+            "gamerxyt.com/hubcloud.php": (200, HC_ZIPDISK_PAGE, {}),
+            "storage.googleapis.com": (206, HC_ZIP_HEAD, HC_ZIP_HEADERS),
+        })
+        verdict = hr.unwrap_hubcloud(HC_DRIVE_URL, fetch=fetch)
+        self.assertEqual(verdict["status"], "active")
+        self.assertEqual(verdict["final_url"], HC_ZIPDISK_URL)
+        self.assertEqual([s["label"] for s in verdict["sources"]],
+                         ["ZipDisk"])
+        self.assertEqual(verdict["http_status"], 206)
+        self.assertEqual(verdict["content_type"], "application/x-zip")
+        self.assertEqual(verdict["size_bytes"], 10050698259)
+        self.assertEqual(verdict["quality"], "1080p")
+        self.assertTrue(verdict["is_temporary"])
+        self.assertIn("zip archive", json.dumps(verdict["notes"]))
+        self.assertEqual(len(fetch.calls), 3)
+
+    def test_fsl_beats_zipdisk_when_both_present(self):
+        gx_page = HC_ZIPDISK_PAGE.replace(
+            "</body>",
+            f'<a href="{HC_FSL_URL}" id="fsl" class="btn btn-success">'
+            "Download [FSL Server]</a></body>")
+        fetch = scripted_fetch({
+            "hubcloud.pw/drive/rn_37lnqqexentk": (200, HC_DRIVE_PAGE, {}),
+            "gamerxyt.com/hubcloud.php": (200, gx_page, {}),
+            "b26be7ab2ca58cec9372503da5e7eb9a":
+                (206, HC_MKV_HEAD, HC_R2_HEADERS),
+            "storage.googleapis.com": (206, HC_ZIP_HEAD, HC_ZIP_HEADERS),
+        })
+        verdict = hr.unwrap_hubcloud(HC_DRIVE_URL, fetch=fetch)
+        self.assertEqual(verdict["status"], "active")
+        self.assertEqual(verdict["final_url"], HC_FSL_URL)
 
     def test_buzz_hx_redirect_is_followed(self):
         gx_page = ("<html><body><div class=\"card-header\">x 720p</div>"

@@ -4232,9 +4232,10 @@ _HUBCLOUD_LABELS = {
     "fslv2": "FSLv2", "fsl": "FSL", "download": "Download",
     "pixel": "PixelServer", "s3": "S3", "buzz": "Buzz",
     "mega": "Mega", "pdl": "PDL", "10gbps": "10Gbps",
+    "zipdisk": "ZipDisk",
 }
 _HUBCLOUD_PRIORITY = ("fslv2", "fsl", "download", "pixel", "s3", "buzz",
-                      "mega", "pdl", "10gbps")
+                      "mega", "pdl", "10gbps", "zipdisk")
 
 
 def _hubcloud_anchors(page: str) -> list[tuple[dict, str]]:
@@ -4283,6 +4284,14 @@ def _hubcloud_dispatch(attrs: dict, text: str) -> str:
         return "pixel"
     if "download file" in low:
         return "download"
+    # ZipDisk has no button id (measured live 2026-11-23 on a season-pack
+    # zip): text "Download [ZipDisk Server]", href on
+    # storage.googleapis.com/photos-web-downloads-anonymous. It serves a
+    # zip archive, not a video stream — last in priority so a video server
+    # on the same page always wins.
+    if "zipdisk" in low or "photos-web-downloads-anonymous" in (
+            attrs.get("href") or "").lower():
+        return "zipdisk"
     if "s3" in low:
         return "s3"
     if "buzz" in low:
@@ -4395,8 +4404,13 @@ def unwrap_hubcloud(url: str, fetch=None, verify: bool = True,
             dispatched by id/text: FSLv2 (#s3) -> FSL (#fsl) -> PixelServer
             (#pxl-1) -> S3 -> Buzz (GET $link/download, hx-redirect) ->
             Mega -> PDL -> 10Gbps (a page, "Resume Not Supported")
+            -> ZipDisk (zip archives only; 206 application/x-zip).
         Range-probe each candidate in that order; the first 206 with real
-        video bytes is the file.
+        video bytes is the file. A ZipDisk candidate is served when its
+        probe is 206 application/x-zip: the bytes prove the archive even
+        though probe_range cannot call a zip "active" (container_magic
+        only knows video containers), and the verdict notes say plainly
+        that it is a download, not a video stream.
 
     The gamerxyt token is per page load and expires, so the drive page is
     fetched fresh on every call and its URL is never stored; the R2
@@ -4507,6 +4521,27 @@ def unwrap_hubcloud(url: str, fetch=None, verify: bool = True,
             if result["expires_in"] is None:
                 result["notes"].append("signed query carries no parsable expiry")
             result["signed_params"] = sorted(signature_params(cand["url"]))
+            return result
+        if (cand["kind"] == "zipdisk" and probe["http_status"] == 206
+                and probe["content_type"] == "application/x-zip"):
+            # ZipDisk serves a zip archive, not a video stream. The 206
+            # still proves the file is really there (live 2026-11-23:
+            # 206, 10,050,698,259 bytes, PK magic, Accept-Ranges) — it
+            # is served as a download, with the download nature explicit
+            # in the label and the notes. The URL is time-limited (Google
+            # anonymous download), so it is resolved fresh per press and
+            # never banked as durable.
+            result["final_url"] = cand["url"]
+            result["http_status"] = probe["http_status"]
+            result["content_type"] = probe["content_type"]
+            result["size_bytes"] = probe["size_bytes"]
+            result["status"] = "active"
+            result["notes"].append(
+                "ZipDisk: 206 application/x-zip holds a zip archive "
+                "(download, not a video stream)")
+            result["notes"].append(
+                "ZipDisk URL is time-limited - resolve fresh per press, "
+                "never bank")
             return result
         result["notes"].append(
             f"{cand['label']}: {probe['reason'] or probe['status']}")
