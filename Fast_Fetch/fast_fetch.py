@@ -2205,16 +2205,20 @@ def http_get(url: str, timeout: int = 15, max_retries: int = 2, allow_probe: boo
     for attempt in range(max_retries + 1):
         try:
             # WARP proxy (RADD_WARP_PROXY): when on, the fetch goes
-            # through 127.0.0.1:40000; when off this is exactly the
-            # opener urlopen builds for a context (HTTPSHandler with
-            # that context), so the behaviour is unchanged.
-            _handlers = [urllib.request.HTTPSHandler(
-                context=_tls_context(norm_url))]
+            # through 127.0.0.1:40000 via an opener carrying the
+            # ProxyHandler; when off this is the plain urlopen call
+            # it was before (the seam the clearance tests stub).
             _ph = warp_proxy.urllib_proxy_handler()
             if _ph is not None:
-                _handlers.append(_ph)
-            with urllib.request.build_opener(*_handlers).open(
-                    req, timeout=timeout) as resp:
+                _handlers = [urllib.request.HTTPSHandler(
+                    context=_tls_context(norm_url)), _ph]
+                _resp_cm = urllib.request.build_opener(
+                    *_handlers).open(req, timeout=timeout)
+            else:
+                _resp_cm = urllib.request.urlopen(
+                    req, timeout=timeout,
+                    context=_tls_context(norm_url))
+            with _resp_cm as resp:
                 final_url = resp.geturl()
                 # Auto-detect domain change/redirect
                 p_orig = urllib.parse.urlparse(norm_url)
