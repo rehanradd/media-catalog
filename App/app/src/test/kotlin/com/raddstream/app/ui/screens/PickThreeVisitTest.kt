@@ -50,16 +50,19 @@ class PickThreeVisitTest {
     // so it is not composed until it scrolls into view, and one swipe does
     // not always reach it. Drag until the text is composed (bounded, so a
     // genuinely missing node still fails loudly at the assert that follows).
-    // A controlled drag, not a swipeUp fling: a fast fling can overshoot
-    // the card and dispose it before the check runs.
+    // A SHORT, SLOW drag (20% of the viewport over 600ms): a longer or
+    // faster drag flings past the card and disposes it before the check
+    // runs — the card sits only ~1 viewport down, so a half-viewport
+    // fling overshoots it entirely and every later drag scrolls further
+    // away from it.
     private fun scrollToText(text: String) {
         repeat(12) {
             if (compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()) return
             compose.onRoot().performTouchInput {
                 swipe(
-                    start = Offset(center.x, center.y * 1.6f),
-                    end = Offset(center.x, center.y * 0.6f),
-                    durationMillis = 400,
+                    start = Offset(center.x, center.y * 1.2f),
+                    end = Offset(center.x, center.y * 0.8f),
+                    durationMillis = 600,
                 )
             }
             compose.waitForIdle()
