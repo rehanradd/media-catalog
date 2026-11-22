@@ -392,7 +392,19 @@ PROBE_READ_BYTES = 200_000
 # The host rule therefore covers both spellings and the live TLDs (.ag,
 # .click); the catalog's `mixdrop` service rows resolve through the same
 # `unwrap_mxdrop` once the resolver rewrites `/f/` to `/e/`.
-MXDROP_HOST_RE = re.compile(r"(?:^|\.)(?:mxdrop|mixdrop)\.(?:to|top|click|ag)$", re.I)
+#
+# 2026-11-22: mixdrop has rotated through more TLDs since Session 103, and
+# the catalog now stores rows on eight more of them (measured on the live
+# merged catalog, download_sources: mixdrop.co 27,046, mixdrop.is 2,583,
+# mixdrop.gl 412, mixdrop.vc 239, mixdrop.ch 83, mixdrop.ps 57, mixdrop.cv 5,
+# mixdrop.ms 1 — 30,426 rows, 58% of all mixdrop rows). The sweep fix
+# (24b07db) routes mixdrop no-verdict URLs through this resolver, but the
+# old allowlist rejected every one of those hosts, so the resolver answered
+# 'unknown' ("not an mxdrop embed URL") and the sweep still showed 0
+# verdicts. The rule now covers the catalog's real TLDs. Deliberately NOT
+# included: `mixdropjmk.pw` (55 rows) — that host merely contains "mixdrop"
+# as a substring and is not a mixdrop host; the label anchor rejects it.
+MXDROP_HOST_RE = re.compile(r"(?:^|\.)(?:mxdrop|mixdrop)\.(?:to|top|click|ag|co|is|gl|vc|ch|ps|cv|ms)$", re.I)
 MXDROP_CONTENT_RE = re.compile(r"^/(?:e|embed)/[A-Za-z0-9_-]+/?$", re.I)
 # The page mxdrop serves for a deleted file: HTTP 200, MDCore present, no
 # packer, and its own words are "WE ARE SORRY / We can't find the video you

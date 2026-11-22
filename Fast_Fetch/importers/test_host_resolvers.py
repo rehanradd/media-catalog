@@ -335,6 +335,19 @@ class TestEmbedRecognition(unittest.TestCase):
                     "https://mxdrop.to/e/abc/"):
             self.assertTrue(hr.is_mxdrop_embed(url), url)
 
+    def test_mxdrop_catalog_tlds_are_recognised(self):
+        # 2026-11-22: the catalog stores mixdrop rows on eight TLDs the old
+        # allowlist did not cover (mixdrop.co 27,046, .is 2,583, .gl 412,
+        # .vc 239, .ch 83, .ps 57, .cv 5, .ms 1 — 30,426 rows). The recogniser
+        # must accept them or the sweep leaves those rows no_verdict. This
+        # exercises the REAL is_mxdrop_embed, not a mock: reverting the
+        # allowlist fails it.
+        for tld in ("co", "is", "gl", "vc", "ch", "ps", "cv", "ms"):
+            url = f"https://mixdrop.{tld}/e/abc123"
+            self.assertTrue(hr.is_mxdrop_embed(url), url)
+        # A look-alike that merely contains the word is still rejected.
+        self.assertFalse(hr.is_mxdrop_embed("https://mixdropjmk.pw/e/abc123"))
+
     def test_other_hosts_and_paths_are_not_mxdrop(self):
         for url in ("https://pkembed.site/e/abc", "https://notmxdrop.to/e/abc",
                     "https://mxdrop.to/other/abc", "https://mxdrop.to/", ""):
@@ -608,6 +621,22 @@ class TestUnwrapMxdrop(unittest.TestCase):
         self.assertEqual(verdict["status"], "active")
         self.assertEqual(verdict["service"], "mxdrop")
         self.assertTrue(verdict["is_temporary"])
+
+    def test_full_chain_active_on_catalog_tld(self):
+        # 2026-11-22: the sweep routes mixdrop.vc/.is/.co links through this
+        # resolver, so unwrap_mxdrop must not reject them at the host gate.
+        # Same packed page as test_full_chain_active, served for a .vc URL.
+        # This exercises the REAL host validation inside unwrap_mxdrop: with
+        # the old allowlist it returns 'unknown' ("not an mxdrop embed URL").
+        embed = "https://mixdrop.vc/e/7kk0mpgdsmoqd4"
+        fetch = scripted_fetch({
+            embed: (200, PACKED_PAGE, {}),
+            ".mp4": (206, b"\x00\x00\x00 ftypisom",
+                     {"content-type": "video/mp4", "content-range": "bytes 0-511/999"}),
+        })
+        verdict = hr.unwrap_mxdrop(embed, fetch=fetch)
+        self.assertEqual(verdict["status"], "active")
+        self.assertEqual(verdict["service"], "mxdrop")
         self.assertEqual(verdict["final_url"], WURL)
         self.assertEqual(verdict["poster_url"], POSTER)
         self.assertEqual(verdict["vfile"], "1556c1dc1420032a1cb272746a51ce74.mp4")
