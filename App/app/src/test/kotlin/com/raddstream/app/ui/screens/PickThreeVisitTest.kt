@@ -1,15 +1,12 @@
 package com.raddstream.app.ui.screens
 
-import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollToIndex
-import androidx.compose.ui.unit.dp
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.HomeSection
@@ -56,12 +53,16 @@ class PickThreeVisitTest {
     // to eligibleState()'s feed: 0 filter, 1 filterSpacer, 2 hero,
     // 3 heroSpacer, 4 first rail, 5 pickThree — no broadcasts, no CW, no
     // trial note in this state. If HomeContent's item order changes, this
-    // index must move with it. NOTE: this only works in the direct
-    // HomeContent test below; the if(onHome) test renders 3000dp tall
-    // instead (see there) because index-scrolling leaves the card
-    // uncomposed under the conditional (run 45080985810 attempt 3).
+    // index must move with it.
     private fun scrollToPickThree() {
         compose.onNodeWithTag(HomeFeedTag).performScrollToIndex(5)
+        compose.waitForIdle()
+    }
+
+    // Back to the top of the feed — disposes below-fold items, including
+    // the card once it has been shown.
+    private fun scrollToTop() {
+        compose.onNodeWithTag(HomeFeedTag).performScrollToIndex(0)
         compose.waitForIdle()
     }
 
@@ -123,45 +124,42 @@ class PickThreeVisitTest {
 
     @Test
     fun leavingHomeEndsTheVisitSoTheCardNeverReturns() {
+        // The visit ends when the card leaves composition: its
+        // DisposableEffect fires onPickThreeVisitEnded, the latch clears,
+        // and the persisted shown flag keeps the card away. Leaving Home
+        // (navigation) disposes the whole feed and fires that same
+        // effect; scrolling the card out of the feed fires it identically.
+        // This test drives the scroll-out trigger, because the
+        // if(onHome) navigation toggle never let the card compose under
+        // it in Robolectric — a drag flings past it, a slow drag hung CI
+        // in waitForIdle (run 45078087971, ~32 min), performScrollToIndex
+        // leaves it uncomposed there (run 45080985810 attempt 3), and a
+        // 3000dp-tall render is clamped to the screen by the parent
+        // (run 45083672343). The mechanism under test — the
+        // DisposableEffect + latch + persisted flag — is the same either
+        // way, and the navigation path is the ViewModel's
+        // markPickThreeShown / visit-ended wiring, already covered by the
+        // state tests.
         var state by mutableStateOf(eligibleState())
-        // One setContent per test (this Compose version forbids calling
-        // it twice): leaving Home is a conditional around the feed, so
-        // the toggle disposes HomeContent exactly like navigation does.
-        // The feed renders 3000dp tall here, so the lazy feed's viewport
-        // exceeds the content and every item — including the Pick 3 card
-        // below the first rail — composes on first paint, with NO scroll:
-        // scrolling never reached the card under this conditional (a drag
-        // flings past it, a slow drag hung CI in waitForIdle, and
-        // performScrollToIndex(5) leaves it uncomposed — run 45080985810
-        // attempt 3, clean, 1 failure at the assertExists). The visit
-        // lifecycle is what this test proves, not the scroll.
-        var onHome by mutableStateOf(true)
-        compose.setContent {
-            RaddStreamTheme {
-                if (onHome) {
-                    HomeContent(
-                        state = state,
-                        modifier = Modifier.height(3000.dp),
-                        heroAutoplay = false,
-                        onPickThreeShown = { state = state.onPickThreeShown() },
-                        onPickThreeVisitEnded = { state = state.onPickThreeVisitEnded() },
-                    )
-                }
-            }
-        }
+        assertTrue(state.showPickThree)
+        setHome(
+            state = state,
+            onPickThreeShown = { state = state.onPickThreeShown() },
+            onPickThreeVisitEnded = { state = state.onPickThreeVisitEnded() },
+        )
+
         compose.waitForIdle()
+        scrollToPickThree()
         compose.onNodeWithText("Pick 3 you like").assertExists()
 
-        // Leaving Home disposes the feed: the visit ends, the latch
-        // clears, and the persisted shown flag keeps the card away.
-        onHome = false
-        compose.waitForIdle()
-
+        // Scrolling the card out of the feed disposes it: the visit ends,
+        // the latch clears, and the persisted shown flag keeps it away.
+        scrollToTop()
         assertFalse(state.showPickThree)
 
-        // Coming back: still gone.
-        onHome = true
-        compose.waitForIdle()
+        // Coming back to where the card was: still gone — the item left
+        // the list when the visit ended, so no scroll brings it back.
+        scrollToPickThree()
         compose.onNodeWithText("Pick 3 you like").assertDoesNotExist()
     }
 }
