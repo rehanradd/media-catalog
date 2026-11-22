@@ -816,11 +816,11 @@ internal fun HomeContent(
                 Spacer(Modifier.height(24.dp))
             }
         }
+        }
         PullToRefreshContainer(
             state = pullRefreshState,
             modifier = Modifier.align(Alignment.TopCenter),
         )
-        }
         }
     }
 }
