@@ -89,7 +89,7 @@ class HomeHeaderTest {
     // outright. Swipe until the text is composed (bounded, so a genuinely
     // missing node still fails loudly at the assert that follows).
     private fun scrollToText(text: String) {
-        repeat(8) {
+        repeat(12) {
             if (compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()) return
             compose.onRoot().performTouchInput { swipeUp() }
             compose.waitForIdle()
@@ -99,7 +99,7 @@ class HomeHeaderTest {
     // Same, toward the top of the feed (swipe down) — used to bring the
     // filter chips back into view after scrolling down to the rails.
     private fun scrollBackToText(text: String) {
-        repeat(8) {
+        repeat(12) {
             if (compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()) return
             compose.onRoot().performTouchInput { swipeDown() }
             compose.waitForIdle()
@@ -136,7 +136,9 @@ class HomeHeaderTest {
         scrollToText("Movies Rail")
         compose.onNodeWithText("Movies Rail").assertExists()
         scrollBackToText("SERIES")
-        compose.onNodeWithText("SERIES").performClick()
+        // The chip is composed now, but a swipe can leave it only partly
+        // in view — scroll it fully on screen before the tap lands.
+        compose.onNodeWithText("SERIES").performScrollTo().performClick()
         compose.onNodeWithText("Movies Rail").assertDoesNotExist()
         scrollToText("Series Rail")
         compose.onNodeWithText("Series Rail").performScrollTo().assertIsDisplayed()

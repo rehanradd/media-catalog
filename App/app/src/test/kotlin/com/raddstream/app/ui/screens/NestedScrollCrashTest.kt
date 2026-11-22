@@ -170,7 +170,7 @@ class NestedScrollCrashTest {
     // reach it. Swipe until the text is composed (bounded, so a genuinely
     // missing node still fails loudly at the assert that follows).
     private fun scrollToText(text: String) {
-        repeat(8) {
+        repeat(12) {
             if (compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()) return
             compose.onRoot().performTouchInput { swipeUp() }
             compose.waitForIdle()
