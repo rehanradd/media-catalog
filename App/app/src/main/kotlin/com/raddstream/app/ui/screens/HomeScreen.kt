@@ -493,7 +493,7 @@ internal fun HomeContent(
         ) {
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().testTag(HomeFeedTag),
         ) {
         // Mockup (Nov 2026): the filter chips ride at the top of the feed —
         // ALL / MOVIES / SERIES / ANIME / KPOP — and filter the rails in
@@ -828,6 +828,8 @@ internal fun HomeContent(
 /** The header's tap targets for the header test. */
 internal const val HomeLogoTag = "homeLogo"
 internal const val HomeFilterRowTag = "homeFilterRow"
+/** The feed itself, so tests can scroll it deterministically by index. */
+internal const val HomeFeedTag = "homeFeed"
 
 /**
  * The Home header (2026-11-17): the centred two-line logo on its own.

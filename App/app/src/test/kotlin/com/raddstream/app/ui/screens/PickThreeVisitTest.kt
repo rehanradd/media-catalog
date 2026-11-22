@@ -3,13 +3,10 @@ package com.raddstream.app.ui.screens
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.onRoot
-import androidx.compose.ui.test.performTouchInput
-import androidx.compose.ui.test.swipe
+import androidx.compose.ui.test.performScrollToIndex
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.HomeSection
@@ -47,26 +44,20 @@ class PickThreeVisitTest {
     val compose = createComposeRule()
 
     // Lazy feed (home fix, Nov 2026): the card rides below the first rail,
-    // so it is not composed until it scrolls into view, and one swipe does
-    // not always reach it. Drag until the text is composed (bounded, so a
-    // genuinely missing node still fails loudly at the assert that follows).
-    // A SHORT, SLOW drag (20% of the viewport over 600ms): a longer or
-    // faster drag flings past the card and disposes it before the check
-    // runs — the card sits only ~1 viewport down, so a half-viewport
-    // fling overshoots it entirely and every later drag scrolls further
-    // away from it.
-    private fun scrollToText(text: String) {
-        repeat(12) {
-            if (compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()) return
-            compose.onRoot().performTouchInput {
-                swipe(
-                    start = Offset(center.x, center.y * 1.2f),
-                    end = Offset(center.x, center.y * 0.8f),
-                    durationMillis = 600,
-                )
-            }
-            compose.waitForIdle()
-        }
+    // so it is not composed until it scrolls into view. Scroll by INDEX,
+    // not by drag: a drag is a fling in disguise — a half-viewport swipe
+    // overshoots the card and disposes it before the check runs, a slow
+    // drag hung the CI job in waitForIdle (run 45078087971, cancelled at
+    // ~32 min), and the card sits only ~1 viewport down so every drag
+    // after the first scrolls further away from it. performScrollToIndex
+    // is deterministic: it puts the item in view and composes it, no
+    // fling, no idle wait. The index is pinned to eligibleState()'s feed:
+    // 0 filter, 1 filterSpacer, 2 hero, 3 heroSpacer, 4 first rail,
+    // 5 pickThree — no broadcasts, no CW, no trial note in this state.
+    // If HomeContent's item order changes, this index must move with it.
+    private fun scrollToPickThree() {
+        compose.onNodeWithTag(HomeFeedTag).performScrollToIndex(5)
+        compose.waitForIdle()
     }
 
     /** Nine titles: the hero takes the first six, the card offers the next three. */
@@ -119,7 +110,7 @@ class PickThreeVisitTest {
         // The card rides below the first rail now (home fix, Nov 2026),
         // so it starts below the fold in a lazy feed — swipe it into view
         // before asserting it exists.
-        scrollToText("Pick 3 you like")
+        scrollToPickThree()
 
         compose.onNodeWithText("Pick 3 you like").assertExists()
         assertTrue("display must not hide the card", state.showPickThree)
@@ -148,7 +139,7 @@ class PickThreeVisitTest {
         // The card rides below the first rail now (home fix, Nov 2026),
         // so it starts below the fold in a lazy feed — swipe it into view
         // before asserting it exists.
-        scrollToText("Pick 3 you like")
+        scrollToPickThree()
         compose.onNodeWithText("Pick 3 you like").assertExists()
 
         // Leaving Home disposes the feed: the visit ends, the latch
