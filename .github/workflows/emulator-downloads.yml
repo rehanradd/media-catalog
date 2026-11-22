@@ -1,0 +1,115 @@
+# Emulator downloads hierarchy — on-demand, free (public repo)
+#
+# Robo v21 diagnostic. Robo v16-v20 all failed at the same tap: Settings >
+# Downloads > "Open Downloads". v16-v19 used a Button+text descriptor and
+# the click errored; v20 used a text-only descriptor and the tap was a no-op
+# (Robo does an accessibility ACTION_CLICK on the matched node, and the
+# inner Text node has no click action). The button is proven wired correctly
+# from main (NavGraph.kt:579 navigates to Screen.Downloads.route, registered
+# at line 629; the card is a plain non-clickable Column; the button is a
+# standard always-enabled OutlinedButton). So this workflow answers two
+# questions with evidence instead of another descriptor guess:
+#   1. What does the button's accessibility node actually look like
+#      (uiautomator dump: class, bounds, clickable/enabled flags, and
+#      whether any ancestor merges semantics or sits on top of it)?
+#   2. Does a REAL coordinate tap (adb input tap at the node's centre —
+#      the closest thing to a user's finger) navigate to the Downloads
+#      screen?
+#
+# What it does: builds the debug APK, boots a free hardware-accelerated
+# emulator (KVM on the GitHub-hosted Ubuntu runner — free and unlimited for
+# public repos), installs the APK, taps through Disclaimer -> Welcome,
+# opens Settings, scrolls until "Open Downloads" is on screen, dumps the
+# hierarchy, taps the button by coordinates, and dumps the hierarchy again
+# to prove whether the Downloads screen opened. Uploads the hierarchy XMLs,
+# the node report, the verdict, and the screenshots as run artifacts
+# (14-day retention). No video — this is a diagnostic, not a demo.
+#
+# Cost: $0. No card, no signup, no third party. Runs on workflow_dispatch
+# only, so it never fires on pushes.
+#
+# Mirrors emulator-screenshots.yml exactly (same pinned actions, same
+# emulator, same google-services restore) so the known-good path is reused,
+# not reinvented. See that file's header for the three past failures
+# (SDK licenses, $GITHUB_WORKSPACE empty, script lines in fresh shells)
+# and why the drive logic lives in a .sh file run as ONE line.
+
+name: Emulator downloads hierarchy
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_level:
+        description: "Android API level for the emulator"
+        required: false
+        default: "34"
+
+permissions:
+  contents: read
+
+jobs:
+  downloads-hierarchy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Set up JDK 17 (temurin)
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad  # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Restore Gradle caches
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-java17-${{ hashFiles('App/gradle/wrapper/gradle-wrapper.properties', 'App/gradle/libs.versions.toml', 'App/**/*.gradle.kts', 'App/**/*.gradle', 'App/settings.gradle.kts') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-java17-
+            gradle-${{ runner.os }}-
+
+      - name: Install Android SDK (platform-tools, android-35, build-tools 35.0.0)
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd  # v4.0.4
+        with:
+          packages: "platform-tools platforms;android-35 build-tools;35.0.0"
+
+      - name: Restore google-services.json (CI secret, never committed)
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -z "$GOOGLE_SERVICES_JSON" ]; then echo "GOOGLE_SERVICES_JSON secret is empty" >&2; exit 1; fi
+          echo "$GOOGLE_SERVICES_JSON" | base64 -d > App/app/google-services.json
+
+      - name: Build debug APK
+        working-directory: App
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug --no-daemon --stacktrace --console=plain
+
+      - name: Boot emulator, dump hierarchy, tap Downloads
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ inputs.api_level }}
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7
+          cores: 2
+          emulator-boot-timeout: 900
+          disable-animations: true
+          # ONE line on purpose: the action runs `script:` line by line in
+          # fresh shells (see header comment) — the drive logic lives in
+          # .github/scripts/emu-downloads.sh so its variables/functions persist.
+          script: bash .github/scripts/emu-downloads.sh
+
+      - name: Upload hierarchy + screenshots + verdict
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: emulator-downloads-${{ github.run_number }}
+          path: emu-downloads/
+          if-no-files-found: warn
+          retention-days: 14
