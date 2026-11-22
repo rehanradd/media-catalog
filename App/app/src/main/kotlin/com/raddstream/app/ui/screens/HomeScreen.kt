@@ -60,8 +60,7 @@ import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
-import androidx.compose.material3.pulltorefresh.pullToRefresh
+import androidx.compose.material3.pulltorefresh.PullToRefreshContainer
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -75,6 +74,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -449,6 +449,23 @@ internal fun HomeContent(
     // already had. The pull indicator replaces the top progress bar.
     val pullRefreshState = rememberPullToRefreshState()
 
+    // 1.2.1 has no onRefresh callback on the pull state: releasing past
+    // the threshold flips pullRefreshState.isRefreshing on, and the caller
+    // observes it. That flip is the pull gesture's refresh signal.
+    LaunchedEffect(pullRefreshState.isRefreshing) {
+        if (pullRefreshState.isRefreshing) {
+            onRefresh()
+        }
+    }
+    // When the ViewModel's refresh finishes (isRefreshing false), hide the
+    // indicator. Harmless when no pull is in flight — endRefresh on a
+    // fresh state is a no-op.
+    LaunchedEffect(state.isRefreshing) {
+        if (!state.isRefreshing) {
+            pullRefreshState.endRefresh()
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -462,20 +479,17 @@ internal fun HomeContent(
         if (kidsMode) {
             KidsModeBanner(onExitKidsMode = onExitKidsMode)
         }
-        // Pull-to-refresh (home fix, Nov 2026): the Material3
-        // PullToRefreshBox container needs material3 1.3.0; this project
-        // is on 1.2.1 (Compose BOM 2024.06.00), so the manual pattern is
-        // used instead — the pullToRefresh modifier plus the default
-        // indicator, rendered after the list below. Same gesture, same
-        // refresh, no library bump.
+        // Pull-to-refresh (home fix, Nov 2026): this project is on
+        // material3 1.2.1 (Compose BOM 2024.06.00), which has no
+        // PullToRefreshBox (1.3.0) and no pullToRefresh modifier — the
+        // 1.2.1 pattern is the pull state itself: attach its
+        // nestedScrollConnection to the Box, render PullToRefreshContainer
+        // for the spinner, and observe isRefreshing to fire the refresh.
+        // Same gesture, same refresh, no library bump.
         Box(
             modifier = Modifier
                 .weight(1f)
-                .pullToRefresh(
-                    state = pullRefreshState,
-                    isRefreshing = state.isRefreshing,
-                    onRefresh = onRefresh,
-                ),
+                .nestedScroll(pullRefreshState.nestedScrollConnection),
         ) {
         LazyColumn(
             state = listState,
@@ -802,10 +816,9 @@ internal fun HomeContent(
                 Spacer(Modifier.height(24.dp))
             }
         }
-        PullToRefreshDefaults.Indicator(
-            modifier = Modifier.align(Alignment.TopCenter),
-            isRefreshing = state.isRefreshing,
+        PullToRefreshContainer(
             state = pullRefreshState,
+            modifier = Modifier.align(Alignment.TopCenter),
         )
         }
         }
