@@ -64,10 +64,97 @@ MAIN_ACTIVITY="$APP_PKG/.MainActivity"
 UI_DUMP="/data/local/tmp/ui.xml"
 UI_SETTINGS="/data/local/tmp/ui-settings-downloads.xml"
 UI_AFTER="/data/local/tmp/ui-after-tap.xml"
+# DUMP FIX (2026-11-22, run 44995080198): `uiautomator dump` CANNOT
+# complete in 20s under TCG software emulation — all 10 tap_text tries
+# for 'I understand' failed with "no ui.xml pulled", and each try took
+# ~20s (the `timeout 20` killing the dump mid-flight, not a fast
+# failure: 07:01:50, 07:02:10, 07:02:32, ...). The dump's own stderr
+# was discarded (>/dev/null), so the reason was invisible, and the app
+# was still on its splash (01-disclaimer.png = logo only, no text) the
+# whole time — the script went straight from focus-confirm to tap_text
+# with no wait for the UI to settle. Fix: a 60s dump budget (3x, still
+# bounded so a frozen system_server cannot stall the run), dump
+# stdout+stderr captured and logged on failure (timeout vs error is
+# distinguishable), and wait_for_ui_ready() below, which proves dumps
+# work AND the UI has rendered text before any tap loop starts.
+DUMP_TIMEOUT=60
 # Set by screenshot(): name + md5 of the previous frame, for the
 # byte-identical frozen-screen check.
 PREV_SHOT=""
 PREV_MD5=""
+
+# Dump the current UI hierarchy to /tmp/ui.xml (fresh each call — never
+# reuse a stale dump). Returns 0 iff a non-empty, XML-parseable dump was
+# pulled; 1 otherwise. Unlike the old inline `timeout 20 ... >/dev/null
+# 2>&1`, the dump's stdout+stderr are captured to /tmp/dump.err and the
+# failure mode is logged: a `timeout` kill (exit 124) reads as "timed
+# out after ${DUMP_TIMEOUT}s", any other nonzero exit logs the device's
+# own error text, and a pull failure is logged separately. Callers must
+# NOT silence this function's stderr — the whole point is that the next
+# dump failure is diagnosable from the run log.
+dump_ui() {
+  rm -f /tmp/ui.xml /tmp/dump.err
+  timeout "$DUMP_TIMEOUT" adb shell uiautomator dump "$UI_DUMP" > /tmp/dump.err 2>&1
+  local rc=$?
+  if [ "$rc" -eq 124 ]; then
+    echo "dump_ui: uiautomator dump TIMED OUT after ${DUMP_TIMEOUT}s (system_server slow under TCG?)" >&2
+    return 1
+  fi
+  if [ "$rc" -ne 0 ]; then
+    echo "dump_ui: uiautomator dump failed (exit $rc): $(head -c 300 /tmp/dump.err | tr '\n' ' ')" >&2
+    return 1
+  fi
+  adb pull -q "$UI_DUMP" /tmp/ui.xml 2>/dev/null || { echo "dump_ui: dump wrote $UI_DUMP but pull failed" >&2; return 1; }
+  if [ ! -s /tmp/ui.xml ]; then
+    echo "dump_ui: pulled ui.xml is empty" >&2
+    return 1
+  fi
+  python3 -c "import xml.etree.ElementTree as ET; ET.parse('/tmp/ui.xml')" 2>/dev/null || { echo "dump_ui: pulled ui.xml does not parse as XML" >&2; return 1; }
+  return 0
+}
+
+# Wait until a UI dump succeeds AND the hierarchy contains at least one
+# node with non-empty text — i.e. the app has rendered a real screen,
+# not just its splash (the splash is a bare logo: 0 text nodes, run
+# 44995080198). Bounded to $1 seconds (default 180). Logs each attempt
+# so the run log shows whether dumps were failing or the app was simply
+# still loading. Returns 1 on timeout, after saving a screenshot and
+# the last dump diagnostics into $OUT.
+wait_for_ui_ready() {
+  local budget="${1:-180}" start now tries=0
+  start=$(date +%s)
+  while true; do
+    tries=$((tries + 1))
+    if dump_ui 2>/tmp/wait-dump.err; then
+      local text_nodes
+      text_nodes=$(python3 - <<'PY' 2>/dev/null
+import sys, xml.etree.ElementTree as ET
+try:
+    root = ET.parse('/tmp/ui.xml').getroot()
+except Exception:
+    sys.exit(0)
+print(sum(1 for n in root.iter('node') if (n.get('text') or '').strip()))
+PY
+)
+      if [ "${text_nodes:-0}" -gt 0 ]; then
+        echo "UI ready after ${tries} dump(s): $text_nodes text node(s) on screen"
+        return 0
+      fi
+      echo "wait_for_ui_ready try $tries: dump ok but 0 text nodes (splash still showing?)" >&2
+    else
+      echo "wait_for_ui_ready try $tries: $(cat /tmp/wait-dump.err | head -c 200 | tr '\n' ' ')" >&2
+    fi
+    now=$(date +%s)
+    if [ $((now - start)) -ge "$budget" ]; then
+      echo "FAIL: UI never became ready within ${budget}s (no dump with text nodes)" >&2
+      adb exec-out screencap -p > "$OUT/ui-ready-timeout.png" 2>/dev/null || true
+      cp /tmp/wait-dump.err "$OUT/ui-ready-timeout-dump.err" 2>/dev/null || true
+      cp /tmp/ui.xml "$OUT/ui-ready-timeout-ui.xml" 2>/dev/null || true
+      return 1
+    fi
+    sleep 5
+  done
+}
 
 # Tap a UI node by its exact visible text (uiautomator dump -> centre tap).
 # A REAL coordinate tap, not an accessibility click, so it is the closest
@@ -76,15 +163,15 @@ PREV_MD5=""
 tap_text() {
   local want="$1" tries=0
   while [ "$tries" -lt 10 ]; do
-    # Never reuse a stale dump: a failed dump/pull must read as "no
-    # ui.xml pulled" for THIS try, not silently match the previous
-    # screen's nodes.
-    rm -f /tmp/ui.xml
-    # timeout 20: with system_server frozen (run 44043626083) the dump
-    # hangs and the wait loop stalls for the whole budget; a killed dump
-    # reads as "no ui.xml pulled", same as a failed one.
-    timeout 20 adb shell uiautomator dump "$UI_DUMP" >/dev/null 2>&1
-    adb pull -q "$UI_DUMP" /tmp/ui.xml 2>/dev/null || true
+    # dump_ui() removes the stale dump and logs the failure mode; a
+    # failed dump reads as "no ui.xml pulled" for THIS try, not a
+    # silent match against the previous screen's nodes.
+    if ! dump_ui 2>/tmp/tap-dump.err; then
+      echo "tap_text '$want' try $((tries + 1))/10: not found ($(cat /tmp/tap-dump.err | head -c 200 | tr '\n' ' '))" >&2
+      tries=$((tries + 1))
+      sleep 3
+      continue
+    fi
     XY=$(python3 - "$want" <<'PY'
 import sys, xml.etree.ElementTree as ET
 want = sys.argv[1]
@@ -143,11 +230,10 @@ PY
         sleep 15
       fi
     fi
-    if [ -f /tmp/ui.xml ]; then
-      echo "tap_text '$want' try $((tries + 1))/10: not found (ui.xml $(wc -c < /tmp/ui.xml) bytes, $(grep -o '<node' /tmp/ui.xml | wc -l) nodes)" >&2
-    else
-      echo "tap_text '$want' try $((tries + 1))/10: not found (no ui.xml pulled — dump to $UI_DUMP failed)" >&2
-    fi
+    # dump_ui() succeeded here, so /tmp/ui.xml exists and parses — the
+    # text is genuinely not on this screen (not a dump failure; those
+    # `continue` above with their own reason logged).
+    echo "tap_text '$want' try $((tries + 1))/10: not found (ui.xml $(wc -c < /tmp/ui.xml) bytes, $(grep -o '<node' /tmp/ui.xml | wc -l) nodes)" >&2
     tries=$((tries + 1))
     sleep 3
   done
@@ -186,10 +272,10 @@ is_app_focused() {
 
 # True if an "isn't responding" / "not responding" dialog is on screen.
 anr_present() {
-  # timeout 20: with system_server frozen the dump hangs; a killed dump
-  # reads as "no dialog seen", same as a failed one — the caller retries.
-  timeout 20 adb shell uiautomator dump "$UI_DUMP" >/dev/null 2>&1 || return 1
-  adb pull -q "$UI_DUMP" /tmp/ui.xml 2>/dev/null || return 1
+  # dump_ui() bounds the dump (a frozen system_server must not stall
+  # the caller); a failed dump reads as "no dialog seen" and the
+  # caller retries.
+  dump_ui 2>/dev/null || return 1
   grep -qi "isn't responding\|not responding" /tmp/ui.xml
 }
 
@@ -214,12 +300,10 @@ dismiss_anr() {
 }
 
 # True if the current UI dump contains the given (case-insensitive)
-# text. Timeout-bounded like the other dumps — a frozen system_server
+# text. Dump-bounded like the other dumps — a frozen system_server
 # must not stall the caller.
 ui_has_text() {
-  rm -f /tmp/ui.xml
-  timeout 20 adb shell uiautomator dump "$UI_DUMP" >/dev/null 2>&1
-  adb pull -q "$UI_DUMP" /tmp/ui.xml 2>/dev/null || return 1
+  dump_ui 2>/dev/null || return 1
   grep -qi "$1" /tmp/ui.xml
 }
 
@@ -306,9 +390,12 @@ screenshot_plain() {
 scroll_to_text() {
   local want="$1" i=0
   while [ "$i" -lt 12 ]; do
-    rm -f /tmp/ui.xml
-    timeout 20 adb shell uiautomator dump "$UI_DUMP" >/dev/null 2>&1
-    adb pull -q "$UI_DUMP" /tmp/ui.xml 2>/dev/null || true
+    if ! dump_ui 2>/tmp/scroll-dump.err; then
+      echo "scroll_to_text '$want': dump failed ($(cat /tmp/scroll-dump.err | head -c 200 | tr '\n' ' '))" >&2
+      i=$((i + 1))
+      sleep 2
+      continue
+    fi
     XY=$(python3 - "$want" <<'PY'
 import sys, xml.etree.ElementTree as ET
 want = sys.argv[1]
@@ -433,6 +520,11 @@ adb shell am start -n "$MAIN_ACTIVITY"
 # path now dumps diagnostics (above) so a real crash is distinguishable
 # from slowness.
 wait_for_app_focus 180 || exit 1
+# DUMP FIX (run 44995080198): focus only means the app is foregrounded —
+# under TCG it can sit on its splash (logo, 0 text nodes) for minutes
+# while cold-starting. Prove a dump works AND the UI has rendered text
+# before the first tap loop, or the taps burn out against a splash.
+wait_for_ui_ready 180 || exit 1
 sleep 4
 screenshot "01-disclaimer.png"
 
@@ -457,7 +549,9 @@ sleep 2
 screenshot_plain "05-settings-downloads.png"
 
 # The evidence: hierarchy with the button on screen, plus its node report.
-timeout 20 adb shell uiautomator dump "$UI_SETTINGS" >/dev/null 2>&1
+# dump_ui() bounds the dump to DUMP_TIMEOUT and logs the failure mode.
+rm -f /tmp/ui.xml
+timeout "$DUMP_TIMEOUT" adb shell uiautomator dump "$UI_SETTINGS" > /tmp/dump.err 2>&1 || echo "settings hierarchy dump failed: $(head -c 200 /tmp/dump.err | tr '\n' ' ')" >&2
 adb pull -q "$UI_SETTINGS" "$OUT/ui-settings-downloads.xml" || echo "no hierarchy pulled"
 dump_node "Open Downloads" "$OUT/ui-settings-downloads.xml" > "$OUT/open-downloads-node.txt" 2>&1 || echo "node report failed"
 cat "$OUT/open-downloads-node.txt"
@@ -468,7 +562,8 @@ cat "$OUT/open-downloads-node.txt"
 tap_text "Open Downloads" && echo "tap returned 0" || echo "tap returned non-zero"
 sleep 5
 screenshot_plain "06-after-tap.png"
-timeout 20 adb shell uiautomator dump "$UI_AFTER" >/dev/null 2>&1
+rm -f /tmp/ui.xml
+timeout "$DUMP_TIMEOUT" adb shell uiautomator dump "$UI_AFTER" > /tmp/dump.err 2>&1 || echo "post-tap hierarchy dump failed: $(head -c 200 /tmp/dump.err | tr '\n' ' ')" >&2
 adb pull -q "$UI_AFTER" "$OUT/ui-after-tap.xml" || echo "no post-tap hierarchy pulled"
 
 # Verdict: the Downloads screen's signature is its TopAppBar title
