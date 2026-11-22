@@ -291,6 +291,11 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+try:  # package-style import when run as Fast_Fetch/importers/*.py
+    from Fast_Fetch import warp_proxy as _warp_proxy
+except ImportError:  # running from inside Fast_Fetch/importers/
+    import warp_proxy as _warp_proxy  # type: ignore
+
 
 def mega_parse_url(url: str) -> dict | None:
     """Split a MEGA file URL into its node id and link key.
@@ -768,13 +773,22 @@ def _build_openers(context: ssl.SSLContext | None = None):
     longer exists.
     """
     context = context or _build_ssl_context()
-    cached = _OPENERS.get(context)
+    # The cache key carries the proxy setting, so a process that gains
+    # (or loses) RADD_WARP_PROXY builds a fresh opener instead of
+    # reusing one built for the other egress.
+    proxy = _warp_proxy.proxy_url()
+    key = (context, proxy)
+    cached = _OPENERS.get(key)
     if cached is not None:
         return cached
     https = urllib.request.HTTPSHandler(context=context)
-    built = (urllib.request.build_opener(https),
-             urllib.request.build_opener(https, _StopRedirect()))
-    _OPENERS[context] = built
+    handlers = [https]
+    _ph = _warp_proxy.urllib_proxy_handler()
+    if _ph is not None:
+        handlers.append(_ph)
+    built = (urllib.request.build_opener(*handlers),
+             urllib.request.build_opener(*handlers, _StopRedirect()))
+    _OPENERS[key] = built
     return built
 
 
@@ -785,7 +799,10 @@ _FOLLOW, _NO_FOLLOW = _build_openers(_SSL_CONTEXT)
 def _open(request: urllib.request.Request, timeout: float = DEFAULT_TIMEOUT,
           follow: bool = True):
     """The only socket call in this module; everything above it is testable."""
-    opener = _FOLLOW if follow else _NO_FOLLOW
+    # Re-derived per call (cached by _build_openers) so a proxy setting
+    # that changes after import is honoured instead of the import-time one.
+    _follow, _no_follow = _build_openers(_SSL_CONTEXT)
+    opener = _follow if follow else _no_follow
     return opener.open(request, timeout=timeout)
 
 
@@ -850,9 +867,12 @@ def _cookie_jar_fetch():
     """
     import http.cookiejar
 
-    opener = urllib.request.build_opener(
-        urllib.request.HTTPSHandler(context=_SSL_CONTEXT),
-        urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+    _handlers = [urllib.request.HTTPSHandler(context=_SSL_CONTEXT),
+               urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar())]
+    _ph = _warp_proxy.urllib_proxy_handler()
+    if _ph is not None:
+        _handlers.append(_ph)
+    opener = urllib.request.build_opener(*_handlers)
 
     def _fetch(url, headers=None, timeout=DEFAULT_TIMEOUT, method="GET",
                follow=True, data=None):
@@ -890,8 +910,11 @@ def _unverified_fetch(url, headers=None, timeout=DEFAULT_TIMEOUT,
     fields.update(headers or {})
     request = urllib.request.Request(url, headers=fields, method=method,
                                      data=data)
-    opener = urllib.request.build_opener(
-        urllib.request.HTTPSHandler(context=_UNVERIFIED_CONTEXT))
+    _handlers = [urllib.request.HTTPSHandler(context=_UNVERIFIED_CONTEXT)]
+    _ph = _warp_proxy.urllib_proxy_handler()
+    if _ph is not None:
+        _handlers.append(_ph)
+    opener = urllib.request.build_opener(*_handlers)
     try:
         with opener.open(request, timeout=timeout) as response:
             return (int(response.status), response.read(PROBE_READ_BYTES),

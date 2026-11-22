@@ -44,6 +44,10 @@ import quality  # release-quality spelling (DB checkup fix #6); stdlib only
 import backfill_year_from_title  # conservative year-from-title rules; stdlib only
 import redact  # shared placeholder / genre vocabulary (stdlib only)
 try:
+    import warp_proxy  # WARP proxy routing for the resolver (stdlib only)
+except ImportError:  # package-style import when run from the repo root
+    from Fast_Fetch import warp_proxy
+try:
     import panel_feed  # the operator's tuning knobs + pauses
 except Exception:  # pragma: no cover - panel_feed is always importable in-repo
     panel_feed = None
@@ -2200,8 +2204,17 @@ def http_get(url: str, timeout: int = 15, max_retries: int = 2, allow_probe: boo
     req = urllib.request.Request(norm_url, headers=headers)
     for attempt in range(max_retries + 1):
         try:
-            with urllib.request.urlopen(req, timeout=timeout,
-                                        context=_tls_context(norm_url)) as resp:
+            # WARP proxy (RADD_WARP_PROXY): when on, the fetch goes
+            # through 127.0.0.1:40000; when off this is exactly the
+            # opener urlopen builds for a context (HTTPSHandler with
+            # that context), so the behaviour is unchanged.
+            _handlers = [urllib.request.HTTPSHandler(
+                context=_tls_context(norm_url))]
+            _ph = warp_proxy.urllib_proxy_handler()
+            if _ph is not None:
+                _handlers.append(_ph)
+            with urllib.request.build_opener(*_handlers).open(
+                    req, timeout=timeout) as resp:
                 final_url = resp.geturl()
                 # Auto-detect domain change/redirect
                 p_orig = urllib.parse.urlparse(norm_url)

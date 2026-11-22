@@ -35,6 +35,8 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+# Fast_Fetch/ too: host_resolvers imports warp_proxy from there.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import host_resolvers as hr  # noqa: E402
 
@@ -485,8 +487,11 @@ class TestTransport(unittest.TestCase):
                 calls.append((self.name, timeout))
                 return FakeResponse(200, b"body")
 
-        with mock.patch.object(hr, "_FOLLOW", Opener("follow")), \
-                mock.patch.object(hr, "_NO_FOLLOW", Opener("strict")):
+        # _open re-derives its openers from _build_openers (cached by
+        # context + proxy setting) instead of the import-time _FOLLOW /
+        # _NO_FOLLOW pair, so the proxy setting is honoured live.
+        pair = (Opener("follow"), Opener("strict"))
+        with mock.patch.object(hr, "_build_openers", return_value=pair):
             first = hr._open(urllib.request.Request("https://x.test/a"), 3)
             second = hr._open(urllib.request.Request("https://x.test/a"), 3,
                               follow=False)

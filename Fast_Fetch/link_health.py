@@ -102,6 +102,11 @@ import time
 import urllib.parse
 from dataclasses import dataclass
 
+try:  # package-style import when run as Fast_Fetch/<module>.py
+    from Fast_Fetch import warp_proxy
+except ImportError:  # running from inside Fast_Fetch/ (the documented way)
+    import warp_proxy  # type: ignore
+
 # Same browser UA as config.HTTP_USER_AGENT / fast_fetch.USER_AGENT, written out
 # instead of imported on purpose: importing config would compute (and possibly
 # create) DB_PATH while live crawlers are writing to it. This module must stay
@@ -398,11 +403,12 @@ def _raw_request(url: str, method: str, headers: dict, timeout: float,
     conn = None
     t0 = time.monotonic()
     try:
-        if parts.scheme == "https":
-            conn = http.client.HTTPSConnection(host, port, timeout=timeout,
-                                               context=SSL_CONTEXT)
-        else:
-            conn = http.client.HTTPConnection(host, port, timeout=timeout)
+        # WARP proxy (RADD_WARP_PROXY): when on, the connection is built
+        # against 127.0.0.1:40000 and CONNECT-tunnels to the real host;
+        # when off this is exactly the direct connection built before.
+        conn = warp_proxy.make_connection(
+            host, port, parts.scheme == "https", timeout,
+            context=SSL_CONTEXT)
         conn.request(method, _request_target(parts), headers=headers)
         resp = conn.getresponse()
         header_ms = int((time.monotonic() - t0) * 1000)

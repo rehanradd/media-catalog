@@ -68,6 +68,11 @@ import urllib.request
 
 from truelink_1fichier import _unwrap_1fichier
 
+try:  # package-style import when run as Fast_Fetch/<module>.py
+    from Fast_Fetch import warp_proxy
+except ImportError:  # running from inside Fast_Fetch/ (the documented way)
+    import warp_proxy  # type: ignore
+
 USER_AGENT = "Mozilla/5.0"
 DEFAULT_TIMEOUT = 15.0
 MAX_BODY_BYTES = 524288
@@ -240,8 +245,13 @@ def default_fetch(url: str, referer: str | None = None, method: str = "GET",
             method = "POST"
     req = urllib.request.Request(url, headers=req_headers, method=method,
                                  data=body_data)
-    opener = (urllib.request.build_opener() if follow_redirects
-              else urllib.request.build_opener(_NoRedirect()))
+    # WARP proxy (RADD_WARP_PROXY): when on, the resolver's fetches go
+    # through 127.0.0.1:40000; when off this is exactly the opener
+    # built before (no proxy handler, direct egress).
+    _proxy = warp_proxy.urllib_proxy_handler()
+    _handlers = [_proxy] if _proxy is not None else []
+    opener = (urllib.request.build_opener(*_handlers) if follow_redirects
+              else urllib.request.build_opener(*_handlers, _NoRedirect()))
     try:
         with opener.open(req, timeout=timeout) as resp:
             body = resp.read(MAX_BODY_BYTES + 1)[:MAX_BODY_BYTES + 1]

@@ -138,6 +138,11 @@ except ImportError:  # running from inside Fast_Fetch/ (the documented way)
     import link_health  # type: ignore
     import link_state  # type: ignore
 
+try:  # package-style import when run as Fast_Fetch/fast_probe.py
+    from Fast_Fetch import warp_proxy
+except ImportError:  # running from inside Fast_Fetch/ (the documented way)
+    import warp_proxy  # type: ignore
+
 try:
     from Fast_Fetch import host_registry
 except ImportError:  # running from inside Fast_Fetch/ (the documented way)
@@ -373,6 +378,20 @@ class _CachedHTTPSConnection(_CachedHTTPConnection, http.client.HTTPSConnection)
 def default_connection_factory(host: str, port: int, https: bool,
                                timeout: float):
     """One keep-alive connection for *(host, port, scheme)*."""
+    proxy = warp_proxy.proxy_url()
+    if proxy:
+        # WARP proxy (RADD_WARP_PROXY): dial the proxy and CONNECT-tunnel
+        # to the real host. The _Cached* connect() already falls back to
+        # the stock connect (which issues the CONNECT) when a tunnel is
+        # set, so the DNS cache is bypassed — the proxy resolves the host.
+        phost, pport = warp_proxy.proxy_host_port(proxy)
+        if https:
+            conn = _CachedHTTPSConnection(phost, pport, timeout=timeout,
+                                          context=link_health.SSL_CONTEXT)
+        else:
+            conn = _CachedHTTPConnection(phost, pport, timeout=timeout)
+        conn.set_tunnel(host, port)
+        return conn
     if https:
         return _CachedHTTPSConnection(host, port, timeout=timeout,
                                       context=link_health.SSL_CONTEXT)

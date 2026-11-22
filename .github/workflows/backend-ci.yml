@@ -331,6 +331,12 @@ jobs:
       - name: 🧪 test_fast_probe.py
         run: python3 -S Fast_Fetch/test_fast_probe.py
 
+      # WARP proxy routing for the resolver (2026-11-22): RADD_WARP_PROXY
+      # routes the resolver's fetches through 127.0.0.1:40000. Offline,
+      # stdlib, fake CONNECT proxy + fake origin on loopback, no network.
+      - name: 🧪 test_warp_proxy.py
+        run: python3 -S Fast_Fetch/test_warp_proxy.py
+
       # H4 R10 network-intercept fallback (2026-11-20): a 5xx is expired,
       # never dead; a HEAD refused by an intermediary gets one bounded
       # ranged GET. Offline, stdlib, loopback stub + fake connections.
