@@ -1,5 +1,6 @@
 package com.raddstream.app.ui.screens
 
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -9,8 +10,7 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
-import androidx.compose.ui.test.swipeDown
-import androidx.compose.ui.test.swipeUp
+import androidx.compose.ui.test.swipe
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.ui.theme.RaddStreamTheme
@@ -86,22 +86,39 @@ class HomeHeaderTest {
 
     // Lazy feed (home fix, Nov 2026): a rail below the fold is not
     // composed until it scrolls into view, so assertExists on it fails
-    // outright. Swipe until the text is composed (bounded, so a genuinely
-    // missing node still fails loudly at the assert that follows).
+    // outright. Drag until the text is composed (bounded, so a genuinely
+    // missing node still fails loudly at the assert that follows). A
+    // controlled drag, not a swipeUp fling: a fast fling can overshoot the
+    // target and dispose it before the check runs.
     private fun scrollToText(text: String) {
         repeat(12) {
             if (compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()) return
-            compose.onRoot().performTouchInput { swipeUp() }
+            compose.onRoot().performTouchInput {
+                swipe(
+                    start = Offset(center.x, size.height * 0.8f),
+                    end = Offset(center.x, size.height * 0.3f),
+                    durationMillis = 400,
+                )
+            }
             compose.waitForIdle()
         }
     }
 
-    // Same, toward the top of the feed (swipe down) — used to bring the
-    // filter chips back into view after scrolling down to the rails.
+    // Same, toward the top of the feed — used to bring the filter chips
+    // back into view after scrolling down to the rails. The drag starts
+    // inside the list (30% down the screen), not at the very top: a
+    // swipeDown starts on the pinned header, which does not scroll the
+    // feed, so the chips never come back.
     private fun scrollBackToText(text: String) {
         repeat(12) {
             if (compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()) return
-            compose.onRoot().performTouchInput { swipeDown() }
+            compose.onRoot().performTouchInput {
+                swipe(
+                    start = Offset(center.x, size.height * 0.3f),
+                    end = Offset(center.x, size.height * 0.8f),
+                    durationMillis = 400,
+                )
+            }
             compose.waitForIdle()
         }
     }

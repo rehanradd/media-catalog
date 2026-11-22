@@ -3,12 +3,13 @@ package com.raddstream.app.ui.screens
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performTouchInput
-import androidx.compose.ui.test.swipeUp
+import androidx.compose.ui.test.swipe
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.HomeSection
@@ -47,12 +48,20 @@ class PickThreeVisitTest {
 
     // Lazy feed (home fix, Nov 2026): the card rides below the first rail,
     // so it is not composed until it scrolls into view, and one swipe does
-    // not always reach it. Swipe until the text is composed (bounded, so a
+    // not always reach it. Drag until the text is composed (bounded, so a
     // genuinely missing node still fails loudly at the assert that follows).
+    // A controlled drag, not a swipeUp fling: a fast fling can overshoot
+    // the card and dispose it before the check runs.
     private fun scrollToText(text: String) {
         repeat(12) {
             if (compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()) return
-            compose.onRoot().performTouchInput { swipeUp() }
+            compose.onRoot().performTouchInput {
+                swipe(
+                    start = Offset(center.x, size.height * 0.8f),
+                    end = Offset(center.x, size.height * 0.3f),
+                    durationMillis = 400,
+                )
+            }
             compose.waitForIdle()
         }
     }
