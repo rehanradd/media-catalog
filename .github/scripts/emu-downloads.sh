@@ -106,6 +106,35 @@ UI_AFTER="/data/local/tmp/ui-after-tap.xml"
 #     branches — "Continue offline — saved titles only" when the catalog
 #     is unreachable (onConnected(false) skips Region/"Done" and opens
 #     Home directly), else the normal Continue -> Done path.
+# V23 FIX (2026-11-22, run 45002249121): v22 cleared an APP ANR ("RADD
+# Stream isn't responding") but a SYSTEM UI ANR ("System UI isn't
+# responding") then recurred and 11 Wait taps never cleared it in 300s.
+# CORRECTION to the v22 diagnosis: (540,1399) was NOT a fixed-coords
+# fallback — it is the hierarchy-derived centre of the Wait button's
+# bounds [70,1336][1010,1462] in the saved timeout dump, and there is no
+# hardcoded tap coordinate anywhere in this script (the only "540" in
+# code is the scroll swipe). The taps were correct; the dialog is
+# undismissable by input, because the tap must be processed by System UI
+# itself, which is the starved process. Fix: wait_for_anr_clear() now
+# tells the two ANR types apart (System UI = "System UI isn't
+# responding" in the dump) and, for a System UI ANR that survives 3 Wait
+# taps, restarts System UI (am force-stop com.android.systemui — it is
+# a persistent app and the system restarts it), which bypasses the
+# starved input path entirely (binder, not input). An APP ANR keeps the
+# Wait-tap path (proven to work: cleared after 4 checks in run 6).
+# There is NO setting to disable the foreground ANR dialog:
+# anr_show_background (Settings.Global.ANR_SHOW_BACKGROUND) only
+# governs BACKGROUND-process ANR dialogs ("If nonzero, ANRs in invisible
+# background processes bring up a dialog"), so the dialog cannot be
+# switched off — it must be dismissed or its process restarted.
+# Also fixed in v23: (a) wait_for_ui_ready() passed with 3 text nodes
+# that were the ANR dialog's own ("System UI isn't responding" /
+# "Close app" / "Wait", all package=android) — a false "ready" while the
+# app had rendered nothing; it now requires text nodes from the APP
+# package and dismisses an ANR while waiting. (b) The timeout evidence
+# is re-dumped FRESH so the saved dump matches the screenshot moment —
+# run 6's anr-timeout.png showed no dialog while the saved ui.xml (up to
+# ~45s stale: dump time + tap + sleep 15) still had one.
 DUMP_TIMEOUT=60
 # Set by screenshot(): name + md5 of the previous frame, for the
 # byte-identical frozen-screen check.
@@ -143,12 +172,19 @@ dump_ui() {
 }
 
 # Wait until a UI dump succeeds AND the hierarchy contains at least one
-# node with non-empty text — i.e. the app has rendered a real screen,
-# not just its splash (the splash is a bare logo: 0 text nodes, run
-# 44995080198). Bounded to $1 seconds (default 180). Logs each attempt
-# so the run log shows whether dumps were failing or the app was simply
-# still loading. Returns 1 on timeout, after saving a screenshot and
-# the last dump diagnostics into $OUT.
+# node with non-empty text FROM THE APP PACKAGE — i.e. the app has
+# rendered a real screen, not just its splash (the splash is a bare logo:
+# 0 text nodes, run 44995080198). Bounded to $1 seconds (default 180).
+# Logs each attempt so the run log shows whether dumps were failing or
+# the app was simply still loading. Returns 1 on timeout, after saving
+# a screenshot and the last dump diagnostics into $OUT.
+# V23 (run 45002249121): the old check counted ANY text node, and passed
+# with 3 text nodes that were the ANR dialog's own ("System UI isn't
+# responding" / "Close app" / "Wait", all package=android) — a false
+# "ready" while the app had rendered nothing. An ANR dialog alone must
+# not count as ready. While waiting, an ANR on screen is dismissed
+# (dismiss_anr) so the wait can make progress instead of timing out on
+# a dialog.
 wait_for_ui_ready() {
   local budget="${1:-180}" start now tries=0
   start=$(date +%s)
@@ -156,20 +192,29 @@ wait_for_ui_ready() {
     tries=$((tries + 1))
     if dump_ui 2>/tmp/wait-dump.err; then
       local text_nodes
-      text_nodes=$(python3 - <<'PY' 2>/dev/null
+      text_nodes=$(python3 - "$APP_PKG" <<'PY' 2>/dev/null
 import sys, xml.etree.ElementTree as ET
+app_pkg = sys.argv[1] if len(sys.argv) > 1 else ''
 try:
     root = ET.parse('/tmp/ui.xml').getroot()
 except Exception:
     sys.exit(0)
-print(sum(1 for n in root.iter('node') if (n.get('text') or '').strip()))
+def is_app(n):
+    pkg = n.get('package') or ''
+    return (not app_pkg) or pkg.startswith(app_pkg)
+print(sum(1 for n in root.iter('node') if (n.get('text') or '').strip() and is_app(n)))
 PY
 )
       if [ "${text_nodes:-0}" -gt 0 ]; then
-        echo "UI ready after ${tries} dump(s): $text_nodes text node(s) on screen"
+        echo "UI ready after ${tries} dump(s): $text_nodes app text node(s) on screen"
         return 0
       fi
-      echo "wait_for_ui_ready try $tries: dump ok but 0 text nodes (splash still showing?)" >&2
+      if grep -qi "isn't responding\|not responding" /tmp/ui.xml; then
+        echo "wait_for_ui_ready try $tries: ANR dialog on screen, dismissing it so the app can render" >&2
+        dismiss_anr || echo "wait_for_ui_ready try $tries: ANR dismiss failed — will retry within budget" >&2
+      else
+        echo "wait_for_ui_ready try $tries: dump ok but 0 app text nodes (splash still showing?)" >&2
+      fi
     else
       echo "wait_for_ui_ready try $tries: $(cat /tmp/wait-dump.err | head -c 200 | tr '\n' ' ')" >&2
     fi
@@ -321,6 +366,42 @@ anr_present() {
   grep -qi "isn't responding\|not responding" /tmp/ui.xml
 }
 
+# Restart System UI (com.android.systemui) and wait for it to come
+# back. Used when a System UI ANR will not clear with Wait taps (see
+# wait_for_anr_clear). am force-stop works from the shell user (it holds
+# FORCE_STOP_PACKAGES) and bypasses the starved input path entirely
+# (binder, not input) — unlike a tap, it does not need the frozen
+# process to handle anything. System UI is a persistent app, so the
+# system restarts it; poll pidof until a (new) PID appears, bounded to
+# 90s so the caller still has budget left to re-dump and verify.
+# Returns 0 if a System UI process is running afterwards, 1 otherwise.
+# Logs the old and new PIDs so a failed restart is diagnosable. Even if
+# System UI does not come back, the ANR dialog is gone (the process it
+# complained about died) and the app itself keeps running — the caller
+# re-dumps to confirm rather than assuming.
+restart_systemui() {
+  local old_pid new_pid waited=0
+  old_pid=$(adb shell pidof com.android.systemui 2>/dev/null | tr -d '\r' | awk '{print $1}' || true)
+  echo "restart_systemui: System UI pid before restart: '${old_pid:-none}' — force-stopping com.android.systemui" >&2
+  adb shell am force-stop com.android.systemui 2>/dev/null || { echo "restart_systemui: am force-stop failed" >&2; return 1; }
+  while [ "$waited" -lt 90 ]; do
+    sleep 5
+    waited=$((waited + 5))
+    new_pid=$(adb shell pidof com.android.systemui 2>/dev/null | tr -d '\r' | awk '{print $1}' || true)
+    if [ -n "$new_pid" ] && [ "$new_pid" != "$old_pid" ]; then
+      echo "restart_systemui: System UI restarted (pid ${old_pid:-none} -> $new_pid) after ${waited}s" >&2
+      return 0
+    fi
+    if [ -n "$new_pid" ] && [ -z "$old_pid" ]; then
+      echo "restart_systemui: System UI running again (pid $new_pid) after ${waited}s" >&2
+      return 0
+    fi
+  done
+  new_pid=$(adb shell pidof com.android.systemui 2>/dev/null | tr -d '\r' | awk '{print $1}' || true)
+  echo "restart_systemui: System UI did NOT come back within 90s (pid now: '${new_pid:-none}')" >&2
+  return 1
+}
+
 # Wait until no "isn't responding" dialog is on screen, tapping "Wait"
 # (at the hierarchy-derived centre, never fixed coords) and VERIFYING
 # the dialog is actually gone by re-dumping after each tap. Bounded to
@@ -330,8 +411,17 @@ anr_present() {
 # sleep" never verified anything — the Wait tap only works once
 # system_server recovers, which took ~4 min for 'I understand'. This
 # loop is the patience the dialog needs, with proof at the end.
+# V23 (run 45002249121): the v22 loop cleared an APP ANR ("RADD Stream
+# isn't responding") but a SYSTEM UI ANR ("System UI isn't responding")
+# then recurred and 11 Wait taps at the correct hierarchy-derived
+# centre (540,1399) never cleared it in 300s. A System UI ANR cannot be
+# dismissed by tapping Wait: the tap must be processed by System UI
+# itself, which is the starved process. So a System UI ANR that survives
+# 3 Wait taps escalates to restart_systemui() (once per call) — the
+# loop then re-dumps to verify. An APP ANR keeps the Wait-tap path
+# (proven to work: cleared after 4 checks in run 45002249121).
 wait_for_anr_clear() {
-  local budget="${1:-300}" start now tries=0
+  local budget="${1:-300}" start now tries=0 wait_taps=0 sysui_restarted=0
   start=$(date +%s)
   while true; do
     tries=$((tries + 1))
@@ -341,7 +431,11 @@ wait_for_anr_clear() {
       echo "ANR dialog cleared after $tries check(s)"
       return 0
     else
-      local wxy
+      local anr_kind wxy
+      anr_kind="app"
+      if grep -qi "System UI isn't responding" /tmp/ui.xml; then
+        anr_kind="systemui"
+      fi
       wxy=$(python3 - <<'PY'
 import sys, xml.etree.ElementTree as ET
 try:
@@ -360,15 +454,37 @@ for n in root.iter('node'):
 PY
 )
       if [ -n "$wxy" ]; then
-        echo "wait_for_anr_clear try $tries: ANR present — tapping Wait ($wxy)" >&2
+        echo "wait_for_anr_clear try $tries: $anr_kind ANR present — tapping Wait ($wxy)" >&2
         adb shell input tap $wxy
+        wait_taps=$((wait_taps + 1))
       else
-        echo "wait_for_anr_clear try $tries: ANR present but no 'Wait' node in dump — waiting" >&2
+        echo "wait_for_anr_clear try $tries: $anr_kind ANR present but no 'Wait' node in dump — waiting" >&2
+      fi
+      # V23 escalation (see header): a System UI ANR that survives 3
+      # Wait taps is undismissable by input — restart System UI once,
+      # then re-dump to verify. The outer budget still bounds the call.
+      if [ "$anr_kind" = "systemui" ] && [ "$wait_taps" -ge 3 ] && [ "$sysui_restarted" -eq 0 ]; then
+        sysui_restarted=1
+        echo "wait_for_anr_clear: System UI ANR survived $wait_taps Wait taps — restarting System UI" >&2
+        restart_systemui || echo "wait_for_anr_clear: System UI restart failed — continuing to tap Wait" >&2
       fi
     fi
     now=$(date +%s)
     if [ $((now - start)) -ge "$budget" ]; then
       echo "FAIL: ANR dialog still present after ${budget}s ($tries checks)" >&2
+      # V23: re-dump FRESH at timeout so the saved dump matches the
+      # screenshot moment. Run 45002249121's anr-timeout.png showed no
+      # dialog while the saved ui.xml (copied from /tmp/ui.xml, up to
+      # ~45s stale: dump time + tap + sleep 15) still had one.
+      if dump_ui 2>/tmp/anr-timeout-dump.err; then
+        if grep -qi "isn't responding\|not responding" /tmp/ui.xml; then
+          echo "timeout evidence: fresh dump taken — ANR still present" >&2
+        else
+          echo "timeout evidence: fresh dump taken — ANR GONE in fresh dump (dialog cleared between last check and timeout)" >&2
+        fi
+      else
+        echo "timeout evidence: fresh re-dump failed ($(cat /tmp/anr-timeout-dump.err | head -c 150 | tr '\n' ' ')) — saving last dump instead" >&2
+      fi
       adb exec-out screencap -p > "$OUT/anr-timeout.png" 2>/dev/null || true
       cp /tmp/ui.xml "$OUT/anr-timeout-ui.xml" 2>/dev/null || true
       return 1
