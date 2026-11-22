@@ -50,7 +50,11 @@ permissions:
 jobs:
   downloads-hierarchy:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # Timeout fix (run 44990207302 cancelled at 45m05s): TCG software
+    # emulation boots slowly (~10-15 min) and the drive is slow too — the
+    # run reached settings-top at 45 min but never got to the hierarchy
+    # dump + tap. 120 min gives the full drive room to finish.
+    timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
