@@ -16,6 +16,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -43,6 +44,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -58,7 +60,8 @@ import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.pullToRefresh
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -308,6 +311,7 @@ fun HomeScreen(
  * navigation and no network. Behaviour is unchanged — this is a pure move
  * of the Column body out of HomeScreen (2026-11-15).
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun HomeContent(
     state: HomeUiState,
@@ -458,11 +462,20 @@ internal fun HomeContent(
         if (kidsMode) {
             KidsModeBanner(onExitKidsMode = onExitKidsMode)
         }
-        PullToRefreshBox(
-            isRefreshing = state.isRefreshing,
-            onRefresh = onRefresh,
-            state = pullRefreshState,
-            modifier = Modifier.weight(1f),
+        // Pull-to-refresh (home fix, Nov 2026): the Material3
+        // PullToRefreshBox container needs material3 1.3.0; this project
+        // is on 1.2.1 (Compose BOM 2024.06.00), so the manual pattern is
+        // used instead — the pullToRefresh modifier plus the default
+        // indicator, rendered after the list below. Same gesture, same
+        // refresh, no library bump.
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .pullToRefresh(
+                    state = pullRefreshState,
+                    isRefreshing = state.isRefreshing,
+                    onRefresh = onRefresh,
+                ),
         ) {
         LazyColumn(
             state = listState,
@@ -789,6 +802,11 @@ internal fun HomeContent(
                 Spacer(Modifier.height(24.dp))
             }
         }
+        PullToRefreshDefaults.Indicator(
+            modifier = Modifier.align(Alignment.TopCenter),
+            isRefreshing = state.isRefreshing,
+            state = pullRefreshState,
+        )
         }
         }
     }
