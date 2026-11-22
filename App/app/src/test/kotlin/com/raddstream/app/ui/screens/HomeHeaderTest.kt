@@ -2,10 +2,15 @@ package com.raddstream.app.ui.screens
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeDown
+import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.ui.theme.RaddStreamTheme
@@ -79,6 +84,28 @@ class HomeHeaderTest {
         ),
     )
 
+    // Lazy feed (home fix, Nov 2026): a rail below the fold is not
+    // composed until it scrolls into view, so assertExists on it fails
+    // outright. Swipe until the text is composed (bounded, so a genuinely
+    // missing node still fails loudly at the assert that follows).
+    private fun scrollToText(text: String) {
+        repeat(8) {
+            if (compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()) return
+            compose.onRoot().performTouchInput { swipeUp() }
+            compose.waitForIdle()
+        }
+    }
+
+    // Same, toward the top of the feed (swipe down) — used to bring the
+    // filter chips back into view after scrolling down to the rails.
+    private fun scrollBackToText(text: String) {
+        repeat(8) {
+            if (compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()) return
+            compose.onRoot().performTouchInput { swipeDown() }
+            compose.waitForIdle()
+        }
+    }
+
     @Test
     fun filterChipsShowAllFiveAndAre48dpTall() {
         compose.setContent {
@@ -100,12 +127,18 @@ class HomeHeaderTest {
             RaddStreamTheme { HomeContent(state = filterState(), heroAutoplay = false) }
         }
         // Existence, not display: the rails sit below the hero, so their
-        // headers are below the first fold — and nothing may scroll before
-        // the chip tap below, or the chip leaves the viewport with it.
+        // headers are below the first fold. A lazy feed does not compose
+        // them until they scroll into view, so bring each into view to
+        // prove it exists — then scroll back to the chips, which must stay
+        // tappable for the tap below.
+        scrollToText("Series Rail")
         compose.onNodeWithText("Series Rail").assertExists()
+        scrollToText("Movies Rail")
         compose.onNodeWithText("Movies Rail").assertExists()
+        scrollBackToText("SERIES")
         compose.onNodeWithText("SERIES").performClick()
         compose.onNodeWithText("Movies Rail").assertDoesNotExist()
+        scrollToText("Series Rail")
         compose.onNodeWithText("Series Rail").performScrollTo().assertIsDisplayed()
     }
 
@@ -119,8 +152,13 @@ class HomeHeaderTest {
         compose.onNodeWithText("SERIES").performClick()
         compose.onNodeWithText("Movies Rail").assertDoesNotExist()
         compose.onNodeWithText("SERIES").performClick()
-        compose.onNodeWithText("Movies Rail").assertExists()
+        // Restored rails are below the fold again — a lazy feed does not
+        // compose them until they scroll into view. Series first (it rides
+        // above Movies), then Movies.
+        scrollToText("Series Rail")
         compose.onNodeWithText("Series Rail").assertExists()
+        scrollToText("Movies Rail")
+        compose.onNodeWithText("Movies Rail").assertExists()
     }
 
     @Test
@@ -131,11 +169,18 @@ class HomeHeaderTest {
         compose.onNodeWithText("ANIME").performClick()
         compose.onNodeWithText("Series Rail").assertDoesNotExist()
         compose.onNodeWithText("Movies Rail").assertDoesNotExist()
+        // Lazy feed: the empty state is not composed until it scrolls into
+        // view, so bring it into view before scrolling it on screen.
+        scrollToText("No anime here yet.")
         compose.onNodeWithText("No anime here yet.").performScrollTo().assertIsDisplayed()
         // A click on a node below the fold lands off-viewport and never
         // fires — scroll the button into view first.
+        scrollToText("Show all")
         compose.onNodeWithText("Show all").performScrollTo().performClick()
+        // Restored rails are below the fold again — bring each into view.
+        scrollToText("Series Rail")
         compose.onNodeWithText("Series Rail").assertExists()
+        scrollToText("Movies Rail")
         compose.onNodeWithText("Movies Rail").assertExists()
     }
 

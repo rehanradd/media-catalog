@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performTouchInput
@@ -43,6 +44,18 @@ class PickThreeVisitTest {
 
     @get:Rule
     val compose = createComposeRule()
+
+    // Lazy feed (home fix, Nov 2026): the card rides below the first rail,
+    // so it is not composed until it scrolls into view, and one swipe does
+    // not always reach it. Swipe until the text is composed (bounded, so a
+    // genuinely missing node still fails loudly at the assert that follows).
+    private fun scrollToText(text: String) {
+        repeat(8) {
+            if (compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()) return
+            compose.onRoot().performTouchInput { swipeUp() }
+            compose.waitForIdle()
+        }
+    }
 
     /** Nine titles: the hero takes the first six, the card offers the next three. */
     private fun eligibleState() = HomeUiState(
@@ -94,8 +107,7 @@ class PickThreeVisitTest {
         // The card rides below the first rail now (home fix, Nov 2026),
         // so it starts below the fold in a lazy feed — swipe it into view
         // before asserting it exists.
-        compose.onRoot().performTouchInput { swipeUp() }
-        compose.waitForIdle()
+        scrollToText("Pick 3 you like")
 
         compose.onNodeWithText("Pick 3 you like").assertExists()
         assertTrue("display must not hide the card", state.showPickThree)
@@ -124,8 +136,7 @@ class PickThreeVisitTest {
         // The card rides below the first rail now (home fix, Nov 2026),
         // so it starts below the fold in a lazy feed — swipe it into view
         // before asserting it exists.
-        compose.onRoot().performTouchInput { swipeUp() }
-        compose.waitForIdle()
+        scrollToText("Pick 3 you like")
         compose.onNodeWithText("Pick 3 you like").assertExists()
 
         // Leaving Home disposes the feed: the visit ends, the latch

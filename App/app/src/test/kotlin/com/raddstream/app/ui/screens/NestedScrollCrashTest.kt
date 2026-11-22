@@ -165,6 +165,18 @@ class NestedScrollCrashTest {
         items = samplePosts("Rail", 11, listOf("Salaar", "Animal", "Pathaan", "Guntur", "Devara", "Kalki")),
     )
 
+    // Lazy feed (home fix, Nov 2026): a rail below the fold is not
+    // composed until it scrolls into view, and one swipe does not always
+    // reach it. Swipe until the text is composed (bounded, so a genuinely
+    // missing node still fails loudly at the assert that follows).
+    private fun scrollToText(text: String) {
+        repeat(8) {
+            if (compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()) return
+            compose.onRoot().performTouchInput { swipeUp() }
+            compose.waitForIdle()
+        }
+    }
+
     // ── Home ─────────────────────────────────────────────────────────────
 
     @Test
@@ -190,8 +202,7 @@ class NestedScrollCrashTest {
         // Home fix (Nov 2026): the feed is a LazyColumn now, so a rail
         // below the fold has no node until the list scrolls to it — swipe
         // it into view first, then scroll to the header.
-        compose.onRoot().performTouchInput { swipeUp() }
-        compose.waitForIdle()
+        scrollToText("Most copies")
         compose.onNodeWithText("Most copies").performScrollTo().assertIsDisplayed()
         compose.onRoot().assertExists()
     }
@@ -215,8 +226,7 @@ class NestedScrollCrashTest {
         // the second rail does.
         // Home fix (Nov 2026): lazy feed — swipe the rail into view first
         // (see homeRichWithHeroRailsAndContinueWatching above).
-        compose.onRoot().performTouchInput { swipeUp() }
-        compose.waitForIdle()
+        scrollToText("Most copies")
         compose.onNodeWithText("Most copies").performScrollTo().assertIsDisplayed()
         compose.onRoot().assertExists()
     }
