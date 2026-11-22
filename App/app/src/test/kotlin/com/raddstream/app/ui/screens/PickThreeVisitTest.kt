@@ -1,12 +1,15 @@
 package com.raddstream.app.ui.screens
 
+import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.unit.dp
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.HomeSection
@@ -46,15 +49,17 @@ class PickThreeVisitTest {
     // Lazy feed (home fix, Nov 2026): the card rides below the first rail,
     // so it is not composed until it scrolls into view. Scroll by INDEX,
     // not by drag: a drag is a fling in disguise — a half-viewport swipe
-    // overshoots the card and disposes it before the check runs, a slow
-    // drag hung the CI job in waitForIdle (run 45078087971, cancelled at
-    // ~32 min), and the card sits only ~1 viewport down so every drag
-    // after the first scrolls further away from it. performScrollToIndex
-    // is deterministic: it puts the item in view and composes it, no
-    // fling, no idle wait. The index is pinned to eligibleState()'s feed:
-    // 0 filter, 1 filterSpacer, 2 hero, 3 heroSpacer, 4 first rail,
-    // 5 pickThree — no broadcasts, no CW, no trial note in this state.
-    // If HomeContent's item order changes, this index must move with it.
+    // overshoots the card and disposes it before the check runs, and a
+    // slow drag hung the CI job in waitForIdle (run 45078087971, cancelled
+    // at ~32 min). performScrollToIndex is deterministic: it puts the item
+    // in view and composes it, no fling, no idle wait. The index is pinned
+    // to eligibleState()'s feed: 0 filter, 1 filterSpacer, 2 hero,
+    // 3 heroSpacer, 4 first rail, 5 pickThree — no broadcasts, no CW, no
+    // trial note in this state. If HomeContent's item order changes, this
+    // index must move with it. NOTE: this only works in the direct
+    // HomeContent test below; the if(onHome) test renders 3000dp tall
+    // instead (see there) because index-scrolling leaves the card
+    // uncomposed under the conditional (run 45080985810 attempt 3).
     private fun scrollToPickThree() {
         compose.onNodeWithTag(HomeFeedTag).performScrollToIndex(5)
         compose.waitForIdle()
@@ -122,12 +127,21 @@ class PickThreeVisitTest {
         // One setContent per test (this Compose version forbids calling
         // it twice): leaving Home is a conditional around the feed, so
         // the toggle disposes HomeContent exactly like navigation does.
+        // The feed renders 3000dp tall here, so the lazy feed's viewport
+        // exceeds the content and every item — including the Pick 3 card
+        // below the first rail — composes on first paint, with NO scroll:
+        // scrolling never reached the card under this conditional (a drag
+        // flings past it, a slow drag hung CI in waitForIdle, and
+        // performScrollToIndex(5) leaves it uncomposed — run 45080985810
+        // attempt 3, clean, 1 failure at the assertExists). The visit
+        // lifecycle is what this test proves, not the scroll.
         var onHome by mutableStateOf(true)
         compose.setContent {
             RaddStreamTheme {
                 if (onHome) {
                     HomeContent(
                         state = state,
+                        modifier = Modifier.height(3000.dp),
                         heroAutoplay = false,
                         onPickThreeShown = { state = state.onPickThreeShown() },
                         onPickThreeVisitEnded = { state = state.onPickThreeVisitEnded() },
@@ -136,10 +150,6 @@ class PickThreeVisitTest {
             }
         }
         compose.waitForIdle()
-        // The card rides below the first rail now (home fix, Nov 2026),
-        // so it starts below the fold in a lazy feed — swipe it into view
-        // before asserting it exists.
-        scrollToPickThree()
         compose.onNodeWithText("Pick 3 you like").assertExists()
 
         // Leaving Home disposes the feed: the visit ends, the latch
