@@ -77,6 +77,35 @@ UI_AFTER="/data/local/tmp/ui-after-tap.xml"
 # stdout+stderr captured and logged on failure (timeout vs error is
 # distinguishable), and wait_for_ui_ready() below, which proves dumps
 # work AND the UI has rendered text before any tap loop starts.
+# V22 FIX (2026-11-22, run 44998141138): the dump fix was only partial —
+# dumps pull sometimes (12/22 nodes) but the run still failed, on TWO
+# blockers the screenshots prove:
+# (A) "System UI isn't responding" ANR over the Disclaimer. The Wait tap
+#     at the hierarchy-derived centre (540,1399) DOES eventually work —
+#     'I understand' succeeded on try 7 after 6 Wait taps (~4 min) —
+#     but the old inline handling burned the tap_text 10-try budget on
+#     it and never verified the dialog was gone. Fix: wait_for_anr_clear()
+#     taps Wait, re-dumps, and verifies the dialog is actually gone,
+#     retrying until it clears (300s budget) instead of assuming one tap
+#     worked; tap_text hands off to it and fails honestly if it never
+#     clears. dismiss_anr() delegates to it too.
+# (B) The Welcome screen dead-ends when the catalog is unreachable.
+#     Default catalog is https://raddstream.duckdns.org
+#     (brand.properties network.default_server_url; live and reachable
+#     from the Oracle VM and the public internet). The runner emulator
+#     could not reach it in run 5 — most likely the probe timing out
+#     under slow TCG, not a wrong address (the CI emulator reached the
+#     catalog before, run 13 on ac128da8, so the address is right and the
+#     runner can reach it in principle). The screen greys out "Continue"
+#     (enabled=false) so the script's Continue -> Done path can never
+#     proceed — and tap_text matched the greyed button by text alone,
+#     tapped its coordinates, and reported success for a no-op. Fix:
+#     (1) tap_text now refuses to tap a disabled node (own or any
+#     ancestor enabled=false) and reports it as "present but DISABLED";
+#     (2) wait_for_welcome_settle() waits for the probe to settle, then
+#     branches — "Continue offline — saved titles only" when the catalog
+#     is unreachable (onConnected(false) skips Region/"Done" and opens
+#     Home directly), else the normal Continue -> Done path.
 DUMP_TIMEOUT=60
 # Set by screenshot(): name + md5 of the previous frame, for the
 # byte-identical frozen-screen check.
@@ -179,8 +208,26 @@ try:
     root = ET.parse('/tmp/ui.xml').getroot()
 except Exception:
     sys.exit(0)
+parent = {c: p for p in root.iter() for c in p}
+disabled_seen = False
 for n in root.iter('node'):
     if (n.get('text') or '') == want or (n.get('content-desc') or '') == want:
+        # V22 (run 44998141138): a disabled control must never be
+        # "tapped" — a real user's tap on it does nothing, and tap_text
+        # would report success for a no-op ('Continue' was greyed on the
+        # Welcome screen because the catalog was unreachable, yet
+        # tap_text tapped its coordinates and returned 0). Skip a node
+        # whose own enabled flag or any ancestor's is "false"; a missing
+        # flag counts as enabled. A Text inside an enabled Button still
+        # matches (the Text and its Button ancestor are both enabled).
+        m, p = n, parent.get(n)
+        disabled = (m.get('enabled') == 'false')
+        while p is not None and p.tag == 'node' and not disabled:
+            disabled = (p.get('enabled') == 'false')
+            p = parent.get(p)
+        if disabled:
+            disabled_seen = True
+            continue
         b = n.get('bounds', '')
         nums = b.replace('[', ' ').replace(']', ' ').replace(',', ' ').split()
         if len(nums) == 4:
@@ -188,8 +235,17 @@ for n in root.iter('node'):
             y = (int(nums[1]) + int(nums[3])) // 2
             print(f"{x} {y}")
             break
+else:
+    if disabled_seen:
+        print("DISABLED")
 PY
 )
+    if [ "$XY" = "DISABLED" ]; then
+      echo "tap_text '$want' try $((tries + 1))/10: not found (present but DISABLED — e.g. Continue greyed while catalog unreachable)" >&2
+      tries=$((tries + 1))
+      sleep 3
+      continue
+    fi
     if [ -n "$XY" ]; then
       adb shell input tap $XY
       return 0
@@ -200,34 +256,20 @@ PY
     # ANR'd ("RADD Stream isn't responding" / "System UI isn't
     # responding") and the dialog covered the screen for all 6
     # 'Continue' tries — tap_text never saw 'Continue' because the
-    # dialog was on top. Dismiss it inline (non-recursive: parse the
-    # already-pulled dump for the "Wait" button) and retry, instead of
-    # burning all 10 tries against a covered screen.
+    # dialog was on top.
+    # V22 (run 44998141138): the old inline handling tapped Wait once
+    # and slept 15s, never verifying the dialog was gone — the Wait tap
+    # only works once system_server recovers, which took 6 tries
+    # (~4 min) for 'I understand', burning the tap budget. Hand off to
+    # wait_for_anr_clear(), which taps Wait, re-dumps, and verifies the
+    # dialog is actually gone, retrying until it clears (300s budget).
+    # If it never clears, fail honestly instead of burning all 10 tries.
     if [ -f /tmp/ui.xml ] && grep -qi "isn't responding\|not responding" /tmp/ui.xml; then
-      WXY=$(python3 - <<'PY'
-import sys, xml.etree.ElementTree as ET
-try:
-    root = ET.parse('/tmp/ui.xml').getroot()
-except Exception:
-    sys.exit(0)
-for n in root.iter('node'):
-    if (n.get('text') or '') == 'Wait':
-        b = n.get('bounds', '')
-        nums = b.replace('[', ' ').replace(']', ' ').replace(',', ' ').split()
-        if len(nums) == 4:
-            x = (int(nums[0]) + int(nums[2])) // 2
-            y = (int(nums[1]) + int(nums[3])) // 2
-            print(f"{x} {y}")
-            break
-PY
-)
-      if [ -n "$WXY" ]; then
-        echo "tap_text '$want': ANR dialog present — tapping Wait ($WXY)" >&2
-        adb shell input tap $WXY
-        # Run 44053140525: the Wait tap doesn't clear the dialog — only
-        # system_server recovering does. Give it 15s before re-dumping
-        # instead of 5s, or the retries burn out while it is still busy.
-        sleep 15
+      if wait_for_anr_clear 300; then
+        echo "tap_text '$want': ANR cleared — re-dumping for '$want'" >&2
+      else
+        echo "FAIL: tap_text '$want': ANR dialog never cleared within 300s" >&2
+        return 1
       fi
     fi
     # dump_ui() succeeded here, so /tmp/ui.xml exists and parses — the
@@ -279,24 +321,70 @@ anr_present() {
   grep -qi "isn't responding\|not responding" /tmp/ui.xml
 }
 
-# Tap "Wait" on an ANR dialog, up to 3 attempts. Returns 0 if no ANR
-# remains (or none was present), 1 if the dialog is still there.
-dismiss_anr() {
-  local tries=0
-  while [ "$tries" -lt 3 ]; do
-    if ! anr_present; then
-      return 0
-    fi
-    echo "ANR dialog detected (attempt $((tries + 1))/3) — tapping Wait" >&2
-    tap_text "Wait" || true
-    sleep 5
+# Wait until no "isn't responding" dialog is on screen, tapping "Wait"
+# (at the hierarchy-derived centre, never fixed coords) and VERIFYING
+# the dialog is actually gone by re-dumping after each tap. Bounded to
+# $1 seconds (default 300). Returns 0 when the dialog is gone, 1 on
+# timeout — and saves a screenshot + the last dump into $OUT so a stuck
+# ANR is diagnosable. V22 (run 44998141138): the old "tap Wait once and
+# sleep" never verified anything — the Wait tap only works once
+# system_server recovers, which took ~4 min for 'I understand'. This
+# loop is the patience the dialog needs, with proof at the end.
+wait_for_anr_clear() {
+  local budget="${1:-300}" start now tries=0
+  start=$(date +%s)
+  while true; do
     tries=$((tries + 1))
+    if ! dump_ui 2>/tmp/anr-dump.err; then
+      echo "wait_for_anr_clear try $tries: dump failed ($(cat /tmp/anr-dump.err | head -c 150 | tr '\n' ' ')) — retrying" >&2
+    elif ! grep -qi "isn't responding\|not responding" /tmp/ui.xml; then
+      echo "ANR dialog cleared after $tries check(s)"
+      return 0
+    else
+      local wxy
+      wxy=$(python3 - <<'PY'
+import sys, xml.etree.ElementTree as ET
+try:
+    root = ET.parse('/tmp/ui.xml').getroot()
+except Exception:
+    sys.exit(0)
+for n in root.iter('node'):
+    if (n.get('text') or '') == 'Wait':
+        b = n.get('bounds', '')
+        nums = b.replace('[', ' ').replace(']', ' ').replace(',', ' ').split()
+        if len(nums) == 4:
+            x = (int(nums[0]) + int(nums[2])) // 2
+            y = (int(nums[1]) + int(nums[3])) // 2
+            print(f"{x} {y}")
+            break
+PY
+)
+      if [ -n "$wxy" ]; then
+        echo "wait_for_anr_clear try $tries: ANR present — tapping Wait ($wxy)" >&2
+        adb shell input tap $wxy
+      else
+        echo "wait_for_anr_clear try $tries: ANR present but no 'Wait' node in dump — waiting" >&2
+      fi
+    fi
+    now=$(date +%s)
+    if [ $((now - start)) -ge "$budget" ]; then
+      echo "FAIL: ANR dialog still present after ${budget}s ($tries checks)" >&2
+      adb exec-out screencap -p > "$OUT/anr-timeout.png" 2>/dev/null || true
+      cp /tmp/ui.xml "$OUT/anr-timeout-ui.xml" 2>/dev/null || true
+      return 1
+    fi
+    sleep 15
   done
-  if anr_present; then
-    echo "FAIL: ANR dialog still present after 3 dismiss attempts" >&2
-    return 1
+}
+
+# Dismiss an ANR dialog if one is present. Returns 0 if no ANR remains
+# (or none was present), 1 if the dialog is still there. Delegates to
+# wait_for_anr_clear(), which verifies the dialog is actually gone.
+dismiss_anr() {
+  if ! anr_present; then
+    return 0
   fi
-  return 0
+  wait_for_anr_clear 180
 }
 
 # True if the current UI dump contains the given (case-insensitive)
@@ -305,6 +393,77 @@ dismiss_anr() {
 ui_has_text() {
   dump_ui 2>/dev/null || return 1
   grep -qi "$1" /tmp/ui.xml
+}
+
+# True (0) if /tmp/ui.xml — already pulled by the caller, never dumped
+# here — contains a node with the given exact text that is enabled (the
+# node itself and every ancestor have enabled != "false"; a missing
+# flag counts as enabled). A disabled Button's Text child counts as
+# disabled, so a greyed "Continue" reads as not-enabled.
+continue_enabled() {
+  local want="$1"
+  python3 - "$want" <<'PY'
+import sys, xml.etree.ElementTree as ET
+want = sys.argv[1]
+try:
+    root = ET.parse('/tmp/ui.xml').getroot()
+except Exception:
+    sys.exit(1)
+parent = {c: p for p in root.iter() for c in p}
+for n in root.iter('node'):
+    if (n.get('text') or '') == want or (n.get('content-desc') or '') == want:
+        m, p = n, parent.get(n)
+        disabled = (m.get('enabled') == 'false')
+        while p is not None and p.tag == 'node' and not disabled:
+            disabled = (p.get('enabled') == 'false')
+            p = parent.get(p)
+        if not disabled:
+            sys.exit(0)
+sys.exit(1)
+PY
+}
+
+# Wait for the Welcome screen's catalog probe to settle, then print the
+# branch the flow must take: "offline" if the probe failed
+# (catalog-unreachable error text on screen) or "online" if it
+# succeeded ("Continue" node enabled). Diagnostics go to stderr; only
+# the one word goes to stdout. Bounded to $1 seconds (default 300).
+# On timeout, falls back to "offline" if the "Continue offline" button
+# is on screen (the probe likely failed and the error text was missed),
+# else fails. V22 (run 44998141138): the old flow tapped "Continue"
+# blindly — on a greyed button that tap is a no-op, and "Done" (which
+# only exists past Continue) never appeared.
+wait_for_welcome_settle() {
+  local budget="${1:-300}" start now
+  start=$(date +%s)
+  while true; do
+    if dump_ui 2>/tmp/welcome-dump.err; then
+      if grep -qi "couldn't find the catalog" /tmp/ui.xml; then
+        echo "Welcome: catalog-unreachable error on screen" >&2
+        echo "offline"
+        return 0
+      fi
+      if continue_enabled "Continue"; then
+        echo "Welcome: Continue is enabled (catalog reachable)" >&2
+        echo "online"
+        return 0
+      fi
+      echo "Welcome: probe still running (no error, Continue not enabled yet)" >&2
+    else
+      echo "Welcome: dump failed ($(cat /tmp/welcome-dump.err | head -c 150 | tr '\n' ' ')) — retrying" >&2
+    fi
+    now=$(date +%s)
+    if [ $((now - start)) -ge "$budget" ]; then
+      if [ -f /tmp/ui.xml ] && grep -qi "Continue offline" /tmp/ui.xml; then
+        echo "Welcome: settle timed out after ${budget}s — 'Continue offline' present, taking offline branch" >&2
+        echo "offline"
+        return 0
+      fi
+      echo "FAIL: Welcome screen never settled within ${budget}s" >&2
+      return 1
+    fi
+    sleep 5
+  done
 }
 
 # Poll until the app is in the foreground ($1 = timeout seconds).
@@ -535,9 +694,27 @@ screenshot "01-disclaimer.png"
 tap_text "I understand" || { echo "FAIL: disclaimer 'I understand' never appeared" >&2; exit 1; }
 sleep 4
 screenshot "02-welcome.png"
-tap_text "Continue" || { echo "FAIL: setup 'Continue' never appeared" >&2; exit 1; }
-sleep 8
-tap_text "Done" || { echo "FAIL: setup 'Done' never appeared" >&2; exit 1; }
+# V22 (run 44998141138): the Welcome screen dead-ends when the catalog is
+# unreachable — "Continue" is greyed (enabled=false) and "Done" never
+# appears, because the Continue -> Done path assumes a reachable catalog.
+# The screen itself offers the way out: "Continue offline — saved titles
+# only" (shown exactly when !isConnected; SetupScreen.kt). Wait for the
+# probe to settle, then branch: offline goes straight to Home
+# (onConnected(false) skips the Region/"Done" screen), online takes the
+# normal Continue -> Done path.
+WELCOME_MODE=$(wait_for_welcome_settle 300) || { echo "FAIL: Welcome screen never settled" >&2; exit 1; }
+if [ "$WELCOME_MODE" = "offline" ]; then
+  echo "Welcome branch: catalog unreachable — tapping 'Continue offline'" >&2
+  tap_text "Continue offline — saved titles only" || { echo "FAIL: 'Continue offline' never appeared" >&2; exit 1; }
+  # Offline path skips Region/"Done" — Home opens directly.
+elif [ "$WELCOME_MODE" = "online" ]; then
+  echo "Welcome branch: catalog reachable — tapping 'Continue' then 'Done'" >&2
+  tap_text "Continue" || { echo "FAIL: setup 'Continue' never appeared" >&2; exit 1; }
+  sleep 8
+  tap_text "Done" || { echo "FAIL: setup 'Done' never appeared" >&2; exit 1; }
+else
+  echo "FAIL: unknown Welcome branch '$WELCOME_MODE'" >&2; exit 1
+fi
 sleep 3
 screenshot "03-home.png"
 tap_text "Settings" || { echo "FAIL: 'Settings' never appeared" >&2; exit 1; }
