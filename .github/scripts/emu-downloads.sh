@@ -206,13 +206,12 @@ UI_AFTER="/data/local/tmp/ui-after-tap.xml"
 # happened or a reboot already failed). (2) dump_ui() falls back to
 # `adb exec-out cat` when the pull fails — the dump file WAS on the
 # device in 4 of 5 failures, only the file-sync pull failed.
-# Known limitation (still): wait_for_anr_clear's dump-failure branch has
-# the same shape — after its one System UI restart, persistent dump
-# failures have no reboot escalation (a nested reboot would also need
-# the caller's budget reset, which is not wired); if a run dies there,
-# apply the same pattern with a reboot return code. Also unchanged: an
-# ANR striking mid-flow inside tap_text's or wait_for_welcome_settle's
-# dump loops has no escalation yet.
+# Known limitation (fixed in v29, see below): wait_for_anr_clear's
+# dump-failure branch had the same shape — after its one System UI
+# restart, persistent dump failures had no reboot escalation (a nested
+# reboot would also need the caller's budget reset, which is not
+# wired). Also unchanged: an ANR striking mid-flow inside tap_text's
+# or wait_for_welcome_settle's dump loops has no escalation yet.
 # V27 FIX (2026-11-22, run 45017212984): v26's reboot escalation FIRED
 # (dumps still failing x3 after a successful System UI restart ->
 # reboot, emulator back in ~160s) but the app NEVER reopened — the run
@@ -251,10 +250,44 @@ UI_AFTER="/data/local/tmp/ui-after-tap.xml"
 # removes the stale on-device dump before each run, so a killed dump
 # cannot leave a partial file for the next "successful" dump to recover
 # as unparseable XML, and the parse-failure log now carries the byte
-# count. Known limitation (still): wait_for_anr_clear's dump-failure
-# branch has no reboot escalation; an ANR striking mid-flow inside
-# tap_text's or wait_for_welcome_settle's dump loops has no escalation
-# yet.
+# count. V29 FIX (2026-11-22, run 45025564956): v28's post-reboot
+# branch never ran — the app ANR'd on FIRST launch (13:22:59), no
+# reboot happened. The Wait tap DID clear the dialog (try 1, 13:23:54,
+# tapped Wait at (540 1395)), but wait_for_anr_clear then got ZERO
+# usable dumps in tries 2–5 (2x uiautomator exit 137, 2x pull-failed)
+# and declared "ANR dialog still present after 180s" — an UNPROVEN
+# verdict: the timeout screenshot shows the Disclaimer FULLY rendered
+# with NO dialog (I understand + Decline visible). The checker was
+# blind, not the tap failing. Two compounding bugs: (1)
+# wait_for_anr_clear treated a dump failure as "ANR still present" —
+# it never re-checked the ANR state any other way; (2) dump_ui's
+# exec-out cat fallback accepted the device shell's error text as a
+# "recovered" dump — the saved anr-timeout-ui.xml is literally "cat:
+# /data/local/tmp/ui.xml: No such file or directory" (55 bytes), NOT a
+# truncated XML header as the v28 comment theorised: uiautomator can
+# exit 0 without the file existing, `adb exec-out cat` delivers the
+# remote error on stdout and exits 0, so the error text was saved as
+# /tmp/ui.xml. Fix, three parts: (a) dump_ui() validates the cat
+# recovery is actually XML (starts with <?xml or <hierarchy) before
+# accepting it, and reports "file missing on device" when it is the
+# cat error; a REAL recovered dump still counts as a success. (b)
+# wait_for_anr_clear()'s dump-failure branch re-checks via
+# detect_anr_light (dumpsys window, no uiautomator): no ANR + app
+# focused = dialog cleared, return 0; ANR confirmed = escalate once
+# per kind (restart_app for an app ANR — the dialog dies with the
+# process; restart_systemui for a System UI ANR) — escalation ONLY
+# when the ANR is actually confirmed present, never on dump failures
+# alone. (c) The timeout verdict is proven, not assumed: a fresh dump
+# or dumpsys must confirm the dialog is present before claiming it;
+# either proving it GONE returns 0; neither able to confirm reports
+# UNVERIFIED instead of "still present". Also: restart_app() now
+# verifies the old pid is actually dead before relaunching —
+# launch_app_retry returns 0 as soon as the app is focused, and
+# focused_pkg() deliberately reports the app during an ANR (mFocusedApp
+# fallback), so a failed kill used to report "restarted" without the
+# process ever dying. Known limitation (still): an ANR striking
+# mid-flow inside tap_text's or wait_for_welcome_settle's dump loops
+# has no escalation yet.
 DUMP_TIMEOUT=60
 # Set by screenshot(): name + md5 of the previous frame, for the
 # byte-identical frozen-screen check.
@@ -302,6 +335,21 @@ dump_ui() {
       echo "dump_ui: dump wrote $UI_DUMP but pull AND cat both failed" >&2
       return 1
     fi
+    # V29 (run 45025564956): `adb exec-out cat` delivers the DEVICE
+    # shell's error text on the same stream when the file does not
+    # exist ("cat: /data/local/tmp/ui.xml: No such file or
+    # directory", 55 bytes) — and exits 0, so the checks above pass
+    # and the error text is saved as /tmp/ui.xml. uiautomator can
+    # exit 0 without the file existing, so a "successful" dump + a
+    # failed pull does NOT prove the file is on the device. Accept
+    # the recovery only if it is actually XML (a real dump starts
+    # with <?xml or <hierarchy); otherwise the file is missing on
+    # the device, not a pull failure. A REAL recovered dump still
+    # counts as a success (its ANR presence is checked by the caller).
+    if ! head -c 20 /tmp/ui.xml | grep -qE '^<\?xml|^<hierarchy'; then
+      echo "dump_ui: exec-out cat returned non-XML ($(wc -c < /tmp/ui.xml) bytes; head: $(head -c 120 /tmp/ui.xml | tr '\n' ' ')) — file missing on device, not a pull failure" >&2
+      return 1
+    fi
     echo "dump_ui: dump recovered via exec-out cat" >&2
   fi
   if [ ! -s /tmp/ui.xml ]; then
@@ -309,10 +357,16 @@ dump_ui() {
     return 1
   fi
   if ! python3 -c "import xml.etree.ElementTree as ET; ET.parse('/tmp/ui.xml')" 2>/dev/null; then
-    # V28 (run 45021960077): the recovered file was 55 bytes — exactly
-    # the XML declaration with no hierarchy (uiautomator wrote the
-    # header then was SIGKILLed mid-write). Log the first bytes so the
-    # next diagnosis can see WHAT the stub is, not just its size.
+    # V28 (run 45021960077) logged the first bytes of an unparseable
+    # file here. CORRECTION in v29 (run 45025564956): the v28 comment
+    # theorised the 55-byte file was "exactly the XML declaration with
+    # no hierarchy (uiautomator wrote the header then was SIGKILLed
+    # mid-write)" — the artifact proves it was cat's "No such file"
+    # error text, caught earlier now by the cat-validation above. This
+    # branch now only fires for genuinely malformed XML (e.g. a dump
+    # killed mid-write leaving a partial hierarchy). Log the first
+    # bytes so the next diagnosis can see WHAT the stub is, not just
+    # its size.
     echo "dump_ui: pulled ui.xml does not parse as XML ($(wc -c < /tmp/ui.xml) bytes); head: $(head -c 120 /tmp/ui.xml | tr '\n' ' ' | head -c 120)" >&2
     return 1
   fi
@@ -792,6 +846,24 @@ restart_app() {
     adb shell am force-stop "$APP_PKG" 2>/dev/null || true
   fi
   sleep 2
+  # V29 (run 45025564956): verify the old process is actually dead
+  # before relaunching. launch_app_retry returns 0 as soon as the app
+  # is focused, and focused_pkg() deliberately reports the app during
+  # an ANR (it falls back to mFocusedApp when mCurrentFocus is the ANR
+  # window) — so a failed kill (no root; wedged system_server
+  # swallowing the force-stop, which is a Binder call) used to report
+  # "restarted" without the process ever dying, and the caller then
+  # believed the ANR was gone. If the original pid is still alive,
+  # the restart did not happen: fail honestly instead of launching
+  # over a live ANR'd process. (No pid was recorded when the app was
+  # not running at entry — then there is nothing to verify, and the
+  # launch below proceeds.)
+  local pid_now=""
+  pid_now=$(adb shell pidof "$APP_PKG" 2>/dev/null | tr -d '\r' | awk '{print $1}' || true)
+  if [ -n "$app_pid" ] && [ "$pid_now" = "$app_pid" ]; then
+    echo "restart_app: app pid $app_pid still alive after kill/force-stop — restart failed" >&2
+    return 1
+  fi
   # V27: same retrying launch as the post-reboot path — a single blind
   # `am start` is swallowed when system_server is wedged.
   if launch_app_retry 60; then
@@ -963,24 +1035,63 @@ reboot_emulator_and_relaunch() {
 # loop then re-dumps to verify. An APP ANR keeps the Wait-tap path
 # (proven to work: cleared after 4 checks in run 45002249121).
 wait_for_anr_clear() {
-  local budget="${1:-300}" start now tries=0 wait_taps=0 sysui_restarted=0 dump_failures=0 anr_kind="app"
+  local budget="${1:-300}" start now tries=0 wait_taps=0 sysui_restarted=0 app_restarted=0 dump_failures=0 dumps_since_tap=0 anr_kind="app"
   start=$(date +%s)
   while true; do
     tries=$((tries + 1))
     if ! dump_ui 2>/tmp/anr-dump.err; then
       dump_failures=$((dump_failures + 1))
-      echo "wait_for_anr_clear try $tries: dump failed ($(cat /tmp/anr-dump.err | head -c 150 | tr '\n' ' ')) — retrying (consecutive dump failures: $dump_failures)" >&2
-      # V24: an ANR was already confirmed on the last successful dump,
-      # and dumps failing now is the same wedge run 45005940365 died on.
-      # If the last-known kind was a System UI ANR, restart System UI
-      # once instead of waiting out the budget on dumps that cannot
-      # succeed. An app ANR keeps retrying (its Wait-tap path needs a
-      # dump). Once per call, like the v23 rule.
-      if [ "$dump_failures" -ge 2 ] && [ "$anr_kind" = "systemui" ] && [ "$sysui_restarted" -eq 0 ]; then
-        echo "wait_for_anr_clear: dumps failing (x$dump_failures) with a System UI ANR outstanding — restarting System UI" >&2
-        sysui_restarted=1
-        dump_failures=0
-        restart_systemui || echo "wait_for_anr_clear: System UI restart failed — continuing to retry dumps" >&2
+      echo "wait_for_anr_clear try $tries: dump failed ($(cat /tmp/anr-dump.err | head -c 150 | tr '\n' ' ')) — re-checking via dumpsys (consecutive dump failures: $dump_failures, successful dumps since last Wait tap: $dumps_since_tap)" >&2
+      # V29 (run 45025564956): a dump failure is "could not check",
+      # NOT "ANR still present". In that run the Wait tap HAD cleared
+      # the dialog (the timeout screenshot showed the Disclaimer with
+      # no dialog), but all 4 re-check dumps failed (2x exit 137, 2x
+      # pull-failed with the cat error as the "recovered" file) and the
+      # script declared "ANR dialog still present after 180s" with ZERO
+      # successful dumps — an unproven verdict. dumpsys window answers
+      # the ANR question without uiautomator (detect_anr_light), and
+      # the app being focused corroborates it: a wedged system_server
+      # makes dumpsys fail, which also reads as "no ANR", so focus is
+      # the guard against that false clear. If dumpsys confirms an ANR
+      # is still up, escalate once per kind instead of burning the
+      # budget on dumps that cannot succeed — restart_app for an app
+      # ANR (the dialog dies with the process), restart_systemui for a
+      # System UI ANR (the v23 remedy). Escalation ONLY when the ANR is
+      # actually confirmed present, never on dump failures alone.
+      local light_kind=""
+      light_kind=$(detect_anr_light) || light_kind=""
+      if [ -z "$light_kind" ]; then
+        if is_app_focused; then
+          echo "wait_for_anr_clear: dumpsys reports no ANR and the app is focused — dialog cleared (dumps were failing, not the dialog)" >&2
+          return 0
+        fi
+        echo "wait_for_anr_clear: dumpsys reports no ANR but the app is not focused — cannot confirm clearance, retrying dumps" >&2
+      else
+        anr_kind="$light_kind"
+        echo "wait_for_anr_clear: dumpsys confirms $anr_kind ANR still present despite dump failures" >&2
+        if [ "$anr_kind" = "systemui" ]; then
+          if [ "$sysui_restarted" -eq 0 ]; then
+            sysui_restarted=1
+            dump_failures=0
+            echo "wait_for_anr_clear: dumps failing with a System UI ANR confirmed via dumpsys — restarting System UI" >&2
+            restart_systemui || echo "wait_for_anr_clear: System UI restart failed — continuing to retry dumps" >&2
+          else
+            echo "wait_for_anr_clear: System UI ANR confirmed via dumpsys — System UI already restarted once, retrying dumps" >&2
+          fi
+        elif [ "$anr_kind" = "app" ]; then
+          if [ "$app_restarted" -eq 0 ]; then
+            app_restarted=1
+            dump_failures=0
+            echo "wait_for_anr_clear: dumps failing with an app ANR confirmed via dumpsys — restarting the app" >&2
+            if restart_app; then
+              echo "wait_for_anr_clear: app restarted — ANR dialog gone with the old process" >&2
+              return 0
+            fi
+            echo "wait_for_anr_clear: app restart failed — continuing to retry dumps" >&2
+          else
+            echo "wait_for_anr_clear: app ANR confirmed via dumpsys — app already restarted once, retrying dumps" >&2
+          fi
+        fi
       fi
     elif ! grep -qi "isn't responding\|not responding" /tmp/ui.xml; then
       echo "ANR dialog cleared after $tries check(s)"
@@ -1013,8 +1124,10 @@ PY
         echo "wait_for_anr_clear try $tries: $anr_kind ANR present — tapping Wait ($wxy)" >&2
         adb shell input tap $wxy
         wait_taps=$((wait_taps + 1))
+        dumps_since_tap=0
       else
         echo "wait_for_anr_clear try $tries: $anr_kind ANR present but no 'Wait' node in dump — waiting" >&2
+        dumps_since_tap=$((dumps_since_tap + 1))
       fi
       # V23 escalation (see header): a System UI ANR that survives 3
       # Wait taps is undismissable by input — restart System UI once,
@@ -1027,19 +1140,45 @@ PY
     fi
     now=$(date +%s)
     if [ $((now - start)) -ge "$budget" ]; then
-      echo "FAIL: ANR dialog still present after ${budget}s ($tries checks)" >&2
-      # V23: re-dump FRESH at timeout so the saved dump matches the
-      # screenshot moment. Run 45002249121's anr-timeout.png showed no
-      # dialog while the saved ui.xml (copied from /tmp/ui.xml, up to
-      # ~45s stale: dump time + tap + sleep 15) still had one.
+      # V29: the timeout verdict must be PROVEN, not assumed. Run
+      # 45025564956 failed with "ANR dialog still present after 180s"
+      # when ZERO dumps had succeeded after the Wait tap — the timeout
+      # screenshot showed the Disclaimer with no dialog at all. Confirm
+      # via a fresh dump first, then via dumpsys; if either proves the
+      # dialog is GONE, return 0 — the caller can proceed. If neither
+      # can confirm the dialog is present, report UNVERIFIED instead of
+      # claiming it is present.
+      local timeout_how=""
       if dump_ui 2>/tmp/anr-timeout-dump.err; then
         if grep -qi "isn't responding\|not responding" /tmp/ui.xml; then
           echo "timeout evidence: fresh dump taken — ANR still present" >&2
+          timeout_how="fresh dump"
         else
           echo "timeout evidence: fresh dump taken — ANR GONE in fresh dump (dialog cleared between last check and timeout)" >&2
+          adb exec-out screencap -p > "$OUT/anr-timeout.png" 2>/dev/null || true
+          cp /tmp/ui.xml "$OUT/anr-timeout-ui.xml" 2>/dev/null || true
+          return 0
         fi
       else
-        echo "timeout evidence: fresh re-dump failed ($(cat /tmp/anr-timeout-dump.err | head -c 150 | tr '\n' ' ')) — saving last dump instead" >&2
+        echo "timeout evidence: fresh re-dump failed ($(cat /tmp/anr-timeout-dump.err | head -c 150 | tr '\n' ' ')) — confirming via dumpsys instead" >&2
+        local timeout_kind=""
+        timeout_kind=$(detect_anr_light) || timeout_kind=""
+        if [ -n "$timeout_kind" ]; then
+          echo "timeout evidence: dumpsys confirms $timeout_kind ANR still present" >&2
+          timeout_how="dumpsys ($timeout_kind ANR)"
+        elif is_app_focused; then
+          echo "timeout evidence: dumpsys reports no ANR and the app is focused — dialog cleared (dumps were failing, not the dialog)" >&2
+          adb exec-out screencap -p > "$OUT/anr-timeout.png" 2>/dev/null || true
+          cp /tmp/ui.xml "$OUT/anr-timeout-ui.xml" 2>/dev/null || true
+          return 0
+        else
+          echo "timeout evidence: dumpsys reports no ANR but the app is not focused — clearance unconfirmed" >&2
+        fi
+      fi
+      if [ -n "$timeout_how" ]; then
+        echo "FAIL: ANR dialog still present after ${budget}s ($tries checks, $wait_taps Wait tap(s), $dumps_since_tap successful dump(s) since the last tap) — confirmed via $timeout_how" >&2
+      else
+        echo "FAIL: ANR dialog state UNVERIFIED after ${budget}s ($tries checks, $wait_taps Wait tap(s), $dumps_since_tap successful dump(s) since the last tap) — dumps failing and dumpsys inconclusive; not claiming the dialog is present" >&2
       fi
       adb exec-out screencap -p > "$OUT/anr-timeout.png" 2>/dev/null || true
       cp /tmp/ui.xml "$OUT/anr-timeout-ui.xml" 2>/dev/null || true
