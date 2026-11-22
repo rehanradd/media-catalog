@@ -92,6 +92,13 @@ jobs:
 
       - name: Boot emulator, dump hierarchy, tap Downloads
         uses: reactivecircus/android-emulator-runner@v2
+        # TCG fix (run 44987940202 failed): the GitHub Linux runner has no
+        # KVM, so the action disables HW acceleration (-accel off) — but the
+        # emulator refuses software CPU emulation unless this is set.
+        # Forcing TCG software emulation lets the emulator boot (slowly);
+        # the screenshots workflow booted in 593s in software mode before.
+        env:
+          ANDROID_I_WANT_MY_TCG: 'yes'
         with:
           api-level: ${{ inputs.api_level }}
           target: google_apis
