@@ -309,7 +309,11 @@ dump_ui() {
     return 1
   fi
   if ! python3 -c "import xml.etree.ElementTree as ET; ET.parse('/tmp/ui.xml')" 2>/dev/null; then
-    echo "dump_ui: pulled ui.xml does not parse as XML ($(wc -c < /tmp/ui.xml) bytes)" >&2
+    # V28 (run 45021960077): the recovered file was 55 bytes — exactly
+    # the XML declaration with no hierarchy (uiautomator wrote the
+    # header then was SIGKILLed mid-write). Log the first bytes so the
+    # next diagnosis can see WHAT the stub is, not just its size.
+    echo "dump_ui: pulled ui.xml does not parse as XML ($(wc -c < /tmp/ui.xml) bytes); head: $(head -c 120 /tmp/ui.xml | tr '\n' ' ' | head -c 120)" >&2
     return 1
   fi
   return 0
@@ -467,6 +471,49 @@ PY
           echo "wait_for_ui_ready: emulator reboot failed — resetting the ${budget}s budget and continuing dump retries" >&2
           dump_failures=0
           start=$(date +%s)
+        fi
+      elif [ "$dump_failures" -ge 2 ] && [ "$rebooted" -eq 1 ]; then
+        # V28 (run 45021960077): after a reboot BOTH escalation branches
+        # above are closed — sysui_restarted==1 blocks the first
+        # (detect_anr_light never runs again) and rebooted==1 blocks
+        # the second — so a NEW app ANR after the relaunch is never
+        # detected and the app is never restarted. In v27 the v27
+        # relaunch DID work (app in foreground 12:43:21, budget reset)
+        # but the app ANR'd at 12:44:38 (Input dispatching timed out,
+        # MainActivity, FocusEvent hasFocus=false), the system returned
+        # to the launcher (timeout screenshot + ui.xml are 100%
+        # launcher, 0 app nodes), and the loop burned its budget on
+        # exit-137 / 55-byte-corrupt dumps with no escalation at all.
+        # The app restart is cheap and safe and needs no reboot, so
+        # keep it available after a reboot: detect the ANR and restart
+        # the app once if it is an app ANR. A System UI ANR here is
+        # only logged — System UI was already restarted once AND the
+        # emulator was rebooted, so there is nothing left to escalate
+        # to. dump_failures is reset after handling so detect_anr_light
+        # runs at most once per 2 failures (a throttle, matching the
+        # pre-reboot behaviour) instead of on every iteration.
+        local anr_kind3=""
+        anr_kind3=$(detect_anr_light) || anr_kind3=""
+        if [ "$anr_kind3" = "app" ]; then
+          if [ "$app_restarted" -eq 0 ]; then
+            echo "wait_for_ui_ready: dumps failing x$dump_failures after emulator reboot and app ANR detected via dumpsys — restarting the app" >&2
+            app_restarted=1
+            if restart_app; then
+              dump_failures=0
+            else
+              echo "wait_for_ui_ready: app restart failed after reboot — retrying dumps so the normal ANR path can take over" >&2
+              dump_failures=0
+            fi
+          else
+            echo "wait_for_ui_ready: dumps failing x$dump_failures after emulator reboot and app ANR detected via dumpsys — app already restarted once, retrying dumps" >&2
+            dump_failures=0
+          fi
+        elif [ "$anr_kind3" = "systemui" ]; then
+          echo "wait_for_ui_ready: dumps failing x$dump_failures after emulator reboot and System UI ANR detected via dumpsys — System UI already restarted and emulator already rebooted, nothing left to escalate; retrying dumps" >&2
+          dump_failures=0
+        else
+          echo "wait_for_ui_ready: dumps failing x$dump_failures after emulator reboot, no ANR visible via dumpsys — retrying dumps" >&2
+          dump_failures=0
         fi
       fi
     fi
