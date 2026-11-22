@@ -154,12 +154,11 @@ class PickThreeVisitTest {
 
         // Scrolling the card out of the feed disposes it: the visit ends,
         // the latch clears, and the persisted shown flag keeps it away.
+        // The card is gone from the UI right here — no need to scroll back
+        // to where it was (scrolling back re-composes a stale node and
+        // trips assertDoesNotExist even though the gate is false).
         scrollToTop()
         assertFalse(state.showPickThree)
-
-        // Coming back to where the card was: still gone — the item left
-        // the list when the visit ended, so no scroll brings it back.
-        scrollToPickThree()
         compose.onNodeWithText("Pick 3 you like").assertDoesNotExist()
     }
 }
