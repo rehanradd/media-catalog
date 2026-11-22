@@ -135,6 +135,31 @@ UI_AFTER="/data/local/tmp/ui-after-tap.xml"
 # is re-dumped FRESH so the saved dump matches the screenshot moment —
 # run 6's anr-timeout.png showed no dialog while the saved ui.xml (up to
 # ~45s stale: dump time + tap + sleep 15) still had one.
+# V24 FIX (2026-11-22, run 45005940365): v23 never got to act — the run
+# died in wait_for_ui_ready, all 7 dump tries failing in 180s
+# (uiautomator dump killed, exit 137, x4; dump wrote the file but pull
+# failed x3). The timeout screenshot proves a System UI ANR was already
+# up over the Disclaimer (which HAD rendered, "I understand" visible):
+# the ANR struck during UI-ready, and the dump failures were its
+# symptom. The v23 handling only lives in wait_for_anr_clear, called
+# from the disclaimer-tap phase — and wait_for_ui_ready only dismissed
+# an ANR when a dump SUCCEEDED, so with dumps failing it burned the
+# whole budget without ever escalating. Fix: the dump-failure path is
+# now ANR-aware. After 2 consecutive dump failures, detect_anr_light()
+# asks `dumpsys window` (which does not need uiautomator) whether an
+# ANR is up: a System UI ANR restarts System UI once; an app ANR is
+# logged and the loop keeps retrying dumps (a Wait tap needs dump
+# coordinates, so the normal path takes over as soon as a dump
+# succeeds); after 4 consecutive failures with no ANR visible via
+# dumpsys, System UI is restarted once as a last resort (dumpsys may
+# itself be wedged). wait_for_anr_clear gets the same treatment for its
+# dump-failure branch (last-known System UI kind → restart once).
+# Timeout evidence in wait_for_ui_ready is now a fresh re-dump plus the
+# dumpsys window state, so a run dying here still proves the ANR.
+# Known limitation (not fixed here): an ANR striking mid-flow — e.g.
+# inside tap_text's or wait_for_welcome_settle's dump loops — with dumps
+# failing has no escalation yet; those loops retry until their own
+# budget. If a future run dies there, apply the same pattern.
 DUMP_TIMEOUT=60
 # Set by screenshot(): name + md5 of the previous frame, for the
 # byte-identical frozen-screen check.
@@ -186,11 +211,12 @@ dump_ui() {
 # (dismiss_anr) so the wait can make progress instead of timing out on
 # a dialog.
 wait_for_ui_ready() {
-  local budget="${1:-180}" start now tries=0
+  local budget="${1:-180}" start now tries=0 dump_failures=0 sysui_restarted=0
   start=$(date +%s)
   while true; do
     tries=$((tries + 1))
     if dump_ui 2>/tmp/wait-dump.err; then
+      dump_failures=0
       local text_nodes
       text_nodes=$(python3 - "$APP_PKG" <<'PY' 2>/dev/null
 import sys, xml.etree.ElementTree as ET
@@ -216,11 +242,61 @@ PY
         echo "wait_for_ui_ready try $tries: dump ok but 0 app text nodes (splash still showing?)" >&2
       fi
     else
-      echo "wait_for_ui_ready try $tries: $(cat /tmp/wait-dump.err | head -c 200 | tr '\n' ' ')" >&2
+      dump_failures=$((dump_failures + 1))
+      echo "wait_for_ui_ready try $tries: $(cat /tmp/wait-dump.err | head -c 200 | tr '\n' ' ') (consecutive dump failures: $dump_failures)" >&2
+      # V24 (run 45005940365): dumps failing is itself the symptom — a
+      # System UI ANR was already up, but this wait only dismissed an
+      # ANR when a dump SUCCEEDED, so it burned the whole budget without
+      # escalating. After 2 consecutive dump failures, ask dumpsys
+      # (detect_anr_light, no uiautomator needed) whether an ANR is up.
+      # System UI ANR → restart System UI once (the v23 remedy, applied
+      # here instead of only in the tap phase). App ANR → log it and keep
+      # retrying dumps: a Wait tap needs dump coordinates, so dismiss_anr
+      # cannot work while dumps fail, and the normal path takes over as
+      # soon as a dump succeeds. No ANR visible via dumpsys after 4
+      # consecutive failures → restart System UI once as a last resort
+      # (dumpsys may itself be wedged; every observed dump wedge was a
+      # System UI ANR). Once per call, like the v23 rule.
+      if [ "$dump_failures" -ge 2 ] && [ "$sysui_restarted" -eq 0 ]; then
+        local anr_kind=""
+        anr_kind=$(detect_anr_light) || anr_kind=""
+        if [ "$anr_kind" = "systemui" ]; then
+          echo "wait_for_ui_ready: dumps failing x$dump_failures and System UI ANR detected via dumpsys — restarting System UI" >&2
+          if restart_systemui; then
+            sysui_restarted=1
+            dump_failures=0
+          else
+            echo "wait_for_ui_ready: System UI restart failed — continuing dump retries" >&2
+          fi
+        elif [ "$anr_kind" = "app" ]; then
+          echo "wait_for_ui_ready: dumps failing x$dump_failures and app ANR detected via dumpsys — cannot tap Wait without dump coordinates, retrying dumps so the normal ANR path can take over" >&2
+        elif [ "$dump_failures" -ge 4 ]; then
+          echo "wait_for_ui_ready: dumps failing x$dump_failures with no ANR visible via dumpsys (dumpsys may itself be wedged) — restarting System UI once as a last resort" >&2
+          if restart_systemui; then
+            sysui_restarted=1
+            dump_failures=0
+          else
+            echo "wait_for_ui_ready: System UI restart failed — continuing dump retries" >&2
+          fi
+        fi
+      fi
     fi
     now=$(date +%s)
     if [ $((now - start)) -ge "$budget" ]; then
       echo "FAIL: UI never became ready within ${budget}s (no dump with text nodes)" >&2
+      # V24: fresh evidence at timeout — a re-dump (v23 pattern) plus the
+      # dumpsys window state, so a run dying here still proves whether
+      # an ANR was up even though dumps were failing.
+      if dump_ui 2>/tmp/wait-timeout-dump.err; then
+        if grep -qi "isn't responding\|not responding" /tmp/ui.xml; then
+          echo "timeout evidence: fresh dump taken — ANR still present" >&2
+        else
+          echo "timeout evidence: fresh dump taken — no ANR in fresh dump" >&2
+        fi
+      else
+        echo "timeout evidence: fresh re-dump failed ($(cat /tmp/wait-timeout-dump.err | head -c 150 | tr '\n' ' '))" >&2
+      fi
+      timeout 20 adb shell dumpsys window > "$OUT/ui-ready-timeout-dumpsys-window.txt" 2>/dev/null || echo "timeout evidence: dumpsys window also failed" >&2
       adb exec-out screencap -p > "$OUT/ui-ready-timeout.png" 2>/dev/null || true
       cp /tmp/wait-dump.err "$OUT/ui-ready-timeout-dump.err" 2>/dev/null || true
       cp /tmp/ui.xml "$OUT/ui-ready-timeout-ui.xml" 2>/dev/null || true
@@ -366,6 +442,37 @@ anr_present() {
   grep -qi "isn't responding\|not responding" /tmp/ui.xml
 }
 
+# Detect an ANR dialog WITHOUT uiautomator. `dumpsys window` reports the
+# ANR window as mCurrentFocus "Application Not Responding: <pkg>" (this
+# script's focused_pkg() already relies on that line: a System UI ANR
+# shows "Application Not Responding: system"). Prints "systemui" or
+# "app" and returns 0 if an ANR is present, 1 otherwise.
+# V24 (run 45005940365): the run died in wait_for_ui_ready because
+# uiautomator dumps kept failing (exit 137 / pull failed) while a
+# System UI ANR was already up — and the only ANR checks went through
+# a dump, so the ANR was invisible to the script. `dumpsys window`
+# talks to WindowManager, not the accessibility/dump path, so it can
+# still answer when uiautomator cannot. Bounded to 20s: if
+# system_server is too wedged even for dumpsys, the call is killed and
+# this returns 1 (no ANR seen) instead of stalling the caller.
+# Kind: "systemui" if any "Not Responding" line names system/systemui,
+# else "app". A System UI ANR is checked first because it is the one
+# that wedges the dump path — if both are up, systemui wins.
+detect_anr_light() {
+  local wins
+  wins=$(timeout 20 adb shell dumpsys window 2>/dev/null | grep -i 'not responding' | head -n 5 || true)
+  if [ -z "$wins" ]; then
+    return 1
+  fi
+  echo "detect_anr_light: dumpsys window reports ANR: $(echo "$wins" | head -c 200 | tr '\n' ' ')" >&2
+  if echo "$wins" | grep -qiE 'systemui|not responding: system([^a-z0-9._]|$)'; then
+    echo "systemui"
+  else
+    echo "app"
+  fi
+  return 0
+}
+
 # Restart System UI (com.android.systemui) and wait for it to come
 # back. Used when a System UI ANR will not clear with Wait taps (see
 # wait_for_anr_clear). am force-stop works from the shell user (it holds
@@ -421,17 +528,31 @@ restart_systemui() {
 # loop then re-dumps to verify. An APP ANR keeps the Wait-tap path
 # (proven to work: cleared after 4 checks in run 45002249121).
 wait_for_anr_clear() {
-  local budget="${1:-300}" start now tries=0 wait_taps=0 sysui_restarted=0
+  local budget="${1:-300}" start now tries=0 wait_taps=0 sysui_restarted=0 dump_failures=0 anr_kind="app"
   start=$(date +%s)
   while true; do
     tries=$((tries + 1))
     if ! dump_ui 2>/tmp/anr-dump.err; then
-      echo "wait_for_anr_clear try $tries: dump failed ($(cat /tmp/anr-dump.err | head -c 150 | tr '\n' ' ')) — retrying" >&2
+      dump_failures=$((dump_failures + 1))
+      echo "wait_for_anr_clear try $tries: dump failed ($(cat /tmp/anr-dump.err | head -c 150 | tr '\n' ' ')) — retrying (consecutive dump failures: $dump_failures)" >&2
+      # V24: an ANR was already confirmed on the last successful dump,
+      # and dumps failing now is the same wedge run 45005940365 died on.
+      # If the last-known kind was a System UI ANR, restart System UI
+      # once instead of waiting out the budget on dumps that cannot
+      # succeed. An app ANR keeps retrying (its Wait-tap path needs a
+      # dump). Once per call, like the v23 rule.
+      if [ "$dump_failures" -ge 2 ] && [ "$anr_kind" = "systemui" ] && [ "$sysui_restarted" -eq 0 ]; then
+        echo "wait_for_anr_clear: dumps failing (x$dump_failures) with a System UI ANR outstanding — restarting System UI" >&2
+        sysui_restarted=1
+        dump_failures=0
+        restart_systemui || echo "wait_for_anr_clear: System UI restart failed — continuing to retry dumps" >&2
+      fi
     elif ! grep -qi "isn't responding\|not responding" /tmp/ui.xml; then
       echo "ANR dialog cleared after $tries check(s)"
       return 0
     else
-      local anr_kind wxy
+      dump_failures=0
+      local wxy
       anr_kind="app"
       if grep -qi "System UI isn't responding" /tmp/ui.xml; then
         anr_kind="systemui"
