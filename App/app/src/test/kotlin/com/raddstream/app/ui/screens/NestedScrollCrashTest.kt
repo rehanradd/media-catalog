@@ -177,8 +177,8 @@ class NestedScrollCrashTest {
             if (compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()) return
             compose.onRoot().performTouchInput {
                 swipe(
-                    start = Offset(center.x, size.height * 0.8f),
-                    end = Offset(center.x, size.height * 0.3f),
+                    start = Offset(center.x, center.y * 1.6f),
+                    end = Offset(center.x, center.y * 0.6f),
                     durationMillis = 400,
                 )
             }
@@ -475,11 +475,17 @@ class NestedScrollCrashTest {
         compose.onAllNodesWithText("Jawan")[0].assertIsDisplayed()
         // S6: the error row is the grid's last item — with 8 posts it sits
         // below the fold, and a Lazy grid only composes visible items, so
-        // the test swipes it into view first (the Detail tests use the
-        // same swipeUp pattern for below-fold content).
+        // the test drags it into view first (a controlled drag, not a
+        // swipeUp fling, which can overshoot and dispose the target).
         var swipes = 0
         while (compose.onAllNodesWithText("Could not load more.").fetchSemanticsNodes().isEmpty() && swipes < 5) {
-            compose.onRoot().performTouchInput { swipeUp() }
+            compose.onRoot().performTouchInput {
+                swipe(
+                    start = Offset(center.x, center.y * 1.6f),
+                    end = Offset(center.x, center.y * 0.6f),
+                    durationMillis = 400,
+                )
+            }
             compose.waitForIdle()
             swipes++
         }

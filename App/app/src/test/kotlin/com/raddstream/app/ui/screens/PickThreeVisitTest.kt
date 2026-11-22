@@ -57,8 +57,8 @@ class PickThreeVisitTest {
             if (compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()) return
             compose.onRoot().performTouchInput {
                 swipe(
-                    start = Offset(center.x, size.height * 0.8f),
-                    end = Offset(center.x, size.height * 0.3f),
+                    start = Offset(center.x, center.y * 1.6f),
+                    end = Offset(center.x, center.y * 0.6f),
                     durationMillis = 400,
                 )
             }
