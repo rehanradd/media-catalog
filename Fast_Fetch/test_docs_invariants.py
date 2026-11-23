@@ -586,16 +586,34 @@ class WorkflowSuiteCoverageTests(unittest.TestCase):
     })
 
     def _steps(self):
+        # Basenames only: a step name carries no directory ("test_x.py (panel)").
         return [pathlib.PurePosixPath(p).name for p in self.STEP.findall(load(WORKFLOW))]
 
     def _runs(self):
-        return [pathlib.PurePosixPath(p).name for p in self.RUN.findall(load(WORKFLOW))]
+        # FULL repo-relative paths from the run commands ("Fast_Fetch/test_x.py",
+        # "AdminV2/tests/test_x.py"). Basenames alone collide: Fast_Fetch/ and
+        # AdminV2/tests/ both hold a test_host_registry.py, and they are two
+        # different modules — a basename comparison calls that a duplicate and
+        # calls the AdminV2-only modules missing. Paths are the identity.
+        return self.RUN.findall(load(WORKFLOW))
+
+    def _run_names(self):
+        return [pathlib.PurePosixPath(p).name for p in self._runs()]
 
     def _on_disk(self):
-        return {p.name for d in (BASE_DIR, BASE_DIR / "importers") for p in d.glob("test_*.py")}
+        # Repo-relative paths of every test module, Fast_Fetch/ (+ importers/)
+        # and AdminV2/tests/ — the same identity the run commands carry.
+        out = set()
+        for d in (BASE_DIR, BASE_DIR / "importers"):
+            for p in d.glob("test_*.py"):
+                out.add(str(p.relative_to(REPO_ROOT)))
+        for p in (REPO_ROOT / "AdminV2" / "tests").glob("test_*.py"):
+            out.add(str(p.relative_to(REPO_ROOT)))
+        return out
 
     def test_every_step_names_the_module_its_run_command_runs(self):
-        steps, runs = self._steps(), self._runs()
+        # Name agreement is a basename check: the step name holds no directory.
+        steps, runs = self._steps(), self._run_names()
         self.assertTrue(steps, "backend-ci.yml has no 🧪 suite steps")
         self.assertEqual(steps, runs,
                          "a step's name and its run command disagree (or a suite lost its 🧪):\n"
@@ -604,7 +622,7 @@ class WorkflowSuiteCoverageTests(unittest.TestCase):
 
     def test_no_suite_runs_twice(self):
         runs = self._runs()
-        dupes = sorted({name for name in runs if runs.count(name) > 1})
+        dupes = sorted({path for path in runs if runs.count(path) > 1})
         self.assertFalse(dupes, "a module runs in two steps: %s" % dupes)
 
     def test_every_step_runs_a_module_that_exists(self):
@@ -613,16 +631,22 @@ class WorkflowSuiteCoverageTests(unittest.TestCase):
                          + "\n".join(missing))
 
     def test_every_module_is_registered_or_recorded_as_debt(self):
+        # UNREGISTERED stays basenames (all its entries are Fast_Fetch modules);
+        # the path sets above are resolved to basenames only for that ledger.
         on_disk, in_gate = self._on_disk(), set(self._runs())
-        undeclared = sorted(on_disk - in_gate - self.UNREGISTERED)
+        on_disk_names = {pathlib.PurePosixPath(p).name for p in on_disk}
+        in_gate_names = {pathlib.PurePosixPath(p).name for p in in_gate}
+        undeclared = sorted(p for p in on_disk
+                            if p not in in_gate
+                            and pathlib.PurePosixPath(p).name not in self.UNREGISTERED)
         self.assertFalse(undeclared,
                          "a module exists and runs on no one's push. Register it in "
                          "backend-ci.yml, or add it to UNREGISTERED with the reason it cannot "
                          "run:\n" + "\n".join(undeclared))
-        registered = sorted(self.UNREGISTERED & in_gate)
+        registered = sorted(self.UNREGISTERED & in_gate_names)
         self.assertFalse(registered, "now in the gate; delete from UNREGISTERED:\n"
                          + "\n".join(registered))
-        gone = sorted(self.UNREGISTERED - on_disk)
+        gone = sorted(self.UNREGISTERED - on_disk_names)
         self.assertFalse(gone, "deleted or renamed; prune UNREGISTERED:\n" + "\n".join(gone))
 
 
