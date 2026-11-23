@@ -5,9 +5,12 @@ a compensating rollback: if the admin record fails, the ledger
 grant is undone. These tests prove both the happy path and that
 rollback, using mock accounts only.
 """
+import os
+import sys
 import unittest
 
-from tests.helpers import make_service
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from helpers import make_service  # noqa: E402
 
 
 def seed_account(svc, hint="test.user"):
