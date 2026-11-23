@@ -71,7 +71,7 @@ SIZE_RE = re.compile(r"\b\d+(?:\.\d+)?\s?(?:mb|gb)\b", re.I)
 YEAR_RE = re.compile(r"\b(?:19\d{2}|20\d{2})\b")
 CODEC_RE = re.compile(r"\b(x264|x265|hevc|avc|xvid)\b", re.I)
 IMDB_RE = re.compile(
-    r"IMD[Bb]\s*(?:Ratings?|Rating)?\s*:\s*([0-9]+(?:\.[0-9]+)?)\s*(?:/10)?"
+    r"IMD[Bb]\s*(?:Ratings?|Rating)?\s*:\s*-?\s*([0-9]+(?:\.[0-9]+)?)\s*(?:/10)?"
 )
 
 # Words that mark a category as a bucket, not a genre.
@@ -85,7 +85,7 @@ _GENERIC_CATEGORIES = (
     "movies", "movie", "tv shows", "tv show", "animes", "anime",
     "web series", "webseries", "uncategorized", "all movies",
     "hindi dubbed", "hindi dub", "hindi sub", "dual audio",
-    "multi audio", "south hindi dubbed",
+    "multi audio", "south hindi dubbed", "television", "tv",
 )
 
 # Canonical label -> regexes matching the label as printed in post text.
@@ -93,15 +93,16 @@ _GENERIC_CATEGORIES = (
 # over "Stars:" and "Film Story:" wins over "Story:".
 _LABEL_PATTERNS: list[tuple[str, str]] = [
     ("imdb_rating", r"IMD[Bb]\s*(?:Ratings?|Rating)?\s*:"),
-    ("release_date", r"(?:Released\s+Date|Release\s+Date)\s*:"),
-    ("director", r"(?:Director|Directed\s+by|Creators?)\s*:"),
+    ("release_date", r"(?:Released\s+Year|Released\s+Date|Release\s+Date)\s*:"),
+    ("director", r"(?:Director(?:/Creator)?|Directed\s+by|Creators?)\s*:"),
     ("cast", r"(?:Stars?\s+Cast|Star\s+Cast|Cast|Starring|Stars?)\s*:"),
     ("judges", r"Judges?\s*:"),
     ("host", r"Hosts?\s*:"),
     ("genres", r"Genres?\s*:"),
     ("languages", r"Languages?\s*:"),
     ("quality", r"(?:Video\s+)?Quality\s*:"),
-    ("story", r"(?:Film\s+Story|Story|Synopsis|Plot|Storyline)\s*:"),
+    ("episode_size", r"Episode\s+Size\s*:"),
+    ("story", r"(?:Film\s+Story|Story|Synopsis|Plot|Storyline)\s*(?::|[-–]\s)"),
 ]
 _LABEL_RE = re.compile(
     "|".join(f"(?P<{key}>{pat})" for key, pat in _LABEL_PATTERNS), re.I
@@ -110,7 +111,7 @@ _LABEL_RE = re.compile(
 # Markers that end a story/synopsis value: the download section starts.
 _STORY_STOP_RE = re.compile(
     r"(?:Watch\s+Online|Download\s+Links?|Free\s+Download|"
-    r"Download\s+\[|\|\|)",
+    r"Download\s+\[|\|\||Screenshots)",
     re.I,
 )
 
@@ -151,7 +152,9 @@ def parse_imdb_rating(text: str) -> float | None:
         value = float(m.group(1))
     except ValueError:
         return None
-    return value if 0.0 <= value <= 10.0 else None
+    # A literal 0.0 is a site placeholder for "not rated" (moviesdrive
+    # banks "IMDb Rating:- 0.0/10" on unrated titles) — never bank it.
+    return value if 0.0 < value <= 10.0 else None
 
 
 def _clean_label_value(key: str, raw: str) -> str:
@@ -162,6 +165,11 @@ def _clean_label_value(key: str, raw: str) -> str:
             value = value[: m.start()].strip(" :–—-|")
     # A value that ran into the next section's heading junk.
     value = re.split(r"\s*\|\|\s*", value)[0].strip(" :–—-|")
+    # Trailing section-marker emoji / dashes / pipes (moviesdrive puts a
+    # "🖼️" between the storyline and its SCREENSHOTS heading; other sites
+    # leave "||" or "—" at value ends). Keep sentence-ending punctuation
+    # and the ellipsis.
+    value = re.sub(r"[^\w.!?…)\]}]+$", "", value)
     return value
 
 
@@ -305,6 +313,9 @@ def genres_from_post(post: dict) -> list[str] | None:
             if (term.get("taxonomy") or "category") != "category":
                 continue
             name = (term.get("name") or "").strip()
+            # WP categories are often ALL-CAPS ("DRAMA"); bank the
+            # title-cased form. The label path keeps the source casing.
+            name = name.title()
             if name and _is_genre_category(name) and name not in names:
                 names.append(name)
     return names or None

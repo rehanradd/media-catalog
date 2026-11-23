@@ -365,5 +365,151 @@ class TestPagination(unittest.TestCase):
         self.assertEqual(wp_rest.fetch_categories(get_json, "https://bolly4u.moda"), {})
 
 
+# Live moviesdrive fixtures (fetched from the Oracle VM 2026-11-23):
+# post 64643 "Final Table (Season 1) 2026 ..." and post 62666
+# "Bigg Boss (Season 20) 2026 ...". The "Series Info:" block carries
+# "IMDb Rating:- N.N/10", "Director/Creator:", "Stars:", "Episode Size:",
+# "Quality:", a "Storyline-" (dash, not colon) synopsis, and a
+# SCREENSHOTS heading after it.
+FINAL_TABLE_CONTENT = (
+    "<p>\u2611\ufe0f Download Final Table (2026) Season 1 K-Drama "
+    "[Hindi \u2013 Korean] Complete All Episodes Available in 480p, "
+    "720p &amp; 1080p qualities.</p>"
+    '<p><img src="https://image.tmdb.org/t/p/original/'
+    'uaMjtALuvZC7dGkYllGKKWEWW1J.jpg" /></p>'
+    "<p>Series Info: \U0001f4ab IMDb Rating:- 0.0/10 \U0001f308 Series "
+    "Name: Final Table Season: 1 \U0001f30d Country: South Korea "
+    "\U0001f5e3\ufe0f Original Language: Korean "
+    "\U0001f50a Language: Hindi \u2013 Korean \U0001f4c5 Released Year: "
+    "2026 \U0001f46eDirector/Creator: Kim Do-hoon \u2b50Stars: "
+    "Ahn Hyo-seop, Hong Hwa-yeon, Chang Ryul, Eugene Jung, Jang Young-nam, "
+    "Cha Ji-yeon \U0001f4bf Episode Size: 240MB || 310MB || 950MB "
+    "\u2013 Each Episode \U0001f3acQuality: 480p || 720p || 1080p "
+    "\u2013 WEB-DL \U0001f4c1 Format: MKV \u2666 Storyline- The Table: "
+    "K-Chef 2026 brings together Korea\u2019s top chefs to compete for "
+    "the title of the country\u2019s best chef. Mysterious "
+    "world-renowned chef Chris K., also known as Kang Han, Song-yi, who is "
+    "fighting to save her restaurant, perfectionist star chef Woo-jin, and "
+    "chefs with stories of their own face off in a fierce culinary battle. "
+    "More than a competition, they find comfort in food and one another. "
+    "\U0001f5bc\ufe0f SCREENSHOTS \u2013 Final Table (Season 1) WEB-DL "
+    "[ Hindi \u2013 Korean ] 480p x264 [240MB/E] 480p Single Episode "
+    "Final Table (Season 1) WEB-DL [ Hindi \u2013 Korean ] 720p x265 "
+    "[310MB/E] 720p x265 Single Episode Final Table (Season 1) WEB-DL "
+    "[ Hindi \u2013 Korean ] 1080p x265 [950MB/E] 1080p x265 Single "
+    "Episode \U0001f3ac Official Trailer \U0001f60a Download Final Table "
+    "(2026) Hindi 480p, 720p &amp; 1080p \u2013 Moviesdrives.bid!</p>"
+)
+
+FINAL_TABLE_POST = {
+    "id": 64643,
+    "slug": "final-table-season-1-2026-hindi-korean-ep08-added",
+    "link": "https://new4.moviesdrive.cyou/final-table-season-1-2026-hindi-korean-ep08-added/",
+    "title": {"rendered": "Final Table (Season 1) 2026 [Hindi \u2013 Korean] "
+              "(Ep08 Added) Korean Drama 480p 720p 1080p \u2013 WEB-DL"},
+    "content": {"rendered": FINAL_TABLE_CONTENT},
+    "excerpt": {"rendered": "<p>\u2611\ufe0f Download Final Table (2026) "
+              "Season 1 K-Drama [Hindi \u2013 Korean] Complete All Episodes "
+              "Available in 480p, 720p &amp; 1080p qualities. [\u2026]</p>"},
+    "_embedded": {"wp:term": [[
+        {"id": 1, "name": "DRAMA", "taxonomy": "category"},
+        {"id": 2, "name": "Dual Audio", "taxonomy": "category"},
+        {"id": 3, "name": "Hindi Dubbed", "taxonomy": "category"},
+        {"id": 4, "name": "K Drama", "taxonomy": "category"},
+        {"id": 5, "name": "Television", "taxonomy": "category"},
+    ]]},
+}
+
+BIGG_BOSS_CONTENT = (
+    "<p>Series Info: \U0001f4ab IMDb Rating:- 3.6/10 \U0001f308 Series "
+    "Name: Bigg Boss Season: 20 \U0001f50a Language: {Hindi DD2.0} "
+    "\U0001f4c5 Released Year: 2026 \U0001f46eDirector/Creator:  "
+    "\u2b50Stars: Salman Khan, Atul Kapoor, Vijay Vikram Singh "
+    "\U0001f4bf Episode Size:  \u2013 Each Episode "
+    "\U0001f3acQuality: 480p || 720p || 1080p \u2013 WEB-DL "
+    "\U0001f4c1 Format: MKV \u2666 Storyline- Bigg Boss is a reality show "
+    "based on the original Dutch Big Brother. A number of contestants "
+    "live in a purpose-built house and are isolated from the rest of the "
+    "world. \U0001f5bc\ufe0f SCREENSHOTS \u2013 Bigg Boss (Season 20) "
+    "\u2013 Watch Free</p>"
+)
+
+BIGG_BOSS_POST = {
+    "id": 62666,
+    "slug": "bigg-boss-season-20-2026-hindi-dd2-0-s20-ep78-added",
+    "link": "https://new4.moviesdrive.cyou/bigg-boss-season-20-2026-hindi-dd2-0-s20-ep78-added/",
+    "title": {"rendered": "Bigg Boss (Season 20) 2026 [Hindi DD2.0] "
+              "(S20 Ep78 Added) JioHotstar Series 480p 720p 1080p "
+              "\u2013 WEB-DL"},
+    "content": {"rendered": BIGG_BOSS_CONTENT},
+    "excerpt": {"rendered": "<p>\u2611\ufe0f Download Bigg Boss (2026) "
+              "Season 20 WEB Series [Hindi] Complete All Episodes Available "
+              "in 720p HEVC | 1080p HEVC qualities. [\u2026]</p>"},
+    "_embedded": {"wp:term": [[
+        {"id": 1, "name": "DRAMA", "taxonomy": "category"},
+        {"id": 2, "name": "Hotstar", "taxonomy": "category"},
+    ]]},
+}
+
+
+class TestMoviesdriveLabels(unittest.TestCase):
+    def test_imdb_rating_dash_separator_and_zero_placeholder(self):
+        self.assertEqual(
+            wp_rest.parse_imdb_rating("IMDb Rating:- 3.6/10"), 3.6)
+        # A literal 0.0 is the site's "not rated" placeholder, never banked.
+        self.assertIsNone(
+            wp_rest.parse_imdb_rating("IMDb Rating:- 0.0/10"))
+        self.assertIsNone(wp_rest.parse_imdb_rating("IMDb: 0.0/10"))
+
+    def test_final_table_series_info_block(self):
+        labels = wp_rest.parse_labelled_text(
+            wp_rest.content_text(FINAL_TABLE_POST))
+        self.assertNotIn("imdb_rating", labels)  # 0.0/10 is a placeholder
+        self.assertEqual(labels["director"], "Kim Do-hoon")
+        self.assertEqual(labels["cast"], [
+            "Ahn Hyo-seop", "Hong Hwa-yeon", "Chang Ryul", "Eugene Jung",
+            "Jang Young-nam", "Cha Ji-yeon"])
+        self.assertEqual(labels["languages"], "Hindi \u2013 Korean")
+        self.assertEqual(labels["release_date"], "2026")
+        # "Episode Size:" is a cut point only — it is never banked.
+        self.assertNotIn("episode_size", labels)
+        story = labels["story"]
+        self.assertTrue(story.startswith(
+            "The Table: K-Chef 2026 brings together"))
+        self.assertNotIn("SCREENSHOTS", story)
+        self.assertNotIn("Moviesdrives.bid", story)
+
+    def test_bigg_boss_series_info_block(self):
+        labels = wp_rest.parse_labelled_text(
+            wp_rest.content_text(BIGG_BOSS_POST))
+        self.assertEqual(labels["imdb_rating"], 3.6)
+        # "Director/Creator:" is empty on this post — nothing banked.
+        self.assertNotIn("director", labels)
+        self.assertEqual(labels["cast"], [
+            "Salman Khan", "Atul Kapoor", "Vijay Vikram Singh"])
+        self.assertEqual(labels["languages"], "{Hindi DD2.0}")
+        self.assertTrue(labels["story"].startswith(
+            "Bigg Boss is a reality show"))
+        self.assertNotIn("SCREENSHOTS", labels["story"])
+
+    def test_genres_from_moviesdrive_categories(self):
+        # DRAMA -> "Drama" (title-cased); "Television" is a bucket, not a
+        # genre; "Dual Audio" / "Hindi Dubbed" are language buckets.
+        self.assertEqual(wp_rest.genres_from_post(FINAL_TABLE_POST),
+                         ["Drama", "K Drama"])
+
+    def test_poster_is_first_content_image(self):
+        self.assertEqual(
+            wp_rest.poster_from_post(FINAL_TABLE_POST),
+            "https://image.tmdb.org/t/p/original/"
+            "uaMjtALuvZC7dGkYllGKKWEWW1J.jpg")
+
+    def test_synopsis_is_the_storyline(self):
+        syn = wp_rest.synopsis_from_post(FINAL_TABLE_POST)
+        self.assertTrue(syn.startswith(
+            "The Table: K-Chef 2026 brings together"))
+        self.assertNotIn("SCREENSHOTS", syn)
+
+
 if __name__ == "__main__":
     unittest.main()

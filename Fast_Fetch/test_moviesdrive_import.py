@@ -884,5 +884,226 @@ class TestDirectHubcloudSave(unittest.TestCase):
             self.assertTrue(all("search-recover.php" in r[1] for r in rows))
 
 
+# --- WP REST adoption tests (2026-11-23) -----------------------------------
+# Live moviesdrive fixtures (posts 64643 Final Table and 62666 Bigg Boss,
+# fetched from the Oracle VM 2026-11-23): the "Series Info:" block carries
+# "IMDb Rating:- N.N/10", "Director/Creator:", "Stars:", "Episode Size:",
+# "Quality:", a "Storyline-" (dash, not colon) synopsis, and a SCREENSHOTS
+# heading after it. The full block is pinned in test_wp_rest.py; here the
+# extractor is pinned end to end (labels -> saved post).
+
+MD_REST_POST = {
+    "id": 64643,
+    "slug": "final-table-season-1-2026-hindi-korean-ep08-added",
+    "link": "https://new4.moviesdrive.cyou/final-table-season-1-2026-hindi-korean-ep08-added/",
+    "title": {"rendered": "Final Table (Season 1) 2026 [Hindi \u2013 Korean] "
+              "(Ep08 Added) Korean Drama 480p 720p 1080p \u2013 WEB-DL"},
+    "content": {"rendered": """
+        <p><img src="https://image.tmdb.org/t/p/original/uaMjtALuvZC7dGkYllGKKWEWW1J.jpg" /></p>
+        <p>Series Info: \U0001f4ab IMDb Rating:- 0.0/10 \U0001f308 Series Name: Final Table Season: 1 \U0001f30d Country: South Korea \U0001f5e3\ufe0f Original Language: Korean \U0001f50a Language: Hindi \u2013 Korean \U0001f4c5 Released Year: 2026 \U0001f46eDirector/Creator: Kim Do-hoon \u2b50Stars: Ahn Hyo-seop, Hong Hwa-yeon, Chang Ryul, Eugene Jung, Jang Young-nam, Cha Ji-yeon \U0001f4bf Episode Size: 240MB || 310MB || 950MB \u2013 Each Episode \U0001f3acQuality: 480p || 720p || 1080p \u2013 WEB-DL \U0001f4c1 Format: MKV \u2666 Storyline- The Table: K-Chef 2026 brings together Korea\u2019s top chefs to compete for the title of the country\u2019s best chef. \U0001f5bc\ufe0f SCREENSHOTS \u2013 Final Table (Season 1) WEB-DL [ Hindi \u2013 Korean ] 480p x264 [240MB/E] 480p Single Episode</p>
+        <p><a href="https://mdrive.lol/archive/24104/">480p Download</a></p>
+    """},
+    "excerpt": {"rendered": "<p>\u2611\ufe0f Download Final Table (2026) Season 1 K-Drama [Hindi \u2013 Korean] Complete All Episodes Available in 480p, 720p &amp; 1080p qualities.</p>"},
+    "_embedded": {"wp:term": [[
+        {"id": 1, "name": "DRAMA", "taxonomy": "category"},
+        {"id": 2, "name": "Dual Audio", "taxonomy": "category"},
+        {"id": 3, "name": "Hindi Dubbed", "taxonomy": "category"},
+        {"id": 4, "name": "K Drama", "taxonomy": "category"},
+        {"id": 5, "name": "Television", "taxonomy": "category"},
+    ]]},
+    "date": "2026-11-08T10:00:00",
+}
+
+MD_REST_POST_BIGG_BOSS = {
+    "id": 62666,
+    "slug": "bigg-boss-season-20-2026-hindi-dd2-0-s20-ep78-added",
+    "link": "https://new4.moviesdrive.cyou/bigg-boss-season-20-2026-hindi-dd2-0-s20-ep78-added/",
+    "title": {"rendered": "Bigg Boss (Season 20) 2026 [Hindi DD2.0] "
+              "(S20 Ep78 Added) JioHotstar Series 480p 720p 1080p "
+              "\u2013 WEB-DL"},
+    "content": {"rendered": """
+        <p>Series Info: \U0001f4ab IMDb Rating:- 3.6/10 \U0001f308 Series Name: Bigg Boss Season: 20 \U0001f50a Language: {Hindi DD2.0} \U0001f4c5 Released Year: 2026 \U0001f46eDirector/Creator:  \u2b50Stars: Salman Khan, Atul Kapoor, Vijay Vikram Singh \U0001f4bf Episode Size:  \u2013 Each Episode \U0001f3acQuality: 480p || 720p || 1080p \u2013 WEB-DL \U0001f4c1 Format: MKV \u2666 Storyline- Bigg Boss is a reality show based on the original Dutch Big Brother. A number of contestants live in a purpose-built house. \U0001f5bc\ufe0f SCREENSHOTS \u2013 Bigg Boss (Season 20) \u2013 Watch Free</p>
+        <p><a href="https://mdrive.lol/archive/24102/">720p Download</a></p>
+    """},
+    "excerpt": {"rendered": "<p>\u2611\ufe0f Download Bigg Boss (2026) Season 20 WEB Series [Hindi] Complete All Episodes Available in 720p HEVC | 1080p HEVC qualities.</p>"},
+    "_embedded": {"wp:term": [[
+        {"id": 1, "name": "DRAMA", "taxonomy": "category"},
+        {"id": 2, "name": "Hotstar", "taxonomy": "category"},
+    ]]},
+    "date": "2026-11-08T10:00:00",
+}
+
+
+class TestMoviesdriveRestExtract(unittest.TestCase):
+    def test_final_table_full_metadata_from_rest_post(self):
+        archive_pages = {
+            "https://mdrive.lol/archive/24104/": SAMPLE_MD_ARCH_480_HTML,
+        }
+        data = import_moviesdrive.extract_post_data_moviesdrive(
+            MD_REST_POST, archive_pages)
+        self.assertIsNotNone(data)
+        self.assertEqual(
+            data["poster_url"],
+            "https://image.tmdb.org/t/p/original/"
+            "uaMjtALuvZC7dGkYllGKKWEWW1J.jpg")
+        self.assertTrue(data["synopsis"].startswith(
+            "The Table: K-Chef 2026 brings together"))
+        self.assertNotIn("SCREENSHOTS", data["synopsis"])
+        self.assertEqual(json.loads(data["genres"]), ["Drama", "K Drama"])
+        # 0.0/10 is the site's "not rated" placeholder — never banked.
+        self.assertIsNone(data["imdb_rating"])
+        self.assertEqual(
+            data["cast_names"],
+            "Ahn Hyo-seop, Hong Hwa-yeon, Chang Ryul, Eugene Jung, "
+            "Jang Young-nam, Cha Ji-yeon")
+        self.assertEqual(data["director"], "Kim Do-hoon")
+        self.assertEqual(data["language"], "Hindi + Korean")
+        self.assertEqual(len(data["releases"]), 1)
+        self.assertEqual(data["releases"][0]["size"], "658.47 MB")
+        self.assertEqual(data["releases"][0]["languages"], "Hindi + Korean")
+
+    def test_bigg_boss_rating_cast_and_language(self):
+        archive_pages = {
+            "https://mdrive.lol/archive/24102/": SAMPLE_MD_ARCH_720_HTML,
+        }
+        data = import_moviesdrive.extract_post_data_moviesdrive(
+            MD_REST_POST_BIGG_BOSS, archive_pages)
+        self.assertIsNotNone(data)
+        self.assertEqual(data["imdb_rating"], 3.6)
+        # "Director/Creator:" is empty on this post — nothing banked.
+        self.assertIsNone(data["director"])
+        self.assertEqual(
+            data["cast_names"],
+            "Salman Khan, Atul Kapoor, Vijay Vikram Singh")
+        self.assertEqual(data["language"], "Hindi")
+        self.assertTrue(data["synopsis"].startswith(
+            "Bigg Boss is a reality show"))
+        self.assertNotIn("SCREENSHOTS", data["synopsis"])
+
+    def test_languages_from_labels(self):
+        fn = import_moviesdrive._languages_from_labels
+        self.assertEqual(fn({"languages": "Hindi \u2013 Korean"}),
+                         "Hindi + Korean")
+        self.assertEqual(fn({"languages": "{Hindi DD2.0}"}), "Hindi")
+        self.assertEqual(fn({"languages": "Hindi (ORG 5.1)"}), "Hindi")
+        self.assertEqual(fn({}), "")
+        self.assertEqual(fn({"languages": ""}), "")
+
+
+class TestMoviesdriveSyncRawJson(unittest.TestCase):
+    def test_sync_stores_raw_json(self):
+        client = MagicMock()
+        client.wp_posts_page.side_effect = [([SAMPLE_MD_WP_POST], 1)]
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "moviesdrive.db"
+            n = import_moviesdrive.sync_posts_to_db(client, db_path)
+            self.assertEqual(n, 1)
+            with sqlite3.connect(str(db_path)) as conn:
+                raw = conn.execute(
+                    "SELECT raw_json FROM sitemap_cache").fetchone()[0]
+            post = json.loads(raw)
+            self.assertEqual(post["id"], SAMPLE_MD_WP_POST["id"])
+            self.assertEqual(post["slug"], SAMPLE_MD_WP_POST["slug"])
+            self.assertIn("content", post)
+
+
+class TestWorkerUsesStoredRawJson(unittest.TestCase):
+    def test_no_slug_lookup_when_raw_json_present(self):
+        # Queue one row carrying the full REST post; the worker must
+        # extract from it without any wp-json slug lookup.
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "moviesdrive.db"
+            fast_fetch.DB_PATH = db_path
+            fast_fetch.init_db()
+            import_moviesdrive._ensure_sitemap_raw_json(db_path)
+            with sqlite3.connect(str(db_path)) as conn:
+                conn.execute(
+                    "INSERT INTO sitemap_cache "
+                    "(loc, lastmod, slug, scraped, site, raw_json) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (MD_REST_POST["link"], None, MD_REST_POST["slug"], 0,
+                     "moviesdrive",
+                     json.dumps(MD_REST_POST, ensure_ascii=False)),
+                )
+                conn.commit()
+            calls = {"slug_lookups": 0, "archive_fetches": 0}
+
+            class FakeClient:
+                def __init__(self, base_url, request_interval=0.0):
+                    self.base_url = base_url
+
+                def _get(self, url, accept, timeout=20):
+                    # Any wp-json call here is a slug lookup — must not happen.
+                    calls["slug_lookups"] += 1
+                    raise AssertionError(f"unexpected wp-json call: {url}")
+
+                def get_text(self, url, referer=None, timeout=20):
+                    calls["archive_fetches"] += 1
+                    return 200, url, SAMPLE_MD_ARCH_480_HTML
+
+                def wp_posts_page(self, page=1, per_page=100):
+                    raise AssertionError("sync must not run with pending rows")
+
+            real_client = import_moviesdrive.MoviesDriveClient
+            real_status = import_moviesdrive.STATUS_FILE
+            import_moviesdrive.MoviesDriveClient = FakeClient
+            import_moviesdrive.STATUS_FILE = Path(td) / "status.json"
+            try:
+                import_moviesdrive.run_moviesdrive_scraper(
+                    db_path=db_path, limit=1, workers=1, delay=0.0)
+            finally:
+                import_moviesdrive.MoviesDriveClient = real_client
+                import_moviesdrive.STATUS_FILE = real_status
+            self.assertEqual(calls["slug_lookups"], 0)
+            self.assertEqual(calls["archive_fetches"], 1)
+            with sqlite3.connect(str(db_path)) as conn:
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    "SELECT poster_url, synopsis, genres, imdb_rating, "
+                    "cast_names, director, language FROM posts"
+                ).fetchone()
+                self.assertIsNotNone(row)
+                self.assertEqual(
+                    row["poster_url"],
+                    "https://image.tmdb.org/t/p/original/"
+                    "uaMjtALuvZC7dGkYllGKKWEWW1J.jpg")
+                self.assertTrue(row["synopsis"].startswith(
+                    "The Table: K-Chef 2026"))
+                self.assertEqual(json.loads(row["genres"]),
+                                 ["Drama", "K Drama"])
+                self.assertIsNone(row["imdb_rating"])
+                self.assertIn("Ahn Hyo-seop", row["cast_names"])
+                self.assertEqual(row["director"], "Kim Do-hoon")
+                self.assertEqual(row["language"], "Hindi + Korean")
+                scraped = conn.execute(
+                    "SELECT scraped FROM sitemap_cache").fetchone()[0]
+            self.assertEqual(scraped, 1)
+
+
+class TestWpPostsPageMethod(unittest.TestCase):
+    def test_wp_posts_page_is_a_real_client_method(self):
+        # Regression: wp_posts_page used to be nested inside
+        # fetch_post_for_pending_url (dead code after its return), so the
+        # real --sync-posts path crashed with AttributeError while the
+        # MagicMock sync test passed. Pin it on the class with a stubbed
+        # transport: one page, total_pages honoured, _embed=1, no _fields.
+        client = import_moviesdrive.MoviesDriveClient(
+            "https://new4.moviesdrive.cyou")
+        seen = {}
+
+        def fake_get(url, accept, timeout=20):
+            seen["url"] = url
+            return 200, {"X-WP-TotalPages": "98"}, json.dumps(
+                [SAMPLE_MD_WP_POST])
+
+        client._get = fake_get
+        posts, total_pages = client.wp_posts_page(1)
+        self.assertEqual(total_pages, 98)
+        self.assertEqual(len(posts), 1)
+        self.assertEqual(posts[0]["id"], SAMPLE_MD_WP_POST["id"])
+        self.assertIn("_embed=1", seen["url"])
+        self.assertNotIn("_fields=", seen["url"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

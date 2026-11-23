@@ -79,6 +79,7 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 import fast_fetch
+import wp_rest
 from config import staging_db_path
 from domain_resolver import get_active_base_url, resolve_if_dead, update_site_registry
 
@@ -164,6 +165,29 @@ class MoviesDriveClient:
         status, _, text = self._get(url, "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", timeout)
         return status, url, text
 
+    def wp_posts_page(self, page: int = 1, per_page: int = WP_PER_PAGE) -> tuple[list, int]:
+        """One wp-json posts page: (posts, total_pages from X-WP-TotalPages)."""
+        # WP REST adoption (2026-11-23): no _fields — the worker needs
+        # the full post (excerpt, categories, featured media, _embedded),
+        # which is stored as raw_json and read back without a per-post fetch.
+        url = (
+            f"{self.base_url}/wp-json/wp/v2/posts"
+            f"?per_page={per_page}&page={page}&_embed=1"
+        )
+        status, headers, body = self._get(url, "application/json, */*;q=0.8")
+        if status != 200 or not body:
+            return [], 0
+        try:
+            posts = json.loads(body)
+        except json.JSONDecodeError:
+            return [], 0
+        if not isinstance(posts, list):
+            return [], 0
+        try:
+            total_pages = int(headers.get("X-WP-TotalPages", "1"))
+        except ValueError:
+            total_pages = 1
+        return posts, total_pages
 
 def _host_of_url(url: str | None) -> str:
     """Lowercased host of a URL, or '' when it has none."""
@@ -173,6 +197,18 @@ def _host_of_url(url: str | None) -> str:
         return urllib.parse.urlparse(url).netloc.lower()
     except Exception:
         return ""
+
+
+def _ensure_sitemap_raw_json(db_path: Path) -> None:
+    """WP REST adoption (2026-11-23): the queue carries the full REST post
+    (``raw_json``) so extraction needs no per-post page fetch. The shared
+    ``fast_fetch`` schema has no such column; add it when missing."""
+    with sqlite3.connect(str(db_path)) as conn:
+        cols = {c[1] for c in conn.execute(
+            "PRAGMA table_info(sitemap_cache);").fetchall()}
+        if "raw_json" not in cols:
+            conn.execute("ALTER TABLE sitemap_cache ADD COLUMN raw_json TEXT;")
+            conn.commit()
 
 
 def lookup_post_by_slug(client: MoviesDriveClient, slug: str) -> tuple[dict | None, str | None, str | None]:
@@ -189,7 +225,7 @@ def lookup_post_by_slug(client: MoviesDriveClient, slug: str) -> tuple[dict | No
     all saved Jailer 2). Never trust found[0] here.
     """
     status, _, body = client._get(
-        f"{client.base_url}/wp-json/wp/v2/posts?slug={urllib.parse.quote(slug)}",
+        f"{client.base_url}/wp-json/wp/v2/posts?slug={urllib.parse.quote(slug)}&_embed=1",
         "application/json, */*;q=0.8",
     )
     if status != 200 or not body:
@@ -253,27 +289,6 @@ def fetch_post_for_pending_url(
     except Exception:
         pass
     return post2, None
-
-    def wp_posts_page(self, page: int = 1, per_page: int = WP_PER_PAGE) -> tuple[list, int]:
-        """One wp-json posts page: (posts, total_pages from X-WP-TotalPages)."""
-        url = (
-            f"{self.base_url}/wp-json/wp/v2/posts"
-            f"?per_page={per_page}&page={page}&_fields=id,slug,link,title,content,date"
-        )
-        status, headers, body = self._get(url, "application/json, */*;q=0.8")
-        if status != 200 or not body:
-            return [], 0
-        try:
-            posts = json.loads(body)
-        except json.JSONDecodeError:
-            return [], 0
-        if not isinstance(posts, list):
-            return [], 0
-        try:
-            total_pages = int(headers.get("X-WP-TotalPages", "1"))
-        except ValueError:
-            total_pages = 1
-        return posts, total_pages
 
 
 ARCHIVE_RE = re.compile(r"https?://mdrive\.lol/archive/(\d+)/?", re.I)
@@ -497,6 +512,32 @@ def languages_from_title(title: str) -> str:
     return " + ".join(found)
 
 
+def _languages_from_labels(labels: dict) -> str:
+    """``"Hindi – Korean"`` / ``"{Hindi DD2.0}"`` -> ``"Hindi + Korean"`` /
+    ``"Hindi"``.
+
+    The Series Info block's ``Language:`` value is one string; split it on
+    dashes, drop the braces and audio-codec tokens (DD2.0), join with
+    " + " like :func:`languages_from_title` does.
+    """
+    raw = (labels.get("languages") or "").strip()
+    if not raw:
+        return ""
+    parts: list[str] = []
+    for piece in re.split(r"\s*[-–]\s*", raw):
+        piece = piece.strip("{} ").strip()
+        # A trailing "(...)" codec note ("Hindi (ORG 5.1)"), then a bare
+        # codec token ("Hindi DD2.0").
+        piece = re.sub(r"\s*\([^)]*\)\s*$", "", piece).strip()
+        piece = re.sub(r"\s+(?:DD\d+(?:\.\d+)?|ORG.*)$", "", piece,
+                       flags=re.I).strip()
+        if not piece or re.fullmatch(r"DD\d+(?:\.\d+)?|ORG|ESub", piece, re.I):
+            continue
+        if piece not in parts:
+            parts.append(piece)
+    return " + ".join(parts)
+
+
 def extract_post_data_moviesdrive(
     post: dict,
     archive_pages: dict[str, str],
@@ -529,7 +570,21 @@ def extract_post_data_moviesdrive(
     if not archive_links and not direct_links:
         return None
 
-    languages = languages_from_title(raw_title)
+    # WP REST adoption (2026-11-23): full metadata from the source
+    # itself. The old path parsed only the <title>, so poster / synopsis /
+    # genres / rating / cast were almost always None (audit: poster 10.9%,
+    # synopsis 10.8%, cast 8.7%). "Released Year:" is a year, not a date,
+    # so release_date is NOT banked; the year comes from the title.
+    labels = wp_rest.post_labels(post)
+    poster_url = wp_rest.poster_from_post(post) or meta.get("poster_url")
+    synopsis = wp_rest.synopsis_from_post(post) or meta.get("synopsis")
+    genres_list = wp_rest.genres_from_post(post)
+    genres = json.dumps(genres_list) if genres_list else meta.get("genres")
+    imdb_rating = labels.get("imdb_rating")
+    cast_names = ", ".join(labels.get("cast") or []) or None
+    director = labels.get("director")
+
+    languages = _languages_from_labels(labels) or languages_from_title(raw_title)
     releases = []
     for arch_url in archive_links:
         arch_html = archive_pages.get(arch_url)
@@ -586,10 +641,13 @@ def extract_post_data_moviesdrive(
         "year": year,
         "content_type": content_type,
         "seasons": seasons,
-        "poster_url": meta.get("poster_url"),
+        "poster_url": poster_url,
         "backdrop_urls": meta.get("backdrop_urls"),
-        "synopsis": meta.get("synopsis"),
-        "genres": meta.get("genres"),
+        "synopsis": synopsis,
+        "genres": genres,
+        "imdb_rating": imdb_rating,
+        "cast_names": cast_names,
+        "director": director,
         "language": languages or meta.get("language"),
         "source_site": SITE_NAME,
         "is_18_plus": meta.get("is_18_plus", 0),
@@ -602,6 +660,7 @@ def sync_posts_to_db(client: MoviesDriveClient, db_path: Path) -> int:
     """Walks the wp-json post list into sitemap_cache (resumable)."""
     fast_fetch.DB_PATH = db_path
     fast_fetch.init_db()
+    _ensure_sitemap_raw_json(db_path)
 
     total = 0
     page = 1
@@ -611,18 +670,20 @@ def sync_posts_to_db(client: MoviesDriveClient, db_path: Path) -> int:
         if not posts:
             break
         records = [
-            (p["link"], None, p.get("slug") or p["link"].rstrip("/").split("/")[-1], 0, SITE_NAME)
+            (p["link"], None, p.get("slug") or p["link"].rstrip("/").split("/")[-1], 0, SITE_NAME,
+             json.dumps(p, ensure_ascii=False))
             for p in posts if p.get("link")
         ]
         with fast_fetch._DB_WRITE_LOCK:
             with fast_fetch.get_db() as conn:
                 conn.executemany(
                     """
-                    INSERT INTO sitemap_cache (loc, lastmod, slug, scraped, site)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO sitemap_cache (loc, lastmod, slug, scraped, site, raw_json)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     ON CONFLICT(loc) DO UPDATE SET
                         slug = excluded.slug,
-                        site = excluded.site;
+                        site = excluded.site,
+                        raw_json = COALESCE(excluded.raw_json, sitemap_cache.raw_json);
                     """,
                     records,
                 )
@@ -722,28 +783,29 @@ def run_moviesdrive_scraper(
     """Worker pool orchestrator for scraping MoviesDrive posts."""
     fast_fetch.DB_PATH = db_path
     fast_fetch.init_db()
+    _ensure_sitemap_raw_json(db_path)
 
     client = MoviesDriveClient(base_url, request_interval=delay)
 
     with fast_fetch.get_db() as conn:
         cursor = conn.execute(
-            "SELECT loc FROM sitemap_cache WHERE site = 'moviesdrive' AND scraped = 0 ORDER BY rowid ASC"
+            "SELECT loc, raw_json FROM sitemap_cache WHERE site = 'moviesdrive' AND scraped = 0 ORDER BY rowid ASC"
         )
-        pending_urls = [row["loc"] for row in cursor]
+        pending = [(row["loc"], row["raw_json"]) for row in cursor]
 
-    if not pending_urls:
+    if not pending:
         print("[*] No pending posts in sitemap_cache. Syncing wp-json first...", flush=True)
         sync_posts_to_db(client, db_path)
         with fast_fetch.get_db() as conn:
             cursor = conn.execute(
-                "SELECT loc FROM sitemap_cache WHERE site = 'moviesdrive' AND scraped = 0 ORDER BY rowid ASC"
+                "SELECT loc, raw_json FROM sitemap_cache WHERE site = 'moviesdrive' AND scraped = 0 ORDER BY rowid ASC"
             )
-            pending_urls = [row["loc"] for row in cursor]
+            pending = [(row["loc"], row["raw_json"]) for row in cursor]
 
     if limit is not None:
-        pending_urls = pending_urls[:max(0, limit)]
+        pending = pending[:max(0, limit)]
 
-    total_tasks = len(pending_urls)
+    total_tasks = len(pending)
     print(f"\n{'='*70}")
     print("🚀 MoviesDrive Staging Ingestion Pipeline (wp-json -> mdrive archive -> file host)")
     print(f"   Database       : {db_path.name}")
@@ -764,16 +826,28 @@ def run_moviesdrive_scraper(
             thread_local.client = MoviesDriveClient(base_url, request_interval=delay)
         return thread_local.client
 
-    def process_one_url(url: str) -> dict:
+    def process_one_url(url: str, raw_json_str: str | None = None) -> dict:
         if STOP_REQUESTED:
             return {"skipped": True}
         c = get_thread_client()
-        # The WP post is re-read by slug from wp-json (one post per call);
-        # the slug is the last path segment of the pending URL.
-        slug = url.rstrip("/").split("/")[-1]
-        post, error = fetch_post_for_pending_url(c, slug)
+        # WP REST adoption (2026-11-23): the queue row carries the full
+        # REST post, so extraction runs off it with no per-post fetch.
+        # Legacy rows without raw_json fall back to the slug lookup.
+        post = None
+        if raw_json_str:
+            try:
+                post = json.loads(raw_json_str)
+            except (json.JSONDecodeError, TypeError):
+                post = None
+            if not isinstance(post, dict):
+                post = None
         if post is None:
-            return {"failed": True, "error": error or "post not found in wp-json", "url": url}
+            # The WP post is re-read by slug from wp-json (one post per call);
+            # the slug is the last path segment of the pending URL.
+            slug = url.rstrip("/").split("/")[-1]
+            post, error = fetch_post_for_pending_url(c, slug)
+            if post is None:
+                return {"failed": True, "error": error or "post not found in wp-json", "url": url}
 
         content_html = ((post.get("content") or {}).get("rendered") or "")
         archive_links = extract_archive_links(content_html)
@@ -802,7 +876,8 @@ def run_moviesdrive_scraper(
         }
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-        future_map = {executor.submit(process_one_url, u): u for u in pending_urls}
+        future_map = {executor.submit(process_one_url, loc, raw_json): loc
+                      for loc, raw_json in pending}
         for future in concurrent.futures.as_completed(future_map):
             if STOP_REQUESTED:
                 break
