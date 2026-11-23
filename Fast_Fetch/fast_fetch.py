@@ -6332,6 +6332,31 @@ def resolve_vidout_playlist(embed_url: str, verbose: bool = False) -> str | None
     return playlist_url
 
 
+def _iso8601_duration_minutes(value: str | None) -> int | None:
+    """Minutes in an ISO 8601 duration ("PT2H26M" -> 146), or None."""
+    if not value:
+        return None
+    m = re.fullmatch(r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", value.strip())
+    if not m or not any(m.groups()):
+        return None
+    hours = int(m.group(1) or 0)
+    minutes = int(m.group(2) or 0)
+    seconds = int(m.group(3) or 0)
+    total = hours * 60 + minutes + (1 if seconds >= 30 else 0)
+    return total or None
+
+
+def _display_runtime_minutes(value: str | None) -> int | None:
+    """Minutes in a display runtime ("2h 26m" -> 146, "45m" -> 45)."""
+    if not value:
+        return None
+    m = re.fullmatch(r"(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?", value.strip(), re.I)
+    if not m or not any(m.groups()):
+        return None
+    total = int(m.group(1) or 0) * 60 + int(m.group(2) or 0)
+    return total or None
+
+
 def extract_post_data_multimovies(
     post_url: str,
     html: str,
@@ -6345,6 +6370,11 @@ def extract_post_data_multimovies(
     Uses watchConfig embedded JSON with Cineverse, GD mirror, Vidrift, RozgarLelo, VIDOUT.
     Extracts TMDB and IMDB IDs from embed server URLs.
     For series, crawls individual episode pages for per-episode streaming servers.
+    Field population (2026-11-23): duration + release_date from JSON-LD
+    (spec-box fallback), cast from the cast grid, page quality into
+    raw_meta; release titles omit the "(year)" when the year is unknown
+    (no more "Title () Stream Server …"). Director is not carried by the
+    page and views have no per-title source — both stay unpopulated.
     """
     slug = post_url.rstrip("/").split("/")[-1]
     title_m = re.search(r"<title>(.*?)</title>", html, re.IGNORECASE)
@@ -6362,6 +6392,15 @@ def extract_post_data_multimovies(
     synopsis = None
     genres = None
     imdb_rating = None
+    # Field population (2026-11-23): the detail page carries duration,
+    # release date and cast the extractor used to drop — JSON-LD
+    # (datePublished, duration) first, the rendered spec box
+    # (cinejoy-spec-row Runtime / Release Date / Quality) as fallback,
+    # and the cast grid (cinejoy-cast-name) for cast_names.
+    duration = None
+    release_date = None
+    cast_names = None
+    page_quality = None
 
     # Parse watchItem embedded JSON
     item_m = re.search(r'watchItem\s*=\s*(\{.*?\});', html, re.DOTALL)
@@ -6386,6 +6425,12 @@ def extract_post_data_multimovies(
                     imdb_rating = str(ld_data["aggregateRating"].get("ratingValue") or "")
                 if not poster_url and ld_data.get("image"):
                     poster_url = ld_data.get("image")
+                if not release_date and ld_data.get("datePublished"):
+                    release_date = str(ld_data["datePublished"]).strip() or None
+                if not duration and ld_data.get("duration"):
+                    minutes = _iso8601_duration_minutes(str(ld_data["duration"]))
+                    if minutes:
+                        duration = f"{minutes} min"
         except Exception:
             pass
 
@@ -6398,6 +6443,35 @@ def extract_post_data_multimovies(
         meta_desc = re.search(r'<meta\s+name=[\"\']description[\"\']\s+content=[\"\']([^\"\']+)[\"\']', html, re.IGNORECASE)
         if meta_desc:
             synopsis = meta_desc.group(1).strip()
+
+    # Rendered spec box (fallback when JSON-LD lacks the field): Runtime
+    # "2h 26m", Release Date "Oct 27, 2023", Quality "1080p". A
+    # "Not specified" value is the page saying it has none — never saved.
+    for spec_label, spec_value in re.findall(
+            r'cinejoy-spec-label">([^<]+)</span>\s*<span class="cinejoy-spec-val">([^<]+)</span>',
+            html):
+        value = html_module.unescape(spec_value).strip()
+        if not value or value.lower() == "not specified":
+            continue
+        label = spec_label.strip().lower()
+        if label == "runtime" and not duration:
+            minutes = _display_runtime_minutes(value)
+            if minutes:
+                duration = f"{minutes} min"
+        elif label == "release date" and not release_date:
+            release_date = value
+        elif label == "quality" and not page_quality:
+            page_quality = value
+
+    # Cast grid: one cinejoy-cast-name per card (actor); the sibling
+    # cinejoy-cast-role is the character, never an actor name.
+    cast_list = [
+        html_module.unescape(name).strip()
+        for name in re.findall(r'cinejoy-cast-name">([^<]+)</', html)
+    ]
+    cast_list = [name for name in cast_list if name]
+    if cast_list:
+        cast_names = ", ".join(cast_list[:20])
 
     is_series = "/series/" in post_url
     content_type = "series" if is_series else "movie"
@@ -6462,7 +6536,7 @@ def extract_post_data_multimovies(
                         "is_temporary": 0,
                     }
                     releases.append({
-                        "release_title": f"{clean_title} ({year or ''}) Stream Server {s_name}",
+                        "release_title": f"{clean_title}{f' ({year})' if year else ''} Stream Server {s_name}",
                         "quality": "1080p",
                         "codec": "H.264",
                         "size": "",
@@ -6503,7 +6577,7 @@ def extract_post_data_multimovies(
                     "is_temporary": 0,
                 })
             releases.append({
-                "release_title": f"{clean_title} ({year or ''}) {t_clean or 'Direct Download'}",
+                "release_title": f"{clean_title}{f' ({year})' if year else ''} {t_clean or 'Direct Download'}",
                 "quality": "1080p",
                 "codec": "x264",
                 "size": "",
@@ -6569,7 +6643,7 @@ def extract_post_data_multimovies(
                                     else "iframe"
                                 )
                             ep_releases.append({
-                                "release_title": f"{clean_title} S{s_num:02d}E{e_num:02d} ({year or ''}) {s_name}",
+                                "release_title": f"{clean_title} S{s_num:02d}E{e_num:02d}{f' ({year})' if year else ''} {s_name}",
                                 "quality": "1080p",
                                 "codec": "H.264",
                                 "size": "",
@@ -6618,6 +6692,15 @@ def extract_post_data_multimovies(
         "imdb_rating": imdb_rating,
         "genres": genres,
         "synopsis": synopsis,
+        "cast_names": cast_names,
+        "duration": duration,
+        "director": None,
+        "release_date": release_date,
+        # The spec box's Quality is the /api/discover `quality` value
+        # rendered on the page (the audit's "not saved" gap); views have
+        # no per-title source — the discover feed is shuffled per call
+        # and search carries no views — so views stay unpopulated.
+        "raw_meta": json.dumps({"quality": page_quality}) if page_quality else None,
         "is_18_plus": is_18_plus,
         "is_animated": 0,
         "source_site": "multimovies",
