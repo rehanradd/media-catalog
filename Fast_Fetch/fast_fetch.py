@@ -313,7 +313,11 @@ DEFAULT_DOMAINS = {
     # and vcloud.beer has 0 rows — the old .beer origin 301s to .my.
     "vcloud": "https://vcloud.my",
     "vegadrive": "https://one.vegadrive.me",
-    "filepress": "https://new1.filepress.lat",
+    # Live 2026-11-23 (filepress crack): new4.filepress.lat is the
+    # current domain — new1 is retired, new2 301s to new4, new3
+    # (filepress.baby) 301s to fpgo.xyz and resets direct. The
+    # unwrapper (importers/host_resolvers.py) always calls new4.
+    "filepress": "https://new4.filepress.lat",
     "linkszilla": "https://secure.linkszilla.top",
     "hubcloud": "https://hubcloud.ist",
     "directcloud": "https://dl.direct-cloud.top",
@@ -7745,8 +7749,11 @@ FAILOVER_FIRST_SLICE_SECONDS = 5.0
 #: a two-hop chain whose own timeout is 15 s
 #: (`importers/host_resolvers.py`: FILEPRESS_TIMEOUT = 15 vs
 #: DEFAULT_TIMEOUT = 25) — a 5 s slice would cut it off before its
-#: first hop answers, so it gets its own 15 s. Every other service
-#: keeps the default slice.
+#: first hop answers, so it gets its own 15 s. The Fast Download
+#: fallback can additionally poll up to FILEPRESS_PREPARE_MAX_SECONDS
+#: (150 s) while the server-side copy prepares; the primary copy has
+#: no deadline, and a sibling that starts inside its slice runs to
+#: that cap. Every other service keeps the default slice.
 FAILOVER_FIRST_SLICE_SLOW_HOSTS = {"filepress": 15.0}
 
 
@@ -7805,7 +7812,14 @@ RESOLVE_FAILURE_CLASSES = ("probe_failed", "no_unwrapper", "unwrap_failed")
 #: extension-less URL with EBML/ftyp/AVI bytes passes instead of failing
 #: "unverified" — hubcdn R2 assets failed under v5 exactly that way, and
 #: the rows deserve one fresh press now that the bytes are read.
-RESOLVER_VERSION = 6
+#: 7 — filepress Fast Download (2026-11-23): the unwrapper gains the
+#: gpixelFastDownload prepare flow (same downlaod/downlaod2 endpoints,
+#: bounded ~2 min poll, Google user-content URL) as a fallback when the
+#: indexDownlaod API chain fails — filepress rows failed under v6
+#: (Oracle-egress 403 on the API, flapdoodle 522) deserve one fresh
+#: press through the new chain, which mints a Google user-content URL
+#: instead of the flapdoodle origin.
+RESOLVER_VERSION = 7
 
 
 def _is_transport_verdict(verdict) -> bool:
@@ -8815,15 +8829,23 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                          or "filebee" in source_u.lower()
                          or "filebee" in cached_u.lower()):
                 # Filepress cracked 2026-11-13 (FileBee downlaod/downlaod2
-                # API chain, no browser, no captcha — see host_resolvers).
-                # The unwrapper's Range probe IS the gate evidence: only a
-                # 206 with real video bytes is "active". Measured limits:
-                # the download origin aws.flapdoodle.cyou answers 522 on
-                # every /download/* path (both egresses, ~50 min), and the
-                # Oracle VM egress is 403-challenged on the API itself, so
-                # no filepress link plays from production yet — this branch
-                # mints correctly and serves the moment the origin/API
-                # answers from the production egress again.
+                # API chain) and again 2026-11-23 (Fast Download: the
+                # same endpoints with method gpixelFastDownload, see
+                # host_resolvers — the /prepare/ and /download/ pages
+                # are SPA shells, so the flow runs on the API, never on
+                # scraped HTML). The unwrapper tries the index chain
+                # first (2 POSTs, fast) and falls back to the Fast
+                # Download chain (same endpoints, bounded ~2 min poll
+                # while the server-side copy prepares) when the chain
+                # fails; a dead file short-circuits both. The unwrapper's
+                # Range probe IS the gate evidence: only a 206 with real
+                # video bytes is "active". Measured limits: the Oracle VM
+                # egress is 403-challenged (Cloudflare Turnstile) on the
+                # file page AND the API, so no filepress link plays from
+                # direct Oracle egress; via WARP egress the API answers
+                # real JSON. The fast chain is residential/WARP-only
+                # until proven otherwise — the resolver is correct, the
+                # egress is the constraint.
                 _unwrap_branch_taken = True
                 verdict = hr.unwrap_filepress(hoster_input("filepress"),
                                               verify=True)

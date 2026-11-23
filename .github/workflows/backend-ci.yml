@@ -1069,6 +1069,14 @@ jobs:
       - name: 🧪 test_greenmotors_multicloud.py
         run: python3 -S Fast_Fetch/test_greenmotors_multicloud.py
 
+      # Filepress Fast Download (2026-11-23): the index chain (downlaod /
+      # downlaod2, method indexDownlaod) is kept first and the new
+      # gpixelFastDownload prepare flow (same endpoints, bounded poll,
+      # Google user-content URL) is the fallback when the index says
+      # METHOD_HIDDEN or the egress blocks it. Offline — mocked fetch.
+      - name: 🧪 test_filepress_unwrap.py
+        run: python3 -S Fast_Fetch/test_filepress_unwrap.py
+
       # XprimeHub (Session 104): the 19th site, 18+ adult catalog — scrape only.
       # The flag is the feature: every row is_18_plus = 1 by site authority, and the
       # registry entry records scrape-only / never publish. Offline — temp SQLite files.

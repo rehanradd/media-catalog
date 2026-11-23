@@ -2971,6 +2971,32 @@ def unwrap_gofile(url: str, fetch=None, verify: bool = True) -> dict:
 # Tokens are stable per file for 10+ minutes. Filenames with spaces or
 # brackets MUST be percent-encoded or HTTP clients reject the URL.
 #
+# SECOND CHAIN — Fast Download (2026-11-23, user's own Chrome): the same
+# two endpoints with method "gpixelFastDownload" prepare a server-side
+# "fast copy" and mint a Google user-content URL instead of flapdoodle:
+#
+#   POST .../api/file/downlaod/
+#     {"id": "<fileId>", "method": "gpixelFastDownload", "captchaValue": null}
+#     -> {"status": true, "data": "<24-hex token>"} — or, while the copy
+#        is still being made, data is a preparing object
+#        {status, progress, error}; the resolver re-calls until the token
+#        appears or FILEPRESS_PREPARE_MAX_SECONDS elapses (bounded poll).
+#   POST .../api/file/downlaod2/
+#     {"id": "<token>", "method": "gpixelFastDownload", "captchaValue": null}
+#     -> {"status": true, "data": "<googleusercontent URL string>"}
+#
+# The browser flow the user clicked is the same chain behind SPA routes:
+# /prepare/?f=<id>&m=gpixelFastDownload is the waiting room while the copy
+# prepares (~2 min), /download/?d=<token>&m=gpixelFastDownload is the page
+# whose "Open download link" anchor is the minted Google URL. Both routes
+# serve the 1,457-byte SPA shell to a plain GET — there is no server-side
+# HTML to scrape, which is why the resolver drives the API, never the
+# pages (10 plain-GET polls of /prepare/ all returned the identical
+# shell, 2026-11-23). The SPA's downloads-attempts API
+# (POST /api/downloads/attempts) answers INVALID_REQUEST without a
+# session, so it is NOT implemented; the downlaod chain above is the
+# unauthenticated path and is what the resolver uses.
+#
 # Measured limits, 2026-11-13 (must be re-measured before trusting):
 #   - The API base MUST be new4.filepress.lat with a matching Referer.
 #     Re-measured 2026-11-20: new3's API route now serves the site's SPA
@@ -2989,9 +3015,36 @@ def unwrap_gofile(url: str, fetch=None, verify: bool = True) -> dict:
 #     from the Oracle VM as-is. Via WARP egress the same two POSTs mint and
 #     the minted link plays (206, Matroska, 2026-11-20). WARP-in-production
 #     is an owner decision; until then this resolver stays WARP-only.
+#
+# Re-measured 2026-11-23 (The Terminal List, 6ad8c86e69b577b11530c5be):
+#   - Oracle direct egress: file page 403 Turnstile, API 403 Turnstile,
+#     new3.filepress.baby connection reset. BLOCKED at every hop.
+#   - WARP egress: new3 301 -> fpgo.xyz, new2 301 -> new4, new4 file page
+#     200 SPA shell (1,457 B, no links). indexDownlaod for THIS file
+#     answers METHOD_HIDDEN (the file is not in new4's index for that
+#     method — the index chain is a per-file lottery). gpixelFastDownload
+#     mints a 24-hex token in ~0.4 s and downlaod2 mints the Google URL
+#     in ~0.4 s (the fast copy already existed: the user's 19:34 crack
+#     had prepared it; a fresh file's first prepare is the ~2 min the
+#     browser showed). The minted URL is a bare signed path on
+#     video-downloads.googleusercontent.com with NO query string, so no
+#     expiry is parsable from it; the same URL answered HTTP 200,
+#     video/mkv, 1.43 GB from the Oracle VM at 19:34. The attempts API
+#     is INVALID_REQUEST without a session (bare path 404).
 FILEPRESS_API_BASE = "https://new4.filepress.lat"
 FILEPRESS_METHOD = "indexDownlaod"
 FILEPRESS_TIMEOUT = 15
+#: The Fast Download method ("gpixelFastDownload", label "Fast Download"
+#: in the SPA): a server-side "fast copy" of the file onto Google user
+#: content, minted through the SAME downlaod/downlaod2 API as the index
+#: chain but with this method instead of indexDownlaod.
+FILEPRESS_FAST_METHOD = "gpixelFastDownload"
+#: The fast copy takes ~2 min server-side (measured in the user's browser
+#: 2026-11-23). The resolver polls by re-calling downlaod (and downlaod2
+#: on the mint hop) while the answer is a preparing object; the poll is
+#: bounded — never an open-ended wait inside a press.
+FILEPRESS_PREPARE_POLL_SECONDS = 15
+FILEPRESS_PREPARE_MAX_SECONDS = 150
 _FILEPRESS_ID_RE = re.compile(r"^[0-9a-f]{24}$")
 
 
@@ -3022,15 +3075,17 @@ def _filepress_encode_filename(url: str) -> str:
         urllib.parse.unquote(tail), safe=".-_~")
 
 
-def _filepress_api_call(fetch, endpoint: str, payload_id: str):
+def _filepress_api_call(fetch, endpoint: str, payload_id: str,
+                       method: str = FILEPRESS_METHOD):
     """One FileBee API POST. Returns (ok, data_or_error_note).
 
-    ok=True  -> data is the parsed "data" field (token str, or [link]).
+    ok=True  -> data is the parsed "data" field (token str, [link], a
+    URL str, or a preparing object {status, progress, error}).
     ok=False -> data is a short machine-readable note for the verdict.
     """
     body = json.dumps({
         "id": payload_id,
-        "method": FILEPRESS_METHOD,
+        "method": method,
         "captchaValue": None,
     }).encode("utf-8")
     headers = {
@@ -3058,6 +3113,14 @@ def _filepress_api_call(fetch, endpoint: str, payload_id: str):
         return False, "bad_json"
     if not isinstance(parsed, dict):
         return False, "bad_json"
+    data = parsed.get("data")
+    if isinstance(data, dict) and isinstance(data.get("status"), str):
+        # A preparing object ({status, progress, error}) is a live answer
+        # about the fast copy, not an error — surface it even when the
+        # envelope's own status is False. The error vocabulary is always
+        # a bare string (METHOD_HIDDEN etc.), never a dict, so this
+        # branch cannot misread a failure as progress.
+        return True, data
     if parsed.get("status") is not True:
         # The API's own error vocabulary, verbatim:
         #   METHOD_NOT_FOUND / METHOD_HIDDEN / INDEX_CLONE_FAILED /
@@ -3067,14 +3130,112 @@ def _filepress_api_call(fetch, endpoint: str, payload_id: str):
     return True, parsed.get("data")
 
 
-def unwrap_filepress(url, fetch=None, verify=True):
+def _filepress_note_status(note: str) -> str:
+    """An API-call note ("blocked:403" / "dead:404" / anything else) to a
+    verdict status. Dead is the only note that short-circuits the other
+    chain: a deleted file has no fast copy to prepare either."""
+    if isinstance(note, str) and note.startswith("blocked:"):
+        return "blocked"
+    if isinstance(note, str) and note.startswith("dead:"):
+        return "dead"
+    return "unknown"
+
+
+def _filepress_mint_fast(fetch, file_id: str, _sleep=None):
+    """The Fast Download chain (2026-11-23 crack): downlaod with method
+    ``gpixelFastDownload`` mints a token for a server-side "fast copy",
+    downlaod2 swaps it for the Google user-content URL.
+
+    Returns (direct_url_or_None, note, outcome) with outcome in
+    {"minted", "blocked", "dead", "unknown"}. While either hop answers
+    a preparing object ({status, progress, error}) the call is repeated
+    every FILEPRESS_PREPARE_POLL_SECONDS until the token/link appears
+    or FILEPRESS_PREPARE_MAX_SECONDS elapses — a bounded poll, never an
+    open-ended wait inside a press. ``_sleep`` is injectable so tests
+    can prove the bound without waiting it out.
+    """
+    sleep = _sleep or time.sleep
+    deadline = time.monotonic() + FILEPRESS_PREPARE_MAX_SECONDS
+    # The bound is a poll COUNT (max seconds / poll seconds), not just a
+    # wall-clock deadline: a test double's instant sleep must not turn
+    # the bounded poll into an unbounded one. The deadline stays as a
+    # second guard for a slow network, where one call can eat seconds.
+    max_polls = max(1, FILEPRESS_PREPARE_MAX_SECONDS
+                    // FILEPRESS_PREPARE_POLL_SECONDS)
+    polls = 0
+
+    def _another_poll():
+        nonlocal polls
+        if polls >= max_polls or time.monotonic() >= deadline:
+            return False
+        sleep(FILEPRESS_PREPARE_POLL_SECONDS)
+        polls += 1
+        return True
+
+    ok, token = _filepress_api_call(fetch, "/api/file/downlaod/", file_id,
+                                    method=FILEPRESS_FAST_METHOD)
+    if ok and isinstance(token, str) and token.startswith("http"):
+        # Same Telegram-deep-link quirk as the index chain: retry once
+        # for a bare token before giving up.
+        ok, token = _filepress_api_call(fetch, "/api/file/downlaod/",
+                                        file_id, method=FILEPRESS_FAST_METHOD)
+    last_progress = None
+    while ok and isinstance(token, dict):
+        # The fast copy is still being made server-side.
+        if token.get("error"):
+            return None, "fast downlaod: preparing failed: %s" % (
+                token.get("error"),), "unknown"
+        last_progress = token.get("progress")
+        if not _another_poll():
+            return None, ("fast downlaod: prepare poll timed out after "
+                          "%ds (%d polls, last progress %s)"
+                          % (FILEPRESS_PREPARE_MAX_SECONDS, polls,
+                             last_progress)), "unknown"
+        ok, token = _filepress_api_call(fetch, "/api/file/downlaod/",
+                                        file_id,
+                                        method=FILEPRESS_FAST_METHOD)
+    if not ok:
+        return None, "fast downlaod: %s" % token, _filepress_note_status(token)
+    if not isinstance(token, str) or not token:
+        return None, "fast downlaod: empty token", "unknown"
+
+    ok, links = _filepress_api_call(fetch, "/api/file/downlaod2/", token,
+                                    method=FILEPRESS_FAST_METHOD)
+    while ok and isinstance(links, dict):
+        if links.get("error"):
+            return None, "fast downlaod2: mint failed: %s" % (
+                links.get("error"),), "unknown"
+        if not _another_poll():
+            return None, ("fast downlaod2: mint poll timed out after "
+                          "%ds (%d polls)"
+                          % (FILEPRESS_PREPARE_MAX_SECONDS, polls)), "unknown"
+        ok, links = _filepress_api_call(fetch, "/api/file/downlaod2/",
+                                        token, method=FILEPRESS_FAST_METHOD)
+    if not ok:
+        return None, "fast downlaod2: %s" % links, _filepress_note_status(links)
+    if isinstance(links, str) and links.startswith("http"):
+        return links, "minted via fast downlaod/downlaod2", "minted"
+    if isinstance(links, list) and links and links[0]:
+        return str(links[0]), "minted via fast downlaod/downlaod2", "minted"
+    return None, "fast downlaod2: empty link", "unknown"
+
+
+def unwrap_filepress(url, fetch=None, verify=True, _sleep=None):
     """Resolve a filepress/filebee page URL to a direct file link.
 
-    Returns a verdict dict like the other unwrap_* resolvers. The chain is
-    the two-POST FileBee API sequence above; with verify=True the minted
-    link is Range-probed and only a 206 with real video bytes is "active".
-    A dead download origin (522, timeout) is "error"/"unknown" — never
-    "dead" on one probe, and never served.
+    Two chains, in order. (1) The index chain: POST downlaod/
+    (method indexDownlaod) mints a 24-hex token, POST downlaod2/ swaps
+    it for a direct .mkv link on the flapdoodle origin. (2) The Fast
+    Download chain: the same two endpoints with method
+    gpixelFastDownload, which prepares a server-side fast copy (~2 min,
+    bounded poll) and mints a Google user-content URL. A chain that
+    fails blocked/unknown falls through to the next; a chain that says
+    dead short-circuits both — a deleted file has no copy to prepare.
+
+    With verify=True the minted link is Range-probed and only a 206
+    with real video bytes is "active". A dead download origin (522,
+    timeout) is "error"/"unknown" — never "dead" on one probe, and
+    never served.
     """
     fetch = fetch or http_request
     result = _new_result(SERVICE_FILEPRESS, url)
@@ -3082,6 +3243,12 @@ def unwrap_filepress(url, fetch=None, verify=True):
     if not file_id:
         result["status"] = "unknown"
         result["notes"].append("no file id in url")
+        return result
+    if "fpgo.xyz" in (urllib.parse.urlsplit(url).netloc or "").lower():
+        # fpgo.xyz is where retired filepress domains redirect, not a
+        # file host: a link already there has no filepress copy left.
+        result["status"] = "dead"
+        result["notes"].append("fpgo.xyz is the retired-file redirect target")
         return result
 
     ok, token = _filepress_api_call(fetch, "/api/file/downlaod/", file_id)
@@ -3095,41 +3262,47 @@ def unwrap_filepress(url, fetch=None, verify=True):
         # four calls), so retry the first call once before giving up.
         ok, token = _filepress_api_call(fetch, "/api/file/downlaod/",
                                         file_id)
+    chain1_note = None
     if not ok:
-        note = "downlaod: %s" % token
-        if isinstance(token, str) and token.startswith("blocked:"):
-            result["status"] = "blocked"
-        elif isinstance(token, str) and token.startswith("dead:"):
+        chain1_note = "downlaod: %s" % token
+        if _filepress_note_status(token) == "dead":
             result["status"] = "dead"
+            result["notes"].append(chain1_note)
+            return result
+    elif not isinstance(token, str) or not token:
+        chain1_note = "downlaod: empty token"
+    else:
+        ok2, links = _filepress_api_call(fetch, "/api/file/downlaod2/",
+                                         token)
+        if not ok2:
+            chain1_note = "downlaod2: %s" % links
+            if _filepress_note_status(links) == "dead":
+                result["status"] = "dead"
+                result["notes"].append(chain1_note)
+                return result
+        elif not isinstance(links, list) or not links or not links[0]:
+            chain1_note = "downlaod2: empty link list"
         else:
-            result["status"] = "unknown"
-        result["notes"].append(note)
-        return result
-    if not isinstance(token, str) or not token:
-        result["status"] = "unknown"
-        result["notes"].append("downlaod: empty token")
-        return result
+            direct = _filepress_encode_filename(str(links[0]))
+            result["final_url"] = direct
+            result["status"] = "active"
+            result["notes"].append("minted via FileBee downlaod/downlaod2")
+            return _finish_media(result, fetch, verify)
 
-    ok, links = _filepress_api_call(fetch, "/api/file/downlaod2/", token)
-    if not ok:
-        note = "downlaod2: %s" % links
-        if isinstance(links, str) and links.startswith("blocked:"):
-            result["status"] = "blocked"
-        elif isinstance(links, str) and links.startswith("dead:"):
-            result["status"] = "dead"
-        else:
-            result["status"] = "unknown"
-        result["notes"].append(note)
+    # The index chain failed (blocked/unknown — never dead, dead returned
+    # above). The Fast Download chain mints from a different method on
+    # the same mirror, so a file the index does not carry (METHOD_HIDDEN)
+    # or an egress the API challenges can still mint here.
+    direct, fast_note, outcome = _filepress_mint_fast(fetch, file_id, _sleep)
+    if chain1_note:
+        result["notes"].append(chain1_note)
+    result["notes"].append(fast_note)
+    if direct is None:
+        result["status"] = outcome
         return result
-    if not isinstance(links, list) or not links or not links[0]:
-        result["status"] = "unknown"
-        result["notes"].append("downlaod2: empty link list")
-        return result
-
-    direct = _filepress_encode_filename(str(links[0]))
-    result["final_url"] = direct
+    result["final_url"] = _filepress_encode_filename(direct)
+    _expires_at, result["expires_in"] = expiry_from_url(direct)
     result["status"] = "active"
-    result["notes"].append("minted via FileBee downlaod/downlaod2")
     return _finish_media(result, fetch, verify)
 
 
