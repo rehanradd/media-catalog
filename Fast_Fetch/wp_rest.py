@@ -102,6 +102,8 @@ _LABEL_PATTERNS: list[tuple[str, str]] = [
     ("host", r"Hosts?\s*:"),
     ("genres", r"Genres?\s*:"),
     ("languages", r"Languages?\s*:"),
+    ("subtitle", r"Subtitles?\s*:"),
+    ("episodes", r"Episodes?\s*:"),
     ("quality", r"(?:Video\s+)?Quality\s*:"),
     ("episode_size", r"Episode\s+Size\s*:"),
     ("story", r"(?:Film\s+Story|Story|Synopsis|Plot|Storyline)\s*(?::|[-–]\s)"),
@@ -177,7 +179,7 @@ def _clean_label_value(key: str, raw: str) -> str:
 
 def _split_list(value: str) -> list[str]:
     parts = []
-    for piece in re.split(r"[,/|]|\s+and\s+", value or ""):
+    for piece in re.split(r"[,/|+]|\s+and\s+", value or ""):
         token = re.sub(r"\s+", " ", piece).strip(" .")
         # Oxford-comma lists ("A, B, and C") leave a leading "and".
         if token.lower().startswith("and "):
@@ -221,7 +223,7 @@ def parse_labelled_text(text: str) -> dict:
             if items:
                 out[key] = items
         elif key in ("story", "director", "languages", "release_date",
-                     "quality"):
+                     "quality", "subtitle", "episodes"):
             if len(value) > 200 and key != "story":
                 value = value[:200].strip()
             if key == "story" and len(value) < 15:

@@ -550,5 +550,23 @@ class TestRareanimesGenres(unittest.TestCase):
                          ["Animation", "Action & Adventure", "Crime", "Drama"])
 
 
+class TestHindianimeszoneLabels(unittest.TestCase):
+    def test_plus_is_a_list_separator(self):
+        # _split_list (used for the list labels) splits on "+".
+        labels = wp_rest.parse_labelled_text("Genres: Action + Adventure")
+        self.assertEqual(labels["genres"], ["Action", "Adventure"])
+
+    def test_subtitle_and_episodes_labels_cut_values(self):
+        # Without these labels the Language: value would run past them
+        # ("...Jap Org Subtitle: English Episodes: 12").
+        labels = wp_rest.parse_labelled_text(
+            "Language: Hindi Fan Dubbed + Jap Org\n"
+            "Subtitle: English\nEpisodes: 12\nQuality: 480p 720p")
+        self.assertEqual(labels["languages"], "Hindi Fan Dubbed + Jap Org")
+        self.assertEqual(labels["subtitle"], "English")
+        self.assertEqual(labels["episodes"], "12")
+        self.assertEqual(labels["quality"], "480p 720p")
+
+
 if __name__ == "__main__":
     unittest.main()
