@@ -2812,5 +2812,122 @@ class MegaLinkViewTests(CatalogApiTestCase):
                          flagged["tiers"][0]["band"])
 
 
+class SearchTimeoutTests(unittest.TestCase):
+    """The v2 listing deadline (Lane E, 2026-11-23).
+
+    `/api/v1/posts` has had a 10 s progress-handler deadline since
+    Session 125; `/api/v2/search` and `/api/v2/browse` called
+    `_run_listing` bare. These tests pin the v2 side: a past deadline
+    answers `search_timeout` (never a LIKE fallback, never a page), a
+    live deadline answers normally, and the handler is cleared so the
+    next query on the same connection is unaffected. The fixture holds
+    300 rows so the page + count queries execute well past the
+    1000-instruction progress-handler interval — a 4-row fixture would
+    never trip the handler at all.
+    """
+
+    def setUp(self):
+        self.conn = sqlite3.connect(":memory:")
+        self.conn.row_factory = sqlite3.Row
+        catalog_api._register_udfs(self.conn)
+        self.conn.execute(
+            "CREATE TABLE cat_works (id INTEGER PRIMARY KEY, title TEXT,"
+            " original_title TEXT, genres TEXT, is_18_plus INTEGER DEFAULT 0,"
+            " year INTEGER, work_type TEXT, is_animated INTEGER DEFAULT 0,"
+            " imdb_rating REAL, languages TEXT, country TEXT, industry TEXT,"
+            " site_count INTEGER DEFAULT 0, episode_count INTEGER DEFAULT 0,"
+            " release_count INTEGER DEFAULT 0, max_resolution TEXT,"
+            " best_quality_score INTEGER DEFAULT 0,"
+            " available_stream INTEGER DEFAULT 0,"
+            " available_download INTEGER DEFAULT 0,"
+            " identity_suspect INTEGER DEFAULT 0, entitlement_model TEXT,"
+            " first_seen_at REAL, updated_at REAL, work_key TEXT,"
+            " imdb_id TEXT, tmdb_id TEXT, synopsis TEXT, poster_url TEXT,"
+            " backdrop_urls TEXT, runtime_minutes INTEGER, tvdb_id TEXT,"
+            " source_rev INTEGER)")
+        self.conn.execute(
+            "CREATE TABLE cat_work_aliases (work_id INTEGER, alias TEXT,"
+            " locale TEXT, source_site TEXT, kind TEXT,"
+            " PRIMARY KEY (work_id, alias, source_site))")
+        self.conn.execute(
+            "CREATE TABLE cat_seasons (id INTEGER PRIMARY KEY,"
+            " work_id INTEGER, number INTEGER, season_type TEXT)")
+        self.conn.execute(
+            "CREATE TABLE cat_review_queue (id INTEGER PRIMARY KEY,"
+            " work_id INTEGER, release_id INTEGER, kind TEXT, detail TEXT,"
+            " resolved_at REAL)")
+        self.conn.execute(
+            "CREATE TABLE cat_links (id INTEGER PRIMARY KEY,"
+            " work_id INTEGER, release_id INTEGER, state TEXT,"
+            " playability TEXT)")
+        self.conn.execute(
+            "CREATE VIRTUAL TABLE cat_works_fts USING fts5(title)")
+        for i in range(300):
+            title = "Film %04d" % i
+            self.conn.execute(
+                "INSERT INTO cat_works (id, title, year, work_type,"
+                " site_count, release_count, best_quality_score,"
+                " episode_count, available_stream, available_download,"
+                " work_key) VALUES (?, ?, 2024, 'movie', 1, 1, 100, 0, 1, 1, ?)",
+                (1000 + i, title, "movie:%s:2024" % title))
+            self.conn.execute(
+                "INSERT INTO cat_works_fts (rowid, title) VALUES (?, ?)",
+                (1000 + i, title))
+        self.conn.commit()
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_past_deadline_search_returns_search_timeout(self):
+        with unittest.mock.patch.object(
+                catalog_api, "SEARCH_TIMEOUT_SECONDS", 0):
+            result = catalog_api.search(self.conn, q="film")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "search_timeout")
+        self.assertNotIn("items", result)
+
+    def test_timed_out_fts_search_does_not_fall_back_to_like(self):
+        # The FTS table exists here: if the timeout fell back to the
+        # LIKE scan, the scan would answer rows (or trip the same
+        # deadline and still answer `search_timeout`). Either way the
+        # observable must be the timeout error, never a page of rows.
+        with unittest.mock.patch.object(
+                catalog_api, "SEARCH_TIMEOUT_SECONDS", 0):
+            result = catalog_api.search(self.conn, q="film")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "search_timeout")
+
+    def test_normal_deadline_search_answers(self):
+        result = catalog_api.search(self.conn, q="film")
+        self.assertTrue(result["ok"])
+        self.assertGreater(len(result["items"]), 0)
+
+    def test_browse_with_zero_timeout_returns_search_timeout(self):
+        result = catalog_api.browse(
+            self.conn, q="film", search_timeout_seconds=0)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "search_timeout")
+
+    def test_explicit_timeout_param_overrides_the_default(self):
+        timed_out = catalog_api.search(
+            self.conn, q="film", search_timeout_seconds=0)
+        self.assertEqual(timed_out["error"]["code"], "search_timeout")
+        answered = catalog_api.search(
+            self.conn, q="film", search_timeout_seconds=30)
+        self.assertTrue(answered["ok"])
+        self.assertGreater(len(answered["items"]), 0)
+
+    def test_handler_is_cleared_after_a_timeout(self):
+        # If the timed-out call left its progress handler installed,
+        # the stale handler (deadline already past) would trip the
+        # next query on this connection too.
+        with unittest.mock.patch.object(
+                catalog_api, "SEARCH_TIMEOUT_SECONDS", 0):
+            catalog_api.search(self.conn, q="film")
+        result = catalog_api.search(self.conn, q="film")
+        self.assertTrue(result["ok"])
+        self.assertGreater(len(result["items"]), 0)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

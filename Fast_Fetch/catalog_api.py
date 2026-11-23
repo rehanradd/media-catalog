@@ -70,6 +70,16 @@ MAX_SEARCH_LIMIT = 100
 # 2026-11-15, search speed: a search total above this is reported as the cap
 # with total_capped=True (the exact COUNT re-scans the whole match set).
 DEFAULT_TOTAL_CAP = 1000
+#: 2026-11-23, scale (Lane E): the v2 search/browse deadline, in seconds.
+#: The v1 `/api/v1/posts` path has had a 10 s progress-handler deadline
+#: since Session 125 (viewer.py `SEARCH_DEADLINE_SECONDS`, 503
+#: `search_timeout`), but `/api/v2/search` and `/api/v2/browse` called
+#: `_run_listing` bare — a slow query could hold a worker thread past
+#: nginx's 15 s read timeout and pile threads up under load. `_run_listing`
+#: installs the same 10 s deadline, so a v2 listing can never run longer
+#: than a v1 one. A timed-out FTS query does NOT fall back to the LIKE
+#: scan (that would be slower, not safer); it answers `search_timeout`.
+SEARCH_TIMEOUT_SECONDS = 10.0
 SORT_KEYS = ("trending", "newest", "quality", "rating", "title", "updated")
 COVERAGE_TYPES = ("whole_work", "season_pack", "episode_range", "single_episode", "parts")
 ERROR_CODES = (
@@ -77,6 +87,7 @@ ERROR_CODES = (
     "invalid_input",
     "cursor_invalid",
     "bad_connection",
+    "search_timeout",
 )
 
 # Link candidate groups — lower group ranks earlier. Playability decides the group.
@@ -1431,10 +1442,93 @@ def _listing_error(sort, order):
     return None
 
 
+def _search_timeout_error() -> dict:
+    """The listing-deadline answer: a 503 `search_timeout` upstream.
+
+    The v2 HTTP layer maps this code to 503 `unavailable`
+    (`api_v2._CODE_ALIASES`); it must never be a LIKE fallback or an
+    empty page, or a timed-out query would silently return wrong rows.
+    """
+    return {"ok": False, "error": {"code": "search_timeout",
+                                   "message": "Search took too long; try a more specific query"}}
+
+
+def _search_deadline(search_timeout_seconds: float | None) -> float | None:
+    """One shared deadline for a listing call, or None to disable it.
+
+    `search()` passes the same deadline to its literal, mood and fuzzy
+    runs, so a whole search call is bounded by one budget, not three.
+    """
+    timeout = (SEARCH_TIMEOUT_SECONDS if search_timeout_seconds is None
+               else search_timeout_seconds)
+    if timeout is None:
+        return None
+    return time.monotonic() + float(timeout)
+
+
 def _run_listing(conn, *, sort, order, limit, include_adult, cursor,
                  facet_clauses, facet_params, query_tokens, query_norm,
-                 use_fts_match, total_cap: int = DEFAULT_TOTAL_CAP) -> dict:
-    """Shared engine for `browse` and `search`.
+                 use_fts_match, total_cap: int = DEFAULT_TOTAL_CAP,
+                 search_timeout_seconds: float | None = None,
+                 _deadline: float | None = None,
+                 _timeout_state: dict | None = None) -> dict:
+    """Shared engine for `browse` and `search`, under a deadline.
+
+    Installs a `set_progress_handler` deadline (default
+    `SEARCH_TIMEOUT_SECONDS`, 10 s — the same bound the v1 posts path
+    uses) around `_run_listing_guarded`, then clears the handler, so no
+    later statement on this connection inherits the deadline. `search()`
+    passes one shared `_deadline` for its literal + mood + fuzzy runs,
+    so a whole search call is bounded, not each attempt. A deadline of
+    ``None`` (or ``<= 0``) disables the handler; the handler never
+    raises — it returns 1 past the deadline, which sqlite3 surfaces as
+    `OperationalError("interrupted")`, exactly as viewer.py relies on.
+    """
+    if _deadline is None:
+        timeout = (SEARCH_TIMEOUT_SECONDS if search_timeout_seconds is None
+                   else search_timeout_seconds)
+        # Only None disables the handler: a 0 s budget is already past,
+        # so the handler trips on its first call (the tests patch the
+        # constant to 0 to prove the trip, as viewer.py does).
+        deadline = (None if timeout is None
+                    else time.monotonic() + float(timeout))
+    else:
+        deadline = _deadline
+    state = _timeout_state if _timeout_state is not None else {"interrupted": False}
+    if deadline is None:
+        return _run_listing_guarded(
+            conn, sort=sort, order=order, limit=limit,
+            include_adult=include_adult, cursor=cursor,
+            facet_clauses=facet_clauses, facet_params=facet_params,
+            query_tokens=query_tokens, query_norm=query_norm,
+            use_fts_match=use_fts_match, total_cap=total_cap,
+            _deadline=None, _timeout_state=state)
+
+    def _handler():
+        if time.monotonic() > deadline:
+            state["interrupted"] = True
+            return 1
+        return 0
+
+    conn.set_progress_handler(_handler, 1000)
+    try:
+        return _run_listing_guarded(
+            conn, sort=sort, order=order, limit=limit,
+            include_adult=include_adult, cursor=cursor,
+            facet_clauses=facet_clauses, facet_params=facet_params,
+            query_tokens=query_tokens, query_norm=query_norm,
+            use_fts_match=use_fts_match, total_cap=total_cap,
+            _deadline=deadline, _timeout_state=state)
+    finally:
+        conn.set_progress_handler(None, 0)
+
+
+def _run_listing_guarded(conn, *, sort, order, limit, include_adult, cursor,
+                         facet_clauses, facet_params, query_tokens, query_norm,
+                         use_fts_match, total_cap: int = DEFAULT_TOTAL_CAP,
+                         _deadline: float | None = None,
+                         _timeout_state: dict | None = None) -> dict:
+    """Shared engine for `browse` and `search` (deadline installed by caller).
 
     Pagination is keyset (`WHERE (expr, id) > (cursor)`), not OFFSET, because the
     catalog is re-sorted by every ingestion run: an offset page can repeat or skip a
@@ -1540,6 +1634,13 @@ def _run_listing(conn, *, sort, order, limit, include_adult, cursor,
     try:
         step1_rows = conn.execute(step1_sql, params).fetchall()
     except sqlite3.OperationalError:
+        if _timeout_state is not None and _timeout_state.get("interrupted"):
+            # The deadline fired: answer `search_timeout`, never the LIKE
+            # fallback — the fallback scan is slower than the FTS query
+            # that just died, so retrying it would only hold the worker
+            # longer. The recursive call below shares the same deadline
+            # and state, so a fallback that trips answers the same way.
+            return _search_timeout_error()
         if not use_fts_match:
             raise
         # The FTS table exists but cannot serve this query (unsupported syntax or a
@@ -1548,7 +1649,8 @@ def _run_listing(conn, *, sort, order, limit, include_adult, cursor,
                             include_adult=include_adult, cursor=cursor,
                             facet_clauses=facet_clauses, facet_params=facet_params,
                             query_tokens=query_tokens, query_norm=query_norm,
-                            use_fts_match=False, total_cap=total_cap)
+                            use_fts_match=False, total_cap=total_cap,
+                            _deadline=_deadline, _timeout_state=_timeout_state)
     has_more = len(step1_rows) > limit
     step1_rows = step1_rows[:limit]
     page_ids = [int(r["id"]) for r in step1_rows]
@@ -1570,9 +1672,14 @@ def _run_listing(conn, *, sort, order, limit, include_adult, cursor,
         step2_params = dict(params)
         step2_params.update({f"pid{i}": pid
                              for i, pid in enumerate(page_ids)})
-        rows = conn.execute(
-            f"SELECT {select_cols}, {expr} AS __sk FROM cat_works w"
-            f" WHERE w.id IN ({marks})", step2_params).fetchall()
+        try:
+            rows = conn.execute(
+                f"SELECT {select_cols}, {expr} AS __sk FROM cat_works w"
+                f" WHERE w.id IN ({marks})", step2_params).fetchall()
+        except sqlite3.OperationalError:
+            if _timeout_state is not None and _timeout_state.get("interrupted"):
+                return _search_timeout_error()
+            raise
         # Step 2 has no ORDER BY: impose the step-1 page order in Python.
         by_id = {int(r["id"]): r for r in rows}
         rows = [by_id[pid] for pid in page_ids if pid in by_id]
@@ -1605,18 +1712,23 @@ def _run_listing(conn, *, sort, order, limit, include_adult, cursor,
     # (its WHERE is cheap, 0.53 s for the whole page). The app renders a
     # capped total as "N+ results".
     total_capped = False
-    if query_tokens or facet_clauses:
-        capped_row = conn.execute(
-            f"SELECT COUNT(*) AS n FROM (SELECT 1 FROM cat_works w"
-            f" WHERE {where_sql} LIMIT :cap)",
-            {**count_params, "cap": total_cap + 1}).fetchone()
-        total_n = int(capped_row["n"]) if capped_row else 0
-        total_capped = total_n > total_cap
-        total_n = min(total_n, total_cap)
-    else:
-        total_row = conn.execute(
-            f"SELECT COUNT(*) AS n FROM cat_works w WHERE {where_sql}", count_params).fetchone()
-        total_n = int(total_row["n"]) if total_row else 0
+    try:
+        if query_tokens or facet_clauses:
+            capped_row = conn.execute(
+                f"SELECT COUNT(*) AS n FROM (SELECT 1 FROM cat_works w"
+                f" WHERE {where_sql} LIMIT :cap)",
+                {**count_params, "cap": total_cap + 1}).fetchone()
+            total_n = int(capped_row["n"]) if capped_row else 0
+            total_capped = total_n > total_cap
+            total_n = min(total_n, total_cap)
+        else:
+            total_row = conn.execute(
+                f"SELECT COUNT(*) AS n FROM cat_works w WHERE {where_sql}", count_params).fetchone()
+            total_n = int(total_row["n"]) if total_row else 0
+    except sqlite3.OperationalError:
+        if _timeout_state is not None and _timeout_state.get("interrupted"):
+            return _search_timeout_error()
+        raise
     return {
         "ok": True,
         "items": items,
@@ -1661,7 +1773,8 @@ def browse(conn, *, content_type=None, genres=(), languages=(), qualities=(),
            sort="trending", order="desc", cursor=None, limit=DEFAULT_LIMIT,
            include_adult=False, q=None, available=None, year_from=None, year_to=None,
            min_quality=None, animated=None, country=(), industry=(),
-           total_cap: int = DEFAULT_TOTAL_CAP) -> dict:
+           total_cap: int = DEFAULT_TOTAL_CAP,
+           search_timeout_seconds: float | None = None) -> dict:
     """Faceted catalog browse with keyset pagination.
 
     Returns ``{items[], next_cursor, has_more, total_estimate, ...}``. `total_estimate`
@@ -1695,13 +1808,14 @@ def browse(conn, *, content_type=None, genres=(), languages=(), qualities=(),
         conn, sort=sort, order=order, limit=limit, include_adult=bool(include_adult),
         cursor=decoded, facet_clauses=facet_clauses, facet_params=facet_params,
         query_tokens=tokens, query_norm=query_norm, use_fts_match=_has_table(conn, "cat_works_fts"),
-        total_cap=total_cap)
+        total_cap=total_cap, _deadline=_search_deadline(search_timeout_seconds))
 
 
 @public_edge
 def search(conn, *, q, limit=DEFAULT_LIMIT, include_adult=False, content_type=None,
            genres=(), languages=(), qualities=(), sort="relevance", order="desc",
-           cursor=None, fields=None, total_cap: int = DEFAULT_TOTAL_CAP) -> dict:
+           cursor=None, fields=None, total_cap: int = DEFAULT_TOTAL_CAP,
+           search_timeout_seconds: float | None = None) -> dict:
     """Title search that survives dirty scraped titles.
 
     Matching is per-token AND over a normalised haystack (casefold, diacritics
@@ -1772,14 +1886,29 @@ def search(conn, *, q, limit=DEFAULT_LIMIT, include_adult=False, content_type=No
     facet_clauses, facet_params = _facet_clauses(
         content_type, browse_genres, languages, qualities, None, None, None, None,
         use_language_bridge=_bridge_usable(conn))
+    # One shared deadline for the literal run and both fallbacks below:
+    # a whole search call is bounded by one budget, not three.
+    deadline = _search_deadline(search_timeout_seconds)
     result = _run_listing(
         conn, sort=effective_sort, order=order, limit=limit,
         include_adult=bool(include_adult),
         cursor=decoded_cursor,
         facet_clauses=facet_clauses, facet_params=facet_params,
         query_tokens=literal_tokens, query_norm=query_norm,
-        use_fts_match=use_fts, total_cap=total_cap)
+        use_fts_match=use_fts, total_cap=total_cap, _deadline=deadline)
     if cursor not in (None, "") and not result.get("ok"):
+        return result
+    if result.get("error", {}).get("code") == "search_timeout":
+        # A timed-out literal search must not fall through to the mood /
+        # fuzzy fallbacks: with the deadline spent they would answer from
+        # a different intent and hide the timeout from the caller.
+        result["query"] = q
+        result["normalized"] = query_norm
+        result["tokens"] = literal_tokens
+        result["moods"] = moods
+        result["mood_genres"] = mood_genres
+        result["sort"] = sort
+        result["fields"] = fields or None
         return result
     used_tokens = literal_tokens
     used_normalized = query_norm
@@ -1796,7 +1925,8 @@ def search(conn, *, q, limit=DEFAULT_LIMIT, include_adult=False, content_type=No
                 conn, sort=effective_sort, order=order, limit=limit,
                 include_adult=bool(include_adult), cursor=None,
                 facet_clauses=mood_clauses, facet_params=mood_params,
-                query_tokens=[], query_norm=query_norm, use_fts_match=use_fts)
+                query_tokens=[], query_norm=query_norm, use_fts_match=use_fts,
+                _deadline=deadline)
             if mood_result.get("ok") and mood_result.get("items"):
                 result = mood_result
                 used_tokens = []
@@ -1815,7 +1945,7 @@ def search(conn, *, q, limit=DEFAULT_LIMIT, include_adult=False, content_type=No
                         facet_clauses=facet_clauses, facet_params=facet_params,
                         query_tokens=corrected_tokens,
                         query_norm=normalize_text(correction["query"]),
-                        use_fts_match=use_fts)
+                        use_fts_match=use_fts, _deadline=deadline)
                     if retry.get("ok") and retry.get("items"):
                         result = retry
                         used_tokens = corrected_tokens

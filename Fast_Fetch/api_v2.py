@@ -85,6 +85,10 @@ _CODE_ALIASES = {
     "bad_connection": "unavailable",
     "no_source_recorded": "no_playable_source",
     "no_playable_source": "no_playable_source",
+    # 2026-11-23, scale (Lane E): a v2 listing that hits its 10 s
+    # deadline answers 503, the same status the v1 posts path uses —
+    # without this the unknown code would collapse to `not_found`.
+    "search_timeout": "unavailable",
 }
 
 #: §13: the flag, and any synonym of it, is never a public key — not even as

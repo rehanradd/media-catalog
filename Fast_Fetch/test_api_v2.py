@@ -3402,6 +3402,26 @@ class V2PlayMegaDecryptTests(V2WireFixture):
             self.assertFalse(reply.json["playable"])
 
 
+class V2SearchTimeoutTests(unittest.TestCase):
+    """A v2 listing that hits its deadline maps to 503, not 404.
+
+    Lane E, 2026-11-23: without the `search_timeout` alias in
+    `_CODE_ALIASES`, `_from_layer2` would collapse the unknown code to
+    `not_found` and `/api/v2/search` would answer a timed-out search
+    with 404. The v1 posts path answers the same condition with 503
+    `search_timeout`; the v2 path must agree.
+    """
+
+    def test_search_timeout_maps_to_unavailable_503(self):
+        ok, code, _message = api_v2._from_layer2(
+            {"ok": False,
+             "error": {"code": "search_timeout",
+                       "message": "Search took too long"}})
+        self.assertFalse(ok)
+        self.assertEqual(code, "unavailable")
+        self.assertEqual(api_v2.PROBLEM_CODES[code][0], 503)
+
+
 _TEST_CLASSES = {name: obj for name, obj in list(globals().items())
                  if isinstance(obj, type) and issubclass(obj, unittest.TestCase)
                  and obj is not unittest.TestCase}
