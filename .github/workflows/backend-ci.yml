@@ -24,6 +24,8 @@ name: 🐍 Backend CI — Stdlib Python Tests
 #     - Fast_Fetch/test_link_state.py        (ledger verdicts + cat_links propagation)
 #     - Fast_Fetch/test_link_state_runner.py (out-of-process sweep runner + ids-mode walk)
 #     - Fast_Fetch/test_title_clean.py      (work grouping: same film folds, remakes split)
+#     - Fast_Fetch/test_dedupe_cap_search.py (over-cap search dedupe: a broad
+#       query dedupes the top of the order instead of skipping dedupe)
 #     - Fast_Fetch/test_evidence_writeback.py(probe evidence folded onto cat_links)
 #     - Fast_Fetch/test_api_v2.py            (every /api/v2 route head)
 #     - Fast_Fetch/test_redact.py            (deny-by-default provenance edge)
@@ -450,6 +452,12 @@ jobs:
       # The work grouping shared by v1 and v2 search dedup (Session 152).
       - name: 🧪 test_title_clean.py
         run: python3 -S Fast_Fetch/test_title_clean.py
+
+      # Over-cap search dedupe: a broad query (over _SEARCH_DEDUPE_CAP)
+      # dedupes the top of the order instead of skipping dedupe and
+      # serving duplicate prints. Fixture-based, temp SQLite only.
+      - name: 🧪 test_dedupe_cap_search.py
+        run: python3 -S Fast_Fetch/test_dedupe_cap_search.py
 
       # The conservative live dedup fold (guided-list item 16): exact
       # title+year plus a shared language/industry/cast/director/imdb/tmdb

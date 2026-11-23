@@ -3504,9 +3504,11 @@ def _enrich_post_rows(conn, rows, base_url: str) -> list[dict]:
 
 
 #: A search that matches more than this many rows is too broad to dedupe
-#: exactly (a one-letter query matches the catalog); it keeps the row page
-#: and its row total instead of paying a full-catalog grouping. Real
-#: title searches match far fewer — "salaar" is 8 rows live.
+#: exactly (a one-letter query matches the catalog). Over the cap the
+#: search still dedupes — `_dedupe_search_page_windowed` groups the first
+#: `_SEARCH_DEDUPE_CAP` rows in the search's own order instead of skipping
+#: dedupe entirely — and keeps the row total (see there). Real title
+#: searches match far fewer — "salaar" is 8 rows live.
 _SEARCH_DEDUPE_CAP = 1000
 
 
@@ -3614,6 +3616,90 @@ def _dedupe_search_page(conn, where_sql, params, step1_order, page, limit,
     last_rep = title_clean.representative(page_groups[-1])
     return ([int(title_clean.representative(g)["id"]) for g in page_groups],
             total, has_more, last_rep)
+
+
+def _dedupe_search_page_windowed(conn, where_sql, params, step1_order,
+                                 page, limit, total_rows, after_id=None):
+    """(page_ids, row_total, has_more, last_rep): windowed dedupe for a
+    search over `_SEARCH_DEDUPE_CAP`.
+
+    Audit #38's grouping, but on a window, not the whole match set: the
+    first `_SEARCH_DEDUPE_CAP` rows in the search's own order are fetched
+    id-only, grouped by work with the same `title_clean.group_work_rows`
+    the exact path uses, and paginated over those groups. The policy is
+    unchanged — only the candidate set is the top of the order instead of
+    every match — so a broad query shows one row per work on the page
+    instead of duplicate prints (live: `q=love` matched 6,295 rows with
+    653 duplicate prints, 10.6%, because the old gate skipped dedupe
+    entirely over the cap).
+
+    The window is grouped exactly once: `group_work_rows` costs ~0.8s on
+    1000 candidates and ~13s on 5000 (measured 2026-11-23), so
+    re-grouping per batch would blow the search deadline. One window
+    costs no more than the exact path already pays for a 1000-row search.
+
+    `total` counts ROWS here, not works: the exact deduped total needs
+    the full grouping this avoids — the same convention
+    `_dedupe_page_rows` already uses ("the count counts rows, the page
+    shows works"). `has_more` is True when more groups sit in the window
+    past the page, or when rows sit past the window (more works may be
+    there). A page whose works sit past the window answers short, never
+    duplicated; a cursor whose group sits past the window answers the
+    empty page, like a group a merge re-filed. The representative is the
+    best print among the window's members of the work — a later print
+    past the window cannot promote it.
+    """
+    rows = conn.execute(
+        "SELECT p.id, p.clean_title, p.title, p.year, p.content_type,"
+        " p.imdb_rating FROM posts p "
+        f"WHERE {where_sql} ORDER BY {step1_order} LIMIT ?",
+        list(params) + [_SEARCH_DEDUPE_CAP]).fetchall()
+    if not rows:
+        return [], total_rows, False, None
+    rows_remain = len(rows) < total_rows
+    ids = [int(r["id"]) for r in rows]
+    counts: dict[int, tuple[int, int]] = {}
+    marks = ",".join("?" * len(ids))
+    for row in conn.execute(
+            "SELECT r.post_id, COUNT(DISTINCT r.id), COUNT(DISTINCT s.id)"
+            " FROM releases r"
+            " LEFT JOIN download_sources s ON s.release_id = r.id"
+            f" WHERE r.post_id IN ({marks}) GROUP BY r.post_id",
+            ids).fetchall():
+        counts[int(row[0])] = (int(row[1]), int(row[2]))
+    position = {post_id: index for index, post_id in enumerate(ids)}
+    candidates = [{
+        "id": int(r["id"]), "clean_title": r["clean_title"],
+        "title": r["title"], "year": r["year"],
+        "content_type": r["content_type"],
+        "imdb_rating": r["imdb_rating"],
+        "release_count": counts.get(int(r["id"]), (0, 0))[0],
+        "source_count": counts.get(int(r["id"]), (0, 0))[1],
+    } for r in rows]
+    groups = title_clean.group_work_rows(candidates)
+    # The search's own order, not popularity order: a work sits where its
+    # earliest row sat in the window scan.
+    groups.sort(key=lambda g: min(position[int(c["id"])] for c in g))
+    if after_id is not None:
+        cut = None
+        for index, group in enumerate(groups):
+            if any(int(c["id"]) == int(after_id) for c in group):
+                cut = index
+                break
+        if cut is None:
+            return [], total_rows, False, None
+        groups = groups[cut + 1:]
+        page_groups = groups[:limit]
+        has_more = len(groups) > limit or rows_remain
+    else:
+        start = max(0, (page - 1) * limit)
+        page_groups = groups[start:start + limit]
+        has_more = start + limit < len(groups) or rows_remain
+    if not page_groups:
+        return [], total_rows, False, None
+    last_rep = title_clean.representative(page_groups[-1])
+    return ([int(title_clean.representative(g)["id"]) for g in page_groups],
+            total_rows, has_more, last_rep)
 
 
 def _facet_filter_clauses(*, content_type: str = "", industry: str = "",
@@ -4682,16 +4768,28 @@ def api_v1_get_posts(query: str = "", content_type: str = "", page: int = 1,
         # the next token once a page was actually served.
         next_cursor = None
         has_more = False
-        if query and not work_ref and two_step and 0 < total <= _SEARCH_DEDUPE_CAP:
+        if query and not work_ref and two_step and 0 < total:
             # Audit #38: one row per film. The dedupe runs on the same
             # where-clause the count above used (adult clause, hides, all
             # filters), so the page and the total agree; the step-1 scan
-            # below is skipped and step 2 fetches exactly these ids.
+            # below is skipped and step 2 fetches exactly these ids. At
+            # or under the cap the dedupe is exact and `total` counts
+            # works; over the cap the windowed path dedupes the top of
+            # the order instead and keeps the row total — a broad query
+            # never shows duplicate prints (see
+            # `_dedupe_search_page_windowed`).
             step1_order = (f"{_NEWEST_YEAR_SQL} DESC, p.id DESC"
                            if order_sql is None else order_sql)
-            page_ids, total, dedupe_has_more, last_rep = _dedupe_search_page(
-                conn, where_sql, params, step1_order, page, limit,
-                after_id=cursor_decoded["id"] if cursor_decoded else None)
+            if total <= _SEARCH_DEDUPE_CAP:
+                page_ids, total, dedupe_has_more, last_rep = _dedupe_search_page(
+                    conn, where_sql, params, step1_order, page, limit,
+                    after_id=cursor_decoded["id"] if cursor_decoded else None)
+            else:
+                page_ids, total, dedupe_has_more, last_rep = (
+                    _dedupe_search_page_windowed(
+                        conn, where_sql, params, step1_order, page, limit,
+                        total,
+                        after_id=cursor_decoded["id"] if cursor_decoded else None))
             has_more = dedupe_has_more
             if has_more and last_rep is not None:
                 next_cursor = _encode_posts_cursor(
