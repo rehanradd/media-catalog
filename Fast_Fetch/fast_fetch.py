@@ -45,6 +45,7 @@ import quality  # release-quality spelling (DB checkup fix #6); stdlib only
 import backfill_year_from_title  # conservative year-from-title rules; stdlib only
 import redact  # shared placeholder / genre vocabulary (stdlib only)
 import expiry_bank  # resolve-time expiry parse + measured windows (API-03); stdlib only
+import source_site  # URL host -> source_site (misattribution guard); stdlib only
 try:
     import warp_proxy  # WARP proxy routing for the resolver (stdlib only)
 except ImportError:  # package-style import when run from the repo root
@@ -8292,11 +8293,24 @@ def save_scraped_data(
     if not isinstance(data, dict):
         raise TypeError("Scraped media data must be a dictionary")
     data = dict(data)
-    _url, _clean_title, _title, source_site, _content_type, _releases = _validate_scraped_data(data)
+    _url, _clean_title, _title, _validated_site, _content_type, _releases = _validate_scraped_data(data)
     # The adult/animation flags below read data["source_site"]: an inferred
     # site must drive them exactly like an asserted one, or a rareanimes
     # page filed without a site would lose its Anime flag.
-    data["source_site"] = source_site
+    data["source_site"] = _validated_site
+    # Source-site guard (2026-11-23, misattribution backfill): a payload
+    # that leaves source_site as the 'vegamovies' the old validator
+    # defaulted to takes the site of its own page URL instead, so the
+    # next merge does not re-mislabel the ~105,000 live rows. An explicit
+    # non-default label is never overridden: the caller asserted it.
+    # (The validator now refuses a missing site and infers via
+    # infer_source_site, so the guard mainly corrects a stale
+    # 'vegamovies' label to the URL-derived site.)
+    _derived_site = source_site.site_for_url(data.get("url") or "")
+    _stored_site = str(data.get("source_site") or "").strip().lower()
+    if (_derived_site and _derived_site != "vegamovies"
+            and _stored_site in ("", "vegamovies")):
+        data["source_site"] = _derived_site
     data["is_18_plus"] = int(
         bool(data.get("is_18_plus"))
         or is_adult_title(
