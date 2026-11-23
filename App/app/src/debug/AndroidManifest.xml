@@ -8,5 +8,22 @@
       origin so a developer can aim the app at whatever machine they are testing.
       Release uses the generated policy — one host, from /brand.properties.
     -->
-    <application />
+    <application>
+        <!--
+          Firebase Sessions is off in debug (and therefore in unit tests,
+          which run against the debug variant): under Robolectric the
+          Sessions client binds through an android.os.Messenger with no
+          target and throws NullPointerException on a Firebase background
+          thread (SessionLifecycleClient.kt:175 via ShadowMessenger.send).
+          Telemetry's uncaught-exception handler swallows it only if
+          installed before the thread fires, which is a race (Firebase
+          initialises via its ContentProvider, before Application.onCreate).
+          Sessions is production telemetry; a debug build does not need it,
+          and release is unaffected. A src/test/AndroidManifest.xml with the
+          same metadata did not take effect, so it lives here.
+        -->
+        <meta-data
+            android:name="firebase_sessions_enabled"
+            android:value="false" />
+    </application>
 </manifest>
