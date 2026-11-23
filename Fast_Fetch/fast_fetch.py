@@ -24,6 +24,7 @@ import re
 import json
 import time
 import base64
+import calendar
 import codecs
 import difflib
 import http.cookiejar
@@ -4470,6 +4471,31 @@ def unwrap_gdflix(gdflix_url: str, clearance=None) -> tuple[str, str, int]:
     return gdflix_url, res_id, 0
 
 
+def _r2_presigned_expiry(url: str) -> int | None:
+    """Epoch expiry of an R2/S3 presigned URL, or None.
+
+    ``X-Amz-Date`` is UTC (``YYYYMMDDTHHMMSSZ``) and ``X-Amz-Expires``
+    is a LIFETIME in seconds — the expiry is date + lifetime. Parsed
+    with ``calendar.timegm``, NEVER ``time.mktime``: mktime reads the
+    struct as LOCAL time, so under any non-UTC TZ it shifts the answer
+    by the UTC offset (and the probe's mktime + tz-correction variant
+    was still 12 s off). timegm is the UTC reader; no correction is
+    needed. Mirrors ``host_resolvers.r2_presigned_expiry`` (same shape,
+    same answer) without importing the importer module from the
+    import-time scrapers that call this unwrapper.
+    """
+    try:
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(url or "").query)
+        date_raw = (query.get("X-Amz-Date") or [""])[0]
+        lifetime_raw = (query.get("X-Amz-Expires") or [""])[0]
+        if not date_raw or not lifetime_raw.isdigit():
+            return None
+        struct = time.strptime(date_raw, "%Y%m%dT%H%M%SZ")
+        return int(calendar.timegm(struct)) + int(lifetime_raw)
+    except (ValueError, OverflowError):
+        return None
+
+
 def unwrap_hubcloud_drive(hub_drive_url: str) -> list[dict]:
     """
     Unwraps HubCloud Drive URL (e.g. https://hubcloud.ist/drive/<ID>)
@@ -4479,109 +4505,140 @@ def unwrap_hubcloud_drive(hub_drive_url: str) -> list[dict]:
     - PixelDrain server
     - ZipDisk Server (Google anonymous download; zip archives)
     Returns list of source dicts.
+
+    One-round refresh (2026-11-23): the gamerxyt token is
+    server-embedded/time-bucketed, and a stale one renders the expiry
+    alert instead of buttons (200, no anchors). An empty gamerxyt page
+    is retried ONCE with a fresh drive fetch for a fresh token, then
+    the unwrapper fails honestly — a second empty page is a real
+    unknown, not a reason to loop. A failed drive fetch is NOT
+    retried here (the dead-page test pins exactly one http_get call):
+    a drive that does not answer is dead, not stale. Each FSL item
+    carries its true presigned ``expires_at`` (see
+    ``_r2_presigned_expiry``) so the caller can bank it instead of
+    re-probing the URL for a lifetime its headers never declare.
     """
     results = []
-    code, final_u, html = http_get(hub_drive_url, timeout=10,
-                                   max_retries=RESOLVE_UNWRAP_MAX_RETRIES)
-    if code != 200 or not html:
+    resource_id = hub_drive_url.rstrip("/").split("/")[-1]
+
+    def _fallback(final_url):
         return [{
             "source_name": "HubCloud Drive",
             "service": "hubcloud",
-            "resource_id": hub_drive_url.rstrip("/").split("/")[-1],
+            "resource_id": resource_id,
             "source_url": hub_drive_url,
-            "final_url": hub_drive_url,
+            "final_url": final_url,
             "is_temporary": 0,
         }]
 
-    gx_m = re.search(r'href=["\'](https?://gamerxyt\.com/hubcloud\.php\?[^"\']+)["\']', html)
-    if not gx_m:
-        direct_anchors = re.findall(r'<a[^>]+href=["\'](https?://[^"\']+)["\'][^>]*>(.*?)</a>', html, re.S)
-        for h, t in direct_anchors:
-            if "r2.cloudflarestorage.com" in h:
-                results.append({
-                    "source_name": "⚡ HubCloud [FSL Cloudflare R2]",
-                    "service": "fsl_r2",
-                    "resource_id": hub_drive_url.rstrip("/").split("/")[-1],
-                    "source_url": hub_drive_url,
-                    "final_url": h,
-                    "is_temporary": 1,
-                })
-        return results or [{
-            "source_name": "HubCloud Drive",
-            "service": "hubcloud",
-            "resource_id": hub_drive_url.rstrip("/").split("/")[-1],
-            "source_url": hub_drive_url,
-            "final_url": hub_drive_url,
-            "is_temporary": 0,
-        }]
+    gx_url = None
+    gx_html = None
+    for _attempt in range(2):
+        code, final_u, html = http_get(hub_drive_url, timeout=10,
+                                       max_retries=RESOLVE_UNWRAP_MAX_RETRIES)
+        if code != 200 or not html:
+            return _fallback(hub_drive_url)
 
-    gx_url = gx_m.group(1).replace("&amp;", "&")
-    gx_code, _, gx_html = http_get(gx_url, timeout=12,
-                                   max_retries=RESOLVE_UNWRAP_MAX_RETRIES)
-    if gx_code != 200 or not gx_html:
-        return [{
-            "source_name": "HubCloud Drive",
-            "service": "hubcloud",
-            "resource_id": hub_drive_url.rstrip("/").split("/")[-1],
-            "source_url": hub_drive_url,
-            "final_url": gx_url,
-            "is_temporary": 0,
-        }]
+        gx_m = re.search(r'href=["\'](https?://gamerxyt\.com/hubcloud\.php\?[^"\']+)["\']', html)
+        if not gx_m:
+            direct_anchors = re.findall(r'<a[^>]+href=["\'](https?://[^"\']+)["\'][^>]*>(.*?)</a>', html, re.S)
+            for h, t in direct_anchors:
+                if "r2.cloudflarestorage.com" in h:
+                    results.append({
+                        "source_name": "⚡ HubCloud [FSL Cloudflare R2]",
+                        "service": "fsl_r2",
+                        "resource_id": resource_id,
+                        "source_url": hub_drive_url,
+                        "final_url": h,
+                        "is_temporary": 1,
+                        "expires_at": _r2_presigned_expiry(h),
+                    })
+            return results or _fallback(hub_drive_url)
 
+        gx_url = gx_m.group(1).replace("&amp;", "&")
+        gx_code, _, gx_html = http_get(gx_url, timeout=12,
+                                       max_retries=RESOLVE_UNWRAP_MAX_RETRIES)
+        if gx_code != 200 or not gx_html:
+            return _fallback(gx_url)
+        # An empty gamerxyt page is the stale-token shape: no buttons
+        # parsed means the token the drive page minted is already dead,
+        # so loop once for a fresh drive fetch, then fail honestly
+        # below. A page with buttons parses now.
+        if _parse_gamerxyt_buttons(gx_html):
+            break
+        gx_html = None
+    if not gx_html:
+        return _fallback(gx_url or hub_drive_url)
+
+    results = _parse_gamerxyt_buttons(gx_html)
+    if not results:
+        return _fallback(hub_drive_url)
+    for item in results:
+        # The parser leaves the drive identity blank (it never sees
+        # the drive URL); the pixeldrain item keeps its own href.
+        if not item.get("resource_id"):
+            item["resource_id"] = resource_id
+        if not item.get("source_url"):
+            item["source_url"] = hub_drive_url
+
+    return results
+
+
+def _parse_gamerxyt_buttons(gx_html: str) -> list[dict]:
+    """File-server buttons on a gamerxyt page, as source dicts.
+
+    Shared by ``unwrap_hubcloud_drive``'s retry loop (an empty list is
+    the stale-token signal) and its final parse, so the two can never
+    disagree about what counts as a button.
+    """
+    out = []
     anchors = re.findall(r'<a[^>]+href=["\'](https?://[^"\']+)["\'][^>]*>(.*?)</a>', gx_html, re.S)
     for href, text in anchors:
         clean_t = re.sub(r'<[^>]+>', '', text).strip()
         h_lower = href.lower()
         if "r2.cloudflarestorage.com" in h_lower or "fsl server" in clean_t.lower():
-            results.append({
+            out.append({
                 "source_name": "⚡ HubCloud [FSL Cloudflare R2]",
                 "service": "fsl_r2",
-                "resource_id": hub_drive_url.rstrip("/").split("/")[-1],
-                "source_url": hub_drive_url,
+                "resource_id": "",
+                "source_url": "",
                 "final_url": href,
                 "is_temporary": 1,
+                "expires_at": _r2_presigned_expiry(href),
             })
         elif "pixel.hubcloud" in h_lower or "10gbps" in clean_t.lower():
-            results.append({
+            out.append({
                 "source_name": "⚡ HubCloud [10Gbps Fast Server]",
                 "service": "hubcloud_10g",
-                "resource_id": hub_drive_url.rstrip("/").split("/")[-1],
-                "source_url": hub_drive_url,
+                "resource_id": "",
+                "source_url": "",
                 "final_url": href,
                 "is_temporary": 0,
+                "expires_at": None,
             })
         elif "pixeldrain" in h_lower:
             direct_pd, pd_id, _ = unwrap_pixeldrain(href)
-            results.append({
+            out.append({
                 "source_name": "⚡ PixelDrain [Direct CDN]",
                 "service": "pixeldrain",
                 "resource_id": pd_id,
                 "source_url": href,
                 "final_url": direct_pd,
                 "is_temporary": 0,
+                "expires_at": None,
             })
         elif ("zipdisk" in clean_t.lower()
                 or "photos-web-downloads-anonymous" in h_lower):
-            results.append({
+            out.append({
                 "source_name": "⚡ HubCloud [ZipDisk Server]",
                 "service": "hubcloud_zipdisk",
-                "resource_id": hub_drive_url.rstrip("/").split("/")[-1],
-                "source_url": hub_drive_url,
+                "resource_id": "",
+                "source_url": "",
                 "final_url": href,
                 "is_temporary": 1,
+                "expires_at": None,
             })
-
-    if not results:
-        results.append({
-            "source_name": "HubCloud Drive",
-            "service": "hubcloud",
-            "resource_id": hub_drive_url.rstrip("/").split("/")[-1],
-            "source_url": hub_drive_url,
-            "final_url": hub_drive_url,
-            "is_temporary": 0,
-        })
-
-    return results
+    return out
 
 
 def unwrap_linkszilla(lz_url: str) -> list[dict]:
@@ -8636,7 +8693,10 @@ RESOLVE_FAILURE_CLASSES = ("probe_failed", "no_unwrapper", "unwrap_failed")
 #: 11 — kmhd bridge wiring (2026-11-23): resolve_live_source gains a
 #: kmhd branch, so rows that answered no_unwrapper under v10 (the bridge
 #: API existed but no play-time branch called it) get one fresh press.
-RESOLVER_VERSION = 11
+#: 12 — HubCloud one-round refresh (2026-11-23): one gamerxyt fetch banks
+#: every sibling row with its true signed expiry, so a copy the old
+#: resolver left stale (or cleared to NULL) deserves one fresh press.
+RESOLVER_VERSION = 12
 
 def _is_transport_verdict(verdict) -> bool:
     """True when a probe/unwrapper verdict names a transport failure (HTTP 0).
@@ -8897,6 +8957,120 @@ def _deadline_expired_answer(source_id: int) -> dict:
         "deadline_expired": True,
         "stale": False,
     }
+
+
+#: Services one HubCloud drive fans out to at ingest (one drive link
+#: becomes up to four rows: hubdrive + fsl_r2 + hubcloud_10g +
+#: pixeldrain). Sibling banking only ever UPDATEs rows in this set —
+#: never the drive row itself (its final_url IS the drive page) and
+#: never INSERTs a row the ingest did not create.
+_HUBCLOUD_SIBLING_SERVICES = ("fsl_r2", "hubcloud_10g", "pixeldrain")
+
+#: Gamerxyt button kind -> sibling service. Kinds with no sibling row
+#: (download, s3, buzz, mega, pdl, zipdisk) are not banked: ZipDisk is
+#: a zip archive, not a stream, and the resolver never banks it (see
+#: host_resolvers.unwrap_hubcloud); the rest have no ledger service.
+_HUBCLOUD_KIND_TO_SERVICE = {
+    "fsl": "fsl_r2", "fslv2": "fsl_r2",
+    "10gbps": "hubcloud_10g", "pixel": "pixeldrain",
+}
+
+#: is_temporary per sibling service: only the signed R2 URL dies.
+_HUBCLOUD_SIBLING_TEMPORARY = {"fsl_r2": 1, "hubcloud_10g": 0, "pixeldrain": 0}
+
+
+def _normalize_hubcloud_candidates(entries, *, prefer_url=None):
+    """One gamerxyt page's links as bankable sibling candidates.
+
+    Accepts either shape: a verdict's ``sources`` (``url``/``kind``/
+    ``expires_at``) or ``unwrap_hubcloud_drive`` items (``final_url``/
+    ``service``/``is_temporary``/``expires_at``). Returns a list of
+    ``{"service", "final_url", "is_temporary", "expires_at"}``, one per
+    sibling service. The list is already in serve-priority order, so
+    the first candidate per service wins — except the probed-active
+    winner (``prefer_url``, the verdict's ``final_url``), which wins
+    over its service's earlier candidate: FSLv2 and FSL both map to
+    the one ``fsl_r2`` row, and the row takes the URL that was
+    actually probed alive.
+    """
+    by_service = {}
+    for entry in entries or []:
+        if not isinstance(entry, dict):
+            continue
+        service = entry.get("service") or _HUBCLOUD_KIND_TO_SERVICE.get(
+            entry.get("kind") or "")
+        url = entry.get("final_url") or entry.get("url") or ""
+        if not service or service not in _HUBCLOUD_SIBLING_SERVICES or not url:
+            continue
+        temp = entry.get("is_temporary")
+        if temp is None:
+            temp = _HUBCLOUD_SIBLING_TEMPORARY[service]
+        exp = entry.get("expires_at")
+        try:
+            exp = float(exp) if exp is not None else None
+        except (TypeError, ValueError):
+            exp = None
+        candidate = {"service": service, "final_url": url,
+                     "is_temporary": 1 if temp else 0, "expires_at": exp}
+        if service not in by_service or url == prefer_url:
+            by_service[service] = candidate
+    return list(by_service.values())
+
+
+def _bank_hubcloud_siblings(*, release_id, pressed_id, candidates):
+    """Bank one gamerxyt page's links onto every sibling row at once.
+
+    The page already published every button, so each sibling row of
+    this release (same ``release_id``, service in
+    ``_HUBCLOUD_SIBLING_SERVICES``, not the pressed row) gets its fresh
+    URL, its temporary flag, ``status='active'`` and its true signed
+    expiry — no per-button re-resolve. Returns how many rows were
+    updated. Never raises: a sibling write must not fail the press
+    that already resolved. Only UPDATEs rows the ingest created; a
+    service with no row is skipped, never inserted.
+    """
+    if not candidates or release_id is None:
+        return 0
+    by_service = {c["service"]: c for c in candidates}
+    try:
+        placeholders = ",".join("?" for _ in _HUBCLOUD_SIBLING_SERVICES)
+        with get_db() as conn:
+            rows = conn.execute(
+                "SELECT id, service FROM download_sources "
+                "WHERE release_id = ? AND id != ? AND service IN ("
+                + placeholders + ")",
+                (release_id, pressed_id,
+                 *_HUBCLOUD_SIBLING_SERVICES)).fetchall()
+            banked = []
+            for row in rows:
+                cand = by_service.get(row["service"])
+                if cand is None:
+                    continue
+                conn.execute(
+                    "UPDATE download_sources "
+                    "SET final_url = ?, is_temporary = ?, status = 'active', "
+                    "last_checked_at = CURRENT_TIMESTAMP, "
+                    "updated_at = CURRENT_TIMESTAMP, "
+                    "last_failed_at = NULL, failure_class = NULL "
+                    "WHERE id = ?",
+                    (cand["final_url"], cand["is_temporary"], row["id"]))
+                banked.append((row["id"], cand))
+    except Exception:
+        return 0
+    for sid, cand in banked:
+        try:
+            if cand["expires_at"] is not None:
+                record_link_expiry(sid, expires_at=cand["expires_at"],
+                                   observed_via="signed_params")
+            else:
+                # The new URL carries no signed lifetime (10Gbps /
+                # PixelServer): drop any older measurement so a stale,
+                # longer window cannot outlive the token it was read from.
+                record_link_expiry(sid, clear=True,
+                                   observed_via="signed_params")
+        except Exception:
+            pass
+    return len(banked)
 
 
 def resolve_live_source(source_id: int, *, v2: bool = False,
@@ -9227,6 +9401,15 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
     # request proving it again. Every other branch keeps the generic gate
     # unchanged.
     _gate_from_verdict = False
+    # HubCloud one-round refresh (2026-11-23): the gamerxyt page the
+    # dispatch just fetched carries EVERY button, and the verdict
+    # already parsed the signed expiry — so the siblings are banked
+    # from this one fetch and the pressed row never pays the
+    # probe_url_ttl HEAD round trip. Set only by a HubCloud branch
+    # that produced a fresh URL; every other host keeps the old path.
+    _hubcloud_path = False
+    _hubcloud_candidates = None
+    _hubcloud_signed_ttl = None
     # The dispatch chain below is a matcher, not a probe: when no branch
     # matches, nothing was contacted and nothing was measured. The failure
     # circuit in resolved_cache may only open on measured evidence, so the
@@ -9418,23 +9601,50 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                     # drive unwrapper is the fallback — it is kept for
                     # the import-time scrapers that still call it.
                     if hr is not None:
-                        verdict = hr.unwrap_hubcloud(hub, verify=True)
+                        # One-round refresh (2026-11-23): the drive
+                        # page, the gamerxyt page and the Range probes
+                        # ride the shared keep-alive pool (5.3x
+                        # measured) instead of a fresh urllib
+                        # connection per GET. The pool is passed
+                        # explicitly so the dispatch default (a plain
+                        # http_request, which tests patch) is untouched;
+                        # getattr keeps a pool-less resolver (the test
+                        # fake) on that default instead of raising.
+                        verdict = hr.unwrap_hubcloud(
+                            hub, verify=True,
+                            fetch=getattr(hr, "keepalive_fetch", None))
                         direct_u = embed_from_verdict(verdict)
                         if direct_u:
                             fresh_url = direct_u
                             fresh_temp = 1 if verdict.get("is_temporary") else 0
                             embed_verdict = verdict
                             _gate_from_verdict = True
+                            _hubcloud_path = True
+                            _hubcloud_candidates = _normalize_hubcloud_candidates(
+                                verdict.get("sources"), prefer_url=direct_u)
+                            _hubcloud_signed_ttl = verdict.get("expires_in")
                     else:
                         unwrapped = unwrap_hubcloud_drive(hub)
+                        _hubcloud_path = True
+                        _hubcloud_candidates = _normalize_hubcloud_candidates(
+                            unwrapped)
+                        _chosen = None
                         for item in unwrapped:
                             if item.get("service") == service:
-                                fresh_url = item.get("final_url")
-                                fresh_temp = item.get("is_temporary", fresh_temp)
+                                _chosen = item
                                 break
-                        if not fresh_url and unwrapped:
-                            fresh_url = unwrapped[0].get("final_url")
-                            fresh_temp = unwrapped[0].get("is_temporary", fresh_temp)
+                        if _chosen is None and unwrapped:
+                            _chosen = unwrapped[0]
+                        if _chosen is not None:
+                            fresh_url = _chosen.get("final_url")
+                            fresh_temp = _chosen.get("is_temporary", fresh_temp)
+                            _exp = _chosen.get("expires_at")
+                            if _exp is not None:
+                                try:
+                                    _hubcloud_signed_ttl = (float(_exp)
+                                                            - time.time())
+                                except (TypeError, ValueError):
+                                    _hubcloud_signed_ttl = None
             elif (service == "hubcdn" or "hubcdn.io/cloud" in source_u.lower()
                   or "hubcdn.io/cloud" in cached_u.lower()):
                 _unwrap_branch_taken = True
@@ -10235,6 +10445,17 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
             fresh_url = None
             fresh_verdict = None
 
+    if fresh_url and _hubcloud_path:
+        # One-round refresh: this gamerxyt fetch already paid for every
+        # button — bank the siblings now, while the URLs are fresh,
+        # instead of making each sibling re-resolve the same drive.
+        # Placed after the Stage-2 gate (a gated-out URL banks nothing)
+        # and before the pressed-row bank below, so it also runs when
+        # the fresh URL equals the stored one.
+        _bank_hubcloud_siblings(release_id=src["release_id"],
+                                pressed_id=src["id"],
+                                candidates=_hubcloud_candidates)
+
     if not fresh_url and not _negative_cache_hit:
         # The dispatch produced nothing playable: record the failure
         # class for the negative cache. A branch that ran and failed —
@@ -10311,34 +10532,55 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
             if _subtitle_tracks is not None and embed_verdict is not None:
                 _subtitle_tracks.record_resolver_subtitles(
                     conn, int(src["id"]), embed_verdict)
-        # Ask the URL itself how long it lives, instead of assuming. A fresh token
-        # whose host declares no freshness window keeps `expires_at` NULL, and the
-        # next call then falls back to the documented 6-hour temporary-link
-        # ceiling rather than to a number we invented for it.
-        observed_ttl, observed_info = probe_url_ttl(fresh_url)
+        # HubCloud one-round refresh (2026-11-23): the unwrapper already
+        # read the signed expiry (X-Amz-Date + X-Amz-Expires) off the
+        # winning URL, so the probe_url_ttl HEAD round trip is skipped
+        # here — it costs a request and its headers usually say
+        # `no_directive`, which used to clear the expiry this branch had
+        # just measured. A winning URL with no signed lifetime (10Gbps /
+        # PixelServer) clears the old measurement instead, exactly as
+        # the `no_directive` arm below does for other hosts.
         signed_ttl = (embed_verdict or {}).get("expires_in")
-        expires_at = observed_info.get("expires_at")
-        if expires_at is not None:
-            record_link_expiry(src["id"], observed_ttl, expires_at=expires_at,
-                               observed_via="response_headers")
-            src["expires_at"] = expires_at
-        elif isinstance(signed_ttl, (int, float)):
-            # The packer CDNs answer with no Cache-Control and no Expires, so
-            # `probe_url_ttl` honestly reports `no_directive` — but the lifetime is
-            # not missing, it is signed into the query the packer handed us, and
-            # `host_resolvers` already parsed it (`e` for mxdrop, `s` + `e` for
-            # pkembed). Recording that number is what makes the cached answer
-            # honest: without it a one-hour token would be served stale for five
-            # hours, because the ceiling below is a six-hour guess.
-            expires_at = time.time() + max(0.0, float(signed_ttl))
-            record_link_expiry(src["id"], expires_at=expires_at,
-                               observed_via="signed_params")
-            src["expires_at"] = expires_at
-        elif observed_info.get("reason") == "no_directive":
-            # The host answered and declared nothing: drop any older measurement
-            # so a stale, longer window cannot outlive the token it was read from.
-            record_link_expiry(src["id"], clear=True, observed_via="no_directive")
-            src["expires_at"] = None
+        if _hubcloud_path:
+            if _hubcloud_signed_ttl is not None:
+                signed_ttl = _hubcloud_signed_ttl
+            if isinstance(signed_ttl, (int, float)):
+                expires_at = time.time() + max(0.0, float(signed_ttl))
+                record_link_expiry(src["id"], expires_at=expires_at,
+                                   observed_via="signed_params")
+                src["expires_at"] = expires_at
+            else:
+                record_link_expiry(src["id"], clear=True,
+                                   observed_via="signed_params")
+                src["expires_at"] = None
+        else:
+            # Ask the URL itself how long it lives, instead of assuming. A fresh token
+            # whose host declares no freshness window keeps `expires_at` NULL, and the
+            # next call then falls back to the documented 6-hour temporary-link
+            # ceiling rather than to a number we invented for it.
+            observed_ttl, observed_info = probe_url_ttl(fresh_url)
+            expires_at = observed_info.get("expires_at")
+            if expires_at is not None:
+                record_link_expiry(src["id"], observed_ttl, expires_at=expires_at,
+                                   observed_via="response_headers")
+                src["expires_at"] = expires_at
+            elif isinstance(signed_ttl, (int, float)):
+                # The packer CDNs answer with no Cache-Control and no Expires, so
+                # `probe_url_ttl` honestly reports `no_directive` — but the lifetime is
+                # not missing, it is signed into the query the packer handed us, and
+                # `host_resolvers` already parsed it (`e` for mxdrop, `s` + `e` for
+                # pkembed). Recording that number is what makes the cached answer
+                # honest: without it a one-hour token would be served stale for five
+                # hours, because the ceiling below is a six-hour guess.
+                expires_at = time.time() + max(0.0, float(signed_ttl))
+                record_link_expiry(src["id"], expires_at=expires_at,
+                                   observed_via="signed_params")
+                src["expires_at"] = expires_at
+            elif observed_info.get("reason") == "no_directive":
+                # The host answered and declared nothing: drop any older measurement
+                # so a stale, longer window cannot outlive the token it was read from.
+                record_link_expiry(src["id"], clear=True, observed_via="no_directive")
+                src["expires_at"] = None
         return {
             "success": True,
             "id": src["id"],

@@ -1093,6 +1093,12 @@ jobs:
       # Offline — temp SQLite file, canned bridge mirrors + stub probe.
       - name: 🧪 test_kmhd_dispatch.py
         run: python3 -S Fast_Fetch/test_kmhd_dispatch.py
+      # HubCloud one-round refresh (2026-11-23): one gamerxyt fetch banks
+      # every sibling row with its true signed expiry, keep-alive pool,
+      # stale-token retry once, no probe_url_ttl HEAD on the HubCloud path.
+      # Offline — canned gamerxyt pages, temp SQLite, fake connections.
+      - name: 🧪 test_hubcloud_oneround.py
+        run: python3 -S Fast_Fetch/test_hubcloud_oneround.py
       # XprimeHub (Session 104): the 19th site, 18+ adult catalog — scrape only.
       # The flag is the feature: every row is_18_plus = 1 by site authority, and the
       # registry entry records scrape-only / never publish. Offline — temp SQLite files.
