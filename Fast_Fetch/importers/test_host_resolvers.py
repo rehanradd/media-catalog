@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import io
 import base64
+import gzip
 import json
 import runpy
 import socket
@@ -1480,6 +1481,50 @@ class TestVidriftUnpack(unittest.TestCase):
         verdict = hr.unwrap_vidrift("https://embed.vidrift.net/embed/movie/999", fetch=fetch)
         self.assertEqual(verdict["status"], "dead")
         self.assertIn("publishes no active streams", json.dumps(verdict["notes"]))
+
+    def test_embed_fetch_sends_browser_headers_and_reads_gzip(self):
+        # 2026-11-23: Cloudflare 403s the embed page on a UA-only (or
+        # UA + Referer) fetch; only the full Chrome header set answers
+        # 200, and it answers gzip, which stdlib cannot decode alone.
+        page_html = """
+        <html><body>
+        <script>
+        var embedMeta = {
+            "tmdbId": "550",
+            "type": "movie",
+            "orionStreams": [
+                {"url": "/api/orion/abc123hash/master.m3u8?s=123&e=456", "type": "hls", "name": "Orion · Original"}
+            ],
+            "bigbangSubtitles": []
+        };
+        </script>
+        </body></html>
+        """
+        gzipped = gzip.compress(page_html.encode("utf-8"))
+        fetch = scripted_fetch({
+            "embed/movie/550": (200, gzipped, {"content-type": "text/html",
+                                               "content-encoding": "gzip"}),
+            "master.m3u8": (200, b"#EXTM3U\n#EXT-X-VERSION:3", {"content-type": "application/vnd.apple.mpegurl"}),
+        })
+        verdict = hr.unwrap_vidrift("https://embed.vidrift.net/embed/movie/550", fetch=fetch)
+        self.assertEqual(verdict["status"], "active")
+        self.assertEqual(verdict["final_url"], "https://embed.vidrift.net/api/orion/abc123hash/master.m3u8?s=123&e=456")
+        embed_calls = [c for c in fetch.calls if "embed/movie/550" in c[0]]
+        self.assertEqual(len(embed_calls), 1)
+        sent = embed_calls[0][1]
+        for key in ("Accept", "Accept-Language", "Accept-Encoding",
+                    "Sec-Fetch-Dest", "Sec-Fetch-Mode", "Sec-Fetch-Site",
+                    "Sec-Fetch-User", "sec-ch-ua", "sec-ch-ua-mobile",
+                    "sec-ch-ua-platform", "Upgrade-Insecure-Requests",
+                    "User-Agent"):
+            self.assertIn(key, sent, f"embed fetch missing header {key}")
+        self.assertNotIn("br", sent["Accept-Encoding"],
+                         "Accept-Encoding must not offer Brotli: stdlib cannot decode it")
+        probe_calls = [c for c in fetch.calls if "master.m3u8" in c[0]]
+        self.assertEqual(len(probe_calls), 1)
+        probe_headers = probe_calls[0][1]
+        self.assertEqual(probe_headers.get("Referer"), "https://embed.vidrift.net/")
+        self.assertIn("sec-ch-ua", probe_headers)
 
 
 # Fixtures for TestUnwrapVidout, taken from the probed live shapes

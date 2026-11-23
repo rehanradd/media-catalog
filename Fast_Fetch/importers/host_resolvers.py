@@ -281,6 +281,7 @@ from __future__ import annotations
 
 import base64
 from datetime import datetime, timezone
+import gzip
 import hashlib
 import http.client
 import json
@@ -292,6 +293,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zlib
 
 try:  # package-style import when run as Fast_Fetch/importers/*.py
     from Fast_Fetch import warp_proxy as _warp_proxy
@@ -534,6 +536,32 @@ VIDRIFT_HOST_RE = re.compile(r"(?:^|\.)vidrift\.net$", re.I)
 VIDRIFT_CONTENT_RE = re.compile(
     r"^/(?:embed/)?(?:movie|tv)/([A-Za-z0-9_-]+)(?:/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+))?/?$",
     re.I)
+# Vidrift sits behind Cloudflare: a UA-only fetch (and even UA + Referer,
+# the old production header set) answers 403. The embed page answers 200
+# only with the full Chrome header set below — measured live 2026-11-23
+# (Playwright capture + stdlib re-proof, movie 1241982). Two traps:
+# (a) Accept-Encoding must NOT include `br` — stdlib has no Brotli
+# decoder, so a Brotli body would come back as unreadable bytes;
+# (b) the orion master lives on the same host, so the Range probe needs
+# the same headers (plus Referer). /api/source stays browser-only (403
+# from stdlib even with XHR headers); the stdlib route is orion only.
+VIDRIFT_EMBED_REFERER = "https://embed.vidrift.net/"
+VIDRIFT_BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,"
+              "image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "sec-ch-ua": '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Linux"',
+    "Upgrade-Insecure-Requests": "1",
+}
 IQSMART_HOST_RE = re.compile(r"(?:^|\.)iqsmartgames\.com$", re.I)
 IQSMART_CONTENT_RE = re.compile(
     r"^/embed/(?:movie|tv)/([A-Za-z0-9_-]+)(?:/([0-9]+)/([0-9]+))?/?$",
@@ -2399,13 +2427,42 @@ def unwrap_vidbolt(url: str, fetch=None, verify: bool = True,
     return _finish_media(result, fetch, verify)
 
 
+def _decompress_body(body, headers):
+    """Undo a Content-Encoding the caller advertised (gzip/deflate).
+
+    urllib does not decompress: a host that answers gzip to our
+    `Accept-Encoding: gzip, deflate` hands back raw gzip bytes, which no
+    parser can read. Returns the body unchanged when the encoding is
+    absent, unknown, or the bytes do not decompress (never raise here —
+    a bad body is the caller's evidence, not a crash).
+    """
+    if not isinstance(body, (bytes, bytearray)) or not body:
+        return body
+    encoding = ""
+    for key, value in (headers or {}).items():
+        if key.lower() == "content-encoding":
+            encoding = (value or "").lower()
+            break
+    try:
+        if "gzip" in encoding:
+            return gzip.decompress(bytes(body))
+        if "deflate" in encoding:
+            return zlib.decompress(bytes(body))
+    except Exception:
+        return body
+    return body
+
+
 def unwrap_vidrift(url: str, fetch=None, verify: bool = True,
                    referer: str | None = None) -> dict:
     """
     Vidrift embed URL -> {final_url, service, is_temporary, expires_in, status, notes, …}.
 
     Embed page holds `var embedMeta = {...};` containing `orionStreams` (HLS/MP4)
-    and subtitle tracks. Probing media endpoints requires `Referer: https://embed.vidrift.net/`.
+    and subtitle tracks. Cloudflare gates the host (2026-11-23): the embed
+    fetch and the media probe both need the full Chrome header set
+    (`VIDRIFT_BROWSER_HEADERS`); the probe also carries
+    `Referer: https://embed.vidrift.net/`.
     """
     fetch = fetch or http_request
     clean_url = (url or "").strip()
@@ -2418,13 +2475,14 @@ def unwrap_vidrift(url: str, fetch=None, verify: bool = True,
         return result
 
     status, body, headers, final_url = fetch(
-        clean_url, headers={"Referer": "https://embed.vidrift.net/"})
+        clean_url, headers=dict(VIDRIFT_BROWSER_HEADERS))
     if status != 200:
         result["status"] = ("dead" if status in (404, 410)
                             else "blocked" if status in (401, 403, 429) else "unknown")
         result["notes"].append(f"vidrift embed page HTTP {status}")
         return result
 
+    body = _decompress_body(body, headers)
     page = body if isinstance(body, str) else (body or b"").decode("utf-8", "replace")
     m = re.search(r"var\s+embedMeta\s*=\s*(\{.*?\});", page, re.DOTALL)
     if not m:
@@ -2472,7 +2530,9 @@ def unwrap_vidrift(url: str, fetch=None, verify: bool = True,
 
     _expires_at, result["expires_in"] = duration_expiry_from_url(result["final_url"])
     result["signed_params"] = sorted(signature_params(result["final_url"]))
-    return _finish_media(result, fetch, verify, req_headers={"Referer": "https://embed.vidrift.net/"})
+    return _finish_media(result, fetch, verify,
+                         req_headers={**VIDRIFT_BROWSER_HEADERS,
+                                      "Referer": VIDRIFT_EMBED_REFERER})
 
 
 def doodstream_parse_url(url: str) -> dict | None:
@@ -2996,7 +3056,9 @@ def unwrap_cineverse(url: str, fetch=None, verify: bool = True,
             result["quality"] = "HLS"
             _expires_at, result["expires_in"] = duration_expiry_from_url(result["final_url"])
             result["signed_params"] = sorted(signature_params(result["final_url"]))
-            return _finish_media(result, fetch, verify, req_headers={"Referer": "https://embed.vidrift.net/"})
+            return _finish_media(result, fetch, verify,
+                         req_headers={**VIDRIFT_BROWSER_HEADERS,
+                                      "Referer": VIDRIFT_EMBED_REFERER})
 
     # The proxy's current shape (measured 2026-11-13): a wrapper page with an
     # <iframe> to the vidrift embed instead of a directSrc or EMBED_URL. The
