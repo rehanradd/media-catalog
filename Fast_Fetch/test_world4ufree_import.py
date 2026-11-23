@@ -236,5 +236,102 @@ class Session104World4uFreeTests(unittest.TestCase):
         self.assertIsNone(params["referer"].default)
 
 
+class Session20261123WatchMoveTests(unittest.TestCase):
+    """23 Nov 2026: the catalog moved to new4.world4ufree.watch.
+
+    world4ufree.gay/.men are now a static portal (WP REST 404s there);
+    the live WordPress catalog is new4.world4ufree.watch (WP REST 200,
+    X-WP-Total 24,875, sitemap generated 2026-11-23 01:00, verified from
+    Oracle VM egress). The sync must target the new domain. Fixtures
+    only, no live network.
+    """
+
+    WATCH_POST = {
+        "title": {"rendered": "Mayookha 2026 Dual Audio [Hindi \u2013 Telugu] WEB-DL 1080p 720p 480p HEVC"},
+        "link": "https://new4.world4ufree.watch/mayookha-2026-dual-audio/",
+        "slug": "mayookha-2026-dual-audio",
+        "modified": "2026-11-23T01:20:09",
+        "content": {"rendered": (
+            '<p><img src="https://blogger.googleusercontent.com/img/b/ABC/s501/Mayookha.jpg" /></p>'
+            '<p><strong><a href="https://w4links.space/115615/">1080p x264</a></strong></p>'
+            '<p><strong><a href="https://w4links.space/115615/">720p HEVC</a></strong></p>'
+        )},
+    }
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.temp_dir.name) / "test_world4ufree.db"
+        import_world4ufree.init_staging_db(self.db_path)
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def test_default_base_url_is_watch(self):
+        self.assertEqual(
+            import_world4ufree.DEFAULT_BASE_URL,
+            "https://new4.world4ufree.watch")
+
+    def test_client_resolves_to_registry_watch(self):
+        # The shipped registry is the source of truth; the client must
+        # resolve to the new catalog domain, not the dead .gay portal.
+        self.assertEqual(
+            import_world4ufree.World4uFreeClient().base_url,
+            "https://new4.world4ufree.watch")
+
+    def test_scrape_post_item_watch_fixture(self):
+        class StubClient:
+            # No live unwrapping in tests: the gateway fallback still
+            # banks the release, which is what the offline path proves.
+            def unwrap_w4links(self, url):
+                return []
+
+            def unwrap_fastilinks(self, url, referer=None):
+                return []
+
+        item = (
+            "https://new4.world4ufree.watch/mayookha-2026-dual-audio/",
+            "2026-11-23T01:20:09",
+            "mayookha-2026-dual-audio",
+            json.dumps(self.WATCH_POST),
+        )
+        result = import_world4ufree.scrape_post_item(item, StubClient())
+        self.assertTrue(result["success"])
+        self.assertEqual(result["post"]["title"], "Mayookha")
+        self.assertEqual(result["post"]["year"], 2026)
+        self.assertEqual(
+            result["post"]["post_url"],
+            "https://new4.world4ufree.watch/mayookha-2026-dual-audio/")
+        self.assertIn("/s1600/", result["post"]["poster_url"])
+        self.assertEqual(len(result["releases"]), 2)
+
+    def test_sync_queues_watch_posts_offline(self):
+        # The sync takes its client as a parameter: stub it and prove
+        # the sync builds {base}/wp-json/wp/v2/posts on the new domain.
+        requested = []
+        post = self.WATCH_POST
+
+        class StubClient:
+            base_url = "https://new4.world4ufree.watch"
+
+            def get_json(self, url, timeout=15):
+                requested.append(url)
+                return 200, [post], {"x-wp-total": "24875",
+                                     "x-wp-totalpages": "249"}
+
+        new_count = import_world4ufree.sync_api_catalog(
+            StubClient(), self.db_path, max_pages=1)
+        self.assertEqual(new_count, 1)
+        self.assertTrue(requested)
+        self.assertIn(
+            "https://new4.world4ufree.watch/wp-json/wp/v2/posts",
+            requested[0])
+        with sqlite3.connect(str(self.db_path)) as conn:
+            row = conn.execute(
+                "SELECT loc, scraped FROM sitemap_cache;").fetchone()
+        self.assertEqual(
+            row[0], "https://new4.world4ufree.watch/mayookha-2026-dual-audio/")
+        self.assertEqual(row[1], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

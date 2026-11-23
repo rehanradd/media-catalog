@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-import_world4ufree.py — Dedicated staging importer and scraper for World4uFree (https://world4ufree.gay).
+import_world4ufree.py — Dedicated staging importer and scraper for World4uFree (https://new4.world4ufree.watch).
 
 Key Features & Hidden API Accelerators:
   1. 100-Item Bulk WP REST API Catalog Synchronization:
@@ -64,7 +64,7 @@ import fast_fetch
 from config import staging_db_path
 from domain_resolver import get_active_base_url, resolve_if_dead
 
-DEFAULT_BASE_URL = "https://world4ufree.men"
+DEFAULT_BASE_URL = "https://new4.world4ufree.watch"
 SITE_NAME = "world4ufree"
 DEFAULT_DB_PATH = staging_db_path("world4ufree")
 STATUS_FILE = BASE_DIR / "world4ufree_status.json"
