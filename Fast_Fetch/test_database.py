@@ -3911,11 +3911,13 @@ seg-00002.ts
         self.assertEqual(res["url"], "https://cdn.example/hls/master.m3u8")
         self.assertEqual(resolvers.calls[0][0], "vidhide")
 
-    def test_resolve_live_source_routes_a_vidmoly_embed_to_the_packer_unwrapper(self):
-        """Session 103: vidmoly has 0 rows in the catalog, so it is wired
-        but unproven live — this test proves only the routing: a vidmoly
-        row reaches the packer unwrapper with the vidmoly service label,
-        and the verified verdict serves."""
+    def test_resolve_live_source_routes_a_vidmoly_embed_to_the_vidmoly_unwrapper(self):
+        """Vidmoly (sweep S2, 2026-11-23): the embed page publishes its
+        master in JWPlayer file:, NOT in the packed config — the Session
+        103 packer routing answered "unknown" on every real vidmoly page
+        (proven live on vidmoly.org/embed-nety8pu43f8i.html). A vidmoly
+        row now reaches unwrap_vidmoly with the vidmoly URL, NOT the
+        packer unwrapper, and the verified verdict serves."""
         stored = self._embed_source(
             "moviesmela", "vidmoly",
             "https://vidmoly.net/embed-abc123.html")
@@ -3923,8 +3925,21 @@ seg-00002.ts
         failing = {"ok": False, "kind": None, "mime": None, "size": None,
                    "resumable": False, "renditions": [],
                    "failure": "probe_error"}
+        vidmoly_calls = []
+
+        def fake_unwrap_vidmoly(url, verify=True):
+            vidmoly_calls.append((url, verify))
+            return {"status": "active",
+                    "final_url": "https://cdn.example/hls2/01/1/f/master.m3u8"
+                    "?t=x&s=1&e=129600&f=1",
+                    "is_temporary": True, "expires_in": 129600.0,
+                    "content_type": "application/vnd.apple.mpegurl",
+                    "http_status": 200, "size_bytes": 1223}
+
         with patch.object(fast_fetch, "_embed_resolvers",
                           return_value=resolvers), \
+             patch.object(fast_fetch, "unwrap_vidmoly",
+                          side_effect=fake_unwrap_vidmoly), \
              patch.object(fast_fetch, "_stage2_probe",
                           return_value=failing):
             res = fast_fetch.resolve_live_source(stored["id"])
@@ -3933,9 +3948,12 @@ seg-00002.ts
         self.assertEqual(res["url"],
                          "https://cdn.example/hls2/01/1/f/master.m3u8"
                          "?t=x&s=1&e=129600&f=1", res)
+        self.assertEqual(len(vidmoly_calls), 1, vidmoly_calls)
+        self.assertIn("vidmoly.net/embed-abc123.html", vidmoly_calls[0][0])
+        self.assertTrue(vidmoly_calls[0][1])
         packer_calls = [c for c in resolvers.calls if c[0] == "packer_hls"]
-        self.assertEqual(len(packer_calls), 1, resolvers.calls)
-        self.assertEqual(packer_calls[0][2], "vidmoly")
+        self.assertEqual(packer_calls, [],
+                         "vidmoly must not fall through to the packer")
 
     def test_resolve_live_source_routes_a_hubcloud_row_to_the_new_hubcloud_unwrapper(self):
         """Phase C item 4: a hubcloud drive row reaches unwrap_hubcloud
@@ -3968,7 +3986,8 @@ seg-00002.ts
     def test_resolve_live_source_routes_an_hglink_row_to_the_new_streamwish_unwrapper(self):
         """Phase C item 4: an hglink.to loader row reaches unwrap_streamwish,
         NOT the packer below it — the packer only keeps the embed shapes
-        (watch-online, embedwish, vidmoly, streamwish /e/)."""
+        (watch-online, embedwish, streamwish /e/). Vidmoly has its own
+        branch above the packer (JWPlayer file:, not the packer)."""
         stored = self._embed_source(
             "moviesmela", "streamwish",
             "https://hglink.to/g70gj3eith1c")

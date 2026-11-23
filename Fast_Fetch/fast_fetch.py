@@ -5037,6 +5037,157 @@ def unwrap_multicloudlinks(player_url: str, timeout: int = 10) -> dict | None:
         "expires_at": expires_at,
     }
 
+#: Vidmoly (sweep S2, desicinemas, 2026-11-23): the embed page publishes
+#: its master in plain JWPlayer setup — `sources: [{ file:
+#: 'https://<host>/hls2/.../master.m3u8?...' }]` — while the P.A.C.K.E.R.
+#: block on the same page unpacks to ~1 KB with no media key, so the
+#: packer unwrapper answers "unknown" on every real vidmoly page.
+VIDMOLY_JWPLAYER_FILE_RE = re.compile(
+    r"""sources\s*:\s*\[\s*\{\s*file\s*:\s*['"]([^'"]+\.m3u8[^'"]*)['"]""")
+VIDMOLY_M3U8_RE = re.compile(r"""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""")
+
+
+def _vidmoly_probe_playlist(url: str, referer: str, timeout: int = 10) -> dict:
+    """One capped Range read of a vidmoly master playlist.
+
+    Returns the `_probe_playlist_or_file` verdict subset this unwrapper
+    needs: {status, http_status, content_type, size_bytes, is_playlist,
+    reason}. A 200/206 whose Content-Type is mpegurl, or whose first bytes
+    are #EXTM3U, is a live playlist. The live master answers 200 (not
+    206) with the whole ~1.2 KB manifest, so the read is capped at 1 KB
+    and the body is never a download. No Referer is required on the live
+    host (proven with and without), but it is sent anyway — it is the
+    embed page, and an edge that starts checking it then still passes.
+    """
+    headers = {"User-Agent": USER_AGENT, "Range": "bytes=0-511",
+               "Referer": referer}
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read(1025)
+            status = resp.status
+            content_type = (resp.headers.get("Content-Type") or ""
+                            ).split(";")[0].strip().lower()
+    except urllib.error.HTTPError as exc:
+        return {"status": ("dead" if exc.code in (404, 410)
+                           else "blocked" if exc.code in (401, 403, 429)
+                           else "unknown"),
+                "http_status": exc.code, "content_type": "",
+                "size_bytes": None, "is_playlist": False,
+                "reason": f"HTTP {exc.code}"}
+    except Exception as exc:  # noqa: BLE001 — transport failure, not a verdict
+        return {"status": "unknown", "http_status": 0, "content_type": "",
+                "size_bytes": None, "is_playlist": False,
+                "reason": f"{type(exc).__name__}: {str(exc)[:80]}"}
+    is_playlist = ("mpegurl" in content_type or "m3u8" in content_type
+                   or body[:7] == b"#EXTM3U")
+    if status in (200, 206) and is_playlist:
+        return {"status": "active", "http_status": status,
+                "content_type": content_type, "size_bytes": len(body),
+                "is_playlist": True, "reason": "HLS master playlist"}
+    if status in (200, 206):
+        return {"status": "unknown", "http_status": status,
+                "content_type": content_type, "size_bytes": len(body),
+                "is_playlist": False,
+                "reason": f"{status} {content_type or 'no content-type'}"}
+    return {"status": ("blocked" if status in (401, 403, 429)
+                       else "dead" if status in (404, 410) else "unknown"),
+            "http_status": status, "content_type": content_type,
+            "size_bytes": len(body), "is_playlist": False,
+            "reason": f"HTTP {status}"}
+
+
+def unwrap_vidmoly(embed_url: str, verify: bool = True, *, _fetch=None,
+                   _probe=None) -> dict:
+    """Vidmoly embed URL -> {final_url, service, is_temporary, expires_in,
+    status, notes, ...}.
+
+    One GET of the embed page, read the HLS master out of its JWPlayer
+    setup (`sources: [{ file: '...master.m3u8?...' }]`, generic .m3u8
+    fallback), one capped Range probe of the playlist. The probe accepts
+    an HLS master as playable media — that is the whole point of this
+    host. `verify=False` extracts only and answers "unverified".
+
+    Live shape (Oracle egress, 2026-11-23, desicinemas trembed ->
+    vidmoly.org/embed-nety8pu43f8i.html): page 200 in ~1 s, 71,669 B,
+    exactly one .m3u8, on prx-am-s-1.vmpx.online under /hls2/.../master.m3u8
+    with signed s=<10-digit issue epoch> + e=43200 (12 h window); the
+    Range probe answers 200 application/vnd.apple.mpegurl, real #EXTM3U,
+    in ~0.6 s. The packed block on the same page unpacks to 1,006 chars
+    with no hls2/hls4/file key — that is why the packer branch answers
+    "unknown" here and this unwrapper exists. The master is temporary
+    (signed, 12 h), so the resolver re-resolves per press and never banks
+    it long-term. A verify failure is "unknown"/"blocked"/"dead" from the
+    probe's own status map — never a guessed "active".
+
+    `_fetch` / `_probe` are the two network edges, injectable so the
+    parsing and the trust decision are testable offline. `_fetch` follows
+    the `http_get` contract and returns (status, final_url, html).
+    """
+    fetch = _fetch or http_get
+    probe = _probe or _vidmoly_probe_playlist
+    result = {"service": "vidmoly", "embed_url": embed_url or "",
+              "final_url": "", "is_temporary": True, "expires_in": None,
+              "status": "unverified", "notes": [], "sources": [],
+              "http_status": None, "content_type": "", "size_bytes": None}
+    if not embed_url or "vidmoly" not in (embed_url or "").lower():
+        result["status"] = "unknown"
+        result["notes"].append("not a vidmoly URL")
+        return result
+    try:
+        status, _final, page = fetch(embed_url, timeout=15, max_retries=0)
+    except Exception as exc:  # noqa: BLE001 — transport failure, not a verdict
+        result["status"] = "unknown"
+        result["http_status"] = 0
+        result["notes"].append(f"embed fetch failed: {type(exc).__name__}")
+        return result
+    result["http_status"] = status
+    if status != 200:
+        result["status"] = ("dead" if status in (404, 410)
+                            else "blocked" if status in (401, 403, 429)
+                            else "unknown")
+        result["notes"].append(f"embed page HTTP {status}")
+        return result
+    html = page if isinstance(page, str) else (page or b"").decode(
+        "utf-8", "ignore")
+    media = ""
+    match = VIDMOLY_JWPLAYER_FILE_RE.search(html)
+    if match:
+        media = match.group(1)
+    if not media:
+        match = VIDMOLY_M3U8_RE.search(html)
+        if match:
+            media = match.group(0)
+    if not media:
+        result["status"] = "unknown"
+        result["notes"].append("embed page carries no .m3u8 URL")
+        return result
+    media = media.replace("\\/", "/").strip()
+    result["final_url"] = media
+    result["sources"] = [{"url": media,
+                          "mime": "application/vnd.apple.mpegurl",
+                          "label": "hls"}]
+    # Signed s=issue-epoch + e=lifetime — the same convention as pkembed's
+    # duration_expiry_from_url in host_resolvers, with the same digit-shape
+    # guards so a lifetime is never read as an epoch.
+    query = urllib.parse.parse_qs(urllib.parse.urlsplit(media).query)
+    start = (query.get("s") or [""])[0]
+    lifetime = (query.get("e") or [""])[0]
+    if (re.fullmatch(r"\d{9,11}", start or "")
+            and re.fullmatch(r"\d{1,7}", lifetime or "")):
+        result["expires_in"] = (int(start) + int(lifetime)
+                                - int(time.time()))
+    if not verify:
+        result["notes"].append("extracted only; the playlist was not probed")
+        return result
+    verdict = probe(media, embed_url)
+    result["http_status"] = verdict["http_status"]
+    result["content_type"] = verdict["content_type"]
+    result["size_bytes"] = verdict["size_bytes"]
+    result["status"] = verdict["status"]
+    if verdict.get("reason"):
+        result["notes"].append(verdict["reason"])
+    return result
 
 def unwrap_greenmotors(greenmotors_url: str, timeout: int = 10) -> list[dict]:
     """
@@ -8472,8 +8623,11 @@ RESOLVE_FAILURE_CLASSES = ("probe_failed", "no_unwrapper", "unwrap_failed")
 #: that a resolver exists. (Most catalog filemoon codes are dead — 10/10
 #: in the sweep plus 12/14 fresh-search codes 404 — so most fresh presses
 #: will honestly record "dead".)
-RESOLVER_VERSION = 8
-
+#: 9 — Vidmoly (sweep S2, 2026-11-23): the embed page's master lives in
+#: JWPlayer file:, not the packed config, so the packer branch answered
+#: "unknown" on every real vidmoly page; unwrap_vidmoly reads it and
+#: Range-probes it. Rows failed under v8 deserve one fresh press.
+RESOLVER_VERSION = 9
 
 def _is_transport_verdict(verdict) -> bool:
     """True when a probe/unwrapper verdict names a transport failure (HTTP 0).
@@ -9526,7 +9680,8 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                 # verify failure is "unknown", never "dead"; a loader or
                 # vibuxer page 404 IS dead (the unwrapper says so). The
                 # packer below keeps the embed shapes (watch-online,
-                # embedwish, vidmoly, streamwish /e/).
+                # embedwish, streamwish /e/). Vidmoly has its own branch
+                # above (JWPlayer file:, not the packer).
                 _unwrap_branch_taken = True
                 _sw_url = (source_u if (hr.is_hglink_loader(source_u)
                                         or hr.streamwish_vibuxer_url(source_u))
@@ -9538,6 +9693,32 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                     fresh_temp = 1
                     embed_verdict = verdict
                     _gate_from_verdict = True
+            elif hr and (service == hr.SERVICE_VIDMOLY
+                         or "vidmoly" in source_u.lower()
+                         or "vidmoly" in cached_u.lower()):
+                # Vidmoly (sweep S2, desicinemas, 2026-11-23): the embed
+                # page publishes its master in plain JWPlayer setup —
+                # sources: [{ file: 'https://<host>/hls2/.../master.m3u8?s=..&e=43200' }]
+                # — NOT in the packed config, so the packer branch below
+                # answers "unknown" on every real vidmoly page (proven
+                # live on vidmoly.org/embed-nety8pu43f8i.html: the packer
+                # unpacks to 1,006 chars with no media key; the JWPlayer
+                # file: URL Range-probes 200 #EXTM3U). unwrap_vidmoly
+                # reads that file: URL and Range-probes it; the probe IS
+                # the gate evidence, same as vidhide/voe. Signed s=epoch +
+                # e=lifetime (43200 = 12 h on the live sample), so the
+                # master is temporary and re-resolved per press.
+                _unwrap_branch_taken = True
+                verdict = unwrap_vidmoly(hoster_input("vidmoly"),
+                                         verify=True)
+                direct_u = embed_from_verdict(verdict)
+                if direct_u:
+                    fresh_url = direct_u
+                    fresh_temp = 1
+                    embed_verdict = verdict
+                    _gate_from_verdict = True
+                elif not _is_transport_verdict(verdict):
+                    _record_resolve_failure(src["id"], "unwrap_failed")
             elif hr and (service in (hr.SERVICE_STREAM, hr.SERVICE_STREAMWISH,
                                      hr.SERVICE_VIDMOLY)
                          or service in hr.STREAMWISH_MIRROR_SERVICES
@@ -9557,6 +9738,11 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                 # unpack + hls2 master). The unwrapper's Referer-carrying
                 # Range probe already proved the playlist, so it stands
                 # as the gate — a bare probe would 403 without the Referer.
+                # Vidmoly used to ride this branch (Session 103, wired
+                # but unproven live — the research said packer, the live
+                # page says JWPlayer file: instead); since the vidmoly
+                # branch above, this marker is only a fallback for a
+                # vidmoly URL that reaches here without matching it.
                 # Vidmoly rides the same packer pattern (research:
                 # mediaflow-proxy VidMoly extractor, same 1-GET + unpack
                 # shape); it has 0 rows in the catalog, so this is wired
@@ -9570,8 +9756,7 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                 # that answers with the 819-byte JS loader shell instead
                 # of a packer page (strwish -> niramirus, measured live
                 # 2026-11-23) is rewritten to its packer URL below, so
-                # the unwrapper fetches the embed page, not the shell.
-                _unwrap_branch_taken = True
+                # the unwrapper fetches the embed page, not the shell.                _unwrap_branch_taken = True
                 _packer_markers = ("watch-online", "streamwish", "hglink",
                                    "embedwish", "vidmoly",
                                    *hr.STREAMWISH_MIRROR_SERVICES)

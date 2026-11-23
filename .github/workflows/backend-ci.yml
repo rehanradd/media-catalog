@@ -1080,6 +1080,13 @@ jobs:
       - name: 🧪 test_filemoon_unwrap.py
         run: python3 -S Fast_Fetch/test_filemoon_unwrap.py
 
+      # Vidmoly (sweep S2, 2026-11-23): the embed page publishes its HLS
+      # master in plain JWPlayer setup (sources: [{ file: '...master.m3u8'
+      # }]), not in the packed config the packer branch reads — unwrap
+      # reads it and Range-probes it. Offline — canned pages via the
+      # _fetch/_probe seams, loopback probe server, temp-DB dispatch.
+      - name: 🧪 test_vidmoly_unwrap.py
+        run: python3 -S Fast_Fetch/test_vidmoly_unwrap.py
       # XprimeHub (Session 104): the 19th site, 18+ adult catalog — scrape only.
       # The flag is the feature: every row is_18_plus = 1 by site authority, and the
       # registry entry records scrape-only / never publish. Offline — temp SQLite files.
