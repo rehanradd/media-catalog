@@ -1069,6 +1069,14 @@ jobs:
       - name: 🧪 test_greenmotors_multicloud.py
         run: python3 -S Fast_Fetch/test_greenmotors_multicloud.py
 
+      # HubCloud dead PixelServer placeholder (2026-11-23): the gamerxyt
+      # page prints the same pixeldrain.dev/u/negn6f on every file and it
+      # 404s on every check — both HubCloud paths must never emit or bank
+      # it, while a real per-file pixeldrain id still banks as /api/file/.
+      # Offline — canned gamerxyt pages, mocked http_get / fetch.
+      - name: 🧪 test_hubcloud_negn6f.py
+        run: python3 -S Fast_Fetch/test_hubcloud_negn6f.py
+
       # XprimeHub (Session 104): the 19th site, 18+ adult catalog — scrape only.
       # The flag is the feature: every row is_18_plus = 1 by site authority, and the
       # registry entry records scrape-only / never publish. Offline — temp SQLite files.

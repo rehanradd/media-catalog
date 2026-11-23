@@ -4320,6 +4320,23 @@ def _hubcloud_pixel_url(href: str) -> str:
     return f"{parts.scheme}://{parts.netloc}/api/file/{last}?download"
 
 
+#: The HubCloud PixelServer button's Pixeldrain id (2026-11-23): the
+#: gamerxyt page prints the SAME pixeldrain.dev/u/negn6f on every file,
+#: and it answers 404 on every Range check — a static placeholder, not
+#: a per-file link. Only the HubCloud candidate path drops it (see
+#: ``_hubcloud_candidates``); ``_hubcloud_pixel_url`` itself still
+#: rewrites any id, because the rewrite is generic and the drop is a
+#: HubCloud-button judgement. The match is on the exact extracted id
+#: segment, never a substring, so ``negn6fX`` still banks.
+HUBCLOUD_DEAD_PIXELDRAIN_ID = "negn6f"
+
+
+def _is_dead_hubcloud_pixeldrain(href: str) -> bool:
+    """Whether a PixelServer href carries the dead placeholder id."""
+    m = re.search(r"/(?:u|d|api/file)/([A-Za-z0-9_-]+)", href or "")
+    return bool(m) and m.group(1) == HUBCLOUD_DEAD_PIXELDRAIN_ID
+
+
 def _hubcloud_buzz_url(fetch, link: str, referer: str) -> str:
     """The file URL a BuzzServer button redirects to, or "".
 
@@ -4347,6 +4364,7 @@ def _hubcloud_candidates(fetch, page: str, page_url: str) -> tuple[list[dict], l
     """
     found: dict[str, dict] = {}
     ignored: list[str] = []
+    dropped_dead_pixel = False
     for attrs, text in _hubcloud_anchors(page):
         if "btn" not in (attrs.get("class") or "").lower():
             continue
@@ -4363,6 +4381,17 @@ def _hubcloud_candidates(fetch, page: str, page_url: str) -> tuple[list[dict], l
             continue
         url = _hubcloud_abs(href, page_url)
         if kind == "pixel":
+            if _is_dead_hubcloud_pixeldrain(url):
+                # Dead PixelServer placeholder (2026-11-23): the same
+                # pixeldrain.dev/u/negn6f on every file, 404 on every
+                # check. Dropping it here keeps it out of the verdict's
+                # sources, so the sibling-banking path can never bank
+                # it as the release's pixeldrain row — and a later real
+                # PixelServer button on the same page still lands,
+                # because `found` is only set below. A real per-file
+                # id still rewrites to /api/file/<id>.
+                dropped_dead_pixel = True
+                continue
             url = _hubcloud_pixel_url(url)
         elif kind == "buzz":
             url = _hubcloud_buzz_url(fetch, url, page_url)
@@ -4372,6 +4401,9 @@ def _hubcloud_candidates(fetch, page: str, page_url: str) -> tuple[list[dict], l
         found[kind] = {"kind": kind, "label": _HUBCLOUD_LABELS[kind], "url": url}
     ordered = [found[kind] for kind in _HUBCLOUD_PRIORITY if kind in found]
     notes = []
+    if dropped_dead_pixel:
+        notes.append("dropped dead PixelServer placeholder pixeldrain id "
+                     "negn6f (static placeholder, 404 on every check)")
     if ignored:
         notes.append("ignored non-file buttons: " + ", ".join(ignored[:6]))
     return ordered, notes

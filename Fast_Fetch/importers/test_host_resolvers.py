@@ -3290,7 +3290,11 @@ class TestUnwrapHubcloud(unittest.TestCase):
         self.assertTrue(verdict["is_temporary"])
         self.assertEqual(verdict["final_url"], HC_FSLV2_URL)
         self.assertEqual([s["label"] for s in verdict["sources"]],
-                         ["FSLv2", "FSL", "PixelServer", "10Gbps"])
+                         ["FSLv2", "FSL", "10Gbps"])
+        # Dead PixelServer placeholder (2026-11-23): the page's
+        # pixeldrain.dev/u/negn6f is dropped, never banked — and the
+        # verdict says so instead of silently losing a button.
+        self.assertIn("negn6f", json.dumps(verdict["notes"]))
         self.assertEqual(verdict["quality"], "1080p")
         self.assertGreater(verdict["expires_in"], 17000)
         self.assertLessEqual(verdict["expires_in"], 18000)
@@ -3317,17 +3321,25 @@ class TestUnwrapHubcloud(unittest.TestCase):
         self.assertIn("FSLv2", json.dumps(verdict["notes"]))
         self.assertIn("HTTP 403", json.dumps(verdict["notes"]))
 
-    def test_both_r2_blocked_falls_back_to_pixel(self):
+    def test_both_r2_blocked_dead_pixel_not_served(self):
+        # Dead PixelServer placeholder (2026-11-23): both R2 blocked
+        # used to fall back to the pixeldrain.dev/u/negn6f button — a
+        # static id that 404s on every check, so the "fallback" served
+        # a dead link. Now the placeholder is dropped from the
+        # candidates, the 10Gbps landing page is not a stream, and the
+        # verdict is unknown with the pixel URL never probed.
         fetch = _hc_fetch(
             (403, HC_NOT_ENTITLED, {"content-type": "application/xml"}),
             (403, HC_NOT_ENTITLED, {"content-type": "application/xml"}),
             pixel_probe=(206, HC_MKV_HEAD, HC_R2_HEADERS))
         verdict = hr.unwrap_hubcloud(HC_DRIVE_URL, fetch=fetch)
-        self.assertEqual(verdict["status"], "active")
-        self.assertEqual(verdict["final_url"], HC_PIXEL_URL)
+        self.assertEqual(verdict["status"], "unknown")
+        self.assertEqual(verdict["final_url"], HC_FSLV2_URL)
+        self.assertEqual([s["label"] for s in verdict["sources"]],
+                         ["FSLv2", "FSL", "10Gbps"])
         probed = [c[0] for c in fetch.calls]
-        self.assertTrue(any("pixeldrain.dev/api/file/negn6f?download" in u
-                            for u in probed))
+        self.assertFalse(any("pixeldrain" in u for u in probed))
+        self.assertIn("negn6f", json.dumps(verdict["notes"]))
 
     def test_verify_off_returns_first_candidate_unverified(self):
         fetch = _hc_fetch(

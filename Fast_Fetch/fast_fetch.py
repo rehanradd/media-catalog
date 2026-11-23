@@ -3513,6 +3513,28 @@ def unwrap_pixeldrain(pixeldrain_url: str) -> tuple[str, str, int]:
     return pixeldrain_url, pixeldrain_url.rstrip("/").split("/")[-1], 0
 
 
+#: The HubCloud PixelServer button's Pixeldrain id (2026-11-23): the
+#: gamerxyt page prints the SAME pixeldrain.dev/u/negn6f on every file,
+#: and it answers 404 on every Range check — a static placeholder, not
+#: a per-file link. Only the HubCloud PixelServer button is dropped on
+#: this id: a pixeldrain link from any other host still rewrites through
+#: ``unwrap_pixeldrain`` untouched (its tests pin that rewrite, and a
+#: real file can legitimately carry any id). The match is on the exact
+#: extracted id segment, never a substring, so ``negn6fX`` still banks.
+HUBCLOUD_DEAD_PIXELDRAIN_ID = "negn6f"
+
+
+def _hubcloud_pixeldrain_file_id(href: str) -> str:
+    """The Pixeldrain file id in a HubCloud PixelServer href, or ""."""
+    m = re.search(r"/(?:u|d|api/file)/([A-Za-z0-9_-]+)", href or "")
+    return m.group(1) if m else ""
+
+
+def _is_dead_hubcloud_pixeldrain(href: str) -> bool:
+    """Whether a HubCloud PixelServer href carries the dead placeholder id."""
+    return _hubcloud_pixeldrain_file_id(href) == HUBCLOUD_DEAD_PIXELDRAIN_ID
+
+
 #: A path ending in one of these is media ExoPlayer/`ffprobe` can open directly.
 #: Query strings are stripped before the test, so `…/movie.mkv?token=…` counts.
 _MEDIA_SUFFIXES = (
@@ -3896,6 +3918,14 @@ def unwrap_hubcloud_drive(hub_drive_url: str) -> list[dict]:
                 "is_temporary": 0,
             })
         elif "pixeldrain" in h_lower:
+            # Dead PixelServer placeholder (2026-11-23): the gamerxyt
+            # page prints the same pixeldrain.dev/u/negn6f on every
+            # file and it 404s on every check — banking it would serve
+            # a dead link as the release's PixelDrain row. A REAL
+            # per-file id still banks through unwrap_pixeldrain
+            # (/u/<id> -> pixeldrain.com/api/file/<id>).
+            if _is_dead_hubcloud_pixeldrain(href):
+                continue
             direct_pd, pd_id, _ = unwrap_pixeldrain(href)
             results.append({
                 "source_name": "⚡ PixelDrain [Direct CDN]",
@@ -3915,6 +3945,12 @@ def unwrap_hubcloud_drive(hub_drive_url: str) -> list[dict]:
                 "final_url": href,
                 "is_temporary": 1,
             })
+
+    # FSL R2 first (2026-11-23 fast-path proof §7): the signed R2 URL is
+    # the only button that answers 206 directly, so it leads even when
+    # the page lists PixelServer or 10Gbps above it. Stable sort: the
+    # siblings keep their page order behind it.
+    results.sort(key=lambda item: 0 if item.get("service") == "fsl_r2" else 1)
 
     if not results:
         results.append({
