@@ -8702,7 +8702,16 @@ RESOLVE_FAILURE_CLASSES = ("probe_failed", "no_unwrapper", "unwrap_failed")
 #: for them are stale. (Versions 8–12 are the stacked filemoon /
 #: vidmoly / moviehax / kmhd / hubcloud-oneround bumps; this branch was
 #: built on main and rebased onto them, so the number jumps 7 -> 13.)
-RESOLVER_VERSION = 13
+#: 14 — FIX2 mp4moviez dl.php unwrapper (2026-11-23): the stored
+#: dl.php endpoint follows a pure 3-hop redirect chain (301 -> 302
+#: -> 200 video/mp4 on fastxmp4) to a real .mp4. All 53,096 mp4moviez
+#: rows carry final_url = NULL and 10,560 posts have no other source,
+#: so those rows deserve one fresh press now that an unwrapper
+#: exists for them. (FIX2 itself adds no dispatch branch, so this
+#: is the queue-convention bump: one bump per landing, so stale
+#: negative-cache rows get a fresh press.)
+RESOLVER_VERSION = 14
+
 
 def _is_transport_verdict(verdict) -> bool:
     """True when a probe/unwrapper verdict names a transport failure (HTTP 0).
