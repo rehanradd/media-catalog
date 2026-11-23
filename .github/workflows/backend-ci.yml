@@ -1056,6 +1056,12 @@ jobs:
       - name: 🧪 test_multiup_unwrap.py
         run: python3 -S Fast_Fetch/test_multiup_unwrap.py
 
+      # VCloud _cy-first (sweep H1, 2026-11-23): when the api page has no
+      # atob(atob()), fetch the _cy page first and decode there; old
+      # first-page path kept as fallback. Offline - mocked http_get.
+      - name: 🧪 test_unwrap_vcloud_cy.py
+        run: python3 -S Fast_Fetch/test_unwrap_vcloud_cy.py
+
       # XprimeHub (Session 104): the 19th site, 18+ adult catalog — scrape only.
       # The flag is the feature: every row is_18_plus = 1 by site authority, and the
       # registry entry records scrape-only / never publish. Offline — temp SQLite files.
