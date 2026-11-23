@@ -309,7 +309,9 @@ DEFAULT_DOMAINS = {
     "gokuhd": "https://gokuhd.com",
     "nexdrive": "https://nexdrive.fit",
     "fastdl": "https://fastdl.beer",
-    "vcloud": "https://vcloud.beer",
+    # Live 2026-11-23 (sweep H1): vcloud rows are vcloud.my (14,538)
+    # and vcloud.beer has 0 rows — the old .beer origin 301s to .my.
+    "vcloud": "https://vcloud.my",
     "vegadrive": "https://one.vegadrive.me",
     "filepress": "https://new1.filepress.lat",
     "linkszilla": "https://secure.linkszilla.top",
@@ -340,7 +342,7 @@ SITE_CANDIDATE_TLDS = {
     "10xflix": ["help", "wiki", "me", "com", "org", "top"],
     "nexdrive": ["fit", "beer", "click", "xyz", "top", "to"],
     "fastdl": ["beer", "xyz", "live", "top"],
-    "vcloud": ["beer", "live", "lol", "one"],
+    "vcloud": ["my", "beer", "live", "lol", "one"],
 }
 
 #: domain_resolver.py is the SOLE writer of this file (flock + atomic replace).
@@ -3376,7 +3378,30 @@ def unwrap_vcloud(vcloud_url: str, clearance=None) -> list[tuple[str, str, str, 
     # var url = atob(atob('...'));
     b64_m = re.search(r"atob\(\s*atob\(\s*['\"]([^'\"]+)['\"]\s*\)\s*\)", html)
     if not b64_m:
-        return [("V-Cloud", "vcloud", final_vcloud_url, 0)]
+        # Current vcloud.my layout (live 2026-11-23, sweep H1): the
+        # api page no longer carries the token — it links a `_cy`
+        # intermediate page that does. Fetch it (same timeout /
+        # retries / clearance as the other hops; http_get routes
+        # through WARP when RADD_WARP_PROXY is on, which the _cy
+        # page needs — direct egress returns a shell without the
+        # token) and decode there. The `_cy` slug is stable per
+        # link value. The old first-page path above stays as the
+        # fallback: when no `_cy` link exists, return the landing.
+        cy_m = re.search(r"""href=["']([^"']*_cy[^"']*)["']""", html)
+        if not cy_m:
+            return [("V-Cloud", "vcloud", final_vcloud_url, 0)]
+        cy_url = urllib.parse.urljoin(
+            final_vcloud_url, cy_m.group(1).strip())
+        cy_code, _cy_final, cy_html = http_get(
+            cy_url, timeout=RESOLVE_LANDING_TIMEOUT_SECONDS,
+            max_retries=RESOLVE_LANDING_MAX_RETRIES,
+            clearance=clearance)
+        if cy_code != 200:
+            return [("V-Cloud", "vcloud", final_vcloud_url, 0)]
+        b64_m = re.search(
+            r"atob\(\s*atob\(\s*['\"]([^'\"]+)['\"]\s*\)\s*\)", cy_html)
+        if not b64_m:
+            return [("V-Cloud", "vcloud", final_vcloud_url, 0)]
 
     try:
         token_str = b64_m.group(1)
