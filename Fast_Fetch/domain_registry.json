@@ -690,8 +690,8 @@
     },
     "xprimehub": {
       "active_base_url": "https://xprimehub.pics",
-      "last_verified": "2026-11-23T00:00:00Z",
-      "verified_by": "wp-json",
+      "last_verified": "2026-11-23T01:03:46Z",
+      "verified_by": "wp_rest_api",
       "known_mirrors": [
         "https://xprimehub.pics"
       ],
@@ -704,11 +704,10 @@
       "api_type": "wp_rest_api",
       "status": "active",
       "rotation_history": [],
-      "last_checked": "2026-11-23T00:00:00Z",
-      "api_endpoint": "/wp-json/wp/v2/posts",
+      "last_checked": "2026-11-23T01:03:46Z",
       "sitemap_endpoint": "/sitemap.xml",
-      "notes": "18+ adult catalog — scrape only, never publish; every row is_18_plus=1 (owner-approved 2026-11-08). WP REST live, 7,296 posts (site-API hunt 2026-11-23); WP REST is the catalog route.",
-      "site_name": "xprimehub"
+      "notes": "18+ adult catalog — scrape only, never publish; every row is_18_plus=1 (owner-approved 2026-11-08). WP REST proven live 2026-11-23 (X-WP-Total 7296, no auth) but its edge cache only ever serves the page-1/page-2 bodies, so a REST seed covers at most the newest ~200 posts; the sitemap seed (37 post-sitemaps, 7,296 URLs) is the full enumeration. REST seed added 2026-11-23, sitemap sync kept.",
+      "api_endpoint": "/wp-json/wp/v2/posts"
     },
     "harpalgeo": {
       "active_base_url": "https://www.harpalgeo.tv",
