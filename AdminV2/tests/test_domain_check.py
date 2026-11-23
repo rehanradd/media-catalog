@@ -5,11 +5,15 @@ resolver (real resolvers differ on .invalid), and fingerprint
 logic is tested directly on bodies. A passing live HTTPS domain is
 verified manually on the VM (raddstream.duckdns.org), not in CI.
 """
+import os
 import socket
+import sys
 import unittest
 from unittest.mock import patch
 
-from admin_v2.domain_check import check_domain, fingerprint_check, fingerprint_ok_for_body
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from admin_v2.domain_check import check_domain, fingerprint_check, fingerprint_ok_for_body  # noqa: E402
 
 # A realistic homepage: title, quality markers, internal links, and
 # over 2,000 bytes. A 65-byte page is a doorway, not a homepage, and
