@@ -131,12 +131,25 @@ class RogmoviesClient:
         return 0, url, ""
 
 
+#: The site-wide default poster image rogmovies serves on posts that have
+#: no real poster (2026-11-23): 5,430 live rows share this one TMDB URL,
+#: while each post's real poster arrives via its og:image ?u= link. A
+#: stored copy of the default is worse than no poster at all — it shows
+#: the wrong film's art — so it is never accepted as a post's poster.
+ROGMOVIES_DEFAULT_POSTER = (
+    "https://image.tmdb.org/t/p/w500/qsnsKf59pYN3GzfQRqvNjE8tcdz.jpg")
+
+
 def unwrap_tmdb_poster(poster_url: str | None, page_html: str = "") -> str | None:
     """
     Decodes the permanent official TMDB poster URL from proxy parameters
     or extracts an embedded permanent TMDB image directly from post HTML.
     If Rogmovies changes domain, the decoded image.tmdb.org URL remains permanent.
+    The site-wide default poster (ROGMOVIES_DEFAULT_POSTER) is never a
+    post's poster — it is returned as None so the enrich path can fill the
+    real poster by title instead of stamping the wrong art on the row.
     """
+    resolved = None
     if poster_url:
         # Check for Base64 encoded TMDB target in ?u= or &#038;u= or &u=
         m = re.search(r'[?&](?:amp;)?u=([A-Za-z0-9+/=]+)', poster_url)
@@ -144,19 +157,21 @@ def unwrap_tmdb_poster(poster_url: str | None, page_html: str = "") -> str | Non
             try:
                 decoded = base64.b64decode(m.group(1)).decode('utf-8', errors='replace').strip()
                 if decoded.startswith("http") and "tmdb.org" in decoded:
-                    return decoded
+                    resolved = decoded
             except Exception:
                 pass
-        if "image.tmdb.org" in poster_url:
-            return poster_url
+        if resolved is None and "image.tmdb.org" in poster_url:
+            resolved = poster_url
 
     # Check if page_html embeds an official TMDB image
-    if page_html:
+    if resolved is None and page_html:
         tmdb_m = re.search(r'https?://image\.tmdb\.org/t/p/(?:original|w\d+)/[A-Za-z0-9_\-\.]+\.(?:jpg|jpeg|png|webp)', page_html, re.I)
         if tmdb_m:
-            return tmdb_m.group(0)
+            resolved = tmdb_m.group(0)
 
-    return poster_url
+    if resolved == ROGMOVIES_DEFAULT_POSTER:
+        return None
+    return resolved if resolved is not None else poster_url
 
 
 def sync_sitemap_to_db(client: RogmoviesClient, db_path: Path) -> int:
