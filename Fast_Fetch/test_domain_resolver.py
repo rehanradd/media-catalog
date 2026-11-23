@@ -603,7 +603,11 @@ class RegistryTests(unittest.TestCase):
             self.assertTrue(entry.get("tld_history"), name)
             self.assertTrue(entry.get("api_type"), name)
             self.assertTrue(entry.get("active_base_url"), name)
-        self.assertEqual(reg["sites"]["hdtvb"]["status"], "retired")
+        self.assertEqual(reg["sites"]["hdtvb"]["status"], "active")
+        self.assertEqual(reg["sites"]["hdtvb"]["active_base_url"],
+                         "https://hdboss.in")
+        self.assertEqual(reg["sites"]["hdtvb"]["known_mirrors"][0],
+                         "https://hdboss.in")
         self.assertEqual(reg["sites"]["vegamovies"]["telegram_channel"], "vega_officials")
         self.assertEqual(reg["sites"]["vegamovies"]["bookmark_domain"], "https://vglist.nl")
         self.assertEqual(reg["sites"]["hdhub4u"]["numeric_pattern"]["host"], "hdhub4u.cl")

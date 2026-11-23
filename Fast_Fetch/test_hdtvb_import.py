@@ -14,6 +14,33 @@ import import_hdtvb
 
 
 class HDTVBImportTests(unittest.TestCase):
+    def test_default_base_url_is_hdboss(self):
+        # The site moved hdtvb.net -> hdutv.com -> hdboss.in (2026-11-23):
+        # the fallback base must name the live host, not the dead one.
+        self.assertEqual(import_hdtvb.DEFAULT_BASE_URL, "https://hdboss.in")
+
+    def test_poster_joins_against_the_post_page_host(self):
+        # A poster joined against a hardcoded dead host 404s at serve
+        # time; the same page shape on hdboss.in must yield an hdboss.in
+        # poster, while the recorded hdtvb.net shape keeps its host.
+        html = (
+            '<html><head><title>Film (2026)</title></head><body>'
+            '<h1 class="entry-title">Film (2026)</h1>'
+            '<img class="movie-cover" src="/uploads/posts/covers/p.png">'
+            '<a href="https://hubcdn.io/cloud/tok">Download 1Gb {1080p}</a>'
+            "</body></html>"
+        )
+        data = import_hdtvb.extract_post_data_hdtvb(
+            "https://hdboss.in/film-2026.html", html, resolve_direct=False)
+        self.assertEqual(
+            data["poster_url"],
+            "https://hdboss.in/uploads/posts/covers/p.png")
+        data = import_hdtvb.extract_post_data_hdtvb(
+            "https://hdtvb.net/film-2026.html", html, resolve_direct=False)
+        self.assertEqual(
+            data["poster_url"],
+            "https://hdtvb.net/uploads/posts/covers/p.png")
+
     def test_parse_sitemap_urls(self):
         sample_xml = """<?xml version="1.0" encoding="UTF-8"?>
         <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">

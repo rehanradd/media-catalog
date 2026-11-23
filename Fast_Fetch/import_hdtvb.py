@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-import_hdtvb.py — Dedicated staging importer and scraper for HDTVB (https://hdtvb.net / https://hdutv.com).
+import_hdtvb.py — Dedicated staging importer and scraper for HDTVB (https://hdboss.in; moved from hdtvb.net / hdutv.com 2026-11-23).
 The site republishes the HDHub4u catalog under its own domains, but its staging
 rows belong to the `hdtvb` site key — never to `hdhub4u`.
 
@@ -52,7 +52,7 @@ from domain_resolver import get_active_base_url, resolve_if_dead
 # the hdhub4u importer, which made every hdtvb post claim to be a hdhub4u page.
 SITE_KEY = "hdtvb"
 
-DEFAULT_BASE_URL = "https://hdutv.com"
+DEFAULT_BASE_URL = "https://hdboss.in"
 SITE_NAME = "hdtvb"
 DEFAULT_DB_PATH = staging_db_path("hdtvb")
 STATUS_FILE = BASE_DIR / "hdtvb_status.json"
@@ -83,7 +83,7 @@ class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 
 class HDTVBClient:
-    """HTTP Client with rate limiting and retry handling for hdtvb.net and hubcdn.io."""
+    """HTTP Client with rate limiting and retry handling for hdboss.in and hubcdn.io."""
 
     def __init__(self, base_url: str | None = None, request_interval: float = 0.3, retries: int = 3):
         # Session 106: the registry is the source of truth for the
@@ -189,7 +189,7 @@ def parse_sitemap_urls(xml_text: str) -> list[str]:
 
 
 def sync_sitemap_to_db(client: HDTVBClient, db_path: Path) -> int:
-    """Fetches hdtvb.net/sitemap.xml and populates sitemap_cache table in staging DB."""
+    """Fetches hdboss.in/sitemap.xml and populates sitemap_cache table in staging DB."""
     fast_fetch.DB_PATH = db_path
     fast_fetch.init_db()
 
@@ -232,7 +232,7 @@ def extract_post_data_hdtvb(
     client: HDTVBClient | None = None,
     resolve_direct: bool = False,
 ) -> dict | None:
-    """Parses full media metadata, releases, and sources from an hdtvb.net post page."""
+    """Parses full media metadata, releases, and sources from an hdboss.in post page."""
     slug = post_url.rstrip("/").split("/")[-1].replace(".html", "")
 
     # 1. Title extraction
@@ -273,7 +273,10 @@ def extract_post_data_hdtvb(
         tag_str = re.sub(r'onerror=["\'][^"\']*["\']', '', cover_m.group(0))
         src_m = re.search(r'\bsrc=["\']([^"\']+)["\']', tag_str)
         if src_m:
-            poster_url = urllib.parse.urljoin("https://hdtvb.net/", src_m.group(1))
+            # Join against the post page itself, not a hardcoded host:
+            # the site moved hdtvb.net -> hdutv.com -> hdboss.in, and a
+            # poster joined against a dead host 404s at serve time.
+            poster_url = urllib.parse.urljoin(post_url, src_m.group(1))
 
     # 4b. Genres, Synopsis, and Language
     genres = None
@@ -444,7 +447,7 @@ def run_hdtvb_scraper(
     delay: float = 0.3,
     resolve_direct: bool = False,
 ):
-    """Main worker pool orchestrator for scraping hdtvb.net titles into staging DB."""
+    """Main worker pool orchestrator for scraping hdboss.in titles into staging DB."""
     fast_fetch.DB_PATH = db_path
     fast_fetch.init_db()
 
@@ -473,7 +476,7 @@ def run_hdtvb_scraper(
 
     total_tasks = len(pending_urls)
     print(f"\n{'='*70}")
-    print(f"🚀 HDTVB (hdtvb.net) Staging Ingestion Pipeline")
+    print(f"🚀 HDTVB (hdboss.in) Staging Ingestion Pipeline")
     print(f"   Database       : {db_path.name}")
     print(f"   Pending Titles : {total_tasks:,}")
     print(f"   Workers        : {workers} | Delay: {delay}s | Direct R2: {resolve_direct}")
@@ -586,7 +589,7 @@ def get_status_summary(db_path: Path):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="HDTVB (hdtvb.net) Staging Importer")
+    parser = argparse.ArgumentParser(description="HDTVB (hdboss.in) Staging Importer")
     parser.add_argument("--base-url", default=None, help="Base origin URL (default: registry live domain)")
     parser.add_argument("--db-path", default=str(DEFAULT_DB_PATH), help="Target SQLite staging database")
     parser.add_argument("--sync-sitemap", action="store_true", help="Download and sync sitemap.xml to database")

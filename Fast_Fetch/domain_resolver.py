@@ -282,8 +282,8 @@ def get_active_base_url(site_name: str, fallback_default: str | None = None,
     DEFAULT_BASE_URL is only the fallback when the registry has no entry.
 
     A retired site is refused outright (""), even when a fallback is passed:
-    the registry still carries its last base (hdtvb is retired yet lists
-    https://hdutv.com), and the fallback would resurrect it for ingestion.
+    the registry still carries its last base, and the fallback would
+    resurrect it for ingestion.
     """
     reg = load_registry(registry_path)
     site_info = reg.get("sites", {}).get(site_name)

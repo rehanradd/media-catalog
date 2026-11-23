@@ -18,7 +18,10 @@ fresh at play time):
   cookie, no wait, no captcha; a removed file still answers ok with
   null FileName/filesize, so that is the dead signal; the file host
   answers image/png on genuine Matroska bytes and honors ranges only
-  via a ?range= query param, so not resumable).
+  via a ?range= query param, so not resumable); hubcdn (hdboss.in gateway:
+  /cloud/<token> page -> /l.php 302s; the public R2 mirror is permanent and
+  preferred, Google direct second, Gofile/Telegram banked as mirrors only —
+  see _unwrap_hubcdn).
 
 Rules this module enforces, wherever it is used:
 
@@ -60,6 +63,7 @@ import base64
 import json
 import os
 import re
+import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import urllib.error
@@ -73,6 +77,12 @@ try:  # package-style import when run as Fast_Fetch/<module>.py
 except ImportError:  # running from inside Fast_Fetch/ (the documented way)
     import warp_proxy  # type: ignore
 
+try:  # same split as warp_proxy above: host_classifier is the trust
+    # authority for what a hubcdn gateway Location may name (R2/Google).
+    from Fast_Fetch import host_classifier as _hc
+except ImportError:
+    import host_classifier as _hc  # type: ignore
+
 USER_AGENT = "Mozilla/5.0"
 DEFAULT_TIMEOUT = 15.0
 MAX_BODY_BYTES = 524288
@@ -83,7 +93,7 @@ FILE_PROBE_BYTES = 512
 STAGE1_BACKENDS = frozenset({
     "streamhg", "vidrift", "vidbolt", "vidly", "vibuxer",
     "pixeldrain", "fastdl-beer", "vidara", "hubdrive", "megaup",
-    "bbupload", "1fichier",
+    "bbupload", "1fichier", "hubcdn",
 })
 
 #: Independence groups: two copies in one group are one backup, not two.
@@ -100,12 +110,13 @@ INDEPENDENCE_GROUP = {
     "megaup": "megaup",
     "bbupload": "bbupload",
     "1fichier": "1fichier",
+    "hubcdn": "hubcdn",
 }
 
 #: Watch tie-break order between backends (only after probe evidence).
 WATCH_PREFERENCE = (
     "streamhg", "vidrift", "vidbolt", "vidly", "vibuxer",
-    "vidara", "pixeldrain", "fastdl-beer", "hubdrive", "megaup",
+    "vidara", "pixeldrain", "hubcdn", "fastdl-beer", "hubdrive", "megaup",
     "bbupload", "1fichier",
 )
 
@@ -113,8 +124,10 @@ WATCH_PREFERENCE = (
 #: fastdl.beer is last on purpose — its files ignore Range. bbupload is
 #: last with it: its file host honors ranges only via a ?range= query
 #: param, never via the Range header, so the probe reports resumable=False.
-DOWNLOAD_PREFERENCE = ("pixeldrain", "fastdl-beer", "hubdrive", "megaup",
-                       "bbupload", "1fichier")
+#: hubcdn sits second: its R2 mirror is resumable AND permanent (unsigned
+#: public bucket, no expiry), so it outranks every non-resumable host.
+DOWNLOAD_PREFERENCE = ("pixeldrain", "hubcdn", "fastdl-beer", "hubdrive",
+                       "megaup", "bbupload", "1fichier")
 
 _MEDIA_SUFFIXES = (
     ".mp4", ".m4v", ".mkv", ".webm", ".mov", ".avi", ".wmv", ".flv",
@@ -473,6 +486,12 @@ def classify_backend(url_a: str = "", url_b: str = "") -> str:
             return "vidrift"
         if host == "vidbolt.xyz":
             return "vidbolt"
+        # hubcdn: the hdboss.in gateway. Only /cloud/<token> pages unwrap;
+        # an /l.php hop URL on its own is not a saved shape (the importer
+        # banks the cloud link), so it stays unknown rather than guessed.
+        if host == "hubcdn.io" or host.endswith(".hubcdn.io"):
+            if "/cloud/" in path:
+                return "hubcdn"
         if host in ("embed.filmu.in", "vidly.pro") or host.endswith(".vidly.pro"):
             return "vidly"
         if host == "streams.iqsmartgames.com":
@@ -1058,6 +1077,122 @@ def _unwrap_vidbolt(saved_url: str, fetch) -> tuple:
 
 
 
+#: hubcdn.io trips "Too Many Requests" after ~25 rapid requests from one
+#: IP (measured 2026-11-23, while hunting for a hidden API — there is
+#: none; the HTML pages + the /l.php 302 ARE the API). Every hubcdn.io
+#: request this module makes (cloud page + one hop per unique button)
+#: passes through _hubcdn_pace, which spaces them at least this far apart
+#: across threads (resolve_release runs siblings in parallel).
+_HUBCDN_MIN_INTERVAL = 0.20
+_hubcdn_lock = threading.Lock()
+_hubcdn_last_request = 0.0
+
+
+def _hubcdn_pace(sleep) -> None:
+    """Wait until _HUBCDN_MIN_INTERVAL has passed since the last hubcdn.io
+    request, then stamp the new request time. ``sleep`` is injectable so
+    fixture tests never actually wait."""
+    global _hubcdn_last_request
+    with _hubcdn_lock:
+        now = time.monotonic()
+        wait_s = _HUBCDN_MIN_INTERVAL - (now - _hubcdn_last_request)
+        if wait_s > 0:
+            sleep(wait_s)
+            now = time.monotonic()
+        _hubcdn_last_request = now
+
+
+def _hubcdn_mirror_kind(location: str) -> str | None:
+    """Mirror slot a hop Location lands in, or None when it must not be
+    trusted. R2/Google go through host_classifier's trust gate (a public
+    ``pub-*.r2.dev`` bucket, or the Google front — lookalike hosts buy
+    nothing). Gofile/Telegram are exact-host pointers only: a landing page
+    / bot link is banked as a mirror, never probed as a file."""
+    role = _hc.hubcdn_asset_role(location)
+    if role == "stream":
+        return "r2"
+    if role == "download":
+        return "google"
+    host = _host_of(location)
+    parts = urllib.parse.urlsplit(location)
+    if host == "gofile.io" and parts.path.startswith("/d/"):
+        return "gofile"
+    if host == "t.me" and parts.path.strip("/"):
+        return "telegram"
+    return None
+
+
+def _unwrap_hubcdn(saved_url: str, fetch, sleep=None) -> tuple:
+    """hubcdn.io/cloud/<token> gateway -> its mirrors, R2 first.
+
+    Measured live from Oracle egress 2026-11-23 (The Raid 2026, 720p-HEVC,
+    id 44259): the cloud page renders 8 ``/l.php`` buttons (4 routes x 2
+    labels); GET ``/l.php?file=...&token=...&id=...`` 302s immediately to
+    the real host with no wait and no dl_token — the click dance (random
+    dl_token + dl_ready cookie poll) is browser UX only, the server 302s
+    without it. One pointer fans out to FOUR mirrors: public R2
+    (``pub-*.r2.dev/<32-hex>``, unsigned, Range 206, permanent), Google
+    Drive direct (token rotates between probes, short-lived), Gofile,
+    Telegram. Five of the eight buttons share the SAME Google href, so
+    hops are deduped by href first (4 hops max per quality, not 8).
+
+    Only R2/Google are probe-able files, so only they become candidates
+    (R2 first — permanent beats minted). Gofile/Telegram ride on each
+    candidate as ``mirrors`` so the caller can bank all four destinations
+    from one resolve. A page with no buttons and a filesdl countdown is
+    the "Preparing Download" shape: reported, never served.
+    """
+    if sleep is None:
+        sleep = time.sleep
+    if not _hc.is_hubcdn_cloud_page(saved_url):
+        return "hubcdn", [], "unverified"
+    _hubcdn_pace(sleep)
+    page = fetch(saved_url, referer=saved_url)
+    if page.status == 429:
+        return "hubcdn", [], "rate_limited"
+    if page.status != 200:
+        return "hubcdn", [], ("blocked" if page.status == 403 else
+                              "transport" if page.status == 0 else "unverified")
+    html = page.text()
+    buttons = _hc.hubcdn_page_buttons(html)
+    if not buttons:
+        if _hc.hubcdn_preparing_target(html):
+            return "hubcdn", [], "preparing_download"
+        return "hubcdn", [], "unverified"
+    seen, hrefs = set(), []
+    for href, _label in buttons:
+        absolute = _hc.hubcdn_resolve_href(href)
+        if absolute not in seen:
+            seen.add(absolute)
+            hrefs.append(absolute)
+    mirrors: dict[str, str] = {}
+    saw_rate_limit = False
+    for href in hrefs:
+        _hubcdn_pace(sleep)
+        resp = fetch(href, referer=saved_url, follow_redirects=False)
+        if resp.status == 429:
+            saw_rate_limit = True
+            continue
+        location = (resp.headers or {}).get("location") or ""
+        if not location:
+            continue
+        direct = urllib.parse.urljoin(href, location)
+        kind = _hubcdn_mirror_kind(direct)
+        if kind is not None and kind not in mirrors:
+            mirrors[kind] = direct
+    candidates = []
+    for kind in ("r2", "google"):
+        if mirrors.get(kind):
+            candidates.append({"url": mirrors[kind], "referer": saved_url,
+                               "kind_hint": "file",
+                               "mirrors": dict(mirrors)})
+    if candidates:
+        return "hubcdn", candidates, None
+    if saw_rate_limit:
+        return "hubcdn", [], "rate_limited"
+    return "hubcdn", [], "unverified"
+
+
 def _unwrap_vidly(saved_url: str, fetch) -> tuple:
     path = urllib.parse.urlsplit(saved_url).path or ""
     if "/tv/" in path:
@@ -1379,6 +1514,8 @@ def resolve_copy(saved_url: str, fetch=default_fetch, probe=None) -> dict:
         backend, candidates, failure = _unwrap_vidrift(saved_url, fetch)
     elif backend0 == "vidbolt":
         backend, candidates, failure = _unwrap_vidbolt(saved_url, fetch)
+    elif backend0 == "hubcdn":
+        backend, candidates, failure = _unwrap_hubcdn(saved_url, fetch)
     elif backend0 == "vidly":
         backend, candidates, failure = _unwrap_vidly(saved_url, fetch)
     elif backend0 == "vibuxer":
@@ -1419,14 +1556,25 @@ def resolve_copy(saved_url: str, fetch=default_fetch, probe=None) -> dict:
         verdict = probe_fn(cand["url"], cand.get("referer"),
                            cand.get("kind_hint", "playlist"))
         if verdict.get("ok"):
-            return {"ok": True, "backend": backend,
-                    "group": independence_group(backend),
-                    "kind": verdict["kind"], "url": cand["url"],
-                    "mime": verdict["mime"], "size": verdict["size"],
-                    "resumable": bool(verdict["resumable"]),
-                    "renditions": verdict["renditions"],
-                    "failure": None, "failure_dead": False,
-                    "temporary": backend != "pixeldrain"}
+            # A HubCDN R2 win is permanent (unsigned public bucket, no
+            # expiry — unlike HubCloud FSL's 8 h signature), so it never
+            # needs a re-resolve timer; a Google win is minted per request
+            # and stays temporary. Mirrors ride on the result so the
+            # caller can bank all four destinations from one resolve.
+            permanent = (backend == "pixeldrain" or
+                         (backend == "hubcdn"
+                          and _host_of(cand["url"]).endswith(".r2.dev")))
+            result = {"ok": True, "backend": backend,
+                      "group": independence_group(backend),
+                      "kind": verdict["kind"], "url": cand["url"],
+                      "mime": verdict["mime"], "size": verdict["size"],
+                      "resumable": bool(verdict["resumable"]),
+                      "renditions": verdict["renditions"],
+                      "failure": None, "failure_dead": False,
+                      "temporary": not permanent}
+            if cand.get("mirrors"):
+                result["mirrors"] = cand["mirrors"]
+            return result
         last_failure = verdict.get("failure") or "unverified"
     return _fail_result(backend, last_failure)
 

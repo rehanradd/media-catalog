@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "updated_at": "2026-11-23T04:46:06Z",
+  "updated_at": "2026-11-23T06:22:36Z",
   "sites": {
     "10xflix": {
       "active_base_url": "https://10xflix.beer",
@@ -280,25 +280,37 @@
       "notes": "hdhub4u.fans is a landing page, new3/new2.hdhub4u.free dead — dropped. hdhub4us.co.in is a live variant (user-found 2026-11-08). new15 current since 2026-11-20 (new12 301s to new15; tracker h4.suncdn.org/host/ agrees new15; hdhub4u.fr is a landing page, not the content base)."
     },
     "hdtvb": {
-      "active_base_url": "https://hdutv.com",
-      "last_verified": "",
-      "verified_by": "",
+      "active_base_url": "https://hdboss.in",
+      "last_verified": "2026-11-23T03:20:00Z",
+      "verified_by": "hubcdn-probe",
       "known_mirrors": [
-        "https://hdutv.com",
-        "https://hdtvb.net"
+        "https://hdboss.in",
+        "https://hdtvb.net",
+        "https://hdutv.com"
       ],
       "slug_variants": [
         "hdtvb",
-        "hdutv"
+        "hdutv",
+        "hdboss"
       ],
       "tld_history": [
         "net",
-        "com"
+        "com",
+        "in"
       ],
       "api_type": "xml_sitemap",
-      "status": "retired",
-      "rotation_history": [],
-      "last_checked": "2026-11-22T05:33:04Z",
+      "status": "active",
+      "rotation_history": [
+        {
+          "domain": "https://hdutv.com",
+          "seen_until": "2026-11-23"
+        },
+        {
+          "domain": "https://hdboss.in",
+          "seen_from": "2026-11-23"
+        }
+      ],
+      "last_checked": "2026-11-23T03:20:00Z",
       "sitemap_endpoint": "/sitemap.xml",
       "site_name": "hdtvb"
     },

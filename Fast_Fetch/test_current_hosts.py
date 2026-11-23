@@ -36,6 +36,20 @@ probes, 2026-11-21):
   removed file ("dead_file"). megaup.net resets the connection from
   Oracle egress (megaup.mobi fails TLS), so the chain is unproven live.
 
+HubCDN (2026-11-23, hdboss.in gateway) — fixtures are the measured live
+shapes (Oracle VM probes, 2026-11-23, The Raid 2026 720p-HEVC):
+
+- the cloud page renders 8 /l.php buttons (4 routes x 2 labels); five
+  share the SAME Google href, so 8 buttons are 4 unique hops.
+- each hop GETs /l.php?file=...&token=...&id=... and 302s immediately
+  to the real host — no wait, no dl_token (the click dance is browser
+  UX only). One pointer fans out to four mirrors: public R2
+  (pub-*.r2.dev, unsigned, permanent), Google direct (token rotates,
+  short-lived), Gofile, Telegram.
+- hubcdn.io rate-limits (~25 rapid requests trip "Too Many Requests"),
+  so the unwrap paces its requests; the pacing test freezes the clock
+  instead of waiting.
+
 No network, stdlib only.
 
 VidBolt (2026-11-23, WARP crack): GET
@@ -1137,6 +1151,267 @@ class VidboltUnwrapTests(unittest.TestCase):
         self.assertTrue(res["failure_dead"])
 
 
+
+
+# ── hubcdn (2026-11-23) ─────────────────────────────────────────────────────
+
+HC_CLOUD = "https://hubcdn.io/cloud/fixture-token-720p"
+# Fake-but-shape-valid destinations (never fetched: every probe is fake).
+HC_R2 = ("https://pub-0123456789abcdef0123456789abcdef.r2.dev/"
+         "0123456789abcdef0123456789abcdef")
+HC_GOOGLE = "https://video-downloads.googleusercontent.com/FAKEGOOGLETOKEN123"
+HC_GOFILE = "https://gofile.io/d/FAKEGOFILE"
+HC_TG = "https://t.me/filesdll_bot"
+
+HC_HREF_R2 = "/l.php?file=AAA&amp;cf_route=1"
+HC_HREF_GOOGLE = "/l.php?file=BBB"
+HC_HREF_GO = "/l.php?file=CCC&go_route=1"
+HC_HREF_TG = "/l.php?file=DDD&tg_route=1"
+
+
+def _hc_button(href, label):
+    return f'<a class="btn dl-trigger" href="{href}">{label}</a>'
+
+
+# The measured 8-button page: 4 routes, Google under 5 different labels.
+HC_PAGE = (
+    "<html><head><title>The Raid 2026 720p-HEVC - HubCDN</title></head><body>"
+    + _hc_button(HC_HREF_R2, "Cloud Direct")
+    + _hc_button(HC_HREF_GOOGLE, "Direct Download (10Gbps)")
+    + _hc_button(HC_HREF_GOOGLE, "Download Pixeldrain -1")
+    + _hc_button(HC_HREF_GOOGLE, "Download - HubCloud")
+    + _hc_button(HC_HREF_GOOGLE, "Login To Download - GDFLIX")
+    + _hc_button(HC_HREF_GOOGLE, "Buzz Download")
+    + _hc_button(HC_HREF_GO, "Download - GoFile.io")
+    + _hc_button(HC_HREF_TG, "Telegram File")
+    + "</body></html>"
+)
+
+HC_PREPARING = (
+    '<html><head><title>Preparing Download - HubCDN</title></head>'
+    '<body><script>var targetUrl="https://new1.filesdl.in/'
+    'drive/nm27vVUjJT";</script></body></html>'
+)
+
+
+def _hc_hop(location):
+    return FetchResult(status=302, headers={"location": location})
+
+
+HC_HOPS = {
+    "https://hubcdn.io/l.php?file=AAA&cf_route=1": _hc_hop(HC_R2),
+    "https://hubcdn.io/l.php?file=BBB": _hc_hop(HC_GOOGLE),
+    "https://hubcdn.io/l.php?file=CCC&go_route=1": _hc_hop(HC_GOFILE),
+    "https://hubcdn.io/l.php?file=DDD&tg_route=1": _hc_hop(HC_TG),
+}
+
+
+def _hc_fetch(hops=None, page=HC_PAGE, status=200):
+    mapping = {HC_CLOUD: _html(page, status=status)}
+    mapping.update(hops if hops is not None else HC_HOPS)
+    return StubFetch(mapping)
+
+
+def _hc_unwrap(fetch, cloud=HC_CLOUD):
+    return current_hosts._unwrap_hubcdn(cloud, fetch, sleep=lambda s: None)
+
+
+class HubcdnUnwrapTests(unittest.TestCase):
+    def test_happy_path_banks_four_mirrors_r2_first(self):
+        backend, candidates, failure = _hc_unwrap(_hc_fetch())
+        self.assertEqual(backend, "hubcdn")
+        self.assertIsNone(failure)
+        self.assertEqual([c["url"] for c in candidates], [HC_R2, HC_GOOGLE])
+        self.assertEqual([c["kind_hint"] for c in candidates],
+                         ["file", "file"])
+        mirrors = candidates[0]["mirrors"]
+        self.assertEqual(mirrors, {"r2": HC_R2, "google": HC_GOOGLE,
+                                   "gofile": HC_GOFILE, "telegram": HC_TG})
+        self.assertEqual(candidates[1]["mirrors"], mirrors)
+
+    def test_eight_buttons_make_four_hops(self):
+        fetch = _hc_fetch()
+        _hc_unwrap(fetch)
+        hop_calls = [c for c in fetch.calls if "/l.php" in c[0]]
+        self.assertEqual(len(hop_calls), 4)
+        self.assertEqual(len({c[0] for c in hop_calls}), 4)
+        for _url, kwargs in fetch.calls:
+            self.assertEqual(kwargs["referer"], HC_CLOUD)
+        for _url, kwargs in hop_calls:
+            self.assertFalse(kwargs["follow_redirects"])
+        self.assertEqual(fetch.calls[0][0], HC_CLOUD)
+
+    def test_r2_first_even_when_google_button_leads(self):
+        page = (
+            "<html><body>"
+            + _hc_button(HC_HREF_GOOGLE, "Direct Download (10Gbps)")
+            + _hc_button(HC_HREF_R2, "Cloud Direct")
+            + _hc_button(HC_HREF_GO, "Download - GoFile.io")
+            + _hc_button(HC_HREF_TG, "Telegram File")
+            + "</body></html>"
+        )
+        _backend, candidates, failure = _hc_unwrap(_hc_fetch(page=page))
+        self.assertIsNone(failure)
+        self.assertEqual([c["url"] for c in candidates], [HC_R2, HC_GOOGLE])
+
+    def test_google_only_when_r2_hop_fails(self):
+        hops = {url: hop for url, hop in HC_HOPS.items()
+                if "cf_route" not in url}
+        _backend, candidates, failure = _hc_unwrap(_hc_fetch(hops=hops))
+        self.assertIsNone(failure)
+        self.assertEqual([c["url"] for c in candidates], [HC_GOOGLE])
+        self.assertEqual(candidates[0]["mirrors"],
+                         {"google": HC_GOOGLE, "gofile": HC_GOFILE,
+                          "telegram": HC_TG})
+
+    def test_gofile_and_telegram_alone_are_unverified(self):
+        hops = {url: hop for url, hop in HC_HOPS.items()
+                if "go_route" in url or "tg_route" in url}
+        backend, candidates, failure = _hc_unwrap(_hc_fetch(hops=hops))
+        self.assertEqual(backend, "hubcdn")
+        self.assertEqual(candidates, [])
+        self.assertEqual(failure, "unverified")
+
+    def test_hostile_locations_buy_no_asset(self):
+        hops = {
+            "https://hubcdn.io/l.php?file=AAA&cf_route=1":
+                _hc_hop("https://r2.dev.attacker.tld/x.mkv"),
+            "https://hubcdn.io/l.php?file=BBB":
+                _hc_hop("https://pub-abc.r2.dev.evil.cn/y.mkv"),
+            "https://hubcdn.io/l.php?file=CCC&go_route=1":
+                _hc_hop("https://gofile.io.evil.com/d/x"),
+            "https://hubcdn.io/l.php?file=DDD&tg_route=1":
+                _hc_hop("https://t.me.evil.com/filesdll_bot"),
+        }
+        backend, candidates, failure = _hc_unwrap(_hc_fetch(hops=hops))
+        self.assertEqual(backend, "hubcdn")
+        self.assertEqual(candidates, [])
+        self.assertEqual(failure, "unverified")
+
+    def test_non_cloud_url_refused_before_any_fetch(self):
+        fetch = StubFetch({})
+        for url in ("https://hubcdn.io/file/abc",
+                    "https://example.com/cloud/abc",
+                    "https://hubcdn.io/l.php?file=AAA"):
+            backend, candidates, failure = _hc_unwrap(fetch, cloud=url)
+            self.assertEqual(backend, "hubcdn", url)
+            self.assertEqual(candidates, [], url)
+            self.assertEqual(failure, "unverified", url)
+        self.assertEqual(fetch.calls, [])
+
+    def test_cloud_page_403_is_blocked(self):
+        _b, _c, failure = _hc_unwrap(_hc_fetch(status=403))
+        self.assertEqual(failure, "blocked")
+
+    def test_cloud_page_429_is_rate_limited(self):
+        _b, _c, failure = _hc_unwrap(_hc_fetch(status=429))
+        self.assertEqual(failure, "rate_limited")
+
+    def test_cloud_page_transport_is_transport(self):
+        _b, _c, failure = _hc_unwrap(_hc_fetch(status=0))
+        self.assertEqual(failure, "transport")
+
+    def test_buttonless_page_is_unverified(self):
+        _b, _c, failure = _hc_unwrap(
+            _hc_fetch(page="<html><body>No buttons here</body></html>"))
+        self.assertEqual(failure, "unverified")
+
+    def test_preparing_page_is_preparing_download(self):
+        _b, _c, failure = _hc_unwrap(_hc_fetch(page=HC_PREPARING))
+        self.assertEqual(failure, "preparing_download")
+
+    def test_all_hops_rate_limited_is_rate_limited(self):
+        hops = {url: FetchResult(status=429) for url in HC_HOPS}
+        _b, _c, failure = _hc_unwrap(_hc_fetch(hops=hops))
+        self.assertEqual(failure, "rate_limited")
+
+    def test_pacing_spaces_hubcdn_requests(self):
+        # Frozen clock: every pace after the first sees no time pass, so
+        # each one waits the full interval. One unwrap paces 5 requests
+        # (page + 4 hops); the first pace of the first unwrap is free.
+        current_hosts._hubcdn_last_request = 0.0
+        self.addCleanup(setattr, current_hosts, "_hubcdn_last_request", 0.0)
+        sleeps = []
+        fetch = _hc_fetch()
+        with mock.patch("time.monotonic", return_value=1000.0):
+            current_hosts._unwrap_hubcdn(HC_CLOUD, fetch, sleep=sleeps.append)
+            current_hosts._unwrap_hubcdn(HC_CLOUD, fetch, sleep=sleeps.append)
+        self.assertEqual(sleeps, [0.2] * 9)
+
+
+class HubcdnRegistryTests(unittest.TestCase):
+    def test_hubcdn_is_a_stage1_backend(self):
+        self.assertIn("hubcdn", current_hosts.STAGE1_BACKENDS)
+        self.assertEqual(current_hosts.INDEPENDENCE_GROUP["hubcdn"], "hubcdn")
+        self.assertIn("hubcdn", current_hosts.WATCH_PREFERENCE)
+        self.assertIn("hubcdn", current_hosts.DOWNLOAD_PREFERENCE)
+        order = current_hosts.DOWNLOAD_PREFERENCE
+        self.assertLess(order.index("pixeldrain"), order.index("hubcdn"))
+        self.assertLess(order.index("hubcdn"), order.index("fastdl-beer"))
+
+    def test_classify_cloud_page(self):
+        self.assertEqual(current_hosts.classify_backend(HC_CLOUD), "hubcdn")
+        self.assertEqual(current_hosts.classify_backend(
+            "https://www.hubcdn.io/cloud/abc123"), "hubcdn")
+
+    def test_classify_lookalikes_are_unknown(self):
+        for url in ("https://hubcdn.io.evil.com/cloud/abc",
+                    "https://hubcdnio.attacker.tld/cloud/abc",
+                    "https://example.com/cloud/abc",
+                    "https://hubcdn.io/file/abc",
+                    "https://hubcdn.io/l.php?file=AAA",
+                    "https://hubcdn.io/"):
+            self.assertEqual(current_hosts.classify_backend(url), "unknown",
+                             url)
+
+    def test_resolve_copy_end_to_end(self):
+        fetch = _hc_fetch()
+        with mock.patch("time.sleep"):
+            res = current_hosts.resolve_copy(HC_CLOUD, fetch=fetch,
+                                             probe=_ok_file_probe)
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["backend"], "hubcdn")
+        self.assertEqual(res["group"], "hubcdn")
+        self.assertEqual(res["kind"], "file")
+        self.assertEqual(res["url"], HC_R2)
+        self.assertTrue(res["resumable"])
+        # The R2 win is permanent: no re-resolve timer, unlike HubCloud FSL.
+        self.assertFalse(res["temporary"])
+        self.assertEqual(res["mirrors"], {"r2": HC_R2, "google": HC_GOOGLE,
+                                          "gofile": HC_GOFILE,
+                                          "telegram": HC_TG})
+
+    def test_resolve_copy_google_win_is_temporary(self):
+        hops = {url: hop for url, hop in HC_HOPS.items()
+                if "cf_route" not in url}
+        fetch = _hc_fetch(hops=hops)
+        with mock.patch("time.sleep"):
+            res = current_hosts.resolve_copy(HC_CLOUD, fetch=fetch,
+                                             probe=_ok_file_probe)
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["url"], HC_GOOGLE)
+        # Google links are minted per request: the win stays temporary.
+        self.assertTrue(res["temporary"])
+
+    def test_resolve_copy_cloud_429_is_rate_limited(self):
+        fetch = _hc_fetch(status=429)
+        with mock.patch("time.sleep"):
+            res = current_hosts.resolve_copy(HC_CLOUD, fetch=fetch,
+                                             probe=_ok_file_probe)
+        self.assertFalse(res["ok"])
+        self.assertEqual(res["backend"], "hubcdn")
+        self.assertEqual(res["failure"], "rate_limited")
+
+    def test_select_download_prefers_hubcdn_over_fastdl(self):
+        hubcdn_copy = {"ok": True, "kind": "file", "backend": "hubcdn",
+                       "group": "hubcdn", "resumable": True,
+                       "renditions": []}
+        fastdl_copy = {"ok": True, "kind": "file", "backend": "fastdl-beer",
+                       "group": "fastdl-beer", "resumable": False,
+                       "renditions": []}
+        winner, _backups = current_hosts.select_download(
+            [fastdl_copy, hubcdn_copy])
+        self.assertEqual(winner["backend"], "hubcdn")
 
 
 if __name__ == "__main__":

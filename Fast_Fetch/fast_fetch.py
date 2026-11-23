@@ -357,7 +357,7 @@ def registry_live_domains() -> dict[str, str]:
     Entries with status == "down" are skipped (a measured death must not
     shadow the DB); entries with status == "retired" are skipped too (a
     retired site is never served, even though the registry still carries
-    its last base — hdtvb lists https://hdutv.com). A missing status counts
+    its last base). A missing status counts
     as untested, not down. Never raises — a broken registry must degrade
     to the old static+DB behavior, not break every scraper."""
     try:
