@@ -1829,13 +1829,16 @@ def is_cineverse_embed(url: str) -> bool:
     return cineverse_parse_url(url) is not None
 
 
-# HubCloud's drive page. The TLD is not pinned: the family rotates it
-# (hubcloud.ist 302s to hubcloud.pw, measured 2026-11-12) and the in-tree
-# bridge tracer already matches `hubcloud\.[a-z]+/drive/<id>`; what is
-# pinned is the `/drive/<id>` path, which is what makes the page a drive
-# page rather than any other hubcloud host.
+# HubCloud's drive page — and its /video/<id> twin. The TLD is not pinned:
+# the family rotates it (hubcloud.ist 302s to hubcloud.pw, measured
+# 2026-11-12) and the in-tree bridge tracer already matches
+# `hubcloud\.[a-z]+/drive/<id>`; what is pinned is the `/drive/<id>` or
+# `/video/<id>` path, which is what makes the page a file page rather than
+# any other hubcloud host. The /video/ page carries the same gamerxyt
+# download link as the drive page, so unwrap_hubcloud fetches it the same
+# way; a page with no download link still answers "unknown".
 HUBCLOUD_HOST_RE = re.compile(r"(?:^|\.)hubcloud\.[a-z]+$", re.I)
-HUBCLOUD_DRIVE_RE = re.compile(r"^/drive/([A-Za-z0-9_-]+)/?$", re.I)
+HUBCLOUD_DRIVE_RE = re.compile(r"^/(?:drive|video)/([A-Za-z0-9_-]+)/?$", re.I)
 # The gamerxyt intermediate page: `hubcloud.php?host=hubcloud&id=<id>&token=<60>`.
 HUBCLOUD_BRIDGE_RE = re.compile(r"(?:^|\.)gamerxyt\.com$", re.I)
 HUBCLOUD_BRIDGE_PATH_RE = re.compile(r"^/hubcloud\.php$", re.I)
