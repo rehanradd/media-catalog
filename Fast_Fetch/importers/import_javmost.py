@@ -505,15 +505,24 @@ def export_staging(db_path: Path | str = DEFAULT_DB_PATH, posts=(),
             values["raw_meta"] = json.dumps(post.get("raw_meta") or {},
                                             ensure_ascii=False)
             columns = [c for c in POST_COLUMNS if c in values]
+            # poster_url is COALESCE-guarded, not blindly overwritten: the
+            # same code appears under several variants across sitemaps, and
+            # a later variant whose block carries no <image:image> must not
+            # wipe the real poster staged from an earlier one. Measured live
+            # 2026-11-23: posts_with_poster fell 2,943 -> 2,894 while posts
+            # grew 11,252 -> 54,028, exactly this wipe. A re-export WITH a
+            # poster still replaces the stored one.
             updates = ", ".join(
                 f"{c} = excluded.{c}" for c in columns
-                if c not in ("canonical_key", "scraped_at", "is_18_plus", "is_animated"))
+                if c not in ("canonical_key", "scraped_at", "is_18_plus", "is_animated",
+                             "poster_url"))
             conn.execute(
                 f"INSERT INTO posts ({', '.join(columns)})"
                 f" VALUES ({', '.join('?' for _ in columns)})"
                 f" ON CONFLICT(canonical_key) DO UPDATE SET "
                 "is_18_plus = MAX(posts.is_18_plus, excluded.is_18_plus), "
                 "is_animated = MAX(posts.is_animated, excluded.is_animated), "
+                "poster_url = COALESCE(excluded.poster_url, posts.poster_url), "
                 f"{updates}",
                 [values[c] for c in columns])
             conn.execute(

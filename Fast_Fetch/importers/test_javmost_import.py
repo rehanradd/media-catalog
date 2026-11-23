@@ -300,6 +300,54 @@ class TestSaveAndVerify(unittest.TestCase):
             self.assertEqual(result["posts"], 1)
             self.assertEqual(result["sources"], 1)
 
+    def test_reexport_without_poster_keeps_existing_poster(self):
+        # The same code appears under several variants across sitemaps, and
+        # a later variant whose block carries no <image:image> used to wipe
+        # the real poster staged from an earlier one (measured live
+        # 2026-11-23: posts_with_poster fell 2,943 -> 2,894 while posts
+        # grew 11,252 -> 54,028). A re-export with no poster keeps the
+        # stored one.
+        first = jm.build_record(
+            "https://www.javmost.ws/DLDSS-570-REDUCING-MOSAIC/", "dldss-570",
+            "https://img2.javmost.com/file_image/DLDSS-570-REDUCING-MOSAIC.jpg",
+            "REDUCING-MOSAIC")
+        second = jm.build_record(
+            "https://www.javmost.ws/DLDSS-570-UNCENSORED-EDIT/",
+            "dldss-570", None, "UNCENSORED-EDIT")
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "javmost.db"
+            jm.export_staging(db_path, posts=[first])
+            jm.export_staging(db_path, posts=[second])
+            result = jm.stats(db_path)
+            self.assertEqual(result["posts"], 1)
+            self.assertEqual(result["posts_with_poster"], 1)
+            conn = sqlite3.connect(db_path)
+            row = conn.execute("SELECT poster_url FROM posts").fetchone()
+            conn.close()
+            self.assertEqual(
+                row[0],
+                "https://img2.javmost.com/file_image/DLDSS-570-REDUCING-MOSAIC.jpg")
+
+    def test_reexport_with_new_poster_replaces_it(self):
+        first = jm.build_record(
+            "https://www.javmost.ws/DLDSS-570-REDUCING-MOSAIC/", "dldss-570",
+            "https://img2.javmost.com/file_image/DLDSS-570-REDUCING-MOSAIC.jpg",
+            "REDUCING-MOSAIC")
+        second = jm.build_record(
+            "https://www.javmost.ws/DLDSS-570-UNCENSORED-EDIT/", "dldss-570",
+            "https://img2.javmost.com/file_image/DLDSS-570-UNCENSORED-EDIT.jpg",
+            "UNCENSORED-EDIT")
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "javmost.db"
+            jm.export_staging(db_path, posts=[first])
+            jm.export_staging(db_path, posts=[second])
+            conn = sqlite3.connect(db_path)
+            row = conn.execute("SELECT poster_url FROM posts").fetchone()
+            conn.close()
+            self.assertEqual(
+                row[0],
+                "https://img2.javmost.com/file_image/DLDSS-570-UNCENSORED-EDIT.jpg")
+
 
 class TestSyncWithFakeFetcher(unittest.TestCase):
     def _fake(self, mapping):
