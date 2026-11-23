@@ -3224,6 +3224,7 @@ class TestUnwrapCastle(unittest.TestCase):
 # import time so expires_in stays positive while the test runs.
 HC_DRIVE_ID = "rn_37lnqqexentk"
 HC_DRIVE_URL = f"https://hubcloud.pw/drive/{HC_DRIVE_ID}"
+HC_VIDEO_URL = f"https://hubcloud.pw/video/{HC_DRIVE_ID}"
 HC_TOKEN = "A" * 60
 HC_GAMERXYT_URL = ("https://gamerxyt.com/hubcloud.php?host=hubcloud"
                    f"&id={HC_DRIVE_ID}&token={HC_TOKEN}")
@@ -3328,11 +3329,48 @@ class TestUnwrapHubcloud(unittest.TestCase):
         self.assertFalse(hr.is_hubcloud_drive("https://hubcloud.pw/drive/"))
         self.assertFalse(hr.is_hubcloud_drive("https://example.com/drive/abc"))
         self.assertFalse(hr.is_hubcloud_drive(HC_GAMERXYT_URL))
+        self.assertTrue(hr.is_hubcloud_drive(HC_VIDEO_URL))
+        self.assertEqual(hr.hubcloud_drive_id(HC_VIDEO_URL), HC_DRIVE_ID)
+        self.assertTrue(hr._is_hubcloud_page(HC_VIDEO_URL))
+        self.assertFalse(hr.is_hubcloud_drive("https://hubcloud.pw/video/"))
+        self.assertFalse(hr.is_hubcloud_drive("https://example.com/video/abc"))
         self.assertTrue(hr.is_hubcloud_bridge(HC_GAMERXYT_URL))
         self.assertFalse(hr.is_hubcloud_bridge("https://gamerxyt.com/"))
         self.assertFalse(hr.is_hubcloud_bridge(
             "https://gamerxyt.com/hubcloud.php?host=hubcloud"))
         self.assertFalse(hr.is_hubcloud_bridge(HC_DRIVE_URL))
+
+    def test_video_page_unwraps_like_drive_page(self):
+        # A /video/<id> URL is the release's own HubCloud page: the unwrap
+        # fetches it and follows its gamerxyt download link exactly as it
+        # does a /drive/<id> page. The first call proves the /video/ page
+        # itself was fetched, not a rewritten drive URL.
+        fetch = scripted_fetch({
+            "hubcloud.pw/video/rn_37lnqqexentk": (200, HC_DRIVE_PAGE, {}),
+            "gamerxyt.com/hubcloud.php": (200, HC_GAMERXYT_PAGE, {}),
+            "1c8e2ebb17c55ccc855414dc97ed1e80":
+                (206, HC_MKV_HEAD, HC_R2_HEADERS),
+            "b26be7ab2ca58cec9372503da5e7eb9a":
+                (206, HC_MKV_HEAD, HC_R2_HEADERS),
+        })
+        verdict = hr.unwrap_hubcloud(HC_VIDEO_URL, fetch=fetch)
+        self.assertEqual(verdict["status"], "active")
+        self.assertEqual(verdict["final_url"], HC_FSLV2_URL)
+        self.assertEqual(fetch.calls[0][0], HC_VIDEO_URL)
+
+    def test_video_page_without_download_link_is_unknown(self):
+        # Guard: a /video/ page with no gamerxyt download link answers
+        # "unknown" after exactly one fetch — the same as a drive page
+        # with no link, and the same as before this change.
+        fetch = scripted_fetch({
+            "hubcloud.pw/video/rn_37lnqqexentk":
+                (200, "<html><body>no download link here</body></html>", {}),
+        })
+        verdict = hr.unwrap_hubcloud(HC_VIDEO_URL, fetch=fetch)
+        self.assertEqual(verdict["status"], "unknown")
+        self.assertEqual(verdict["notes"],
+                         ["hubcloud drive page carries no download link"])
+        self.assertEqual(len(fetch.calls), 1)
 
     def test_r2_presigned_expiry(self):
         _at, fslv2_in = hr.r2_presigned_expiry(HC_FSLV2_URL)
