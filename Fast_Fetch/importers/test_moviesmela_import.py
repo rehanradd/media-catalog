@@ -585,6 +585,33 @@ class TestSynopsis(unittest.TestCase):
             '<p><a href="https://vimeo.com"></a> <a href="https://vimeo.com"></a>'
             '<a href="https://vimeo.com/user32952935"></a></p>', "Tigers", "Tigers"))
 
+    def test_boilerplate_first_sentence_then_genuine_prose(self):
+        # Measured 2026-11-23 on the live Cocktail post: the SEO sentence
+        # opens the body, real prose follows it. Only the prose is kept.
+        body = ("<p>Cocktail Full Movie (2012) Watch Online HD Quality Free "
+                "Download,Watch Online Cocktail Full Movie (2012) DVD Print "
+                "Quality Free Download. Saif ali khan play a key role in this "
+                "movie,he act as a hero in this movie and really play very "
+                "well his part,so if you love saif ali khan movies you must "
+                "watch this movie.</p>")
+        self.assertEqual(
+            mm.extract_synopsis(body, "Cocktail (2012) Full Movie Online",
+                                "Cocktail"),
+            "Saif ali khan play a key role in this movie,he act as a hero "
+            "in this movie and really play very well his part,so if you "
+            "love saif ali khan movies you must watch this movie.")
+
+    def test_title_restatement_dropped_but_later_prose_kept(self):
+        # Measured 2026-11-23 on the live Jism 2 post: the sentence that
+        # opens with the work name is dropped, the cast sentence after it
+        # is kept.
+        body = ("<p>Jism 2 Movie is one of the top adult/romantic movie of "
+                "the year 2012 by sunny leone. Sunny leone is famous by her "
+                "Adult movies and her bold scenes.</p>")
+        self.assertEqual(
+            mm.extract_synopsis(body, "Jism 2 (2012) Full Movie", "Jism 2"),
+            "Sunny leone is famous by her Adult movies and her bold scenes.")
+
 
 class TestTaxonomy(unittest.TestCase):
     def test_industry_and_year_categories(self):

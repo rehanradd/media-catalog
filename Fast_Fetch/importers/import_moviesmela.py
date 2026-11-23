@@ -269,6 +269,10 @@ NUMBERING_WORD_RE = re.compile(
 SEO_AD_RE = re.compile(
     r"\b(?:watch online|free download|dvd download|print quality|from player"
     r"|full show|web release)\b", re.I)
+# Sentences end on . ! ? followed by whitespace; the boilerplate that opens
+# most posts is comma-joined inside one sentence, so splitting here keeps a
+# boilerplate sentence and the genuine prose after it apart.
+SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 IFRAME_BLOCK_RE = re.compile(r"<iframe\b.*?</iframe>|<iframe\b[^>]*/?>", re.S | re.I)
 HEADING_BLOCK_RE = re.compile(r"<h[1-6]\b[^>]*>.*?</h[1-6]>", re.S | re.I)
 
@@ -772,10 +776,17 @@ def extract_synopsis(content: str | None, raw_title: str, base_title: str) -> st
     """
     Prose the site wrote about the work, or None.
 
-    Every sampled post closes with the SEO sentence — the title restated and
-    joined to a "Watch Online DVD Download" clause — and that is not a synopsis.
-    A remainder whose opening names the work again is that restatement, so it is
-    dropped; genuinely different prose is kept.
+    Every sampled post opens with the SEO sentence — the title restated and
+    joined to a "Watch Online DVD Download" clause — and that sentence is
+    not a synopsis. The old whole-text rule rejected the post outright when
+    any boilerplate matched, which dropped the genuine prose that follows
+    the boilerplate in most posts (measured 2026-11-23: 16,669 of 16,677
+    staged rows had no synopsis, yet the live posts carry real prose after
+    the first sentence — cast and story notes). So the boilerplate is
+    judged sentence by sentence now: a sentence is dropped when it carries
+    SEO/download vocabulary, or when it merely restates the work name; the
+    sentences that survive are the synopsis. A post whose every sentence is
+    boilerplate still returns None.
 
     Markup goes before any of that is judged: a post may wrap its embed in bare
     `<a href>` tags, and a display string that still carried them would show the
@@ -785,13 +796,22 @@ def extract_synopsis(content: str | None, raw_title: str, base_title: str) -> st
         " ", IFRAME_BLOCK_RE.sub(" ", content or ""))))
     if not text or len(text) < 20:
         return None
-    if SEO_AD_RE.search(text):
-        return None
-    slug_text = _slugify(text)
     slug_work = _slugify(base_title)
-    if slug_work and slug_text.startswith(slug_work[:max(8, len(slug_work) // 2)]):
+    prefix = slug_work[:max(8, len(slug_work) // 2)] if slug_work else ""
+    kept = []
+    for sentence in SENTENCE_SPLIT_RE.split(text):
+        sentence = sentence.strip()
+        if len(sentence) < 20:
+            continue
+        if SEO_AD_RE.search(sentence):
+            continue
+        if prefix and _slugify(sentence).startswith(prefix):
+            continue
+        kept.append(sentence)
+    if not kept:
         return None
-    return text
+    synopsis = " ".join(kept)
+    return synopsis if len(synopsis) >= 20 else None
 
 
 def taxonomy_fields(category_names: list[str]) -> dict:
