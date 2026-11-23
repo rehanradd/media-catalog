@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Radd Stream Autonomous Pipeline Every 6 Hours
+RefuseManualStart=no
+RefuseManualStop=no
+
+[Timer]
+OnCalendar=*-*-* 02,08,14,20:00:00
+RandomizedDelaySec=120
+Persistent=true
+
+[Install]
+WantedBy=timers.target

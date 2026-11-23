@@ -1,0 +1,24 @@
+# radd-autocrawl.service — installed on the VM at
+# /etc/systemd/system/radd-autocrawl.service (freshness 2026-11-23: the units
+# lived only on the VM, uncommitted — the schedule itself was not in git).
+# The VM also carries drop-ins in radd-autocrawl.service.d/ (10-polite.conf,
+# 20-hf-env.conf, 30-timeout.conf raising TimeoutStartSec to 10800s); those
+# are VM-local and not in git. Description updated: the backup step is gone
+# (2026-11-20) and the cycle is sync + crawl + merge.
+[Unit]
+Description=Radd Stream Autonomous Sync, Crawl and Merge Pipeline
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/radd-stream
+ExecStart=/opt/radd-stream/Fast_Fetch/auto_crawl_cron.sh
+TimeoutStartSec=3600
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
