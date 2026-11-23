@@ -12,12 +12,22 @@ button's label and never by a substring. Tests named ``refuses``/``buy`` are the
 counterfactual anchors: sabotage ``hubcdn_asset_role`` to accept anything and
 they go red.
 
+Bank-all-4 (speed lane, 2026-11-23): one gateway resolve fans out to four
+mirrors — R2 (permanent), Google (minted), Gofile, Telegram — and the tests
+below pin that all four are banked from a single round of hops, deduped by
+href (the live page's 8 buttons are 4 distinct hrefs), with R2 first and
+pacing honoured. Only R2/Google are playable files; Gofile/Telegram alone
+are still an honest failure.
+
     python3 -S Fast_Fetch/test_hubcdn_unwrap.py
 """
 from __future__ import annotations
 
 import re
+import sqlite3
 import sys
+import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -28,6 +38,8 @@ import host_classifier as hc  # noqa: E402
 
 R2_ASSET = "https://pub-abc123.r2.dev/movie.mkv"
 GOOGLE_ASSET = "https://video-downloads.googleusercontent.com/dl/movie"
+GOFILE_ASSET = "https://gofile.io/d/SAYYBt81"
+TELEGRAM_ASSET = "https://t.me/filesdll_bot"
 
 
 def gateway_page(buttons) -> str:
@@ -182,7 +194,8 @@ class UnwrapTests(unittest.TestCase):
         recorder = HopRecorder(hops)
         res = fast_fetch.unwrap_hubcdn(
             url or "https://hubcdn.io/cloud/abc123",
-            _fetch=lambda u: (page, cookies), _hop=recorder)
+            _fetch=lambda u: (page, cookies), _hop=recorder,
+            _sleep=lambda s: None)
         return res, recorder
 
     def test_happy_page_yields_both_assets(self):
@@ -276,7 +289,8 @@ class UnwrapTests(unittest.TestCase):
                 'drive/nm27vVUjJT";</script></body></html>')
         res = fast_fetch.unwrap_hubcdn(
             "https://hubcdn.io/cloud/abc",
-            _fetch=lambda u: (page, ""), _hop=HopRecorder({}))
+            _fetch=lambda u: (page, ""), _hop=HopRecorder({}),
+            _sleep=lambda s: None)
         self.assertFalse(res["ok"])
         self.assertEqual(res["error"], "preparing_download")
         self.assertEqual(res["preparing_target"],
@@ -309,15 +323,376 @@ class UnwrapTests(unittest.TestCase):
         def boom(url):
             raise OSError("gateway is having a day")
         res = fast_fetch.unwrap_hubcdn("https://hubcdn.io/cloud/abc",
-                                       _fetch=boom, _hop=HopRecorder({}))
+                                       _fetch=boom, _hop=HopRecorder({}),
+                                       _sleep=lambda s: None)
         self.assertFalse(res["ok"])
         self.assertTrue(res["error"].startswith("cloud_fetch_fail:"), res)
 
     def test_empty_page_is_reported(self):
         res = fast_fetch.unwrap_hubcdn("https://hubcdn.io/cloud/abc",
                                        _fetch=lambda u: ("", ""),
-                                       _hop=HopRecorder({}))
+                                       _hop=HopRecorder({}),
+                                       _sleep=lambda s: None)
         self.assertEqual(res["error"], "empty_cloud_page")
+
+
+# The live page (probe5, 2026-11-23): 8 buttons, 4 distinct hrefs. Five
+# labels share the one Google href — the button NAMED HubCloud does not go
+# to HubCloud at all.
+EIGHT_BUTTONS = [
+    trigger("/l.php?file=cf", "Cloud Direct [480MB]"),
+    trigger("/l.php?file=plain", "Direct Download (10Gbps)"),
+    trigger("/l.php?file=plain", "Download Pixeldrain -1"),
+    trigger("/l.php?file=plain", "Download - HubCloud"),
+    trigger("/l.php?file=plain", "Login To Download - GDFLIX"),
+    trigger("/l.php?file=plain", "Buzz Download"),
+    trigger("/l.php?file=go", "Download - GoFile.io"),
+    trigger("/l.php?file=tg", "Telegram File"),
+]
+
+
+def eight_hops() -> dict:
+    return {
+        "https://hubcdn.io/l.php?file=cf": (302, R2_ASSET),
+        "https://hubcdn.io/l.php?file=plain": (302, GOOGLE_ASSET),
+        "https://hubcdn.io/l.php?file=go": (302, GOFILE_ASSET),
+        "https://hubcdn.io/l.php?file=tg": (302, TELEGRAM_ASSET),
+    }
+
+
+class BankAllMirrorsTests(unittest.TestCase):
+    """One resolve banks all four mirrors; dedupe is by href, never label."""
+
+    def unwrap_eight(self, hops=None, buttons=None, sleep=None):
+        page = gateway_page(EIGHT_BUTTONS if buttons is None else buttons)
+        recorder = HopRecorder(eight_hops() if hops is None else hops)
+        res = fast_fetch.unwrap_hubcdn(
+            "https://hubcdn.io/cloud/abc123",
+            _fetch=lambda u: (page, "session=xyz"), _hop=recorder,
+            _sleep=sleep or (lambda s: None))
+        return res, recorder
+
+    def test_eight_buttons_cost_four_hops_and_bank_four_mirrors(self):
+        res, rec = self.unwrap_eight()
+        self.assertTrue(res["ok"], res)
+        # 5 duplicate Google labels collapse to one hop.
+        self.assertEqual(len(rec.urls), 4, rec.urls)
+        self.assertEqual(res["mirrors"], {
+            "r2": R2_ASSET, "google": GOOGLE_ASSET,
+            "gofile": GOFILE_ASSET, "telegram": TELEGRAM_ASSET})
+        self.assertEqual(list(res["mirrors"]),
+                         ["r2", "google", "gofile", "telegram"])
+        self.assertEqual(res["r2_url"], R2_ASSET)
+        self.assertEqual(res["google_url"], GOOGLE_ASSET)
+        self.assertEqual(res["gofile_url"], GOFILE_ASSET)
+        self.assertEqual(res["telegram_url"], TELEGRAM_ASSET)
+
+    def test_slotting_is_by_role_not_label(self):
+        # A button labelled "HubCloud" that 302s to Google slots as Google;
+        # a button labelled "Pixeldrain" that 302s to R2 slots as R2.
+        buttons = [
+            trigger("/l.php?file=a", "Download - HubCloud"),
+            trigger("/l.php?file=b", "Download Pixeldrain -1"),
+        ]
+        hops = {
+            "https://hubcdn.io/l.php?file=a": (302, GOOGLE_ASSET),
+            "https://hubcdn.io/l.php?file=b": (302, R2_ASSET),
+        }
+        res, _rec = self.unwrap_eight(hops=hops, buttons=buttons)
+        self.assertEqual(res["google_url"], GOOGLE_ASSET)
+        self.assertEqual(res["r2_url"], R2_ASSET)
+        self.assertEqual(list(res["mirrors"]), ["r2", "google"])
+
+    def test_gofile_and_telegram_alone_are_not_playable_but_still_banked(self):
+        hops = {
+            "https://hubcdn.io/l.php?file=go": (302, GOFILE_ASSET),
+            "https://hubcdn.io/l.php?file=tg": (302, TELEGRAM_ASSET),
+        }
+        buttons = [EIGHT_BUTTONS[6], EIGHT_BUTTONS[7]]
+        res, _rec = self.unwrap_eight(hops=hops, buttons=buttons)
+        self.assertFalse(res["ok"], res)
+        self.assertEqual(res["error"], "no_trusted_asset_in_any_redirect")
+        self.assertEqual(res["mirrors"], {
+            "gofile": GOFILE_ASSET, "telegram": TELEGRAM_ASSET})
+
+    def test_hostile_gofile_and_telegram_lookalikes_buy_no_mirror(self):
+        hops = {
+            "https://hubcdn.io/l.php?file=cf": (302, R2_ASSET),
+            "https://hubcdn.io/l.php?file=g1": (302, "https://gofile.io.evil.cn/d/x"),
+            "https://hubcdn.io/l.php?file=g2": (302, "https://gofile.io/x"),
+            "https://hubcdn.io/l.php?file=t1": (302, "https://t.me.evil.cn/x"),
+            "https://hubcdn.io/l.php?file=t2": (302, "https://t.me/"),
+        }
+        buttons = [
+            trigger("/l.php?file=cf", "Cloud Direct"),
+            trigger("/l.php?file=g1", "GoFile evil suffix"),
+            trigger("/l.php?file=g2", "GoFile no /d/ path"),
+            trigger("/l.php?file=t1", "Telegram evil suffix"),
+            trigger("/l.php?file=t2", "Telegram empty path"),
+        ]
+        res, _rec = self.unwrap_eight(hops=hops, buttons=buttons)
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["mirrors"], {"r2": R2_ASSET})
+        self.assertIsNone(res["gofile_url"])
+        self.assertIsNone(res["telegram_url"])
+
+    def test_hop_403_and_404_are_honest_failures(self):
+        hops = {
+            "https://hubcdn.io/l.php?file=cf": (403, ""),
+            "https://hubcdn.io/l.php?file=plain": (404, ""),
+        }
+        buttons = [EIGHT_BUTTONS[0], EIGHT_BUTTONS[1]]
+        res, _rec = self.unwrap_eight(hops=hops, buttons=buttons)
+        self.assertFalse(res["ok"], res)
+        self.assertEqual(res["error"], "no_trusted_asset_in_any_redirect")
+        self.assertEqual(res["mirrors"], {})
+
+
+class PacingTests(unittest.TestCase):
+    """hubcdn.io 429s after ~25 rapid requests: every request is paced."""
+
+    def test_fetch_plus_each_hop_is_spaced_at_least_020s(self):
+        sleeps: list[float] = []
+        fast_fetch._hubcdn_last_request = time.monotonic()
+        try:
+            page = gateway_page(EIGHT_BUTTONS)
+            res = fast_fetch.unwrap_hubcdn(
+                "https://hubcdn.io/cloud/abc123",
+                _fetch=lambda u: (page, ""), _hop=HopRecorder(eight_hops()),
+                _sleep=sleeps.append)
+        finally:
+            fast_fetch._hubcdn_last_request = time.monotonic()
+        self.assertTrue(res["ok"], res)
+        # 1 cloud fetch + 4 deduped hops, each spaced >= 0.20 s.
+        self.assertEqual(len(sleeps), 5, sleeps)
+        for slept in sleeps:
+            self.assertGreaterEqual(slept, 0.19, sleeps)
+
+
+_BANK_SCHEMA = """
+    CREATE TABLE download_sources (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        release_id INTEGER NOT NULL, source_name TEXT, service TEXT,
+        resource_id TEXT, source_url TEXT, final_url TEXT,
+        playback_type TEXT DEFAULT 'url', is_temporary INTEGER DEFAULT 0,
+        status TEXT DEFAULT 'active', is_resumable INTEGER DEFAULT 0,
+        http_status INTEGER DEFAULT NULL, file_size_bytes INTEGER DEFAULT NULL,
+        mime_type TEXT DEFAULT NULL, last_checked_at TIMESTAMP DEFAULT NULL,
+        last_failed_at REAL DEFAULT NULL, failure_class TEXT DEFAULT NULL,
+        failure_resolver_v INTEGER DEFAULT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
+"""
+
+_ALL_MIRRORS = {"r2": R2_ASSET, "google": GOOGLE_ASSET,
+                "gofile": GOFILE_ASSET, "telegram": TELEGRAM_ASSET}
+
+
+class BankSiblingsTests(unittest.TestCase):
+    """_bank_hubcdn_siblings: INSERTs the missing mirrors, never duplicates."""
+
+    def setUp(self):
+        self._tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self._tmp.close()
+        self.conn = sqlite3.connect(self._tmp.name)
+        self.conn.execute(_BANK_SCHEMA)
+        # The pressed row, already rewritten to the R2 winner.
+        self.conn.execute(
+            "INSERT INTO download_sources (id, release_id, source_name,"
+            " service, source_url, final_url, playback_type, is_temporary,"
+            " status) VALUES (1, 77, 'HubCDN Cloud Gateway [720p-HEVC]',"
+            " 'hubcdn', 'https://hubcdn.io/cloud/abc123', ?, 'url', 0,"
+            " 'active')", (R2_ASSET,))
+        self.conn.commit()
+
+    def tearDown(self):
+        self.conn.close()
+        Path(self._tmp.name).unlink(missing_ok=True)
+
+    def rows(self):
+        return self.conn.execute(
+            "SELECT service, source_url, final_url, is_temporary"
+            " FROM download_sources WHERE release_id = 77"
+            " ORDER BY id").fetchall()
+
+    def bank(self, mirrors=None):
+        n = fast_fetch._bank_hubcdn_siblings(
+            self.conn, release_id=77, pressed_id=1,
+            cloud_url="https://hubcdn.io/cloud/abc123",
+            mirrors=dict(_ALL_MIRRORS if mirrors is None else mirrors),
+            source_name="HubCDN Cloud Gateway [720p-HEVC]")
+        self.conn.commit()
+        return n
+
+    def test_banks_the_three_other_mirrors_not_the_winner(self):
+        self.assertEqual(self.bank(), 3)
+        rows = self.rows()
+        self.assertEqual(len(rows), 4, rows)
+        by_service = {r[0]: r for r in rows}
+        google = by_service["google_cdn"]
+        self.assertEqual(google[2], GOOGLE_ASSET)
+        self.assertEqual(google[1], "https://hubcdn.io/cloud/abc123")
+        self.assertEqual(google[3], 1, "Google banks temporary")
+        gofile = by_service["gofile"]
+        self.assertEqual(gofile[1], GOFILE_ASSET)
+        self.assertEqual(gofile[2], GOFILE_ASSET)
+        self.assertEqual(gofile[3], 0)
+        telegram = by_service["telegram"]
+        self.assertEqual(telegram[2], TELEGRAM_ASSET)
+        self.assertEqual(telegram[3], 0)
+        # The R2 winner stays exactly one row.
+        self.assertEqual(sum(1 for r in rows if r[2] == R2_ASSET), 1)
+
+    def test_second_run_banks_nothing(self):
+        self.assertEqual(self.bank(), 3)
+        self.assertEqual(self.bank(), 0)
+        self.assertEqual(len(self.rows()), 4)
+
+    def test_already_banked_url_is_skipped(self):
+        self.conn.execute(
+            "INSERT INTO download_sources (release_id, source_name,"
+            " service, source_url, final_url, is_temporary, status)"
+            " VALUES (77, 'old google', 'google_cdn',"
+            " 'https://hubcdn.io/cloud/abc123', ?, 1, 'active')",
+            (GOOGLE_ASSET,))
+        self.conn.commit()
+        self.assertEqual(self.bank(), 2)
+        rows = self.rows()
+        self.assertEqual(sum(1 for r in rows if r[2] == GOOGLE_ASSET), 1)
+
+    def test_empty_mirrors_bank_nothing(self):
+        self.assertEqual(self.bank(mirrors={}), 0)
+        self.assertEqual(len(self.rows()), 1)
+
+
+#: The gate verdicts the resolve tests fake: an R2 bucket that 403/1010s
+#: the datacenter egress (measured live 2026-11-23), and a Google twin
+#: that Range-probes clean.
+def _blocked_verdict():
+    return {"ok": False, "kind": None, "mime": None, "size": 16791,
+            "resumable": False, "renditions": [], "failure": "blocked"}
+
+
+def _file_verdict():
+    return {"ok": True, "kind": "file", "mime": "video/x-matroska",
+            "size": None, "resumable": True, "renditions": [],
+            "failure": None}
+
+
+class ResolveFallbackTests(unittest.TestCase):
+    """resolve_live_source on a scratch DB: R2-first, Google fallback, banking.
+
+    The unwrap and the gate probe are the only network edges and both are
+    faked, so no test touches a third party; the DB is a temp file with the
+    real schema (``fast_fetch.init_db``), and ``DB_PATH`` is restored after.
+    """
+
+    CLOUD_URL = "https://hubcdn.io/cloud/abc123"
+
+    def setUp(self):
+        self._tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self._tmp.close()
+        self._old_db_path = fast_fetch.DB_PATH
+        self._old_unwrap = fast_fetch.unwrap_hubcdn
+        self._old_probe = fast_fetch._stage2_probe
+        self._old_ttl = fast_fetch.probe_url_ttl
+        fast_fetch.DB_PATH = Path(self._tmp.name)
+        fast_fetch.init_db()
+        fast_fetch.probe_url_ttl = lambda u, **k: (None, {"reason": "no_directive"})
+        conn = sqlite3.connect(self._tmp.name)
+        conn.execute(
+            "INSERT INTO posts (url, title) VALUES"
+            " ('https://example.invalid/hubcdn-probe', 'hubcdn probe')")
+        post_id = conn.execute("SELECT id FROM posts").fetchone()[0]
+        conn.execute(
+            "INSERT INTO releases (post_id, release_title, quality)"
+            " VALUES (?, 'hubcdn probe 720p', '720p')", (post_id,))
+        self.rel_id = conn.execute("SELECT id FROM releases").fetchone()[0]
+        conn.execute(
+            "INSERT INTO download_sources (release_id, source_name, service,"
+            " source_url, final_url, is_temporary, status)"
+            " VALUES (?, 'HubCDN Cloud Gateway [720p]', 'hubcdn', ?, ?, 0,"
+            " 'active')", (self.rel_id, self.CLOUD_URL, self.CLOUD_URL))
+        self.row_id = conn.execute(
+            "SELECT id FROM download_sources").fetchone()[0]
+        conn.commit()
+        conn.close()
+
+    def tearDown(self):
+        fast_fetch.DB_PATH = self._old_db_path
+        fast_fetch.unwrap_hubcdn = self._old_unwrap
+        fast_fetch._stage2_probe = self._old_probe
+        fast_fetch.probe_url_ttl = self._old_ttl
+        Path(self._tmp.name).unlink(missing_ok=True)
+
+    def _fake_unwrap(self, res):
+        fast_fetch.unwrap_hubcdn = lambda url, **k: dict(res)
+
+    def _fake_probe(self, r2_ok: bool, google_ok: bool):
+        def probe(url, *a, **k):
+            if "r2.dev" in url:
+                return _file_verdict() if r2_ok else _blocked_verdict()
+            if "googleusercontent.com" in url:
+                return _file_verdict() if google_ok else _blocked_verdict()
+            return _blocked_verdict()
+        fast_fetch._stage2_probe = probe
+
+    def _rows(self):
+        conn = sqlite3.connect(self._tmp.name)
+        rows = conn.execute(
+            "SELECT service, final_url, is_temporary, status FROM"
+            " download_sources WHERE release_id = ? ORDER BY id",
+            (self.rel_id,)).fetchall()
+        conn.close()
+        return rows
+
+    def test_blocked_r2_falls_back_to_google_and_banks_the_rest(self):
+        self._fake_unwrap({"ok": True, "r2_url": R2_ASSET,
+                           "google_url": GOOGLE_ASSET,
+                           "mirrors": dict(_ALL_MIRRORS)})
+        self._fake_probe(r2_ok=False, google_ok=True)
+        res = fast_fetch.resolve_live_source(self.row_id)
+        self.assertTrue(res["success"], res)
+        self.assertEqual(res["url"], GOOGLE_ASSET)
+        self.assertTrue(res["is_temporary"], res)
+        # Winner is Google, so the other three mirrors bank as siblings.
+        self.assertEqual(res["mirrors_banked"], 3, res)
+        rows = self._rows()
+        self.assertEqual(len(rows), 4, rows)
+        # Pressed row rewritten to the Google winner, temporary...
+        self.assertEqual(rows[0][1], GOOGLE_ASSET)
+        self.assertEqual(rows[0][2], 1)
+        # ...and the blocked-but-real R2 asset banked as its sibling.
+        self.assertEqual(rows[1][0], "hubcdn")
+        self.assertEqual(rows[1][1], R2_ASSET)
+        self.assertEqual(rows[1][2], 0)
+
+    def test_r2_winner_banks_the_google_sibling(self):
+        self._fake_unwrap({"ok": True, "r2_url": R2_ASSET,
+                           "google_url": GOOGLE_ASSET,
+                           "mirrors": dict(_ALL_MIRRORS)})
+        self._fake_probe(r2_ok=True, google_ok=True)
+        res = fast_fetch.resolve_live_source(self.row_id)
+        self.assertTrue(res["success"], res)
+        self.assertEqual(res["url"], R2_ASSET)
+        self.assertFalse(res["is_temporary"], res)
+        rows = self._rows()
+        self.assertEqual(len(rows), 4, rows)
+        by_service = {r[0]: r for r in rows}
+        self.assertEqual(by_service["google_cdn"][1], GOOGLE_ASSET)
+        self.assertEqual(by_service["google_cdn"][2], 1)
+        self.assertEqual(by_service["gofile"][1], GOFILE_ASSET)
+        self.assertEqual(by_service["telegram"][1], TELEGRAM_ASSET)
+
+    def test_both_mirrors_blocked_is_an_honest_failure_and_banks_nothing(self):
+        self._fake_unwrap({"ok": True, "r2_url": R2_ASSET,
+                           "google_url": GOOGLE_ASSET,
+                           "mirrors": dict(_ALL_MIRRORS)})
+        self._fake_probe(r2_ok=False, google_ok=False)
+        res = fast_fetch.resolve_live_source(self.row_id)
+        self.assertFalse(res["success"], res)
+        self.assertEqual(res["code"], "no_playable_source", res)
+        self.assertEqual(len(self._rows()), 1)
 
 
 if __name__ == "__main__":

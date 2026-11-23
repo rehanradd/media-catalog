@@ -4208,18 +4208,86 @@ def _hubcdn_hop(url: str, headers: dict, timeout: int) -> tuple:
         return int(exc.code), (exc.headers.get("Location") if exc.headers else None)
 
 
+def _hubcdn_mirror_kind(location: str) -> str | None:
+    """Mirror slot a hop Location lands in, or None when it must not be trusted.
+
+    Same trust rules as :func:`current_hosts._hubcdn_mirror_kind`: R2/Google
+    go through :func:`host_classifier.hubcdn_asset_role` (a public
+    ``pub-*.r2.dev`` bucket, or the Google front — lookalike hosts buy
+    nothing). Gofile/Telegram are exact-host pointers only: a landing page /
+    bot link is banked as a mirror, never probed as a file.
+    """
+    if _hc is None:
+        return None
+    role = _hc.hubcdn_asset_role(location)
+    if role == "stream":
+        return "r2"
+    if role == "download":
+        return "google"
+    parts = urllib.parse.urlsplit(location)
+    host = parts.hostname or ""
+    if host == "gofile.io" and parts.path.startswith("/d/"):
+        return "gofile"
+    if host == "t.me" and parts.path.strip("/"):
+        return "telegram"
+    return None
+
+
+#: hubcdn.io trips "Too Many Requests" after ~25 rapid requests from one IP
+#: (measured 2026-11-23, while hunting for a hidden API — there is none; the
+#: HTML pages + the /l.php 302 ARE the API). Every hubcdn.io request this
+#: unwrapper makes (cloud page + one hop per unique button) passes through
+#: _hubcdn_pace, which spaces them at least this far apart.
+#: current_hosts carries its own copy for the Stage-1 path; the two pacers do
+#: not share state, so each guarantees spacing only within its own call
+#: sequence — the press path uses one path at a time, and both agree on the
+#: 0.20 s floor.
+_HUBCDN_MIN_INTERVAL = 0.20
+_hubcdn_lock = threading.Lock()
+_hubcdn_last_request = 0.0
+
+
+def _hubcdn_pace(sleep) -> None:
+    """Wait until _HUBCDN_MIN_INTERVAL has passed since the last hubcdn.io
+    request, then stamp the new request time. ``sleep`` is injectable so
+    fixture tests never actually wait."""
+    global _hubcdn_last_request
+    with _hubcdn_lock:
+        now = time.monotonic()
+        wait_s = _HUBCDN_MIN_INTERVAL - (now - _hubcdn_last_request)
+        if wait_s > 0:
+            sleep(wait_s)
+            now = time.monotonic()
+        _hubcdn_last_request = now
+
+
 def unwrap_hubcdn(cloud_url: str, timeout: int = 8, *, _fetch=None,
-                  _hop=None, clearance=None) -> dict:
+                  _hop=None, _sleep=None, clearance=None) -> dict:
     """Unwrap a ``hubcdn.io/cloud/<id>`` gateway page to its direct assets.
 
-    Returns ``{ok, r2_url, google_url, title, size_str}`` plus ``error`` on any
-    failure. ``r2_url`` is the public Cloudflare R2 bucket (Category A, tier 1,
-    streamable); ``google_url`` is the Google Cloud CDN front (Category A, tier
-    1, the 10Gbps download). Both are durable byte URLs, so the caller does not
-    need a token window for them. A "Preparing Download" page answers
-    ``error == "preparing_download"`` with ``preparing_target`` attached —
-    the asset lives on filesdl behind a JS challenge, so it is counted,
-    never served.
+    Returns ``{ok, r2_url, google_url, gofile_url, telegram_url, mirrors,
+    title, size_str}`` plus ``error`` on any failure. ``r2_url`` is the public
+    Cloudflare R2 bucket (Category A, tier 1, streamable); ``google_url`` is
+    the Google Cloud CDN front (Category A, tier 1, the 10Gbps download).
+    ``gofile_url`` / ``telegram_url`` are the remaining two mirrors of the
+    same file (a Gofile landing page / a Telegram bot link — banked as
+    mirrors, never probed as files). ``mirrors`` carries all four in serve
+    order — R2 first (permanent, unsigned, never expires), Google second
+    (minted per request, short-lived), Gofile/Telegram last — keyed by slot
+    so the caller can bank every destination from one resolve instead of
+    re-unwrapping per mirror. Both playable assets are durable byte URLs,
+    so the caller does not need a token window for them. A "Preparing
+    Download" page answers ``error == "preparing_download"`` with
+    ``preparing_target`` attached — the asset lives on filesdl behind a JS
+    challenge, so it is counted, never served.
+
+    ``ok`` is True only when an R2 or a Google asset exists: Gofile/Telegram
+    alone are landing pointers, not playable files, so a page offering only
+    them is still an honest failure — but ``mirrors`` still carries them as
+    evidence. Buttons are deduped by resolved href before hopping (the live
+    page renders 8 buttons but only 4 distinct hrefs — 5 labels share the one
+    Google href), so one quality costs at most 5 hubcdn.io requests
+    (page + 4 hops), each paced ≥0.20 s apart.
 
     ``_fetch`` / ``_hop`` are the two network edges, injectable so the parsing
     and the trust decision are testable offline. Every target is judged by
@@ -4234,8 +4302,9 @@ def unwrap_hubcdn(cloud_url: str, timeout: int = 8, *, _fetch=None,
     gateway reuses the host's stored clearance; the button hop keeps it
     through the merged cookie header :func:`_hubcdn_page` returns.
     """
-    out = {"ok": False, "r2_url": None, "google_url": None, "title": None,
-           "size_str": None}
+    out = {"ok": False, "r2_url": None, "google_url": None,
+           "gofile_url": None, "telegram_url": None, "mirrors": {},
+           "title": None, "size_str": None}
     if _hc is None:
         out["error"] = "host_authority_absent"
         return out
@@ -4243,8 +4312,10 @@ def unwrap_hubcdn(cloud_url: str, timeout: int = 8, *, _fetch=None,
         out["error"] = "not_a_hubcdn_cloud_page"
         return out
 
+    sleep = _sleep or time.sleep
     fetch = _fetch or (lambda u: _hubcdn_page(u, timeout, clearance=clearance))
     hop = _hop or (lambda u, h: _hubcdn_hop(u, h, timeout))
+    _hubcdn_pace(sleep)
     try:
         page, cookies = fetch(cloud_url)
     except Exception as exc:  # noqa: BLE001 — the gateway is a third party
@@ -4280,23 +4351,44 @@ def unwrap_hubcdn(cloud_url: str, timeout: int = 8, *, _fetch=None,
     if cookies:
         headers["Cookie"] = cookies
     token = f"fast_{int(time.time())}"
+    # Dedupe by resolved href first: the live page prints 8 buttons but the
+    # Pixeldrain / HubCloud / GDFLIX / Buzz labels all share the one Google
+    # href (measured 2026-11-23), so hopping every button would pay for the
+    # same 302 five times and burn the rate-limit budget.
+    seen, hrefs = set(), []
     for href, label in buttons:
+        absolute = _hc.hubcdn_resolve_href(href)
+        if absolute not in seen:
+            seen.add(absolute)
+            hrefs.append(absolute)
         if not out["size_str"]:
             size_m = re.search(r"([0-9][0-9.]*\s*(?:GB|MB))", label, re.I)
             if size_m:
                 out["size_str"] = size_m.group(1)
+    mirrors: dict[str, str] = {}
+    for href in hrefs:
+        _hubcdn_pace(sleep)
         try:
             code, location = hop(
-                _hc.hubcdn_with_token(_hc.hubcdn_resolve_href(href), token), headers)
+                _hc.hubcdn_with_token(href, token), headers)
         except Exception:
             continue
         if code not in (301, 302, 303, 307, 308) or not location:
             continue
-        role = _hc.hubcdn_asset_role(location)
-        if role == "stream" and not out["r2_url"]:
-            out["r2_url"] = location
-        elif role == "download" and not out["google_url"]:
-            out["google_url"] = location
+        kind = _hubcdn_mirror_kind(location)
+        if kind is not None and kind not in mirrors:
+            mirrors[kind] = location
+
+    # Serve order, not hop order: R2 first (permanent), Google second
+    # (minted per request), Gofile/Telegram last (landing pointers).
+    ordered = {kind: mirrors[kind]
+               for kind in ("r2", "google", "gofile", "telegram")
+               if kind in mirrors}
+    out["mirrors"] = ordered
+    out["r2_url"] = ordered.get("r2")
+    out["google_url"] = ordered.get("google")
+    out["gofile_url"] = ordered.get("gofile")
+    out["telegram_url"] = ordered.get("telegram")
 
     out["ok"] = bool(out["r2_url"] or out["google_url"])
     if not out["ok"] and "error" not in out:
@@ -8069,6 +8161,69 @@ def _deadline_expired_answer(source_id: int) -> dict:
     }
 
 
+#: Mirror slot -> (service, is_temporary, playback_type) for a banked
+#: HubCDN sibling row. R2 is the permanent stream copy; Google is minted per
+#: request (its token rotated between live probes) so it banks temporary and
+#: the 6 h ceiling re-resolves it; Gofile/Telegram are stable landing
+#: pointers, banked under their own service so each resolves through its own
+#: branch on press (Gofile unwraps; Telegram has no branch and fails
+#: honestly, never served). The pressed row itself keeps service "hubcdn".
+_HUBCDN_MIRROR_ROWS = {
+    "r2": ("hubcdn", 0, "direct"),
+    "google": ("google_cdn", 1, "download"),
+    "gofile": ("gofile", 0, "download"),
+    "telegram": ("telegram", 0, "url"),
+}
+
+
+def _bank_hubcdn_siblings(conn, *, release_id: int, pressed_id: int,
+                          cloud_url: str, mirrors: dict,
+                          source_name: str | None = None) -> int:
+    """INSERT one sibling row per HubCDN mirror not already banked for the release.
+
+    One gateway resolve fans out to four mirrors; the winner already rewrote
+    the pressed row, and the rest belong in the ledger as sibling rows for the
+    same release so the next press serves them from the bank instead of
+    re-unwrapping. Unlike the HubCloud one-round banking (which UPDATEs
+    pre-existing sibling rows — the drive link files four rows at ingest),
+    HubCDN ingest files ONE gateway row per quality, so there is nothing to
+    UPDATE: mirrors are INSERTed, deduped by ``final_url`` within the release
+    (the winner is already there, so it is naturally skipped). ``source_url``
+    for the playable mirrors is the cloud bridge they came from, so a stale
+    sibling re-resolves through the same gateway; Gofile/Telegram bank the
+    pointer itself as both addresses, like the importer's own rows. No
+    expiry is stamped here: R2 is permanent (NULL), Google is temporary with
+    NULL expiry so the documented 6 h ceiling applies. Returns the rows
+    inserted. Callers own the transaction (no commit here) and treat a
+    failure as best-effort — banking must never change a resolve answer.
+    """
+    if not mirrors:
+        return 0
+    existing = {row[0] for row in conn.execute(
+        "SELECT final_url FROM download_sources WHERE release_id = ?",
+        (release_id,)).fetchall() if row[0]}
+    banked = 0
+    base_name = (source_name or "HubCDN").strip() or "HubCDN"
+    for kind in ("r2", "google", "gofile", "telegram"):
+        url = (mirrors or {}).get(kind)
+        if not url or url in existing:
+            continue
+        service, is_temporary, playback_type = _HUBCDN_MIRROR_ROWS[kind]
+        source_url = cloud_url if kind in ("r2", "google") else url
+        conn.execute(
+            """INSERT INTO download_sources
+                   (release_id, source_name, service, resource_id,
+                    source_url, final_url, playback_type, is_temporary,
+                    status, last_checked_at, updated_at)
+               VALUES (?, ?, ?, NULL, ?, ?, ?, ?, 'active',
+                       CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+            (release_id, f"{base_name} ({kind} mirror)", service,
+             source_url, url, playback_type, is_temporary))
+        existing.add(url)
+        banked += 1
+    return banked
+
+
 def resolve_live_source(source_id: int, *, v2: bool = False,
                         want: str = "either", _failover: bool = True,
                         deadline: float | None = None) -> dict:
@@ -8368,6 +8523,15 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
     service = src.get("service") or ""
     fresh_url = None
     fresh_temp = src["is_temporary"]
+    # Bank-all-4 (speed lane, 2026-11-23): the hubcdn branch fills these when
+    # one gateway resolve fans out to four mirrors; the winner rewrite below
+    # banks the rest as sibling rows, and the count rides on the answer.
+    # _hubcdn_winner_kind names which mirror won, so a failed R2 gate probe
+    # can fall back to the Google twin instead of discarding the resolve.
+    _hubcdn_mirrors: dict = {}
+    _hubcdn_cloud_url = ""
+    _hubcdn_winner_kind = None
+    _mirrors_banked = 0
     embed_verdict = None
     # The last unwrap branch's verdict (None when no branch ran). Read once
     # after the chain, so the fall-through can tell a transport failure
@@ -8608,13 +8772,19 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
             elif (service == "hubcdn" or "hubcdn.io/cloud" in source_u.lower()
                   or "hubcdn.io/cloud" in cached_u.lower()):
                 _unwrap_branch_taken = True
-                res = unwrap_hubcdn(hoster_input("hubcdn"), clearance=_clearance)
+                _hubcdn_cloud_url = hoster_input("hubcdn")
+                res = unwrap_hubcdn(_hubcdn_cloud_url, clearance=_clearance)
                 if res.get("ok"):
                     # The R2 bucket copy is the streamable asset; the Google
-                    # front is its download twin. Both are durable Category A
-                    # bytes, so no token window applies to the refreshed URL.
+                    # front is its download twin. R2 is permanent (unsigned
+                    # public bucket, no expiry); Google is minted per request
+                    # — its token rotated between live probes — so a Google
+                    # winner banks temporary and the 6 h ceiling re-resolves
+                    # it, instead of the old claim that both are durable.
                     fresh_url = res.get("r2_url") or res.get("google_url")
-                    fresh_temp = 0
+                    fresh_temp = 0 if res.get("r2_url") else 1
+                    _hubcdn_winner_kind = "r2" if res.get("r2_url") else "google"
+                    _hubcdn_mirrors = res.get("mirrors") or {}
             elif (service == "direct_cloud" or "direct-cloud" in source_u.lower()
                   or "direct-cloud" in cached_u.lower()):
                 _unwrap_branch_taken = True
@@ -9255,6 +9425,24 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
             fresh_url = None
             fresh_verdict = None
 
+    # HubCDN bank-all-4 (speed lane, 2026-11-23): the R2 winner just failed
+    # its gate probe — a bucket can 403/1010 the datacenter egress while the
+    # Google twin plays (measured live 2026-11-23 on post 7612 row 289156:
+    # R2 403 "error code: 1010" on every header set, WARP or direct). The
+    # same resolve already holds the Google mirror, so probe it through the
+    # same gate instead of discarding the whole resolve. One fallback only,
+    # R2 -> Google; a Google winner that already failed is never re-probed,
+    # and a failed Google probe becomes the recorded verdict.
+    if (not fresh_url and _hubcdn_winner_kind == "r2"
+            and _hubcdn_mirrors.get("google")):
+        _google_verdict = _stage2_probe(_hubcdn_mirrors["google"])
+        if _stage2_accept(_google_verdict, want):
+            fresh_url = _hubcdn_mirrors["google"]
+            fresh_temp = 1
+            fresh_verdict = _google_verdict
+        else:
+            _last_failure_verdict = _google_verdict
+
     if not fresh_url and not _negative_cache_hit:
         # The dispatch produced nothing playable: record the failure
         # class for the negative cache. A branch that ran and failed —
@@ -9359,12 +9547,29 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
             # so a stale, longer window cannot outlive the token it was read from.
             record_link_expiry(src["id"], clear=True, observed_via="no_directive")
             src["expires_at"] = None
+        # Bank-all-4 (speed lane, 2026-11-23): the winner above rewrote this
+        # row; the other mirrors from the same resolve become sibling rows
+        # for the release, so the next press serves them from the bank. Only
+        # after the Stage-2 gate passed the winner (above), so a gated-out
+        # URL banks nothing. Best-effort: a banking failure never changes
+        # this answer.
+        if _hubcdn_mirrors:
+            try:
+                with get_db() as _bconn:
+                    _mirrors_banked = _bank_hubcdn_siblings(
+                        _bconn, release_id=src["release_id"],
+                        pressed_id=src["id"], cloud_url=_hubcdn_cloud_url,
+                        mirrors=_hubcdn_mirrors,
+                        source_name=src.get("source_name"))
+            except Exception:
+                _mirrors_banked = 0
         return {
             "success": True,
             "id": src["id"],
             "url": fresh_url,
             "cached": False,
             "refreshed": True,
+            "mirrors_banked": _mirrors_banked,
             "service": src["service"],
             "is_temporary": bool(fresh_temp),
             "is_resumable": bool(src["is_resumable"]),
