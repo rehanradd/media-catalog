@@ -861,7 +861,10 @@ class TuningKnobsTests(unittest.TestCase):
 
 
 class RegistryCorrections20261123Tests(unittest.TestCase):
-    """Site-API hunt corrections (23 Nov 2026): the six registry fixes.
+    """Site-API hunt + scraper-audit corrections (23 Nov 2026):
+    the six hunt fixes plus audit items 7 (xprimehub/toonworld4all
+    WP REST), 8 (dramadog /api/), 9 (live sites must not be "down")
+    and 10 (bollyflix unverifiable, not down).
 
     Each test pins the corrected value in the SHIPPED registry, so a
     future refresh that reverts one of them goes red here. The probe
@@ -980,6 +983,98 @@ class RegistryCorrections20261123Tests(unittest.TestCase):
                 body, None),
         })
         res = dr.probe_endpoint(entry, "https://katmoviehd.mom",
+                                fetcher=stub)
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["verified_by"], "wp-json")
+
+
+    def test_xprimehub_is_wp_rest(self):
+        reg = dr.load_registry()
+        entry = reg["sites"]["xprimehub"]
+        self.assertEqual(entry["api_type"], "wp_rest_api")
+        self.assertEqual(entry["api_endpoint"], "/wp-json/wp/v2/posts")
+
+    def test_toonworld4all_is_wp_rest(self):
+        reg = dr.load_registry()
+        entry = reg["sites"]["toonworld4all"]
+        self.assertEqual(entry["api_type"], "wp_rest_api")
+        self.assertEqual(entry["api_endpoint"], "/wp-json/wp/v2/posts")
+
+    def test_shipped_xprimehub_and_toonworld4all_build_wp_probe_urls(self):
+        reg = dr.load_registry()
+        for site, base in (("xprimehub", "https://xprimehub.pics"),
+                           ("toonworld4all", "https://toonworld4all.me")):
+            urls = dr._endpoint_urls(reg["sites"][site], base)
+            self.assertEqual(urls, [base + "/wp-json/wp/v2/posts?per_page=3"])
+
+    def test_dramadog_has_proven_same_host_api(self):
+        reg = dr.load_registry()
+        entry = reg["sites"]["dramadog"]
+        self.assertEqual(entry["api_type"], "json_api")
+        self.assertEqual(entry["api_endpoint"], "/api/suggest")
+        # Catalog enumeration stays the sitemap; the API is metadata-only.
+        self.assertEqual(entry["sitemap_endpoint"], "/sitemap.xml")
+        self.assertIn("/api/suggest", entry["notes"])
+
+    def test_live_sites_are_not_marked_down(self):
+        # Audit item 9: the 22 Nov probe run flipped these to "down" in
+        # the live tree, but the hunt proved every one alive (themoviebox
+        # + movienestbd APIs 200; harpalgeo homepage 200; 10xflix +
+        # world4ufree alive as HTML on their new domains). hdtvb is
+        # deliberately "retired" in main (pinned by
+        # test_shipped_registry_is_v2_with_all_33_sites), not "down".
+        reg = dr.load_registry()
+        for site in ("themoviebox", "movienestbd", "harpalgeo",
+                     "10xflix", "world4ufree"):
+            self.assertNotEqual(reg["sites"][site]["status"], "down", site)
+
+    def test_bollyflix_stays_unverifiable_not_down(self):
+        reg = dr.load_registry()
+        entry = reg["sites"]["bollyflix"]
+        self.assertEqual(entry["status"], "unverifiable")
+        self.assertEqual(entry["verified_by"], "redirect")
+        self.assertIn("unproven", entry["notes"])
+
+    def test_probe_xprimehub_wp_posts_with_stub(self):
+        entry = {"site_name": "xprimehub",
+                 "slug_variants": ["xprimehub"],
+                 "api_type": "wp_rest_api",
+                 "api_endpoint": "/wp-json/wp/v2/posts",
+                 "active_base_url": "https://xprimehub.pics"}
+        body = json.dumps([
+            {"link": "https://xprimehub.pics/post/one/",
+             "title": {"rendered": "Series One (2026) Hindi 1080p"}},
+            {"link": "https://xprimehub.pics/post/two/",
+             "title": {"rendered": "Series Two (2026) Hindi 720p"}},
+        ])
+        stub = StubFetch({
+            "https://xprimehub.pics/wp-json/wp/v2/posts?per_page=3": (
+                200, "https://xprimehub.pics/wp-json/wp/v2/posts?per_page=3",
+                body, None),
+        })
+        res = dr.probe_endpoint(entry, "https://xprimehub.pics",
+                                fetcher=stub)
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["verified_by"], "wp-json")
+
+    def test_probe_toonworld4all_wp_posts_with_stub(self):
+        entry = {"site_name": "toonworld4all",
+                 "slug_variants": ["toonworld4all"],
+                 "api_type": "wp_rest_api",
+                 "api_endpoint": "/wp-json/wp/v2/posts",
+                 "active_base_url": "https://toonworld4all.me"}
+        body = json.dumps([
+            {"link": "https://toonworld4all.me/post/one/",
+             "title": {"rendered": "The Apothecary Diaries S3 1080p"}},
+            {"link": "https://toonworld4all.me/post/two/",
+             "title": {"rendered": "Blue Box S2 Hindi 720p"}},
+        ])
+        stub = StubFetch({
+            "https://toonworld4all.me/wp-json/wp/v2/posts?per_page=3": (
+                200, "https://toonworld4all.me/wp-json/wp/v2/posts?per_page=3",
+                body, None),
+        })
+        res = dr.probe_endpoint(entry, "https://toonworld4all.me",
                                 fetcher=stub)
         self.assertTrue(res["ok"], res)
         self.assertEqual(res["verified_by"], "wp-json")

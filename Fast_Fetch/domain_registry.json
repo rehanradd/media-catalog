@@ -668,8 +668,8 @@
     },
     "toonworld4all": {
       "active_base_url": "https://toonworld4all.me",
-      "last_verified": "2026-11-08T09:47:28Z",
-      "verified_by": "homepage",
+      "last_verified": "2026-11-23T00:00:00Z",
+      "verified_by": "wp-json",
       "known_mirrors": [
         "https://toonworld4all.me",
         "https://www.toonworld4all.me"
@@ -680,15 +680,18 @@
       "tld_history": [
         "me"
       ],
-      "api_type": "homepage",
+      "api_type": "wp_rest_api",
       "status": "active",
       "rotation_history": [],
-      "last_checked": "2026-11-08T09:47:28Z"
+      "last_checked": "2026-11-23T00:00:00Z",
+      "api_endpoint": "/wp-json/wp/v2/posts",
+      "notes": "WP REST live, 2,316 posts (site-API hunt 2026-11-23).",
+      "site_name": "toonworld4all"
     },
     "xprimehub": {
       "active_base_url": "https://xprimehub.pics",
-      "last_verified": "2026-11-08T09:47:32Z",
-      "verified_by": "sitemap",
+      "last_verified": "2026-11-23T00:00:00Z",
+      "verified_by": "wp-json",
       "known_mirrors": [
         "https://xprimehub.pics"
       ],
@@ -698,12 +701,14 @@
       "tld_history": [
         "pics"
       ],
-      "api_type": "xml_sitemap",
+      "api_type": "wp_rest_api",
       "status": "active",
       "rotation_history": [],
-      "last_checked": "2026-11-08T09:47:32Z",
+      "last_checked": "2026-11-23T00:00:00Z",
+      "api_endpoint": "/wp-json/wp/v2/posts",
       "sitemap_endpoint": "/sitemap.xml",
-      "notes": "18+ adult catalog — scrape only, never publish; every row is_18_plus=1 (owner-approved 2026-11-08)."
+      "notes": "18+ adult catalog — scrape only, never publish; every row is_18_plus=1 (owner-approved 2026-11-08). WP REST live, 7,296 posts (site-API hunt 2026-11-23); WP REST is the catalog route.",
+      "site_name": "xprimehub"
     },
     "harpalgeo": {
       "active_base_url": "https://www.harpalgeo.tv",
@@ -794,8 +799,8 @@
     },
     "dramadog": {
       "active_base_url": "https://dramadog.app",
-      "last_verified": "2026-11-09T20:20:00Z",
-      "verified_by": "sitemap",
+      "last_verified": "2026-11-23T00:00:00Z",
+      "verified_by": "api",
       "known_mirrors": [
         "https://dramadog.app"
       ],
@@ -805,9 +810,13 @@
       "tld_history": [
         "app"
       ],
-      "api_type": "xml_sitemap",
+      "api_type": "json_api",
       "status": "active",
-      "last_checked": "2026-11-09T20:20:00Z"
+      "last_checked": "2026-11-23T01:00:00Z",
+      "api_endpoint": "/api/suggest",
+      "sitemap_endpoint": "/sitemap.xml",
+      "notes": "Same-host /api/ proven by the site-API hunt 2026-11-23 (~05:00 PKT): /api/suggest?q=, /api/alive, /api/geo return JSON metadata only (title/slug/cover/episode count) — no stream links or qualities. Full catalog enumeration is via /sitemap.xml (173 KB), not the API. Re-probe 23 Nov ~06:00 PKT: whole host CF 403 (Just a moment) from Oracle curl, including / and /api/* — CF-gated from this egress right now, not proof the API is gone; the browser/HAR path still reaches it.",
+      "site_name": "dramadog"
     },
     "megacartoons": {
       "active_base_url": "https://www.megacartoons.net",
@@ -961,9 +970,9 @@
           "seen_from": "2026-11-21"
         }
       ],
-      "last_checked": "2026-11-22T05:32:55Z",
+      "last_checked": "2026-11-23T00:00:00Z",
       "api_endpoint": "/wp-json/wp/v2/posts",
-      "notes": "gen.in redirects to io.in; io.in 403s plain curl AND Chrome UA (Cloudflare) from Oracle egress 2026-11-21 - move real, content unverifiable from here. Post list comes from the open WP REST route once reachable.",
+      "notes": "gen.in redirects to io.in; io.in 403s plain curl AND Chrome UA (Cloudflare) from Oracle egress 2026-11-21 - move real, content unverifiable from here. Post list comes from the open WP REST route once reachable. Site-API hunt 2026-11-23: CF 403 (Just a moment) on root, /wp-json/ and /wp/v2/posts from Oracle egress, both io.in and gen.in — WP REST likely present underneath but still unproven. Do NOT treat as down.",
       "site_name": "bollyflix"
     },
     "animeworld": {
