@@ -54,6 +54,7 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 import fast_fetch
+import wp_rest
 from config import staging_db_path
 from domain_resolver import get_active_base_url, resolve_if_dead
 
@@ -377,6 +378,10 @@ def init_staging_db(db_path: Path):
                 poster_url TEXT,
                 synopsis TEXT,
                 genres TEXT,
+                imdb_rating REAL,
+                cast_names TEXT,
+                director TEXT,
+                languages TEXT,
                 is_18_plus INTEGER DEFAULT 0,
                 site TEXT DEFAULT 'bolly4u',
                 post_url TEXT,
@@ -385,12 +390,26 @@ def init_staging_db(db_path: Path):
             """
         )
         cur.execute("CREATE INDEX IF NOT EXISTS idx_bolly4u_canonical ON posts(canonical_key);")
+        # WP REST adoption (2026-11-23): the source carries rating / cast /
+        # director / languages in every post's labelled info block. Older
+        # staging DBs predate these columns; add any that are missing.
         _bp = {c[1] for c in cur.execute("PRAGMA table_info(posts);").fetchall()}
         if "is_18_plus" not in _bp:
             try:
                 cur.execute("ALTER TABLE posts ADD COLUMN is_18_plus INTEGER DEFAULT 0;")
             except Exception:
                 pass
+        for _col, _decl in (
+            ("imdb_rating", "REAL"),
+            ("cast_names", "TEXT"),
+            ("director", "TEXT"),
+            ("languages", "TEXT"),
+        ):
+            if _col not in _bp:
+                try:
+                    cur.execute(f"ALTER TABLE posts ADD COLUMN {_col} {_decl};")
+                except Exception:
+                    pass
 
         cur.execute(
             """
@@ -520,49 +539,61 @@ def parse_bolly4u_content(content_html: str, post_title: str) -> list[dict]:
         anchors = re.findall(r'<a\s+[^>]*href=[\"\']([^\"\']+)[\"\'][^>]*>(.*?)</a>', sec, re.I | re.S)
         valid_links = []
         for href, text in anchors:
-            if any(x in href.lower() for x in ["photojin.", "linkskeep", "movcloud"]):
+            # WP REST adoption (2026-11-23): torrentsave.0to.site is a
+            # fourth gateway family in live posts; it was silently dropped.
+            # It has no unwrapper — it is stored as a gateway source.
+            if any(x in href.lower() for x in
+                   ["photojin.", "linkskeep", "movcloud", "torrentsave."]):
                 valid_links.append((href, re.sub(r"<[^>]+>", "", text).strip()))
 
         if not valid_links:
             continue
 
-        quality = q_m.group(1).upper() if q_m else "720P"
+        # No fabricated defaults: a heading without a quality token means
+        # the quality is unknown (None), not 720P; a codec is only what
+        # the heading or title actually says (x264/x265/HEVC).
+        quality = q_m.group(1).upper() if q_m else None
         size_str = size_m.group(0).upper() if size_m else None
         size_bytes = parse_size_string(size_str) if size_str else None
+        codec_m = wp_rest.CODEC_RE.search(
+            (cur_header or "") + " " + (post_title or ""))
+        codec = codec_m.group(1).lower() if codec_m else None
 
         # Episode number if mentioned
         ep_m = re.search(r"\b(?:E|EP|Episode)\s*(\d+)\b", cur_header, re.I)
         episode_num = int(ep_m.group(1)) if ep_m else None
 
-        label = f"{quality} {size_str or ''}".strip()
+        label = (f"{quality or ''} {size_str or ''}").strip() or "Download"
 
         releases.append({
             "label": label,
             "quality": quality,
-            "resolution": quality.lower(),
+            "resolution": quality.lower() if quality else None,
             "size_bytes": size_bytes,
             "season_number": season_num,
             "episode_number": episode_num,
             "audio_languages": "Hindi" if "hindi" in post_title.lower() else None,
-            "codec": "x264",
+            "codec": codec,
             "links": valid_links,
         })
 
-    # Fallback if no heading sections matched: extract any photojin or linkskeep anchors directly
+    # Fallback if no heading sections matched: extract any gateway anchors directly.
     if not releases:
         all_anchors = re.findall(r'<a\s+[^>]*href=[\"\']([^\"\']+)[\"\'][^>]*>(.*?)</a>', content_html, re.I | re.S)
-        direct_pj = [h for h, _ in all_anchors if "photojin." in h]
-        if direct_pj:
+        direct = [h for h, _ in all_anchors
+                  if any(x in h.lower() for x in
+                         ["photojin.", "linkskeep", "movcloud", "torrentsave."])]
+        if direct:
             releases.append({
                 "label": "Standard Download",
-                "quality": "720P",
-                "resolution": "720p",
+                "quality": None,
+                "resolution": None,
                 "size_bytes": None,
                 "season_number": season_num,
                 "episode_number": None,
-                "audio_languages": "Hindi",
-                "codec": "x264",
-                "links": [(u, "DIRECT 1") for u in direct_pj],
+                "audio_languages": "Hindi" if "hindi" in post_title.lower() else None,
+                "codec": None,
+                "links": [(u, "DIRECT 1") for u in direct],
             })
 
     return releases
@@ -585,6 +616,7 @@ def sync_api_catalog(client: Bolly4uClient, db_path: Path, max_pages: int | None
     total_adult_flagged = 0
     consecutive_empty_new = 0
     total_posts = 0
+    total_pages = 0
 
     with sqlite3.connect(str(db_path)) as conn:
         existing_slugs = set(
@@ -606,8 +638,14 @@ def sync_api_catalog(client: Bolly4uClient, db_path: Path, max_pages: int | None
         if max_pages and page > max_pages:
             print(f"[*] Reached page limit ({max_pages}).", flush=True)
             break
+        # WP REST adoption (2026-11-23): page 1 reports the page count;
+        # stop there instead of spending one more call to learn it via 400.
+        if total_pages and page > total_pages:
+            break
 
-        url = f"{wp_api_url}?per_page=100&page={page}"
+        # _embed=1 carries wp:featuredmedia (poster) + wp:term (category
+        # names) inside each post, so extraction needs no extra calls.
+        url = f"{wp_api_url}?per_page=100&page={page}&_embed=1"
         code, posts, headers = client.get_json(url, timeout=15)
 
         if code != 200 or not posts or not isinstance(posts, list):
@@ -697,6 +735,15 @@ def scrape_post_item(item: tuple, client: Bolly4uClient) -> dict | None:
         clean_title, year, media_type = clean_bolly4u_title(raw_title)
         canonical_key = fast_fetch.generate_canonical_key(clean_title, year)
 
+        # WP REST adoption (2026-11-23): full metadata from the REST post
+        # itself — the labelled info block in content.rendered carries
+        # rating / genres / director / cast / languages / story, the
+        # excerpt is the synopsis fallback, and _embedded featured media
+        # (or the first content image) is the poster. Nothing here is
+        # defaulted or invented: a missing field stays None.
+        labels = wp_rest.post_labels(p_data)
+        genres = wp_rest.genres_from_post(p_data)
+
         # Extract releases from HTML content
         releases_data = parse_bolly4u_content(content_html, raw_title)
         if not releases_data:
@@ -722,6 +769,17 @@ def scrape_post_item(item: tuple, client: Bolly4uClient) -> dict | None:
                         "final_url": link_url,
                         "is_temporary": 0,
                     })
+                elif "torrentsave." in link_url:
+                    # No unwrapper exists for torrentsave; the gateway link
+                    # itself is stored, like movcloud above.
+                    resolved_sources.append({
+                        "source_name": "🔗 Torrentsave Gateway",
+                        "service": "torrentsave",
+                        "resource_id": link_url.rstrip("/").split("/")[-1],
+                        "source_url": link_url,
+                        "final_url": link_url,
+                        "is_temporary": 0,
+                    })
 
             rel_copy = dict(rel)
             rel_copy["sources"] = resolved_sources
@@ -737,9 +795,14 @@ def scrape_post_item(item: tuple, client: Bolly4uClient) -> dict | None:
                 "year": year,
                 "media_type": media_type,
                 "imdb_id": None,
-                "poster_url": None,
-                "synopsis": None,
-                "genres": None,
+                "poster_url": wp_rest.poster_from_post(p_data),
+                "synopsis": wp_rest.synopsis_from_post(p_data),
+                "genres": json.dumps(genres) if genres else None,
+                "imdb_rating": labels.get("imdb_rating"),
+                "cast_names": ", ".join(labels["cast"])
+                if labels.get("cast") else None,
+                "director": labels.get("director"),
+                "languages": labels.get("languages"),
                 "site": "bolly4u",
                 "post_url": loc,
                 "is_18_plus": is_adult,
@@ -774,13 +837,20 @@ def save_post_to_staging(db_path: Path, result: dict):
 
         cur.execute(
             """
-            INSERT INTO posts (canonical_key, title, original_title, year, media_type, imdb_id, poster_url, synopsis, genres, is_18_plus, site, post_url)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO posts (canonical_key, title, original_title, year, media_type, imdb_id, poster_url, synopsis, genres, imdb_rating, cast_names, director, languages, is_18_plus, site, post_url)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(canonical_key) DO UPDATE SET
                 title=excluded.title,
                 original_title=excluded.original_title,
                 year=excluded.year,
                 media_type=excluded.media_type,
+                poster_url=COALESCE(excluded.poster_url, posts.poster_url),
+                synopsis=COALESCE(excluded.synopsis, posts.synopsis),
+                genres=COALESCE(excluded.genres, posts.genres),
+                imdb_rating=COALESCE(excluded.imdb_rating, posts.imdb_rating),
+                cast_names=COALESCE(excluded.cast_names, posts.cast_names),
+                director=COALESCE(excluded.director, posts.director),
+                languages=COALESCE(excluded.languages, posts.languages),
                 is_18_plus=MAX(posts.is_18_plus, excluded.is_18_plus),
                 post_url=excluded.post_url,
                 updated_at=CURRENT_TIMESTAMP;
@@ -788,7 +858,9 @@ def save_post_to_staging(db_path: Path, result: dict):
             (
                 p["canonical_key"], p["title"], p["original_title"], p["year"],
                 p["media_type"], p["imdb_id"], p["poster_url"], p["synopsis"],
-                p["genres"], p.get("is_18_plus", 0), p["site"], p["post_url"]
+                p["genres"], p.get("imdb_rating"), p.get("cast_names"),
+                p.get("director"), p.get("languages"),
+                p.get("is_18_plus", 0), p["site"], p["post_url"]
             ),
         )
 

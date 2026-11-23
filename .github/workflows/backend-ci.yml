@@ -252,6 +252,7 @@ name: 🐍 Backend CI — Stdlib Python Tests
 #     EXCLUDED: importers/test_moviecok_import.py  — per-site parser; fixture layout follows the site, run by that site's own agent at edit time
 #     EXCLUDED: importers/test_moviesmela_import.py  — per-site parser; fixture layout follows the site, run by that site's own agent at edit time
 #     EXCLUDED: importers/test_pagalmovies_import.py  — per-site parser; fixture layout follows the site, run by that site's own agent at edit time
+#     EXCLUDED: test_wp_rest.py  — shared WP REST helper; offline fixtures transcribed from live responses, run by the WP REST lane at edit time
 #
 # KNOWN FAILURE MODES THIS FILE FIXES
 #   GitHub never ran any pipeline for this repo because the workflow files lived
