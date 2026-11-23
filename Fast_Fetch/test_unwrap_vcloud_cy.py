@@ -19,8 +19,10 @@ What this pins:
   page with no token all return the landing page unchanged (temp 0)
   so the caller's bridge guard refuses them — never a half-decoded URL.
 
-No network, no production DB: ``http_get`` and ``unwrap_hubcloud``
-are stubbed. Fixture tokens/URLs are fake.
+No network, no production DB: ``_vcloud_fetch`` (the pool-first hop
+fetcher) and ``unwrap_hubcloud`` are stubbed. Fixture tokens/URLs
+are fake. The ``http_get`` fallback inside ``_vcloud_fetch`` is
+pinned by test_vcloud_speed.py, not here.
 """
 
 from __future__ import annotations
@@ -85,7 +87,7 @@ class UnwrapVcloudCyTests(unittest.TestCase):
             (200, CY_URL, _cy_page()),
             (200, TOKEN_URL, _token_page()),
         ])
-        with mock.patch.object(fast_fetch, "http_get", getter), \
+        with mock.patch.object(fast_fetch, "_vcloud_fetch", getter), \
                 mock.patch.object(
                     fast_fetch, "unwrap_hubcloud",
                     return_value=(GOOGLE_URL, "google_cdn", 1)):
@@ -94,7 +96,6 @@ class UnwrapVcloudCyTests(unittest.TestCase):
         self.assertEqual(getter.call_args_list[1].args[0], CY_URL)
         for call in getter.call_args_list:
             self.assertEqual(call.kwargs.get("timeout"), 5)
-            self.assertEqual(call.kwargs.get("max_retries"), 0)
         by_service = {svc: url for _name, svc, url, _t in out}
         self.assertEqual(by_service.get("google_cdn"), GOOGLE_URL)
 
@@ -105,7 +106,7 @@ class UnwrapVcloudCyTests(unittest.TestCase):
             (200, CY_URL, _cy_page()),
             (200, TOKEN_URL, "<html>no links</html>"),
         ])
-        with mock.patch.object(fast_fetch, "http_get", getter):
+        with mock.patch.object(fast_fetch, "_vcloud_fetch", getter):
             out = fast_fetch.unwrap_vcloud(API_URL)
         self.assertEqual(getter.call_args_list[1].args[0], CY_URL)
         self.assertEqual(len(out), 1)
@@ -118,7 +119,7 @@ class UnwrapVcloudCyTests(unittest.TestCase):
             (200, API_URL, _api_page_with_token()),
             (200, TOKEN_URL, "<html>no links</html>"),
         ])
-        with mock.patch.object(fast_fetch, "http_get", getter):
+        with mock.patch.object(fast_fetch, "_vcloud_fetch", getter):
             out = fast_fetch.unwrap_vcloud(API_URL)
         self.assertEqual(getter.call_count, 2, getter.call_args_list)
         fetched = [c.args[0] for c in getter.call_args_list]
@@ -131,7 +132,7 @@ class UnwrapVcloudCyTests(unittest.TestCase):
         one fetch, temp 0."""
         getter = mock.Mock(return_value=(
             200, API_URL, "<html><body>no token here</body></html>"))
-        with mock.patch.object(fast_fetch, "http_get", getter):
+        with mock.patch.object(fast_fetch, "_vcloud_fetch", getter):
             out = fast_fetch.unwrap_vcloud(API_URL)
         self.assertEqual(getter.call_count, 1)
         self.assertEqual(out, [("V-Cloud", "vcloud", API_URL, 0)])
@@ -142,7 +143,7 @@ class UnwrapVcloudCyTests(unittest.TestCase):
             (200, API_URL, _api_page_without_token()),
             (0, CY_URL, "ERROR: timeout"),
         ])
-        with mock.patch.object(fast_fetch, "http_get", getter):
+        with mock.patch.object(fast_fetch, "_vcloud_fetch", getter):
             out = fast_fetch.unwrap_vcloud(API_URL)
         self.assertEqual(getter.call_count, 2)
         self.assertEqual(out, [("V-Cloud", "vcloud", API_URL, 0)])
@@ -153,7 +154,7 @@ class UnwrapVcloudCyTests(unittest.TestCase):
             (200, API_URL, _api_page_without_token()),
             (200, CY_URL, "<html><body>shell, no token</body></html>"),
         ])
-        with mock.patch.object(fast_fetch, "http_get", getter):
+        with mock.patch.object(fast_fetch, "_vcloud_fetch", getter):
             out = fast_fetch.unwrap_vcloud(API_URL)
         self.assertEqual(getter.call_count, 2)
         self.assertEqual(out, [("V-Cloud", "vcloud", API_URL, 0)])
@@ -164,7 +165,7 @@ class UnwrapVcloudCyTests(unittest.TestCase):
         sentinel = object()
         seen = []
 
-        def fake_http_get(url, timeout=5, max_retries=0, clearance=None):
+        def fake_http_get(url, timeout=5, clearance=None):
             seen.append(clearance)
             if url == API_URL:
                 return (200, API_URL, _api_page_without_token())
@@ -172,7 +173,7 @@ class UnwrapVcloudCyTests(unittest.TestCase):
                 return (200, CY_URL, _cy_page())
             return (200, url, "<html>no links</html>")
 
-        with mock.patch.object(fast_fetch, "http_get", fake_http_get):
+        with mock.patch.object(fast_fetch, "_vcloud_fetch", fake_http_get):
             out = fast_fetch.unwrap_vcloud(API_URL, clearance=sentinel)
         self.assertEqual(len(seen), 3)
         self.assertTrue(all(c is sentinel for c in seen))

@@ -24,8 +24,10 @@ import re
 import json
 import time
 import base64
+import calendar
 import codecs
 import difflib
+import http.client
 import http.cookiejar
 import sqlite3
 import argparse
@@ -2313,6 +2315,251 @@ def http_get(url: str, timeout: int = 15, max_retries: int = 2, allow_probe: boo
     return 0, norm_url, "ERROR: request failed"
 
 
+# ── Keep-alive fetch (VCloud one-round, 2026-11-23) ──────────────────────────
+
+#: Bound on the VCloud keep-alive pool: one connection per (scheme, host,
+#: port). The api page, the _cy/slug page and the token page are all
+#: vcloud.my, so one pooled connection serves the whole chain after the
+#: first dial, and the gpdl hop keeps its own. Past the bound the
+#: least-recently-used connection is closed and dropped. Same shape as
+#: ``importers.host_resolvers.KeepAliveFetch`` (HubCloud one-round) —
+#: that branch had not landed when this one was written, so the pattern
+#: is vendored here instead of imported; when it lands the two pools
+#: can be unified.
+_VCLOUD_KEEPALIVE_MAX_CONNECTIONS = 8
+
+#: Bodies bigger than this are never left half-read on a reusable
+#: connection: the connection is dropped instead of poisoned, and the
+#: capped body is kept. VCloud pages run ~11-29 KB; 1 MB is headroom,
+#: not a target.
+_VCLOUD_KEEPALIVE_READ_CAP = 1024 * 1024
+
+
+class _KeepAliveFetch:
+    """``http_get``-shaped fetch over reused ``http.client`` connections.
+
+    One connection per (scheme, host, port), created lazily through
+    ``warp_proxy.make_connection`` so a configured WARP proxy is
+    tunnelled (CONNECT), exactly as the urllib openers are — the pool
+    never bypasses the egress the process was told to use. A lock
+    serialises use: ``http.client`` connections are not thread-safe,
+    and the serve path is threaded.
+
+    Measured 2026-11-23 (Oracle VM egress, manual chain): the api ->
+    slug -> token hops cost ~2.7 s on fresh urllib connections, most
+    of it the WARP-tunnelled slug hop's dial + TLS. The win is the
+    handshake the second GET stops paying, not a new endpoint — the
+    chain is forced.
+
+    A dead connection (server closed it, reset, broken pipe, bad status
+    line) is dropped and the request retried on a fresh connection —
+    the connection was dead, not the server. Any other transport
+    failure is reported as status 0 so the caller can fall back to
+    ``http_get`` (which owns retries / the TLD probe / clearance
+    invalidation). An HTTP answer, including a 429, is never retried:
+    it is evidence, not a transport failure.
+    """
+
+    def __init__(self, connection_factory=None,
+                 max_connections: int = _VCLOUD_KEEPALIVE_MAX_CONNECTIONS):
+        self._factory = connection_factory or self._default_factory
+        self._max = max(1, int(max_connections))
+        self._conns: dict[tuple[str, int, bool], object] = {}
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def _default_factory(host, port, https, timeout, context):
+        return warp_proxy.make_connection(host, port, https, timeout,
+                                          context=context)
+
+    @property
+    def pooled_connections(self) -> int:
+        """How many connections the pool currently holds (tests/diagnostics)."""
+        with self._lock:
+            return len(self._conns)
+
+    def close(self) -> None:
+        """Drop every pooled connection (tests; process-shutdown hygiene)."""
+        with self._lock:
+            conns, self._conns = self._conns, {}
+        for conn in conns.values():
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def _drop_locked(self, key) -> None:
+        conn = self._conns.pop(key, None)
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def _conn_for_locked(self, key, timeout, context):
+        conn = self._conns.get(key)
+        if conn is not None:
+            # Reused: most-recently-used again, so eviction below
+            # drops the connection idle longest, not this one.
+            self._conns[key] = self._conns.pop(key)
+            return conn
+        host, port, https = key
+        conn = self._factory(host, port, https, timeout, context)
+        if len(self._conns) >= self._max:
+            self._drop_locked(next(iter(self._conns)))
+        self._conns[key] = conn
+        return conn
+
+    def fetch(self, url, timeout=15, clearance=None):
+        """``(status, final_url, text)``, ``http_get``'s shape.
+
+        ``status`` is 0 on a transport failure (with the error as the
+        text), so the caller can fall back to ``http_get``. The body is
+        decoded like ``http_get``'s (charset from Content-Type, else
+        UTF-8, errors replaced). Redirects are followed (6 max) on the
+        pool, each hop on its own pooled connection.
+        """
+        norm_url = normalize_url(url)
+        parts = urllib.parse.urlsplit(norm_url or "")
+        host = parts.hostname or ""
+        if not host:
+            return 0, norm_url, "ERROR: no host in URL"
+        try:
+            port = parts.port or (443 if parts.scheme == "https" else 80)
+        except ValueError:
+            return 0, norm_url, "ERROR: unparsable port"
+        headers = {
+            "User-Agent": USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        ua_used = USER_AGENT
+        if clearance is not None:
+            try:
+                c_header, c_ua = clearance.header_for(norm_url)
+            except Exception:
+                c_header, c_ua = None, None
+            if c_header:
+                headers["Cookie"] = c_header
+            if c_ua:
+                headers["User-Agent"] = c_ua
+                ua_used = c_ua
+        # A stored URL may carry raw non-ASCII and http.client encodes
+        # the request line as ASCII — percent-encode the target first.
+        target = urllib.parse.quote(parts.path or "/", safe="/%")
+        if parts.query:
+            target += "?" + urllib.parse.quote(parts.query, safe="=&%")
+        key = (host, port, parts.scheme == "https")
+        current_url = norm_url
+        for _redirect in range(6):
+            status, raw, resp_headers, error = 0, b"", {}, None
+            for _attempt in range(3):
+                with self._lock:
+                    try:
+                        conn = self._conn_for_locked(
+                            key, timeout, _tls_context(current_url))
+                        conn.request("GET", target, headers=headers)
+                        resp = conn.getresponse()
+                        raw = resp.read(_VCLOUD_KEEPALIVE_READ_CAP + 1)
+                        status = int(resp.status)
+                        resp_headers = {k.lower(): v
+                                        for k, v in resp.getheaders()}
+                        error = None
+                    except Exception as exc:  # dead conn, timeout, DNS, TLS
+                        # The connection cannot be trusted for the next
+                        # request — drop it and retry on a fresh one.
+                        self._drop_locked(key)
+                        error = exc
+                        status = 0
+                        continue
+                    if len(raw) > _VCLOUD_KEEPALIVE_READ_CAP:
+                        # Over the cap: the unread tail would poison the
+                        # connection, so drop it and keep the capped body.
+                        self._drop_locked(key)
+                        raw = raw[:_VCLOUD_KEEPALIVE_READ_CAP]
+                    break
+            if error is not None:
+                return 0, current_url, f"ERROR: {error}"
+            location = (resp_headers.get("location") or "").strip()
+            if status in (301, 302, 303, 307, 308) and location:
+                nxt = urllib.parse.urljoin(current_url, location)
+                nparts = urllib.parse.urlsplit(nxt)
+                nhost = nparts.hostname or ""
+                if not nhost:
+                    break
+                try:
+                    nport = (nparts.port
+                             or (443 if nparts.scheme == "https" else 80))
+                except ValueError:
+                    break
+                key = (nhost, nport, nparts.scheme == "https")
+                target = urllib.parse.quote(nparts.path or "/", safe="/%")
+                if nparts.query:
+                    target += "?" + urllib.parse.quote(nparts.query,
+                                                       safe="=&%")
+                current_url = nxt
+                continue
+            break
+        charset = "utf-8"
+        ctype = resp_headers.get("content-type", "")
+        m = re.search(r"charset=([^\s;]+)", ctype or "")
+        if m:
+            charset = m.group(1).strip("\"'")
+        text = raw.decode(charset, errors="replace")
+        if clearance is not None:
+            # Mirror http_get: a clean 200 captures a fresh clearance,
+            # a challenge invalidates the host at once. The store gates
+            # on status itself, so every HTTP answer is reported.
+            try:
+                clearance.note_response(current_url, status=status,
+                                        headers=resp_headers, body=text,
+                                        user_agent=ua_used)
+            except Exception:
+                pass
+        return status, current_url, text
+
+
+#: The process-wide VCloud keep-alive pool (see _KeepAliveFetch): one
+#: pool per process, bounded, shared by every VCloud resolve in it.
+_VCLOUD_KEEPALIVE = _KeepAliveFetch()
+
+
+def _vcloud_fetch(url, timeout=None, clearance=None):
+    """Pool-first fetch for the VCloud hops: ``http_get``'s shape.
+
+    The pool serves the hop when it can; on a transport failure
+    (status 0) the plain ``http_get`` path runs instead, with its
+    retries / TLD probe / clearance invalidation — the pool never
+    changes what a failure means. A pool-served answer also gets
+    ``http_get``'s bookkeeping: the vcloud domain-redirect track and
+    the sister-domain harvest.
+    """
+    if timeout is None:
+        timeout = RESOLVE_LANDING_TIMEOUT_SECONDS
+    code, final_url, text = _VCLOUD_KEEPALIVE.fetch(
+        url, timeout=timeout, clearance=clearance)
+    if code == 0:
+        return http_get(url, timeout=timeout,
+                        max_retries=RESOLVE_LANDING_MAX_RETRIES,
+                        clearance=clearance)
+    try:
+        p_orig = urllib.parse.urlparse(normalize_url(url))
+        p_final = urllib.parse.urlparse(final_url)
+        if (p_orig.netloc and p_final.netloc
+                and p_orig.netloc.lower() != p_final.netloc.lower()
+                and "vcloud" in p_orig.netloc.lower()):
+            new_base = f"{p_final.scheme}://{p_final.netloc}".rstrip("/")
+            set_domain("vcloud", new_base)
+            DOMAINS["vcloud"] = new_base
+    except Exception:
+        pass
+    try:
+        harvest_sister_domains(text)
+    except Exception:
+        pass
+    return code, final_url, text
+
+
 # ── Sitemap Indexer ───────────────────────────────────────────────────────────
 
 def extract_xml_tags(xml_text: str, tag: str) -> list[str]:
@@ -3357,7 +3604,16 @@ def unwrap_fastdl(fastdl_url: str) -> tuple[str, str, int]:
     return fastdl_url, res_id, 0
 
 
-def unwrap_vcloud(vcloud_url: str, clearance=None) -> list[tuple[str, str, str, int]]:
+#: Single-segment paths the bare-slug fallback must never mistake for a
+#: file slug: nav words a page could link on the same host. A real slug
+#: is 16 random characters, so no real slug ever equals one of these.
+_VCLOUD_SLUG_DENYLIST = frozenset({
+    "download", "login", "register", "home", "dmca", "contact", "api",
+    "search", "faq", "terms", "privacy", "about", "upload",
+})
+
+
+def unwrap_vcloud(vcloud_url: str, clearance=None, _fetch=None) -> list[tuple[str, str, str, int]]:
     """
     Decodes V-Cloud double base64 token and fetches direct server links
     (FSL Cloudflare R2 bucket & HubCloud 10Gbps servers & PixelDrain).
@@ -3366,11 +3622,17 @@ def unwrap_vcloud(vcloud_url: str, clearance=None) -> list[tuple[str, str, str, 
     ``clearance`` (H4 R8) is threaded to every ``http_get`` and to the
     nested HubCloud unwrap, so a protected vcloud landing reuses the
     host's stored clearance instead of paying it again.
+
+    ``_fetch`` is the hop fetcher (tests): the pool-first
+    ``_vcloud_fetch`` by default, so the api -> _cy/slug -> token hops
+    ride one keep-alive connection instead of three fresh dials (the
+    gpdl hop rides it too, via ``unwrap_hubcloud``'s ``fetch``).
     """
+    fetch = _fetch or _vcloud_fetch
     res_id = vcloud_url.rstrip("/").split("/")[-1].split("?")[0]
-    code, final_vcloud_url, html = http_get(
+    code, final_vcloud_url, html = fetch(
         vcloud_url, timeout=RESOLVE_LANDING_TIMEOUT_SECONDS,
-        max_retries=RESOLVE_LANDING_MAX_RETRIES, clearance=clearance)
+        clearance=clearance)
     if code != 200:
         return [("V-Cloud", "vcloud", vcloud_url, 0)]
 
@@ -3379,22 +3641,39 @@ def unwrap_vcloud(vcloud_url: str, clearance=None) -> list[tuple[str, str, str, 
     b64_m = re.search(r"atob\(\s*atob\(\s*['\"]([^'\"]+)['\"]\s*\)\s*\)", html)
     if not b64_m:
         # Current vcloud.my layout (live 2026-11-23, sweep H1): the
-        # api page no longer carries the token — it links a `_cy`
+        # api page no longer carries the token — it links an
         # intermediate page that does. Fetch it (same timeout /
-        # retries / clearance as the other hops; http_get routes
-        # through WARP when RADD_WARP_PROXY is on, which the _cy
-        # page needs — direct egress returns a shell without the
-        # token) and decode there. The `_cy` slug is stable per
+        # clearance as the other hops; the fetch routes through WARP
+        # when RADD_WARP_PROXY is on, which the intermediate page
+        # needs — direct egress returns a shell without the token)
+        # and decode there. The intermediate slug is stable per
         # link value. The old first-page path above stays as the
-        # fallback: when no `_cy` link exists, return the landing.
+        # fallback: when no intermediate link exists, return the landing.
+        # Two slug shapes live (2026-11-23): the ``_cy`` slug the H1
+        # audit pinned, tried first, and the bare slug fresh api pages
+        # link instead (``/4ptsbnwacaco4js`` — same page, same token,
+        # no ``_cy`` marker; 3 of 4 fresh links sampled). The bare
+        # shape is a same-host single-segment slug, never a nav path.
+        cy_href = None
         cy_m = re.search(r"""href=["']([^"']*_cy[^"']*)["']""", html)
-        if not cy_m:
+        if cy_m:
+            cy_href = cy_m.group(1).strip()
+        else:
+            _host = urllib.parse.urlparse(final_vcloud_url).netloc.lower()
+            for _href in re.findall(r"""href=["']([^"']+)["']""", html):
+                _full = urllib.parse.urljoin(final_vcloud_url, _href)
+                _parts = urllib.parse.urlparse(_full)
+                _seg = (_parts.path or "").lstrip("/")
+                if ((_parts.netloc or "").lower() == _host
+                        and re.fullmatch(r"[A-Za-z0-9_-]{8,}", _seg)
+                        and _seg.lower() not in _VCLOUD_SLUG_DENYLIST):
+                    cy_href = _href.strip()
+                    break
+        if not cy_href:
             return [("V-Cloud", "vcloud", final_vcloud_url, 0)]
-        cy_url = urllib.parse.urljoin(
-            final_vcloud_url, cy_m.group(1).strip())
-        cy_code, _cy_final, cy_html = http_get(
+        cy_url = urllib.parse.urljoin(final_vcloud_url, cy_href)
+        cy_code, _cy_final, cy_html = fetch(
             cy_url, timeout=RESOLVE_LANDING_TIMEOUT_SECONDS,
-            max_retries=RESOLVE_LANDING_MAX_RETRIES,
             clearance=clearance)
         if cy_code != 200:
             return [("V-Cloud", "vcloud", final_vcloud_url, 0)]
@@ -3412,9 +3691,8 @@ def unwrap_vcloud(vcloud_url: str, clearance=None) -> list[tuple[str, str, str, 
         return [("V-Cloud", "vcloud", final_vcloud_url, 0)]
 
     # Fetch token URL to get actual server buttons
-    t_code, _, t_html = http_get(token_url, timeout=RESOLVE_LANDING_TIMEOUT_SECONDS,
-                                 max_retries=RESOLVE_LANDING_MAX_RETRIES,
-                                 clearance=clearance)
+    t_code, _, t_html = fetch(token_url, timeout=RESOLVE_LANDING_TIMEOUT_SECONDS,
+                              clearance=clearance)
     if t_code != 200:
         return [("V-Cloud (Token)", "vcloud", token_url, 0)]
 
@@ -3445,7 +3723,7 @@ def unwrap_vcloud(vcloud_url: str, clearance=None) -> list[tuple[str, str, str, 
     # 2. HubCloud 10Gbps server & Google CDN
     hub_links = re.findall(r'href=[\"\'](https?://[^\s\"\']*hubcloud\.[^\s\"\']+)[\"\']', t_html)
     for l in hub_links:
-        direct_url, svc, is_temp = unwrap_hubcloud(l, clearance=clearance)
+        direct_url, svc, is_temp = unwrap_hubcloud(l, clearance=clearance, fetch=fetch)
         if svc == "google_cdn":
             resolved.append(("V-Cloud [Google Direct CDN]", "google_cdn", direct_url, is_temp))
         else:
@@ -3457,18 +3735,27 @@ def unwrap_vcloud(vcloud_url: str, clearance=None) -> list[tuple[str, str, str, 
     return resolved
 
 
-def unwrap_hubcloud(hub_url: str, clearance=None) -> tuple[str, str, int]:
+def unwrap_hubcloud(hub_url: str, clearance=None, fetch=None) -> tuple[str, str, int]:
     """
     Follows HubCloud GPDL link to direct Google CDN URL (video-downloads.googleusercontent.com)
     or falls back to the original HubCloud link.
 
     ``clearance`` (H4 R8) is threaded to the landing fetch, so a protected
     HubCloud page reuses the host's stored clearance.
+
+    ``fetch`` (VCloud one-round, 2026-11-23) is the hop fetcher to use for
+    the gpdl redirect instead of ``http_get`` — the caller passes its
+    keep-alive fetch so the redirect rides the pool. ``None`` keeps the
+    plain ``http_get`` path every other caller uses.
     """
     if "gpdl" in hub_url:
         try:
-            code, final_u, _ = http_get(hub_url, timeout=5, max_retries=1,
-                                        clearance=clearance)
+            if fetch is not None:
+                code, final_u, _ = fetch(hub_url, timeout=5,
+                                          clearance=clearance)
+            else:
+                code, final_u, _ = http_get(hub_url, timeout=5, max_retries=1,
+                                            clearance=clearance)
             if "link=" in final_u:
                 direct = urllib.parse.unquote(final_u.split("link=", 1)[1])
                 return direct, "google_cdn", 1
@@ -8069,6 +8356,148 @@ def _deadline_expired_answer(source_id: int) -> dict:
     }
 
 
+#: Services one VCloud token page fans out to at ingest that are directly
+#: playable files. Sibling banking only ever UPDATEs rows in this set —
+#: never the pressed row itself, never the HubCloud bridge row (its
+#: final_url is a landing page, not media — a press re-resolves it) and
+#: never the vcloud row (its final_url is the landing / token page).
+#: Never INSERTs a row the ingest did not create.
+_VCLOUD_SIBLING_SERVICES = ("fsl_r2", "pixeldrain", "google_cdn")
+
+#: is_temporary per sibling service: only the signed URLs die. The R2
+#: presigned link carries an 8 h window (the unwrapper's 0 predates the
+#: presigned-expiry read, so the table corrects it); the Google token is
+#: temporary with no signed window in its query; PixelDrain's /api/file/
+#: address is permanent.
+_VCLOUD_SIBLING_TEMPORARY = {"fsl_r2": 1, "pixeldrain": 0, "google_cdn": 1}
+
+#: PixelDrain ids the token page prints that are not files: ``negn6f``
+#: is a static placeholder that 404s on /api/file/ on both pixeldrain
+#: hosts (measured live 2026-11-23, twice) — banking it would clobber a
+#: sibling's good address with a dead one.
+_VCLOUD_DEAD_PIXELDRAIN_IDS = frozenset({"negn6f"})
+
+
+def _parse_vcloud_signed_expiry(url):
+    """``expires_at`` (epoch float) signed into a VCloud destination URL, else None.
+
+    Only the R2 presigned form carries one: ``X-Amz-Date`` (generation
+    instant, ``YYYYMMDDTHHMMSSZ``) + ``X-Amz-Expires`` (a LIFETIME in
+    seconds, not an epoch — 28800 is FSL's eight hours). Same shape
+    ``host_resolvers.r2_presigned_expiry`` reads. The Google token
+    carries no signed window in its query and PixelDrain none at all,
+    so both honestly report None: their rows keep the temporary ceiling
+    plus the cached probe as the guard, not an invented window.
+    """
+    try:
+        qs = urllib.parse.parse_qs(urllib.parse.urlsplit(url or "").query)
+    except Exception:
+        return None
+    date_raw = (qs.get("X-Amz-Date") or [""])[0]
+    life_raw = (qs.get("X-Amz-Expires") or [""])[0]
+    if not date_raw or not life_raw.isdigit():
+        return None
+    try:
+        issued = calendar.timegm(time.strptime(date_raw, "%Y%m%dT%H%M%SZ"))
+    except (ValueError, TypeError):
+        return None
+    return float(issued + int(life_raw))
+
+
+def _normalize_vcloud_candidates(results):
+    """One token page's destinations as bankable sibling candidates.
+
+    Takes ``unwrap_vcloud``'s 4-tuples and returns a list of
+    ``{"service", "final_url", "is_temporary", "expires_at"}``, one per
+    sibling service, first candidate wins. Non-sibling services
+    (``hubcloud`` bridge, ``vcloud`` landing) and the known-dead
+    PixelDrain placeholder are dropped, never banked.
+    """
+    by_service = {}
+    for entry in results or []:
+        try:
+            _name, service, url, _is_temp = entry
+        except (TypeError, ValueError):
+            continue
+        if service not in _VCLOUD_SIBLING_SERVICES or not url:
+            continue
+        if service == "pixeldrain":
+            _pd_id = urllib.parse.urlsplit(url).path.rstrip("/").split("/")[-1]
+            if _pd_id in _VCLOUD_DEAD_PIXELDRAIN_IDS:
+                continue
+        by_service.setdefault(service, {
+            "service": service,
+            "final_url": url,
+            "is_temporary": _VCLOUD_SIBLING_TEMPORARY[service],
+            "expires_at": _parse_vcloud_signed_expiry(url),
+        })
+    return list(by_service.values())
+
+
+def _bank_vcloud_siblings(*, release_id, pressed_id, source_url, candidates):
+    """Bank one token page's destinations onto every sibling row at once.
+
+    The page already published every destination, so each sibling row
+    filed under the SAME vcloud address (same ``release_id`` and same
+    ``source_url``, service in ``_VCLOUD_SIBLING_SERVICES``, not the
+    pressed row) gets its fresh URL, its temporary flag, ``status='active'``
+    and its true signed expiry — no per-destination re-resolve. Returns
+    how many rows were updated. Never raises: a sibling write must not
+    fail the press that already resolved. Only UPDATEs rows the ingest
+    created; a service with no row is skipped, never inserted.
+
+    The ``source_url`` match is the vcloud-specific guard: one release
+    holds several vcloud files (different api links / short slugs), and
+    a live check (2026-11-23, release 649245) showed the api link's
+    HubCloud id differs from the short URL's — two entry points to two
+    files, not one. Banking by release alone would serve the wrong
+    file; only rows filed under the pressed link's own address get
+    the fresh URLs.
+    """
+    if not candidates or release_id is None or not source_url:
+        return 0
+    by_service = {c["service"]: c for c in candidates}
+    try:
+        placeholders = ",".join("?" for _ in _VCLOUD_SIBLING_SERVICES)
+        with get_db() as conn:
+            rows = conn.execute(
+                "SELECT id, service FROM download_sources "
+                "WHERE release_id = ? AND id != ? AND source_url = ? "
+                "AND service IN (" + placeholders + ")",
+                (release_id, pressed_id, source_url,
+                 *_VCLOUD_SIBLING_SERVICES)).fetchall()
+            banked = []
+            for row in rows:
+                cand = by_service.get(row["service"])
+                if cand is None:
+                    continue
+                conn.execute(
+                    "UPDATE download_sources "
+                    "SET final_url = ?, is_temporary = ?, status = 'active', "
+                    "last_checked_at = CURRENT_TIMESTAMP, "
+                    "updated_at = CURRENT_TIMESTAMP, "
+                    "last_failed_at = NULL, failure_class = NULL "
+                    "WHERE id = ?",
+                    (cand["final_url"], cand["is_temporary"], row["id"]))
+                banked.append((row["id"], cand))
+    except Exception:
+        return 0
+    for sid, cand in banked:
+        try:
+            if cand["expires_at"] is not None:
+                record_link_expiry(sid, expires_at=cand["expires_at"],
+                                   observed_via="signed_params")
+            else:
+                # The new URL carries no signed lifetime (Google token /
+                # PixelDrain): drop any older measurement so a stale,
+                # longer window cannot outlive the token it was read from.
+                record_link_expiry(sid, clear=True,
+                                   observed_via="signed_params")
+        except Exception:
+            pass
+    return len(banked)
+
+
 def resolve_live_source(source_id: int, *, v2: bool = False,
                         want: str = "either", _failover: bool = True,
                         deadline: float | None = None) -> dict:
@@ -8397,6 +8826,13 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
     # request proving it again. Every other branch keeps the generic gate
     # unchanged.
     _gate_from_verdict = False
+    # VCloud one-round + bank-all (2026-11-23): the token page the
+    # dispatch just fetched carries EVERY destination, so the siblings
+    # are banked from this one fetch and no sibling re-resolves the
+    # same vcloud link. Set only by a VCloud branch that produced a
+    # fresh URL; every other host keeps the old path.
+    _vcloud_path = False
+    _vcloud_candidates = None
     # The dispatch chain below is a matcher, not a probe: when no branch
     # matches, nothing was contacted and nothing was measured. The failure
     # circuit in resolved_cache may only open on measured evidence, so the
@@ -8633,6 +9069,8 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                 if v_res:
                     fresh_url = v_res[0][2]
                     fresh_temp = v_res[0][3]
+                    _vcloud_path = True
+                    _vcloud_candidates = _normalize_vcloud_candidates(v_res)
             elif (service == "fastdl" or "fastdl" in source_u.lower()
                   or "fastdl" in cached_u.lower()):
                 _unwrap_branch_taken = True
@@ -9255,6 +9693,20 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
             fresh_url = None
             fresh_verdict = None
 
+    if fresh_url and _vcloud_path:
+        # One-round refresh: this token-page fetch already paid for every
+        # destination — bank the siblings now, while the URLs are fresh,
+        # instead of making each sibling re-resolve the same vcloud link.
+        # Placed after the Stage-2 gate (a gated-out URL banks nothing)
+        # and before the pressed-row bank below, so it also runs when
+        # the fresh URL equals the stored one. The source_url match keeps
+        # the bank on the pressed link's own file (see
+        # _bank_vcloud_siblings).
+        _bank_vcloud_siblings(release_id=src["release_id"],
+                              pressed_id=src["id"],
+                              source_url=src.get("source_url"),
+                              candidates=_vcloud_candidates)
+
     if not fresh_url and not _negative_cache_hit:
         # The dispatch produced nothing playable: record the failure
         # class for the negative cache. A branch that ran and failed —
@@ -9331,34 +9783,52 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
             if _subtitle_tracks is not None and embed_verdict is not None:
                 _subtitle_tracks.record_resolver_subtitles(
                     conn, int(src["id"]), embed_verdict)
-        # Ask the URL itself how long it lives, instead of assuming. A fresh token
-        # whose host declares no freshness window keeps `expires_at` NULL, and the
-        # next call then falls back to the documented 6-hour temporary-link
-        # ceiling rather than to a number we invented for it.
-        observed_ttl, observed_info = probe_url_ttl(fresh_url)
-        signed_ttl = (embed_verdict or {}).get("expires_in")
-        expires_at = observed_info.get("expires_at")
-        if expires_at is not None:
-            record_link_expiry(src["id"], observed_ttl, expires_at=expires_at,
-                               observed_via="response_headers")
-            src["expires_at"] = expires_at
-        elif isinstance(signed_ttl, (int, float)):
-            # The packer CDNs answer with no Cache-Control and no Expires, so
-            # `probe_url_ttl` honestly reports `no_directive` — but the lifetime is
-            # not missing, it is signed into the query the packer handed us, and
-            # `host_resolvers` already parsed it (`e` for mxdrop, `s` + `e` for
-            # pkembed). Recording that number is what makes the cached answer
-            # honest: without it a one-hour token would be served stale for five
-            # hours, because the ceiling below is a six-hour guess.
-            expires_at = time.time() + max(0.0, float(signed_ttl))
-            record_link_expiry(src["id"], expires_at=expires_at,
+        # VCloud one-round (2026-11-23): the fresh URL's lifetime may
+        # already be signed into its query (R2 presigned: X-Amz-Date +
+        # X-Amz-Expires), and the HEAD round trip below would then read
+        # the RESPONSE's freshness instead of the token's life — live
+        # the R2 HEAD answered max-age=900 while the signature lives
+        # ~3 h, so the pressed row used to re-resolve every 15 min and
+        # disagreed with its own banked sibling. A parseable signed
+        # window wins and the HEAD is skipped (same rule HubCloud
+        # one-round applied); without one the old path runs unchanged.
+        _vcloud_signed_expires = (
+            _parse_vcloud_signed_expiry(fresh_url) if _vcloud_path else None)
+        if _vcloud_signed_expires is not None:
+            record_link_expiry(src["id"],
+                               expires_at=_vcloud_signed_expires,
                                observed_via="signed_params")
-            src["expires_at"] = expires_at
-        elif observed_info.get("reason") == "no_directive":
-            # The host answered and declared nothing: drop any older measurement
-            # so a stale, longer window cannot outlive the token it was read from.
-            record_link_expiry(src["id"], clear=True, observed_via="no_directive")
-            src["expires_at"] = None
+            src["expires_at"] = _vcloud_signed_expires
+            expires_at = _vcloud_signed_expires
+        else:
+            # Ask the URL itself how long it lives, instead of assuming. A fresh token
+            # whose host declares no freshness window keeps `expires_at` NULL, and the
+            # next call then falls back to the documented 6-hour temporary-link
+            # ceiling rather than to a number we invented for it.
+            observed_ttl, observed_info = probe_url_ttl(fresh_url)
+            signed_ttl = (embed_verdict or {}).get("expires_in")
+            expires_at = observed_info.get("expires_at")
+            if expires_at is not None:
+                record_link_expiry(src["id"], observed_ttl, expires_at=expires_at,
+                                   observed_via="response_headers")
+                src["expires_at"] = expires_at
+            elif isinstance(signed_ttl, (int, float)):
+                # The packer CDNs answer with no Cache-Control and no Expires, so
+                # `probe_url_ttl` honestly reports `no_directive` — but the lifetime is
+                # not missing, it is signed into the query the packer handed us, and
+                # `host_resolvers` already parsed it (`e` for mxdrop, `s` + `e` for
+                # pkembed). Recording that number is what makes the cached answer
+                # honest: without it a one-hour token would be served stale for five
+                # hours, because the ceiling below is a six-hour guess.
+                expires_at = time.time() + max(0.0, float(signed_ttl))
+                record_link_expiry(src["id"], expires_at=expires_at,
+                                   observed_via="signed_params")
+                src["expires_at"] = expires_at
+            elif observed_info.get("reason") == "no_directive":
+                # The host answered and declared nothing: drop any older measurement
+                # so a stale, longer window cannot outlive the token it was read from.
+                record_link_expiry(src["id"], clear=True, observed_via="no_directive")
+                src["expires_at"] = None
         return {
             "success": True,
             "id": src["id"],

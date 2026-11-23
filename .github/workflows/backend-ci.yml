@@ -1058,9 +1058,18 @@ jobs:
 
       # VCloud _cy-first (sweep H1, 2026-11-23): when the api page has no
       # atob(atob()), fetch the _cy page first and decode there; old
-      # first-page path kept as fallback. Offline - mocked http_get.
+      # first-page path kept as fallback. Offline - mocked _vcloud_fetch.
       - name: 🧪 test_unwrap_vcloud_cy.py
         run: python3 -S Fast_Fetch/test_unwrap_vcloud_cy.py
+
+      # VCloud one-round + bank-all (2026-11-23): the api -> intermediate
+      # -> token hops ride one keep-alive connection (pool-first fetch
+      # with http_get fallback), the bare-slug intermediate fresh api
+      # pages link resolves beside _cy, and one token-page fetch banks
+      # every playable sibling with its own expiry. Offline — canned
+      # fetches, temp SQLite files.
+      - name: 🧪 test_vcloud_speed.py
+        run: python3 -S Fast_Fetch/test_vcloud_speed.py
 
       # Greenmotors -> multicloudlinks (sweep H3b, 2026-11-23): the decoded
       # destination is now a multicloudlinks player.php page; its streamSrc
