@@ -749,14 +749,15 @@ class UnwrapWiringTests(unittest.TestCase):
                 base64.b64encode(token_url.encode()).decode().encode()
             ).decode()
 
-            def fake_http_get(url, timeout=10, max_retries=2, clearance=None):
+            def fake_vcloud_fetch(url, timeout=None, clearance=None):
                 seen["n"] += 1
                 self.assertIs(clearance, store)
                 if "vcloud" in url:
                     return (200, url, f"<script>var url = atob(atob('{inner}'));</script>")
                 return (200, url, "<html>no links</html>")
 
-            with mock.patch.object(fast_fetch, "http_get", fake_http_get):
+            with mock.patch.object(fast_fetch, "_vcloud_fetch",
+                                   fake_vcloud_fetch):
                 out = fast_fetch.unwrap_vcloud(
                     "https://vcloud.beer/abc", clearance=store)
             self.assertEqual(seen["n"], 2)
