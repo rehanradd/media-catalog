@@ -586,6 +586,17 @@ jobs:
       - name: 🧪 test_resolver_probes.py
         run: python3 -S Fast_Fetch/test_resolver_probes.py
 
+      # Bank defects (latency audit 2026-11-23): (a) a negative-cache hit
+      # on a temporary copy with a bridge re-mints instead of 404ing —
+      # a permanent copy, and a temporary copy with no bridge, keep the
+      # skip; (b1) a successful resolve never banks an already-expired
+      # expiry (a stale ledger value is cleared, the 6 h ceiling
+      # applies); (b2) a 403 re-probe on a signed URL whose window is
+      # still open serves the row (header refusal, not a dead file).
+      # Offline, stdlib, temp-DB dispatch + stub probers, no network.
+      - name: 🧪 test_bank_defects.py
+        run: python3 -S Fast_Fetch/test_bank_defects.py
+
       # Phase C (GDFlix): the real button-flow resolver — Instant DL
       # (busycdn 302 → fastdl-one ?url= signed Google URL), legacy DIRECT
       # DL / CLOUD DOWNLOAD [R2] / PixelDrain DL buttons, DriveBot token
