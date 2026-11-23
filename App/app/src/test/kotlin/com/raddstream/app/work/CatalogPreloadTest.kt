@@ -7,16 +7,22 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.junit.runners.JUnit4
+import org.robolectric.RobolectricTestRunner
 
 /**
  * Feel-instant S8: the preload contract, pinned without a device — the
  * overnight window is the safety case (a constraint silently dropped is
  * either a warm that burns mobile data or one that never runs), and the
  * rail filter is the scope (a worker must never fetch a rail it cannot
- * serve). Plain JUnit4: nothing here touches the Android framework.
+ * serve). Robolectric, not plain JUnit4: WorkManager's
+ * Constraints.Builder.build() ANDs requiresDeviceIdle with
+ * Build.VERSION.SDK_INT >= 23, and under compileSdk 36 the plain-JUnit
+ * android.jar stub reports SDK_INT = 0, so the idle flag is silently
+ * dropped and the "warm must wait for idle" assert fails even though the
+ * function calls setRequiresDeviceIdle(true). Robolectric provides a real
+ * SDK_INT (targetSdk 35), so the flag survives build().
  */
-@RunWith(JUnit4::class)
+@RunWith(RobolectricTestRunner::class)
 class CatalogPreloadTest {
 
     @Test
