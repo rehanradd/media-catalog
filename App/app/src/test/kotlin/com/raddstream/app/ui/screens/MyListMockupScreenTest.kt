@@ -337,7 +337,13 @@ class MyListMockupScreenTest {
     fun hiddenBranchShowsTheTrendingRailWhenLoaded() {
         hiddenContent(popular = listOf(post(1, "Inception"), post(2, "Dune")))
         compose.onNodeWithText("Trending to Start Your List").assertIsDisplayed()
-        compose.onNodeWithText("Inception", useUnmergedTree = true).assertIsDisplayed()
+        // Audit #9 (Nov 2026): the title is findable only in the tile's
+        // paint-only caption now — and the caption sits below the poster,
+        // below the Robolectric fold the fallback label used to clear, so
+        // the rail is scrolled into view first (as the second-rail test
+        // already does for its own rail).
+        compose.onNodeWithText("Inception", useUnmergedTree = true)
+            .performScrollTo().assertIsDisplayed()
     }
 
     @Test
