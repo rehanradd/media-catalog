@@ -1,0 +1,100 @@
+name: 🧹 Training Pairs — Scrub Check
+
+# WHAT THIS DOES
+#   Quality gate for the resolver-maintainer training data in
+#   resolver-maintainer-training/: on every push or PR touching that
+#   directory, run scrub_check.py over sft_train.jsonl + sft_eval.jsonl
+#   and FAIL the run if it finds any secret (key=value, long token-like
+#   run, mixed-case token) — a hit means a real secret reached the
+#   dataset and must be redacted before the data can be trained on.
+#   A second step proves the dataset stats agree with the files
+#   (train/eval/total counts and per-job splits in sft_stats.json).
+#
+# WHAT IT NEEDS
+#   Nothing secret. Stdlib-only Python, no installs, no network.
+#   The dataset itself ships in the repo (Phase 0, 371 pairs); the
+#   workflow reads it, never the live catalog or any HAR file.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["**"]
+    paths:
+      - "resolver-maintainer-training/**"
+      - ".github/workflows/training-pairs-scrub.yml"
+  pull_request:
+    paths:
+      - "resolver-maintainer-training/**"
+      - ".github/workflows/training-pairs-scrub.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: training-pairs-scrub-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scrub:
+    name: scrub check + dataset stats
+    runs-on: ubuntu-24.04   # pinned, not ubuntu-latest, so runner drift is visible
+    timeout-minutes: 10
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: 🐍 Interpreter report (no pip, no installs)
+        run: |
+          python3 --version
+          echo "Runner system Python in use. This workflow must never pip-install."
+
+      # Exit 1 on ANY hit — a secret in the training data is a red X,
+      # not a warning. scrub_check.py prints the (truncated) hits.
+      - name: 🧹 scrub_check.py (0 hits required)
+        run: python3 -S resolver-maintainer-training/scrub_check.py
+
+      # The stats file is the dataset's own claim about itself; prove the
+      # files agree with it (counts + per-job splits by system prompt).
+      - name: 📊 Dataset stats match sft_stats.json
+        run: |
+          python3 -S - <<'PY'
+          import json, sys
+          from collections import Counter
+          from pathlib import Path
+          base = Path("resolver-maintainer-training")
+          for name in ("scrub_check.py", "sft_train.jsonl",
+                       "sft_eval.jsonl", "sft_stats.json"):
+              if not (base / name).is_file():
+                  print(f"MISSING: {base / name}")
+                  sys.exit(1)
+          stats = json.loads((base / "sft_stats.json").read_text(encoding="utf-8"))
+          def load(path):
+              return [json.loads(line) for line in
+                      open(path, encoding="utf-8") if line.strip()]
+          train = load(base / "sft_train.jsonl")
+          evl = load(base / "sft_eval.jsonl")
+          prompts = stats["system_prompts"]  # job -> system text
+          def job_of(ex):
+              sys_msg = next((m["content"] for m in ex["messages"]
+                              if m["role"] == "system"), "")
+              for job, text in prompts.items():
+                  if sys_msg == text:
+                      return job
+              return "<unknown>"
+          train_jobs = Counter(job_of(e) for e in train)
+          eval_jobs = Counter(job_of(e) for e in evl)
+          print(f"train: {len(train)} (stats: {stats['train']})  "
+                f"eval: {len(evl)} (stats: {stats['eval']})  "
+                f"total: {len(train) + len(evl)} (stats: {stats['total_pairs']})")
+          print("train per job:", dict(train_jobs), " stats:", stats["train_per_job"])
+          print("eval per job:", dict(eval_jobs), " stats:", stats["eval_per_job"])
+          ok = (len(train) == stats["train"] and len(evl) == stats["eval"]
+                and len(train) + len(evl) == stats["total_pairs"]
+                and dict(train_jobs) == stats["train_per_job"]
+                and dict(eval_jobs) == stats["eval_per_job"])
+          if not ok:
+              print("STATS MISMATCH — files disagree with sft_stats.json")
+              sys.exit(1)
+          print("STATS OK")
+          PY

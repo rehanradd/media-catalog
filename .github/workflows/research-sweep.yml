@@ -1,0 +1,82 @@
+name: 🔍 Research Sweep — Nightly Host Analysis
+
+# WHAT THIS DOES
+#   Once a night, from the runner's own public egress, probe every
+#   non-retired site in Fast_Fetch/domain_registry.json (base URL, sitemap
+#   endpoint, API endpoint; up to 2 known mirrors only when the base is
+#   dead) and upload the verdicts as an artifact for the next registry
+#   correction: moved / down / sitemap-dead / mirror-alive / rate-limited.
+#
+# WHAT IT NEEDS
+#   Nothing secret. No Oracle egress, no live service, no catalog read,
+#   no GPU, no device browser. Linux-only, standard runner. The script is
+#   stdlib-only (urllib), paced ~1.2 s between requests, 20 s timeouts,
+#   bounded by a 45-minute time budget — and it stores no response bodies,
+#   only status / final URL / byte length / a sitemap sniff verdict.
+#
+# WHAT IT IS NOT
+#   Not a gate: dead sites are FINDINGS, not failures. The script exits 0
+#   when the sweep completes however many sites are down; only an internal
+#   error (registry unreadable) fails the job. A red X here means the sweep
+#   itself broke, never that a site is down.
+#
+#   The nightly run is the point — do not force-run the full 45-minute
+#   sweep just to verify this file. `workflow_dispatch` with a small
+#   `limit` (e.g. 2) proves the workflow end to end in about a minute.
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Probe at most N sites (empty = all)"
+        required: false
+        default: ""
+      time-budget-minutes:
+        description: "Stop gracefully after this many minutes"
+        required: false
+        default: "45"
+
+permissions:
+  contents: read
+
+concurrency:
+  # One sweep at a time; a dispatch never kills a running nightly run.
+  group: research-sweep
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    name: probe registry sites (public egress only)
+    runs-on: ubuntu-latest   # standard runner, no secrets, no GPU
+    timeout-minutes: 70
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: 🐍 Interpreter report (no pip, no installs)
+        run: |
+          python3 --version
+          echo "Runner system Python in use. This workflow must never pip-install."
+
+      - name: 🔍 Run the research sweep
+        run: |
+          ARGS="--out research-sweep/${{ github.run_id }} --time-budget-minutes ${{ inputs.time-budget-minutes || '45' }}"
+          if [ -n "${{ inputs.limit }}" ]; then ARGS="$ARGS --limit ${{ inputs.limit }}"; fi
+          python3 -S .github/scripts/research_sweep.py $ARGS
+
+      - name: 📋 Show the summary in the log
+        if: always()
+        run: |
+          cat research-sweep/${{ github.run_id }}/SUMMARY.md || echo "no summary written (sweep failed before output)"
+
+      - name: 📤 Upload sweep results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: research-sweep-${{ github.run_number }}
+          path: research-sweep/
+          if-no-files-found: error
+          retention-days: 30
