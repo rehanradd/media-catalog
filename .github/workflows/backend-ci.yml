@@ -1102,6 +1102,12 @@ jobs:
       # Offline — canned gamerxyt pages, temp SQLite, fake connections.
       - name: 🧪 test_hubcloud_oneround.py
         run: python3 -S Fast_Fetch/test_hubcloud_oneround.py
+
+      # mp4moviez dl.php unwrapper (sweep FIX2, 2026-11-23): pure 3-hop
+      # redirect chain to a real .mp4 (301 -> 302 -> 200 video/mp4).
+      # Offline - loopback server mimicking the measured chain.
+      - name: 🧪 test_unwrap_mp4moviez.py
+        run: python3 -S Fast_Fetch/importers/test_unwrap_mp4moviez.py
       # XprimeHub (Session 104): the 19th site, 18+ adult catalog — scrape only.
       # The flag is the feature: every row is_18_plus = 1 by site authority, and the
       # registry entry records scrape-only / never publish. Offline — temp SQLite files.
