@@ -352,6 +352,72 @@ class ImageButtonBridgeTests(unittest.TestCase):
             ])
 
 
+class RestSeedTests(unittest.TestCase):
+    def test_rest_seed_sends_categories_and_pages(self):
+        payloads = {
+            1: ('[{"link":"https://animeworld.live/one-piece-2024/"},'
+                '{"link":"https://animeworld.live/category/anime/"}]',
+                {"x-wp-totalpages": "2"}),
+            2: ('[{"link":"https://animeworld.live/naruto-2024/"}]', {}),
+        }
+        seen_urls = []
+
+        def fake_full(url, **_kw):
+            seen_urls.append(url)
+            page = 2 if "page=2" in url else 1
+            text, headers = payloads[page]
+            return 200, url, text, headers
+
+        cfg = {"base": "https://animeworld.live", "sitemaps": [],
+               "rest": "https://animeworld.live/wp-json/wp/v2/posts",
+               "rest_categories": "1,2,3,5",
+               "exclude": r"/category/"}
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(wp, "_http_get_full", side_effect=fake_full):
+            db = Path(tmp) / "aw.db"
+            fresh = wp.sync_catalog("animeworld", db, config=cfg, verbose=False)
+            self.assertEqual(fresh, 2)
+            self.assertTrue(all("categories=1,2,3,5" in u for u in seen_urls),
+                            "every REST page carries the category filter")
+            conn = sqlite3.connect(db)
+            try:
+                self.assertEqual(
+                    conn.execute("SELECT loc FROM sitemap_cache ORDER BY loc").fetchall(),
+                    [("https://animeworld.live/naruto-2024/",),
+                     ("https://animeworld.live/one-piece-2024/",)])
+            finally:
+                conn.close()
+
+    def test_animeworld_config_uses_rest_without_blog(self):
+        cfg = wp.SITES["animeworld"]
+        self.assertEqual(cfg["rest"], "https://animeworld.live/wp-json/wp/v2/posts")
+        cats = (cfg.get("rest_categories") or "").split(",")
+        self.assertEqual(cats, ["1", "2", "3", "5"])
+        self.assertNotIn("17", cats, "Blog (17) editorials are not title entries")
+
+
+ANIMEWORLD_TITLE_PAGE = """<html><head>
+<meta property="og:title" content="The Quintessential Quintuplets - Anime World">
+<meta property="og:description" content="Five sisters, one tutor.">
+<meta property="og:image" content="https://animeworld.live/wp-content/uploads/qq.jpg">
+</head><body>
+<h1>The Quintessential Quintuplets</h1>
+<iframe src="https://www.youtube-nocookie.com/embed/cj6NGP9nNwI" title="Official trailer"></iframe>
+<a href="https://www.crunchyroll.com/series/GY4PD7Z06/the-quintessential-quintuplets">Watch</a>
+</body></html>"""
+
+
+class AnimeworldTests(unittest.TestCase):
+    def test_title_page_with_trailer_only_has_no_playable_object(self):
+        # Measured live 2026-11-23: 34/34 sampled title pages carry only a
+        # YouTube trailer iframe + outbound platform links. The parser must
+        # decline them, not bank the trailer or the Crunchyroll link.
+        self.assertIsNone(wp.parse_page(
+            ANIMEWORLD_TITLE_PAGE,
+            "https://animeworld.live/the-quintessential-quintuplets/",
+            "animeworld"))
+
+
 class DooplayTests(unittest.TestCase):
     PAGE = ('<html><head><meta property="og:title" content="Generation Iron 2 (2017)">'
             '</head><body><ul id="playeroptionsul" class="ajax_mode">'

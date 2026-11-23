@@ -977,8 +977,8 @@
     },
     "animeworld": {
       "active_base_url": "https://animeworld.live",
-      "last_verified": "2026-11-21T16:00:00Z",
-      "verified_by": "sitemap",
+      "last_verified": "2026-11-23T01:18:58Z",
+      "verified_by": "wp_rest_api",
       "known_mirrors": [
         "https://animeworld.live"
       ],
@@ -988,12 +988,13 @@
       "tld_history": [
         "live"
       ],
-      "api_type": "xml_sitemap",
+      "api_type": "wp_rest_api",
       "status": "active",
       "rotation_history": [],
-      "last_checked": "2026-11-21T16:00:00Z",
+      "last_checked": "2026-11-23T01:18:58Z",
       "sitemap_endpoint": "/sitemap_index.xml",
-      "notes": "WordPress, 596 posts, Hindi-dub episode pages. sitemap_index 200 (1,287 B) 2026-11-21; root 200, 121 KB."
+      "notes": "WordPress, 820 posts, Hindi-dub episode pages. WP REST proven live 2026-11-23 (X-WP-Total 820; 550 in Anime/Movies/Series/Cartoon, Blog excluded via categories=1,2,3,5). REST seed added 2026-11-23, sitemap sync kept. CRAWL BLOCKED 2026-11-23: 34/34 sampled title pages carry no server-rendered player (YouTube trailer + outbound Crunchyroll/Netflix links only); wp_family crawl declines every page as no-playable-object — needs a real-browser pass, not a parser tweak.",
+      "api_endpoint": "/wp-json/wp/v2/posts"
     },
     "hindidubbedmovies": {
       "active_base_url": "https://hindidubbedmovies.pk",
