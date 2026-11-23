@@ -177,8 +177,11 @@ def _clean_label_value(key: str, raw: str) -> str:
 
 def _split_list(value: str) -> list[str]:
     parts = []
-    for piece in re.split(r"[,/|]", value or ""):
+    for piece in re.split(r"[,/|]|\s+and\s+", value or ""):
         token = re.sub(r"\s+", " ", piece).strip(" .")
+        # Oxford-comma lists ("A, B, and C") leave a leading "and".
+        if token.lower().startswith("and "):
+            token = token[4:].lstrip()
         if token:
             parts.append(token)
     return parts
@@ -298,6 +301,26 @@ def _is_genre_category(name: str) -> bool:
     return True
 
 
+def genres_from_categories(names: list[str] | None) -> list[str] | None:
+    """Filtered, title-cased genre names from a raw WP category list.
+
+    Same filter as the category path of :func:`genres_from_post`, but
+    without touching the post's labels or excerpt — for importers whose
+    excerpts are wrong-title and whose label parse is content-only.
+    """
+    out: list[str] = []
+    for name in names or []:
+        name = (name or "").strip()
+        if not name or not _is_genre_category(name):
+            continue
+        # WP categories are often ALL-CAPS ("DRAMA"); bank the
+        # title-cased form. The label path keeps the source casing.
+        name = name.title()
+        if name not in out:
+            out.append(name)
+    return out or None
+
+
 def genres_from_post(post: dict) -> list[str] | None:
     """Genres for a WP post dict: ``Genres:`` label first, then filtered
     ``_embedded`` category names. Returns None when neither carries one."""
@@ -305,7 +328,7 @@ def genres_from_post(post: dict) -> list[str] | None:
     if labels.get("genres"):
         return list(labels["genres"])
     embedded = post.get("_embedded") or {}
-    names: list[str] = []
+    raw_names: list[str] = []
     for group in embedded.get("wp:term") or []:
         if not isinstance(group, list):
             continue
@@ -314,13 +337,8 @@ def genres_from_post(post: dict) -> list[str] | None:
                 continue
             if (term.get("taxonomy") or "category") != "category":
                 continue
-            name = (term.get("name") or "").strip()
-            # WP categories are often ALL-CAPS ("DRAMA"); bank the
-            # title-cased form. The label path keeps the source casing.
-            name = name.title()
-            if name and _is_genre_category(name) and name not in names:
-                names.append(name)
-    return names or None
+            raw_names.append((term.get("name") or "").strip())
+    return genres_from_categories(raw_names)
 
 
 def _norm_headers(headers: dict | None) -> dict:

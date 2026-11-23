@@ -526,5 +526,29 @@ class TestMoviezguruGenres(unittest.TestCase):
         self.assertEqual(wp_rest.genres_from_post(post), ["Action"])
 
 
+class TestRareanimesGenres(unittest.TestCase):
+    def test_junk_categories_yield_no_genres(self):
+        # rareanimes files everything under junk buckets ("Animes",
+        # "COMPLETED", "Hindi Dub") — none of those is a genre.
+        self.assertIsNone(wp_rest.genres_from_categories(
+            ["Animes", "COMPLETED", "Hindi Anime", "Hindi Dub", "2026"]))
+
+    def test_real_categories_survive_filter(self):
+        self.assertEqual(wp_rest.genres_from_categories(
+            ["Action", "Drama", "2026", "Hindi Dubbed"]),
+            ["Action", "Drama"])
+
+    def test_and_split_no_comma_genres(self):
+        labels = wp_rest.parse_labelled_text(
+            "Genres: Animation and Drama\nCast: A, B")
+        self.assertEqual(labels["genres"], ["Animation", "Drama"])
+
+    def test_oxford_comma_and_stripped(self):
+        labels = wp_rest.parse_labelled_text(
+            "Genres: Animation, Action & Adventure, Crime, and Drama")
+        self.assertEqual(labels["genres"],
+                         ["Animation", "Action & Adventure", "Crime", "Drama"])
+
+
 if __name__ == "__main__":
     unittest.main()
