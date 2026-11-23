@@ -13,6 +13,11 @@ Tests:
   6. Save path: a saved post in a temp staging DB.
   7. Post sync: mocked wp-json pages -> sitemap_cache rows.
   8. Registry: the moviesdrive entry exists with the wp-json endpoint.
+  9. Series Info block: rating/director/stars/country/language/year/
+     storyline parsed from the post body; a 0.0 rating is dropped.
+  10. Rich post: poster/backdrop/synopsis/genres/cast/director/imdb_id/
+      raw_meta populated from the WP post (field population, 2026-11-23);
+      duration/release_date stay NULL (the source carries neither).
 
 100% Python Standard Library. Zero external pip packages. Offline — temp SQLite
 files only, no network, no catalog read. Fixture file-host URLs use the
@@ -104,6 +109,62 @@ SAMPLE_MD_ARCH_NO_HOST_HTML = """
 <!DOCTYPE html>
 <html><head><title>Some Title (2026) 480p x264 [500 MB]</title></head>
 <body><p><a href="https://mdrive.lol/">Home</a></p></body></html>
+"""
+
+# Rich post fixture (field population, 2026-11-23): modelled on the live
+# "Bigg Boss (Season 20)" WP post (new4.moviesdrive.cyou, 2026-11-22) — a
+# TMDB poster image + catimages screenshots, an IMDb link, a Series Info
+# block with rating/stars/language/year/storyline, and _embedded categories.
+# The live post's Director/Creator line is EMPTY, so the fixture keeps it
+# empty: an empty director must stay None, not "".
+SAMPLE_MD_WP_POST_RICH = {
+    "id": 65293,
+    "slug": "bigg-boss-season-20-2026-hindi-dd2-0-s20-ep78-added-jiohotstar-series-480p-720p-1080p-web-dl",
+    "link": "https://new4.moviesdrive.cyou/bigg-boss-season-20-2026-hindi-dd2-0-s20-ep78-added-jiohotstar-series-480p-720p-1080p-web-dl/",
+    "title": {"rendered": "Bigg Boss (Season 20) 2026 [Hindi DD2.0] (S20 Ep78 Added) JioHotstar Series 480p 720p 1080p \u2013 WEB-DL"},
+    "content": {"rendered": """
+        <p>Download Bigg Boss (2026) Season 20 WEB Series [Hindi] Complete All Episodes Available in 720p HEVC | 1080p HEVC qualities.</p>
+        <p><img src="https://image.tmdb.org/t/p/w500/k5ope1puShzLycqcj3FIoGAPjva.jpg" alt="Bigg Boss"></p>
+        <p><img src="https://catimages.org/images/2026/09/07/Vlcsnap.mkv-frame024377.jpg" alt="screenshot"></p>
+        <p><img src="https://catimages.org/images/2026/09/07/Vlcsnap.mkv-frame042892.jpg" alt="screenshot"></p>
+        <p><a href="https://www.imdb.com/title/tt1281973/">IMDb</a></p>
+        <p>Series Info: \U0001f4ab IMDb Rating:- 3.6/10 \U0001f308 Series Name: Bigg Boss Season: 20
+        \U0001f50a Language: {Hindi DD2.0} \U0001f4c5 Released Year: 2026
+        \U0001f46eDirector/Creator: \u2b50Stars: Salman Khan, Atul Kapoor, Vijay Vikram Singh
+        \U0001f4bf Episode Size: \u2013 Each Episode \U0001f3acQuality: 480p || 720p || 1080p \u2013 WEB-DL
+        \U0001f4c1 Format: MKV \u2666 Storyline- Bigg Boss is a reality show based on the original
+        Dutch Big Brother. A number of contestants live in a purpose-built house.
+        \U0001f5bc\ufe0f SCREENSHOTS \u2013 Bigg Boss (Season 20) \u2013 Watch Free</p>
+        <p><a href="https://mdrive.lol/archive/18530/">480p Download</a></p>
+        <p><a href="https://mdrive.lol/archive/18529/">720p Download</a></p>
+    """},
+    "date": "2026-11-22T21:30:41",
+    "_embedded": {
+        "wp:term": [
+            [{"id": 1, "name": "DRAMA", "taxonomy": "category"},
+             {"id": 2, "name": "Dual Audio", "taxonomy": "category"},
+             {"id": 3, "name": "Hotstar", "taxonomy": "category"}],
+            [],
+        ],
+    },
+}
+
+SAMPLE_MD_ARCH_BB_480_HTML = """
+<!DOCTYPE html>
+<html><head>
+<title>Bigg Boss (Season 20) [ Hindi DD2.0 ] 480p x264 [340MB/E]</title>
+</head><body>
+<p><a href="https://hubcloud.test/drive/bb480aaa">Download 480p</a></p>
+</body></html>
+"""
+
+SAMPLE_MD_ARCH_BB_720_HTML = """
+<!DOCTYPE html>
+<html><head>
+<title>Bigg Boss (Season 20) [ Hindi DD2.0 ] 720p x264 [800MB/E]</title>
+</head><body>
+<p><a href="https://gdflix.test/file/bb720bbb">Download 720p</a></p>
+</body></html>
 """
 
 
@@ -239,6 +300,140 @@ class TestMoviesDriveSave(unittest.TestCase):
             self.assertEqual(n_rel, 1)
             self.assertEqual(n_src, 2)
             self.assertEqual(dups, 0)
+
+
+class TestMoviesDriveSeriesInfo(unittest.TestCase):
+    def test_series_info_block_parsed(self):
+        info = import_moviesdrive.parse_moviesdrive_series_info(
+            SAMPLE_MD_WP_POST_RICH["content"]["rendered"])
+        self.assertEqual(info["imdb_rating"], "3.6")
+        self.assertIsNone(info["director"])  # live post: empty Director/Creator
+        self.assertEqual(
+            info["cast_names"], "Salman Khan, Atul Kapoor, Vijay Vikram Singh")
+        self.assertEqual(info["language"], "Hindi")
+        self.assertEqual(info["release_year"], 2026)
+        self.assertTrue(
+            info["synopsis"].startswith(
+                "Bigg Boss is a reality show based on the original Dutch Big Brother."))
+        self.assertNotIn("SCREENSHOTS", info["synopsis"])
+        self.assertNotIn("🖼", info["synopsis"])
+        self.assertIn("MKV", info["raw_meta"])
+        self.assertIn("format", info["raw_meta"])
+
+    def test_zero_rating_is_dropped_not_saved(self):
+        content = SAMPLE_MD_WP_POST_RICH["content"]["rendered"].replace(
+            "IMDb Rating:- 3.6/10", "IMDb Rating:- 0.0/10")
+        info = import_moviesdrive.parse_moviesdrive_series_info(content)
+        self.assertIsNone(info["imdb_rating"])
+
+    def test_director_and_country_and_original_language(self):
+        content = """
+        <p>Series Info: \U0001f4ab IMDb Rating:- 7.9/10 \U0001f308 Series Name: Final Table
+        Season: 1 \U0001f30d Country: South Korea \U0001f5e3 Original Language: Korean
+        \U0001f50a Language: Hindi \u2013 Korean \U0001f4c5 Released Year: 2026
+        \U0001f46eDirector/Creator: Kim Someone \u2b50Stars: Lee One, Park Two
+        \u2666 Storyline- A cooking contest.</p>
+        """
+        info = import_moviesdrive.parse_moviesdrive_series_info(content)
+        self.assertEqual(info["imdb_rating"], "7.9")
+        self.assertEqual(info["director"], "Kim Someone")
+        self.assertEqual(info["country"], "South Korea")
+        self.assertEqual(info["original_language"], "Korean")
+        self.assertEqual(info["language"], "Hindi + Korean")
+        self.assertEqual(info["cast_names"], "Lee One, Park Two")
+        self.assertEqual(info["synopsis"], "A cooking contest.")
+        self.assertIn("Korean", info["raw_meta"])
+
+    def test_no_series_info_block_is_all_none(self):
+        info = import_moviesdrive.parse_moviesdrive_series_info(
+            "<p>Just a plain paragraph, no info block.</p>")
+        self.assertIsNone(info["imdb_rating"])
+        self.assertIsNone(info["director"])
+        self.assertIsNone(info["cast_names"])
+        self.assertIsNone(info["synopsis"])
+        self.assertIsNone(info["raw_meta"])
+
+    def test_categories_keep_real_genres_only(self):
+        genres = import_moviesdrive.extract_moviesdrive_categories(
+            SAMPLE_MD_WP_POST_RICH)
+        self.assertEqual(genres, ["Drama"])
+
+    def test_imdb_id_from_content_link(self):
+        self.assertEqual(
+            import_moviesdrive.extract_moviesdrive_imdb_id(
+                SAMPLE_MD_WP_POST_RICH["content"]["rendered"]),
+            "tt1281973")
+        self.assertIsNone(
+            import_moviesdrive.extract_moviesdrive_imdb_id("<p>no link</p>"))
+
+
+class TestMoviesDriveRichPost(unittest.TestCase):
+    def _rich_data(self):
+        archive_pages = {
+            "https://mdrive.lol/archive/18530/": SAMPLE_MD_ARCH_BB_480_HTML,
+            "https://mdrive.lol/archive/18529/": SAMPLE_MD_ARCH_BB_720_HTML,
+        }
+        data = import_moviesdrive.extract_post_data_moviesdrive(
+            SAMPLE_MD_WP_POST_RICH, archive_pages)
+        self.assertIsNotNone(data)
+        return data
+
+    def test_rich_post_populates_metadata_fields(self):
+        data = self._rich_data()
+        self.assertEqual(data["year"], 2026)
+        self.assertTrue(data["clean_title"].startswith("Bigg Boss"))
+        # Poster: the TMDB image from the post body (was ~11% before).
+        self.assertEqual(
+            data["poster_url"],
+            "https://image.tmdb.org/t/p/w500/k5ope1puShzLycqcj3FIoGAPjva.jpg")
+        # Backdrops: the catimages screenshots (poster excluded).
+        backdrops = json.loads(data["backdrop_urls"])
+        self.assertIn(
+            "https://catimages.org/images/2026/09/07/Vlcsnap.mkv-frame024377.jpg",
+            backdrops)
+        self.assertNotIn(data["poster_url"], backdrops)
+        # Synopsis: the Storyline text, not the SEO blurb.
+        self.assertIn("reality show based on the original Dutch Big Brother",
+                      data["synopsis"])
+        self.assertNotIn("SCREENSHOTS", data["synopsis"])
+        # Genres: DRAMA category survives; Dual Audio / Hotstar do not.
+        self.assertEqual(json.loads(data["genres"]), ["Drama"])
+        self.assertEqual(data["imdb_rating"], "3.6")
+        self.assertEqual(
+            data["cast_names"], "Salman Khan, Atul Kapoor, Vijay Vikram Singh")
+        self.assertIsNone(data["director"])
+        self.assertEqual(data["imdb_id"], "tt1281973")
+        self.assertEqual(data["language"], "Hindi")
+        # The source carries no duration or release date: NULL, not made up.
+        self.assertIsNone(data["duration"])
+        self.assertIsNone(data["release_date"])
+        self.assertIsNotNone(data["raw_meta"])
+        # Releases still work exactly as before.
+        self.assertEqual(len(data["releases"]), 2)
+
+    def test_rich_post_saves_metadata_to_staging_db(self):
+        data = self._rich_data()
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "moviesdrive.db"
+            fast_fetch.DB_PATH = db_path
+            fast_fetch.init_db()
+            post_id = import_moviesdrive.save_post_record(data, db_path)
+            with sqlite3.connect(str(db_path)) as conn:
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    "SELECT poster_url, synopsis, genres, imdb_rating,"
+                    " cast_names, imdb_id, duration, release_date, raw_meta"
+                    " FROM posts WHERE id = ?", (post_id,)
+                ).fetchone()
+            self.assertIn("image.tmdb.org", row["poster_url"])
+            self.assertIn("reality show", row["synopsis"])
+            self.assertEqual(json.loads(row["genres"]), ["Drama"])
+            self.assertEqual(row["imdb_rating"], "3.6")
+            self.assertIn("Salman Khan", row["cast_names"])
+            self.assertEqual(row["imdb_id"], "tt1281973")
+            self.assertIsNone(row["duration"])
+            self.assertIsNone(row["release_date"])
+            self.assertIn("format", row["raw_meta"])
 
 
 class TestMoviesDriveSync(unittest.TestCase):
