@@ -3499,6 +3499,661 @@ def unwrap_filepress(filepress_url: str) -> tuple[str, str, int]:
     return filepress_url, res_id, 0
 
 
+#: ---------------------------------------------------------------------------
+#: filemoon — new REST API resolver (2026-11-23, H2b sweep + Fix 4)
+#: ---------------------------------------------------------------------------
+#: Mined from the live "Byse Frontend" React SPA bundles
+#: (`/assets/index-DocunfmE.js`, `videoPagesBundle-*.js`, `pow-*.js`) and
+#: proven end-to-end on a live file (code `fihge8dsk4wd`, 2026-11-23):
+#:
+#:   GET  /api/videos/<code>/embed/details    -> 200 {id, code, title, ...}
+#:        404 {"error": "video record missing: video not found"} = dead file
+#:   GET  /api/videos/<code>/embed/settings   -> 200 {premium_only,
+#:        download_allowed, captcha_required, ...}
+#:   POST /api/videos/<code>/embed/playback   {fingerprint} [+ X-Captcha-Token]
+#:        -> 200 {playback: {algorithm: "AES-256-GCM", version, key_parts,
+#:           iv, payload}, cache_status} | 405 on GET | 428 captcha_required
+#:   POST /api/videos/<code>/embed/captcha    {} -> 200 {pow_nonce,
+#:        pow_difficulty, pow_token, expires_in, algorithm}
+#:   POST /api/videos/<code>/embed/captcha/verify
+#:        {pow_token, solution} -> 200 {status: "ok", token, expires_in}
+#:
+#: Decrypt (JS `La`/`En` in the video bundle): the key is the concatenation
+#: of the base64url-decoded `key_parts` selected by `version` — version v
+#: (1..20) selects 1-based parts [v, 31-v]; an invalid version uses all
+#: parts. AES-GCM, 12-byte IV, payload = ciphertext || 16-byte tag, no AAD.
+#: The plaintext is JSON {sources: [{quality, label, mime_type, url,
+#: bitrate_kbps, height, size_bytes}], tracks: [...], poster_url,
+#: expires_at, generated_at}. Live file: version "12", 30 parts, 32-byte
+#: key (AES-256), one 1080p HLS source on a sprintcdn edge host; the master
+#: Range probe answered 200 application/vnd.apple.mpegurl and the master
+#: body is a real #EXTM3U (variant `s=<epoch>&e=10800` — 3 h window).
+#:
+#: Proof-of-work (JS `Er` in `pow-*.js`): find decimal counter s such that
+#: the custom hash `gr("<pow_nonce>:<s>")` has >= `pow_difficulty` leading
+#: zero bits. `gr` is a ChaCha-quarter-round construction (NOT SHA-256
+#: despite the response's "sha256-leading-zero-bits" label — the label
+#: names only the difficulty metric). Difficulty 16 measured live; a
+#: pure-Python solve averages ~3 ms/hash on the Oracle VM, i.e. ~3 min
+#: expected at difficulty 16 (measured solves: 5,311 tries / 16 s and
+#: 11,100 tries / 38 s — both lucky). The captcha token is NOT bound to
+#: one video (proven: the token minted for file A returned 200 playback
+#: for file B), so it is cached in-process for its 1800 s lifetime and
+#: the PoW is paid once per ~30 min, not once per file.
+#:
+#: The fingerprint the player sends (`ct()` attestation: token/viewer_id/
+#: device_id/confidence) is accepted by the server as an opaque JSON
+#: object — a fixed synthetic fingerprint was accepted live — so the
+#: resolver sends a clearly-marked synthetic one, never a real device
+#: identity. No `cryptography` dependency: the project is stdlib-only, so
+#: AES-GCM (AES block + GHASH) and the PoW hash are implemented here in
+#: pure Python and pinned against NIST vectors + the live payload in
+#: `test_filemoon_unwrap.py`.
+_FILEMOON_API_BASE = "https://filemoon.sx"
+_FILEMOON_FINGERPRINT = {
+    "token": "raddstream-resolver",
+    "viewer_id": "raddstream-resolver",
+    "device_id": "raddstream-resolver",
+    "confidence": 0.5,
+}
+#: In-process captcha-token cache: {"token": str|None, "expires_at": float}.
+#: One entry — the token is session-scoped, not per-video (proven live).
+_FILEMOON_CAPTCHA = {"token": None, "expires_at": 0.0}
+_FILEMOON_CAPTCHA_LOCK = threading.Lock()
+_FILEMOON_POW_TIMEOUT_S = 300.0
+
+
+def _filemoon_b64url_decode(text: str) -> bytes:
+    """base64url without padding -> bytes (the JS `Xt` helper)."""
+    text = (text or "").strip().replace("-", "+").replace("_", "/")
+    return base64.b64decode(text + "=" * (-len(text) % 4))
+
+
+def _filemoon_make_sbox() -> list[int]:
+    """AES S-box, generated the standard way (p *= 3, q *= 0xf6)."""
+    sbox = [0] * 256
+    p = 1
+    q = 1
+    for _ in range(256):
+        p = p ^ ((p << 1) & 0xFF) ^ (0x1B if p & 0x80 else 0)
+        q ^= (q << 1) & 0xFF
+        q ^= (q << 2) & 0xFF
+        q ^= (q << 4) & 0xFF
+        q ^= 0x09 if q & 0x80 else 0
+        q &= 0xFF
+        xformed = (q ^ ((q << 1) | (q >> 7)) ^ ((q << 2) | (q >> 6))
+                   ^ ((q << 3) | (q >> 5)) ^ ((q << 4) | (q >> 4)))
+        sbox[p] = (xformed ^ 0x63) & 0xFF
+        if p == 1:
+            break
+    sbox[0] = 0x63
+    return sbox
+
+
+_FILEMOON_SBOX = _filemoon_make_sbox()
+_FILEMOON_RCON = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1B, 0x36]
+
+
+def _filemoon_aes_encrypt_block(key: bytes, block: bytes) -> bytes:
+    """One AES block encryption (FIPS-197). Only encryption is needed:
+    AES-GCM decrypts with the encryption direction (CTR mode)."""
+    nk = len(key) // 4
+    nr = nk + 6
+    w = [list(key[4 * i:4 * i + 4]) for i in range(nk)]
+    for i in range(nk, 4 * (nr + 1)):
+        t = list(w[i - 1])
+        if i % nk == 0:
+            t = t[1:] + t[:1]
+            t = [_FILEMOON_SBOX[b] for b in t]
+            t[0] ^= _FILEMOON_RCON[i // nk - 1]
+        elif nk > 6 and i % nk == 4:
+            t = [_FILEMOON_SBOX[b] for b in t]
+        w.append([w[i - nk][j] ^ t[j] for j in range(4)])
+    rk = [[w[4 * r + c] for c in range(4)] for r in range(nr + 1)]
+
+    def xtime(a):
+        return ((a << 1) ^ (0x1B if a & 0x80 else 0)) & 0xFF
+
+    s = [[block[4 * c + r] for c in range(4)] for r in range(4)]
+
+    def add_round(rnd):
+        for r in range(4):
+            for c in range(4):
+                s[r][c] ^= rk[rnd][c][r]
+
+    def sub_bytes():
+        for r in range(4):
+            for c in range(4):
+                s[r][c] = _FILEMOON_SBOX[s[r][c]]
+
+    def shift_rows():
+        for r in range(1, 4):
+            row = [s[r][(c + r) % 4] for c in range(4)]
+            for c in range(4):
+                s[r][c] = row[c]
+
+    def mix_columns():
+        for c in range(4):
+            a = [s[r][c] for r in range(4)]
+            s[0][c] = xtime(a[0]) ^ (xtime(a[1]) ^ a[1]) ^ a[2] ^ a[3]
+            s[1][c] = a[0] ^ xtime(a[1]) ^ (xtime(a[2]) ^ a[2]) ^ a[3]
+            s[2][c] = a[0] ^ a[1] ^ xtime(a[2]) ^ (xtime(a[3]) ^ a[3])
+            s[3][c] = (xtime(a[0]) ^ a[0]) ^ a[1] ^ a[2] ^ xtime(a[3])
+
+    add_round(0)
+    for rnd in range(1, nr):
+        sub_bytes()
+        shift_rows()
+        mix_columns()
+        add_round(rnd)
+    sub_bytes()
+    shift_rows()
+    add_round(nr)
+    return bytes(s[r][c] for c in range(4) for r in range(4))
+
+
+def _filemoon_ghash(h: bytes, data: bytes) -> bytes:
+    """GHASH over GF(2^128), NIST bit-reflected representation."""
+    h_int = int.from_bytes(h, "big")
+    y = 0
+    for i in range(0, len(data), 16):
+        blk = data[i:i + 16].ljust(16, b"\x00")
+        y ^= int.from_bytes(blk, "big")
+        z = 0
+        v = h_int
+        x = y
+        for bit in range(128):
+            if (x >> (127 - bit)) & 1:
+                z ^= v
+            if v & 1:
+                v = (v >> 1) ^ 0xE1000000000000000000000000000000
+            else:
+                v >>= 1
+        y = z
+    return y.to_bytes(16, "big")
+
+
+def _filemoon_gcm_j0(key: bytes, iv: bytes) -> tuple[bytes, bytes]:
+    """(H, J0) for a GCM operation. 12-byte IVs take the fast path."""
+    h = _filemoon_aes_encrypt_block(key, b"\x00" * 16)
+    if len(iv) == 12:
+        return h, iv + b"\x00\x00\x00\x01"
+    pad = b"\x00" * ((-len(iv)) % 16)
+    s = _filemoon_ghash(h, iv + pad + (0).to_bytes(8, "big")
+                        + (len(iv) * 8).to_bytes(8, "big"))
+    return h, s
+
+
+def _filemoon_aes_gcm_decrypt(key: bytes, iv: bytes, payload: bytes,
+                             aad: bytes = b"") -> bytes:
+    """payload = ciphertext || 16-byte tag. Raises ValueError on a bad tag."""
+    if len(payload) < 16:
+        raise ValueError("payload too short for AES-GCM tag")
+    ct, tag = payload[:-16], payload[-16:]
+    h, j0 = _filemoon_gcm_j0(key, iv)
+    out = bytearray()
+    ctr = j0
+    for i in range(0, len(ct), 16):
+        ctr = ctr[:12] + ((int.from_bytes(ctr[12:16], "big") + 1)
+                          & 0xFFFFFFFF).to_bytes(4, "big")
+        ks = _filemoon_aes_encrypt_block(key, ctr)
+        chunk = ct[i:i + 16]
+        out += bytes(a ^ b for a, b in zip(chunk, ks))
+    s = _filemoon_ghash(h, aad + b"\x00" * ((-len(aad)) % 16)
+                        + ct + b"\x00" * ((-len(ct)) % 16)
+                        + (len(aad) * 8).to_bytes(8, "big")
+                        + (len(ct) * 8).to_bytes(8, "big"))
+    expect = bytes(a ^ b for a, b in zip(s, _filemoon_aes_encrypt_block(key, j0)))
+    if expect != tag:
+        raise ValueError("AES-GCM tag mismatch")
+    return bytes(out)
+
+
+def _filemoon_aes_gcm_encrypt(key: bytes, iv: bytes, plaintext: bytes,
+                             aad: bytes = b"") -> bytes:
+    """ciphertext || 16-byte tag. Test/support counterpart of the decryptor
+    (builds the canned API fixtures in test_filemoon_unwrap.py)."""
+    h, j0 = _filemoon_gcm_j0(key, iv)
+    out = bytearray()
+    ctr = j0
+    for i in range(0, len(plaintext), 16):
+        ctr = ctr[:12] + ((int.from_bytes(ctr[12:16], "big") + 1)
+                          & 0xFFFFFFFF).to_bytes(4, "big")
+        ks = _filemoon_aes_encrypt_block(key, ctr)
+        chunk = plaintext[i:i + 16]
+        out += bytes(a ^ b for a, b in zip(chunk, ks))
+    ct = bytes(out)
+    s = _filemoon_ghash(h, aad + b"\x00" * ((-len(aad)) % 16)
+                        + ct + b"\x00" * ((-len(ct)) % 16)
+                        + (len(aad) * 8).to_bytes(8, "big")
+                        + (len(ct) * 8).to_bytes(8, "big"))
+    tag = bytes(a ^ b for a, b in zip(s, _filemoon_aes_encrypt_block(key, j0)))
+    return ct + tag
+
+
+def _filemoon_pow_gr(data: bytes) -> list[int]:
+    """The PoW hash from `pow-*.js` (`gr`): ChaCha-quarter-round state
+    (seeded with SHA-256's H0..H3), a 512-word table, two mixing passes,
+    8 output words. Verified byte-identical against the JS bundle run
+    under node (see test_filemoon_unwrap.py)."""
+    m = 0xFFFFFFFF
+    e0, e1, e2, e3 = 1779033703, 3144134277, 1013904242, 2773480762
+
+    def rotl(t, e):
+        return ((t << e) | (t >> (32 - e))) & m
+
+    def qr():
+        nonlocal e0, e1, e2, e3
+        e0 = (e0 + e1) & m
+        e3 = rotl(e3 ^ e0, 16)
+        e2 = (e2 + e3) & m
+        e1 = rotl(e1 ^ e2, 12)
+        e0 = (e0 + e1) & m
+        e3 = rotl(e3 ^ e0, 8)
+        e2 = (e2 + e3) & m
+        e1 = rotl(e1 ^ e2, 7)
+
+    for b in data:
+        e0 = (e0 + b) & m
+        e0 = rotl(e0, 7)
+        qr()
+    for _ in range(8):
+        qr()
+    r = [0] * 512
+    for i in range(512):
+        qr()
+        r[i] = e0 ^ e2
+    for _ in range(2):
+        for s in range(512):
+            a = r[s] & 511
+            c = (r[s] + r[a]) & m
+            c = rotl(c, 13)
+            c = (c ^ ((r[(s + 1) & 511] * 2654435761) & m)) & m
+            r[s] = c
+            e0 = (e0 ^ c) & m
+            qr()
+    n = [0] * 8
+    for i in range(8):
+        qr()
+        s = e0
+        base = i * 64
+        for cc in range(64):
+            d = r[base + cc]
+            s = (s + d) & m
+            s = rotl(s, 5)
+            s = (s ^ ((d * 2246822519) & m)) & m
+        n[i] = (s ^ e2) & m
+    return n
+
+
+def _filemoon_pow_leading_zero_bits(words) -> int:
+    """`wr` from the bundle: leading zero bits across the output words."""
+    total = 0
+    for word in words:
+        if word == 0:
+            total += 32
+            continue
+        return total + (32 - word.bit_length())
+    return total
+
+
+def _filemoon_pow_solve(nonce: str, difficulty: int, timeout_s: float = 300.0,
+                       deadline: float | None = None) -> str | None:
+    """Find decimal counter s with gr("<nonce>:<s>") >= difficulty leading
+    zero bits (JS `Er`). Returns the counter as a string, or None on
+    timeout/deadline. ~3 ms/hash on the Oracle VM; difficulty 16 needs
+    ~65k tries expected (~3 min) — the caller caches the captcha token,
+    so this is paid rarely."""
+    if difficulty <= 0:
+        return "0"
+    prefix = (nonce + ":").encode()
+    start = time.monotonic()
+    counter = 0
+    while True:
+        words = _filemoon_pow_gr(prefix + str(counter).encode())
+        if _filemoon_pow_leading_zero_bits(words) >= difficulty:
+            return str(counter)
+        counter += 1
+        if counter % 1024 == 0:
+            now = time.monotonic()
+            if now - start > timeout_s:
+                return None
+            if deadline is not None and now > deadline:
+                return None
+
+
+def _filemoon_cached_token() -> str | None:
+    """The in-process captcha token while >60 s of life remains, else None."""
+    with _FILEMOON_CAPTCHA_LOCK:
+        if (_FILEMOON_CAPTCHA["token"]
+                and _FILEMOON_CAPTCHA["expires_at"] - time.time() > 60):
+            return _FILEMOON_CAPTCHA["token"]
+        return None
+
+
+def _filemoon_store_token(token: str, expires_in) -> None:
+    """Cache a verified captcha token for its lifetime (1800 s live)."""
+    try:
+        ttl = float(expires_in)
+    except (TypeError, ValueError):
+        ttl = 1800.0
+    with _FILEMOON_CAPTCHA_LOCK:
+        _FILEMOON_CAPTCHA["token"] = token
+        _FILEMOON_CAPTCHA["expires_at"] = time.time() + max(0.0, ttl)
+
+
+def filemoon_code_from_url(url: str) -> str:
+    """The file code from a filemoon embed/download URL (/e/<code>, /d/<code>)."""
+    m = re.search(r"""filemoon\.[a-z]+/(?:e|d)/([A-Za-z0-9]+)""",
+                  url or "", re.IGNORECASE)
+    return m.group(1) if m else ""
+
+
+def _filemoon_api_request(method: str, url: str, headers: dict,
+                         data: bytes | None, timeout_s: int = 15,
+                         _request=None):
+    """One JSON API call. Returns (status, body_bytes, content_type).
+    Status 0 = transport failure (reset/timeout — the host resets
+    ~30-50% of connections intermittently; the caller retries). A fresh
+    connection per call: keep-alive reuse fails intermittently here.
+    `_request` is the test seam: (method, url, headers, data) -> triple."""
+    if _request is not None:
+        return _request(method, url, headers, data)
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    last_exc = None
+    for _attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout_s,
+                                        context=_tls_context(url)) as resp:
+                return (resp.status, resp.read(65536),
+                        (resp.headers.get("Content-Type") or ""))
+        except urllib.error.HTTPError as exc:
+            try:
+                body = exc.read(65536)
+            except Exception:
+                body = b""
+            return (int(exc.code), body,
+                    (exc.headers.get("Content-Type") or "") if exc.headers else "")
+        except Exception as exc:  # noqa: BLE001 — reset/timeout: retry
+            last_exc = exc
+            time.sleep(1)
+    return (0, b"", "")
+
+
+def _filemoon_decrypt_playback(enc: dict) -> dict:
+    """The encrypted `playback` object -> decrypted JSON (JS `La`/`En`)."""
+    if not isinstance(enc, dict):
+        raise ValueError("playback is not an object")
+    parts = enc.get("key_parts")
+    if not isinstance(parts, list) or not parts:
+        raise ValueError("playback has no key_parts")
+    version = enc.get("version")
+    selected = list(parts)
+    try:
+        v = int(str(version).strip())
+        if 1 <= v <= 20 and 1 <= 31 - v <= len(parts):
+            selected = [parts[v - 1], parts[31 - v - 1]]
+    except (TypeError, ValueError):
+        pass
+    key = b"".join(_filemoon_b64url_decode(p) for p in selected
+                   if isinstance(p, str) and p)
+    if len(key) not in (16, 24, 32):
+        raise ValueError("derived key is not 16/24/32 bytes")
+    iv = _filemoon_b64url_decode(enc.get("iv") or "")
+    payload = _filemoon_b64url_decode(enc.get("payload") or "")
+    plain = _filemoon_aes_gcm_decrypt(key, iv, payload)
+    data = json.loads(plain.decode("utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("decrypted playback is not an object")
+    return data
+
+
+def _filemoon_pick_source(dec: dict) -> dict | None:
+    """Best decrypted source: highest rendition first (height, bitrate)."""
+    sources = dec.get("sources") or []
+    best = None
+    best_rank = None
+    for src in sources:
+        if not isinstance(src, dict):
+            continue
+        url = (src.get("url") or "").strip()
+        if not url.lower().startswith("https://"):
+            continue
+        rank = (int(src.get("height") or 0), int(src.get("bitrate_kbps") or 0))
+        if best_rank is None or rank > best_rank:
+            best, best_rank = src, rank
+    return best
+
+
+def _filemoon_expiry_seconds(source_url: str, dec: dict) -> float | None:
+    """Seconds until the resolved URL dies, from the decrypted
+    `expires_at` (epoch or ISO) or the source URL's signed `s` + `e`
+    params (master variants carry s=<epoch>&e=<seconds>)."""
+    now = time.time()
+    exp = dec.get("expires_at")
+    if isinstance(exp, (int, float)) and exp > 0:
+        return max(0.0, float(exp) - now)
+    if isinstance(exp, str) and exp.strip():
+        try:
+            from datetime import datetime, timezone
+            dt = datetime.fromisoformat(exp.strip().replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return max(0.0, dt.timestamp() - now)
+        except ValueError:
+            pass
+    try:
+        qs = urllib.parse.parse_qs(urllib.parse.urlsplit(source_url).query)
+        start = qs.get("s", [None])[0]
+        span = qs.get("e", [None])[0]
+        if start is not None and span is not None:
+            return max(0.0, float(start) + float(span) - now)
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+def unwrap_filemoon(url: str, verify: bool = True, fetch=None,
+                   pow_timeout_s: float = _FILEMOON_POW_TIMEOUT_S,
+                   deadline: float | None = None) -> dict:
+    """filemoon embed/download URL -> verdict dict (host_resolvers shape).
+
+    Chain (all JSON, fresh connection per call, ~1 req/s pacing is the
+    caller's job): details (liveness) -> settings -> playback POST
+    {fingerprint} -> on 428 captcha_required: captcha start -> PoW solve
+    -> verify -> retry playback with X-Captcha-Token -> AES-GCM decrypt
+    -> best source -> Range/capped-GET probe of the master (verify=True).
+    `fetch` is the test seam: (method, url, headers, data) ->
+    (status, body_bytes, content_type). Never raises for a host answer:
+    a dead file is "dead", a challenge/timeout is "unverified", a crypto
+    failure is "unknown" (the file exists; our decrypt failed).
+    """
+    result = {"service": "filemoon", "embed_url": url, "final_url": "",
+              "is_temporary": True, "expires_in": None, "status": "unverified",
+              "notes": [], "poster_url": "", "signed_params": [],
+              "subtitles": [], "sources": [], "quality": "",
+              "file_id": "", "http_status": None, "content_type": None,
+              "size_bytes": None}
+    code = filemoon_code_from_url(url or "")
+    if not code:
+        result["status"] = "unknown"
+        result["notes"].append("not a filemoon /e/<code> or /d/<code> URL")
+        return result
+    result["file_id"] = code
+    embed_url = f"{_FILEMOON_API_BASE}/e/{code}"
+    result["embed_url"] = embed_url
+    api = f"{_FILEMOON_API_BASE}/api/videos/{code}/embed"
+    headers = {"Accept": "application/json", "Referer": embed_url,
+               "User-Agent": USER_AGENT}
+
+    def api_call(method, path, data=None, extra_headers=None):
+        hdrs = dict(headers)
+        if extra_headers:
+            hdrs.update(extra_headers)
+        if data is not None:
+            hdrs["Content-Type"] = "application/json"
+        status, body, ctype = _filemoon_api_request(
+            method, api + path, hdrs, data, _request=fetch)
+        return status, body, ctype
+
+    def parse_json(body):
+        try:
+            data = json.loads(body.decode("utf-8", "replace"))
+            return data if isinstance(data, dict) else {}
+        except (ValueError, UnicodeDecodeError):
+            return {}
+
+    # 1. details — the liveness proof (404 = dead file, per the live API).
+    status, body, _ctype = api_call("GET", "/details")
+    result["http_status"] = status
+    if status in (404, 410):
+        result["status"] = "dead"
+        result["notes"].append(f"filemoon holds no file {code} (HTTP {status})")
+        return result
+    if status == 0:
+        result["notes"].append("details request failed at transport level")
+        return result
+    if status != 200:
+        result["notes"].append(f"details HTTP {status}")
+        return result
+    details = parse_json(body)
+    if details.get("poster_url"):
+        result["poster_url"] = details["poster_url"]
+    if details.get("title"):
+        result["notes"].append(f"title: {str(details['title'])[:80]}")
+
+    # 2. settings — best-effort; playback itself is authoritative.
+    status, _body, _ctype = api_call("GET", "/settings")
+
+    # 3. playback POST. GET is 405; the fingerprint POST is the only shape.
+    def playback_call(captcha_token=None):
+        hdrs = {}
+        if captcha_token:
+            hdrs["X-Captcha-Token"] = captcha_token
+        return api_call("POST", "/playback",
+                        data=json.dumps(
+                            {"fingerprint": _FILEMOON_FINGERPRINT}).encode(),
+                        extra_headers=hdrs)
+
+    status, body, _ctype = playback_call(_filemoon_cached_token())
+    if status == 428 or (status in (401, 403)
+                         and "captcha" in body.decode("utf-8", "replace").lower()):
+        # A cached token that the server just rejected is stale: drop it
+        # so the next call does not retry the same dead token first.
+        with _FILEMOON_CAPTCHA_LOCK:
+            _FILEMOON_CAPTCHA["token"] = None
+            _FILEMOON_CAPTCHA["expires_at"] = 0.0
+        # 4. PoW captcha: start -> solve -> verify -> retry playback.
+        if deadline is not None and time.monotonic() > deadline:
+            result["notes"].append("captcha required but the call deadline "
+                                   "passed before the PoW could start")
+            return result
+        status, body, _ctype = api_call("POST", "/captcha", data=b"{}")
+        if status != 200:
+            result["notes"].append(f"captcha start HTTP {status}")
+            return result
+        challenge = parse_json(body)
+        nonce = challenge.get("pow_nonce") or ""
+        try:
+            difficulty = int(challenge.get("pow_difficulty") or 0)
+        except (TypeError, ValueError):
+            difficulty = 0
+        pow_token = challenge.get("pow_token") or ""
+        if not nonce or not pow_token or difficulty <= 0:
+            result["notes"].append("captcha challenge is missing nonce/token/"
+                                   "difficulty")
+            return result
+        solution = _filemoon_pow_solve(nonce, difficulty,
+                                       timeout_s=pow_timeout_s,
+                                       deadline=deadline)
+        if solution is None:
+            result["notes"].append(
+                f"PoW solve timed out (difficulty {difficulty})")
+            return result
+        status, body, _ctype = api_call(
+            "POST", "/captcha/verify",
+            data=json.dumps({"pow_token": pow_token,
+                             "solution": solution}).encode())
+        verified = parse_json(body)
+        token = verified.get("token") if status == 200 else None
+        if not token or verified.get("status") != "ok":
+            result["notes"].append(
+                f"captcha verify HTTP {status} status "
+                f"{verified.get('status')}")
+            return result
+        _filemoon_store_token(token, verified.get("expires_in"))
+        status, body, _ctype = playback_call(token)
+    if status == 0:
+        result["notes"].append("playback request failed at transport level")
+        return result
+    if status != 200:
+        result["notes"].append(f"playback HTTP {status}")
+        return result
+    envelope = parse_json(body)
+    enc = envelope.get("playback")
+    if not isinstance(enc, dict):
+        result["status"] = "unknown"
+        result["notes"].append("playback answer carries no encrypted object")
+        return result
+    try:
+        dec = _filemoon_decrypt_playback(enc)
+    except (ValueError, KeyError) as exc:
+        result["status"] = "unknown"
+        result["notes"].append(f"playback decrypt failed: {exc}")
+        return result
+    src = _filemoon_pick_source(dec)
+    if src is None:
+        result["status"] = "unknown"
+        result["notes"].append("decrypted playback carries no https source")
+        return result
+    media_url = src["url"]
+    result["final_url"] = media_url
+    result["sources"] = [{"url": media_url,
+                          "mime": src.get("mime_type") or "",
+                          "label": src.get("label") or ""}]
+    result["quality"] = src.get("label") or src.get("quality") or ""
+    if isinstance(src.get("size_bytes"), int):
+        result["size_bytes"] = src["size_bytes"]
+    result["expires_in"] = _filemoon_expiry_seconds(media_url, dec)
+    for track in dec.get("tracks") or []:
+        if isinstance(track, dict) and (track.get("url") or "").startswith("https://"):
+            result["subtitles"].append({
+                "language": track.get("language") or "",
+                "url": track["url"],
+                "kind": track.get("kind") or "subtitles",
+                "default": bool(track.get("default", False)),
+            })
+    if not verify:
+        result["notes"].append("playback decrypted without a media probe")
+        return result
+    # 5. verify the master itself: Range probe, capped read. A master
+    # answers 200 application/vnd.apple.mpegurl with a #EXTM3U body (the
+    # CDN ignores Range on the small text file); an mp4 answers 206
+    # video/*. Anything else is not proven media.
+    _status, _body, _ctype = _filemoon_api_request(
+        "GET", media_url,
+        {"User-Agent": USER_AGENT, "Referer": embed_url,
+         "Range": "bytes=0-0"},
+        None, _request=fetch)
+    ctype = (_ctype or "").split(";")[0].strip().lower()
+    body_head = (_body or b"")[:7]
+    is_master = ("mpegurl" in ctype or body_head.startswith(b"#EXTM3U")
+                 or media_url.split("?")[0].endswith(".m3u8"))
+    is_file = (ctype.startswith(("video/", "audio/"))
+               or "octet-stream" in ctype)
+    if _status in (200, 206) and (is_master or is_file):
+        result["status"] = "active"
+        result["http_status"] = _status
+        result["content_type"] = ctype or src.get("mime_type") or ""
+        result["notes"].append(
+            f"playback decrypted ({src.get('label') or src.get('quality')}), "
+            f"master probed HTTP {_status}")
+        return result
+    result["notes"].append(
+        f"decrypted URL probed HTTP {_status} ({ctype or 'no content-type'})")
+    return result
+
+
 def unwrap_pixeldrain(pixeldrain_url: str) -> tuple[str, str, int]:
     """
     Unwraps a PixelDrain viewing URL into a high-speed direct CDN streaming URL.
@@ -7810,7 +8465,14 @@ RESOLVE_FAILURE_CLASSES = ("probe_failed", "no_unwrapper", "unwrap_failed")
 #: URL is rewritten to the niramirus packer page its main.js navigates
 #: to — those 11,391 rows deserve one fresh press now that a branch
 #: exists for them.
-RESOLVER_VERSION = 7
+#: 8 — Fix 4 (filemoon REST resolver, 2026-11-23): the new
+#: /api/videos/<code>/embed/* API + AES-GCM decrypt + PoW captcha
+#: unwrapper. Filemoon rows failed under v6 with `no_unwrapper`, so their
+#: failure records are stale and the rows deserve one fresh press now
+#: that a resolver exists. (Most catalog filemoon codes are dead — 10/10
+#: in the sweep plus 12/14 fresh-search codes 404 — so most fresh presses
+#: will honestly record "dead".)
+RESOLVER_VERSION = 8
 
 
 def _is_transport_verdict(verdict) -> bool:
@@ -9210,6 +9872,28 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                 _vo_url = (source_u if "vidout.pages.dev" in source_u.lower()
                            else cached_u)
                 verdict = hr.unwrap_vidout(_vo_url, verify=True)
+                direct_u = embed_from_verdict(verdict)
+                if direct_u:
+                    fresh_url = direct_u
+                    fresh_temp = 1
+                    embed_verdict = verdict
+                    _gate_from_verdict = True
+            elif (service == "filemoon"
+                  or "filemoon" in source_u.lower()
+                  or "filemoon" in cached_u.lower()):
+                # Filemoon (Fix 4, 2026-11-23): the new REST API mined
+                # from the Byse SPA bundles — details -> playback POST
+                # (PoW captcha when the file demands it; the token is
+                # session-scoped and cached in-process) -> AES-GCM
+                # decrypt -> HLS master. Proven end-to-end live on
+                # fihge8dsk4wd (details/settings/playback 200, PoW
+                # difficulty 16 solved, decrypt matches `cryptography`,
+                # master 200 application/vnd.apple.mpegurl, real #EXTM3U).
+                # The unwrapper's Range/capped-GET probe of the master IS
+                # the gate evidence, same as gofile/streamtape.
+                _unwrap_branch_taken = True
+                verdict = unwrap_filemoon(hoster_input("filemoon"),
+                                          verify=True, deadline=deadline)
                 direct_u = embed_from_verdict(verdict)
                 if direct_u:
                     fresh_url = direct_u

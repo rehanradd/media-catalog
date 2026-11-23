@@ -1074,6 +1074,11 @@ jobs:
       # redirect to niramirus. Offline - mocked http_get.
       - name: 🧪 test_streamwish_dispatch.py
         run: python3 -S Fast_Fetch/test_streamwish_dispatch.py
+      # Filemoon REST resolver (sweep H2b, 2026-11-23): /api/videos/<code>/embed/*
+      # + AES-GCM decrypt (pure stdlib) + PoW captcha with a session-scoped
+      # token cache. Offline - canned API responses + NIST vectors.
+      - name: 🧪 test_filemoon_unwrap.py
+        run: python3 -S Fast_Fetch/test_filemoon_unwrap.py
 
       # XprimeHub (Session 104): the 19th site, 18+ adult catalog — scrape only.
       # The flag is the feature: every row is_18_plus = 1 by site authority, and the
