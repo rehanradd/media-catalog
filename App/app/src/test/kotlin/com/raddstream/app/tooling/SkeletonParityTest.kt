@@ -57,7 +57,10 @@ class SkeletonParityTest {
         // The real title is displaySmall copied to 28sp/32sp (Gemini home
         // review, Nov 2026) — the skeleton must match the copy, not the token.
         // The sizes ride brandSp (BrandDriftTest bans raw .sp literals).
-        val slide = bodyOf(hero, "if (hasArt) {")
+        // Audit #2 (Nov 2026): the no-art branch is gone — every slide
+        // carries the same BottomStart title column, so the anchor is the
+        // slide itself and the first lineHeight in it is the title's.
+        val slide = bodyOf(hero, "fun HeroSlide(")
         val lineHeight = Regex("""lineHeight = brandSp\((\d+)\)""")
             .find(slide)?.groupValues?.get(1)
         assertEquals("the hero title must carry its 32sp line height", "32", lineHeight)

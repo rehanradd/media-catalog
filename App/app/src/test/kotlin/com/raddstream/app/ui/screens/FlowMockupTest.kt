@@ -113,9 +113,10 @@ class FlowMockupTest {
         // text row is paint-only (clearAndSetSemantics — one spoken sentence
         // per tile), so the meta is pinned through that sentence, which
         // carries the same year + type. The title is findable as text only
-        // because the art-less fallback frame prints it, not the text row.
-        compose.onNodeWithText("Apex Horizon").assertIsDisplayed()
-        compose.onNodeWithText("Shadow Protocol").assertIsDisplayed()
+        // in the unmerged tree — the art-less fallback prints the monogram
+        // now, not the title (audit #9), so the caption is its only Text.
+        compose.onNodeWithText("Apex Horizon", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithText("Shadow Protocol", useUnmergedTree = true).assertIsDisplayed()
         // And each tile still speaks one sentence, title + meta.
         compose.onNode(hasContentDescription("Apex Horizon, 2024 · Movie")).assertExists()
         compose.onNode(hasContentDescription("Shadow Protocol, 2023 · Series")).assertExists()
@@ -162,7 +163,7 @@ class FlowMockupTest {
         }
         compose.onNodeWithText("Could not load more.").assertIsDisplayed()
         compose.onNodeWithText("Retry").performScrollTo().performClick()
-        compose.onNodeWithText("Apex Horizon").assertIsDisplayed()
+        compose.onNodeWithText("Apex Horizon", useUnmergedTree = true).assertIsDisplayed()
         compose.onNodeWithText("Could not load more.").assertIsDisplayed()
     }
 

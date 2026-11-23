@@ -109,7 +109,7 @@ class SearchDiscoveryTest {
         var clicked: Post? = null
         setDiscovery(onPostClick = { clicked = it })
 
-        compose.onAllNodesWithText("Dune")[0].performClick()
+        compose.onAllNodesWithText("Dune", useUnmergedTree = true)[0].performClick()
         assertEquals(1, clicked?.id)
     }
 
@@ -158,7 +158,7 @@ class SearchDiscoveryTest {
             // positionInRoot, not boundsInRoot: the latter clips to the
             // visible window, so a below-fold row reports the window's edge
             // instead of its layout position (see the order test above).
-            compose.onNodeWithText(it).fetchSemanticsNode().positionInRoot.y
+            compose.onNodeWithText(it, useUnmergedTree = true).fetchSemanticsNode().positionInRoot.y
         }
         assertEquals("First grid row must share a top", tops[0], tops[1])
         assertEquals("First grid row must share a top", tops[0], tops[2])

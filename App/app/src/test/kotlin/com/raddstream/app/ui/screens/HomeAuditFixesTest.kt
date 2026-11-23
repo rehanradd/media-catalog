@@ -227,14 +227,12 @@ class HomeAuditFixesTest {
             RaddStreamTheme {
                 HomeContent(
                     state = HomeUiState(
-                        sections = listOf(
-                            HomeSection(
-                                key = "trending",
-                                title = "Most available",
-                                type = null,
-                                items = listOf(jawan, post(2, "Salaar", 2023)),
-                            ),
-                        ),
+                        // No sections: the trial note is the 5th lazy item
+                        // (chips, broadcast, Continue Watching, trial), so
+                        // it is composed in the first Robolectric viewport.
+                        // With a hero + rail above it, the lazy column
+                        // never composes it and the node does not exist.
+                        sections = emptyList(),
                         continueWatching = listOf(resumeTile(jawan)),
                         broadcasts = listOf(
                             PanelBroadcast(

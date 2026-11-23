@@ -297,7 +297,7 @@ class MyListEmptyContentTest {
         }
         compose.onNodeWithText("Trending to Start Your List").assertIsDisplayed()
         compose.onNodeWithText("Recently Added").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Oppenheimer").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Oppenheimer", useUnmergedTree = true).performScrollTo().assertIsDisplayed()
     }
 
     @Test
