@@ -315,6 +315,25 @@ class TestSSRMoviesRestAdoption(unittest.TestCase):
         self.assertIn("linkszilla", services)
         self.assertIn("direct_cloud", services)
 
+    def test_sxxeyy_title_is_a_series(self):
+        # Branch-2 live proof banked 'Sa Re Ga Ma Pa' S01E020 as a movie:
+        # S\d+ needs a word boundary after the digits, which "S01E020"
+        # does not have. The compact SxxEyy form must mark a series.
+        post = {
+            "id": 132231,
+            "slug": "sa-re-ga-ma-pa-2026-hindi-org-s01e020-series-hdrip-1080p-720p-480p",
+            "link": "https://site4.ssrmovies.page/sa-re-ga-ma-pa-2026-hindi-org-s01e020-series-hdrip-1080p-720p-480p/",
+            "title": {"rendered": "Sa Re Ga Ma Pa (2026) Hindi ORG S01E020 Series HDRip | 1080p | 720p | 480p"},
+            "content": {"rendered": '<p>Sa Re Ga Ma Pa (2026) Hindi ORG S01E020 Series HDRip</p><p><a href="https://secure.linkszilla.top/view/AAA111">Watch &amp; Download in 1080p - 1.69GB</a></p>'},
+            "excerpt": {"rendered": ""},
+        }
+        data = import_ssrmovies.extract_post_data_ssrmovies_enhanced(
+            post_url=post["link"], page_html="", resolve_direct=False,
+            rest_post=post)
+        self.assertEqual(data["content_type"], "series")
+        self.assertEqual(data["clean_title"], "Sa Re Ga Ma Pa")
+        self.assertEqual(data["year"], 2026)
+
     def test_no_fabricated_genres_on_dual_audio_page(self):
         html_doc = """<html><head><title>Some Movie 2024 Dual Audio 720p – SSRmovies</title></head>
 <body><p><a href="https://secure.linkszilla.top/view/AAA111">Watch &amp; Download in 720p - 1.1GB</a></p></body></html>"""
