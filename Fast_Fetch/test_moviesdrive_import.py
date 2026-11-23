@@ -265,7 +265,7 @@ class TestMoviesDriveRegistry(unittest.TestCase):
         reg_path = Path(__file__).parent / "domain_registry.json"
         reg = json.loads(reg_path.read_text())
         entry = reg["sites"]["moviesdrive"]
-        self.assertEqual(entry["active_base_url"], "https://new3.moviesdrive.cyou")
+        self.assertEqual(entry["active_base_url"], "https://new4.moviesdrive.cyou")
         self.assertEqual(entry["api_type"], "wp_rest_api")
         self.assertEqual(entry["api_endpoint"], "/wp-json/wp/v2/posts")
         self.assertEqual(entry["status"], "active")

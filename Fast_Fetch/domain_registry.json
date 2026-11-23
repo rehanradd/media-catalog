@@ -1,12 +1,13 @@
 {
   "version": "2.0",
-  "updated_at": "2026-11-21T16:00:00Z",
+  "updated_at": "2026-11-23T04:46:06Z",
   "sites": {
     "10xflix": {
-      "active_base_url": "https://10xflix.asia",
+      "active_base_url": "https://10xflix.beer",
       "last_verified": "2026-11-08T09:46:20Z",
       "verified_by": "wp-json",
       "known_mirrors": [
+        "https://10xflix.beer",
         "https://10xflix.asia",
         "https://10xflix.bond"
       ],
@@ -31,8 +32,9 @@
           "seen_from": "2026-11-08"
         }
       ],
-      "last_checked": "2026-11-08T09:46:20Z",
-      "api_endpoint": "/wp-json/wp/v2/posts"
+      "last_checked": "2026-11-22T05:32:50Z",
+      "api_endpoint": "/wp-json/wp/v2/posts",
+      "site_name": "10xflix"
     },
     "7starhd": {
       "active_base_url": "https://7starhd.surgery",
@@ -107,10 +109,11 @@
       "api_endpoint": "/wp-json/wp/v2/posts"
     },
     "bolly4u": {
-      "active_base_url": "https://bolly4u.lgbt",
-      "last_verified": "2026-11-08T09:46:24Z",
+      "active_base_url": "https://bolly4u.moda",
+      "last_verified": "2026-11-22T05:32:55Z",
       "verified_by": "wp-json",
       "known_mirrors": [
+        "https://bolly4u.moda",
         "https://bolly4u.lgbt",
         "https://bolly4u.lol",
         "https://bolly4uv.com"
@@ -145,8 +148,9 @@
           "seen_from": "2026-11-08T09:46:24Z"
         }
       ],
-      "last_checked": "2026-11-08T09:46:24Z",
-      "api_endpoint": "/wp-json/wp/v2/posts"
+      "last_checked": "2026-11-22T05:32:55Z",
+      "api_endpoint": "/wp-json/wp/v2/posts",
+      "site_name": "bolly4u"
     },
     "desicinemas": {
       "active_base_url": "https://www.desicinemas.pk",
@@ -171,10 +175,11 @@
       "notes": "desicinemas.tv hijacked (koi5000sultan.com), desicinemas.chat dead — both dropped 2026-11-08."
     },
     "filmyzilla": {
-      "active_base_url": "https://www.filmyzilla80.com",
-      "last_verified": "2026-11-08T09:46:29Z",
+      "active_base_url": "https://www.filmyzilla89.com",
+      "last_verified": "2026-11-22T05:33:02Z",
       "verified_by": "sitemap",
       "known_mirrors": [
+        "https://www.filmyzilla89.com",
         "https://www.filmyzilla80.com",
         "https://filmyzilla80.com",
         "https://filmyzillahq.in",
@@ -210,15 +215,17 @@
           "seen_from": "2026-11-08"
         }
       ],
-      "last_checked": "2026-11-08T09:46:29Z",
+      "last_checked": "2026-11-22T05:33:02Z",
       "sitemap_endpoint": "/sitemap.xml",
-      "notes": "filmyzilla75/74 301 to filmyzilla80; thefilmyzilla.in redirects to HQ (filmyzillahq.in, second live shape)."
+      "notes": "filmyzilla75/74 301 to filmyzilla80; thefilmyzilla.in redirects to HQ (filmyzillahq.in, second live shape).",
+      "site_name": "filmyzilla"
     },
     "hdhub4u": {
-      "active_base_url": "https://new15.hdhub4u.cl",
+      "active_base_url": "https://new16.hdhub4u.cl",
       "last_verified": "2026-11-20T22:30:00Z",
       "verified_by": "sitemap",
       "known_mirrors": [
+        "https://new16.hdhub4u.cl",
         "https://new15.hdhub4u.cl",
         "https://new12.hdhub4u.cl",
         "https://new11.hdhub4u.cl",
@@ -291,8 +298,9 @@
       "api_type": "xml_sitemap",
       "status": "retired",
       "rotation_history": [],
-      "last_checked": "2026-11-08T09:55:08Z",
-      "sitemap_endpoint": "/sitemap.xml"
+      "last_checked": "2026-11-22T05:33:04Z",
+      "sitemap_endpoint": "/sitemap.xml",
+      "site_name": "hdtvb"
     },
     "katmoviehd": {
       "active_base_url": "https://katmoviehd.mom",
@@ -329,10 +337,11 @@
       "api_endpoint": "/__data.json"
     },
     "moviezguru": {
-      "active_base_url": "https://moviezguru.technology",
-      "last_verified": "2026-11-08T09:47:24Z",
+      "active_base_url": "https://moviezguru.host",
+      "last_verified": "2026-11-22T05:33:15Z",
       "verified_by": "wp-json",
       "known_mirrors": [
+        "https://moviezguru.host",
         "https://moviezguru.technology",
         "https://moviezguru.guru"
       ],
@@ -355,9 +364,10 @@
           "seen_from": "2026-11-08"
         }
       ],
-      "last_checked": "2026-11-08T09:47:24Z",
+      "last_checked": "2026-11-22T05:33:15Z",
       "api_endpoint": "/wp-json/wp/v2/posts",
-      "notes": "moviezguru.guru redirects to .technology."
+      "notes": "moviezguru.guru redirects to .technology.",
+      "site_name": "moviezguru"
     },
     "multimovies": {
       "active_base_url": "https://m1.multimovies.courses",
@@ -389,10 +399,11 @@
       "sitemap_endpoint": "/sitemap.xml"
     },
     "rareanimes": {
-      "active_base_url": "https://www.rareanimes.fans",
-      "last_verified": "2026-11-08T09:47:26Z",
+      "active_base_url": "https://www.rareanimes.foo",
+      "last_verified": "2026-11-22T05:33:17Z",
       "verified_by": "wp-json",
       "known_mirrors": [
+        "https://www.rareanimes.foo",
         "https://www.rareanimes.fans",
         "https://www.rareanimes.mov"
       ],
@@ -415,8 +426,9 @@
           "seen_from": "2026-11-08"
         }
       ],
-      "last_checked": "2026-11-08T09:47:26Z",
-      "api_endpoint": "/wp-json/wp/v2/posts"
+      "last_checked": "2026-11-22T05:33:17Z",
+      "api_endpoint": "/wp-json/wp/v2/posts",
+      "site_name": "rareanimes"
     },
     "rogmovies": {
       "active_base_url": "https://rogmovies.beauty",
@@ -507,8 +519,9 @@
           "seen_from": "2026-11-20T22:30:00Z"
         }
       ],
-      "last_checked": "2026-11-20T22:30:00Z",
-      "api_endpoint": "/wp-json/wp/v2/posts"
+      "last_checked": "2026-11-22T05:33:20Z",
+      "api_endpoint": "/wp-json/wp/v2/posts",
+      "site_name": "ssrmovies"
     },
     "vegamovies": {
       "active_base_url": "https://vegamovies.latino",
@@ -563,10 +576,11 @@
       "sitemap_endpoint": "/sitemap.xml"
     },
     "world4ufree": {
-      "active_base_url": "https://world4ufree.gay",
+      "active_base_url": "https://world4ufree.men",
       "last_verified": "2026-11-08T09:47:31Z",
       "verified_by": "wp-json",
       "known_mirrors": [
+        "https://world4ufree.men",
         "https://world4ufree.gay",
         "https://world4ufree.tours"
       ],
@@ -590,8 +604,9 @@
           "seen_from": "2026-11-08"
         }
       ],
-      "last_checked": "2026-11-08T09:47:31Z",
-      "api_endpoint": "/wp-json/wp/v2/posts"
+      "last_checked": "2026-11-22T05:33:26Z",
+      "api_endpoint": "/wp-json/wp/v2/posts",
+      "site_name": "world4ufree"
     },
     "hindilinks4u": {
       "active_base_url": "https://www.hindilinks4u.zip",
@@ -670,8 +685,9 @@
       "api_type": "homepage",
       "status": "active",
       "rotation_history": [],
-      "last_checked": "2026-11-08T20:44:00Z",
-      "notes": "Official Geo dramas; episode pages carry a direct .m3u8 on 5centscdn.com (720p max, ffprobe hls) — no crack needed. No sitemap; catalog is homepage /program/ list + program episode lists. Teaser pages are not episodes."
+      "last_checked": "2026-11-22T05:33:03Z",
+      "notes": "Official Geo dramas; episode pages carry a direct .m3u8 on 5centscdn.com (720p max, ffprobe hls) — no crack needed. No sitemap; catalog is homepage /program/ list + program episode lists. Teaser pages are not episodes.",
+      "site_name": "harpalgeo"
     },
     "movienestbd": {
       "active_base_url": "https://movienestbd.best",
@@ -689,15 +705,17 @@
       "api_type": "json_api",
       "status": "active",
       "rotation_history": [],
-      "last_checked": "2026-11-08T20:44:00Z",
+      "last_checked": "2026-11-22T05:33:13Z",
       "api_endpoint": "/api/v1/search",
-      "notes": "Public no-key JSON API: /api/v1/search?q=<letter>&page=N (18/page, has_next) enumerates; /api/v1/movie/<slug> gives detail incl. watch + per-quality links[] on player/embed.jiofiles.pics (NEW host, not cracked — stored as-is). /movie/<slug> HTML is 404; /api/v1/movies and /api/v1/trending are 404."
+      "notes": "Public no-key JSON API: /api/v1/search?q=<letter>&page=N (18/page, has_next) enumerates; /api/v1/movie/<slug> gives detail incl. watch + per-quality links[] on player/embed.jiofiles.pics (NEW host, not cracked — stored as-is). /movie/<slug> HTML is 404; /api/v1/movies and /api/v1/trending are 404.",
+      "site_name": "movienestbd"
     },
     "moviesdrive": {
-      "active_base_url": "https://new3.moviesdrive.cyou",
-      "last_verified": "2026-11-12T19:10:54Z",
+      "active_base_url": "https://new4.moviesdrive.cyou",
+      "last_verified": "2026-11-22T05:33:14Z",
       "verified_by": "wp-json",
       "known_mirrors": [
+        "https://new4.moviesdrive.cyou",
         "https://new3.moviesdrive.cyou",
         "https://new2.moviesdrive.cyou",
         "https://new1.moviesdrive.cyou",
@@ -717,10 +735,25 @@
       ],
       "api_type": "wp_rest_api",
       "status": "active",
-      "rotation_history": [{"domain": "https://new1.moviesdrive.cyou", "seen_until": "2026-11-10"}, {"domain": "https://new2.moviesdrive.cyou", "seen_from": "2026-11-10", "seen_until": "2026-11-12"}, {"domain": "https://new3.moviesdrive.cyou", "seen_from": "2026-11-12"}],
-      "last_checked": "2026-11-12T19:10:54Z",
+      "rotation_history": [
+        {
+          "domain": "https://new1.moviesdrive.cyou",
+          "seen_until": "2026-11-10"
+        },
+        {
+          "domain": "https://new2.moviesdrive.cyou",
+          "seen_from": "2026-11-10",
+          "seen_until": "2026-11-12"
+        },
+        {
+          "domain": "https://new3.moviesdrive.cyou",
+          "seen_from": "2026-11-12"
+        }
+      ],
+      "last_checked": "2026-11-22T05:33:14Z",
       "api_endpoint": "/wp-json/wp/v2/posts",
-      "notes": "WP download catalog; posts link mdrive.lol/archive/<id>/ per quality, archive pages link hubcloud.ist/drive/... and gdflix.vip/file/... (known file-host families)."
+      "notes": "WP download catalog; posts link mdrive.lol/archive/<id>/ per quality, archive pages link hubcloud.ist/drive/... and gdflix.vip/file/... (known file-host families).",
+      "site_name": "moviesdrive"
     },
     "dramadog": {
       "active_base_url": "https://dramadog.app",
@@ -838,9 +871,10 @@
       "api_type": "json_api",
       "status": "active",
       "rotation_history": [],
-      "last_checked": "2026-11-21T16:00:00Z",
+      "last_checked": "2026-11-22T05:33:22Z",
       "api_endpoint": "/wefeed-h5api-bff/subject/filter",
-      "notes": "MovieBox + 123moviesfree.club share the aoneroom backend (h5-api.aoneroom.com). Catalog API POST /subject/filter {page, perPage} is public: 200 with real items 2026-11-21. /subject/search needs X-Client-Token. Site root 200, 1.1 MB. themoviebox 360p/480p free, 1080p vipLocked; 123moviesfree 480p/1080p free."
+      "notes": "MovieBox + 123moviesfree.club share the aoneroom backend (h5-api.aoneroom.com). Catalog API POST /subject/filter {page, perPage} is public: 200 with real items 2026-11-21. /subject/search needs X-Client-Token. Site root 200, 1.1 MB. themoviebox 360p/480p free, 1080p vipLocked; 123moviesfree 480p/1080p free.",
+      "site_name": "themoviebox"
     },
     "moviehax": {
       "active_base_url": "https://moviehax.run",
@@ -890,9 +924,10 @@
           "seen_from": "2026-11-21"
         }
       ],
-      "last_checked": "2026-11-21T16:00:00Z",
+      "last_checked": "2026-11-22T05:32:55Z",
       "api_endpoint": "/wp-json/wp/v2/posts",
-      "notes": "gen.in redirects to io.in; io.in 403s plain curl AND Chrome UA (Cloudflare) from Oracle egress 2026-11-21 - move real, content unverifiable from here. Post list comes from the open WP REST route once reachable."
+      "notes": "gen.in redirects to io.in; io.in 403s plain curl AND Chrome UA (Cloudflare) from Oracle egress 2026-11-21 - move real, content unverifiable from here. Post list comes from the open WP REST route once reachable.",
+      "site_name": "bollyflix"
     },
     "animeworld": {
       "active_base_url": "https://animeworld.live",
