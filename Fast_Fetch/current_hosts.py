@@ -63,6 +63,7 @@ import base64
 import json
 import os
 import re
+import sys
 import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
@@ -885,6 +886,15 @@ def _unwrap_vidrift(saved_url: str, fetch) -> tuple:
 #: per-load token). A 200 with {"stream": null} means this title has no
 #: stream right now — "no_streams", never dead. A 404 on the resolve
 #: means vidbolt has no such title — "dead_file".
+#: One round + bank-all (2026-11-23): the resolve is one GET over the
+#: shared keep-alive pool (see _vidbolt_pooled_fetch) and every source the
+#: response returns is a candidate with its own expires_at (see
+#: _vidbolt_candidates). Live re-measured 2026-11-23: the API rotates the
+#: server per call (luna seen live, alongside the quasar/quantum/orion of
+#: the first crack) and the rendition set varies (1-2 HLS masters today on
+#: stream.vidbolt.xyz or a workers.dev bridge; 4 in the first capture) —
+#: one response still carries ONE server, never several, so &prefer=
+#: would be a second round, not banked here.
 _VIDBOLT_MOVIE_RE = re.compile(r"^/movie/(\d+)/?$")
 _VIDBOLT_TV_RE = re.compile(r"^/tv/(\d+)/(\d+)/(\d+)/?$")
 
@@ -911,6 +921,23 @@ def _vidbolt_direct(saved_url: str):
                 f"&season={season}&episode={episode}&hevc=0",
                 f"https://vidbolt.xyz/tv/{vid}/{season}/{episode}")
     return None
+
+
+def _vidbolt_source_expiry(url: str) -> float | None:
+    """Epoch expiry of one VidBolt source URL, or None.
+
+    The signed HLS masters carry `Expires=<epoch>` (same reader as
+    `host_resolvers.vidbolt_signed_expiry`, re-implemented here so this
+    module stays importable without the importers package). The
+    workers.dev bridge and `stream.vidbolt.xyz/v/<token>` shapes carry no
+    parsable lifetime and return None — the caller keeps its conservative
+    default for those instead of inventing one.
+    """
+    query = urllib.parse.parse_qs(urllib.parse.urlsplit(url or "").query)
+    raw = (query.get("Expires") or query.get("expires") or [""])[0]
+    if not re.fullmatch(r"\d{9,11}", raw or ""):
+        return None
+    return float(int(raw))
 
 
 def _vidbolt_candidates(res, referer: str) -> tuple:
@@ -943,7 +970,11 @@ def _vidbolt_candidates(res, referer: str) -> tuple:
             kind_hint = "file"
         else:
             kind_hint = "playlist"
-        candidate = {"url": url, "referer": referer, "kind_hint": kind_hint}
+        candidate = {"url": url, "referer": referer, "kind_hint": kind_hint,
+                     # Per-source expiry: each signed URL carries its own
+                     # lifetime (or none), so a caller banking all
+                     # candidates banks each with its own clock.
+                     "expires_at": _vidbolt_source_expiry(url)}
         if (source or {}).get("quality"):
             candidate["quality"] = source["quality"]
         if server:
@@ -956,95 +987,63 @@ def _vidbolt_candidates(res, referer: str) -> tuple:
     return [], "no_streams"
 
 
-#: VidBolt /api/resolve crack (WARP egress, 2026-11-23): the movie/TV page
-#: JS fetches '/api/resolve?'+q where q is `type=movie&id=<tmdb>` or
-#: `type=tv&id=<tmdb>&season=<s>&episode=<e>` — read live off the page
-#: itself via WARP, 2026-11-23, so the resolve URL is built straight from
-#: the saved link with no page fetch. The call needs Referer: the
-#: movie/TV page — without it Cloudflare 403s (measured: the no-Referer
-#: attempt answers the "Attention Required!" page). The response is live
-#: stream JSON: {"stream": {"server": "quasar", "sources": [{"url":
-#: "https://.../index_287.m3u8?Expires=...&Signature=...", "kind":
-#: "hls", "quality": "1080p", "language": "Hindi"}, ...]}}. Servers
-#: seen: quantum/quasar (movies), orion (TV); selectable via
-#: &prefer=<server> — not used, the API's default pick is proven. The
-#: stream URLs are SIGNED (Expires + Signature): resolve fresh on every
-#: call, never serve a stored signed URL (same rule as the gamerxyt
-#: per-load token). A 200 with {"stream": null} means this title has no
-#: stream right now — "no_streams", never dead. A 404 on the resolve
-#: means vidbolt has no such title — "dead_file".
-_VIDBOLT_MOVIE_RE = re.compile(r"^/movie/(\d+)/?$")
-_VIDBOLT_TV_RE = re.compile(r"^/tv/(\d+)/(\d+)/(\d+)/?$")
 
+def _vidbolt_pooled_fetch(fetch):
+    """The caller's fetch, with vidbolt.xyz /api/resolve calls routed over
+    the shared keep-alive pool — only when the caller passed this module's
+    own default fetch (the production press path).
 
-def _vidbolt_direct(saved_url: str):
-    """(resolve_url, referer) built straight from a vidbolt page URL.
-
-    Returns None when the URL is not a /movie/<id> or /tv/<id>/<s>/<e>
-    page — those shapes fall back to the page-fetch + ``var q`` path.
+    The pool is `host_resolvers.keepalive_fetch` (the HubCloud one-round
+    pool, reused — not reinvented): one TLS + Cloudflare handshake per
+    process instead of one per press. A test StubFetch (or any non-default
+    fetch) passes through untouched, so mocked tests never touch the
+    network; a missing or broken pool module falls back to the plain fetch
+    instead of failing the resolve. Only the /api/resolve GET is pooled —
+    the page-fetch fallback and the media probes keep the caller's fetch.
+    The import is lazy and mirrors fast_fetch's `_resolvers()` shape (the
+    importers dir on sys.path, plain `import host_resolvers`) so this
+    module still imports when the pool is absent.
     """
-    parts = urllib.parse.urlsplit(str(saved_url or ""))
-    if (parts.netloc or "").lower().split(":")[0] != "vidbolt.xyz":
-        return None
-    path = parts.path or ""
-    match = _VIDBOLT_MOVIE_RE.match(path)
-    if match:
-        vid = match.group(1)
-        return (f"https://vidbolt.xyz/api/resolve?type=movie&id={vid}&hevc=0",
-                f"https://vidbolt.xyz/movie/{vid}")
-    match = _VIDBOLT_TV_RE.match(path)
-    if match:
-        vid, season, episode = match.groups()
-        return (f"https://vidbolt.xyz/api/resolve?type=tv&id={vid}"
-                f"&season={season}&episode={episode}&hevc=0",
-                f"https://vidbolt.xyz/tv/{vid}/{season}/{episode}")
-    return None
-
-
-def _vidbolt_candidates(res, referer: str) -> tuple:
-    """(candidates, failure) parsed from one /api/resolve response."""
+    if fetch is not default_fetch:
+        return fetch
     try:
-        payload = json.loads(res.text()) or {}
+        _dir = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "importers")
+        if _dir not in sys.path:
+            sys.path.insert(0, _dir)
+        import host_resolvers as _hr
+        _pool = getattr(_hr, "keepalive_fetch", None)
     except Exception:
-        return [], "unverified"
-    stream = payload.get("stream") or {}
-    if not isinstance(stream, dict):
-        return [], "unverified"
-    sources = stream.get("sources") or []
-    if not sources and stream.get("url"):
-        sources = [stream]
-    if not sources:
-        return [], "no_streams"
-    server = stream.get("server") or ""
-    candidates = []
-    seen = set()
-    for source in sources:
-        url = (source or {}).get("url") or ""
-        if not url or url in seen:
-            continue
-        seen.add(url)
-        kind = (source or {}).get("kind") or ""
-        stem = url.split("?", 1)[0]
-        if kind == "hls" or stem.endswith(".m3u8"):
-            kind_hint = "playlist"
-        elif kind == "mp4" or stem.endswith(".mp4"):
-            kind_hint = "file"
-        else:
-            kind_hint = "playlist"
-        candidate = {"url": url, "referer": referer, "kind_hint": kind_hint}
-        if (source or {}).get("quality"):
-            candidate["quality"] = source["quality"]
-        if server:
-            candidate["server"] = server
-        if (source or {}).get("language"):
-            candidate["language"] = source["language"]
-        candidates.append(candidate)
-    if candidates:
-        return candidates, None
-    return [], "no_streams"
+        return fetch
+    if _pool is None:
+        return fetch
+
+    def _fetch(url, referer=None, *args, **kwargs):
+        parts = urllib.parse.urlsplit(url or "")
+        if ((parts.netloc or "").lower().split(":")[0] == "vidbolt.xyz"
+                and (parts.path or "").startswith("/api/resolve")
+                and not args and not kwargs):
+            headers = {"Referer": referer} if referer else {}
+            try:
+                status, body, resp_headers, final_url = _pool(
+                    url, headers=headers)
+            except Exception:
+                return fetch(url, referer=referer)
+            if isinstance(body, str):
+                body = body.encode("utf-8", "replace")
+            return FetchResult(
+                status=status,
+                content_type=(resp_headers or {}).get("content-type", ""),
+                body=body or b"",
+                headers=resp_headers or {},
+                final_url=final_url or url)
+        return fetch(url, referer, *args, **kwargs)
+
+    return _fetch
 
 
 def _unwrap_vidbolt(saved_url: str, fetch) -> tuple:
+    fetch = _vidbolt_pooled_fetch(fetch)
     direct = _vidbolt_direct(saved_url)
     if direct is not None:
         resolve_url, referer = direct
@@ -1574,6 +1573,18 @@ def resolve_copy(saved_url: str, fetch=default_fetch, probe=None) -> dict:
                       "temporary": not permanent}
             if cand.get("mirrors"):
                 result["mirrors"] = cand["mirrors"]
+            if backend == "vidbolt":
+                # Bank-all (2026-11-23): the one /api/resolve response
+                # already published every rendition; the non-winning ones
+                # ride on the result (same shape as hubcdn's `mirrors`) so
+                # the caller can bank or fail over to them from this
+                # resolve instead of re-resolving per quality. Each
+                # carries its own `expires_at` (None when its URL carries
+                # no parsable lifetime).
+                others = [c for c in expanded
+                          if c.get("url") and c["url"] != cand["url"]]
+                if others:
+                    result["siblings"] = others
             return result
         last_failure = verdict.get("failure") or "unverified"
     return _fail_result(backend, last_failure)

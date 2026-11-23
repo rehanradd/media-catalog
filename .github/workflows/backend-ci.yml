@@ -1043,6 +1043,15 @@ jobs:
       - name: 🧪 test_current_hosts.py
         run: python3 -S Fast_Fetch/test_current_hosts.py
 
+      # VidBolt one-round + bank-all (2026-11-23): the /api/resolve GET
+      # rides the shared keep-alive pool and every source the one response
+      # returns is banked with its own signed expiry (per-source
+      # `Expires`, never one shared stamp); Stage-1 winners carry the
+      # non-winning renditions as `siblings`. Offline — canned resolve
+      # JSON, fake connections, stub fetch + stub probe.
+      - name: 🧪 test_vidbolt_speed.py
+        run: python3 -S Fast_Fetch/test_vidbolt_speed.py
+
       # 1fichier TrueLink port (2026-11-21): GET file page, POST its hidden
       # form (a=1), scrape a.btn-general for the direct link. Offline —
       # fixtures built from the TrueLink/nurlresolver reference selectors,

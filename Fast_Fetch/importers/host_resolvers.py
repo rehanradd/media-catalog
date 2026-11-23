@@ -282,10 +282,12 @@ from __future__ import annotations
 import base64
 from datetime import datetime, timezone
 import hashlib
+import http.client
 import json
 import re
 import ssl
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -854,6 +856,192 @@ def http_request(url: str, headers: dict | None = None, timeout: float = DEFAULT
         except Exception as exc:                      # DNS, TLS, timeout, refused
             last = (0, str(exc), {}, url)
     return last
+#: Bound on the HubCloud keep-alive pool (2026-11-23, one-round refresh):
+#: one connection per (scheme, host, port) the resolver is talking to
+#: right now — drive page, gamerxyt, and the byte endpoints its Range
+#: probes knock on. Eight covers a full gamerxyt page (drive + gamerxyt
+#: + FSLv2 + FSL + PixelServer + 10Gbps + ZipDisk + one spare) without
+#: holding a connection per host in the catalog. Past the bound the
+#: least-recently-used connection is closed and dropped.
+KEEPALIVE_MAX_CONNECTIONS = 8
+
+
+class KeepAliveFetch:
+    """``http_request``-shaped fetch over reused ``http.client`` connections.
+
+    One connection per (scheme, host, port), created lazily through
+    ``warp_proxy.make_connection`` so a configured WARP proxy is
+    tunnelled (CONNECT), exactly as the urllib openers are — the pool
+    never bypasses the egress the process was told to use. A lock
+    serialises use: ``http.client`` connections are not thread-safe,
+    and the serve path is threaded.
+
+    Measured 2026-11-23 (Oracle VM egress, ``hubcloud_fast.py`` probe3):
+    three full HubCloud resolves cost 3.02 s on fresh urllib
+    connections and 0.57 s on reused ones (5.3x); a warm resolve is
+    0.02-0.04 s. The win is the TLS + TCP handshake the second GET
+    stops paying, not a new endpoint — the 2-GET chain is forced.
+
+    A dead connection (server closed it, reset, broken pipe, bad status
+    line) is dropped and the request retried on a fresh connection —
+    the connection was dead, not the server. Any other transport
+    failure (timeout, DNS, TLS) is retried like ``http_request``'s, up
+    to three attempts with a short sleep. An HTTP answer, including a
+    429, is never retried: it is evidence, not a transport failure.
+    """
+
+    def __init__(self, connection_factory=None,
+                 max_connections: int = KEEPALIVE_MAX_CONNECTIONS):
+        self._factory = connection_factory or self._default_factory
+        self._max = max(1, int(max_connections))
+        self._conns: dict[tuple[str, int, bool], object] = {}
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def _default_factory(host, port, https, timeout):
+        return _warp_proxy.make_connection(host, port, https, timeout,
+                                           context=_SSL_CONTEXT)
+
+    @property
+    def pooled_connections(self) -> int:
+        """How many connections the pool currently holds (tests/diagnostics)."""
+        with self._lock:
+            return len(self._conns)
+
+    def close(self) -> None:
+        """Drop every pooled connection (tests; process-shutdown hygiene)."""
+        with self._lock:
+            conns, self._conns = self._conns, {}
+        for conn in conns.values():
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def _drop_locked(self, key) -> None:
+        conn = self._conns.pop(key, None)
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def _conn_for_locked(self, key, timeout):
+        conn = self._conns.get(key)
+        if conn is not None:
+            # Reused: most-recently-used again, so eviction below
+            # drops the connection idle longest, not this one.
+            self._conns[key] = self._conns.pop(key)
+            return conn
+        host, port, https = key
+        conn = self._factory(host, port, https, timeout)
+        if len(self._conns) >= self._max:
+            self._drop_locked(next(iter(self._conns)))
+        self._conns[key] = conn
+        return conn
+
+    def fetch(self, url, headers=None, timeout=DEFAULT_TIMEOUT,
+              method="GET", follow=True, data=None):
+        """``(status, body, headers, final_url)``, ``http_request``'s shape.
+
+        ``headers`` are lowercase-name in the answer, as ``http_request``
+        returns them. ``body`` is bytes, capped at ``PROBE_READ_BYTES``
+        like ``http_request``'s read; a longer body cannot be left
+        half-read on a reusable connection, so that connection is
+        dropped instead of poisoned for the next request.
+        """
+        parts = urllib.parse.urlsplit(url or "")
+        host = parts.hostname or ""
+        if not host:
+            return 0, "no host in URL", {}, url
+        try:
+            port = parts.port or (443 if parts.scheme == "https" else 80)
+        except ValueError:
+            return 0, "unparsable port", {}, url
+        fields = {"User-Agent": USER_AGENT}
+        fields.update(headers or {})
+        # A stored URL may carry raw non-ASCII (fast_probe hit this with
+        # a curly quote in a filename) and http.client encodes the
+        # request line as ASCII — percent-encode the target first.
+        target = urllib.parse.quote(parts.path or "/", safe="/%")
+        if parts.query:
+            target += "?" + urllib.parse.quote(parts.query, safe="=&%")
+        key = (host, port, parts.scheme == "https")
+        current_url = url
+        for _redirect in range(6):
+            status, body, resp_headers, error = 0, b"", {}, None
+            for attempt in range(3):
+                if attempt:
+                    time.sleep(0.25 + 0.15 * (attempt % 4))
+                with self._lock:
+                    conn = self._conn_for_locked(key, timeout)
+                    try:
+                        conn.request(method, target, body=data,
+                                     headers=fields)
+                        resp = conn.getresponse()
+                        raw = resp.read(PROBE_READ_BYTES + 1)
+                        status = int(resp.status)
+                        resp_headers = {k.lower(): v
+                                        for k, v in resp.getheaders()}
+                        error = None
+                    except Exception as exc:  # dead conn, timeout, DNS, TLS
+                        # The connection cannot be trusted for the next
+                        # request — drop it and retry on a fresh one.
+                        self._drop_locked(key)
+                        error = exc
+                        status = 0
+                        continue
+                    if len(raw) > PROBE_READ_BYTES:
+                        # Over the cap: the unread tail would poison the
+                        # connection, so drop it and keep the capped body.
+                        self._drop_locked(key)
+                        raw = raw[:PROBE_READ_BYTES]
+                    body = raw
+                    break
+            if error is not None:
+                return 0, str(error), {}, current_url
+            location = (resp_headers.get("location") or "").strip()
+            if (follow and status in (301, 302, 303, 307, 308)
+                    and location):
+                nxt = urllib.parse.urljoin(current_url, location)
+                nparts = urllib.parse.urlsplit(nxt)
+                nhost = nparts.hostname or ""
+                if not nhost:
+                    return status, body, resp_headers, current_url
+                try:
+                    nport = (nparts.port
+                             or (443 if nparts.scheme == "https" else 80))
+                except ValueError:
+                    return status, body, resp_headers, current_url
+                if status == 303:
+                    method, data = "GET", None
+                key = (nhost, nport, nparts.scheme == "https")
+                target = urllib.parse.quote(nparts.path or "/", safe="/%")
+                if nparts.query:
+                    target += "?" + urllib.parse.quote(nparts.query,
+                                                       safe="=&%")
+                current_url = nxt
+                continue
+            return status, body, resp_headers, current_url
+        return status, body, resp_headers, current_url
+
+
+#: The process-wide HubCloud keep-alive pool (see KeepAliveFetch): one
+#: pool per process, bounded, shared by every HubCloud resolve in it.
+_KEEPALIVE = KeepAliveFetch()
+
+
+def keepalive_fetch(url, headers=None, timeout=DEFAULT_TIMEOUT,
+                    method="GET", follow=True, data=None):
+    """``http_request``'s shape over the shared keep-alive pool."""
+    return _KEEPALIVE.fetch(url, headers=headers, timeout=timeout,
+                            method=method, follow=follow, data=data)
+
+
+def close_keepalive_pool():
+    """Drop every pooled connection (tests; process-shutdown hygiene)."""
+    _KEEPALIVE.close()
+
 
 
 def _cookie_jar_fetch():
@@ -2085,6 +2273,26 @@ def unwrap_vibuxer(embed_url: str, fetch=None, verify: bool = True,
     return _finish_media(result, fetch, verify)
 
 
+def vidbolt_signed_expiry(url: str) -> tuple[int | None, int | None]:
+    """(expires_at epoch, seconds-from-now) for a VidBolt signed HLS URL.
+
+    The VidBolt CDN signs with `Expires=<epoch>` (absolute, capital E) plus
+    `Signature` — neither `expiry_from_url` (reads lowercase `e` / `expires` /
+    `exp`) nor `duration_expiry_from_url` (reads `s` + `e` lifetime) sees it,
+    so the pre-speed resolver always fell back to the 4-hour default even
+    though the signed lifetime was in the URL all along. The mp4 proxy URLs
+    (`scraper.vidbolt.xyz/proxy/segment/...`) carry no expiry at all and
+    still return (None, None). Nine to eleven digits is the same epoch guard
+    the other readers use.
+    """
+    query = urllib.parse.parse_qs(urllib.parse.urlsplit(url or "").query)
+    raw = (query.get("Expires") or query.get("expires") or [""])[0]
+    if not re.fullmatch(r"\d{9,11}", raw or ""):
+        return None, None
+    expires_at = int(raw)
+    return expires_at, expires_at - int(time.time())
+
+
 def unwrap_vidbolt(url: str, fetch=None, verify: bool = True,
                    referer: str | None = None) -> dict:
     """
@@ -2092,6 +2300,15 @@ def unwrap_vidbolt(url: str, fetch=None, verify: bool = True,
 
     Vidbolt resolves streams via JSON API: /api/resolve?type=<movie|tv>&id=<tmdb_id>[&season=S&episode=E].
     The API returns HLS sources and subtitles.
+
+    One round: the /api/resolve call is a single GET, and callers that pass
+    `fetch=keepalive_fetch` ride the shared keep-alive pool (see
+    `KeepAliveFetch`) instead of paying a fresh TLS + Cloudflare handshake
+    per press. Every source the one response returns is banked in
+    `result["sources"]` with its OWN expiry (`expires_in` / `expires_at`,
+    read off its own signed URL — the HLS masters carry `Expires`, the mp4
+    proxy URLs carry none), so a caller can bank all renditions from one
+    resolve instead of re-resolving per quality.
     """
     fetch = fetch or http_request
     clean_url = (url or "").strip()
@@ -2142,10 +2359,17 @@ def unwrap_vidbolt(url: str, fetch=None, verify: bool = True,
     renditions = []
     for s in raw_sources:
         if isinstance(s, dict) and s.get("url"):
+            # Per-source expiry: each signed URL carries its own lifetime
+            # (HLS masters: `Expires` epoch; mp4 proxy URLs: none), so a
+            # caller banking all renditions banks each with its own clock
+            # instead of stamping the whole response with one guess.
+            _src_exp_at, _src_exp_in = vidbolt_signed_expiry(s["url"])
             renditions.append({
                 "url": s["url"],
                 "mime": "application/vnd.apple.mpegurl" if (s.get("kind") == "hls" or ".m3u8" in s["url"]) else "video/mp4",
                 "label": s.get("quality") or s.get("kind") or "HLS",
+                "expires_in": _src_exp_in,
+                "expires_at": _src_exp_at,
             })
 
     if not renditions:
@@ -2157,7 +2381,13 @@ def unwrap_vidbolt(url: str, fetch=None, verify: bool = True,
     result["sources"] = renditions
     result["quality"] = renditions[0]["label"]
 
-    _expires_at, measured_exp = duration_expiry_from_url(result["final_url"])
+    # The signed `Expires` epoch is the real lifetime (the old
+    # `duration_expiry_from_url` reader never saw it — wrong param shape —
+    # so every resolve banked the 4-hour guess). Keep the old reader as a
+    # fallback for a future CDN shape, then the conservative default.
+    _expires_at, measured_exp = vidbolt_signed_expiry(result["final_url"])
+    if measured_exp is None:
+        _expires_at, measured_exp = duration_expiry_from_url(result["final_url"])
     result["expires_in"] = measured_exp if measured_exp is not None else VIDBOLT_DEFAULT_EXPIRY_SECONDS
     result["signed_params"] = sorted(signature_params(result["final_url"]))
     return _finish_media(result, fetch, verify)

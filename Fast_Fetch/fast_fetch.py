@@ -9062,9 +9062,15 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                 # (current_hosts) claims vidbolt.xyz first; this branch
                 # serves vidbolt.pro rows and the Stage-1 import-failure
                 # path.
+                # One round (2026-11-23): the /api/resolve GET rides the
+                # shared keep-alive pool (see host_resolvers.KeepAliveFetch,
+                # the HubCloud one-round pool, reused here) instead of a
+                # fresh urllib connection per press; getattr keeps a
+                # pool-less resolver (the test fake) on the default.
                 _unwrap_branch_taken = True
                 verdict = hr.unwrap_vidbolt(hoster_input("vidbolt"),
-                                            verify=True)
+                                            verify=True,
+                                            fetch=getattr(hr, "keepalive_fetch", None))
                 direct_u = embed_from_verdict(verdict)
                 if direct_u:
                     fresh_url = direct_u
