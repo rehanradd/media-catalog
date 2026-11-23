@@ -10,6 +10,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from admin_v2.errors import ApiError  # noqa: E402
 from admin_v2.live_stores import LiveStores, check_stream_url  # noqa: E402
 from admin_v2.services import Service  # noqa: E402
