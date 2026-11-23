@@ -583,6 +583,7 @@ class WorkflowSuiteCoverageTests(unittest.TestCase):
         "test_rareanimes_import.py", "test_rogmovies_import.py",
         "test_ssrmovies_import.py",
         "test_toonworld4all.py", "test_vegamovies_import.py", "test_world4ufree_import.py",
+        "test_wp_rest.py",
     })
 
     def _steps(self):
