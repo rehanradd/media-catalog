@@ -350,9 +350,11 @@ class KmhdDispatchTests(unittest.TestCase):
         self.assertTrue(res["cached"])
 
     def test_resolver_version_covers_kmhd_rows(self):
-        """The v6→v7 bump: rows that failed under v6 with no_unwrapper
-        are re-pressed instead of being refused from the negative cache."""
-        self.assertEqual(fast_fetch.RESOLVER_VERSION, 11)
+        """The v10→v11 bump: rows that failed under v10 with no_unwrapper
+        are re-pressed instead of being refused from the negative cache.
+        Assert a floor, not an exact version: later landings (hubcloud
+        v12, ...) bump RESOLVER_VERSION further and must not break this."""
+        self.assertGreaterEqual(fast_fetch.RESOLVER_VERSION, 11)
 
 
 if __name__ == "__main__":
