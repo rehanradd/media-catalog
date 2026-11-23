@@ -21,6 +21,13 @@ carries neither. It carries download buttons. What this pins:
   buttons, and a page with only login / Turnstile-gated ``/cflare`` links
   all return the landing page unchanged (temp 0) so the caller's bridge
   guard refuses them;
+* the busycdn scan (speed path, 23 Nov 2026): the file page embeds the
+  ``busycdn.instadl.rest/<token>?bytes=N`` URL, so ``unwrap_gdflix``
+  reads it straight off the page — one page GET, no button parsing —
+  and ``bytes=`` parses to the file size. The no-follow hop still runs
+  (the busycdn URL 302s to a fastdl HTML interstitial, not to bytes,
+  so only the hop's ``?url=`` is the file); a hop that yields nothing
+  falls through to the legacy buttons without repeating the same hop.
 * the old behaviour is kept: an embedded video-downloads URL or Drive file
   id still unwraps first;
 * the H4 R8 clearance is threaded to the page fetch and to the Instant DL
@@ -149,6 +156,96 @@ class GDFlixInstantTests(unittest.TestCase):
             url, _res_id, temp = fast_fetch.unwrap_gdflix(FILE_URL)
         self.assertEqual(url, GOOGLE_URL + "/file.mkv")
         self.assertEqual(temp, 1)
+
+
+class GDFlixBusycdnScanTests(unittest.TestCase):
+    """The speed path: busycdn URL read off the page, not off the button.
+
+    Fixture tokens/URLs are fake; the live shape (``::`` token,
+    ``bytes=`` size) is pinned by ``test_busycdn_live_shape_parses``.
+    """
+
+    def test_busycdn_embedded_outside_any_button_is_used(self):
+        """A busycdn URL in a <script> (no buttons at all) still unwraps
+        — the scan, not the button parse, finds it. One page GET."""
+        script_page = (
+            "<html><head><title>GDFlix | f.mkv</title></head><body>"
+            '<script>var dl="https://busycdn.instadl.rest/FAKETOKEN123'
+            '?bytes=938314815";</script></body></html>'
+        )
+        getter = mock.Mock(return_value=(200, FILE_URL, script_page))
+        locator = mock.Mock(return_value=FASTDL_URL)
+        with mock.patch.object(fast_fetch, "http_get", getter), \
+                mock.patch.object(fast_fetch, "_gdflix_redirect_location",
+                                  locator):
+            url, res_id, temp = fast_fetch.unwrap_gdflix(FILE_URL)
+        self.assertEqual(url, GOOGLE_URL)
+        self.assertEqual(res_id, "N4NC704WLKFJAKL")
+        self.assertEqual(temp, 1)
+        locator.assert_called_once_with(BUSY_URL, timeout=10, clearance=None)
+        self.assertEqual(getter.call_count, 1)
+
+    def test_busycdn_live_shape_parses(self):
+        """Live shape (23 Nov, Tor): long hex token with ``::``, a short
+        hex hash, ``bytes=`` the file size in bytes. Token is synthetic
+        — only the shape and the live byte size are pinned."""
+        live = ("https://busycdn.instadl.rest/" + "ab" * 80 + "::"
+                + "cd" * 16 + "?bytes=1780539782")
+        got = fast_fetch._gdflix_busycdn_from_page(
+            f'<a href="{live}">Instant DL [10GBPS]</a>')
+        self.assertEqual(got, (live, 1780539782))
+
+    def test_busycdn_without_bytes_is_ignored(self):
+        """A busycdn mention with no ``bytes=`` is not the file link:
+        the scan passes and the legacy buttons still win."""
+        page = _page(
+            '<a href="https://busycdn.instadl.rest/FAKETOKEN123">x</a>',
+            DIRECT_BTN)
+        getter = mock.Mock(return_value=(200, FILE_URL, page))
+        with mock.patch.object(fast_fetch, "http_get", getter):
+            url, _res_id, temp = fast_fetch.unwrap_gdflix(FILE_URL)
+        self.assertEqual(url, "https://r2.example.invalid/direct/file.mkv")
+        self.assertEqual(temp, 1)
+
+    def test_busycdn_scan_hop_failure_falls_through_without_repeating(self):
+        """Scan hit + hop yields nothing: DIRECT DL wins, and the
+        Instant DL button (same URL) does NOT pay for a second hop."""
+        getter = mock.Mock(
+            return_value=(200, FILE_URL, _page(INSTANT_BTN, DIRECT_BTN)))
+        locator = mock.Mock(return_value=None)
+        with mock.patch.object(fast_fetch, "http_get", getter), \
+                mock.patch.object(fast_fetch, "_gdflix_redirect_location",
+                                  locator):
+            url, _res_id, temp = fast_fetch.unwrap_gdflix(FILE_URL)
+        self.assertEqual(url, "https://r2.example.invalid/direct/file.mkv")
+        self.assertEqual(temp, 1)
+        self.assertEqual(locator.call_count, 1)
+
+    def test_different_instant_button_still_gets_its_hop(self):
+        """Scan hit (URL-A, hop fails) + an Instant DL button at a
+        DIFFERENT URL-B: the button still gets its own hop."""
+        other = "https://busycdn.instadl.rest/OTHERTOKEN999?bytes=111"
+        other_btn = (
+            f'<a href="{other}" class="btn btn-danger">'
+            "Instant DL [10GBPS]</a>"
+        )
+        script_page = (
+            "<html><body>"
+            '<script>var dl="https://busycdn.instadl.rest/FAKETOKEN123'
+            '?bytes=938314815";</script>'
+            f"{other_btn}</body></html>"
+        )
+        getter = mock.Mock(return_value=(200, FILE_URL, script_page))
+        locator = mock.Mock(side_effect=[None, FASTDL_URL])
+        with mock.patch.object(fast_fetch, "http_get", getter), \
+                mock.patch.object(fast_fetch, "_gdflix_redirect_location",
+                                  locator):
+            url, _res_id, temp = fast_fetch.unwrap_gdflix(FILE_URL)
+        self.assertEqual(url, GOOGLE_URL)
+        self.assertEqual(temp, 1)
+        self.assertEqual(locator.call_count, 2)
+        self.assertEqual(locator.call_args_list[0].args[0], BUSY_URL)
+        self.assertEqual(locator.call_args_list[1].args[0], other)
 
 
 class GDFlixLegacyButtonTests(unittest.TestCase):

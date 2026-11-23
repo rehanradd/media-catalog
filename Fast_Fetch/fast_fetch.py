@@ -3645,6 +3645,45 @@ def _gdflix_redirect_location(url: str, timeout: int = 10,
         return None
 
 
+#: The direct-download URL the GDFlix file page embeds (23 Nov 2026, Tor):
+#: ``https://busycdn.instadl.rest/<token>?bytes=<size>``. The token is
+#: per-file and stable across fetches; it may contain ``::`` (a long hex
+#: token, ``::``, a short hex hash on the live page). ``bytes`` is the file
+#: size in bytes. The URL is matched anywhere in the page HTML — it is the
+#: ``Instant DL`` button's href today, but a button-markup change must not
+#: lose it. It is NOT itself a playable stream: the hop 302s to
+#: ``fastdl-one.pages.dev/?url=<Google URL>`` and that worker serves a 6 KB
+#: HTML "Instant DL Page" (no redirect, no Google URL in the body), so a
+#: bare busycdn URL classifies ``html_shell`` in the Stage-2 probe and is
+#: refused — the no-follow hop that reads ``?url=`` stays load-bearing.
+_GDFLIX_BUSYCDN_RE = re.compile(
+    r"""https?://busycdn\.instadl\.rest/[^\s"'<>\\]+""")
+
+
+def _gdflix_busycdn_from_page(page: str) -> tuple[str, int] | None:
+    """First busycdn direct-download URL embedded in ``page``.
+
+    Returns ``(url, size_bytes)`` — ``size_bytes`` parsed from the
+    ``bytes=`` query param — or None when the page carries no well-formed
+    busycdn URL (a busycdn mention without ``bytes=`` is not the file
+    link and is ignored, so the caller falls back to the button flow).
+    Never raises on hostile HTML.
+    """
+    try:
+        for match in _GDFLIX_BUSYCDN_RE.finditer(page or ""):
+            url = html_module.unescape(match.group(0))
+            parsed = urllib.parse.urlparse(url)
+            if (parsed.hostname or "").lower() != "busycdn.instadl.rest":
+                continue
+            raw_bytes = (urllib.parse.parse_qs(parsed.query).get("bytes")
+                         or [""])[0]
+            if raw_bytes.isdigit() and int(raw_bytes) > 0:
+                return url, int(raw_bytes)
+    except Exception:
+        return None
+    return None
+
+
 def unwrap_gdflix(gdflix_url: str, clearance=None) -> tuple[str, str, int]:
     """GDFlix `file/<ID>` page → the direct Google endpoint behind it.
 
@@ -3658,6 +3697,13 @@ def unwrap_gdflix(gdflix_url: str, clearance=None) -> tuple[str, str, int]:
       ``?url=`` value is the file. The busycdn token is per-file (stable
       across fetches); the Google signature is re-minted per hop, so the
       chain is re-run live on every resolve and the result is temporary.
+      The busycdn URL is found by scanning the whole page
+      (:func:`_gdflix_busycdn_from_page`), not by reading the button —
+      the hop still runs, because the busycdn URL itself 302s to a
+      fastdl HTML interstitial, not to bytes (measured 2026-11-23 via
+      Tor: fastdl answers 200 text/html, "Instant DL Page", no redirect
+      and no Google URL in the body, so a bare busycdn URL classifies
+      ``html_shell`` and the Stage-2 probe refuses it).
     * Legacy buttons (NuvioStreamsAddon / vega-app extractors): ``DIRECT DL``
       and ``CLOUD DOWNLOAD [R2]`` return their href, ``PixelDrain DL`` is
       rewritten to the ``/api/file/`` form, ``DRIVEBOT`` follows the ResumeBot
@@ -3704,6 +3750,28 @@ def unwrap_gdflix(gdflix_url: str, clearance=None) -> tuple[str, str, int]:
         if code == 200 and wrapped:
             page = wrapped
 
+    # Busycdn scan (speed path): the file page embeds the direct-download
+    # URL, so read it straight off the page — one page GET, no button
+    # parsing, no Turnstile. The hop below is still needed: busycdn 302s
+    # to a fastdl HTML interstitial, and only the Location's ``?url=``
+    # is the file (see _GDFLIX_BUSYCDN_RE). A hop that yields nothing
+    # falls through to the legacy behaviour below instead of failing.
+    busy_url: str | None = None
+    busy_scan = _gdflix_busycdn_from_page(page)
+    if busy_scan is not None:
+        busy_url, _busy_size = busy_scan
+        location = _gdflix_redirect_location(busy_url, timeout=10,
+                                             clearance=clearance)
+        if location:
+            parsed = urllib.parse.urlparse(location)
+            query = urllib.parse.parse_qs(parsed.query)
+            wrapped = query.get("url", [None])[0]
+            if wrapped and wrapped.startswith(("http://", "https://")):
+                return wrapped, res_id, 1
+            if parsed.netloc.endswith(("googleusercontent.com",
+                                       "google.com")):
+                return location, res_id, 1
+
     direct = re.search(
         r"""https?://video-downloads\.googleusercontent\.com/[^\s"'<>\\]+""", page)
     if direct:
@@ -3742,7 +3810,11 @@ def unwrap_gdflix(gdflix_url: str, clearance=None) -> tuple[str, str, int]:
         elif "drivebot" in text and "drivebot" not in buttons:
             buttons["drivebot"] = href
 
-    if "instant" in buttons:
+    if "instant" in buttons and buttons["instant"] != busy_url:
+        # The scan above already hopped the embedded busycdn URL; a
+        # button pointing at the SAME URL would only repeat that hop.
+        # A different instant href still gets its own hop (it may 302 to
+        # fastdl with its own ?url=).
         location = _gdflix_redirect_location(buttons["instant"], timeout=10,
                                              clearance=clearance)
         if location:
