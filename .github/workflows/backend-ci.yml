@@ -157,6 +157,36 @@ name: 🐍 Backend CI — Stdlib Python Tests
 #   never imports.
 #
 #
+#   ADMIN PANEL V2 SUITES — SEPARATE JOB `panel-tests` (added 2026-11-23).
+#   The Admin Panel v2 (AdminV2/) has its own unittest suites under
+#   AdminV2/tests/ — 278 tests, stdlib only (http.server, sqlite3, unittest),
+#   run as `python3 -S AdminV2/tests/test_*.py` from the repo root. They were
+#   in git and passing locally but NOT in CI; this workflow now runs them.
+#   They live in a SEPARATE job, not in the `tests` job, for one reason: time.
+#   The Fast_Fetch job already takes ~5-6 min against a 15-min timeout, and
+#   the panel suites take ~9-10 min (mostly password-hash cost in setUp, one
+#   Service per test — slow locally, same on the runner). Serialising them
+#   would put the single job at ~15 min, on the timeout's edge; in parallel
+#   each job stays comfortably inside its own 15-min budget.
+#   The panel suites are OFFLINE and mock-only by construction (helpers.py:
+#   "Fixtures are MOCK only"; test_live_real.py builds TEMP copies from the
+#   real DDL and never touches a live DB; test_live_tv_controls.py always
+#   injects its stream checker). No suite needs the network, a live catalog,
+#   or a credential. The ci-manifest guard (test_ci_manifest.py) is scoped to
+#   Fast_Fetch paths only — its MODULE_PATH_RE matches `Fast_Fetch/...`, so
+#   these AdminV2 steps read as tool steps there and cannot trip the
+#   one-module law; the stdlib-only law (-S, no pip) still applies to them.
+#   Three suites needed a one-line import fix to run the way CI runs them
+#   (direct `python3 -S`, repo root as cwd) — they imported `admin_v2` (or
+#   `tests.helpers`) without first putting AdminV2/ on sys.path, so they
+#   failed with ModuleNotFoundError while the other eleven passed. Fixed
+#   minimally, same pattern as the passing files (helpers path insert):
+#     - test_domain_check.py (18 tests)
+#     - test_live_tv_controls.py (27 tests)
+#     - test_vip_grant_atomic.py (2 tests; `from tests.helpers` -> `from
+#       helpers`, the standard pattern)
+#   After the fix, all 14 files pass: 278 tests.
+#
 #   MACHINE-READABLE EXCLUSION BLOCK (parsed by Fast_Fetch/test_ci_manifest.py
 #   — the drift guard). One line per top-level Fast_Fetch/test_*.py that is
 #   deliberately NOT a CI step. A new test file that appears in neither this
@@ -232,10 +262,12 @@ on:
     branches: ["**"]
     paths:
       - "Fast_Fetch/**"
+      - "AdminV2/**"
       - ".github/workflows/backend-ci.yml"
   pull_request:
     paths:
       - "Fast_Fetch/**"
+      - "AdminV2/**"
       - ".github/workflows/backend-ci.yml"
 
 permissions:
@@ -1167,3 +1199,73 @@ jobs:
       # the build.
       - name: 📎 Docs citation drift check
         run: python3 -S Fast_Fetch/check_doc_citations.py
+
+  panel-tests:
+    name: admin-v2 panel suites (stdlib)
+    runs-on: ubuntu-24.04   # system python 3.12 — same minor as the Oracle VM
+    timeout-minutes: 15
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        # No fetch-depth: 0 here — this job runs no manifest guard, so it
+        # needs no trunk ref; a depth-1 checkout is enough and faster.
+
+      - name: 🐍 Interpreter report (no pip, no installs)
+        run: |
+          python3 --version
+          echo "Runner system Python in use. This workflow must never pip-install."
+
+      # Same prod-leak pin as the Fast_Fetch job (audit S5): no suite run
+      # here may resolve the live staging path.
+      - name: 📁 Pin RADD_DATA_DIR to a scratch dir (prod-leak audit S5)
+        run: |
+          mkdir -p "$RUNNER_TEMP/radd-data-dir"
+          echo "RADD_DATA_DIR=$RUNNER_TEMP/radd-data-dir" >> "$GITHUB_ENV"
+
+      # Admin Panel v2 suites (AdminV2/tests/, 278 tests, stdlib only).
+      # One step per suite: a red X names the exact failing suite. Run as
+      # `python3 -S` from the repo root — the tests insert AdminV2/ into
+      # sys.path themselves (helpers.py), so they import AdminV2/admin_v2/,
+      # not the root-level runtime copy. Offline, mock-only, temp dirs.
+      - name: 🧪 test_a10a16.py (panel)
+        run: python3 -S AdminV2/tests/test_a10a16.py
+
+      - name: 🧪 test_api.py (panel)
+        run: python3 -S AdminV2/tests/test_api.py
+
+      - name: 🧪 test_domain_check.py (panel)
+        run: python3 -S AdminV2/tests/test_domain_check.py
+
+      - name: 🧪 test_e2e.py (panel)
+        run: python3 -S AdminV2/tests/test_e2e.py
+
+      - name: 🧪 test_host_registry.py (panel)
+        run: python3 -S AdminV2/tests/test_host_registry.py
+
+      - name: 🧪 test_live_real.py (panel)
+        run: python3 -S AdminV2/tests/test_live_real.py
+
+      - name: 🧪 test_live_tv_controls.py (panel)
+        run: python3 -S AdminV2/tests/test_live_tv_controls.py
+
+      - name: 🧪 test_orphan.py (panel)
+        run: python3 -S AdminV2/tests/test_orphan.py
+
+      - name: 🧪 test_publish_flow.py (panel)
+        run: python3 -S AdminV2/tests/test_publish_flow.py
+
+      - name: 🧪 test_redesign.py (panel)
+        run: python3 -S AdminV2/tests/test_redesign.py
+
+      - name: 🧪 test_regressions.py (panel)
+        run: python3 -S AdminV2/tests/test_regressions.py
+
+      - name: 🧪 test_ui_overhaul.py (panel)
+        run: python3 -S AdminV2/tests/test_ui_overhaul.py
+
+      - name: 🧪 test_unit.py (panel)
+        run: python3 -S AdminV2/tests/test_unit.py
+
+      - name: 🧪 test_vip_grant_atomic.py (panel)
+        run: python3 -S AdminV2/tests/test_vip_grant_atomic.py
