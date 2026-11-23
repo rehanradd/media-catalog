@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Offline tests for HDHub4u / hdtvb.net staging import path."""
 
+import json
 import sys
 import tempfile
 import unittest
@@ -226,7 +227,53 @@ class HDTVBImportTests(unittest.TestCase):
                 self.assertEqual(cache_row["scraped"], 1)
 
 
-class HDTVBProvenanceStampTests(unittest.TestCase):
+class TestHDTVBGenreFilter(unittest.TestCase):
+    #: The info-genre span as it appears on live pages (token census,
+    #: 2026-11-23): real genres mixed with format tags, language tags,
+    #: categories, slug duplicates and a sponsor token.
+    POLLUTED_SPAN = (
+        "Drama, Music, 300MB Movies, Dual Audio, HD Movies, Hindi Dubbed, "
+        "Action, HollyWood, dual-audio, dubbed-movie, sci-fi, thriller, "
+        "Amazon Prime Video, 4rabet, Science Fiction, Drama")
+
+    def _page_with_genres(self, span):
+        return """
+        <html><head><title>Puli (2015) Hindi Tamil Dual Audio Uncut South Movie HD ESub</title></head>
+        <body><h1 class="entry-title">Puli (2015) Hindi Tamil Dual Audio Uncut South Movie HD ESub</h1>
+        <span class="info-genre">%s</span>
+        <a href="https://hubcdn.io/cloud/token1">Download 1.2Gb {720p-HD}</a>
+        </body></html>
+        """ % span
+
+    def test_only_real_genres_survive_the_span(self):
+        data = import_hdtvb.extract_post_data_hdtvb(
+            "https://hdtvb.net/puli-2015-hindi-tamil-dual-audio-uncut-south-movie-hd-esub.html",
+            self._page_with_genres(self.POLLUTED_SPAN), resolve_direct=False)
+        self.assertEqual(json.loads(data["genres"]),
+                         ["Drama", "Music", "Action", "Sci-Fi", "Thriller",
+                          "Science Fiction"])
+
+    def test_normalize_genres_unit(self):
+        self.assertEqual(
+            import_hdtvb.normalize_hdtvb_genres(
+                "Action, Drama, action, DRAMA, Romantic, scifi, 300MB Movies"),
+            ["Action", "Drama", "Romance", "Sci-Fi"])
+        self.assertEqual(import_hdtvb.normalize_hdtvb_genres(
+            "300MB Movies, Dual Audio, HollyWood"), [])
+        self.assertEqual(import_hdtvb.normalize_hdtvb_genres(None), [])
+        self.assertEqual(import_hdtvb.normalize_hdtvb_genres(""), [])
+
+    def test_cast_is_absent_not_an_empty_list_string(self):
+        # The audit's literal "[]" cast is a historical artifact: this
+        # extractor carries no cast_names key at all, so the save path
+        # stores NULL, never "[]".
+        data = import_hdtvb.extract_post_data_hdtvb(
+            "https://hdtvb.net/puli-2015-hindi-tamil-dual-audio-uncut-south-movie-hd-esub.html",
+            self._page_with_genres(self.POLLUTED_SPAN), resolve_direct=False)
+        self.assertNotIn("cast_names", data)
+
+
+class TestHDTVBProvenanceStampTests(unittest.TestCase):
     """D3 regression: this importer must only ever stamp its own site key."""
 
     PAGE_HTML = """
