@@ -4322,11 +4322,74 @@ def decode_greenmotors_payload(payload_b64: str) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# multicloudlinks (sweep H3b, 2026-11-23) — the NEW greenmotors destination.
+#
+# Proven live from the Oracle VM egress (stdlib urllib, 23 Nov 2026):
+#   greenmotors.cc/?id=<enc> -> 200 "Redirecting…" page carrying the 4-layer
+#   payload (same scheme as decode_greenmotors_payload) -> decode yields
+#   https://new.multicloudlinks.com/player.php/?v=<id> (NOT hblinks — the
+#   only destination the old code followed). The player page (200, ~50 KB,
+#   redirects new. -> new3.multicloudlinks.com) carries inline JS with
+#   streamSrc = https://dr1.multidownload.click/d/<8-hex>?eid=<50ch>
+#   &token=<24ch>&exp=<epoch>&action=watch (primary + identical fallback +
+#   a prepareSrc on the same host). Range probe of streamSrc: 206
+#   video/matroska in ~0.9 s. Token stripped -> 403, signing mandatory.
+#   exp - now = 14,400 s exactly (4 h), so the stream URL is banked with
+#   its parsed exp as expires_at and is_temporary=1; durably, bank the
+#   greenmotors ?id= + player ?v= and re-resolve in 2 GETs. The
+#   /homelander/ mediator wait is JS-only and skippable (decode `o` directly).
+# ---------------------------------------------------------------------------
+_MULTICLOUD_STREAMSRC_RE = re.compile(
+    r"""streamSrc\s*=\s*["']([^"']+)["']""")
+
+
+def unwrap_multicloudlinks(player_url: str, timeout: int = 10) -> dict | None:
+    """multicloudlinks player.php page -> the signed direct stream URL.
+
+    Returns the result dict (service ``multicloud`` — the name the catalog
+    already uses for this host family) or None when the player page does not
+    carry a ``streamSrc``. The ``exp`` query param on the stream URL is the
+    4 h signing window, parsed per URL into ``expires_at``; without it the
+    link is still returned with ``expires_at`` None and ``is_temporary`` 1.
+    """
+    try:
+        code, _fin, html = http_get(player_url, timeout=timeout,
+                                    max_retries=RESOLVE_UNWRAP_MAX_RETRIES)
+    except Exception:
+        return None
+    if code != 200 or not html:
+        return None
+    m = _MULTICLOUD_STREAMSRC_RE.search(html)
+    if not m:
+        return None
+    stream_url = html_module.unescape(m.group(1).strip())
+    if not stream_url.startswith("http"):
+        return None
+    qs = urllib.parse.parse_qs(urllib.parse.urlsplit(stream_url).query)
+    exp_raw = (qs.get("exp") or [""])[0]
+    expires_at = float(exp_raw) if exp_raw.isdigit() else None
+    v = (urllib.parse.parse_qs(
+        urllib.parse.urlsplit(player_url).query).get("v") or [""])[0]
+    resource_id = v or player_url.rstrip("/").split("/")[-1]
+    return {
+        "source_name": "⚡ MultiCloud [Direct]",
+        "service": "multicloud",
+        "resource_id": resource_id,
+        "source_url": player_url,
+        "final_url": stream_url,
+        "is_temporary": 1,
+        "expires_at": expires_at,
+    }
+
+
 def unwrap_greenmotors(greenmotors_url: str, timeout: int = 10) -> list[dict]:
     """
     Unwraps HDHub4u greenmotors bridge (greenmotors.cc / greenmotors.club / etc.)
-    by unpacking the multi-layer base64/rot13 payload and following the destination
-    hublink archive to extract live HubCloud / PixelDrain / Direct-Cloud direct streams.
+    by unpacking the multi-layer base64/rot13 payload and following the destination:
+    a multicloudlinks player.php page (its streamSrc direct stream, sweep H3b)
+    or an hblinks archive (live HubCloud / PixelDrain / Direct-Cloud / FastDL /
+    HubDrive / GDFlix streams).
     """
     results = []
     resource_id = greenmotors_url.split("?id=")[-1][:24] if "?id=" in greenmotors_url else greenmotors_url.rstrip("/").split("/")[-1]
@@ -4349,12 +4412,19 @@ def unwrap_greenmotors(greenmotors_url: str, timeout: int = 10) -> list[dict]:
         dest_url = decode_greenmotors_payload(m_payload.group(1))
 
     # Fallback to final URL if already redirected
-    if not dest_url and ("hblinks." in fin_u or "/archives/" in fin_u):
+    if not dest_url and ("hblinks." in fin_u or "/archives/" in fin_u
+                         or "multicloudlinks." in fin_u):
         dest_url = fin_u
 
     if dest_url:
         dl = dest_url.lower()
-        if "hblinks." in dl or "/archives/" in dl:
+        if "multicloudlinks." in dl:
+            # Sweep H3b (2026-11-23): the live destination is a multicloudlinks
+            # player.php page, not hblinks — fetch it and take its streamSrc.
+            mc = unwrap_multicloudlinks(dest_url, timeout=timeout)
+            if mc:
+                results.append(mc)
+        elif "hblinks." in dl or "/archives/" in dl:
             c_hb, _, html_hb = http_get(dest_url, timeout=timeout,
                                         max_retries=RESOLVE_UNWRAP_MAX_RETRIES)
             if c_hb == 200 and html_hb:
@@ -4402,6 +4472,23 @@ def unwrap_greenmotors(greenmotors_url: str, timeout: int = 10) -> list[dict]:
                             "source_url": href,
                             "final_url": href,
                             "is_temporary": 0,
+                        })
+                    elif "multicloudlinks." in hl:
+                        mc = unwrap_multicloudlinks(href, timeout=timeout)
+                        if mc:
+                            results.append(mc)
+                    elif "gdflix." in hl or "gdtot." in hl:
+                        # Sweep H3b cross-note: hblinks pages also carry
+                        # gdflix/gdtot anchors the old loop dropped. The
+                        # resolver already exists — follow it.
+                        gdu, _gid, is_tmp = unwrap_gdflix(href)
+                        results.append({
+                            "source_name": "⚡ GDFlix [Google Drive]",
+                            "service": "gdflix",
+                            "resource_id": href.rstrip("/").split("/")[-1].split("?")[0],
+                            "source_url": href,
+                            "final_url": gdu,
+                            "is_temporary": is_tmp,
                         })
 
     if not results:
