@@ -7,6 +7,12 @@ parses high-resolution posters, IMDb IDs, multi-tier releases (1080p, 720p, 480p
 and unwraps linksddr.com bridges into redundant 10Gbps Google CDN, HubCloud,
 FilePress, GoFile, Streamtape, and Cloudflare R2 direct stream mirrors.
 
+WP REST adoption (2026-11-23): sync fetches with _embed=1 (Yoast og:image
+poster fallback, filtered WP categories as a genre fallback); the IMDb
+rating the parser already extracted is now banked (imdb_rating column),
+with the release date from the same info block. The worker already parsed
+from the stored raw_json post — no per-post page fetch.
+
 Constraints:
   - 100% Python standard library only (zero external pip/npm packages).
   - Strict staging database isolation: writes solely to /home/ubuntu/radd-stream-data/9xmovies.db.
@@ -32,6 +38,13 @@ import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+
+# Add Fast_Fetch to sys.path (for the shared wp_rest helper)
+BASE_DIR = Path(__file__).parent.resolve()
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+
+import wp_rest
 from domain_resolver import get_active_base_url, resolve_if_dead
 
 # --- Constants ---
@@ -423,6 +436,15 @@ def extract_wp_post_metadata(content_html: str) -> dict:
         except ValueError:
             rating = None
 
+    # 7. Release Date (WP REST adoption, 2026-11-23: banked alongside
+    # the rating — the fname block carries "Released Date: ... (India)").
+    release_date = None
+    rd_m = re.search(r'Released\s*Date\s*:\s*([^<\n]+)', text, re.I)
+    if rd_m:
+        clean_rd = re.sub(r'<[^>]+>', '', rd_m.group(1)).strip()
+        if clean_rd and len(clean_rd) < 100:
+            release_date = clean_rd
+
     return {
         "director": director,
         "cast_names": cast_names,
@@ -430,6 +452,7 @@ def extract_wp_post_metadata(content_html: str) -> dict:
         "languages": languages,
         "synopsis": synopsis,
         "rating": rating,
+        "release_date": release_date,
     }
 
 
@@ -631,6 +654,7 @@ def init_staging_db(db_path: Path):
                 year INTEGER,
                 media_type TEXT DEFAULT 'movie',
                 imdb_id TEXT,
+                imdb_rating REAL,
                 tmdb_id INTEGER,
                 poster_url TEXT,
                 synopsis TEXT,
@@ -638,6 +662,7 @@ def init_staging_db(db_path: Path):
                 cast_names TEXT,
                 director TEXT,
                 languages TEXT,
+                release_date TEXT,
                 site TEXT DEFAULT '9xmovies',
                 post_url TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -697,6 +722,18 @@ def init_staging_db(db_path: Path):
                 cur.execute("ALTER TABLE posts ADD COLUMN is_18_plus INTEGER DEFAULT 0;")
             except Exception:
                 pass
+        # WP REST adoption (2026-11-23): the rating was extracted but
+        # never stored; the release date was never parsed at all.
+        if "imdb_rating" not in existing_cols:
+            try:
+                cur.execute("ALTER TABLE posts ADD COLUMN imdb_rating REAL;")
+            except Exception:
+                pass
+        if "release_date" not in existing_cols:
+            try:
+                cur.execute("ALTER TABLE posts ADD COLUMN release_date TEXT;")
+            except Exception:
+                pass
 
 
 def save_post_to_staging(db_path: Path, result: dict):
@@ -720,20 +757,22 @@ def save_post_to_staging(db_path: Path, result: dict):
 
         cur.execute(
             """
-            INSERT INTO posts (canonical_key, title, original_title, year, media_type, imdb_id, poster_url, synopsis, genres, cast_names, director, languages, is_18_plus, site, post_url)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO posts (canonical_key, title, original_title, year, media_type, imdb_id, imdb_rating, poster_url, synopsis, genres, cast_names, director, languages, release_date, is_18_plus, site, post_url)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(canonical_key) DO UPDATE SET
                 title=excluded.title,
                 original_title=excluded.original_title,
                 year=COALESCE(excluded.year, posts.year),
                 media_type=excluded.media_type,
                 imdb_id=COALESCE(excluded.imdb_id, posts.imdb_id),
+                imdb_rating=COALESCE(excluded.imdb_rating, posts.imdb_rating),
                 poster_url=COALESCE(excluded.poster_url, posts.poster_url),
                 synopsis=COALESCE(excluded.synopsis, posts.synopsis),
                 genres=COALESCE(excluded.genres, posts.genres),
                 cast_names=COALESCE(excluded.cast_names, posts.cast_names),
                 director=COALESCE(excluded.director, posts.director),
                 languages=COALESCE(excluded.languages, posts.languages),
+                release_date=COALESCE(excluded.release_date, posts.release_date),
                 is_18_plus=MAX(posts.is_18_plus, excluded.is_18_plus),
                 post_url=excluded.post_url,
                 updated_at=CURRENT_TIMESTAMP;
@@ -745,12 +784,14 @@ def save_post_to_staging(db_path: Path, result: dict):
                 p["year"],
                 p["media_type"],
                 p["imdb_id"],
+                p.get("imdb_rating"),
                 p["poster_url"],
                 p.get("synopsis"),
                 p.get("genres"),
                 p.get("cast_names"),
                 p.get("director"),
                 p.get("languages"),
+                p.get("release_date"),
                 p.get("is_18_plus", 0),
                 p["site"],
                 p["post_url"],
@@ -856,6 +897,21 @@ def scrape_post_item(
 
         meta = extract_wp_post_metadata(content_html)
 
+        # WP REST adoption (2026-11-23): the rating was extracted by
+        # extract_wp_post_metadata but never stored — bank it now, with
+        # the release date from the same info block. Genres fall back to
+        # the filtered WP categories when the post carries no Genres:
+        # label (9xmovies categories are quality buckets, so this stays
+        # None there — honest, not fabricated). The poster falls back to
+        # the Yoast og:image when the content carries no image.
+        genres = meta.get("genres")
+        if not genres:
+            _cat_genres = wp_rest.genres_from_post(p_data)
+            if _cat_genres:
+                genres = json.dumps(_cat_genres)
+        if not poster_url:
+            poster_url = wp_rest.poster_from_post(p_data)
+
         return {
             "loc": loc,
             "success": True,
@@ -866,12 +922,14 @@ def scrape_post_item(
                 "year": year,
                 "media_type": media_type,
                 "imdb_id": imdb_id,
+                "imdb_rating": meta.get("rating"),
                 "poster_url": poster_url,
                 "synopsis": meta.get("synopsis"),
-                "genres": meta.get("genres"),
+                "genres": genres,
                 "cast_names": meta.get("cast_names"),
                 "director": meta.get("director"),
                 "languages": meta.get("languages"),
+                "release_date": meta.get("release_date"),
                 "site": "9xmovies",
                 "post_url": loc,
                 "is_18_plus": is_adult,
@@ -921,7 +979,10 @@ def sync_api_catalog(
             print(f"[*] Reached page limit ({max_pages}).", flush=True)
             break
 
-        url = f"{_wp_api_url()}?per_page=100&page={page}"
+        # _embed=1 carries wp:term (category names) and the Yoast block
+        # (og:description / og:image) inside each post; the whole post
+        # is already stored as raw_json for the worker.
+        url = f"{_wp_api_url()}?per_page=100&page={page}&_embed=1"
         code, posts, headers = client.get_json(url, timeout=15.0)
 
         if code != 200 or not posts or not isinstance(posts, list):
@@ -1100,6 +1161,11 @@ def enrich_existing_metadata(db_path: Path):
 
                 clean_title, year, season_num, media_type, canonical_key = clean_9xmovies_title(raw_title)
                 meta = extract_wp_post_metadata(content_html)
+                _genres = meta.get("genres")
+                if not _genres:
+                    _cat_genres = wp_rest.genres_from_post(p_data)
+                    if _cat_genres:
+                        _genres = json.dumps(_cat_genres)
 
                 cur.execute(
                     """
@@ -1108,15 +1174,19 @@ def enrich_existing_metadata(db_path: Path):
                         genres = COALESCE(?, genres),
                         cast_names = COALESCE(?, cast_names),
                         director = COALESCE(?, director),
-                        languages = COALESCE(?, languages)
+                        languages = COALESCE(?, languages),
+                        imdb_rating = COALESCE(?, imdb_rating),
+                        release_date = COALESCE(?, release_date)
                     WHERE canonical_key = ?;
                     """,
                     (
                         meta.get("synopsis"),
-                        meta.get("genres"),
+                        _genres,
                         meta.get("cast_names"),
                         meta.get("director"),
                         meta.get("languages"),
+                        meta.get("rating"),
+                        meta.get("release_date"),
                         canonical_key,
                     ),
                 )
