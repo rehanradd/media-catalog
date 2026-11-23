@@ -547,7 +547,7 @@ class TestFastFetchIntegration(unittest.TestCase):
         self.assertEqual(domains.get("directcloud"),
                          "https://storage.direct-cloud.org")
         # No audited pair: the literal survives (honest fallback).
-        self.assertEqual(domains.get("filepress"), "https://new1.filepress.lat")
+        self.assertEqual(domains.get("filepress"), "https://new4.filepress.lat")
 
     def test_mobilejsr_unwrap_short_circuits(self):
         import fast_fetch as ff
