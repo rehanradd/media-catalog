@@ -9,8 +9,13 @@ episodes free, no sign-up. Measured live 2026-11-10 from the Oracle VM:
   * ``https://dramadog.app/`` answers 200, title "DramaDog — Watch Short
     Dramas Free, All Episodes, No Ads".
   * ``/robots.txt`` names ``Sitemap: https://dramadog.app/sitemap.xml``.
-  * ``/sitemap.xml`` is a sitemapindex of 30 child sitemaps, one per
-    platform (``sitemap-goodshort.xml`` holds 2,942 drama URLs).
+  * ``/sitemap.xml`` was a sitemapindex of 30 child sitemaps, one per
+    platform (``sitemap-goodshort.xml`` held 2,942 drama URLs) — until
+    2026-11-23, when the site flattened it: the per-platform children
+    404 now and the index itself is a flat ``<urlset>`` with 1,500
+    ``/drama/`` URLs (robots.txt still names it). ``sync`` handles both
+    shapes: a sitemapindex fans out to its children, a flat urlset is
+    read as the drama list directly.
   * A drama page (``/drama/<slug>``) ships JSON-LD ``TVSeries`` (name,
     image poster, description, genres, ``numberOfEpisodes``) plus
     ``data-ep="N"`` buttons, and embeds the episode-1 stream:
@@ -40,7 +45,8 @@ episodes free, no sign-up. Measured live 2026-11-10 from the Oracle VM:
 One post per series (media_type "series"), one release per episode
 (season 1, episode N), one source per release: source_url is the drama
 page, final_url is the episode .m3u8, playback_type "direct". Episode 1
-and the last episode are Range-probed per title; the middle episodes are
+and the last episode are Range-probed per title (with the dramadog.app
+Referer — the episode CDNs 403 a bare probe); the middle episodes are
 stored active-by-pattern (the pattern is verified at both ends of every
 title, and the play-time Stage-2 probe is the final gate) with
 ``raw_meta.pattern_derived`` set so the provenance is honest.
@@ -107,6 +113,10 @@ MAX_EPISODES_PER_TITLE = 500
 
 SERVICE = "dramadog"
 SERVICE_TIER = 1
+# Episode CDNs are hotlink-gated: v.73920583.xyz answers 403 to a bare
+# Range probe and 206 with Referer: https://dramadog.app/ (measured live
+# 2026-11-23). The probe sends the site origin, as a browser player would.
+REFERER = DEFAULT_BASE_URL + "/"
 PLAYBACK_DIRECT = "direct"
 DEFAULT_SOURCE_STATUS = "active"
 
@@ -160,9 +170,14 @@ def http_get(url: str, timeout: int = PAGE_TIMEOUT) -> tuple:
 
 
 def probe_m3u8(url: str, timeout: int = PROBE_TIMEOUT) -> dict:
-    """Range-probe one .m3u8. Returns {ok, status, is_playlist}."""
+    """Range-probe one .m3u8. Returns {ok, status, is_playlist}.
+
+    Sends the dramadog.app Referer: the episode CDNs are hotlink-gated and
+    answer 403 to a bare probe (measured 2026-11-23 on v.73920583.xyz).
+    """
     req = urllib.request.Request(url, headers={
-        "User-Agent": USER_AGENT, "Range": "bytes=0-511"})
+        "User-Agent": USER_AGENT, "Range": "bytes=0-511",
+        "Referer": REFERER})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             head = resp.read(512)
@@ -401,7 +416,8 @@ def build_record(page: dict, probe=None) -> dict | None:
                 "last_checked": int(time.time()),
                 "raw_meta": {"pattern_derived": n not in (1, total),
                              "probed": n in (1, total),
-                             "episode_source": episode_source},
+                             "episode_source": episode_source,
+                             "referer": REFERER},
             }],
         })
     return {
@@ -675,7 +691,8 @@ def sync(db_path: Path | str = DEFAULT_DB_PATH, limit: int | None = None,
          base_url: str | None = None, delay: float = DEFAULT_DELAY,
          registry_path: str | Path | None = None,
          fetcher=None, prober=None) -> dict:
-    """Walk the sitemapindex round-robin and stage up to ``limit`` dramas.
+    """Walk the sitemap (sitemapindex round-robin, or the flat urlset the
+    site switched to 2026-11-23) and stage up to ``limit`` dramas.
 
     ``fetcher``/``prober`` are injectable for offline tests; the live path
     uses http_get / probe_m3u8. Pages with no ``v.dramadog.app`` stream
@@ -699,12 +716,19 @@ def sync(db_path: Path | str = DEFAULT_DB_PATH, limit: int | None = None,
             return []
         children = parse_sitemap_index(index_xml)
         queues: list[list] = []
-        for child in children:
-            time.sleep(delay)
-            cstatus, cxml = fetch(child)
-            if cstatus != 200 or not cxml:
-                continue
-            urls = parse_child_sitemap(cxml)
+        if children:
+            for child in children:
+                time.sleep(delay)
+                cstatus, cxml = fetch(child)
+                if cstatus != 200 or not cxml:
+                    continue
+                urls = parse_child_sitemap(cxml)
+                if urls:
+                    queues.append(urls)
+        else:
+            # Flat urlset (site flattened the sitemap 2026-11-23; the old
+            # per-platform children 404): the index itself is the drama list.
+            urls = parse_child_sitemap(index_xml)
             if urls:
                 queues.append(urls)
         # Round-robin across platforms so the batch is representative,
