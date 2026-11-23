@@ -127,14 +127,17 @@ fun ScrollingChipRow(
 internal fun RowEndFade(modifier: Modifier = Modifier, height: Dp = 48.dp) {
     // The fade needs an explicit height: fillMaxHeight() collapses to 0
     // here — the parent Box is wrap-content inside a scrollable column,
-    // so there is no definite height to fill, and the 24dp-wide strip
-    // painted nothing (Pixel 5 shots and the homeLoaded golden both show
-    // "KPO" at full brightness to the edge). The default 48dp is the
+    // so there is no definite height to fill. The default 48dp is the
     // height of the filter, Browse and Live TV rows; callers with
     // shorter rows pass their own height.
+    //
+    // Audit #11: the strip itself is 48dp wide now, not 24dp — a 24dp
+    // fade on a 360dp row dims only the last sliver of the cut chip, so
+    // the row still read as broken-off, not scrollable. At 48dp the last
+    // chip visibly dims into the edge, which is the scroll cue.
     Box(
         modifier = modifier
-            .width(24.dp)
+            .width(48.dp)
             .height(height)
             .background(
                 Brush.horizontalGradient(

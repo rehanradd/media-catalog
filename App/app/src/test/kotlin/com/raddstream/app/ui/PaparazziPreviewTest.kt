@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
@@ -368,7 +370,15 @@ class PaparazziPreviewTest {
     fun homeLoaded() {
         paparazzi.snapshot {
             themed {
-                HomeContent(state = loadedHome, heroAutoplay = false)
+                // Audit #3: the rails' stagger entrance is a real-time delay
+                // and Paparazzi renders with a frozen clock, so without
+                // inspection mode every rail stays invisible in the golden.
+                // Paparazzi does not set inspection mode itself — the test
+                // provides it (per the Paparazzi docs), and HomeRailSection
+                // renders its entrance as already over when it is set.
+                CompositionLocalProvider(LocalInspectionMode provides true) {
+                    HomeContent(state = loadedHome, heroAutoplay = false)
+                }
             }
         }
     }
@@ -377,15 +387,20 @@ class PaparazziPreviewTest {
     fun homeLoading() {
         paparazzi.snapshot {
             themed {
-                HomeContent(
-                    state = HomeUiState(
-                        sections = listOf(
-                            HomeSection(key = "trending", title = "Most available", type = null, loading = true),
-                            HomeSection(key = "bollywood", title = "Bollywood", type = "movie", loading = true),
+                // Audit #3: see homeLoaded — without inspection mode the
+                // loading rails (header + skeleton) never appear in the
+                // golden and the state reads as half a dead black page.
+                CompositionLocalProvider(LocalInspectionMode provides true) {
+                    HomeContent(
+                        state = HomeUiState(
+                            sections = listOf(
+                                HomeSection(key = "trending", title = "Most available", type = null, loading = true),
+                                HomeSection(key = "bollywood", title = "Bollywood", type = "movie", loading = true),
+                            ),
                         ),
-                    ),
-                    heroAutoplay = false,
-                )
+                        heroAutoplay = false,
+                    )
+                }
             }
         }
     }

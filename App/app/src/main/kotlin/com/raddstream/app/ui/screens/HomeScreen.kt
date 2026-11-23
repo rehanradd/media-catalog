@@ -78,6 +78,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -115,6 +116,7 @@ import com.raddstream.app.ui.components.prefetchPosterArt
 import com.raddstream.app.ui.components.rememberReduceMotion
 import com.raddstream.app.ui.layout.CardGeometry
 import com.raddstream.app.ui.theme.RaddMotion
+import com.raddstream.app.ui.theme.RaddStreamMark
 import com.raddstream.app.update.InAppUpdate
 import kotlinx.coroutines.delay
 import com.raddstream.app.viewmodel.HomeFilter
@@ -130,6 +132,29 @@ import com.raddstream.app.viewmodel.visibleHomeRows
 /** Slides in the hero banner. Six is enough to feel like a rail, few enough that the
  *  auto-advance cycle does not outlast attention. */
 private const val HERO_LIMIT = 6
+
+/**
+ * UI/UX audit #1 (Nov 2026): the hero is for discovery, not resume — a
+ * title already in Continue Watching never headlines the hero, so the top
+ * slot stops repeating the card directly above it. The exclusion is by
+ * work identity (one film filed twice has two row ids), and it happens
+ * BEFORE the take, so the rail backfills from its own later rows instead
+ * of showing a shorter hero. Pure, so the exclusion is testable without
+ * a composition.
+ */
+internal fun heroItemsExcludingContinueWatching(
+    heroSection: HomeSection?,
+    continueWatching: List<ResumeTile>,
+    heroMax: Int,
+): List<Post> {
+    if (heroSection == null || heroMax <= 0) return emptyList()
+    val cwKeys = continueWatching.mapTo(HashSet()) {
+        UserWords.workKey(it.post.workRef, it.post.displayTitle, it.post.year)
+    }
+    return heroSection.items
+        .filterNot { UserWords.workKey(it.workRef, it.displayTitle, it.year) in cwKeys }
+        .take(heroMax)
+}
 
 @Composable
 fun HomeScreen(
@@ -388,7 +413,9 @@ internal fun HomeContent(
     // de-duplicated out of the rail below — the same six titles must
     // not appear twice on one screen.
     val heroSection = if (heroMax > 0) selectHeroSection(state.visibleSections, currentCalendarYear()) else null
-    val heroItems = heroSection?.items.orEmpty().take(heroMax)
+    // Audit #1: the hero never repeats a Continue Watching title — the
+    // exclusion happens before the take, so the rail backfills.
+    val heroItems = heroItemsExcludingContinueWatching(heroSection, state.visibleContinueWatching, heroMax)
     // At most 10 rows total, CW included: a panel that publishes 12
     // sections does not get 12 rails on a phone, and the first rails win.
     // Audit #18: the same title never appears twice on Home. The seen
@@ -529,12 +556,21 @@ internal fun HomeContent(
                 ErrorState(
                     message = state.fatal ?: "Couldn't reach the catalog.",
                     onRetry = onRefresh,
+                    // Audit #6: the block is centred in the viewport, not
+                    // stranded at the top — a lazy item's fillMaxSize is a
+                    // no-op against infinite constraints, so the item
+                    // itself takes the viewport height.
+                    modifier = Modifier.fillParentMaxHeight(),
                     // Dev-cleanup (Nov 2026): Home's fatal error names its own
                     // screen instead of the shared "Something went wrong".
                     title = stringResource(R.string.home_fatal_title),
-                    // The address is the one thing a person can fix themselves, and
+                    // Audit #5: "Try a different address" is backend
+                    // jargon — the button says what it does, and the
+                    // line under it says what an address is. The address
+                    // is the one thing a person can fix themselves, and
                     // Settings is four taps away. Offer it where the failure is seen.
-                    secondaryLabel = "Try a different address",
+                    secondaryLabel = "Change server address",
+                    secondaryHint = "Titles load from this address — if it changed, update it here.",
                     onSecondary = onSetupServerClick,
                 )
             }
@@ -769,8 +805,11 @@ internal fun HomeContent(
                 }
             }
             // A successful empty load is a blank page today: no rails, no
-            // error, nothing to tap. Say so, and point at the one fix the
-            // viewer can do — a different address. Only when no filter is
+            // error, nothing to tap. Say so, and point at the content:
+            // the primary action seeks titles (Audit #4 — the old sole
+            // action was backend jargon with no path to anything to
+            // watch), and the address stays as the secondary fix, named
+            // for what it does (Audit #5). Only when no filter is
             // active: a filtered empty feed has its own message above.
             if (filter == HomeFilter.All && renderedRows.isEmpty() && state.visibleContinueWatching.isEmpty() &&
                 state.visibleSections.none { it.loading } && state.fatal == null
@@ -779,9 +818,30 @@ internal fun HomeContent(
                     EmptyState(
                         title = "Nothing here yet",
                         message = "No titles to show right now.",
+                        icon = {
+                            RaddStreamMark(
+                                diameter = 56.dp,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        },
                         action = {
-                            OutlinedButton(onClick = onSetupServerClick) {
-                                Text("Try a different address")
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Button(
+                                    onClick = { onBrowseType(null) },
+                                    modifier = Modifier.heightIn(min = 48.dp),
+                                ) {
+                                    Text("Browse titles")
+                                }
+                                Spacer(Modifier.height(8.dp))
+                                TextButton(onClick = onSetupServerClick) {
+                                    Text("Change server address")
+                                }
+                                Text(
+                                    text = "Titles load from this address — if it changed, update it here.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center,
+                                )
                             }
                         },
                     )
@@ -986,9 +1046,14 @@ private fun ContinueWatchingRow(
                     )
                 }
             }
+            // Audit #12: the remove is an explicit 48dp button in the
+            // row's top-end corner — the same size and corner as the
+            // broadcast dismiss and the trial-note dismiss — not
+            // vertically centred, where it read as a third, different
+            // placement.
             IconButton(
                 onClick = onRemove,
-                modifier = Modifier.size(48.dp),
+                modifier = Modifier.size(48.dp).align(Alignment.Top),
             ) {
                 Icon(
                     Icons.Default.Close,
@@ -1172,29 +1237,44 @@ internal fun PickThreeCard(
  * The line names no quality: with the quality gate off, free playback is
  * uncapped (4K proven free 2026-11-17), so a 720p claim would be false —
  * the Settings account card follows the same rule (AccountCardCopy).
+ *
+ * Audit #13: the bare line read as stray small print sitting in the
+ * content flow — it rides a tonal surface now, the same treatment as the
+ * Live TV banner and the offline strip. Audit #12: the dismiss is an
+ * explicit 48dp button in the line's end corner, like the other two
+ * dismissals on this screen.
  */
 @Composable
 private fun TrialNoteLine(daysRemaining: Int, onDismiss: () -> Unit) {
-    Row(
+    Surface(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
     ) {
-        Text(
-            text = if (daysRemaining == 1) {
-                "Free VIP: 1 day left."
-            } else {
-                "Free VIP: $daysRemaining days left."
-            },
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.weight(1f),
-        )
-        IconButton(onClick = onDismiss) {
-            Icon(
-                Icons.Default.Close,
-                contentDescription = "Dismiss trial note",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 4.dp, bottom = 4.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = if (daysRemaining == 1) {
+                    "Free VIP: 1 day left."
+                } else {
+                    "Free VIP: $daysRemaining days left."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
             )
+            IconButton(
+                onClick = onDismiss,
+                modifier = Modifier.size(48.dp),
+            ) {
+                Icon(
+                    Icons.Default.Close,
+                    contentDescription = "Dismiss trial note",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }
@@ -1230,7 +1310,13 @@ private fun BroadcastBanner(broadcast: PanelBroadcast, onDismiss: () -> Unit) {
                     )
                 }
             }
-            IconButton(onClick = onDismiss) {
+            // Audit #12: the dismiss is an explicit 48dp button in the
+            // banner's top-end corner — the same size and corner as the
+            // Continue Watching remove and the trial-note dismiss.
+            IconButton(
+                onClick = onDismiss,
+                modifier = Modifier.size(48.dp),
+            ) {
                 Icon(
                     Icons.Default.Close,
                     contentDescription = "Dismiss announcement",
@@ -1474,9 +1560,21 @@ private fun HomeRailSection(
     // visible, since a spring carries no delay of its own. (A lazy item
     // that scrolls out and back re-plays its entrance — the list recycles
     // the slot — a subtle fade, the standard lazy-list trade.)
+    // Audit #3: the stagger is a real-time delay, and a snapshot renders
+    // with a frozen clock — Paparazzi never advances it — so in a golden
+    // every rail stays invisible, skeletons included, and the loading
+    // state reads as half a dead black page. On a phone the delays are
+    // 0–540 ms and the skeletons paint at once; the gap is the preview,
+    // not the app. In inspection mode the entrance is already over: the
+    // rail renders immediately, so the golden shows what the phone shows.
+    // Paparazzi does not set inspection mode itself, so the snapshot test
+    // provides it (CompositionLocalProvider, per the Paparazzi docs).
+    // Runtime behaviour is unchanged.
+    val inInspectionMode = LocalInspectionMode.current
     val reduceMotion = rememberReduceMotion()
-    var visible by remember { mutableStateOf(false) }
+    var visible by remember { mutableStateOf(inInspectionMode) }
     LaunchedEffect(Unit) {
+        if (inInspectionMode) return@LaunchedEffect
         delay(index * 60L)
         visible = true
     }
@@ -1566,6 +1664,16 @@ private fun HomeRailSection(
                         // play button opens Detail with autoplay.
                         onPlayClick = { onPlayClick(post) },
                         rank = if (isRanked && itemIndex < 10) itemIndex + 1 else null,
+                        // Audit #8: the full "★ 7.0 · 2023 · Movie" line
+                        // truncates the type word mid-word ("Mo…") on a
+                        // 132dp rail card — the compact line drops it, so
+                        // rating · year fits. The type stays in the tile's
+                        // spoken sentence and on Detail. Two title lines
+                        // for the same reason: one line truncates long
+                        // titles mid-word, and the slot stays uniform
+                        // because every tile in the rail gets two.
+                        compactMeta = true,
+                        titleMaxLines = 2,
                         // REA #2: the "For you" row's Match % rides its
                         // tiles; every other rail carries no scores, so
                         // this reads null there and paints nothing.

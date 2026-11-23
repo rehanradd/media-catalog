@@ -28,6 +28,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
 import coil3.asDrawable
@@ -155,6 +156,13 @@ fun CatalogImage(
      * logos, and any tile whose poster has never loaded).
      */
     accentTint: Color? = null,
+    /**
+     * Audit #7 (Nov 2026): bottom clearance for the fallback card, in
+     * the caller's units — a ranked [PosterCard] clears its numeral's
+     * bottom-left zone, so a centred fallback title never runs into it.
+     * Defaults to none: every other caller keeps its centred fallback.
+     */
+    fallbackBottomClearance: Dp = 0.dp,
 ) {
     val context = LocalContext.current
     val holder = remember(context) { imageSizingHolder(context) }
@@ -217,6 +225,7 @@ fun CatalogImage(
             modifier = modifier,
             tone = fallbackTone,
             large = fallbackLarge,
+            bottomClearance = fallbackBottomClearance,
         )
         return
     }
@@ -262,6 +271,7 @@ fun CatalogImage(
                         modifier = Modifier.fillMaxSize(),
                         tone = fallbackTone,
                         large = fallbackLarge,
+                        bottomClearance = fallbackBottomClearance,
                     )
                 }
                 ShimmerBox(Modifier.fillMaxSize(), bandOnly = true)
@@ -277,6 +287,7 @@ fun CatalogImage(
                 monogram = monogram,
                 tone = fallbackTone,
                 large = fallbackLarge,
+                bottomClearance = fallbackBottomClearance,
             )
         },
         // The artwork-accent hook: only a caller that passed onBitmap pays the
@@ -318,6 +329,7 @@ internal fun CatalogImageErrorSlot(
     tone: FallbackTone,
     large: Boolean,
     modifier: Modifier = Modifier,
+    bottomClearance: Dp = 0.dp,
 ) {
     Box(modifier.fillMaxSize()) {
         ImageFallbackCard(
@@ -326,6 +338,7 @@ internal fun CatalogImageErrorSlot(
             modifier = Modifier.fillMaxSize(),
             tone = tone,
             large = large,
+            bottomClearance = bottomClearance,
         )
     }
 }
@@ -400,6 +413,14 @@ fun ImageFallbackCard(
      * derivation. Only the logo plate passes one.
      */
     monogram: String? = null,
+    /**
+     * Audit #7 (Nov 2026): bottom clearance for the centred mark + label
+     * column — a ranked [PosterCard] passes its numeral's height, so the
+     * column's centre shifts up by half the clearance and a two- or
+     * three-line title never reaches the numeral's bottom-left zone.
+     * Defaults to none: every other caller keeps its centred fallback.
+     */
+    bottomClearance: Dp = 0.dp,
 ) {
     Box(
         modifier = modifier
@@ -445,7 +466,10 @@ fun ImageFallbackCard(
         }
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(8.dp),
+            // Audit #7: the bottom clearance lifts the whole centred
+            // column — the Box centres what is left, so the mark + title
+            // sit half a clearance above centre, clear of a rank numeral.
+            modifier = Modifier.padding(8.dp).padding(bottom = bottomClearance),
         ) {
             // Screenshot-fix D4 (2026-11-16): the tile fallback read as a
             // broken dark box — a 30dp mark and a two-line titleSmall that

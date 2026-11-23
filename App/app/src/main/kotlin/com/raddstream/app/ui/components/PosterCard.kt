@@ -312,12 +312,23 @@ fun PosterCard(
             // previous title's colour.
             var posterBitmap by remember(post.id) { mutableStateOf<Bitmap?>(null) }
             val posterAccent = rememberArtworkAccent(posterBitmap)
+            // Audit #7: the big rank numeral owns the poster's bottom-left
+            // — a two-line fallback title centred in the box runs into it
+            // (the "2" striking through "– Ceasefire"). A ranked tile
+            // clears the numeral's zone: the fallback content shifts up by
+            // half the clearance, so the title never reaches the numeral.
+            // The numeral is ~54dp tall (displayMedium + bottom padding);
+            // 56dp clears it with room for a three-line title.
+            val rankClearance = if (rank != null && rank in 1..10) 56.dp else 0.dp
             if (posterUrl == null) {
                 ImageFallbackCard(
                     modifier = Modifier.fillMaxSize(),
-                    // F6 (Batch A): the full title, not initials — the tile
-                    // must say which title has no poster.
-                    label = title,
+                    // Audit #9: the caption below the poster already
+                    // carries the title — the fallback paints the logo +
+                    // initials only, never the title twice. (F6's full
+                    // title was the duplication the audit caught.)
+                    label = channelMonogram(title),
+                    bottomClearance = rankClearance,
                 )
             } else {
                 CatalogImage(
@@ -326,7 +337,11 @@ fun PosterCard(
                     modifier = Modifier.fillMaxSize(),
                     // A dead poster URL must not look like "no artwork exists" — the
                     // branded fallback says what failed, and keeps the title readable.
-                    fallbackLabel = title,
+                    // Audit #9: initials only here too — the caption below
+                    // carries the title. Audit #7: the ranked tile clears
+                    // the numeral's zone on a failed load as well.
+                    fallbackLabel = channelMonogram(title),
+                    fallbackBottomClearance = rankClearance,
                     onBitmap = { posterBitmap = it },
                     accentTint = posterAccent,
                 )

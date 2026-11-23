@@ -77,6 +77,8 @@ import com.raddstream.app.network.models.WireText
 import com.raddstream.app.ui.theme.PressHaptics
 import com.raddstream.app.ui.theme.RaddArtScrim
 import com.raddstream.app.ui.theme.RaddEmphasized
+import com.raddstream.app.ui.theme.RaddHeroPlaceholderHigh
+import com.raddstream.app.ui.theme.RaddHeroPlaceholderLow
 import com.raddstream.app.ui.theme.RaddMotion
 import com.raddstream.app.ui.theme.RaddStreamMark
 import com.raddstream.app.ui.theme.RaddTokens
@@ -590,12 +592,27 @@ private fun HeroSlide(
             .semantics { contentDescription = a11y }
             .clickable(onClick = onClick),
     ) {
-        // 1 — artwork, or the branded fallback card when there is nothing to paint.
-        // F6 (Batch A): the blank-backdrop branch used to paint a labelless card —
-        // a bare gradient with no title at all. It now names the title, like the
-        // failed-load fallback below it.
+        // 1 — artwork, or the branded fallback when there is nothing to paint.
+        // Audit #2: an art-less slide keeps the branded gradient, but the
+        // mark rides the upper half — never the button row — and the
+        // headline prints at the bottom over the scrim, like a slide with
+        // art. The old fallback card centred its grey title + mark in the
+        // middle of the slide, where the title read barely legible and
+        // the mark collided with the Watch Now / Saved buttons.
         if (backdropUrl.isNullOrBlank()) {
-            ImageFallbackCard(label = title, tone = FallbackTone.Hero)
+            Box(
+                Modifier.fillMaxSize().background(
+                    Brush.verticalGradient(
+                        listOf(RaddHeroPlaceholderHigh, RaddHeroPlaceholderLow),
+                    ),
+                ),
+            ) {
+                RaddStreamMark(
+                    diameter = 48.dp,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.align(Alignment.TopCenter).padding(top = 48.dp),
+                )
+            }
         } else {
             CatalogImage(
                 url = backdropUrl,
@@ -607,7 +624,7 @@ private fun HeroSlide(
                 // title in the middle of the slide while the headline below
                 // prints it again — the duplicate the Appetize screenshots
                 // showed ("The Stranger" twice). The headline below always
-                // carries the title on this branch (hasArt), so the fallback
+                // carries the title on this branch, so the fallback
                 // is mark + gradient only.
                 fallbackLabel = null,
                 // B1 (home review, Nov 2026): a failed backdrop paints the
@@ -651,54 +668,51 @@ private fun HeroSlide(
                 ),
         )
 
-        // 3 — the words. With art they sit at the bottom, over the scrim.
-        // Without art (F8c, Batch B) the slide is a branded fallback card
-        // that already names the title in its centre — repeating the headline
-        // at the bottom left an enormous empty area with the buttons sitting
-        // very low, reading as a missing background. So the art-less slide
-        // centres its badges + buttons instead, and drops the repeated title.
-        val hasArt = !backdropUrl.isNullOrBlank()
+        // 3 — the words. They sit at the bottom, over the scrim, with or
+        // without art: the art-less slide used to centre its buttons and
+        // drop the headline (the fallback card carried the title), which
+        // left the buttons floating mid-slide under a faint grey title.
+        // The headline is white bold over the scrim now, and the mark
+        // rides the upper half (step 1), clear of this row.
         Column(
             modifier = Modifier
-                .align(if (hasArt) Alignment.BottomStart else Alignment.CenterStart)
+                .align(Alignment.BottomStart)
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp)
-                .padding(bottom = if (hasArt) HERO_ACTION_BOTTOM_DP.dp else 0.dp),
+                .padding(bottom = HERO_ACTION_BOTTOM_DP.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            if (hasArt) {
-                // Gemini home review + Stitch redesign (Nov 2026): 28sp
-                // Bold, -0.3sp tracking. The title was 36sp Bold
-                // (displaySmall) — bigger than the redesign asks, and the
-                // weight was already Bold, so the legibility defect was
-                // the scrim above, not the weight. 28sp keeps two lines
-                // inside the 320dp hero with room for the meta + CTAs.
-                // The sizes ride brandSp, not raw .sp literals — the
-                // brand ramp owns every sp (BrandDriftTest).
+            // Gemini home review + Stitch redesign (Nov 2026): 28sp
+            // Bold, -0.3sp tracking. The title was 36sp Bold
+            // (displaySmall) — bigger than the redesign asks, and the
+            // weight was already Bold, so the legibility defect was
+            // the scrim above, not the weight. 28sp keeps two lines
+            // inside the 320dp hero with room for the meta + CTAs.
+            // The sizes ride brandSp, not raw .sp literals — the
+            // brand ramp owns every sp (BrandDriftTest).
+            Text(
+                text = title,
+                style = RaddEmphasized.displaySmall.copy(
+                    fontSize = brandSp(28),
+                    lineHeight = brandSp(32),
+                    letterSpacing = brandSp(-0.3),
+                ),
+                color = MaterialTheme.colorScheme.onBackground,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            // Mockup (Nov 2026): one meta line under the title —
+            // "S1-S2 | reality | 2026" — not four separate pills. The
+            // rating, year and type badges are gone with the pills; the
+            // meta line is the only words under the title.
+            heroMetaLine(post)?.let { meta ->
                 Text(
-                    text = title,
-                    style = RaddEmphasized.displaySmall.copy(
-                        fontSize = brandSp(28),
-                        lineHeight = brandSp(32),
-                        letterSpacing = brandSp(-0.3),
-                    ),
+                    text = meta,
+                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onBackground,
-                    maxLines = 2,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                // Mockup (Nov 2026): one meta line under the title —
-                // "S1-S2 | reality | 2026" — not four separate pills. The
-                // rating, year and type badges are gone with the pills; the
-                // meta line is the only words under the title.
-                heroMetaLine(post)?.let { meta ->
-                    Text(
-                        text = meta,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
             }
 
             Row(
@@ -787,18 +801,21 @@ private fun HeroSlide(
  * Page dots that are also buttons: the active one stretches into a short bar, so the state
  * reads at a glance, and each dot jumps the pager to its slide.
  *
- * The painted dot is 4dp tall (review redesign, Nov 2026: active 16×4dp pill,
+ * The painted dot is 6dp tall (review redesign, Nov 2026: active 16×4dp pill,
  * inactive 4dp circles) and used to be the only thing a finger could aim at. Each one now
  * sits inside the [DOT_TOUCH_WIDTH] by [DOT_TOUCH_HEIGHT] box — 48dp square, the WCAG 2.2 AA
  * minimum in both directions (the 24dp width it used to have failed Robo's 48dp touch-target
- * floor). Mockup (Nov 2026): the row rides BELOW the card, centred and bare — it used to
+ * floor). Audit #10 (Nov 2026): the 16×4dp dash and 4dp dots at 50% were nearly invisible
+ * on black — the active dash is 24×6dp in the accent now, the inactive dots 6dp at 70%.
+ * Mockup (Nov 2026): the row rides BELOW the card, centred and bare — it used to
  * ride the top end in a contrast pill, and before that the bottom strip, where its hit
  * boxes covered the Watch Now button's centre. Below the card no dot can cover any
  * control, and the pill is gone with the artwork behind it ([background] = false);
  * the pill stays for an overlay position, where the dots still need contrast over
  * bright artwork. The painted dots shrank twice — Batch B (active 18dp → 12dp, 7dp → 5dp
  * tall) and the review redesign (16×4dp pill, 4dp circles) — because the old capsules
- * read oversized next to the badges. The hit boxes stay 48dp: the review asked for a
+ * read oversized next to the badges; audit #10 grew them back to 24×6dp because the
+ * small ones were unreadable. The hit boxes stay 48dp: the review asked for a
  * ~20dp-tall dots row, but the 48dp boxes are pinned by HeroIndicatorTest and by the
  * Robo touch-target floor, so the row's footprint stays 48dp and only the paint got
  * smaller. Each dot also says what it is in words and carries a `selected` state,
@@ -854,13 +871,18 @@ internal fun HeroIndicator(
     ) {
         repeat(count) { index ->
             val active = index == current
+            // Audit #10: the dots were nearly invisible — a 16×4dp dash
+            // and 4dp dots at 50% on black. The active dash stretches to
+            // 24×6dp in the accent, and the inactive dots are 6dp at 70%,
+            // so the row reads as a control, not a smudge. The 48dp hit
+            // boxes are untouched (HeroIndicatorTest pins them).
             val dotWidth by animateDpAsState(
-                targetValue = if (active) 16.dp else 4.dp,
+                targetValue = if (active) 24.dp else 6.dp,
                 animationSpec = if (reduceMotion) snap() else RaddMotion.fastSpatial(),
                 label = "heroDotWidth",
             )
             val dotColor by animateColorAsState(
-                targetValue = if (active) scheme.primary else scheme.onSurface.copy(alpha = 0.50f),
+                targetValue = if (active) scheme.primary else scheme.onSurface.copy(alpha = 0.70f),
                 animationSpec = if (reduceMotion) snap() else RaddMotion.defaultEffects(),
                 label = "heroDotColor",
             )
@@ -876,7 +898,7 @@ internal fun HeroIndicator(
             ) {
                 Box(
                     Modifier
-                        .size(width = dotWidth, height = 4.dp)
+                        .size(width = dotWidth, height = 6.dp)
                         .clip(RaddTokens.Shape.Pill)
                         .background(dotColor),
                 )
@@ -960,7 +982,7 @@ private const val HERO_SKELETON_SHIMMER_ALPHA = 0.30f
 
 /**
  * The page dot's hit box: 48dp square, the WCAG 2.2 AA minimum in both directions.
- * The painted dot inside it is 4dp tall (16×4dp active pill, 4dp circles).
+ * The painted dot inside it is 6dp tall (24×6dp active pill, 6dp circles — audit #10).
  */
 private val DOT_TOUCH_HEIGHT: Dp = DOT_TOUCH_HEIGHT_DP.dp
 private val DOT_TOUCH_WIDTH: Dp = 48.dp

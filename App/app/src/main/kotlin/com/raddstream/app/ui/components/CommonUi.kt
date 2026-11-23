@@ -27,6 +27,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
@@ -36,7 +37,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -1027,6 +1027,9 @@ fun ErrorState(
     title: String = "Something went wrong",
     secondaryLabel: String? = null,
     onSecondary: (() -> Unit)? = null,
+    // Audit #5: one explanatory line under the secondary action, saying
+    // what the action changes. Null keeps the old two-button shape.
+    secondaryHint: String? = null,
     fillScreen: Boolean = true,
 ) {
     EmptyState(
@@ -1039,8 +1042,11 @@ fun ErrorState(
             // Every caller of this state is a retryable load failure — a dead
             // server, a failed page — not a destructive mistake, and red says
             // "you did something wrong" where nothing the viewer did was wrong.
+            // Audit #6: the glyph itself is a network failure now (a cloud
+            // with its line through it), not a grey "info" — the tint stays
+            // muted, only the shape says what broke.
             Icon(
-                Icons.Default.Info,
+                Icons.Default.CloudOff,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(40.dp),
@@ -1052,7 +1058,11 @@ fun ErrorState(
                 // with a dead screen taps most, so it sits on the 48dp
                 // floor. ErrorState is shared (Home, Search, Detail,
                 // Browse, Live TV) — one fix for all callers.
-                OutlinedButton(
+                // Audit #6: Retry is the primary recovery, so it is a
+                // filled button now, not an outline — the outlined shape
+                // read as a secondary action on a screen with nothing else
+                // to tap.
+                Button(
                     onClick = onRetry,
                     modifier = Modifier.heightIn(min = 48.dp),
                 ) {
@@ -1066,6 +1076,14 @@ fun ErrorState(
                 if (secondaryLabel != null && onSecondary != null) {
                     Spacer(Modifier.height(8.dp))
                     TextButton(onClick = onSecondary) { Text(secondaryLabel) }
+                    if (secondaryHint != null) {
+                        Text(
+                            text = secondaryHint,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
                 }
             }
         },
