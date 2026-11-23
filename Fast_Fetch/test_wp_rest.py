@@ -176,6 +176,25 @@ class TestLabelParsing(unittest.TestCase):
                           "Kiku Sharda"])
         self.assertTrue(labels["story"].startswith("Comedian Kapil Sharma hosts"))
 
+    def test_7starhd_host_label(self):
+        # Live 7starhd Indian Idol info block (post 85549, 2026-11-23):
+        # "Host:" is on-screen talent, banked into cast by the importer.
+        text = ("Title: Indian Idol: Legends Returns (2026) IMDB Ratings: 5.1/10 "
+                "Released Date: 22nd November 2026 Genres: Reality Show "
+                "Languages: Hindi Director: Saahil Chhabaria Host: Aditya "
+                "Narayan Judges: Himesh Reshammiya Quality: 1080p | 720p | "
+                "480p | HDRip Plot: Indian Idol – Legends Return features "
+                "a unique two-phase journey.")
+        labels = wp_rest.parse_labelled_text(text)
+        self.assertEqual(labels["imdb_rating"], 5.1)
+        self.assertEqual(labels["genres"], ["Reality Show"])
+        self.assertEqual(labels["director"], "Saahil Chhabaria")
+        self.assertEqual(labels["host"], ["Aditya Narayan"])
+        self.assertEqual(labels["judges"], ["Himesh Reshammiya"])
+        self.assertEqual(labels["release_date"], "22nd November 2026")
+        self.assertTrue(labels["story"].startswith(
+            "Indian Idol – Legends Return features"))
+
     def test_no_labels_means_empty_not_fabricated(self):
         self.assertEqual(wp_rest.parse_labelled_text("Just a plain title."), {})
         self.assertEqual(wp_rest.parse_labelled_text(""), {})
