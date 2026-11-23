@@ -2019,7 +2019,7 @@ def _init_db(db_path: Path | None = None) -> None:
             "cast_names": "TEXT",
             "is_18_plus": "INTEGER DEFAULT 0",
             "is_animated": "INTEGER DEFAULT 0",
-            "source_site": "TEXT",
+            "source_site": "TEXT DEFAULT NULL",
             "industry": "TEXT DEFAULT 'Hollywood'",
             "country": "TEXT DEFAULT 'USA'",
             "language": "TEXT DEFAULT 'English'",
@@ -2211,14 +2211,19 @@ def _init_db(db_path: Path | None = None) -> None:
         # Auto-classify any unclassified existing posts
         unclassified = conn.execute("SELECT id, url, title, slug, clean_title, is_animated, genres FROM posts WHERE industry IS NULL OR source_site IS NULL OR industry = ''").fetchall()
         for up in unclassified:
-            site = "rogmovies" if "rogmovies" in (up["url"] or "") else "vegamovies"
+            # The page's own host names the site — the old rogmovies-else-
+            # vegamovies guess stamped every unattributed row vegamovies on
+            # every init (audit 2026-11-23). A host that maps to no site
+            # leaves the row unattributed (COALESCE keeps the NULL) rather
+            # than filing it under another site's name.
+            site = infer_source_site(up["url"]) or ""
             meta = classify_media(site, up["title"] or up["clean_title"], up["slug"], "")
             conn.execute("""
                 UPDATE posts
-                SET source_site = ?, industry = ?, country = ?, language = ?,
+                SET source_site = COALESCE(NULLIF(?, ''), source_site), industry = ?, country = ?, language = ?,
                     is_animated = MAX(is_animated, ?)
                 WHERE id = ?
-            """, (meta["source_site"], meta["industry"], meta["country"], meta["language"],
+            """, (site, meta["industry"], meta["country"], meta["language"],
                   meta["animated"], up["id"]))
 
         # Backfill canonical_key on existing posts
@@ -3526,7 +3531,11 @@ def parse_post_metadata(page_url: str, html: str) -> dict:
     is_animated = looks_animated(title_slug_text)
 
     # 8. Media Classification (Source Site, Industry, Country, Language)
-    source_site = "rogmovies" if "rogmovies" in page_url.lower() else "vegamovies"
+    # The page's own host names the site — the old rogmovies-else-vegamovies
+    # guess filed every other site's page under vegamovies (audit 2026-11-23).
+    # An unattributable host stays empty here; the save helper refuses it
+    # rather than filing it under another site's name.
+    source_site = infer_source_site(page_url) or ""
     cls_meta = classify_media(source_site, raw_title, slug, html)
 
     return {
@@ -3544,7 +3553,7 @@ def parse_post_metadata(page_url: str, html: str) -> dict:
         "synopsis": synopsis,
         "is_18_plus": is_18_plus,
         "is_animated": is_animated,
-        "source_site": cls_meta["source_site"],
+        "source_site": source_site,
         "industry": cls_meta["industry"],
         "country": cls_meta["country"],
         "language": cls_meta["language"],
@@ -8125,18 +8134,132 @@ def _find_existing_post(
     )
 
 
+#: Rotation prefixes on scraper hosts: a domain move keeps the site's name
+#: and only swaps the label in front of it (hdhub4u new15 -> new16,
+#: MoviesDrive new1 -> new2). The stem fallback drops them so the first
+#: surviving label is the site's own name.
+_ROTATION_PREFIX = re.compile(r"^new\d*$")
+
+#: Cache for the registry-derived host/slug -> site maps, keyed by the
+#: registry file's mtime so a domain_resolver rotation in another process
+#: is picked up without re-reading the file on every ingest.
+_REGISTRY_SITE_MAPS_CACHE: dict = {"mtime": None, "hosts": {}, "slugs": []}
+
+
+def _registry_site_maps():
+    """(exact-host -> site, [(slug, site), ...]) from domain_registry.json.
+
+    Every registry entry counts, whatever its status: a "down" entry is
+    still the site that published the page (themoviebox is flagged down
+    while serving), and attribution is about who published it, not who
+    is reachable. Never raises — a missing or broken registry degrades
+    to the domain-stem fallback in infer_source_site, never to a wrong
+    site.
+    """
+    try:
+        mtime = REGISTRY_PATH.stat().st_mtime
+    except OSError:
+        return {}, []
+    cached = _REGISTRY_SITE_MAPS_CACHE
+    if cached["mtime"] == mtime:
+        return cached["hosts"], cached["slugs"]
+    hosts: dict[str, str] = {}
+    slugs: list[tuple[str, str]] = []
+    try:
+        data = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        data = {}
+    for name, entry in (data.get("sites") or {}).items():
+        if not isinstance(entry, dict):
+            continue
+        site = str(name).strip().lower()
+        if not site:
+            continue
+        for url in [entry.get("active_base_url")] + list(entry.get("known_mirrors") or []):
+            try:
+                host = urllib.parse.urlparse(str(url or "")).hostname or ""
+            except ValueError:
+                continue
+            host = host.lower().rstrip(".")
+            if host.startswith("www."):
+                host = host[4:]
+            if host:
+                hosts.setdefault(host, site)
+        for slug in entry.get("slug_variants") or [site]:
+            slug = str(slug or "").strip().lower()
+            if slug:
+                slugs.append((slug, site))
+    slugs.sort(key=lambda item: len(item[0]), reverse=True)
+    cached.update({"mtime": mtime, "hosts": hosts, "slugs": slugs})
+    return hosts, slugs
+
+
+def _domain_stem(host: str) -> str | None:
+    """First surviving label of a host: the site's name by the convention
+    every importer in this tree follows (SITE_NAME == domain stem).
+
+    Returns None for an IP literal or localhost — there is no site name
+    to infer from those, and inventing one would be a fresh mislabel.
+    """
+    host = (host or "").strip().lower().rstrip(".")
+    if not host or ":" in host:
+        return None
+    labels = [label for label in host.split(".") if label]
+    if not labels or host == "localhost" or all(label.isdigit() for label in labels):
+        return None
+    while len(labels) > 1 and (labels[0] == "www" or _ROTATION_PREFIX.match(labels[0])):
+        labels.pop(0)
+    if labels[0] == "localhost":
+        return None
+    return labels[0] or None
+
+
+def infer_source_site(url, *, strong_only: bool = False) -> str | None:
+    """Derive the owning site from a post URL's host; None when unmapped.
+
+    Registry first — an exact mirror host, then a slug_variants substring
+    match (longest slug wins, so katmovieshd.net maps to katmoviehd and
+    bulwik.com to castle) — then the registrable-domain stem. With
+    strong_only, only registry evidence counts and the stem fallback is
+    skipped. The one thing this never does is return 'vegamovies' for a
+    URL that is not a vegamovies page: that default is how ~90,700 rows
+    from other sites ended up filed under vegamovies (audit 2026-11-23).
+    """
+    try:
+        host = urllib.parse.urlparse(str(url or "")).hostname or ""
+    except ValueError:
+        return None
+    host = host.lower().rstrip(".")
+    if not host:
+        return None
+    hosts, slugs = _registry_site_maps()
+    bare = host[4:] if host.startswith("www.") else host
+    if bare in hosts:
+        return hosts[bare]
+    for slug, site in slugs:
+        if slug and slug in host:
+            return site
+    if strong_only:
+        return None
+    return _domain_stem(host)
+
+
 def _validate_scraped_data(data: dict):
     if not isinstance(data, dict):
         raise TypeError("Scraped media data must be a dictionary")
     url = str(data.get("url") or "").strip()
     clean_title = str(data.get("clean_title") or data.get("title") or "").strip()
     title = str(data.get("title") or clean_title).strip()
-    # DB-08: a missing label used to default to 'vegamovies' here, which is how
-    # foreign pages were filed under that site. Derive it from the page's own
-    # host when known, else 'unknown' — never a guessed site.
-    source_site = str(
-        data.get("source_site") or source_site_from_url(url) or "unknown"
-    ).strip().lower()
+    # An importer that names its site keeps its name; one that does not
+    # gets it from the page it scraped — never the 'vegamovies' default
+    # that mislabelled ~90,700 rows from other sites (audit 2026-11-23).
+    # A URL with no attributable host is refused below, not filed elsewhere.
+    # (DB-08's fallback to "unknown" still applies to a real domain that
+    # is not a known site — only a host with no site name at all, an IP
+    # literal or localhost, is refused.)
+    source_site = str(data.get("source_site") or "").strip().lower()
+    if not source_site:
+        source_site = infer_source_site(url) or ""
     content_type = str(data.get("content_type") or "movie").strip().lower()
     if not url:
         raise ValueError("Scraped media data is missing its source URL")
@@ -8169,7 +8292,11 @@ def save_scraped_data(
     if not isinstance(data, dict):
         raise TypeError("Scraped media data must be a dictionary")
     data = dict(data)
-    _validate_scraped_data(data)
+    _url, _clean_title, _title, source_site, _content_type, _releases = _validate_scraped_data(data)
+    # The adult/animation flags below read data["source_site"]: an inferred
+    # site must drive them exactly like an asserted one, or a rareanimes
+    # page filed without a site would lose its Anime flag.
+    data["source_site"] = source_site
     data["is_18_plus"] = int(
         bool(data.get("is_18_plus"))
         or is_adult_title(

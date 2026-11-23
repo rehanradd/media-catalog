@@ -32,6 +32,10 @@ name: 🐍 Backend CI — Stdlib Python Tests
 #     - Fast_Fetch/test_bundle_handles.py    (Session 111: bundle handles name ledger rows)
 #     - Fast_Fetch/test_provenance_stamping.py(ingest-time provenance)
 #     - Fast_Fetch/test_merge_catalogs.py    (staging → unified merge)
+#     - Fast_Fetch/test_source_site_helper.py (audit 2026-11-23 item 1b:
+#                                             insert helper attributes a
+#                                             payload from its page URL,
+#                                             never defaults to 'vegamovies')
 #     - Fast_Fetch/test_backfill_cast.py     (cast backfill: report-only by
 #                                             default; --apply fills blanks from
 #                                             staging by page URL, never overwrites)
@@ -541,6 +545,12 @@ jobs:
 
       - name: 🧪 test_merge_catalogs.py
         run: python3 -S Fast_Fetch/test_merge_catalogs.py
+
+      # Scraper-improvement lane, audit item 1b (2026-11-23): the shared
+      # insert helper attributes a payload from its page URL instead of
+      # defaulting to 'vegamovies'. Offline — temp SQLite files, no network.
+      - name: 🧪 test_source_site_helper.py
+        run: python3 -S Fast_Fetch/test_source_site_helper.py
 
       - name: 🧪 test_merge_fleet.py
         run: python3 -S Fast_Fetch/test_merge_fleet.py

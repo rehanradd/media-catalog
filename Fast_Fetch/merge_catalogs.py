@@ -83,7 +83,15 @@ def _collect_staging_post(src_conn: sqlite3.Connection, post: sqlite3.Row,
                 url = ""
     # A staging database knows which site it holds even when its rows do not;
     # leaving those as "unknown" loses the attribution the API ranks and filters by.
-    site = _pick(post, "site", "source_site", default=default_site) or default_site
+    # A row that names its site keeps it; a row that does not is attributed
+    # from the page it scraped (the shared helper — the same rule that files
+    # a live ingest), and only a row with neither falls back to the staging
+    # file's name. The filename is the weakest evidence: it is how a
+    # misnamed staging file would re-label a whole site as 'vegamovies'.
+    site = _pick(post, "site", "source_site", default=None)
+    site = (str(site).strip().lower() if site else "") or None
+    if not site:
+        site = fast_fetch.infer_source_site(url) or default_site
     media_type = (_pick(post, "media_type", "content_type", default="movie") or "movie").lower()
     backdrops = _pick(post, "backdrop_url")
     # Dev-cleanup (2026-11-18): no "Unknown" default. A missing language
