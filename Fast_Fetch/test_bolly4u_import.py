@@ -10,6 +10,10 @@ Tests cover:
   6. Atomic post, release, and source persistence.
   7. Hidden /action JSON API photojin unwrap mock.
   8. Session-cookie negotiated linkskeep unwrap mock.
+  9. WP REST adoption (2026-11-23): full metadata from the REST post
+     (poster / synopsis / genres / rating / cast / director / languages),
+     torrentsave gateway kept, no fabricated quality or codec, _embed=1
+     sync that pages through the whole catalog.
 """
 
 import json
@@ -249,6 +253,282 @@ class Session104Bolly4uTests(unittest.TestCase):
         src = inspect.getsource(import_bolly4u.Bolly4uClient.unwrap_photojin)
         self.assertIn("pj_origin", src)
         self.assertNotIn("photojin.study", src)
+
+
+class TestBolly4uWpRestAdoption(unittest.TestCase):
+    """WP REST adoption: the live post carries every field; the importer
+    must save it, keep every gateway, and invent nothing.
+
+    Fixture transcribed from live bolly4u post 146083 ("Son Of 2026",
+    captured 2026-11-23): real title, labels, poster URL and link hosts.
+    """
+
+    FIXTURE_CONTENT = """
+        <p><strong>Son Of 2026 WEB-DL UNCUT Hindi Dual Audio ORG Full Movie Download [Hindi – Tamil ] 1080p, 720p &amp; 480p.</strong></p>
+        <p><img src="https://myimg.click/images/2026/11/22/Son-Of-2026.jpg" /></p>
+        <p><strong>IMDB Rating: 6.8/10</strong><br />
+        <strong>Genres: Drama, Family, Thriller</strong></p>
+        <p><strong>Director: Bathala Sateesh</strong><br />
+        <strong>Stars Cast: Vinod Kumar, Meera Raaj, Inturi Vasu, Sai Simhadri</strong></p>
+        <p><strong>Languages: Hindi + Telugu</strong><br />
+        <strong>Video Quality: WEB-DL 1080p | 720p | 480p</strong></p>
+        <p><strong>Film Story: An entitled son sues his father for neglecting his duties. The father’s powerful response sparks a courtroom battle that teaches the son about responsibility, love, and family.</strong></p>
+        <h4><strong>|| 1080p Download Links: 1.7GB ||</strong></h4>
+        <p><a href="https://photojin.garden/download/SAggOe4g1BE">DIRECT 1</a>
+        <a href="https://new4.movcloud.click/s/877a4cd0f961b706">DIRECT [ G-DRIVE ]</a>
+        <a href="https://torrentsave.0to.site/save/2f34d34dc26694d53847498e41d684aa9e617151">Download [T]</a>
+        <a href="https://new2.linkskeep.lat/view/P0Ssy5renT">DOWNLOAD LINKS</a></p>
+        <h4><strong>|| 720p Download Links: 1.1GB ||</strong></h4>
+        <p><a href="https://photojin.garden/download/Q2dNDbPqYjH">DIRECT 1</a>
+        <a href="https://new4.movcloud.click/s/6848b7af35d34645">DIRECT [ G-DRIVE ]</a>
+        <a href="https://torrentsave.0to.site/save/65bf84a370732bc0940065ff54196a5ec05485e9">Download [T]</a>
+        <a href="https://new2.linkskeep.lat/view/ZKgZxn_L9-">DOWNLOAD LINKS</a></p>
+        <h4><strong>|| 480p Download Links: 400MB ||</strong></h4>
+        <p><a href="https://photojin.garden/download/dzL8P4TSRg4">DIRECT 1</a>
+        <a href="https://new4.movcloud.click/s/bc0c9e323434361a">DIRECT [ G-DRIVE ]</a>
+        <a href="https://torrentsave.0to.site/save/ef5d019c0cc0a89245456f56ebbe06937cb53122">Download [T]</a>
+        <a href="https://new2.linkskeep.lat/view/qAz0kQRjA-">DOWNLOAD LINKS</a></p>
+        """
+
+    FIXTURE_TITLE = (
+        "Son Of 2026 WEB-DL UNCUT Hindi Dual Audio ORG Full Movie "
+        "Download 1080p | 720p | 480p"
+    )
+
+    def _fixture_post(self):
+        return {
+            "id": 146083,
+            "date": "2026-11-22T06:21:40",
+            "modified": "2026-11-22T06:30:04",
+            "slug": "son-of-2026-hindi-dual-audio-org-movie-download-webrip",
+            "link": "https://bolly4u.moda/son-of-2026-hindi-dual-audio-org-movie-download-webrip/",
+            "title": {"rendered": self.FIXTURE_TITLE},
+            "content": {"rendered": self.FIXTURE_CONTENT},
+            "excerpt": {"rendered": (
+                "<p>Son Of 2026 WEB-DL UNCUT Hindi Dual Audio ORG Full Movie "
+                "Download [Hindi – Tamil ] 1080p, 720p &amp; 480p. Son Of 2026 "
+                "This is a South Hindi Movie and available in Hindi 1080p, 720p "
+                "&amp; 480p qualities. [&hellip;]</p>")},
+            "categories": [9910, 4, 83],
+            "featured_media": 0,
+            "_embedded": {"wp:term": [[
+                {"id": 9910, "name": "720p Movies", "taxonomy": "category"},
+                {"id": 4, "name": "Telugu 300Mb", "taxonomy": "category"},
+            ]]},
+        }
+
+    def test_parse_content_keeps_all_four_gateways(self):
+        releases = import_bolly4u.parse_bolly4u_content(
+            self.FIXTURE_CONTENT, self.FIXTURE_TITLE)
+        self.assertEqual(len(releases), 3)
+        self.assertEqual(
+            [r["quality"] for r in releases], ["1080P", "720P", "480P"])
+        hosts = {u.split("/")[2] for r in releases for u, _ in r["links"]}
+        self.assertIn("torrentsave.0to.site", hosts)
+        self.assertIn("photojin.garden", hosts)
+        self.assertIn("new4.movcloud.click", hosts)
+        self.assertIn("new2.linkskeep.lat", hosts)
+        self.assertEqual(len(releases[0]["links"]), 4)
+
+    def test_parse_content_no_fabricated_quality_or_codec(self):
+        html = (
+            "<h4>Download Links: 1.1GB</h4>"
+            '<p><a href="https://photojin.garden/download/abc">DIRECT 1</a></p>'
+            "<h4>Download Links</h4>"
+            '<p><a href="https://photojin.garden/download/def">DIRECT 1</a></p>'
+        )
+        releases = import_bolly4u.parse_bolly4u_content(html, "Some Movie 2026")
+        self.assertEqual(len(releases), 2)
+        # A heading with no quality token means unknown — never "720P".
+        self.assertIsNone(releases[0]["quality"])
+        self.assertIsNone(releases[0]["resolution"])
+        self.assertIsNone(releases[0]["codec"])
+        self.assertEqual(releases[0]["label"], "1.1GB")
+        self.assertIsNone(releases[1]["quality"])
+        self.assertEqual(releases[1]["label"], "Download")
+
+    def test_parse_content_codec_only_when_stated(self):
+        html = (
+            "<h4>|| 1080p Download Links: 1.7GB x265 ||</h4>"
+            '<p><a href="https://photojin.garden/download/abc">DIRECT 1</a></p>'
+        )
+        releases = import_bolly4u.parse_bolly4u_content(
+            html, "Some Movie 2026 BluRay HEVC")
+        self.assertEqual(releases[0]["codec"], "x265")
+
+    def test_scrape_post_item_full_metadata_from_rest_post(self):
+        client = import_bolly4u.Bolly4uClient(base_url="https://bolly4u.moda")
+        post = self._fixture_post()
+        item = (post["link"], post["modified"], post["slug"],
+                json.dumps(post))
+        with patch.object(client, "unwrap_photojin", return_value=[]), \
+                patch.object(client, "unwrap_linkskeep", return_value=[]):
+            result = import_bolly4u.scrape_post_item(item, client)
+        self.assertTrue(result["success"])
+        saved = result["post"]
+        self.assertEqual(saved["title"], "Son Of")
+        self.assertEqual(saved["year"], 2026)
+        self.assertEqual(
+            saved["poster_url"],
+            "https://myimg.click/images/2026/11/22/Son-Of-2026.jpg")
+        self.assertTrue(saved["synopsis"].startswith(
+            "An entitled son sues his father"))
+        self.assertEqual(json.loads(saved["genres"]),
+                         ["Drama", "Family", "Thriller"])
+        self.assertEqual(saved["imdb_rating"], 6.8)
+        self.assertEqual(saved["director"], "Bathala Sateesh")
+        self.assertIn("Vinod Kumar", saved["cast_names"])
+        self.assertIn("Sai Simhadri", saved["cast_names"])
+        self.assertEqual(saved["languages"], "Hindi + Telugu")
+        self.assertEqual(len(result["releases"]), 3)
+        by_quality = {r["quality"]: r for r in result["releases"]}
+        self.assertEqual(set(by_quality), {"1080P", "720P", "480P"})
+        services = {s["service"] for r in result["releases"]
+                    for s in r["sources"]}
+        self.assertIn("torrentsave", services)
+        self.assertIn("movcloud", services)
+
+    def test_sync_api_uses_embed_and_fetches_all_pages(self):
+        import types
+
+        pages = {
+            1: ([{"link": "https://bolly4u.moda/a/", "slug": "a",
+                  "modified": "2026-11-22T00:00:00",
+                  "title": {"rendered": "A 2026"}}], 2, 2),
+            2: ([{"link": "https://bolly4u.moda/b/", "slug": "b",
+                  "modified": "2026-11-22T00:00:00",
+                  "title": {"rendered": "B 2026"}}], 2, 2),
+        }
+        seen = []
+
+        def fake_get_json(url, timeout=15):
+            seen.append(url)
+            import re as _re
+            page = int(_re.search(r"[?&]page=(\d+)", url).group(1))
+            if page in pages:
+                posts, total, total_pages = pages[page]
+                return 200, posts, {"x-wp-total": str(total),
+                                    "x-wp-totalpages": str(total_pages)}
+            return 400, None, {}
+
+        client = types.SimpleNamespace(
+            base_url="https://bolly4u.moda", get_json=fake_get_json)
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "sync.db"
+            total_new = import_bolly4u.sync_api_catalog(client, db_path)
+            self.assertEqual(total_new, 2)
+            self.assertEqual(len(seen), 2)
+            self.assertTrue(all("_embed=1" in u for u in seen))
+            self.assertTrue(all("per_page=100" in u for u in seen))
+            with sqlite3.connect(str(db_path)) as conn:
+                rows = conn.execute(
+                    "SELECT loc, raw_json FROM sitemap_cache ORDER BY loc"
+                ).fetchall()
+            self.assertEqual(
+                [r[0] for r in rows],
+                ["https://bolly4u.moda/a/", "https://bolly4u.moda/b/"])
+            self.assertIn("A 2026", rows[0][1])
+
+    def test_sync_api_stops_after_three_empty_pages(self):
+        import types
+
+        post = {"link": "https://bolly4u.moda/a/", "slug": "a",
+                "modified": "2026-11-22T00:00:00",
+                "title": {"rendered": "A 2026"}}
+        seen = []
+
+        def fake_get_json(url, timeout=15):
+            seen.append(url)
+            return 200, [post], {"x-wp-total": "1", "x-wp-totalpages": "99"}
+
+        client = types.SimpleNamespace(
+            base_url="https://bolly4u.moda", get_json=fake_get_json)
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "sync.db"
+            total_new = import_bolly4u.sync_api_catalog(client, db_path)
+        # Page 1 new, pages 2-4 empty -> stop after the 3rd empty page.
+        self.assertEqual(total_new, 1)
+        self.assertEqual(len(seen), 4)
+
+    def test_save_backfills_metadata_on_conflict(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "save.db"
+            import_bolly4u.init_staging_db(db_path)
+            first = {
+                "loc": "https://bolly4u.moda/son-of-2026/",
+                "success": True,
+                "post": {
+                    "canonical_key": "son-of_2026",
+                    "title": "Son Of",
+                    "original_title": "Son Of 2026",
+                    "year": 2026,
+                    "media_type": "movie",
+                    "imdb_id": None,
+                    "poster_url": "https://myimg.click/images/2026/11/22/Son-Of-2026.jpg",
+                    "synopsis": "An entitled son sues his father.",
+                    "genres": '["Drama", "Family"]',
+                    "imdb_rating": 6.8,
+                    "cast_names": "Vinod Kumar",
+                    "director": "Bathala Sateesh",
+                    "languages": "Hindi + Telugu",
+                    "site": "bolly4u",
+                    "post_url": "https://bolly4u.moda/son-of-2026/",
+                },
+                "releases": [],
+            }
+            import_bolly4u.save_post_to_staging(db_path, first)
+            # Re-save with a new title but no metadata: title updates,
+            # the stored metadata survives.
+            second = dict(first)
+            second["post"] = dict(first["post"])
+            second["post"]["title"] = "Son Of (Updated)"
+            for key in ("poster_url", "synopsis", "genres", "imdb_rating",
+                        "cast_names", "director", "languages"):
+                second["post"][key] = None
+            import_bolly4u.save_post_to_staging(db_path, second)
+            with sqlite3.connect(str(db_path)) as conn:
+                row = conn.execute(
+                    "SELECT title, poster_url, synopsis, genres, imdb_rating,"
+                    " cast_names, director, languages FROM posts"
+                    " WHERE canonical_key = 'son-of_2026'"
+                ).fetchone()
+            self.assertEqual(row[0], "Son Of (Updated)")
+            self.assertEqual(
+                row[1], "https://myimg.click/images/2026/11/22/Son-Of-2026.jpg")
+            self.assertEqual(row[2], "An entitled son sues his father.")
+            self.assertEqual(row[3], '["Drama", "Family"]')
+            self.assertEqual(row[4], 6.8)
+            self.assertEqual(row[5], "Vinod Kumar")
+            self.assertEqual(row[6], "Bathala Sateesh")
+            self.assertEqual(row[7], "Hindi + Telugu")
+
+    def test_init_db_migrates_old_schema(self):
+        import tempfile
+
+        # The pre-adoption posts table: every original column, none of
+        # the four WP REST columns. The migration must add exactly those.
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "old.db"
+            with sqlite3.connect(str(db_path)) as conn:
+                conn.execute(
+                    "CREATE TABLE posts ("
+                    " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                    " canonical_key TEXT UNIQUE, title TEXT,"
+                    " original_title TEXT, year INTEGER, media_type TEXT,"
+                    " imdb_id TEXT, poster_url TEXT, synopsis TEXT,"
+                    " genres TEXT, site TEXT DEFAULT 'bolly4u',"
+                    " post_url TEXT,"
+                    " updated_at DATETIME DEFAULT CURRENT_TIMESTAMP);")
+                conn.commit()
+            import_bolly4u.init_staging_db(db_path)
+            with sqlite3.connect(str(db_path)) as conn:
+                cols = {c[1] for c in conn.execute(
+                    "PRAGMA table_info(posts);").fetchall()}
+            for col in ("imdb_rating", "cast_names", "director", "languages",
+                        "poster_url", "synopsis", "genres", "is_18_plus"):
+                self.assertIn(col, cols)
 
 
 if __name__ == "__main__":
