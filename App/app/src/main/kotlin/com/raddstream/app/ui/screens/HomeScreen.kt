@@ -16,7 +16,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -60,8 +59,7 @@ import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.pulltorefresh.PullToRefreshContainer
-import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -74,7 +72,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -443,28 +440,14 @@ internal fun HomeContent(
     val isStale = state.lastHomeSyncMs?.let { nowMs - it > 30 * 60 * 1000L } ?: false
     val showSyncLine = syncLine != null && (isStale || state.isOffline)
 
-    // Pull-to-refresh (home fix, Nov 2026): the refresh icon went with the
-    // top bar, so a stale Home had no user-initiated recovery — only Retry
-    // on a failed rail. A pull now calls the same refresh the ViewModel
-    // already had. The pull indicator replaces the top progress bar.
-    val pullRefreshState = rememberPullToRefreshState()
-
-    // 1.2.1 has no onRefresh callback on the pull state: releasing past
-    // the threshold flips pullRefreshState.isRefreshing on, and the caller
-    // observes it. That flip is the pull gesture's refresh signal.
-    LaunchedEffect(pullRefreshState.isRefreshing) {
-        if (pullRefreshState.isRefreshing) {
-            onRefresh()
-        }
-    }
-    // When the ViewModel's refresh finishes (isRefreshing false), hide the
-    // indicator. Harmless when no pull is in flight — endRefresh on a
-    // fresh state is a no-op.
-    LaunchedEffect(state.isRefreshing) {
-        if (!state.isRefreshing) {
-            pullRefreshState.endRefresh()
-        }
-    }
+    // Pull-to-refresh (home fix, Nov 2026; migrated to PullToRefreshBox
+    // with the library bump): the refresh icon went with the top bar, so a
+    // stale Home had no user-initiated recovery — only Retry on a failed
+    // rail. A pull now calls the same refresh the ViewModel already had.
+    // The Box drives the indicator from the ViewModel's isRefreshing and
+    // fires onRefresh on the pull gesture — no pull state to observe and
+    // nothing to dismiss by hand. The pull indicator replaces the top
+    // progress bar.
 
     Column(
         modifier = Modifier
@@ -479,17 +462,14 @@ internal fun HomeContent(
         if (kidsMode) {
             KidsModeBanner(onExitKidsMode = onExitKidsMode)
         }
-        // Pull-to-refresh (home fix, Nov 2026): this project is on
-        // material3 1.2.1 (Compose BOM 2024.06.00), which has no
-        // PullToRefreshBox (1.3.0) and no pullToRefresh modifier — the
-        // 1.2.1 pattern is the pull state itself: attach its
-        // nestedScrollConnection to the Box, render PullToRefreshContainer
-        // for the spinner, and observe isRefreshing to fire the refresh.
-        // Same gesture, same refresh, no library bump.
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .nestedScroll(pullRefreshState.nestedScrollConnection),
+        // Pull-to-refresh: PullToRefreshBox (material3 1.3.0+, here via the
+        // bumped Compose BOM 2025.11.01). The Box owns the nested scroll
+        // and the spinner; isRefreshing comes from the ViewModel and
+        // onRefresh is the pull gesture's refresh signal.
+        PullToRefreshBox(
+            isRefreshing = state.isRefreshing,
+            onRefresh = onRefresh,
+            modifier = Modifier.weight(1f),
         ) {
         LazyColumn(
             state = listState,
@@ -817,10 +797,6 @@ internal fun HomeContent(
             }
         }
         }
-        PullToRefreshContainer(
-            state = pullRefreshState,
-            modifier = Modifier.align(Alignment.TopCenter),
-        )
         }
     }
 }
