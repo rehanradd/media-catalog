@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-import_10xflix.py — Dedicated staging importer and scraper for 10xflix (https://10xflix.bond).
+import_10xflix.py — Dedicated staging importer and scraper for 10xflix (https://10xflix.beer).
 
 Key Features:
   1. Dedicated staging SQLite database: 10xflix.db (strictly isolated from fast_fetch.db).
@@ -58,7 +58,7 @@ import fast_fetch
 from config import staging_db_path
 from domain_resolver import get_active_base_url, resolve_if_dead
 
-DEFAULT_BASE_URL = "https://10xflix.asia"
+DEFAULT_BASE_URL = "https://10xflix.beer"
 SITE_NAME = "10xflix"
 DEFAULT_DB_PATH = staging_db_path("10xflix")
 STATUS_FILE = BASE_DIR / "10xflix_status.json"

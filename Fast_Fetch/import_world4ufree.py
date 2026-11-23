@@ -64,7 +64,7 @@ import fast_fetch
 from config import staging_db_path
 from domain_resolver import get_active_base_url, resolve_if_dead
 
-DEFAULT_BASE_URL = "https://world4ufree.gay"
+DEFAULT_BASE_URL = "https://world4ufree.men"
 SITE_NAME = "world4ufree"
 DEFAULT_DB_PATH = staging_db_path("world4ufree")
 STATUS_FILE = BASE_DIR / "world4ufree_status.json"

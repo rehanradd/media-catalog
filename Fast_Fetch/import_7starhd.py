@@ -788,7 +788,7 @@ def main():
     # (the old special case pinned the dead 10xflix.bond domain).
     site_key = "10xflix" if args.site == "10xflix" else "7starhd"
     base_url = args.base_url or get_active_base_url(
-        site_key, DEFAULT_BASE_URL if site_key == "7starhd" else "https://10xflix.asia")
+        site_key, DEFAULT_BASE_URL if site_key == "7starhd" else "https://10xflix.beer")
 
     # Auto-adjust default DB path if site is 10xflix
     if args.site == "10xflix" and args.db_path == str(DEFAULT_DB_PATH):

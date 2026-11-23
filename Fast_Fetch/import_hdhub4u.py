@@ -58,7 +58,7 @@ import fast_fetch
 from config import staging_db_path
 from domain_resolver import get_active_base_url, resolve_if_dead
 
-DEFAULT_BASE_URL = "https://new12.hdhub4u.cl"
+DEFAULT_BASE_URL = "https://new16.hdhub4u.cl"
 SITE_NAME = "hdhub4u"
 HOST_RESOLVER_URL = "https://h4.suncdn.org/host/"
 TYPESENSE_SEARCH_URL = "https://search.pingora.fyi/collections/post/documents/search"

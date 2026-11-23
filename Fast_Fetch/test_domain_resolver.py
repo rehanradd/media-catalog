@@ -860,5 +860,130 @@ class TuningKnobsTests(unittest.TestCase):
             tmp.cleanup()
 
 
+class RegistryCorrections20261123Tests(unittest.TestCase):
+    """Site-API hunt corrections (23 Nov 2026): the six registry fixes.
+
+    Each test pins the corrected value in the SHIPPED registry, so a
+    future refresh that reverts one of them goes red here. The probe
+    tests use the stub fetcher only -- no live requests.
+    """
+
+    def test_katmoviehd_is_wp_rest_not_sveltekit(self):
+        reg = dr.load_registry()
+        entry = reg["sites"]["katmoviehd"]
+        self.assertEqual(entry["api_type"], "wp_rest_api")
+        self.assertEqual(entry["api_endpoint"], "/wp-json/wp/v2/posts")
+        self.assertNotEqual(entry["api_endpoint"], "/__data.json")
+
+    def test_themoviebox_lists_via_everyone_search(self):
+        reg = dr.load_registry()
+        entry = reg["sites"]["themoviebox"]
+        self.assertEqual(entry["api_endpoint"],
+                         "/wefeed-h5api-bff/subject/everyone-search")
+        self.assertNotIn("subject/filter", entry["api_endpoint"])
+
+    def test_10xflix_moved_to_beer(self):
+        reg = dr.load_registry()
+        entry = reg["sites"]["10xflix"]
+        self.assertEqual(entry["active_base_url"], "https://10xflix.beer")
+        self.assertIn("https://10xflix.beer", entry["known_mirrors"])
+        # Retirement rule: the old base stays listed (needle superset).
+        self.assertIn("https://10xflix.asia", entry["known_mirrors"])
+        self.assertIn("beer", entry["tld_history"])
+
+    def test_world4ufree_moved_to_men(self):
+        reg = dr.load_registry()
+        entry = reg["sites"]["world4ufree"]
+        self.assertEqual(entry["active_base_url"], "https://world4ufree.men")
+        self.assertIn("https://world4ufree.men", entry["known_mirrors"])
+        self.assertIn("https://world4ufree.gay", entry["known_mirrors"])
+        self.assertIn("men", entry["tld_history"])
+
+    def test_hdhub4u_moved_to_new16(self):
+        reg = dr.load_registry()
+        entry = reg["sites"]["hdhub4u"]
+        self.assertEqual(entry["active_base_url"], "https://new16.hdhub4u.cl")
+        self.assertIn("https://new16.hdhub4u.cl", entry["known_mirrors"])
+        self.assertIn("https://new15.hdhub4u.cl", entry["known_mirrors"])
+        rotations = [r["domain"] for r in entry["rotation_history"]]
+        self.assertIn("https://new16.hdhub4u.cl", rotations)
+
+    def test_hindilinks4u_needs_rest_route(self):
+        reg = dr.load_registry()
+        entry = reg["sites"]["hindilinks4u"]
+        self.assertEqual(entry["api_type"], "wp_rest_api")
+        self.assertEqual(entry["api_endpoint"], "/?rest_route=/wp/v2/posts")
+
+    def test_shipped_hindilinks4u_entry_builds_rest_route_probe_url(self):
+        reg = dr.load_registry()
+        entry = reg["sites"]["hindilinks4u"]
+        urls = dr._endpoint_urls(entry, entry["active_base_url"])
+        self.assertEqual(urls, ["https://www.hindilinks4u.zip/"
+                                "?rest_route=/wp/v2/posts&per_page=3"])
+        self.assertEqual(urls[0].count("?"), 1)
+
+    def test_shipped_katmoviehd_entry_builds_wp_posts_probe_url(self):
+        reg = dr.load_registry()
+        entry = reg["sites"]["katmoviehd"]
+        urls = dr._endpoint_urls(entry, entry["active_base_url"])
+        self.assertEqual(urls, ["https://katmoviehd.mom/"
+                                "wp-json/wp/v2/posts?per_page=3"])
+
+    def test_endpoint_urls_rest_route_joins_with_ampersand(self):
+        entry = {"api_type": "wp_rest_api",
+                 "api_endpoint": "/?rest_route=/wp/v2/posts"}
+        urls = dr._endpoint_urls(entry, "https://www.hindilinks4u.zip")
+        self.assertEqual(urls, ["https://www.hindilinks4u.zip/"
+                                "?rest_route=/wp/v2/posts&per_page=3"])
+
+    def test_probe_hindilinks4u_rest_route_with_stub(self):
+        entry = {"site_name": "hindilinks4u",
+                 "slug_variants": ["hindilinks4u"],
+                 "api_type": "wp_rest_api",
+                 "api_endpoint": "/?rest_route=/wp/v2/posts",
+                 "active_base_url": "https://www.hindilinks4u.zip"}
+        body = json.dumps([
+            {"link": "https://www.hindilinks4u.zip/post/one/",
+             "title": {"rendered": "Padosi Uncal (2026) UnCut Hindi 1080p"}},
+            {"link": "https://www.hindilinks4u.zip/post/two/",
+             "title": {"rendered": "Pushpa The Rule Part 2 2024 Hindi 720p"}},
+        ])
+        stub = StubFetch({
+            "https://www.hindilinks4u.zip/"
+            "?rest_route=/wp/v2/posts&per_page=3": (
+                200,
+                "https://www.hindilinks4u.zip/"
+                "?rest_route=/wp/v2/posts&per_page=3",
+                body, None),
+        })
+        res = dr.probe_endpoint(entry, "https://www.hindilinks4u.zip",
+                                fetcher=stub)
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["verified_by"], "wp-json")
+
+    def test_probe_katmoviehd_wp_posts_with_stub(self):
+        entry = {"site_name": "katmoviehd",
+                 "slug_variants": ["katmoviehd", "katmovieshd"],
+                 "api_type": "wp_rest_api",
+                 "api_endpoint": "/wp-json/wp/v2/posts",
+                 "active_base_url": "https://katmoviehd.mom"}
+        body = json.dumps([
+            {"link": "https://katmoviehd.mom/post/one/",
+             "title": {"rendered": "Sinners (2025) Hindi Dubbed 1080p"}},
+            {"link": "https://katmoviehd.mom/post/two/",
+             "title": {"rendered": "Max (2025) Hindi ORG Dubbed 720p"}},
+        ])
+        stub = StubFetch({
+            "https://katmoviehd.mom/wp-json/wp/v2/posts?per_page=3": (
+                200,
+                "https://katmoviehd.mom/wp-json/wp/v2/posts?per_page=3",
+                body, None),
+        })
+        res = dr.probe_endpoint(entry, "https://katmoviehd.mom",
+                                fetcher=stub)
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["verified_by"], "wp-json")
+
+
 if __name__ == "__main__":
     unittest.main()

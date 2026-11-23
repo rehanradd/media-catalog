@@ -4,12 +4,13 @@
   "sites": {
     "10xflix": {
       "active_base_url": "https://10xflix.beer",
-      "last_verified": "2026-11-08T09:46:20Z",
-      "verified_by": "wp-json",
+      "last_verified": "2026-11-23T00:00:00Z",
+      "verified_by": "homepage",
       "known_mirrors": [
         "https://10xflix.beer",
         "https://10xflix.asia",
-        "https://10xflix.bond"
+        "https://10xflix.bond",
+        "https://10xflix.beer"
       ],
       "slug_variants": [
         "10xflix"
@@ -18,7 +19,8 @@
         "asia",
         "hair",
         "bond",
-        "help"
+        "help",
+        "beer"
       ],
       "api_type": "wp_rest_api",
       "status": "active",
@@ -30,10 +32,15 @@
         {
           "domain": "https://10xflix.asia",
           "seen_from": "2026-11-08"
+        },
+        {
+          "domain": "https://10xflix.beer",
+          "seen_from": "2026-11-23"
         }
       ],
-      "last_checked": "2026-11-22T05:32:50Z",
+      "last_checked": "2026-11-23T00:00:00Z",
       "api_endpoint": "/wp-json/wp/v2/posts",
+      "notes": "Canonical moved to 10xflix.beer (site-API hunt 2026-11-23); WP REST gone on .asia/.beer/.bond (404) — no API; HTML scrape only.",
       "site_name": "10xflix"
     },
     "7starhd": {
@@ -222,7 +229,7 @@
     },
     "hdhub4u": {
       "active_base_url": "https://new16.hdhub4u.cl",
-      "last_verified": "2026-11-20T22:30:00Z",
+      "last_verified": "2026-11-23T00:00:00Z",
       "verified_by": "sitemap",
       "known_mirrors": [
         "https://new16.hdhub4u.cl",
@@ -230,7 +237,8 @@
         "https://new12.hdhub4u.cl",
         "https://new11.hdhub4u.cl",
         "https://hdhub4us.co.in",
-        "https://hdhub4u.fr"
+        "https://hdhub4u.fr",
+        "https://new16.hdhub4u.cl"
       ],
       "github_keys": {
         "saurabh": "hdhub4u",
@@ -272,12 +280,18 @@
         },
         {
           "domain": "https://new15.hdhub4u.cl",
-          "seen_from": "2026-11-20T22:30:00Z"
+          "seen_from": "2026-11-20T22:30:00Z",
+          "seen_until": "2026-11-23"
+        },
+        {
+          "domain": "https://new16.hdhub4u.cl",
+          "seen_from": "2026-11-23"
         }
       ],
-      "last_checked": "2026-11-20T22:30:00Z",
+      "last_checked": "2026-11-23T00:00:00Z",
       "sitemap_endpoint": "/sitemap.xml",
-      "notes": "hdhub4u.fans is a landing page, new3/new2.hdhub4u.free dead — dropped. hdhub4us.co.in is a live variant (user-found 2026-11-08). new15 current since 2026-11-20 (new12 301s to new15; tracker h4.suncdn.org/host/ agrees new15; hdhub4u.fr is a landing page, not the content base)."
+      "notes": "hdhub4u.fans is a landing page, new3/new2.hdhub4u.free dead — dropped. hdhub4us.co.in is a live variant (user-found 2026-11-08). new15 current since 2026-11-20 (new12 301s to new15; tracker h4.suncdn.org/host/ agrees new15; hdhub4u.fr is a landing page, not the content base). Live domain moved new15 → new16.hdhub4u.cl (site-API hunt 2026-11-23); REST disabled for guests (403 rest_disabled); sitemap + HTML only, plus /slider/data/ featured-titles feed.",
+      "site_name": "hdhub4u"
     },
     "hdtvb": {
       "active_base_url": "https://hdboss.in",
@@ -316,8 +330,8 @@
     },
     "katmoviehd": {
       "active_base_url": "https://katmoviehd.mom",
-      "last_verified": "2026-11-08T09:47:23Z",
-      "verified_by": "homepage",
+      "last_verified": "2026-11-23T00:15:00Z",
+      "verified_by": "wp-json",
       "known_mirrors": [
         "https://katmoviehd.mom",
         "https://new.katmoviehd.top",
@@ -333,7 +347,7 @@
         "net",
         "fans"
       ],
-      "api_type": "sveltekit",
+      "api_type": "wp_rest_api",
       "status": "active",
       "rotation_history": [
         {
@@ -345,8 +359,10 @@
           "seen_from": "2026-11-08T09:47:23Z"
         }
       ],
-      "last_checked": "2026-11-08T09:47:23Z",
-      "api_endpoint": "/__data.json"
+      "last_checked": "2026-11-23T00:15:00Z",
+      "api_endpoint": "/wp-json/wp/v2/posts",
+      "notes": "WordPress, not SvelteKit — /__data.json 404s (site-API hunt 2026-11-23); WP REST live, 9,428 posts.",
+      "site_name": "katmoviehd"
     },
     "moviezguru": {
       "active_base_url": "https://moviezguru.host",
@@ -589,12 +605,13 @@
     },
     "world4ufree": {
       "active_base_url": "https://world4ufree.men",
-      "last_verified": "2026-11-08T09:47:31Z",
-      "verified_by": "wp-json",
+      "last_verified": "2026-11-23T00:00:00Z",
+      "verified_by": "homepage",
       "known_mirrors": [
         "https://world4ufree.men",
         "https://world4ufree.gay",
-        "https://world4ufree.tours"
+        "https://world4ufree.tours",
+        "https://world4ufree.men"
       ],
       "slug_variants": [
         "world4ufree"
@@ -602,7 +619,8 @@
       "tld_history": [
         "gay",
         "tours",
-        "garden"
+        "garden",
+        "men"
       ],
       "api_type": "wp_rest_api",
       "status": "active",
@@ -614,16 +632,21 @@
         {
           "domain": "https://world4ufree.gay",
           "seen_from": "2026-11-08"
+        },
+        {
+          "domain": "https://world4ufree.men",
+          "seen_from": "2026-11-23"
         }
       ],
-      "last_checked": "2026-11-22T05:33:26Z",
+      "last_checked": "2026-11-23T00:00:00Z",
       "api_endpoint": "/wp-json/wp/v2/posts",
+      "notes": "Canonical moved to world4ufree.men (site-API hunt 2026-11-23); now a static portal, no WordPress behind it — WP REST 404 on .gay/.men/.tours; no API.",
       "site_name": "world4ufree"
     },
     "hindilinks4u": {
       "active_base_url": "https://www.hindilinks4u.zip",
-      "last_verified": "2026-11-08T09:46:58Z",
-      "verified_by": "homepage",
+      "last_verified": "2026-11-23T00:00:00Z",
+      "verified_by": "wp-json",
       "known_mirrors": [
         "https://www.hindilinks4u.zip",
         "https://hindilinks4u.pink"
@@ -635,11 +658,13 @@
         "zip",
         "pink"
       ],
-      "api_type": "homepage",
+      "api_type": "wp_rest_api",
       "status": "active",
       "rotation_history": [],
-      "last_checked": "2026-11-08T09:46:58Z",
-      "notes": ".pink is behind Cloudflare JS challenge; .zip serves plain HTML."
+      "last_checked": "2026-11-23T00:00:00Z",
+      "api_endpoint": "/?rest_route=/wp/v2/posts",
+      "notes": ".pink is behind Cloudflare JS challenge; .zip serves plain HTML. WP REST works only via ?rest_route= (pretty /wp-json/wp/v2/* 404s); 32,273 posts (site-API hunt 2026-11-23).",
+      "site_name": "hindilinks4u"
     },
     "toonworld4all": {
       "active_base_url": "https://toonworld4all.me",
@@ -867,7 +892,7 @@
     },
     "themoviebox": {
       "active_base_url": "https://themoviebox.xyz",
-      "last_verified": "2026-11-21T16:00:00Z",
+      "last_verified": "2026-11-23T00:00:00Z",
       "verified_by": "api",
       "known_mirrors": [
         "https://themoviebox.xyz",
@@ -883,9 +908,9 @@
       "api_type": "json_api",
       "status": "active",
       "rotation_history": [],
-      "last_checked": "2026-11-22T05:33:22Z",
-      "api_endpoint": "/wefeed-h5api-bff/subject/filter",
-      "notes": "MovieBox + 123moviesfree.club share the aoneroom backend (h5-api.aoneroom.com). Catalog API POST /subject/filter {page, perPage} is public: 200 with real items 2026-11-21. /subject/search needs X-Client-Token. Site root 200, 1.1 MB. themoviebox 360p/480p free, 1080p vipLocked; 123moviesfree 480p/1080p free.",
+      "last_checked": "2026-11-23T00:00:00Z",
+      "api_endpoint": "/wefeed-h5api-bff/subject/everyone-search",
+      "notes": "MovieBox + 123moviesfree.club share the aoneroom backend (h5-api.aoneroom.com). Listing is GET /wefeed-h5api-bff/subject/everyone-search (page/pageSize, proven 200 2026-11-23); the old /subject/filter 404s — do not use it. Detail is /wefeed-h5api-bff/detail?detailPath=<slug>. /subject/search needs X-Client-Token. themoviebox 360p/480p free, 1080p vipLocked; 123moviesfree 480p/1080p free.",
       "site_name": "themoviebox"
     },
     "moviehax": {

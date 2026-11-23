@@ -446,7 +446,11 @@ def _endpoint_urls(entry: dict, base: str) -> list:
     api_type = entry.get("api_type") or "homepage"
     if api_type == "wp_rest_api":
         endpoint = entry.get("api_endpoint") or "/wp-json/wp/v2/posts"
-        return [base + endpoint.rstrip("/") + "?per_page=3"]
+        # rest_route endpoints already carry a query string
+        # (/?rest_route=/wp/v2/posts): join the page size with
+        # "&", not a second "?".
+        sep = "&" if "?" in endpoint else "?"
+        return [base + endpoint.rstrip("/") + sep + "per_page=3"]
     if api_type == "xml_sitemap":
         first = entry.get("sitemap_endpoint") or "/sitemap.xml"
         urls = [base + first]
