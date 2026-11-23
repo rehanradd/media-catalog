@@ -77,7 +77,7 @@ PLAN_DAYS = {"vip_monthly": 30, "vip_yearly": 365}
 PLAN_DEFAULT_PKR = {"vip_monthly": 200, "vip_yearly": 1500}
 PAYMENT_METHODS = ("jazzcash", "easypaisa", "raast")
 
-# The 16 real app_remote_config fields the Android app actually reads
+# The 17 real app_remote_config fields the Android app actually reads
 # (viewer.py GET /api/v1/app/remote-config + VipRemoteConfig.kt),
 # plus the six coin pass prices the panel could previously neither
 # show nor edit (admin-panel audit 2026-11-08 §Money).
@@ -87,7 +87,7 @@ REMOTE_CONFIG_FIELDS = [
     "monetag_zone_id", "adsterra_tag_id", "shrinkme_api_token",
     "droplink_api_token", "maintenance_mode", "apk_update_url",
     "feature_downloads", "feature_pure_cinema", "feature_chromecast",
-    "feature_quality_gate", "coins_enabled",
+    "feature_quality_gate", "coins_enabled", "ads_enabled",
 ] + COIN_REDEEM_FIELDS
 REMOTE_CONFIG_SECRETS = ("shrinkme_api_token", "droplink_api_token")
 
@@ -95,7 +95,7 @@ REMOTE_CONFIG_SECRETS = ("shrinkme_api_token", "droplink_api_token")
 _REMOTE_CONFIG_INT_FIELDS = frozenset({
     "vip_monthly_pkr", "vip_yearly_pkr", "maintenance_mode",
     "feature_downloads", "feature_pure_cinema", "feature_chromecast",
-    "feature_quality_gate", "coins_enabled",
+    "feature_quality_gate", "coins_enabled", "ads_enabled",
 } | set(COIN_REDEEM_FIELDS))
 ENGINE_SYNC_SITES = frozenset({
     "vegamovies", "rogmovies", "ssrmovies", "7starhd", "katmoviehd",
@@ -1739,7 +1739,8 @@ class LiveStores:
             if k in fields and not (0 <= int(fields[k]) <= 10_000_000):
                 raise bad("Coin price must be between 0 and 10,000,000.")
         for k in ("maintenance_mode", "feature_downloads", "feature_pure_cinema",
-                  "feature_chromecast", "feature_quality_gate", "coins_enabled"):
+                  "feature_chromecast", "feature_quality_gate", "coins_enabled",
+                  "ads_enabled"):
             if k in fields and int(fields[k]) not in (0, 1):
                 raise bad("That flag must be 0 or 1.")
         conn = self._rw(self.catalog_path, "catalog")

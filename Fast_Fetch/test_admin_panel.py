@@ -686,6 +686,26 @@ class Monetization(Fixture):
                          [{"network": "shrinkme", "configured": True},
                           {"network": "droplink", "configured": False}])
 
+    def test_the_ads_switch_defaults_off_and_a_zone_id_alone_never_turns_it_on(self):
+        """Lane F: a zone id is inventory, not permission. Before the
+        `ads_enabled` knob existed the server published no switch at all,
+        so the app defaulted it false forever and no panel edit could
+        ever turn an ad on; saving a zone id must still publish the
+        switch off."""
+        self.save({"monetag_zone_id": "10293847"})
+        data = self.public()
+        self.assertEqual(data["ads"]["monetag_rewarded_zone_id"], "10293847")
+        self.assertIs(data["ads"]["ads_enabled"], False)
+
+    def test_the_ads_switch_flips_and_publishes_a_boolean(self):
+        """The stored flag reaches the phone as a real boolean, the same
+        rule every other flag in this body already follows."""
+        self.public()  # creates the row and the column
+        self.conn.execute(
+            "UPDATE app_remote_config SET ads_enabled=1 WHERE id=1")
+        self.conn.commit()
+        self.assertIs(self.public()["ads"]["ads_enabled"], True)
+
     def test_the_public_projection_names_no_provenance_key(self):
         """This body leaves the box on the public port, so it obeys the same rule
         as every other emitter: no `url`/`site`/`service`/`hoster` key, whatever
@@ -760,6 +780,7 @@ class Monetization(Fixture):
             "feature_pure_cinema": True,
             "feature_chromecast": False,
             "feature_quality_gate": True,
+            "ads_enabled": True,
         })
         self.assertEqual(answered[0], 400, answered)
         data = self.public()

@@ -49,7 +49,7 @@ MONETIZATION_FIELDS = [
     "monetag_zone_id", "adsterra_tag_id", "shrinkme_api_token",
     "droplink_api_token", "maintenance_mode", "apk_update_url",
     "feature_downloads", "feature_pure_cinema", "feature_chromecast",
-    "feature_quality_gate", "coins_enabled",
+    "feature_quality_gate", "coins_enabled", "ads_enabled",
 ] + COIN_REDEEM_FIELDS
 
 # Canonical tuning defaults (launch plan Phase 0, G-7): one value per knob,
@@ -116,6 +116,7 @@ MIGRATIONS = [
       feature_chromecast INTEGER NOT NULL DEFAULT 1,
       feature_quality_gate INTEGER NOT NULL DEFAULT 0,
       coins_enabled INTEGER NOT NULL DEFAULT 0,
+      ads_enabled INTEGER NOT NULL DEFAULT 0,
       min_version_code INTEGER, latest_version_code INTEGER,
       latest_version_name TEXT DEFAULT '', force_update INTEGER NOT NULL DEFAULT 0,
       force_update_message TEXT DEFAULT '', maintenance_message TEXT DEFAULT '',
@@ -299,6 +300,7 @@ def _ensure_v5_columns(conn):
     wanted = [
         ("domain_registry", "last_redirect_to", "TEXT"),
         ("domain_health_checks", "final_domain", "TEXT"),
+        ("app_remote_config_v2", "ads_enabled", "INTEGER NOT NULL DEFAULT 0"),
     ]
     for name, default in COIN_REDEEM_DEFAULTS.items():
         wanted.append(("app_remote_config_v2", name,

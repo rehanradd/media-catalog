@@ -1480,7 +1480,7 @@ def _page_tuning(self, user, sess, query):
 
 
 def _page_monetization(self, user, sess, query):
-    """Monetization (audit §Tuning/Money): the 22 controls the API
+    """Monetization (audit §Tuning/Money): the 24 controls the API
     already had — VIP prices, the six coin pass prices, payment rails,
     ad zones, feature flags — now reachable from the UI. Token inputs
     are password fields, never prefilled: blank means "keep the stored
@@ -1527,7 +1527,7 @@ def _page_monetization(self, user, sess, query):
              '<div class="card"><h3>Ad zones</h3>%s%s</div>'
              '<div class="card"><h3>Tokens (blank keeps the stored one)</h3>'
              '<p class="muted">ShrinkMe: %s. Droplink: %s.</p>%s%s</div>'
-             '<div class="card"><h3>Flags</h3>%s%s%s%s%s%s</div>'
+             '<div class="card"><h3>Flags</h3>%s%s%s%s%s%s%s</div>'
              '<label for="mon-apk_update_url">APK update URL</label>'
              '<input id="mon-apk_update_url" name="apk_update_url" type="text" value="%s">'
              '<div class="stickybar"><button type="submit">Save monetization</button></div></form>') % (
@@ -1552,6 +1552,7 @@ def _page_monetization(self, user, sess, query):
         flag_field("feature_chromecast", "Chromecast"),
         flag_field("feature_quality_gate", "Quality gate"),
         flag_field("coins_enabled", "Coins"),
+        flag_field("ads_enabled", "Ads"),
         templates.esc(mon.get("apk_update_url") or ""),
     )
     return templates.layout("Monetization", body, active="monetization", error=error)

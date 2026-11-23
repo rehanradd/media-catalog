@@ -71,7 +71,8 @@ def public_remote_config(service):
             "raast_instant_id": cfg["pak_raast_id"],
         },
         "ads": {"monetag_rewarded_zone_id": cfg["monetag_zone_id"],
-                "adsterra_native_banner_id": cfg["adsterra_tag_id"]},
+                "adsterra_native_banner_id": cfg["adsterra_tag_id"],
+                "ads_enabled": bool(cfg.get("ads_enabled", 0))},
         "link_shorteners": {
             "shrinkme": cfg["shrinkme_configured"],
             "droplink": cfg["droplink_configured"],
@@ -113,6 +114,7 @@ def old_app_parse(public_config):
         "pak_raast_id": pays.get("raast_instant_id"),
         "monetag_zone_id": ads.get("monetag_rewarded_zone_id"),
         "adsterra_tag_id": ads.get("adsterra_native_banner_id"),
+        "ads_enabled": ads.get("ads_enabled"),
     }
     return {k: v for k, v in flat.items() if k in V1_REMOTE_CONFIG_KEYS}
 

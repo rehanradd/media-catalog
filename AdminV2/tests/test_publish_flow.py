@@ -190,6 +190,24 @@ class TestPublish(PublishFlowBase):
         self.assertEqual(row["config_version"], before + 1)
         self.assertEqual(self.svc._config_row()["config_version"], before + 1)
 
+    def test_monetization_ads_switch_publishes_to_the_catalog(self):
+        """Lane F: the ads switch is a real toggle, not a zone id. The
+        draft flip publishes to the live catalog row the app reads — on
+        and back off — and a catalog predating the column gains it on
+        publish, the way coins_enabled did before it."""
+        self._live_service()
+        before = self.svc._config_row()["config_version"]
+        self.svc.put_monetization(self.owner, {"ads_enabled": 1})
+        row = self._catalog().execute(
+            "SELECT * FROM app_remote_config WHERE id=1").fetchone()
+        self.assertEqual(row["ads_enabled"], 1)
+        self.assertEqual(row["config_version"], before + 1)
+        self.assertEqual(self.svc.get_monetization(self.owner)["ads_enabled"], 1)
+        self.svc.put_monetization(self.owner, {"ads_enabled": 0})
+        row = self._catalog().execute(
+            "SELECT ads_enabled FROM app_remote_config WHERE id=1").fetchone()
+        self.assertEqual(row["ads_enabled"], 0)
+
     def test_save_remote_config_adds_missing_columns_on_old_catalog(self):
         """An old catalog gains the columns being written, the way v1
         _ensure_monetization adds them at read time."""
