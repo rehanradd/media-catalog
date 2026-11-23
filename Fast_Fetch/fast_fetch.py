@@ -303,9 +303,9 @@ DEFAULT_DOMAINS = {
     # RETIRED origin: live = https://m1.multimovies.courses (registry)
     "multimovies": "https://multimovies.garden",
     "multimovies_sitemap": "https://multimovies.garden/sitemap.xml",
-    # RETIRED origin: live = https://10xflix.hair (registry)
-    "10xflix": "https://10xflix.help",
-    "10xflix_sitemap": "https://10xflix.help/sitemap.xml",
+    # RETIRED origin: live = https://10xflix.beer/m (registry, 23 Nov 2026)
+    "10xflix": "https://10xflix.beer/m",
+    "10xflix_sitemap": "https://10xflix.beer/sitemap.xml",
     "cinemeta": "https://v3-cinemeta.strem.io",
     "gokuhd": "https://gokuhd.com",
     "nexdrive": "https://nexdrive.fit",
@@ -340,7 +340,7 @@ SITE_CANDIDATE_TLDS = {
     "7starhd": ["rich", "run", "skin", "photos", "life", "vet", "com", "surf"],
     "katmoviehd": ["fans", "rodeo", "top", "pictures", "eu", "net"],
     "multimovies": ["garden", "com", "net", "org", "live"],
-    "10xflix": ["help", "wiki", "me", "com", "org", "top"],
+    "10xflix": ["beer", "help", "wiki", "me", "com", "org", "top"],
     "nexdrive": ["fit", "beer", "click", "xyz", "top", "to"],
     "fastdl": ["beer", "xyz", "live", "top"],
     "vcloud": ["my", "beer", "live", "lol", "one"],

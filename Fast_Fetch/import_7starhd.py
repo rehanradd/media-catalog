@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-import_7starhd.py — Dedicated staging importer and scraper for 7StarHD (https://7starhd.rich) and 10xflix (https://10xflix.bond).
+import_7starhd.py — Dedicated staging importer and scraper for 7StarHD (https://7starhd.rich) and 10xflix (https://10xflix.beer/m).
 
 Key Features:
   1. Dedicated staging SQLite database: 7starhd.db (isolated from production fast_fetch.db).
@@ -785,10 +785,10 @@ def main():
     args = parse_args()
     db_path = Path(args.db_path).resolve()
     # Session 106: the base comes from the registry for the requested site
-    # (the old special case pinned the dead 10xflix.bond domain).
+    # (the fallback is the live /m/ base; the registry wins when present).
     site_key = "10xflix" if args.site == "10xflix" else "7starhd"
     base_url = args.base_url or get_active_base_url(
-        site_key, DEFAULT_BASE_URL if site_key == "7starhd" else "https://10xflix.beer")
+        site_key, DEFAULT_BASE_URL if site_key == "7starhd" else "https://10xflix.beer/m")
 
     # Auto-adjust default DB path if site is 10xflix
     if args.site == "10xflix" and args.db_path == str(DEFAULT_DB_PATH):
