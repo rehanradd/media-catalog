@@ -86,6 +86,8 @@ _GENERIC_CATEGORIES = (
     "web series", "webseries", "uncategorized", "all movies",
     "hindi dubbed", "hindi dub", "hindi sub", "dual audio",
     "multi audio", "south hindi dubbed", "television", "tv",
+    "hollywood", "bollywood", "tollywood", "kollywood", "mollywood",
+    "sandalwood",
 )
 
 # Canonical label -> regexes matching the label as printed in post text.

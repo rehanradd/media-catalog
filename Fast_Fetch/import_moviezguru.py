@@ -33,6 +33,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from domain_resolver import get_active_base_url, resolve_if_dead
+import wp_rest
 
 # --- Constants ---
 DEFAULT_DB_PATH = Path("/home/ubuntu/radd-stream-data/moviezguru.db")
@@ -445,6 +446,7 @@ def init_staging_db(db_path: Path):
                 poster_url TEXT,
                 synopsis TEXT,
                 genres TEXT,
+                cast_names TEXT,
                 is_18_plus INTEGER DEFAULT 0,
                 site TEXT DEFAULT 'moviezguru',
                 post_url TEXT,
@@ -457,6 +459,11 @@ def init_staging_db(db_path: Path):
         if "is_18_plus" not in _mp:
             try:
                 cur.execute("ALTER TABLE posts ADD COLUMN is_18_plus INTEGER DEFAULT 0;")
+            except Exception:
+                pass
+        if "cast_names" not in _mp:
+            try:
+                cur.execute("ALTER TABLE posts ADD COLUMN cast_names TEXT;")
             except Exception:
                 pass
         cur.execute(
@@ -520,8 +527,8 @@ def save_post_to_staging(db_path: Path, result: dict):
 
         cur.execute(
             """
-            INSERT INTO posts (canonical_key, title, original_title, year, media_type, imdb_id, poster_url, synopsis, genres, is_18_plus, site, post_url)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO posts (canonical_key, title, original_title, year, media_type, imdb_id, poster_url, synopsis, genres, cast_names, is_18_plus, site, post_url)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(canonical_key) DO UPDATE SET
                 title=excluded.title,
                 original_title=excluded.original_title,
@@ -529,6 +536,9 @@ def save_post_to_staging(db_path: Path, result: dict):
                 media_type=excluded.media_type,
                 imdb_id=COALESCE(excluded.imdb_id, posts.imdb_id),
                 poster_url=COALESCE(excluded.poster_url, posts.poster_url),
+                synopsis=COALESCE(excluded.synopsis, posts.synopsis),
+                genres=COALESCE(excluded.genres, posts.genres),
+                cast_names=COALESCE(excluded.cast_names, posts.cast_names),
                 is_18_plus=MAX(posts.is_18_plus, excluded.is_18_plus),
                 post_url=excluded.post_url,
                 updated_at=CURRENT_TIMESTAMP;
@@ -543,6 +553,7 @@ def save_post_to_staging(db_path: Path, result: dict):
                 p["poster_url"],
                 p["synopsis"],
                 p["genres"],
+                p.get("cast_names"),
                 p.get("is_18_plus", 0),
                 p["site"],
                 p["post_url"],
@@ -621,6 +632,18 @@ def scrape_post_item(
         if not releases_data:
             return {"loc": loc, "success": False, "reason": "no_releases"}
 
+        # WP REST adoption (2026-11-23): full metadata from the source
+        # itself. Synopsis is the Storyline: label (never the SEO excerpt);
+        # genres the Genres: label, else filtered WP categories; poster the
+        # validated featured media first. The source carries no IMDb rating
+        # and no director, so no columns for those exist.
+        labels = wp_rest.post_labels(p_data)
+        poster_url = wp_rest.poster_from_post(p_data) or poster_url
+        synopsis = wp_rest.synopsis_from_post(p_data)
+        genres_list = wp_rest.genres_from_post(p_data)
+        genres = json.dumps(genres_list) if genres_list else None
+        cast_names = ", ".join(labels.get("cast") or []) or None
+
         # Unwrap bridge URLs into 10Gbps Google CDN streams
         resolved_releases = []
         for rel in releases_data:
@@ -658,8 +681,9 @@ def scrape_post_item(
                 "media_type": media_type,
                 "imdb_id": imdb_id,
                 "poster_url": poster_url,
-                "synopsis": None,
-                "genres": None,
+                "synopsis": synopsis,
+                "genres": genres,
+                "cast_names": cast_names,
                 "site": "moviezguru",
                 "post_url": loc,
                 "is_18_plus": is_adult,
@@ -693,7 +717,7 @@ def sync_api_catalog(
             print(f"[*] Reached page limit ({max_pages}).", flush=True)
             break
 
-        url = f"{_wp_api_url()}?per_page=100&page={page}"
+        url = f"{_wp_api_url()}?per_page=100&page={page}&_embed=1"
         code, posts, headers = client.get_json(url, timeout=15.0)
 
         if code != 200 or not posts or not isinstance(posts, list):

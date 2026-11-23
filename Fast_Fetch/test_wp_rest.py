@@ -511,5 +511,20 @@ class TestMoviesdriveLabels(unittest.TestCase):
         self.assertNotIn("SCREENSHOTS", syn)
 
 
+class TestMoviezguruGenres(unittest.TestCase):
+    def test_industry_words_are_not_genres(self):
+        # moviezguru files every Hollywood film under a "Hollywood"
+        # category (and Bollywood/Tollywood/... for Indian cinema) — those
+        # are industries, not genres.
+        post = {"content": {"rendered": "<p>No genre label here.</p>"},
+                "_embedded": {"wp:term": [[
+                    {"id": 1, "name": "Hollywood", "taxonomy": "category"},
+                    {"id": 2, "name": "Action", "taxonomy": "category"},
+                    {"id": 3, "name": "Bollywood", "taxonomy": "category"},
+                    {"id": 4, "name": "2026", "taxonomy": "category"},
+                ]]}}
+        self.assertEqual(wp_rest.genres_from_post(post), ["Action"])
+
+
 if __name__ == "__main__":
     unittest.main()
