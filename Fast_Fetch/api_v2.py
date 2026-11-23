@@ -2540,6 +2540,53 @@ def _release_has_verified_candidate(conn, release_id) -> bool:
     return False
 
 
+def _release_has_servable_banked_candidate(conn, release_id) -> bool:
+    """Player Fix v2 follow-up (2026-11-23): does this print hold a copy
+    with a SERVABLE banked resolution — a `resolved_cache` row
+    `lookup_cache` accepts right now?
+
+    This is the walk's question, not the display rung's, so it does NOT
+    use `_release_has_verified_candidate`'s 600 s freshness window: a row
+    the stream route would serve after its (<= 5 s) re-probe is still the
+    fastest press available, so the walk prefers it over a print with no
+    banked row at all — which must live-resolve. Live 2026-11-23: a
+    HubCloud-banked press walked to a sibling print and live-resolved it
+    because the banked row was older than 600 s and counted as
+    "unverified", even though it was servable inside `reverify_after`.
+    A refused row (dead, stale, over the fail budget, or carrying a fresh
+    negative-cache record) reads as no row, exactly as the stream route
+    sees it — `lookup_cache` is the shared law, so the two cannot
+    disagree. The display rung (`catalog_api._annotate_print_verification`)
+    keeps the fresh rule; this is preference only, never a refusal.
+    """
+    import resolved_cache
+    try:
+        rows = conn.execute(
+            """
+            SELECT l.kind, l.playability, l.state, l.final_url, l.url,
+                   l.ledger_link_id
+            FROM cat_links l
+            WHERE l.release_id = ?
+            """, (int(release_id),)).fetchall()
+    except Exception:      # noqa: BLE001 — an unreadable ledger means "unknown"
+        return False
+    for row in rows:
+        if row["ledger_link_id"] is None:
+            continue
+        if catalog_api._link_group(row) > catalog_api._GROUP_RESOLVE:
+            continue
+        if str(row["state"]) in tiers.UNPLAYABLE_STATES:
+            continue
+        try:
+            hit = resolved_cache.lookup_cache(
+                conn, int(row["ledger_link_id"]), want="watch")
+        except Exception:      # noqa: BLE001 — a cache fault is "unknown"
+            continue
+        if hit:
+            return True
+    return False
+
+
 def _bearer_token(headers) -> str:
     raw = str((headers or {}).get("Authorization", "") or "")
     parts = raw.split()
@@ -2812,10 +2859,21 @@ def _play_first_playable(conn, release_ids, *, episode_id, include_adult,
     When nothing in the work is verified the answer is exactly today's
     (first unfailed, non-gated bundle), so a cold title never 409s for
     want of a warm-up.
+
+    Follow-up (2026-11-23): a print with a SERVABLE banked row — older
+    than the 600 s fresh window but inside `reverify_after`
+    (`_release_has_servable_banked_candidate`) — ranks between verified
+    and merely-unfailed. The stream route would serve that row after one
+    capped re-probe, so it is still the fastest press available; a cold
+    sibling must live-resolve. Verified still wins over banked (a fresh
+    row 302s at once, an aging one pays the re-probe), and the named
+    print is never overridden — this tier only orders prints the walk
+    was already choosing between.
     """
     release_ids = _band_order(conn, release_ids)
     first = None
     first_acceptable = None
+    first_banked = None
     for release_id in release_ids:
         bundle = catalog_api.play_bundle(
             conn, release_id=int(release_id), episode_id=episode_id,
@@ -2832,6 +2890,12 @@ def _play_first_playable(conn, release_ids, *, episode_id, include_adult,
                 first_acceptable = bundle
             if _release_has_verified_candidate(conn, int(release_id)):
                 return bundle
+            if (first_banked is None
+                    and _release_has_servable_banked_candidate(
+                        conn, int(release_id))):
+                first_banked = bundle
+    if first_banked is not None:
+        return first_banked
     return first_acceptable if first_acceptable is not None else first
 
 
@@ -3178,7 +3242,14 @@ def route_play(handler, conn, body: dict, *, rid: str, path: str, operator: bool
                 # highest projection score — exactly as the derived-target
                 # walk orders them. A cold title never loses its named
                 # print for want of a warm-up.
+                # Follow-up (2026-11-23): a sibling with a SERVABLE banked
+                # row — older than the 600 s fresh window but inside
+                # `reverify_after` — ranks between verified and
+                # merely-acceptable, for the same reason as the
+                # derived-target walk: the stream route serves it after one
+                # capped re-probe, while a cold sibling must live-resolve.
                 acceptable = None
+                banked = None
                 verified = None
                 for sibling_id in _band_order(conn, sibling_ids):
                     sibling_bundle = catalog_api.play_bundle(
@@ -3197,8 +3268,14 @@ def route_play(handler, conn, body: dict, *, rid: str, path: str, operator: bool
                         if _release_has_verified_candidate(conn, sibling_id):
                             verified = sibling_bundle
                             break
+                        if (banked is None
+                                and _release_has_servable_banked_candidate(
+                                    conn, sibling_id)):
+                            banked = sibling_bundle
                 if verified is not None:
                     bundle = verified
+                elif banked is not None:
+                    bundle = banked
                 elif acceptable is not None:
                     bundle = acceptable
     ok, code, _message = _from_layer2(bundle)

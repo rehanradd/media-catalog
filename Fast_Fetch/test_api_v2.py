@@ -1741,6 +1741,93 @@ class V2StaticProbeUnitTests(unittest.TestCase):
              ("GET", self.URL): self._response(
                  302, {"Location": "https://cdn.example/fresh"})})
         self.assertEqual(verdict, api_v2._STATIC_PROBE_ALIVE)
+class V2PlayBankedPrintPreferenceTests(V2WireFixture):
+    """2026-11-23 (press-timing lane): the walk prefers a print with a
+    SERVABLE banked row over a merely-unfailed one.
+
+    A HubCloud-banked press walked to a sibling print and live-resolved it
+    because the banked row was older than the 600 s fresh window and
+    counted as "unverified", even though it was servable inside
+    `reverify_after`. The tiers are now fresh-verified > servable-banked
+    > merely-unfailed, in both the derived-target walk and the named-print
+    sibling walk — preference only, never a refusal, and the named print
+    itself is never overridden by a banked sibling.
+    """
+
+    def _bank(self, release_id, *, age_seconds):
+        """Bank one servable row for a print's first ledger link."""
+        ledger_id = self._one(
+            "SELECT ledger_link_id FROM cat_links WHERE release_id = ?"
+            " AND ledger_link_id IS NOT NULL ORDER BY id LIMIT 1",
+            (release_id,))
+        now = time.time()
+        resolved_cache.record_resolved_cache(
+            self.conn, ledger_id,
+            {"url": "https://pixeldrain.com/api/file/s2yMcLkb",
+             "mime_type": "video/mp4", "service": "pixeldrain",
+             "is_temporary": False, "expires_in": 7200.0,
+             "resolved_at": now - age_seconds},
+            now=now)
+        self.conn.commit()
+
+    def _ledger_id(self, release_id):
+        return self._one(
+            "SELECT ledger_link_id FROM cat_links WHERE release_id = ?"
+            " AND ledger_link_id IS NOT NULL ORDER BY id LIMIT 1",
+            (release_id,))
+
+    def test_work_id_prefers_an_aging_banked_sibling_over_a_cold_best(self):
+        # The hubcloud shape: best is cold, sibling holds a row banked an
+        # hour ago — past the 600 s fresh window, inside reverify_after.
+        best, sibling = self._twin_prints("Cache Twins")
+        self._bank(sibling, age_seconds=3600)
+        self.assertFalse(api_v2._release_has_verified_candidate(
+            self.conn, sibling),
+            "an hour-old row is not fresh-verified")
+        self.assertTrue(api_v2._release_has_servable_banked_candidate(
+            self.conn, sibling))
+        self.assertFalse(api_v2._release_has_servable_banked_candidate(
+            self.conn, best))
+        reply = self.post("/api/v2/play",
+                          {"work_id": self.work_ids["Cache Twins"]})
+        self.assertEqual(reply.status, 200, reply.json)
+        self.assertEqual(reply.json["release_id"], sibling)
+        self.assertNotEqual(reply.json["release_id"], best)
+        self.assertTrue(reply.json["playable"])
+
+    def test_work_id_still_prefers_a_fresh_verified_best(self):
+        # Fresh still beats aging: the best print's minute-old row 302s at
+        # once, the sibling's hour-old row pays the serve-time re-probe.
+        best, sibling = self._twin_prints("Cache Twins")
+        self._bank(best, age_seconds=60)
+        self._bank(sibling, age_seconds=3600)
+        reply = self.post("/api/v2/play",
+                          {"work_id": self.work_ids["Cache Twins"]})
+        self.assertEqual(reply.status, 200, reply.json)
+        self.assertEqual(reply.json["release_id"], best)
+        self.assertTrue(reply.json["playable"])
+
+    def test_named_print_is_not_overridden_by_a_banked_sibling(self):
+        # The banked tier only orders prints a walk was already choosing
+        # between. A named print that is playable and unfailed stands,
+        # however warm its sibling is.
+        best, sibling = self._twin_prints("Cache Twins")
+        self._map_legacy_release(500005, best)
+        self._bank(sibling, age_seconds=3600)
+        reply = self.post("/api/v2/play", {"release_id": 500005})
+        self.assertEqual(reply.status, 200, reply.json)
+        self.assertEqual(reply.json["release_id"], best)
+        self.assertTrue(reply.json["playable"])
+
+    def test_servable_helper_refuses_an_expired_row(self):
+        # A row past reverify_after is not servable: the walk must not
+        # prefer a print whose bank the stream route would refuse.
+        _best, sibling = self._twin_prints("Cache Twins")
+        self._bank(sibling, age_seconds=9000)
+        self.assertFalse(api_v2._release_has_servable_banked_candidate(
+            self.conn, sibling))
+        self.assertIsNone(resolved_cache.lookup_cache(
+            self.conn, self._ledger_id(sibling), want="watch"))
 
 
 # ── 2. provenance: nothing that names a source ever leaves ──────────────────
