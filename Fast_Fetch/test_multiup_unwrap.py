@@ -13,6 +13,14 @@ mirror (gofile, then mixdrop) with the existing resolvers. Fixtures below
 are small synthetic pages with the same structure as the real pages fetched
 that day — never the recorded 60 KB pages (they carry a live session token).
 
+Ordering (speed, 23 Nov 2026 — user Chrome capture, The Terminal List
+720p): mirrors are tried in Multiup's own validity order first — every
+"valid" mirror, then every "unknown" one — and "invalid" mirrors are never
+attempted. The capture had exactly one Valid mirror (mixdrop, live) while
+gofile was Unknown and dailyuploads + 1fichier were Invalid; the old
+host-major order paid a gofile unwrap before reaching the Valid mirror.
+`ValidityFirstTests` pins that order; the older tests pin the chain itself.
+
     python3 -S Fast_Fetch/test_multiup_unwrap.py
 """
 from __future__ import annotations
@@ -46,7 +54,10 @@ def download_page(token: str = "cc50c6b04cc763373.EA1234567890abcdef") -> str:
     )
 
 
-def mirror_anchor(host: str, link: str, validity: str = "invalid") -> str:
+def mirror_anchor(host: str, link: str, validity: str = "unknown") -> str:
+    # Default "unknown", like the parser's own default for a missing
+    # validity attribute — an anchor that says nothing about itself is a
+    # fallback candidate, never an invalid one.
     return (
         f'<a href="{link}" target="_blank" nameHost="{host}" '
         f'link="{link}" validity="{validity}">Download</a>'
@@ -278,6 +289,9 @@ class UnwrapTests(unittest.TestCase):
         self.assertEqual(direct, DIRECT_MP4)
         self.assertEqual(resolvers.tried[0],
                          ("gofile", "https://gofile.io/d/LiveOne"))
+        # The invalid mirror is never attempted at all, not merely tried last.
+        self.assertEqual(resolvers.tried,
+                         [("gofile", "https://gofile.io/d/LiveOne")])
 
     def test_org_url_posts_to_io_mirror(self):
         # multiup.org 301s to .io in real life; the POST follows the GET's
@@ -296,6 +310,160 @@ class UnwrapTests(unittest.TestCase):
         self.assertEqual(direct, DIRECT_MP4)
         self.assertEqual(rid, OTHER_ID)
         self.assertEqual(http.calls[1][1], mirror_url)
+
+
+class ValidityFirstTests(unittest.TestCase):
+    """Speed (23 Nov 2026): validity order first, host order second.
+
+    Fixtures mirror the user's Chrome capture for one file (The Terminal
+    List 720p): mixdrop Valid (the only mirror Multiup marks valid),
+    gofile Unknown, dailyuploads + 1fichier Invalid. The mirror list is
+    read fresh per file — these URLs pin the ORDERING logic, never a
+    claim that any other file carries the same mirrors.
+    """
+
+    CAPTURED_MIXDROP = "https://mixdrop.ag/f/vkk61vj4hmd41w"
+    CAPTURED_GOFILE = "https://gofile.io/d/n0auSD4K"
+    CAPTURED_DAILYUPLOADS = "https://dailyuploads.net/gauvtle9p4x8"
+    CAPTURED_1FICHIER = "https://1fichier.com/?pcar5m0q1m236glum8ly&af=62851"
+
+    def _http_for(self, mirror_anchors, token="tok123"):
+        mirror_url = f"https://multiup.io/en/mirror/{FILE_ID}"
+        return FakeHttp({
+            ("GET", DOWNLOAD_URL): (200, DOWNLOAD_URL, download_page(token)),
+            ("POST", mirror_url): (200, mirror_url,
+                                   mirror_page(mirror_anchors)),
+        })
+
+    def _captured_anchors(self):
+        return [
+            mirror_anchor("mixdrop.ag", self.CAPTURED_MIXDROP, "valid"),
+            mirror_anchor("gofile.io", self.CAPTURED_GOFILE, "unknown"),
+            mirror_anchor("dailyuploads.net", self.CAPTURED_DAILYUPLOADS,
+                          "invalid"),
+            mirror_anchor("1fichier.com", self.CAPTURED_1FICHIER, "invalid"),
+        ]
+
+    def test_captured_case_valid_mixdrop_before_unknown_gofile(self):
+        # Both resolvers would win if tried — the Valid mirror must win
+        # because it is tried FIRST, and the Unknown gofile must never
+        # be attempted at all.
+        http = self._http_for(self._captured_anchors())
+        resolvers = StubResolvers(
+            gofile=active_verdict(DIRECT_MP4),
+            mixdrop=active_verdict(DIRECT_MP4))
+        direct, rid, _temp, verdict = fast_fetch.unwrap_multiup(
+            DOWNLOAD_URL, _http=http, _resolvers=resolvers)
+        self.assertEqual(direct, DIRECT_MP4)
+        self.assertEqual(rid, FILE_ID)
+        self.assertEqual(verdict["status"], "active")
+        self.assertEqual(
+            resolvers.tried,
+            [("mixdrop", "https://mixdrop.ag/e/vkk61vj4hmd41w")])
+
+    def test_unknown_is_fallback_when_no_valid_mirror(self):
+        http = self._http_for([
+            mirror_anchor("gofile.io", GOFILE_LINK, "unknown"),
+            mirror_anchor("mixdrop.ag", MIXDROP_LINK, "invalid"),
+            mirror_anchor("dailyuploads.net",
+                          "https://dailyuploads.net/gauvtle9p4x8", "invalid"),
+        ])
+        resolvers = StubResolvers(
+            gofile=active_verdict(DIRECT_MP4),
+            mixdrop=active_verdict(DIRECT_MP4))
+        direct, _rid, _temp, _v = fast_fetch.unwrap_multiup(
+            DOWNLOAD_URL, _http=http, _resolvers=resolvers)
+        self.assertEqual(direct, DIRECT_MP4)
+        # The invalid mixdrop is never attempted even though no valid
+        # mirror exists — Unknown is the only fallback tier.
+        self.assertEqual(resolvers.tried, [("gofile", GOFILE_LINK)])
+
+    def test_all_invalid_is_honest_failure(self):
+        http = self._http_for([
+            mirror_anchor("gofile.io", GOFILE_LINK, "invalid"),
+            mirror_anchor("mixdrop.ag", MIXDROP_LINK, "invalid"),
+        ])
+        resolvers = StubResolvers(
+            gofile=active_verdict(DIRECT_MP4),
+            mixdrop=active_verdict(DIRECT_MP4))
+        self.assertEqual(
+            fast_fetch.unwrap_multiup(DOWNLOAD_URL, _http=http,
+                                      _resolvers=resolvers),
+            ("", FILE_ID, 0, None))
+        self.assertEqual(resolvers.tried, [])
+
+    def test_invalid_never_served_even_when_resolver_would_win(self):
+        # Multiup's Invalid flag is the verdict: a mirror the resolver
+        # would call active is still never served from an Invalid row.
+        http = self._http_for([
+            mirror_anchor("gofile.io", GOFILE_LINK, "invalid"),
+        ])
+        resolvers = StubResolvers(gofile=active_verdict(DIRECT_MP4))
+        self.assertEqual(
+            fast_fetch.unwrap_multiup(DOWNLOAD_URL, _http=http,
+                                      _resolvers=resolvers),
+            ("", FILE_ID, 0, None))
+        self.assertEqual(resolvers.tried, [])
+
+    def test_empty_mirror_list_is_honest_failure(self):
+        http = self._http_for([])
+        resolvers = StubResolvers(
+            gofile=active_verdict(DIRECT_MP4),
+            mixdrop=active_verdict(DIRECT_MP4))
+        self.assertEqual(
+            fast_fetch.unwrap_multiup(DOWNLOAD_URL, _http=http,
+                                      _resolvers=resolvers),
+            ("", FILE_ID, 0, None))
+        self.assertEqual(resolvers.tried, [])
+
+    def test_valid_tier_keeps_gofile_before_mixdrop(self):
+        # Within one validity tier the host order is unchanged (gofile,
+        # then mixdrop) — only the tier order moved.
+        http = self._http_for([
+            mirror_anchor("mixdrop.ag", MIXDROP_LINK, "valid"),
+            mirror_anchor("gofile.io", GOFILE_LINK, "valid"),
+        ])
+        resolvers = StubResolvers(
+            gofile=active_verdict(DIRECT_MP4),
+            mixdrop=active_verdict(DIRECT_MP4))
+        direct, _rid, _temp, _v = fast_fetch.unwrap_multiup(
+            DOWNLOAD_URL, _http=http, _resolvers=resolvers)
+        self.assertEqual(direct, DIRECT_MP4)
+        self.assertEqual(resolvers.tried, [("gofile", GOFILE_LINK)])
+
+    def test_unknown_fallthrough_after_unknown_gofile_dead(self):
+        http = self._http_for([
+            mirror_anchor("gofile.io", GOFILE_LINK, "unknown"),
+            mirror_anchor("mixdrop.ag", MIXDROP_LINK, "unknown"),
+        ])
+        resolvers = StubResolvers(
+            gofile={"status": "dead", "notes": ["folder deleted"]},
+            mixdrop=active_verdict(DIRECT_MP4))
+        direct, _rid, _temp, _v = fast_fetch.unwrap_multiup(
+            DOWNLOAD_URL, _http=http, _resolvers=resolvers)
+        self.assertEqual(direct, DIRECT_MP4)
+        self.assertEqual(resolvers.tried,
+                         [("gofile", GOFILE_LINK),
+                          ("mixdrop", "https://mixdrop.ag/e/pjmm1d8zuogown")])
+
+    def test_resolver_exception_falls_through_to_next_mirror(self):
+        http = self._http_for([
+            mirror_anchor("gofile.io", GOFILE_LINK, "unknown"),
+            mirror_anchor("mixdrop.ag", MIXDROP_LINK, "unknown"),
+        ])
+
+        class RaisingResolvers(StubResolvers):
+            def unwrap_gofile(self, url, verify=True):
+                self.tried.append(("gofile", url))
+                raise RuntimeError("gofile transport blew up")
+
+        resolvers = RaisingResolvers(mixdrop=active_verdict(DIRECT_MP4))
+        direct, _rid, _temp, _v = fast_fetch.unwrap_multiup(
+            DOWNLOAD_URL, _http=http, _resolvers=resolvers)
+        self.assertEqual(direct, DIRECT_MP4)
+        self.assertEqual(resolvers.tried,
+                         [("gofile", GOFILE_LINK),
+                          ("mixdrop", "https://mixdrop.ag/e/pjmm1d8zuogown")])
 
 
 if __name__ == "__main__":

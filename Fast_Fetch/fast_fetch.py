@@ -4538,6 +4538,17 @@ def unwrap_greenmotors(greenmotors_url: str, timeout: int = 10) -> list[dict]:
 # (vikingfile, dailyuploads, rapidgator, 1fichier, megaup, chomikuj, fireload)
 # have no resolver in this repo and are not attempted. Only an `active`
 # verdict from gofile/mixdrop wins; anything else is ("", id, 0, None).
+#
+# Ordering (speed, 23 Nov 2026 — user Chrome capture, The Terminal List 720p):
+# the mirror list is read fresh per file (old and new links carry different
+# mirror sets — never hardcode which mirrors a file has) and tried in
+# VALIDITY order first, host order second: every "valid" mirror, then every
+# "unknown" one; "invalid" mirrors are never attempted. The capture had
+# exactly one Valid mirror (mixdrop, live) while gofile was Unknown and
+# dailyuploads + 1fichier were Invalid (dead per Multiup) — the old
+# host-major order paid a gofile unwrap before ever reaching the Valid
+# mirror. Baseline on that link: multiup press 4.573s cold, 4.085s banked
+# (nothing banked, so the re-press re-ran the whole chain).
 # ---------------------------------------------------------------------------
 MULTIUP_ID_RE = re.compile(
     r"""multiup\.(?:io|org)/download/([0-9a-f]{32})""", re.I)
@@ -4546,8 +4557,11 @@ MULTIUP_CSRF_RE = re.compile(
 MULTIUP_MIRROR_RE = re.compile(
     r"""<a[^>]*\bnameHost="([^"]+)"[^>]*>""", re.I | re.S)
 # multiup's own validity check, measured accurate on every sampled mirror:
-# "valid" mirrors are tried first, "unknown" next, "invalid" last.
-_MULTIUP_VALIDITY_RANK = {"valid": 0, "unknown": 1, "invalid": 2}
+# "valid" mirrors are tried first, "unknown" next, "invalid" never — an
+# invalid mirror is dead per Multiup (20 Nov samples + 23 Nov capture), so
+# attempting it can only waste a resolver round-trip, never serve a file.
+# Within one tier the host order stays gofile, then mixdrop.
+_MULTIUP_VALIDITY_TIERS = ("valid", "unknown")
 _MULTIUP_MIRROR_HOSTS = ("gofile.io", "mixdrop")
 _MULTIUP_HTTP_TRIES = 3
 _MULTIUP_HTTP_SLEEP = 3.0
@@ -4642,12 +4656,16 @@ def unwrap_multiup(multiup_url: str, timeout: int = 12, _http=None,
 
     GET the download page, POST its CSRF token to /en/mirror/<id>, parse the
     mirror list, and unwrap the best mirror with an existing resolver
-    (gofile, then mixdrop). Only a mirror verdict of `active` — i.e. the
-    resolver's own Range probe just read real bytes — wins; the returned
-    direct URL is that verdict's final_url and is_temporary is 1 (gofile /
-    mixdrop links are signed and short-lived). Anything else is
+    (gofile, then mixdrop). Mirrors are tried in Multiup's own validity
+    order first — every "valid" mirror, then every "unknown" one — and
+    "invalid" mirrors are never attempted. Only a mirror verdict of `active`
+    — i.e. the resolver's own Range probe just read real bytes — wins; the
+    returned direct URL is that verdict's final_url and is_temporary is 1
+    (gofile / mixdrop links are signed and short-lived). Anything else is
     ("", <id>, 0, None): file deleted (404), no CSRF token, no mirror page,
-    no resolvable mirror, or every mirror dead.
+    no resolvable mirror, every mirror dead, or every mirror invalid.
+    A mirror whose resolver raises is treated as dead and the next mirror
+    is tried — one host's failure must not kill the Valid mirror behind it.
 
     `_http` is the test seam: (method, url, data, referer, timeout) -> (status,
     final_url, body). `_resolvers` is the test seam for the host_resolvers
@@ -4677,27 +4695,33 @@ def unwrap_multiup(multiup_url: str, timeout: int = 12, _http=None,
     mirrors = multiup_parse_mirrors(mirror_html)
     if not mirrors:
         return ("", file_id, 0, None)
-    for want_host in _MULTIUP_MIRROR_HOSTS:
-        cands = [m for m in mirrors
-                 if want_host in (m.get("host") or "").lower()
-                 and (m.get("link") or "").lower().startswith("https://")]
-        cands.sort(key=lambda m: _MULTIUP_VALIDITY_RANK.get(
-            (m.get("validity") or "unknown").lower(), 1))
-        for cand in cands:
-            link = cand["link"]
-            if want_host == "mixdrop":
-                f_page = re.match(
-                    r"""^(https?://[^/]+)/f/([A-Za-z0-9_-]+)/?$""", link)
-                if f_page and "/e/" not in link:
-                    link = f"{f_page.group(1)}/e/{f_page.group(2)}"
-                verdict = resolvers.unwrap_mxdrop(link, verify=True)
-            else:
-                verdict = resolvers.unwrap_gofile(link, verify=True)
-            if isinstance(verdict, dict) and verdict.get("status") == "active":
-                direct = verdict.get("final_url") or ""
-                if direct.lower().startswith("https://"):
-                    return (direct, file_id,
-                            int(verdict.get("is_temporary", 1) or 1), verdict)
+    # Validity first, host second: a Valid mixdrop beats an Unknown gofile
+    # (23 Nov capture), an Unknown mirror is fallback only, and an Invalid
+    # mirror is never attempted — Multiup already marked it dead.
+    for tier in _MULTIUP_VALIDITY_TIERS:
+        for want_host in _MULTIUP_MIRROR_HOSTS:
+            cands = [m for m in mirrors
+                     if (m.get("validity") or "unknown").lower() == tier
+                     and want_host in (m.get("host") or "").lower()
+                     and (m.get("link") or "").lower().startswith("https://")]
+            for cand in cands:
+                link = cand["link"]
+                try:
+                    if want_host == "mixdrop":
+                        f_page = re.match(
+                            r"""^(https?://[^/]+)/f/([A-Za-z0-9_-]+)/?$""", link)
+                        if f_page and "/e/" not in link:
+                            link = f"{f_page.group(1)}/e/{f_page.group(2)}"
+                        verdict = resolvers.unwrap_mxdrop(link, verify=True)
+                    else:
+                        verdict = resolvers.unwrap_gofile(link, verify=True)
+                except Exception:
+                    continue
+                if isinstance(verdict, dict) and verdict.get("status") == "active":
+                    direct = verdict.get("final_url") or ""
+                    if direct.lower().startswith("https://"):
+                        return (direct, file_id,
+                                int(verdict.get("is_temporary", 1) or 1), verdict)
     return ("", file_id, 0, None)
 
 
@@ -8790,7 +8814,11 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                 # Phase C (2026-11-20): multiup is a mirror hub, not a file
                 # host — unwrap_multiup GETs the download page, POSTs its
                 # CSRF token to /en/mirror/<id>, and unwraps the best mirror
-                # (gofile, then mixdrop) with the existing resolvers. The
+                # (gofile, then mixdrop) with the existing resolvers. Since
+                # the 23 Nov speed fix the mirrors are tried in Multiup's
+                # own validity order first (Valid, then Unknown; Invalid
+                # never attempted), so a Valid mixdrop is reached before an
+                # Unknown gofile is paid for. The
                 # unwrapper's Range probe IS the gate evidence, exactly as
                 # for gofile/mixdrop themselves: a gofile direct link 302s
                 # without its guest Authorization header and the mxcontent

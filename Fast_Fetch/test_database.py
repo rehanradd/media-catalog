@@ -949,6 +949,47 @@ class DatabaseSaveTests(unittest.TestCase):
         self.assertTrue(res["cached"])
         self.assertFalse(res["refreshed"])
 
+    def test_resolve_live_source_multiup_dispatch_banks_mirror(self):
+        """Multiup dispatch (service multiup, 23 Nov 2026 speed fix):
+        resolve_live_source routes the row through unwrap_multiup and
+        banks the unwrapped mirror address on the row, so the next press
+        serves it cached instead of re-running the download-page + mirror
+        list chain. Offline: unwrap_multiup and probe_url_ttl are stubbed;
+        the routing and the banking are what is under test."""
+        media_data = self.media("site_a", "https://site-a.example/example-film/")
+        media_data["releases"][0]["sources"] = [{
+            "source_name": "MultiUp Mirror Hub",
+            "service": "multiup",
+            "resource_id": "e6781199c420227949edf018a57f0421",
+            "source_url": "https://multiup.io/download/e6781199c420227949edf018a57f0421/",
+            "final_url": "https://multiup.io/download/e6781199c420227949edf018a57f0421/",
+            "is_temporary": 1,
+        }]
+        fast_fetch.save_scraped_data(media_data)
+        with fast_fetch.get_db() as conn:
+            source = conn.execute("SELECT id FROM download_sources LIMIT 1").fetchone()
+        verdict = {"status": "active",
+                   "final_url": "https://store-xyz.gofile.io/download/abc/movie.mkv",
+                   "is_temporary": 1, "content_type": "video/mp4",
+                   "http_status": 206, "size_bytes": 12345}
+        with patch.object(
+                fast_fetch, "unwrap_multiup",
+                return_value=(verdict["final_url"],
+                              "e6781199c420227949edf018a57f0421", 1, verdict)) as mock_unwrap, \
+             patch.object(fast_fetch, "probe_url_ttl",
+                          return_value=(None, {"observed": False,
+                                               "reason": "no_directive"})):
+            res = fast_fetch.resolve_live_source(source["id"])
+        mock_unwrap.assert_called_once()
+        self.assertTrue(res["success"], res)
+        self.assertEqual(res["url"], verdict["final_url"])
+        self.assertTrue(res["refreshed"])
+        banked = self.rows(
+            "SELECT final_url, status FROM download_sources WHERE id = ?",
+            (source["id"],))[0]
+        self.assertEqual(banked[0], verdict["final_url"])
+        self.assertEqual(banked[1], "active")
+
     def test_stage2_gate_refuses_an_unprobed_cached_page(self):
         """The strict gate: a cached address that fails its probe is never
         served, on either contract — the answer is no_playable_source,
