@@ -849,7 +849,197 @@ def _unwrap_vidrift(saved_url: str, fetch) -> tuple:
     return "vidrift", [], "no_streams"
 
 
+#: VidBolt /api/resolve crack (WARP egress, 2026-11-23): the movie/TV page
+#: JS fetches '/api/resolve?'+q where q is `type=movie&id=<tmdb>` or
+#: `type=tv&id=<tmdb>&season=<s>&episode=<e>` — read live off the page
+#: itself via WARP, 2026-11-23, so the resolve URL is built straight from
+#: the saved link with no page fetch. The call needs Referer: the
+#: movie/TV page — without it Cloudflare 403s (measured: the no-Referer
+#: attempt answers the "Attention Required!" page). The response is live
+#: stream JSON: {"stream": {"server": "quasar", "sources": [{"url":
+#: "https://.../index_287.m3u8?Expires=...&Signature=...", "kind":
+#: "hls", "quality": "1080p", "language": "Hindi"}, ...]}}. Servers
+#: seen: quantum/quasar (movies), orion (TV); selectable via
+#: &prefer=<server> — not used, the API's default pick is proven. The
+#: stream URLs are SIGNED (Expires + Signature): resolve fresh on every
+#: call, never serve a stored signed URL (same rule as the gamerxyt
+#: per-load token). A 200 with {"stream": null} means this title has no
+#: stream right now — "no_streams", never dead. A 404 on the resolve
+#: means vidbolt has no such title — "dead_file".
+_VIDBOLT_MOVIE_RE = re.compile(r"^/movie/(\d+)/?$")
+_VIDBOLT_TV_RE = re.compile(r"^/tv/(\d+)/(\d+)/(\d+)/?$")
+
+
+def _vidbolt_direct(saved_url: str):
+    """(resolve_url, referer) built straight from a vidbolt page URL.
+
+    Returns None when the URL is not a /movie/<id> or /tv/<id>/<s>/<e>
+    page — those shapes fall back to the page-fetch + ``var q`` path.
+    """
+    parts = urllib.parse.urlsplit(str(saved_url or ""))
+    if (parts.netloc or "").lower().split(":")[0] != "vidbolt.xyz":
+        return None
+    path = parts.path or ""
+    match = _VIDBOLT_MOVIE_RE.match(path)
+    if match:
+        vid = match.group(1)
+        return (f"https://vidbolt.xyz/api/resolve?type=movie&id={vid}&hevc=0",
+                f"https://vidbolt.xyz/movie/{vid}")
+    match = _VIDBOLT_TV_RE.match(path)
+    if match:
+        vid, season, episode = match.groups()
+        return (f"https://vidbolt.xyz/api/resolve?type=tv&id={vid}"
+                f"&season={season}&episode={episode}&hevc=0",
+                f"https://vidbolt.xyz/tv/{vid}/{season}/{episode}")
+    return None
+
+
+def _vidbolt_candidates(res, referer: str) -> tuple:
+    """(candidates, failure) parsed from one /api/resolve response."""
+    try:
+        payload = json.loads(res.text()) or {}
+    except Exception:
+        return [], "unverified"
+    stream = payload.get("stream") or {}
+    if not isinstance(stream, dict):
+        return [], "unverified"
+    sources = stream.get("sources") or []
+    if not sources and stream.get("url"):
+        sources = [stream]
+    if not sources:
+        return [], "no_streams"
+    server = stream.get("server") or ""
+    candidates = []
+    seen = set()
+    for source in sources:
+        url = (source or {}).get("url") or ""
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        kind = (source or {}).get("kind") or ""
+        stem = url.split("?", 1)[0]
+        if kind == "hls" or stem.endswith(".m3u8"):
+            kind_hint = "playlist"
+        elif kind == "mp4" or stem.endswith(".mp4"):
+            kind_hint = "file"
+        else:
+            kind_hint = "playlist"
+        candidate = {"url": url, "referer": referer, "kind_hint": kind_hint}
+        if (source or {}).get("quality"):
+            candidate["quality"] = source["quality"]
+        if server:
+            candidate["server"] = server
+        if (source or {}).get("language"):
+            candidate["language"] = source["language"]
+        candidates.append(candidate)
+    if candidates:
+        return candidates, None
+    return [], "no_streams"
+
+
+#: VidBolt /api/resolve crack (WARP egress, 2026-11-23): the movie/TV page
+#: JS fetches '/api/resolve?'+q where q is `type=movie&id=<tmdb>` or
+#: `type=tv&id=<tmdb>&season=<s>&episode=<e>` — read live off the page
+#: itself via WARP, 2026-11-23, so the resolve URL is built straight from
+#: the saved link with no page fetch. The call needs Referer: the
+#: movie/TV page — without it Cloudflare 403s (measured: the no-Referer
+#: attempt answers the "Attention Required!" page). The response is live
+#: stream JSON: {"stream": {"server": "quasar", "sources": [{"url":
+#: "https://.../index_287.m3u8?Expires=...&Signature=...", "kind":
+#: "hls", "quality": "1080p", "language": "Hindi"}, ...]}}. Servers
+#: seen: quantum/quasar (movies), orion (TV); selectable via
+#: &prefer=<server> — not used, the API's default pick is proven. The
+#: stream URLs are SIGNED (Expires + Signature): resolve fresh on every
+#: call, never serve a stored signed URL (same rule as the gamerxyt
+#: per-load token). A 200 with {"stream": null} means this title has no
+#: stream right now — "no_streams", never dead. A 404 on the resolve
+#: means vidbolt has no such title — "dead_file".
+_VIDBOLT_MOVIE_RE = re.compile(r"^/movie/(\d+)/?$")
+_VIDBOLT_TV_RE = re.compile(r"^/tv/(\d+)/(\d+)/(\d+)/?$")
+
+
+def _vidbolt_direct(saved_url: str):
+    """(resolve_url, referer) built straight from a vidbolt page URL.
+
+    Returns None when the URL is not a /movie/<id> or /tv/<id>/<s>/<e>
+    page — those shapes fall back to the page-fetch + ``var q`` path.
+    """
+    parts = urllib.parse.urlsplit(str(saved_url or ""))
+    if (parts.netloc or "").lower().split(":")[0] != "vidbolt.xyz":
+        return None
+    path = parts.path or ""
+    match = _VIDBOLT_MOVIE_RE.match(path)
+    if match:
+        vid = match.group(1)
+        return (f"https://vidbolt.xyz/api/resolve?type=movie&id={vid}&hevc=0",
+                f"https://vidbolt.xyz/movie/{vid}")
+    match = _VIDBOLT_TV_RE.match(path)
+    if match:
+        vid, season, episode = match.groups()
+        return (f"https://vidbolt.xyz/api/resolve?type=tv&id={vid}"
+                f"&season={season}&episode={episode}&hevc=0",
+                f"https://vidbolt.xyz/tv/{vid}/{season}/{episode}")
+    return None
+
+
+def _vidbolt_candidates(res, referer: str) -> tuple:
+    """(candidates, failure) parsed from one /api/resolve response."""
+    try:
+        payload = json.loads(res.text()) or {}
+    except Exception:
+        return [], "unverified"
+    stream = payload.get("stream") or {}
+    if not isinstance(stream, dict):
+        return [], "unverified"
+    sources = stream.get("sources") or []
+    if not sources and stream.get("url"):
+        sources = [stream]
+    if not sources:
+        return [], "no_streams"
+    server = stream.get("server") or ""
+    candidates = []
+    seen = set()
+    for source in sources:
+        url = (source or {}).get("url") or ""
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        kind = (source or {}).get("kind") or ""
+        stem = url.split("?", 1)[0]
+        if kind == "hls" or stem.endswith(".m3u8"):
+            kind_hint = "playlist"
+        elif kind == "mp4" or stem.endswith(".mp4"):
+            kind_hint = "file"
+        else:
+            kind_hint = "playlist"
+        candidate = {"url": url, "referer": referer, "kind_hint": kind_hint}
+        if (source or {}).get("quality"):
+            candidate["quality"] = source["quality"]
+        if server:
+            candidate["server"] = server
+        if (source or {}).get("language"):
+            candidate["language"] = source["language"]
+        candidates.append(candidate)
+    if candidates:
+        return candidates, None
+    return [], "no_streams"
+
+
 def _unwrap_vidbolt(saved_url: str, fetch) -> tuple:
+    direct = _vidbolt_direct(saved_url)
+    if direct is not None:
+        resolve_url, referer = direct
+        res = fetch(resolve_url, referer=referer)
+        if res.status != 200:
+            return "vidbolt", [], ("blocked" if res.status == 403 else
+                                   "dead_file" if res.status == 404 else
+                                   "transport" if res.status == 0 else "unverified")
+        candidates, failure = _vidbolt_candidates(res, referer)
+        return "vidbolt", candidates, failure
+    # Any other vidbolt shape: the old page-fetch path — the page JS
+    # carries var q="type=...&id=..." and the resolve answers the same
+    # stream JSON. Kept so an unexpected saved shape still resolves
+    # instead of failing outright.
     page = fetch(saved_url, referer=saved_url)
     if page.status != 200:
         return "vidbolt", [], ("blocked" if page.status == 403 else
@@ -863,22 +1053,9 @@ def _unwrap_vidbolt(saved_url: str, fetch) -> tuple:
     if res.status != 200:
         return "vidbolt", [], ("blocked" if res.status == 403 else
                                "transport" if res.status == 0 else "unverified")
-    try:
-        stream = (json.loads(res.text()) or {}).get("stream") or {}
-    except Exception:
-        return "vidbolt", [], "unverified"
-    sources = stream.get("sources") or []
-    if not sources and stream.get("url"):
-        sources = [stream]
-    candidates = []
-    for source in sources[:3]:
-        url = (source or {}).get("url") or ""
-        if url:
-            candidates.append({"url": url, "referer": saved_url,
-                               "kind_hint": "playlist"})
-    if candidates:
-        return "vidbolt", candidates, None
-    return "vidbolt", [], "unverified"
+    candidates, failure = _vidbolt_candidates(res, saved_url)
+    return "vidbolt", candidates, failure
+
 
 
 def _unwrap_vidly(saved_url: str, fetch) -> tuple:

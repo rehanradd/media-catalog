@@ -37,6 +37,21 @@ probes, 2026-11-21):
   Oracle egress (megaup.mobi fails TLS), so the chain is unproven live.
 
 No network, stdlib only.
+
+VidBolt (2026-11-23, WARP crack): GET
+``https://vidbolt.xyz/api/resolve?type=movie&id=<tmdb>&hevc=0`` (TV:
+``type=tv&id=<tmdb>&season=<s>&episode=<e>&hevc=0``) with Referer the
+movie/TV page answers 200 with live stream JSON — ``{"stream":
+{"server": "quasar", "sources": [{"url": ".../index_287.m3u8?Expires=...
+&Signature=...", "kind": "hls", "quality": "1080p", "language":
+"Hindi"}, ...]}}``. The query shape is read live off the page JS
+(``var q="type=movie&id=11667"`` / ``var q="type=tv&id=133064&season=1
+&episode=1"``), so the resolver builds the resolve URL straight from
+the saved link with no page fetch; an unknown shape falls back to the
+page-fetch + ``var q`` path. The URLs are signed (Expires + Signature),
+so every resolve fetches fresh. Fixture signatures are redacted
+placeholders — the shape (hosts, kinds, qualities, server) is the
+measured live capture (/tmp/warp-vb-resolve2.json, Oracle VM).
 """
 
 from __future__ import annotations
@@ -124,6 +139,57 @@ BINGR_PROXY_URL = (f"{ORIGIN}/proxy.php?p=bingr&c=11667%3Amovie%3A0%3A0"
                    f"&title=x&noredirect=1")
 VIDRIFT_EMBED_URL = "https://embed.vidrift.net/embed/movie/11667"
 VIDARA_API_URL = "https://vidara.to/api/stream"
+
+VIDBOLT_MOVIE_URL = "https://vidbolt.xyz/movie/11667"
+VIDBOLT_MOVIE_RESOLVE = ("https://vidbolt.xyz/api/resolve?type=movie"
+                         "&id=11667&hevc=0")
+VIDBOLT_TV_URL = "https://vidbolt.xyz/tv/1396/1/1"
+VIDBOLT_TV_RESOLVE = ("https://vidbolt.xyz/api/resolve?type=tv&id=1396"
+                      "&season=1&episode=1&hevc=0")
+VIDBOLT_EMBED_URL = "https://vidbolt.xyz/embed/11667"
+VIDBOLT_EMBED_Q_RESOLVE = "https://vidbolt.xyz/api/resolve?type=movie&id=11667"
+# Stream JSON shape from the live WARP capture /tmp/warp-vb-resolve2.json
+# (movie 11667, server quasar: 2 HLS + 2 mp4). Signature values are
+# redacted placeholders; the live URLs are signed and expire.
+VIDBOLT_STREAM = json.dumps({
+    "stream": {
+        "server": "quasar",
+        "sources": [
+            {"url": ("https://img1.hscow.com/hls_mps/272726923fa4a6c5949f7a0aeefcd"
+                     "8e5d6dab598/720/index_287.m3u8?Expires=1795402837"
+                     "&KeyName=Signature&Signature=SIGNATURE"),
+             "kind": "hls", "quality": "1080p", "language": "Hindi"},
+            {"url": ("https://img1.fcxmb.com/hls_mps/272726923fa4a6c5949f7a0aeefcd"
+                     "8e5d6dab598/480/index_266.m3u8?Expires=1795402837"
+                     "&KeyName=Signature&Signature=SIGNATURE"),
+             "kind": "hls", "quality": "1080p", "language": "Hindi"},
+            {"url": ("https://scraper.vidbolt.xyz/proxy/segment/"
+                     "aHR0cHM6Ly9leGFtcGxlLmNvbS92aWRlby0xMDgwcC5tcDQ="),
+             "kind": "mp4", "quality": "1080p", "language": None},
+            {"url": ("https://scraper.vidbolt.xyz/proxy/segment/"
+                     "aHR0cHM6Ly9leGFtcGxlLmNvbS92aWRlby03MjBwLm1wNA=="),
+             "kind": "mp4", "quality": "720p", "language": None},
+        ],
+    },
+})
+VIDBOLT_TV_STREAM = json.dumps({
+    "stream": {
+        "server": "orion",
+        "sources": [
+            {"url": ("https://img1.hscow.com/hls_mps/272726923fa4a6c5949f7a0aeefcd"
+                     "8e5d6dab598/720/index_287.m3u8?Expires=1795402837"
+                     "&KeyName=Signature&Signature=SIGNATURE"),
+             "kind": "hls", "quality": "1080p", "language": "Hindi"},
+        ],
+    },
+})
+VIDBOLT_EMBED_PAGE = ('<html><head><script>var q="type=movie&id=11667";'
+                      "</script></head></html>")
+
+
+def _json(body: str, status: int = 200) -> FetchResult:
+    return FetchResult(status=status, content_type="application/json",
+                       body=body.encode())
 
 
 def _html(body: str, status: int = 200, final_url: str = "",
@@ -929,6 +995,148 @@ class FichierRegistryTests(unittest.TestCase):
         self.assertEqual(res["backend"], "1fichier")
         self.assertEqual(res["failure"], "dead_file")
         self.assertTrue(res["failure_dead"])
+class VidboltUnwrapTests(unittest.TestCase):
+    def test_movie_builds_direct_resolve_with_referer(self):
+        fetch = StubFetch({VIDBOLT_MOVIE_RESOLVE: _json(VIDBOLT_STREAM)})
+        backend, candidates, failure = current_hosts._unwrap_vidbolt(
+            VIDBOLT_MOVIE_URL, fetch)
+        self.assertEqual(backend, "vidbolt")
+        self.assertIsNone(failure)
+        # One call only: the resolve itself — the movie page is never fetched.
+        self.assertEqual(len(fetch.calls), 1)
+        self.assertEqual(fetch.calls[0][0], VIDBOLT_MOVIE_RESOLVE)
+        self.assertEqual(fetch.calls[0][1]["referer"], VIDBOLT_MOVIE_URL)
+        self.assertEqual(len(candidates), 4)
+        self.assertEqual([c["kind_hint"] for c in candidates],
+                         ["playlist", "playlist", "file", "file"])
+        self.assertEqual(candidates[0]["quality"], "1080p")
+        self.assertEqual(candidates[0]["server"], "quasar")
+        self.assertEqual(candidates[0]["language"], "Hindi")
+        self.assertEqual(candidates[3]["quality"], "720p")
+        self.assertTrue(candidates[0]["url"].endswith(".m3u8?Expires=1795402837"
+                                                      "&KeyName=Signature"
+                                                      "&Signature=SIGNATURE"))
+
+    def test_tv_builds_direct_resolve_with_season_episode(self):
+        fetch = StubFetch({VIDBOLT_TV_RESOLVE: _json(VIDBOLT_TV_STREAM)})
+        backend, candidates, failure = current_hosts._unwrap_vidbolt(
+            VIDBOLT_TV_URL, fetch)
+        self.assertEqual(backend, "vidbolt")
+        self.assertIsNone(failure)
+        self.assertEqual(len(fetch.calls), 1)
+        self.assertEqual(fetch.calls[0][0], VIDBOLT_TV_RESOLVE)
+        self.assertEqual(fetch.calls[0][1]["referer"], VIDBOLT_TV_URL)
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["kind_hint"], "playlist")
+        self.assertEqual(candidates[0]["server"], "orion")
+
+    def test_each_call_fetches_fresh(self):
+        # Signed URLs expire: every resolve re-fetches /api/resolve, never
+        # a stored answer. Two unwraps of the same link are two fetches.
+        fetch = StubFetch({VIDBOLT_MOVIE_RESOLVE: _json(VIDBOLT_STREAM)})
+        for _ in range(2):
+            backend, candidates, failure = current_hosts._unwrap_vidbolt(
+                VIDBOLT_MOVIE_URL, fetch)
+            self.assertIsNone(failure)
+            self.assertEqual(len(candidates), 4)
+        self.assertEqual(len(fetch.calls), 2)
+        self.assertTrue(all(call[0] == VIDBOLT_MOVIE_RESOLVE
+                            for call in fetch.calls))
+
+    def test_resolve_403_is_blocked(self):
+        fetch = StubFetch({VIDBOLT_MOVIE_RESOLVE:
+                           FetchResult(status=403)})
+        backend, candidates, failure = current_hosts._unwrap_vidbolt(
+            VIDBOLT_MOVIE_URL, fetch)
+        self.assertEqual((backend, candidates, failure),
+                         ("vidbolt", [], "blocked"))
+
+    def test_resolve_404_is_dead_file(self):
+        fetch = StubFetch({VIDBOLT_MOVIE_RESOLVE:
+                           FetchResult(status=404)})
+        backend, candidates, failure = current_hosts._unwrap_vidbolt(
+            VIDBOLT_MOVIE_URL, fetch)
+        self.assertEqual((backend, candidates, failure),
+                         ("vidbolt", [], "dead_file"))
+
+    def test_resolve_transport_is_transport(self):
+        fetch = StubFetch({VIDBOLT_MOVIE_RESOLVE:
+                           FetchResult(status=0)})
+        backend, candidates, failure = current_hosts._unwrap_vidbolt(
+            VIDBOLT_MOVIE_URL, fetch)
+        self.assertEqual((backend, candidates, failure),
+                         ("vidbolt", [], "transport"))
+
+    def test_non_json_is_unverified(self):
+        fetch = StubFetch({VIDBOLT_MOVIE_RESOLVE: _json("not json")})
+        backend, candidates, failure = current_hosts._unwrap_vidbolt(
+            VIDBOLT_MOVIE_URL, fetch)
+        self.assertEqual((backend, candidates, failure),
+                         ("vidbolt", [], "unverified"))
+
+    def test_null_stream_is_no_streams_not_dead(self):
+        fetch = StubFetch({VIDBOLT_MOVIE_RESOLVE:
+                           _json('{"stream": null}')})
+        backend, candidates, failure = current_hosts._unwrap_vidbolt(
+            VIDBOLT_MOVIE_URL, fetch)
+        self.assertEqual((backend, candidates, failure),
+                         ("vidbolt", [], "no_streams"))
+
+    def test_empty_sources_is_no_streams(self):
+        fetch = StubFetch({VIDBOLT_MOVIE_RESOLVE: _json(
+            '{"stream": {"server": "quasar", "sources": []}}')})
+        backend, candidates, failure = current_hosts._unwrap_vidbolt(
+            VIDBOLT_MOVIE_URL, fetch)
+        self.assertEqual((backend, candidates, failure),
+                         ("vidbolt", [], "no_streams"))
+
+    def test_unknown_shape_falls_back_to_page_q(self):
+        fetch = StubFetch({
+            VIDBOLT_EMBED_URL: _html(VIDBOLT_EMBED_PAGE),
+            VIDBOLT_EMBED_Q_RESOLVE: _json(VIDBOLT_STREAM),
+        })
+        backend, candidates, failure = current_hosts._unwrap_vidbolt(
+            VIDBOLT_EMBED_URL, fetch)
+        self.assertEqual(backend, "vidbolt")
+        self.assertIsNone(failure)
+        self.assertEqual([call[0] for call in fetch.calls],
+                         [VIDBOLT_EMBED_URL, VIDBOLT_EMBED_Q_RESOLVE])
+        self.assertEqual(len(candidates), 4)
+
+    def test_fallback_page_without_q_is_unverified(self):
+        fetch = StubFetch({VIDBOLT_EMBED_URL: _html("<html>no q here</html>")})
+        backend, candidates, failure = current_hosts._unwrap_vidbolt(
+            VIDBOLT_EMBED_URL, fetch)
+        self.assertEqual((backend, candidates, failure),
+                         ("vidbolt", [], "unverified"))
+
+    def test_classify_vidbolt_movie_and_tv(self):
+        self.assertEqual(current_hosts.classify_backend(VIDBOLT_MOVIE_URL),
+                         "vidbolt")
+        self.assertEqual(current_hosts.classify_backend(VIDBOLT_TV_URL),
+                         "vidbolt")
+
+    def test_resolve_copy_movie_end_to_end(self):
+        fetch = StubFetch({VIDBOLT_MOVIE_RESOLVE: _json(VIDBOLT_STREAM)})
+        res = current_hosts.resolve_copy(VIDBOLT_MOVIE_URL, fetch=fetch,
+                                         probe=_ok_probe)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["backend"], "vidbolt")
+        self.assertIsNone(res["failure"])
+        self.assertTrue(res["url"].endswith(".m3u8?Expires=1795402837"
+                                            "&KeyName=Signature"
+                                            "&Signature=SIGNATURE"))
+
+    def test_resolve_copy_404_is_dead(self):
+        fetch = StubFetch({})
+        res = current_hosts.resolve_copy(VIDBOLT_MOVIE_URL, fetch=fetch,
+                                         probe=_ok_probe)
+        self.assertFalse(res["ok"])
+        self.assertEqual(res["backend"], "vidbolt")
+        self.assertEqual(res["failure"], "dead_file")
+        self.assertTrue(res["failure_dead"])
+
+
 
 
 if __name__ == "__main__":
