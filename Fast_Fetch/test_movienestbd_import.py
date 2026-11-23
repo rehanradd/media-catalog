@@ -84,7 +84,94 @@ SAMPLE_MN_SERIES_DETAIL = {
 }
 
 
+#: Live shape (2026-11-23, /api/v1/search?q=syrup): the API returns
+#: year 0 and rating 0 for this row, and `casts` smashed together with
+#: no separator at all. The detail endpoint for the same slug DOES
+#: return a links[] entry even though search shows links null.
+SAMPLE_SYRUP_DETAIL = {
+    "id": 17005,
+    "slug": "syrup",
+    "title": "Syrup",
+    "poster": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcS0LM_g6rWefOIipkXU67kAxos2Ee7jM4MP77P9SQmU9w&s=10",
+    "cover": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcS0LM_g6rWefOIipkXU67kAxos2Ee7jM4MP77P9SQmU9w&s=10",
+    "year": 0,
+    "quality": "WEB-DL",
+    "rating": 0,
+    "description": "A slacker hatches a million-dollar idea.",
+    "casts": "Amber HeardShiloh FernandezKellan Lutz",
+    "director": "Aram Rappaport",
+    "is_series": False,
+    "series_status": "",
+    "release_schedule": "",
+    "release_day": "",
+    "is_adult": False,
+    "is_trending": False,
+    "is_pinned": False,
+    "watch": "",
+    "notes": "Esub",
+    "categories": [{"id": 1, "name": "Hollywood", "slug": "hollywood"}],
+    "genres": None,
+    "episodes": None,
+    "links": [{"id": 62975,
+               "link": "https://embed.jiofiles.test/6a991a1adc782d20c2a61535",
+               "quality": {"id": 2, "name": "1080P"}}],
+}
+
+
 class TestMovieNestBDExtract(unittest.TestCase):
+    def test_cast_director_rating_are_saved(self):
+        # Before the fields fix these were read into locals and dropped.
+        data = import_movienestbd.extract_title_data_movienestbd(SAMPLE_MN_MOVIE_DETAIL)
+        self.assertEqual(data["cast_names"], "Sai Pallavi, Ranbir Kapoor, Yash")
+        self.assertEqual(data["director"], "Nitesh Tiwari")
+        self.assertEqual(data["imdb_rating"], "8.9")
+
+    def test_smashed_casts_are_split_without_breaking_single_names(self):
+        self.assertEqual(
+            import_movienestbd.split_cast_names(
+                "Amber HeardShiloh FernandezKellan Lutz"),
+            ["Amber Heard", "Shiloh Fernandez", "Kellan Lutz"])
+        self.assertEqual(
+            import_movienestbd.split_cast_names(
+                "Ibrahim Risyad, Anggika Bolsterli, Messi Gusti"),
+            ["Ibrahim Risyad", "Anggika Bolsterli", "Messi Gusti"])
+        # A single word is never split, so McDonald/DiCaprio survive.
+        self.assertEqual(import_movienestbd.split_cast_names("McDonald"),
+                         ["McDonald"])
+        self.assertEqual(import_movienestbd.split_cast_names("DiCaprio"),
+                         ["DiCaprio"])
+        self.assertEqual(import_movienestbd.split_cast_names("N/A"), [])
+        self.assertEqual(import_movienestbd.split_cast_names(None), [])
+
+    def test_series_schedule_fields_land_in_raw_meta(self):
+        detail = dict(SAMPLE_MN_SERIES_DETAIL, series_status="Ongoing",
+                      release_schedule="Weekly", release_day="Friday",
+                      is_trending=True)
+        data = import_movienestbd.extract_title_data_movienestbd(detail)
+        self.assertEqual(json.loads(data["raw_meta"]), {
+            "is_series": True, "series_status": "Ongoing",
+            "release_schedule": "Weekly", "release_day": "Friday",
+            "is_trending": True})
+        # The movie fixture has no series fields and no trending flag, so
+        # only its pinned flag and notes survive.
+        movie = import_movienestbd.extract_title_data_movienestbd(
+            SAMPLE_MN_MOVIE_DETAIL)
+        self.assertEqual(json.loads(movie["raw_meta"]),
+                         {"is_pinned": True, "notes": "Best Quality"})
+
+    def test_na_director_is_not_saved(self):
+        # The series fixture carries director "N/A" — a placeholder, not a person.
+        data = import_movienestbd.extract_title_data_movienestbd(SAMPLE_MN_SERIES_DETAIL)
+        self.assertIsNone(data["director"])
+
+    def test_zero_rating_is_not_saved(self):
+        data = import_movienestbd.extract_title_data_movienestbd(SAMPLE_SYRUP_DETAIL)
+        self.assertIsNotNone(data)
+        self.assertIsNone(data["imdb_rating"])
+        self.assertEqual(data["cast_names"],
+                         "Amber Heard, Shiloh Fernandez, Kellan Lutz")
+        self.assertEqual(data["director"], "Aram Rappaport")
+
     def test_movie_detail_maps_to_post(self):
         data = import_movienestbd.extract_title_data_movienestbd(SAMPLE_MN_MOVIE_DETAIL)
         self.assertIsNotNone(data)
@@ -163,6 +250,28 @@ class TestMovieNestBDSave(unittest.TestCase):
             self.assertEqual(row["content_type"], "series")
             self.assertEqual(row["is_18_plus"], 0)
             self.assertEqual(n_src, 3)
+
+    def test_syrup_row_saves_split_cast_and_drops_zero_year_rating(self):
+        # The API genuinely returns year 0 / rating 0 for Syrup — the save
+        # path drops both, but the smashed casts still split and land.
+        data = import_movienestbd.extract_title_data_movienestbd(SAMPLE_SYRUP_DETAIL)
+        self.assertIsNotNone(data)
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "movienestbd.db"
+            fast_fetch.DB_PATH = db_path
+            fast_fetch.init_db()
+            post_id = import_movienestbd.save_post_record(data, db_path)
+            with sqlite3.connect(str(db_path)) as conn:
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    "SELECT year, cast_names, director, imdb_rating, raw_meta"
+                    " FROM posts WHERE id = ?", (post_id,)).fetchone()
+            self.assertIsNone(row["year"])
+            self.assertIsNone(row["imdb_rating"])
+            self.assertEqual(row["cast_names"],
+                             "Amber Heard, Shiloh Fernandez, Kellan Lutz")
+            self.assertEqual(row["director"], "Aram Rappaport")
+            self.assertEqual(json.loads(row["raw_meta"]), {"notes": "Esub"})
 
 
 class TestMovieNestBDSync(unittest.TestCase):

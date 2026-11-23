@@ -182,6 +182,40 @@ def season_from_slug(slug: str) -> str | None:
     return f"S{int(m.group(1)):02d}" if m else None
 
 
+def split_cast_names(raw) -> list[str]:
+    """Split the API's ``casts`` string into person names.
+
+    Most rows are comma-separated ("Ibrahim Risyad, Anggika Bolsterli"),
+    but some are smashed together with no separator at all
+    ("Amber HeardShiloh FernandezKellan Lutz", live
+    ``/api/v1/search?q=syrup``, 2026-11-23). For a comma segment that
+    already contains a space — i.e. it holds at least one full
+    "First Last" name — a lowercase-to-uppercase boundary is a smashed
+    join, so split there. A single word is never split, so "McDonald"
+    and "DiCaprio" survive intact. Placeholder values are dropped.
+    """
+    placeholders = {"n/a", "na", "n.a.", "unknown", "-"}
+    names: list[str] = []
+    for segment in str(raw or "").split(","):
+        segment = segment.strip()
+        if not segment or segment.lower() in placeholders:
+            continue
+        if " " in segment:
+            parts = re.split(r"(?<=[a-z])(?=[A-Z])", segment)
+            names.extend(p.strip() for p in parts if p.strip())
+        else:
+            names.append(segment)
+    return list(dict.fromkeys(names))
+
+
+def _clean_director(raw) -> str | None:
+    """The API's ``director`` is a comma-joined string, or "N/A"."""
+    value = str(raw or "").strip()
+    if not value or value.lower() in {"n/a", "na", "n.a.", "unknown", "-"}:
+        return None
+    return value
+
+
 def extract_title_data_movienestbd(detail: dict) -> dict | None:
     """Maps one /api/v1/movie/<slug> detail object to a post record.
 
@@ -204,8 +238,36 @@ def extract_title_data_movienestbd(detail: dict) -> dict | None:
     genres = [g.get("name") for g in (detail.get("genres") or []) if g.get("name")]
     categories = [c.get("name") for c in (detail.get("categories") or []) if c.get("name")]
     all_genres = list(dict.fromkeys(genres + [c for c in categories if c not in genres]))
-    casts = detail.get("casts") or ""
-    director = detail.get("director") or ""
+    # Field population (2026-11-23): `casts`, `director` and `rating` were
+    # read into locals and then DROPPED — the returned record never carried
+    # them, so live rows only got cast/director/rating when a later enrich
+    # happened to fill them. `series_status`/`release_schedule`/`release_day`
+    # were never saved anywhere; they go to raw_meta when the API populates
+    # them (empty strings on every row probed 2026-11-23, movie and series
+    # alike, so they are stored only when non-empty).
+    cast_names = ", ".join(split_cast_names(detail.get("casts"))) or None
+    director = _clean_director(detail.get("director"))
+    rating = detail.get("rating")
+    imdb_rating = None
+    if isinstance(rating, (int, float)) and rating > 0:
+        imdb_rating = str(rating)
+    elif isinstance(rating, str) and rating.strip():
+        try:
+            if float(rating) > 0:
+                imdb_rating = rating.strip()
+        except ValueError:
+            pass
+    series_meta: dict = {}
+    if is_series:
+        series_meta["is_series"] = True
+    for key in ("series_status", "release_schedule", "release_day", "notes"):
+        value = detail.get(key)
+        if isinstance(value, str) and value.strip():
+            series_meta[key] = value.strip()
+    if detail.get("is_trending"):
+        series_meta["is_trending"] = True
+    if detail.get("is_pinned"):
+        series_meta["is_pinned"] = True
     synopsis = html.unescape(str(detail.get("description") or "").strip()) or None
 
     sources: list[dict] = []
@@ -257,6 +319,10 @@ def extract_title_data_movienestbd(detail: dict) -> dict | None:
         "backdrop_urls": json.dumps([detail["cover"]]) if detail.get("cover") and detail.get("cover") != detail.get("poster") else None,
         "synopsis": synopsis,
         "genres": json.dumps(all_genres) if all_genres else None,
+        "cast_names": cast_names,
+        "director": director,
+        "imdb_rating": imdb_rating,
+        "raw_meta": json.dumps(series_meta) if series_meta else None,
         "language": None,
         "source_site": SITE_NAME,
         "is_18_plus": 1 if detail.get("is_adult") else 0,
