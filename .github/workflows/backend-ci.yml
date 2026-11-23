@@ -11,6 +11,7 @@ name: 🐍 Backend CI — Stdlib Python Tests
 #     - Fast_Fetch/test_database.py          (catalog/DB + adult filtering)
 #     - Fast_Fetch/test_vidout.py            (VIDOUT extractor tests)
 #     - Fast_Fetch/test_fix1_dispatch.py    (FIX1: vidout+gdrive dispatch)
+#     - Fast_Fetch/test_fix2_dispatch.py    (FIX2: mp4moviez dispatch)
 #     - Fast_Fetch/test_catalog_v2.py        (v2 catalog projection)
 #     - Fast_Fetch/test_release_descriptor.py(release descriptor parsing)
 #     - Fast_Fetch/test_link_health.py       (link health prober; binds a
@@ -342,6 +343,12 @@ jobs:
         run: python3 -S Fast_Fetch/test_vidout.py
       - name: 🧪 test_fix1_dispatch.py
         run: python3 -S Fast_Fetch/test_fix1_dispatch.py
+
+      # FIX2 (sweep 2026-11-23): mp4moviez dl.php dispatch wiring — the
+      # branch that turns 53,096 final_url-NULL rows into real .mp4s.
+      # Offline — loopback server mimicking the measured chain, temp SQLite.
+      - name: 🧪 test_fix2_dispatch.py
+        run: python3 -S Fast_Fetch/test_fix2_dispatch.py
 
       - name: 🧪 test_catalog_v2.py
         run: python3 -S Fast_Fetch/test_catalog_v2.py
