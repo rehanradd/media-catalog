@@ -1215,6 +1215,13 @@ jobs:
       # temp SQLite, stubbed unwrappers + gate probe.
       - name: 🧪 test_expiry_bank.py
         run: python3 -S Fast_Fetch/test_expiry_bank.py
+      # Mega AES-CTR decrypt prototype (2026-11-23): pure-stdlib AES-128/
+      # 192/256 block + CTR + CBC, MEGA link-key unmerge, attrs decrypt,
+      # container-magic check. Offline — FIPS-197 / NIST SP 800-38A known
+      # vectors + fixtures built with the module's own encrypt path; the
+      # live 1 KiB proof is probe_mega_decrypt.py (workspace, not CI).
+      - name: 🧪 test_mega_crypto.py
+        run: python3 -S Fast_Fetch/test_mega_crypto.py
       # XprimeHub (Session 104): the 19th site, 18+ adult catalog — scrape only.
       # The flag is the feature: every row is_18_plus = 1 by site authority, and the
       # registry entry records scrape-only / never publish. Offline — temp SQLite files.
