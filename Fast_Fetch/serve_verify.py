@@ -463,7 +463,11 @@ def recheck_banked(hit: dict, *, want: str = "watch", conn=None,
       caller treats the row as a cache miss and the live resolver
       re-resolves, probes, and fails over to the next verified candidate.
       This function records nothing itself; the resolver's own evidence
-      path records once, so a dead row is never double-counted;
+      path records once, so a dead row is never double-counted. One
+      exception: a 403 on a signed URL whose own window is still open is
+      a header refusal, not a dead file (Referer-gated CDNs 403 the bare
+      re-probe on a live file), so the row is served like a transport
+      failure — and not refreshed, so the next press re-probes;
     * older + the probe fails with no HTTP answer at all (transport,
       timeout, DNS, TLS — ``NO_ANSWER_REASONS``): serve the banked row
       anyway and do NOT refresh it. A network blip says nothing about
@@ -497,6 +501,22 @@ def recheck_banked(hit: dict, *, want: str = "watch", conn=None,
         return {"serve": True, "reason": "transport", "refreshed": False}
     if not verified:
         status = int(fields.get("http_status") or 0)
+        if str(reason) == "http_403":
+            # Bank defect (b) — Referer-gated CDNs 403 the bare re-probe
+            # on a live file (mxcontent: latency audit 2026-11-23, mxdrop
+            # release 2221661 — every press past the fresh window fell
+            # through to a full cold resolve). A 403 on a signed URL
+            # whose own window is still open cannot be an expired
+            # signature — an expired URL is refused as `expired_url`
+            # before the probe — so it is a header refusal, and the row
+            # is served: the player fetches it with the app's headers.
+            # No refresh: there is no new liveness evidence, so the next
+            # press re-probes. A 403 with no window, or a window already
+            # closed, falls through to the refusal below.
+            _row_expiry = _epoch_of(hit.get("expires_at"))
+            if _row_expiry is not None and _row_expiry > moment:
+                return {"serve": True, "reason": "transport",
+                        "refreshed": False}
         if status != 0 or reason in ("expired_url", "webview",
                                      "empty_file") \
                 or str(reason).startswith("http_"):
