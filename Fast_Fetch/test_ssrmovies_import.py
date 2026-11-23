@@ -53,6 +53,41 @@ SAMPLE_SSR_MOVIE_HTML = """
 """
 
 
+# WP REST adoption (2026-11-23): live post 132230 "The Great Indian Kapil
+# Show S05", fetched from site4.ssrmovies.page/wp-json/wp/v2/posts/132230
+# ?_embed=1 on 2026-11-23. Transcribed faithfully (info block, first img,
+# Ep 09 heading, 3 linkszilla + 1 direct-cloud buttons) — the full live
+# content is 61 KB, so only the parts extraction reads are kept. Note the
+# trap this pins: featured_media is -1 and _embedded.wp:featuredmedia[0]
+# is the SITE INDEX (name/url/home/gmt_offset — no source_url), so the
+# poster must come from the first content image, never from _embedded.
+SAMPLE_SSR_REST_POST = {
+    "id": 132230,
+    "date": "2026-10-03T10:00:00",
+    "modified": "2026-11-21T09:00:00",
+    "slug": "the-great-indian-kapil-show-s05",
+    "link": "https://site4.ssrmovies.page/the-great-indian-kapil-show-s05/",
+    "title": {"rendered": "The Great Indian Kapil Show S05 NF 1080p 720p 480p WEB-DL x264 ESubs [Ep 09 ADDED]"},
+    "content": {"rendered": """
+<p><img class="aligncenter" src="https://imgurworld.top/images/2026/10/03/f60eb35cc4beaaf8e5689bdcfece0e5e.jpg" /></p>
+<p style="text-align: center;">The Great Indian Kapil Show 2025 S05 NF 1080p 720p 480p WEB-DL x264</p>
+<p style="text-align: center;">IMDb: 6.5/10 || Size: See below || Language: Hindi (ORG 5.1) Genres: Comedy Show Creators: Kapil Sharma Judges: Archana Puran Singh, Navjot Singh Sidhu Stars: Kapil Sharma, Sunil Grover, Krishna Abhishek, Kiku Sharda Storyline: Comedian Kapil Sharma hosts this laugh-out-loud variety talk show with celebrity guests, hilarious antics and his signature supporting cast. Rest Episodes Will Be Added Release Accordingly… || Ep 09 (Shreya Ghoshal, Badshah) – 21st November 2026 ||</p>
+<h2>Ep 09 (Shreya Ghoshal, Badshah) – 21st November 2026</h2>
+<p><a href="https://secure.linkszilla.top/view/LAZ-Z3ySyQ">Watch &amp; Download in 1080p - 1.85GB</a></p>
+<p><a href="https://secure.linkszilla.top/view/hLAaxa79nc">Watch &amp; Download in 720p - 811MB</a></p>
+<p><a href="https://secure.linkszilla.top/view/xQz96a-OXP">Watch &amp; Download in 480p - 306MB</a></p>
+<p><a href="https://dl.direct-cloud.top/d/BBB222">Download in 1080p - 1.8GB</a></p>
+"""},
+    "excerpt": {"rendered": "<p>The Great Indian Kapil Show 2025 S05 NF 1080p 720p 480p WEB-DL x264 IMDb: 6.5/10 || Size: See below || Language: Hindi (ORG 5.1) Genres: Comedy Show Creators: Kapil Sharma Judges: Archana Puran Singh, Navjot Singh Sidhu Stars: Kapil Sharm…</p>"},
+    "categories": [12],
+    "featured_media": -1,
+    "_embedded": {
+        "wp:term": [[{"id": 12, "name": "Bollywood Movies", "taxonomy": "category"}]],
+        "wp:featuredmedia": [{"name": "ssrmovies", "url": "https://site4.ssrmovies.page", "home": "https://site4.ssrmovies.page", "gmt_offset": "+5.5"}],
+    },
+}
+
+
 class TestSSRMoviesImport(unittest.TestCase):
 
     def setUp(self):
@@ -111,6 +146,11 @@ class TestSSRMoviesImport(unittest.TestCase):
         self.assertEqual(data["language"], "Punjabi")
         self.assertEqual(data["poster_url"], "https://imgurworld.top/images/2026/10/17/thaapi-main.jpg")
         self.assertIn("Thaapi 2026 Punjabi Full Movie", data["synopsis"])
+        # WP REST adoption: no genre/rating labels in this page, so neither
+        # is fabricated — the old code banked ["Action", "Drama"] here.
+        self.assertIsNone(data["genres"])
+        self.assertIsNone(data["imdb_rating"])
+        self.assertIsNone(data["cast_names"])
         self.assertEqual(len(data["releases"]), 3)
 
         qualities = [r["quality"] for r in data["releases"]]
@@ -224,6 +264,116 @@ class TestSSRMoviesImport(unittest.TestCase):
             scraped_flag = conn.execute("SELECT scraped FROM sitemap_cache WHERE loc = ?", (test_url,)).fetchone()[0]
             self.assertEqual(scraped_flag, 1)
 
+
+
+class TestSSRMoviesRestAdoption(unittest.TestCase):
+    """WP REST adoption (2026-11-23): extract from the REST post itself,
+    sync stores raw_json, worker never fetches when raw_json is present."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.temp_dir.name) / "test_ssrmovies.db"
+        fast_fetch.DB_PATH = self.db_path
+        fast_fetch.init_db()
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def test_extract_from_rest_post_kapil_show(self):
+        data = import_ssrmovies.extract_post_data_ssrmovies_enhanced(
+            post_url=SAMPLE_SSR_REST_POST["link"],
+            page_html="",
+            resolve_direct=False,
+            rest_post=SAMPLE_SSR_REST_POST,
+        )
+        self.assertIsNotNone(data)
+        self.assertEqual(data["clean_title"], "The Great Indian Kapil Show")
+        # Year is not in the title — it comes from the content heading.
+        self.assertEqual(data["year"], 2025)
+        self.assertEqual(data["content_type"], "series")
+        # Poster is the first content image: _embedded carries only the
+        # site index (no source_url), never a poster.
+        self.assertEqual(
+            data["poster_url"],
+            "https://imgurworld.top/images/2026/10/03/f60eb35cc4beaaf8e5689bdcfece0e5e.jpg")
+        self.assertTrue(data["synopsis"].startswith("Comedian Kapil Sharma hosts"))
+        self.assertNotIn("Watch & Download", data["synopsis"])
+        self.assertEqual(json.loads(data["genres"]), ["Comedy Show"])
+        self.assertEqual(data["imdb_rating"], 6.5)
+        self.assertEqual(data["director"], "Kapil Sharma")
+        self.assertIn("Kapil Sharma", data["cast_names"])
+        self.assertIn("Sunil Grover", data["cast_names"])
+        # Judges are on-screen talent too — they join the cast.
+        self.assertIn("Archana Puran Singh", data["cast_names"])
+        self.assertEqual(len(data["releases"]), 4)
+        self.assertEqual([r["episode"] for r in data["releases"]], [9, 9, 9, 9])
+        qualities = [r["quality"] for r in data["releases"]]
+        self.assertIn("1080p", qualities)
+        self.assertIn("720p", qualities)
+        self.assertIn("480p", qualities)
+        services = [r["sources"][0]["service"] for r in data["releases"]]
+        self.assertIn("linkszilla", services)
+        self.assertIn("direct_cloud", services)
+
+    def test_no_fabricated_genres_on_dual_audio_page(self):
+        html_doc = """<html><head><title>Some Movie 2024 Dual Audio 720p – SSRmovies</title></head>
+<body><p><a href="https://secure.linkszilla.top/view/AAA111">Watch &amp; Download in 720p - 1.1GB</a></p></body></html>"""
+        data = import_ssrmovies.extract_post_data_ssrmovies_enhanced(
+            "https://new1.ssrmovies.page/some-movie-2024-dual-audio-720p/",
+            html_doc, resolve_direct=False)
+        self.assertIsNone(data["genres"])
+        self.assertIsNone(data["imdb_rating"])
+
+    def test_sync_stores_raw_json_and_requests_embed(self):
+        client = import_ssrmovies.SSRMoviesClient(base_url="https://ssrmovies.surf")
+        sample_posts = [SAMPLE_SSR_REST_POST]
+        with patch.object(client, "get_json") as mock_json:
+            mock_json.side_effect = [
+                (200, [{"id": 132230}], {"x-wp-total": "1", "x-wp-totalpages": "1"}),
+                (200, sample_posts, {"x-wp-total": "1", "x-wp-totalpages": "1"}),
+            ]
+            synced = import_ssrmovies.sync_api_to_db(client, self.db_path, max_pages=1)
+            self.assertEqual(synced, 1)
+            # The probe only reads headers; the page fetch carries _embed=1.
+            self.assertEqual(len(mock_json.call_args_list), 2)
+            self.assertIn("_embed=1", mock_json.call_args_list[1].args[0])
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT loc, slug, raw_json FROM sitemap_cache").fetchone()
+            self.assertIsNotNone(row)
+            self.assertEqual(row["loc"], SAMPLE_SSR_REST_POST["link"])
+            stored = json.loads(row["raw_json"])
+            self.assertEqual(stored["id"], 132230)
+            self.assertEqual(stored["title"]["rendered"], SAMPLE_SSR_REST_POST["title"]["rendered"])
+
+    def test_worker_uses_raw_json_without_fetch(self):
+        client = import_ssrmovies.SSRMoviesClient(base_url="https://ssrmovies.surf")
+        test_url = SAMPLE_SSR_REST_POST["link"]
+        import_ssrmovies._ensure_sitemap_raw_json(self.db_path)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO sitemap_cache (loc, slug, scraped, site, raw_json) VALUES (?, ?, 0, 'ssrmovies', ?)",
+                (test_url, "the-great-indian-kapil-show-s05", json.dumps(SAMPLE_SSR_REST_POST)),
+            )
+            conn.commit()
+        with patch.object(client, "get_text") as mock_text:
+            mock_text.side_effect = AssertionError("page fetch must not run with raw_json")
+            ok, rels, srcs = import_ssrmovies.scrape_ssrmovies_worker(
+                post_url=test_url, client=client, resolve_direct=False,
+                raw_json_str=json.dumps(SAMPLE_SSR_REST_POST))
+            self.assertTrue(ok)
+            self.assertEqual(rels, 4)
+        with sqlite3.connect(self.db_path) as conn:
+            p_row = conn.execute(
+                "SELECT imdb_rating, genres, cast_names FROM posts WHERE clean_title = 'The Great Indian Kapil Show'").fetchone()
+            self.assertIsNotNone(p_row)
+            # posts.imdb_rating is a TEXT column; normalize_rating stores
+            # the float as its string form.
+            self.assertEqual(float(p_row[0]), 6.5)
+            self.assertEqual(json.loads(p_row[1]), ["Comedy Show"])
+            self.assertIn("Archana Puran Singh", p_row[2])
+            self.assertEqual(
+                conn.execute("SELECT scraped FROM sitemap_cache WHERE loc = ?", (test_url,)).fetchone()[0], 1)
 
 
 class Session104SSRMoviesTests(unittest.TestCase):

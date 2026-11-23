@@ -14,8 +14,9 @@ What the source carries per post (measured live 2026-11-23, see
 * ``title.rendered`` — full title, qualities/sizes in the string.
 * ``content.rendered`` — the post HTML. Its plain text carries a labelled
   info block on most sites (``IMDB Rating: 6.8/10``, ``Genres: Drama,
-  Family``, ``Director: …``, ``Stars Cast: …``, ``Languages: …``,
-  ``Film Story: …``) plus the per-quality download anchors.
+  Family``, ``Director: …`` / ``Creators: …``, ``Stars Cast: …`` /
+  ``Stars: …`` / ``Judges: …``, ``Languages: …``,
+  ``Film Story: …`` / ``Storyline: …``) plus the per-quality download anchors.
 * ``excerpt.rendered`` — a truncated synopsis start (ends in ``[…]``).
 * ``categories`` (ids) + ``_embedded.wp:term`` (names). Category NAMES
   are usually quality/language buckets (``720p Movies``,
@@ -93,8 +94,9 @@ _GENERIC_CATEGORIES = (
 _LABEL_PATTERNS: list[tuple[str, str]] = [
     ("imdb_rating", r"IMD[Bb]\s*(?:Ratings?|Rating)?\s*:"),
     ("release_date", r"(?:Released\s+Date|Release\s+Date)\s*:"),
-    ("director", r"(?:Director|Directed\s+by)\s*:"),
+    ("director", r"(?:Director|Directed\s+by|Creators?)\s*:"),
     ("cast", r"(?:Stars?\s+Cast|Star\s+Cast|Cast|Starring|Stars?)\s*:"),
+    ("judges", r"Judges?\s*:"),
     ("genres", r"Genres?\s*:"),
     ("languages", r"Languages?\s*:"),
     ("quality", r"(?:Video\s+)?Quality\s*:"),
@@ -197,7 +199,7 @@ def parse_labelled_text(text: str) -> dict:
             rating = parse_imdb_rating(m.group(0) + " " + value)
             if rating is not None:
                 out["imdb_rating"] = rating
-        elif key in ("genres", "cast"):
+        elif key in ("genres", "cast", "judges"):
             items = [
                 t for t in _split_list(value)
                 if not QUALITY_RE.search(t) and not SIZE_RE.search(t)
