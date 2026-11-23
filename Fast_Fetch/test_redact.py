@@ -790,11 +790,17 @@ class RateLimiterTests(unittest.TestCase):
         self.assertFalse(limiter.check("browse", "203.0.113.7")["allowed"])
 
     def test_cf_connecting_ip_is_the_per_user_key_behind_cloudflare(self):
-        # Scale bottleneck #1 (2026-11-20): nginx has no real_ip config, so
-        # X-Real-IP is the Cloudflare edge IP and every user behind one edge
-        # shared one bucket (browse = 1 req/s for all of them). Cloudflare
-        # sets CF-Connecting-IP to the real user address; nginx passes it
-        # through untouched. It is read first, loopback peer only.
+        # Scale bottleneck #1 (2026-11-20): nginx had no real_ip config, so
+        # X-Real-IP was the Cloudflare edge IP and every user behind one edge
+        # shared one bucket. The nginx `real_ip` patch has since landed (live
+        # 2026-11-23: `real_ip_header CF-Connecting-IP` plus the full CF
+        # ranges), so `$remote_addr` — and therefore `X-Real-IP` — is the
+        # real user address on the Cloudflare path, and it is read FIRST.
+        # `CF-Connecting-IP` is only the fallback for an edge that forwards
+        # it without setting `X-Real-IP`, and a typed value must never
+        # override the address nginx itself saw: on the direct-IP path a
+        # client can send any `CF-Connecting-IP` and nginx passes it through
+        # untouched, so reading it first minted fresh buckets at will.
         class _Handler:
             def __init__(self, peer, **headers):
                 self.client_address = (peer, 41234)
@@ -802,13 +808,14 @@ class RateLimiterTests(unittest.TestCase):
 
         edge = "172.68.174.168"
         user_a, user_b = "203.0.113.11", "203.0.113.22"
-        # Two users behind one edge are two buckets, not one.
+        # Two users behind one edge are two buckets, not one: nginx already
+        # resolved each to their own address, so X-Real-IP names the user.
         for user in (user_a, user_b):
             self.assertEqual(
                 redact.client_ip(_Handler(
                     "127.0.0.1",
                     **{"CF-Connecting-IP": user,
-                       "X-Real-IP": edge,
+                       "X-Real-IP": user,
                        "X-Forwarded-For": f"{user}, {edge}"})), user)
         limiter = redact.RateLimiter(limits={"browse": (2, 60.0)})
         for _ in range(2):
@@ -816,6 +823,19 @@ class RateLimiterTests(unittest.TestCase):
         self.assertFalse(limiter.check("browse", user_a)["allowed"])
         # The other user still has their own budget.
         self.assertTrue(limiter.check("browse", user_b)["allowed"])
+        # A spoofed CF-Connecting-IP must not override X-Real-IP: the direct
+        # path types any value, nginx passes it through, and only the address
+        # nginx set from $remote_addr is the edge's own measurement.
+        self.assertEqual(redact.client_ip(_Handler(
+            "127.0.0.1",
+            **{"CF-Connecting-IP": "198.51.100.99",
+               "X-Real-IP": user_a})), user_a)
+        # With no X-Real-IP (an edge that only forwards CF-Connecting-IP),
+        # the header is still the per-user key.
+        self.assertEqual(redact.client_ip(_Handler(
+            "127.0.0.1",
+            **{"CF-Connecting-IP": user_a,
+               "X-Forwarded-For": f"{user_a}, {edge}"})), user_a)
         # From a non-loopback peer the header is ignored, like X-Real-IP.
         direct = _Handler("198.51.100.9",
                           **{"CF-Connecting-IP": user_a,

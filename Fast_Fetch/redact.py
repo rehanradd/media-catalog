@@ -1801,16 +1801,20 @@ def client_ip(handler) -> str:
     trusts no forwarded header at all.
 
     Cloudflare sits in front of nginx now, and that changed what `$remote_addr`
-    is: it is the Cloudflare edge IP, shared by every user behind that edge, so
-    `X-Real-IP` keys one bucket per edge instead of per user (browse = 1 req/s
-    for all of them — scale bottleneck #1, 2026-11-20). Cloudflare sets
-    `CF-Connecting-IP` to the real user address on every request it proxies, and
-    nginx passes it through untouched (`proxy_params` sets `X-Real-IP`/`XFF` but
-    clears nothing), so it is read FIRST, before `X-Real-IP`. Once the nginx
-    `real_ip` patch lands, `$remote_addr` — and therefore `X-Real-IP` — is the
-    same user address and the order stops mattering; until then this is what
-    makes the buckets per-user. Same trust boundary as `X-Real-IP`: loopback
-    peer only.
+    is: until the nginx `real_ip` patch landed, it was the Cloudflare edge
+    IP, shared by every user behind that edge, so `X-Real-IP` keyed one
+    bucket per edge instead of per user (browse = 1 req/s for all of them —
+    scale bottleneck #1, 2026-11-20) and `CF-Connecting-IP` had to be read
+    first. The patch has landed (live 2026-11-23: `real_ip_header
+    CF-Connecting-IP` plus the full Cloudflare ranges, so `$remote_addr` —
+    and therefore `X-Real-IP` — is the real user address on the Cloudflare
+    path too, and nginx's own `limit_req` zone counts that same address).
+    `CF-Connecting-IP` is now read only when `X-Real-IP` is absent, for an
+    edge that forwards it without setting `X-Real-IP`: reading it first was
+    a hole on the direct-IP path, where a client can type any value and
+    nginx passes it through untouched, minting fresh buckets at will while
+    nginx's own zone still counted the true peer. Same trust boundary as
+    `X-Real-IP`: loopback peer only.
 
     This is not a trust decision about the response any more: the same leftmost
     read meant a Pakistani carrier-NAT user behind a shared proxy could be
@@ -1819,12 +1823,12 @@ def client_ip(handler) -> str:
     peer = str(getattr(handler, "client_address", ("",))[0] or "")
     if peer and peer not in ("127.0.0.1", "::1"):
         return peer
-    connecting = str(handler.headers.get("CF-Connecting-IP") or "").strip()
-    if connecting:
-        return connecting
     real = str(handler.headers.get("X-Real-IP") or "").strip()
     if real:
         return real
+    connecting = str(handler.headers.get("CF-Connecting-IP") or "").strip()
+    if connecting:
+        return connecting
     forwarded = [entry.strip() for entry in
                  str(handler.headers.get("X-Forwarded-For") or "").split(",")]
     forwarded = [entry for entry in forwarded if entry]
