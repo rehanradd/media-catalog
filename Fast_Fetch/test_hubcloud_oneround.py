@@ -319,9 +319,11 @@ class HubcloudOneroundTests(unittest.TestCase):
     # (i) one gamerxyt page banks ALL sibling rows ---------------------
 
     def test_one_gamerxyt_fetch_banks_all_siblings(self):
-        """Pressing the FSL row banks the 10Gbps + PixelDrain siblings
-        from the SAME gamerxyt fetch — one gamerxyt GET, three rows
-        fresh — and the drive row is untouched."""
+        """Pressing the FSL row banks the PixelDrain sibling from the
+        SAME gamerxyt fetch — one gamerxyt GET, two rows fresh — and
+        the drive row is untouched. The 10Gbps button on the same page
+        is NOT banked (dropped 2026-11-24): its anchor is dead by
+        construction, so the 10Gbps row keeps its stale URL."""
         fetch = hubcloud_fetch()
         res, _, ttl_calls = self._resolve_with(
             fetch, self.rows["fsl_r2"]["id"])
@@ -344,8 +346,7 @@ class HubcloudOneroundTests(unittest.TestCase):
                                time.time() + 18000, delta=120)
         # Siblings: fresh URLs from the same page, no re-resolve.
         ten_g = self._row("hubcloud_10g")
-        self.assertEqual(ten_g["final_url"], GBPS_URL)
-        self.assertEqual(ten_g["status"], "active")
+        self.assertEqual(ten_g["final_url"], self.rows["hubcloud_10g"]["final_url"])
         self.assertIsNone(ten_g["expires_at"])
         pixel = self._row("pixeldrain")
         self.assertEqual(pixel["final_url"], PIXEL_URL)
@@ -400,7 +401,6 @@ class HubcloudOneroundTests(unittest.TestCase):
         kinds = [(s["kind"], s["label"]) for s in verdict["sources"]]
         self.assertEqual(kinds, [("fslv2", "FSLv2"), ("fsl", "FSL"),
                                  ("pixel", "PixelServer"),
-                                 ("10gbps", "10Gbps"),
                                  ("zipdisk", "ZipDisk")])
         by_kind = {s["kind"]: s for s in verdict["sources"]}
         self.assertAlmostEqual(by_kind["fslv2"]["expires_at"],
@@ -408,8 +408,8 @@ class HubcloudOneroundTests(unittest.TestCase):
         self.assertAlmostEqual(by_kind["fsl"]["expires_at"],
                                time.time() + 28800, delta=120)
         self.assertIsNone(by_kind["pixel"]["expires_at"])
-        self.assertIsNone(by_kind["10gbps"]["expires_at"])
         self.assertIsNone(by_kind["zipdisk"]["expires_at"])
+        self.assertNotIn("10gbps", by_kind)
 
     # (ii) X-Amz-Expires parses to the correct expires_at --------------
 
@@ -472,11 +472,12 @@ class HubcloudOneroundTests(unittest.TestCase):
              {"kind": "zipdisk", "url": ZIPDISK_URL, "expires_at": None}],
             prefer_url=FSL_URL)
         by_service = {c["service"]: c for c in cands}
-        self.assertEqual(sorted(by_service), ["fsl_r2", "hubcloud_10g"])
+        self.assertEqual(sorted(by_service), ["fsl_r2"])
         self.assertEqual(by_service["fsl_r2"]["final_url"], FSL_URL)
         self.assertEqual(by_service["fsl_r2"]["expires_at"], 222)
         self.assertEqual(by_service["fsl_r2"]["is_temporary"], 1)
-        self.assertEqual(by_service["hubcloud_10g"]["is_temporary"], 0)
+        # The 10gbps kind maps to no sibling service since the drop:
+        # it is never banked, even when the page still publishes it.
 
     # (iii) stale-token retry happens exactly once ----------------------
 
@@ -517,7 +518,7 @@ class HubcloudOneroundTests(unittest.TestCase):
         self.assertEqual(seen["gx"], 2)
         services = [o["service"] for o in out]
         self.assertEqual(services, ["fsl_r2", "pixeldrain", "fsl_r2",
-                                    "hubcloud_10g", "hubcloud_zipdisk"])
+                                    "hubcloud_zipdisk"])
         fsl_items = [o for o in out if o["service"] == "fsl_r2"]
         self.assertEqual(len(fsl_items), 2)
         for item in fsl_items:

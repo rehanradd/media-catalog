@@ -1207,6 +1207,13 @@ jobs:
       # Offline — canned gamerxyt pages, temp SQLite, fake connections.
       - name: 🧪 test_hubcloud_oneround.py
         run: python3 -S Fast_Fetch/test_hubcloud_oneround.py
+      # HubCloud 10Gbps leg dropped (2026-11-24): the pixel.hubcloud
+      # anchor 302s to rohitkiskk.workers.dev and ends at HTTP 400
+      # "404 !" (banked) or an HTML page (fresh-minted) — verified live
+      # from Oracle VM egress — so no unwrapper emits it and no sibling
+      # banking refreshes hubcloud_10g rows. Offline — canned pages.
+      - name: 🧪 test_hubcloud_drop_10g.py
+        run: python3 -S Fast_Fetch/test_hubcloud_drop_10g.py
 
       # mp4moviez dl.php unwrapper (sweep FIX2, 2026-11-23): pure 3-hop
       # redirect chain to a real .mp4 (301 -> 302 -> 200 video/mp4).

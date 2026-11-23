@@ -5192,17 +5192,20 @@ _HUBCLOUD_QUALITY_RE = re.compile(r"(\d{3,4})[pP]")
 # which is CloudStream core HubCloud.kt's dispatch. "Download File" is
 # HubCloud.kt's direct-file case, slotted after FSL: it is a plain href to
 # a file, so it belongs with the direct-file group, and the named order
-# (FSLv2, FSL, PixelServer, S3, Buzz, Mega, PDL, 10Gbps) is preserved.
+# (FSLv2, FSL, PixelServer, S3, Buzz, Mega, PDL) is preserved. There is no
+# 10Gbps kind (dropped 2026-11-24): its anchor 302s to
+# rohitkiskk.workers.dev and ends at HTTP 400 "404 !" or an HTML page —
+# never video bytes — so the button is ignored, not probed or banked.
 _HUBCLOUD_ID_DISPATCH = {"s3": "fslv2", "fsl": "fsl",
                          "pxl-1": "pixel", "pxl": "pixel"}
 _HUBCLOUD_LABELS = {
     "fslv2": "FSLv2", "fsl": "FSL", "download": "Download",
     "pixel": "PixelServer", "s3": "S3", "buzz": "Buzz",
-    "mega": "Mega", "pdl": "PDL", "10gbps": "10Gbps",
+    "mega": "Mega", "pdl": "PDL",
     "zipdisk": "ZipDisk",
 }
 _HUBCLOUD_PRIORITY = ("fslv2", "fsl", "download", "pixel", "s3", "buzz",
-                      "mega", "pdl", "10gbps", "zipdisk")
+                      "mega", "pdl", "zipdisk")
 
 
 def _hubcloud_anchors(page: str) -> list[tuple[dict, str]]:
@@ -5267,8 +5270,6 @@ def _hubcloud_dispatch(attrs: dict, text: str) -> str:
         return "mega"
     if "pdl" in low:
         return "pdl"
-    if "10gbps" in low:
-        return "10gbps"
     return ""
 
 
@@ -5370,8 +5371,10 @@ def unwrap_hubcloud(url: str, fetch=None, verify: bool = True,
             200, ~17-20 KB; server buttons are <a class="btn …"> anchors
             dispatched by id/text: FSLv2 (#s3) -> FSL (#fsl) -> PixelServer
             (#pxl-1) -> S3 -> Buzz (GET $link/download, hx-redirect) ->
-            Mega -> PDL -> 10Gbps (a page, "Resume Not Supported")
-            -> ZipDisk (zip archives only; 206 application/x-zip).
+            Mega -> PDL -> ZipDisk (zip archives only; 206 application/x-zip).
+            The 10Gbps button is skipped outright (dropped 2026-11-24):
+            its anchor 302s to rohitkiskk.workers.dev and ends at HTTP 400
+            "404 !" or an HTML page, never at video bytes.
         Range-probe each candidate in that order; the first 206 with real
         video bytes is the file. A ZipDisk candidate is served when its
         probe is 206 application/x-zip: the bytes prove the archive even

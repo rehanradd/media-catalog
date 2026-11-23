@@ -4663,9 +4663,13 @@ def is_bridge_url(url: str) -> bool:
     path = (parsed.path or "").lower()
     query = (parsed.query or "").lower()
     if "hubcloud" in host:
-        # `pixel.hubcloud…` is the 10Gbps byte server; everything else on a
-        # hubcloud host is the `/drive/<id>` landing page or a gpdl redirector.
-        return not host.startswith("pixel.")
+        # Every hubcloud host is a landing page, including
+        # `pixel.hubcloud…`: its anchor 302s to rohitkiskk.workers.dev
+        # and ends at HTTP 400 "404 !" or an HTML page (verified live
+        # 2026-11-24) — it was treated as the 10Gbps byte server until
+        # the leg was dropped, and a stored one must be refreshed,
+        # never served as a stream.
+        return True
     if "gamerxyt" in host:
         return "link=" not in query          # dl.php?link=<direct> unwraps
     if "fastdl" in host:
@@ -4939,10 +4943,15 @@ def unwrap_hubcloud_drive(hub_drive_url: str) -> list[dict]:
     Unwraps HubCloud Drive URL (e.g. https://hubcloud.ist/drive/<ID>)
     via gamerxyt.com/hubcloud.php directly to:
     - Cloudflare R2 bucket signed stream (HTTP 206 resumable)
-    - 10Gbps Server
     - PixelDrain server
     - ZipDisk Server (Google anonymous download; zip archives)
     Returns list of source dicts.
+
+    The 10Gbps Server button is NOT returned (dropped 2026-11-24):
+    its anchor (pixel.hubcloud.*) 302s to rohitkiskk.workers.dev and
+    ends at HTTP 400 "404 !" (banked anchors, verified live 2/2) or
+    at an HTML link-generator page (fresh-minted anchor, verified
+    live) — never at video bytes. Banking it only serves a dead link.
 
     One-round refresh (2026-11-23): the gamerxyt token is
     server-embedded/time-bucketed, and a stale one renders the expiry
@@ -5044,16 +5053,11 @@ def _parse_gamerxyt_buttons(gx_html: str) -> list[dict]:
                 "is_temporary": 1,
                 "expires_at": _r2_presigned_expiry(href),
             })
-        elif "pixel.hubcloud" in h_lower or "10gbps" in clean_t.lower():
-            out.append({
-                "source_name": "⚡ HubCloud [10Gbps Fast Server]",
-                "service": "hubcloud_10g",
-                "resource_id": "",
-                "source_url": "",
-                "final_url": href,
-                "is_temporary": 0,
-                "expires_at": None,
-            })
+        # No 10Gbps branch (dropped 2026-11-24): a pixel.hubcloud /
+        # "10Gbps" button's anchor 302s to rohitkiskk.workers.dev and
+        # ends at HTTP 400 "404 !" or an HTML page — never video bytes
+        # — so it is skipped here, not banked. See the unwrapper's
+        # docstring for the live verification.
         elif "pixeldrain" in h_lower:
             direct_pd, pd_id, _ = unwrap_pixeldrain(href)
             out.append({
@@ -9521,7 +9525,7 @@ RESOLVE_FAILURE_CLASSES = ("probe_failed", "no_unwrapper", "unwrap_failed")
 #: expires_in, so the 37,088 voe/stream rows bank a true expiry
 #: instead of NULL and presses inside the window serve banked
 #: instead of cold re-resolving (3.1 s / 1.7 s).
-RESOLVER_VERSION = 16
+RESOLVER_VERSION = 17
 
 
 def _is_transport_verdict(verdict) -> bool:
@@ -9857,23 +9861,29 @@ def _deadline_expired_answer(source_id: int) -> dict:
 
 
 #: Services one HubCloud drive fans out to at ingest (one drive link
-#: becomes up to four rows: hubdrive + fsl_r2 + hubcloud_10g +
-#: pixeldrain). Sibling banking only ever UPDATEs rows in this set —
-#: never the drive row itself (its final_url IS the drive page) and
-#: never INSERTs a row the ingest did not create.
-_HUBCLOUD_SIBLING_SERVICES = ("fsl_r2", "hubcloud_10g", "pixeldrain")
+#: becomes up to three rows: hubdrive + fsl_r2 + pixeldrain). Sibling
+#: banking only ever UPDATEs rows in this set — never the drive row
+#: itself (its final_url IS the drive page) and never INSERTs a row
+#: the ingest did not create. hubcloud_10g was dropped from this set
+#: 2026-11-24: its banked anchor is dead by construction (pixel host
+#: 302 -> workers.dev -> 400 "404 !", verified live), so a fresh
+#: resolve must not refresh it — the 81,995 existing rows are left
+#: to go stale for the sweep / a later dead-batch, never re-banked.
+_HUBCLOUD_SIBLING_SERVICES = ("fsl_r2", "pixeldrain")
 
 #: Gamerxyt button kind -> sibling service. Kinds with no sibling row
 #: (download, s3, buzz, mega, pdl, zipdisk) are not banked: ZipDisk is
 #: a zip archive, not a stream, and the resolver never banks it (see
 #: host_resolvers.unwrap_hubcloud); the rest have no ledger service.
+#: "10gbps" maps to nothing since 2026-11-24 (dead anchor, see above)
+#: so a verdict source carrying that kind is never banked either.
 _HUBCLOUD_KIND_TO_SERVICE = {
     "fsl": "fsl_r2", "fslv2": "fsl_r2",
-    "10gbps": "hubcloud_10g", "pixel": "pixeldrain",
+    "pixel": "pixeldrain",
 }
 
 #: is_temporary per sibling service: only the signed R2 URL dies.
-_HUBCLOUD_SIBLING_TEMPORARY = {"fsl_r2": 1, "hubcloud_10g": 0, "pixeldrain": 0}
+_HUBCLOUD_SIBLING_TEMPORARY = {"fsl_r2": 1, "pixeldrain": 0}
 
 
 def _normalize_hubcloud_candidates(entries, *, prefer_url=None):
@@ -9966,14 +9976,17 @@ def _bank_hubcloud_siblings(*, release_id, pressed_id, candidates):
                 # sibling (PixelServer) derives nothing, so the old
                 # measurement is dropped exactly as before — a stale,
                 # longer window must not outlive the token it was read
-                # from.
-                _derived = _derive_resolve_expiry(cand["final_url"])
+                # from. (Drop-10g: the 10Gbps sibling is gone, but the
+                # derive still applies to fsl_r2's R2 expiry; for a
+                # PixelServer sibling the derive returns None and the
+                # clear below runs, as drop-10g intended.)
+                _derived = _derive_resolve_expiry(cand[final_url])
                 if _derived is not None:
-                    record_link_expiry(sid, expires_at=_derived["expires_at"],
-                                       observed_via=_derived["observed_via"])
+                    record_link_expiry(sid, expires_at=_derived[expires_at],
+                                       observed_via=_derived[observed_via])
                 else:
                     record_link_expiry(sid, clear=True,
-                                       observed_via="signed_params")
+                                       observed_via=signed_params)
         except Exception:
             pass
     return len(banked)
