@@ -8627,7 +8627,13 @@ RESOLVE_FAILURE_CLASSES = ("probe_failed", "no_unwrapper", "unwrap_failed")
 #: JWPlayer file:, not the packed config, so the packer branch answered
 #: "unknown" on every real vidmoly page; unwrap_vidmoly reads it and
 #: Range-probes it. Rows failed under v8 deserve one fresh press.
-RESOLVER_VERSION = 9
+#: 10 — MovieHax WP-family import (2026-11-23): unquoted href=/src=
+#: attributes are now parsed (moviehax writes them bare) and
+#: empty-label image-button anchors count as download sources on
+#: proven bridge hosts (filemoon.sx, pixeldrain.com). Moviehax rows
+#: that pressed empty under v9 deserve one fresh press now that the
+#: bridges are collected.
+RESOLVER_VERSION = 10
 
 def _is_transport_verdict(verdict) -> bool:
     """True when a probe/unwrapper verdict names a transport failure (HTTP 0).

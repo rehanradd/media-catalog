@@ -13,6 +13,8 @@ Measured on 2026-10-29 (see /tmp/new_site_candidates_20261028.json):
 * moviehax.run — WordPress + Dooplay; the catalogue lives in the movies CPT,
   so posts sitemaps are tiny and movies-sitemap.xml is the catalog surface.
   "18+ ... Adult" titles share the same catalogue, so the adult rule runs here.
+  Its pages write href=/src= attributes with no quotes (sweep S4, 2026-11-23),
+  so the anchor/iframe patterns accept quoted and bare values alike.
 * thebollyflix.gen.in — WP, X-WP-Total 17,827, one bflixcdn.xyz iframe per post;
   the family hops domains, so identity is title+year, never the host.
 * animeworld.live — WP, 596 posts, Hindi-dub episode pages; the player is
@@ -70,6 +72,21 @@ ADULT_KEYWORDS = {
 QUALITY_RE = re.compile(r"\b(2160p|1440p|1080p|720p|480p|360p|240p|4k)\b", re.I)
 SIZE_RE = re.compile(r"\b\d+(?:\.\d+)?\s?(?:mb|gb)\b", re.I)
 DOWNLOAD_WORD_RE = re.compile(r"\bdownload\b", re.I)
+# Image-button download anchors carry no label at all (no quality token, no
+# size), so the label gate in _sources_from_html drops them — including
+# moviehax's download buttons, which are <a href=...><img ...></a> banners
+# in the post body (measured 2026-11-23: filemoon /d/<code>/<Title>.mp4 and
+# pixeldrain /u/<id>, one pair per series post, inside <div class=wp-content>,
+# wrapping the site's own fast-download banner images; filemoon answers 206
+# to a 1-byte Range probe, pixeldrain's sampled 2024 files are 404/stale).
+# An empty-label image-button anchor counts as a source ONLY on a host here.
+# Deliberately NOT listed, on the same measurement: wishfast.top (its button
+# 302s to an ad redirector, aipages.dev) and d0000d.com (unproven — its
+# /d/<code> 301s to playmogo.com, which answers a Cloudflare challenge, so
+# no live file was confirmed); listeamed.net is out too (the whole domain,
+# homepage included, now 302s to an ad-click tracker, junimedclk.com).
+# Host match is exact or a subdomain of a listed host.
+IMAGE_BUTTON_BRIDGE_HOSTS = ("filemoon.sx", "pixeldrain.com")
 BRACKET_RE = re.compile(r"\[[^\]]*\]?")
 PAREN_PACKAGING_RE = re.compile(
     r"\((?:[^)]*\b(?:\d{3,4}p|4k|hd|uhd|web-?dl|bluray|hevc|10bit|esub|dual|multi)\b[^)]*)\)",
@@ -92,9 +109,33 @@ LANGUAGE_WORDS = ("hindi", "tamil", "telugu", "malayalam", "kannada", "punjabi",
 ANIMATED_WORDS = ("anime", "animation", "animated", "cartoon")
 
 IFRAME_TAG_RE = re.compile(r"<iframe\b[^>]*>", re.I)
+# An attribute value is quoted ("..." or '...', and may then contain ">" or
+# spaces) or bare — moviehax writes href=/src= with no quotes at all
+# (sweep S4, 2026-11-23: 110 unquoted vs 4 quoted href= per post), so the
+# quoted-only patterns used to miss every bridge on its pages. A bare value
+# ends at whitespace, a quote, a backtick or the tag's ">", per the HTML rule
+# for unquoted attribute values; "=" stays legal inside it so a query string
+# (...?a=b) is not cut short. One capture group per quoting style.
+_ATTR_VALUE = r"""(?:"([^"]+)"|'([^']+)'|([^\s"'`>]+))"""
 SRC_ATTR_RE = re.compile(
-    r"\b(?:data-litespeed-src|data-lazy-src|data-src|src)=[\"']([^\"']+)[\"']", re.I)
-ANCHOR_RE = re.compile(r"<a\b[^>]*href=[\"']([^\"']+)[\"'][^>]*>(.*?)</a>", re.I | re.S)
+    r"\b(?:data-litespeed-src|data-lazy-src|data-src|src)=\s*" + _ATTR_VALUE, re.I)
+ANCHOR_RE = re.compile(
+    r"<a\b[^>]*href=\s*" + _ATTR_VALUE + r"[^>]*>(.*?)</a>", re.I | re.S)
+
+
+def _attr_value(match: re.Match | None) -> str:
+    """The value of a quoted-or-unquoted attribute match.
+
+    SRC_ATTR_RE/ANCHOR_RE carry one capture group per quoting style, so
+    exactly one of the leading groups is set; the anchor's inner text is the
+    trailing group and is never returned here.
+    """
+    if match is None:
+        return ""
+    for group in match.groups()[:3]:
+        if group is not None:
+            return group
+    return ""
 OG_RE = r"<meta[^>]+property=[\"']og:{name}[\"'][^>]+content=[\"']([^\"']*)[\"']"
 META_RE = r"<meta[^>]+name=[\"']{name}[\"'][^>]+content=[\"']([^\"']*)[\"']"
 TAG_RE = re.compile(r"<a\b[^>]*rel=[\"']tag[\"'][^>]*>(.*?)</a>", re.I | re.S)
@@ -324,8 +365,7 @@ def _dooplay_player_sources(html: str, page_url: str, cfg: dict) -> list[dict]:
             continue
         embed = payload.get("embed_url") or ""
         if "<iframe" in embed:
-            m = SRC_ATTR_RE.search(embed)
-            embed = m.group(1) if m else ""
+            embed = _attr_value(SRC_ATTR_RE.search(embed))
         embed = html_mod.unescape(embed).strip()
         if not embed.startswith(("http://", "https://")):
             continue
@@ -478,15 +518,16 @@ def _sources_from_html(html: str, page_url: str,
         })
 
     for tag in IFRAME_TAG_RE.findall(html):
-        for src in SRC_ATTR_RE.findall(tag):
-            _add_embed(src)
+        for m in SRC_ATTR_RE.finditer(tag):
+            _add_embed(_attr_value(m))
     # Some themes drop the player URL into the body text with no <iframe> at all.
     for host in cfg.get("player_hosts") or []:
         for m in re.finditer(
                 r"https?://[a-z0-9.-]*" + re.escape(host) + r"[^\s\"'<>]*", html, re.I):
             _add_embed(m.group(0))
-    for href, inner in ANCHOR_RE.findall(html):
-        href = html_mod.unescape(href).strip()
+    for m in ANCHOR_RE.finditer(html):
+        href = html_mod.unescape(_attr_value(m)).strip()
+        inner = m.group(4)
         text = _strip_tags(inner)
         if not href.startswith(("http://", "https://")):
             continue
@@ -502,7 +543,16 @@ def _sources_from_html(html: str, page_url: str,
                                 and DOWNLOAD_WORD_RE.match(text.strip())):
             continue
         if not (quality or size) and not is_internal:
-            continue
+            # Label-less image-button anchor: a download button whose label is
+            # a banner image, not text. It counts ONLY on a proven bridge host
+            # (IMAGE_BUTTON_BRIDGE_HOSTS) — the same pages carry image-button
+            # links to ad/shortlink hosts, which must stay dropped.
+            is_image_button = not text and "<img" in inner.lower()
+            is_bridge_host = any(
+                host == h or host.endswith("." + h)
+                for h in IMAGE_BUTTON_BRIDGE_HOSTS)
+            if not (is_image_button and is_bridge_host):
+                continue
         if href in seen:
             continue
         seen.add(href)

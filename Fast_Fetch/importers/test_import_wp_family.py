@@ -148,6 +148,210 @@ class ParsePageTests(unittest.TestCase):
         self.assertEqual(post["is_18_plus"], 1)
 
 
+# Moviehax writes href=/src= attributes with no quotes at all (sweep S4,
+# 2026-11-23: 110 unquoted vs 4 quoted href= per post). The quoted-only
+# patterns used to miss every bridge on such a page.
+UNQUOTED_PAGE = """<html><head>
+<meta property="og:title" content="Terminator Zero (2024) Hindi Dubbed">
+</head><body>
+<iframe src=https://pixeldrain.com/u/abc123></iframe>
+<iframe src='https://listeamed.net/e/xyz789'></iframe>
+<div class="dl">
+ <a href=https://pixeldrain.com/u/def456>Terminator Zero 2024 720p WEB-DL 900MB</a>
+ <a href="https://filemoon.sx/d/ghi789">Terminator Zero 2024 1080p WEB-DL 2.1 GB</a>
+ <a href='https://cdn.example.com/tz-480p.mkv'>Terminator Zero 2024 480p 400MB</a>
+</div>
+</body></html>"""
+
+
+class UnquotedAttributeTests(unittest.TestCase):
+    def test_unquoted_iframe_src_is_collected(self):
+        html = ('<iframe src=https://pixeldrain.com/u/abc123></iframe>'
+                '<iframe src="https://filemoon.sx/e/xyz789"></iframe>')
+        got = wp._sources_from_html(html, "https://moviehax.run/x/",
+                                    {"base": "https://moviehax.run"})
+        self.assertEqual([s["source_url"] for s in got],
+                         ["https://pixeldrain.com/u/abc123",
+                          "https://filemoon.sx/e/xyz789"])
+
+    def test_unquoted_anchor_href_is_collected_with_quality(self):
+        html = ('<a href=https://pixeldrain.com/u/def456>'
+                'Terminator Zero 2024 720p WEB-DL 900MB</a>')
+        got = wp._sources_from_html(html, "https://moviehax.run/x/",
+                                    {"base": "https://moviehax.run"})
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0]["source_url"], "https://pixeldrain.com/u/def456")
+        self.assertEqual(got[0]["quality"], "720p")
+        self.assertEqual(got[0]["playback_type"], "download")
+
+    def test_unquoted_value_stops_at_space_and_keeps_query_string(self):
+        html = ('<a href=https://pixeldrain.com/u/abc123 class="dl-btn">'
+                'Film 2024 1080p 1GB</a>'
+                '<iframe src=https://example.com/e/abc?x=1&y=2></iframe>')
+        got = wp._sources_from_html(html, "https://moviehax.run/x/",
+                                    {"base": "https://moviehax.run"})
+        self.assertEqual([s["source_url"] for s in got],
+                         ["https://example.com/e/abc?x=1&y=2",
+                          "https://pixeldrain.com/u/abc123"])
+
+    def test_quoted_value_containing_gt_is_not_cut_short(self):
+        html = ('<a href="https://example.com/?q=a>b">Film 2024 720p 500MB</a>'
+                "<a href='https://example.com/?q=c>d'>Film 2024 480p 400MB</a>")
+        got = wp._sources_from_html(html, "https://moviehax.run/x/",
+                                    {"base": "https://moviehax.run"})
+        self.assertEqual([s["source_url"] for s in got],
+                         ["https://example.com/?q=a>b",
+                          "https://example.com/?q=c>d"])
+
+    def test_mixed_quotes_and_unquoted_on_one_moviehax_page(self):
+        post = wp.parse_page(UNQUOTED_PAGE,
+                             "https://moviehax.run/movies/terminator-zero-2024/",
+                             "moviehax")
+        self.assertIsNotNone(post)
+        self.assertEqual(post["clean_title"], "Terminator Zero Hindi Dubbed")
+        self.assertEqual(post["year"], 2024)
+        urls = sorted(s["source_url"] for rel in post["releases"]
+                      for s in rel["sources"])
+        self.assertEqual(urls, [
+            "https://cdn.example.com/tz-480p.mkv",
+            "https://filemoon.sx/d/ghi789",
+            "https://listeamed.net/e/xyz789",
+            "https://pixeldrain.com/u/abc123",
+            "https://pixeldrain.com/u/def456",
+        ])
+        kinds = sorted(((rel["quality"], s["playback_type"])
+                        for rel in post["releases"] for s in rel["sources"]),
+                       key=lambda k: (k[0] or "", k[1]))
+        self.assertEqual(kinds, [(None, "iframe"), (None, "iframe"),
+                                 ("1080p", "download"), ("480p", "download"),
+                                 ("720p", "download")])
+
+    def test_same_unquoted_page_parses_for_a_sibling_site(self):
+        # The patterns live in the shared WP-family helper, so every site it
+        # serves (moviehax, bollyflix, animeworld, hindidubbedmovies,
+        # hindianimeszone) gains the fix, not just moviehax.
+        got = wp._sources_from_html(UNQUOTED_PAGE, "https://thebollyflix.gen.in/x/",
+                                    {"base": "https://thebollyflix.gen.in"})
+        self.assertEqual(sorted(s["source_url"] for s in got), [
+            "https://cdn.example.com/tz-480p.mkv",
+            "https://filemoon.sx/d/ghi789",
+            "https://listeamed.net/e/xyz789",
+            "https://pixeldrain.com/u/abc123",
+            "https://pixeldrain.com/u/def456",
+        ])
+
+
+# Moviehax's download buttons are image-button anchors: <a href=...><img></a>
+# with empty inner text, so the quality/size label gate drops them. They count
+# ONLY on a proven bridge host (IMAGE_BUTTON_BRIDGE_HOSTS). The fixture below
+# mirrors the live Jab Mila Tu pages (2026-11-23): unquoted hrefs, the site's
+# own banner images, filemoon /d/<code>/<Title>.mp4 + pixeldrain /u/<id>.
+JAB_PAGE = """<html><head>
+<meta property="og:title" content="Jab Mila Tu (2024 Ep 5-8) Hindi Season 1">
+</head><body><div class="wp-content">
+<p><a href=https://filemoon.sx/d/emhq833ezmhg/Jab_Mila_Tu__2024_Ep_5-8__Hindi_Season_1.mp4><img src=https://moviehax.run/wp-content/uploads/2022/11/fast-download-logo-300x20.jpg alt width=1230 height=82></a></p>
+<p><a href=https://pixeldrain.com/u/fF29RHAM><img src=https://moviehax.run/wp-content/uploads/2022/10/a-300x22.jpg alt width=1240 height=91></a></p>
+<p><a href=https://wishfast.top/o3vfpze8wdcx><img src=https://moviehax.run/wp-content/uploads/2022/10/a-300x22.jpg alt width=1240 height=91></a></p>
+<p><a href=https://d0000d.com/d/covwa5i4fzmt><img src=https://moviehax.run/wp-content/uploads/2022/10/v-300x21.jpg alt width=1242 height=87></a></p>
+</div></body></html>"""
+
+
+def _moviehax_sources(html):
+    return wp._sources_from_html(html, "https://moviehax.run/x/",
+                                 {"base": "https://moviehax.run"})
+
+
+class ImageButtonBridgeTests(unittest.TestCase):
+    def test_image_button_filemoon_is_collected(self):
+        html = ('<a href=https://filemoon.sx/d/emhq833ezmhg/'
+                'Jab_Mila_Tu__2024_Ep_5-8__Hindi_Season_1.mp4>'
+                '<img src=https://moviehax.run/wp-content/uploads/2022/11/'
+                'fast-download-logo-300x20.jpg></a>')
+        got = _moviehax_sources(html)
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0]["source_url"],
+                         "https://filemoon.sx/d/emhq833ezmhg/"
+                         "Jab_Mila_Tu__2024_Ep_5-8__Hindi_Season_1.mp4")
+        self.assertEqual(got[0]["playback_type"], "download")
+        self.assertIsNone(got[0]["quality"])
+        self.assertEqual(got[0]["release_title"], "Download")
+
+    def test_image_button_pixeldrain_is_collected(self):
+        html = ('<a href="https://pixeldrain.com/u/fF29RHAM">'
+                '<img src="https://moviehax.run/wp-content/uploads/2022/10/'
+                'a-300x22.jpg" alt=""></a>')
+        got = _moviehax_sources(html)
+        self.assertEqual([s["source_url"] for s in got],
+                         ["https://pixeldrain.com/u/fF29RHAM"])
+
+    def test_image_button_subdomain_of_bridge_host_is_collected(self):
+        html = ('<a href="https://www.pixeldrain.com/u/abc123">'
+                '<img src="https://moviehax.run/b.jpg"></a>')
+        got = _moviehax_sources(html)
+        self.assertEqual([s["source_url"] for s in got],
+                         ["https://www.pixeldrain.com/u/abc123"])
+
+    def test_image_button_wishfast_is_dropped(self):
+        # Live Gen V page: the same banner slot also links wishfast.top, whose
+        # URL 302s to an ad redirector — an ad button, not a bridge.
+        html = ('<a href=https://wishfast.top/o3vfpze8wdcx>'
+                '<img src=https://moviehax.run/wp-content/uploads/2022/10/'
+                'a-300x22.jpg></a>')
+        self.assertEqual(_moviehax_sources(html), [])
+
+    def test_image_button_d0000d_is_dropped(self):
+        # Unproven: its /d/<code> 301s to playmogo.com behind a Cloudflare
+        # challenge, so no live file was confirmed — it stays out until proven.
+        html = ('<a href=https://d0000d.com/d/covwa5i4fzmt>'
+                '<img src=https://moviehax.run/wp-content/uploads/2022/10/'
+                'v-300x21.jpg></a>')
+        self.assertEqual(_moviehax_sources(html), [])
+
+    def test_image_button_internal_logo_is_dropped(self):
+        html = ('<a href="https://moviehax.run/">'
+                '<img src="https://moviehax.run/wp-content/uploads/2026/11/'
+                'moviehax-logo-360x120-1.webp" alt="MovieHax"></a>')
+        self.assertEqual(_moviehax_sources(html), [])
+
+    def test_empty_anchor_without_img_to_bridge_host_is_dropped(self):
+        # The exception is for image buttons, not for any empty anchor to a
+        # bridge host (e.g. a tracking pixel link).
+        html = '<a href="https://filemoon.sx/d/abc123"></a>'
+        self.assertEqual(_moviehax_sources(html), [])
+
+    def test_labelled_anchor_without_quality_still_dropped(self):
+        # The gate is unchanged for labelled anchors: no quality/size token,
+        # no bridge-host image button, no source — even off the allowlist.
+        html = ('<a href="https://example.com/watch">Watch Online</a>'
+                '<a href="https://filemoon.sx/d/abc123">Watch Online</a>')
+        self.assertEqual(_moviehax_sources(html), [])
+
+    def test_jab_page_collects_bridges_and_drops_ad_buttons(self):
+        got = _moviehax_sources(JAB_PAGE)
+        self.assertEqual(sorted(s["source_url"] for s in got), [
+            "https://filemoon.sx/d/emhq833ezmhg/"
+            "Jab_Mila_Tu__2024_Ep_5-8__Hindi_Season_1.mp4",
+            "https://pixeldrain.com/u/fF29RHAM",
+        ])
+
+    def test_parse_page_with_only_image_button_bridges_returns_post(self):
+        with mock.patch.object(wp, "_dooplay_player_sources", return_value=[]):
+            post = wp.parse_page(
+                JAB_PAGE,
+                "https://moviehax.run/jab-mila-tu-2024-ep-5-8-hindi-season-1/",
+                "moviehax")
+        self.assertIsNotNone(post)
+        self.assertEqual(len(post["releases"]), 1)
+        rel = post["releases"][0]
+        self.assertIsNone(rel["quality"])
+        self.assertEqual(
+            sorted(s["source_url"] for s in rel["sources"]), [
+                "https://filemoon.sx/d/emhq833ezmhg/"
+                "Jab_Mila_Tu__2024_Ep_5-8__Hindi_Season_1.mp4",
+                "https://pixeldrain.com/u/fF29RHAM",
+            ])
+
+
 class DooplayTests(unittest.TestCase):
     PAGE = ('<html><head><meta property="og:title" content="Generation Iron 2 (2017)">'
             '</head><body><ul id="playeroptionsul" class="ajax_mode">'
