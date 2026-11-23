@@ -5,7 +5,9 @@ import_ssrmovies.py — Dedicated staging importer and scraper for SSRMovies (ht
 Key Features:
   1. Dedicated staging SQLite database: ssrmovies.db (isolated from production fast_fetch.db).
   2. Full WP REST API sync: Paginates https://new1.ssrmovies.page/wp-json/wp/v2/posts?per_page=100
-     across all ~274 pages (27,362+ catalog titles).
+     across all ~274 pages (27,362+ catalog titles). Sync stores the full
+     REST post (with _embed=1) as raw_json, so extraction runs off the
+     post itself — no per-post page fetch (WP REST adoption, 2026-11-23).
   3. Clean Metadata Extraction:
      - Clean Title, Year, Audio/Language (Dual Audio, Hindi, Punjabi, South Dubbed, English).
      - Poster Image extraction (embedded CDN, TMDB, or OpenGraph).
@@ -54,6 +56,7 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 import fast_fetch
+import wp_rest
 from config import staging_db_path
 from domain_resolver import get_active_base_url, resolve_if_dead
 
@@ -165,10 +168,23 @@ class SSRMoviesClient:
         return 0, None, {}
 
 
+def _ensure_sitemap_raw_json(db_path: Path) -> None:
+    """WP REST adoption (2026-11-23): the queue carries the full REST post
+    (``raw_json``) so extraction needs no per-post page fetch. The shared
+    ``fast_fetch`` schema has no such column; add it when missing."""
+    with sqlite3.connect(str(db_path)) as conn:
+        cols = {c[1] for c in conn.execute(
+            "PRAGMA table_info(sitemap_cache);").fetchall()}
+        if "raw_json" not in cols:
+            conn.execute("ALTER TABLE sitemap_cache ADD COLUMN raw_json TEXT;")
+            conn.commit()
+
+
 def sync_api_to_db(client: SSRMoviesClient, db_path: Path, max_pages: int | None = None) -> int:
     """Fetches post URLs from SSRMovies WP REST API and populates sitemap_cache."""
     fast_fetch.DB_PATH = db_path
     fast_fetch.init_db()
+    _ensure_sitemap_raw_json(db_path)
 
     print(f"[*] Probing SSRMovies WP REST API at {client.base_url}/wp-json/wp/v2/posts...", flush=True)
     probe_url = f"{client.base_url}/wp-json/wp/v2/posts?per_page=1"
@@ -212,7 +228,10 @@ def sync_api_to_db(client: SSRMoviesClient, db_path: Path, max_pages: int | None
     for page in range(1, pages_to_fetch + 1):
         if STOP_REQUESTED:
             break
-        page_url = f"{client.base_url}/wp-json/wp/v2/posts?per_page=100&page={page}"
+        # _embed=1 carries wp:featuredmedia (poster) + wp:term (category
+        # names) inside each post; the whole post is stored as raw_json
+        # so the worker extracts from it instead of fetching the page.
+        page_url = f"{client.base_url}/wp-json/wp/v2/posts?per_page=100&page={page}&_embed=1"
         p_code, p_data, _ = client.get_json(page_url)
         if p_code != 200 or not isinstance(p_data, list):
             print(f"    [!] Error fetching page {page} (HTTP {p_code})", flush=True)
@@ -225,11 +244,12 @@ def sync_api_to_db(client: SSRMoviesClient, db_path: Path, max_pages: int | None
                 continue
             slug = item.get("slug") or post_url.rstrip("/").split("/")[-1]
             modified = item.get("modified")
-            
+
             if (slug and slug in existing_slugs) or (post_url in existing_locs):
                 total_existing += 1
             else:
-                records.append((post_url, modified, slug, 0, "ssrmovies"))
+                records.append((post_url, modified, slug, 0, "ssrmovies",
+                                json.dumps(item)))
                 if slug:
                     existing_slugs.add(slug)
                 existing_locs.add(post_url)
@@ -243,11 +263,12 @@ def sync_api_to_db(client: SSRMoviesClient, db_path: Path, max_pages: int | None
                 with fast_fetch.get_db() as conn:
                     conn.executemany(
                         """
-                        INSERT INTO sitemap_cache (loc, lastmod, slug, scraped, site)
-                        VALUES (?, ?, ?, ?, ?)
+                        INSERT INTO sitemap_cache (loc, lastmod, slug, scraped, site, raw_json)
+                        VALUES (?, ?, ?, ?, ?, ?)
                         ON CONFLICT(loc) DO UPDATE SET
                             lastmod = COALESCE(excluded.lastmod, sitemap_cache.lastmod),
-                            slug = COALESCE(excluded.slug, sitemap_cache.slug)
+                            slug = COALESCE(excluded.slug, sitemap_cache.slug),
+                            raw_json = COALESCE(excluded.raw_json, sitemap_cache.raw_json)
                         """,
                         records,
                     )
@@ -267,11 +288,12 @@ def sync_api_to_db(client: SSRMoviesClient, db_path: Path, max_pages: int | None
             with fast_fetch.get_db() as conn:
                 conn.executemany(
                     """
-                    INSERT INTO sitemap_cache (loc, lastmod, slug, scraped, site)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO sitemap_cache (loc, lastmod, slug, scraped, site, raw_json)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     ON CONFLICT(loc) DO UPDATE SET
                         lastmod = COALESCE(excluded.lastmod, sitemap_cache.lastmod),
-                        slug = COALESCE(excluded.slug, sitemap_cache.slug)
+                        slug = COALESCE(excluded.slug, sitemap_cache.slug),
+                        raw_json = COALESCE(excluded.raw_json, sitemap_cache.raw_json)
                     """,
                     records,
                 )
@@ -340,19 +362,47 @@ def extract_post_data_ssrmovies_enhanced(
     page_html: str,
     client: SSRMoviesClient | None = None,
     resolve_direct: bool = True,
+    rest_post: dict | None = None,
 ) -> dict | None:
-    """
-    Extracts complete, rich catalog metadata and LinksZilla releases from an SSRMovies post.
+    """Extracts complete, rich catalog metadata and LinksZilla releases
+    from an SSRMovies post.
+
+    WP REST adoption (2026-11-23): when ``rest_post`` (one WP REST post
+    dict) is given, everything comes from it — title, the labelled info
+    block in ``content.rendered`` (IMDb, genres, creators, stars, judges,
+    storyline), the poster (featured media, else first content image) and
+    the per-quality LinksZilla buttons in the content — and no page fetch
+    is needed. Without it the old page-HTML path runs, with the same
+    label parsing so neither path fabricates metadata.
     """
     slug = post_url.rstrip("/").split("/")[-1]
 
     # 1. Clean Title and Year
-    title_m = re.search(r"<title>(.*?)</title>", page_html, re.I)
-    raw_title = title_m.group(1).split(" – SSRmovies")[0].split(" | ")[0].strip() if title_m else slug
-    raw_title = html.unescape(raw_title)
+    if rest_post is not None:
+        raw_title = html.unescape(
+            str((rest_post.get("title") or {}).get("rendered") or slug))
+        # The REST content is the post body; the release buttons and the
+        # info block both live in it, exactly as on the rendered page.
+        page_html = (rest_post.get("content") or {}).get("rendered") or ""
+    else:
+        title_m = re.search(r"<title>(.*?)</title>", page_html, re.I)
+        raw_title = title_m.group(1).split(" – SSRmovies")[0].split(" | ")[0].strip() if title_m else slug
+        raw_title = html.unescape(raw_title)
 
     year_m = re.search(r"\b(19\d{2}|20\d{2})\b", raw_title)
     year = int(year_m.group(1)) if year_m else None
+    if year is None and rest_post is not None:
+        # REST only: the title often carries no year ("... S05 NF 1080p
+        # ...") while the content's heading line does ("... Show 2025
+        # S05 ..."). Take the year from the text before the first info
+        # label — later dates (episode air dates) are not the show year.
+        _head = wp_rest.content_text(rest_post)
+        _imdb_at = _head.find("IMDb:")
+        if _imdb_at > 0:
+            _head = _head[:_imdb_at]
+        _year_m = re.search(r"\b(19\d{2}|20\d{2})\b", _head)
+        if _year_m:
+            year = int(_year_m.group(1))
 
     # Strip year and trailing resolution/quality noise
     clean_title = re.sub(r"\s*[\(\[]?\b(19\d{2}|20\d{2})\b.*$", "", raw_title).strip()
@@ -372,33 +422,50 @@ def extract_post_data_ssrmovies_enhanced(
     if re.search(r'\b(?:Season\s*\d+|S\d+|Complete\s+Series|Episodes?)\b', raw_title, re.I):
         content_type = "series"
 
+    # Labels from the post text (both paths): the info block carries
+    # IMDb / genres / creators / stars / judges / storyline. The page
+    # path reads them off the stripped page; the REST path off the post.
+    labels = wp_rest.post_labels(rest_post) if rest_post is not None \
+        else wp_rest.parse_labelled_text(wp_rest.strip_html(page_html))
+
     # 3. Poster URL
-    poster_url = None
-    # 3a. Imgurworld or CDN poster tag in <p class="poster">
-    poster_m = re.search(r'<p\s+class=["\']poster["\'][^>]*>.*?<img[^>]+src=["\']([^"\']+)["\']', page_html, re.I | re.S)
-    if poster_m:
-        poster_url = poster_m.group(1)
+    if rest_post is not None:
+        # Featured media first (validated: ssrmovies embeds the site
+        # index under that key, which poster_from_post skips), else the
+        # first content image — the poster opens every post body.
+        poster_url = wp_rest.poster_from_post(rest_post)
     else:
-        # 3b. TMDB image
-        tmdb_m = re.search(r'https?://image\.tmdb\.org/t/p/(?:original|w\d+)/[A-Za-z0-9_\-\.]+\.(?:jpg|jpeg|png|webp)', page_html, re.I)
-        if tmdb_m:
-            poster_url = tmdb_m.group(0)
+        poster_url = None
+        # 3a. Imgurworld or CDN poster tag in <p class="poster">
+        poster_m = re.search(r'<p\s+class=["\']poster["\'][^>]*>.*?<img[^>]+src=["\']([^"\']+)["\']', page_html, re.I | re.S)
+        if poster_m:
+            poster_url = poster_m.group(1)
         else:
-            # 3c. OpenGraph image
-            og_m = re.search(r'<meta property="og:image" content="([^"]+)"', page_html)
-            if og_m:
-                poster_url = og_m.group(1)
+            # 3b. TMDB image
+            tmdb_m = re.search(r'https?://image\.tmdb\.org/t/p/(?:original|w\d+)/[A-Za-z0-9_\-\.]+\.(?:jpg|jpeg|png|webp)', page_html, re.I)
+            if tmdb_m:
+                poster_url = tmdb_m.group(0)
+            else:
+                # 3c. OpenGraph image
+                og_m = re.search(r'<meta property="og:image" content="([^"]+)"', page_html)
+                if og_m:
+                    poster_url = og_m.group(1)
 
     # 4. Synopsis / Storyline
-    synopsis = None
-    desc_m = re.search(r'<meta name="description" content="([^"]+)"', page_html)
-    if desc_m:
-        synopsis = html.unescape(desc_m.group(1).strip())
+    if rest_post is not None:
+        synopsis = wp_rest.synopsis_from_post(rest_post)
     else:
-        # Fallback to paragraph before the download links
-        p_match = re.search(r'<p style=["\']text-align: center;["\']>(.*?enjoy the full movie.*?)</p>', page_html, re.I | re.S)
-        if p_match:
-            synopsis = html.unescape(re.sub(r'<[^>]+>', '', p_match.group(1)).strip())
+        synopsis = None
+        desc_m = re.search(r'<meta name="description" content="([^"]+)"', page_html)
+        if desc_m:
+            synopsis = html.unescape(desc_m.group(1).strip())
+        elif labels.get("story"):
+            synopsis = labels["story"]
+        else:
+            # Fallback to paragraph before the download links
+            p_match = re.search(r'<p style=["\']text-align: center;["\']>(.*?enjoy the full movie.*?)</p>', page_html, re.I | re.S)
+            if p_match:
+                synopsis = html.unescape(re.sub(r'<[^>]+>', '', p_match.group(1)).strip())
 
     # 5. Language and Audio
     language = "Hindi"
@@ -413,6 +480,25 @@ def extract_post_data_ssrmovies_enhanced(
         language = "South Hindi Dubbed"
     elif "english" in raw_lower:
         language = "English"
+
+    # Metadata from the source's own labels — never fabricated: a post
+    # with no genre label banks None, not a guessed ["Action", "Drama"].
+    # "Stars:" + "Judges:" are both on-screen talent, so both go into
+    # cast_names; "Creators:" is the show creator, mapped to director.
+    if rest_post is not None:
+        genres_list = wp_rest.genres_from_post(rest_post)
+    else:
+        genres_list = labels.get("genres")
+    genres = json.dumps(genres_list) if genres_list else None
+    imdb_rating = labels.get("imdb_rating")
+    cast_parts: list[str] = []
+    for _key in ("cast", "judges"):
+        for _name in labels.get(_key) or []:
+            if _name not in cast_parts:
+                cast_parts.append(_name)
+    cast_names = ", ".join(cast_parts) if cast_parts else None
+    director = labels.get("director")
+    release_date = labels.get("release_date")
 
     # 6. Extract Release Download Buttons (LinksZilla anchors)
     # 6. Extract Release Download Buttons (LinksZilla + direct-cloud anchors).
@@ -500,8 +586,11 @@ def extract_post_data_ssrmovies_enhanced(
         "seasons": None,
         "poster_url": poster_url,
         "backdrop_urls": None,
-        "imdb_rating": None,
-        "genres": json.dumps(["Action", "Drama"]) if "dual" in raw_title.lower() else None,
+        "imdb_rating": imdb_rating,
+        "genres": genres,
+        "cast_names": cast_names,
+        "director": director,
+        "release_date": release_date,
         "synopsis": synopsis,
         "is_18_plus": 0,
         "is_animated": 1 if "anime" in raw_lower or "animated" in raw_lower else 0,
@@ -578,18 +667,40 @@ def scrape_ssrmovies_worker(
     post_url: str,
     client: SSRMoviesClient,
     resolve_direct: bool = True,
+    raw_json_str: str | None = None,
 ) -> tuple[bool, int, int]:
-    """Worker task: fetches post, extracts releases & sources, persists to SQLite."""
-    code, final_url, html_text = client.get_text(post_url)
-    if code != 200 or not html_text:
-        return False, 0, 0
+    """Worker task: extracts releases & sources from a post, persists to SQLite.
 
-    data = extract_post_data_ssrmovies_enhanced(
-        post_url=final_url,
-        page_html=html_text,
-        client=client,
-        resolve_direct=resolve_direct,
-    )
+    WP REST adoption (2026-11-23): when the queue row carries ``raw_json``
+    (the full REST post from sync), extraction runs off it and the worker
+    makes NO page fetch at all. Rows synced before the adoption (no
+    raw_json) fall back to fetching the post page.
+    """
+    data = None
+    if raw_json_str:
+        try:
+            rest_post = json.loads(raw_json_str)
+        except (json.JSONDecodeError, TypeError):
+            rest_post = None
+        if isinstance(rest_post, dict) and rest_post.get("content"):
+            data = extract_post_data_ssrmovies_enhanced(
+                post_url=post_url,
+                page_html="",
+                client=client,
+                resolve_direct=resolve_direct,
+                rest_post=rest_post,
+            )
+    if data is None:
+        code, final_url, html_text = client.get_text(post_url)
+        if code != 200 or not html_text:
+            return False, 0, 0
+
+        data = extract_post_data_ssrmovies_enhanced(
+            post_url=final_url,
+            page_html=html_text,
+            client=client,
+            resolve_direct=resolve_direct,
+        )
     if not data or not data["releases"]:
         # Mark as scraped to avoid infinite loops on empty/removed posts
         with fast_fetch._DB_WRITE_LOCK:
@@ -622,13 +733,14 @@ def run_ssrmovies_scraper(
     """Runs concurrent multi-worker scraping of pending SSRMovies post URLs."""
     fast_fetch.DB_PATH = db_path
     fast_fetch.init_db()
+    _ensure_sitemap_raw_json(db_path)
 
     with fast_fetch.get_db() as conn:
-        q = "SELECT loc FROM sitemap_cache WHERE scraped = 0 AND site = 'ssrmovies' ORDER BY rowid ASC"
+        q = "SELECT loc, raw_json FROM sitemap_cache WHERE scraped = 0 AND site = 'ssrmovies' ORDER BY rowid ASC"
         if limit:
             q += f" LIMIT {int(limit)}"
         rows = conn.execute(q).fetchall()
-        pending_urls = [r[0] for r in rows]
+        pending_urls = [(r[0], r[1]) for r in rows]
 
     total_pending = len(pending_urls)
     if total_pending == 0:
@@ -662,12 +774,15 @@ def run_ssrmovies_scraper(
             thread_local.client = SSRMoviesClient(base_url=client.base_url, request_interval=delay)
         return thread_local.client
 
-    def task_fn(url):
+    def task_fn(url_and_raw):
+        url, raw_json_str = url_and_raw
         t_client = get_thread_client()
-        return scrape_ssrmovies_worker(url, t_client, resolve_direct=resolve_direct)
+        return scrape_ssrmovies_worker(
+            url, t_client, resolve_direct=resolve_direct,
+            raw_json_str=raw_json_str)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-        future_map = {executor.submit(task_fn, url): url for url in pending_urls}
+        future_map = {executor.submit(task_fn, url): url[0] for url in pending_urls}
         for future in concurrent.futures.as_completed(future_map):
             if STOP_REQUESTED:
                 print("\n[!] Cancelling pending tasks for graceful exit...", flush=True)

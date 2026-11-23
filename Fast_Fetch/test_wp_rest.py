@@ -154,6 +154,27 @@ class TestLabelParsing(unittest.TestCase):
         self.assertIsNone(wp_rest.parse_imdb_rating("No rating here"))
         self.assertIsNone(wp_rest.parse_imdb_rating("IMDb: 11/10"))
         self.assertIsNone(wp_rest.parse_imdb_rating(""))
+        self.assertIsNone(wp_rest.parse_imdb_rating("IMDb: N/A"))
+
+    def test_ssrmovies_creators_and_judges_labels(self):
+        # Live ssrmovies Kapil Show info block (post 132230, 2026-11-23):
+        # "Creators:" is the show creator, "Judges:" the panel — both are
+        # real labels the importer banks (director / cast).
+        text = ("IMDb: 6.5/10 || Language: Hindi (ORG 5.1) Genres: Comedy Show "
+                "Creators: Kapil Sharma Judges: Archana Puran Singh, "
+                "Navjot Singh Sidhu Stars: Kapil Sharma, Sunil Grover, "
+                "Krishna Abhishek, Kiku Sharda Storyline: Comedian Kapil "
+                "Sharma hosts this laugh-out-loud variety talk show.")
+        labels = wp_rest.parse_labelled_text(text)
+        self.assertEqual(labels["imdb_rating"], 6.5)
+        self.assertEqual(labels["genres"], ["Comedy Show"])
+        self.assertEqual(labels["director"], "Kapil Sharma")
+        self.assertEqual(labels["judges"],
+                         ["Archana Puran Singh", "Navjot Singh Sidhu"])
+        self.assertEqual(labels["cast"],
+                         ["Kapil Sharma", "Sunil Grover", "Krishna Abhishek",
+                          "Kiku Sharda"])
+        self.assertTrue(labels["story"].startswith("Comedian Kapil Sharma hosts"))
 
     def test_no_labels_means_empty_not_fabricated(self):
         self.assertEqual(wp_rest.parse_labelled_text("Just a plain title."), {})
