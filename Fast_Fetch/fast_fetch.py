@@ -8675,12 +8675,12 @@ RESOLVE_FAILURE_CLASSES = ("probe_failed", "no_unwrapper", "unwrap_failed")
 #: exists for them.
 #: 8 — Fix 4 (filemoon REST resolver, 2026-11-23): the new
 #: /api/videos/<code>/embed/* API + AES-GCM decrypt + PoW captcha
-#: unwrapper. Filemoon rows failed under v6 with `no_unwrapper`, so their
+#: unwrapper. Filemoon rows failed under v6 with no_unwrapper, so their
 #: failure records are stale and the rows deserve one fresh press now
 #: that a resolver exists. (Most catalog filemoon codes are dead — 10/10
 #: in the sweep plus 12/14 fresh-search codes 404 — so most fresh presses
 #: will honestly record "dead".)
-#: 9 — Vidmoly (sweep S2, 2026-11-23): the embed page's master lives in
+#: 9 — Vidmoly (sweep S2, 2026-11-23): the embed page master lives in
 #: JWPlayer file:, not the packed config, so the packer branch answered
 #: "unknown" on every real vidmoly page; unwrap_vidmoly reads it and
 #: Range-probes it. Rows failed under v8 deserve one fresh press.
@@ -8696,7 +8696,13 @@ RESOLVE_FAILURE_CLASSES = ("probe_failed", "no_unwrapper", "unwrap_failed")
 #: 12 — HubCloud one-round refresh (2026-11-23): one gamerxyt fetch banks
 #: every sibling row with its true signed expiry, so a copy the old
 #: resolver left stale (or cleared to NULL) deserves one fresh press.
-RESOLVER_VERSION = 12
+#: 13 — FIX1 (host/API sweep 2026-11-23): the vidout + gdrive branches
+#: land (two previously ingest-only resolvers now answer at play time),
+#: so failure records written while the dispatcher answered no_unwrapper
+#: for them are stale. (Versions 8–12 are the stacked filemoon /
+#: vidmoly / moviehax / kmhd / hubcloud-oneround bumps; this branch was
+#: built on main and rebased onto them, so the number jumps 7 -> 13.)
+RESOLVER_VERSION = 13
 
 def _is_transport_verdict(verdict) -> bool:
     """True when a probe/unwrapper verdict names a transport failure (HTTP 0).
@@ -10342,6 +10348,82 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                     fresh_temp = 1
                     embed_verdict = verdict
                     _gate_from_verdict = True
+            elif (service == "vidout" or "vidout" in source_u.lower()
+                  or "vidout" in cached_u.lower()):
+                # FIX1 (host/API sweep 2026-11-23): resolve_vidout_playlist
+                # existed only at ingest -- it read the embed page and banked
+                # the playlist, but no play-time branch ever called it, so
+                # vidout rows answered no_unwrapper. When the embed page
+                # publishes an HLS master, the unwrapper fetches the page
+                # and returns it, and the generic Stage-2 gate below probes
+                # the playlist itself (the unwrapper does not probe it, so
+                # _gate_from_verdict stays False). When the page publishes
+                # no playlist (measured live 2026-11-23: the /movie/<imdb>
+                # page carries no extractable .m3u8), the branch falls back
+                # to the Phase C unwrap_vidout path (wecollege -> GitHub API
+                # -> rotating master) instead of failing a row that path can
+                # resolve -- the Phase C test pins that fallback, so this
+                # branch runs BEFORE the Phase C branch but never shadows it.
+                _unwrap_branch_taken = True
+                _vidout_playlist = resolve_vidout_playlist(
+                    hoster_input("vidout"))
+                if _vidout_playlist:
+                    fresh_url = _vidout_playlist
+                    fresh_temp = 1
+                elif hr:
+                    # No page-published playlist: the Phase C API path.
+                    _vo_url = (source_u if "vidout.pages.dev" in source_u.lower()
+                               else cached_u)
+                    verdict = hr.unwrap_vidout(_vo_url, verify=True)
+                    direct_u = embed_from_verdict(verdict)
+                    if direct_u:
+                        fresh_url = direct_u
+                        fresh_temp = 1
+                        embed_verdict = verdict
+                        _gate_from_verdict = True
+            elif hr and (service in (hr.SERVICE_GDRIVE, "google_drive")
+                         or "drive.google.com" in source_u.lower()
+                         or "drive.google.com" in cached_u.lower()
+                         or "drive.usercontent.google.com" in source_u.lower()
+                         or "drive.usercontent.google.com" in cached_u.lower()):
+                # FIX1 (host/API sweep 2026-11-23): unwrap_gdrive existed
+                # only at ingest (import_animahd), so the 7,927 gdrive +
+                # google_drive rows answered no_unwrapper. The unwrapper
+                # rebuilds the download endpoint from the file id, replays
+                # the large-file confirm form once, and Range-probes the
+                # bytes -- that probe IS the gate evidence, so the generic
+                # gate is not re-run on the same URL. The moviezguru rows
+                # store the byte host directly
+                # (drive.usercontent.google.com/download?id=...), which
+                # gdrive_file_id does not read, so those are rewritten to
+                # the /uc endpoint the unwrapper parses (same file id).
+                _unwrap_branch_taken = True
+                _gdrive_url = (
+                    source_u if ("drive.google.com" in source_u.lower()
+                                 or "drive.usercontent.google.com"
+                                 in source_u.lower())
+                    else cached_u)
+                if "drive.usercontent.google.com" in _gdrive_url.lower():
+                    _gdrive_id = re.search(r"[?&]id=([A-Za-z0-9_-]{20,})",
+                                            _gdrive_url)
+                    if _gdrive_id:
+                        _gdrive_url = (
+                            "https://drive.google.com/uc?export=download"
+                            f"&id={_gdrive_id.group(1)}")
+                verdict = hr.unwrap_gdrive(_gdrive_url, verify=True)
+                direct_u = embed_from_verdict(verdict)
+                if direct_u:
+                    fresh_url = direct_u
+                    fresh_temp = 1 if verdict.get("is_temporary") else 0
+                    embed_verdict = verdict
+                    _gate_from_verdict = True
+            # NOTE (FIX1, host/API sweep 2026-11-23, corrected against main
+            # 4f2e1f4f): no filepress branch is added here -- one already
+            # exists above (hr.unwrap_filepress, the downlaod/downlaod2 API
+            # chain cracked 2026-11-13). The sweep's "identity function"
+            # note described fast_fetch.unwrap_filepress, the ingest-only
+            # helper; the play-time unwrapper is host_resolvers'
+            # unwrap_filepress. FIX1 leaves that branch alone.
             elif hr and (service == hr.SERVICE_VIDOUT
                          or "vidout.pages.dev" in source_u.lower()
                          or "vidout.pages.dev" in cached_u.lower()):
