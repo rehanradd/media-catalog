@@ -15,6 +15,7 @@ name: 🐍 Backend CI — Stdlib Python Tests
 #     - Fast_Fetch/test_expiry_bank.py       (API-03: resolve-time expiry banking)
 #     - Fast_Fetch/importers/test_http_keepalive.py (keep-alive: http_request
 #                                             over the per-host pool)
+#     - Fast_Fetch/importers/test_expiry_voe_stream.py (voe/stream e-duration expiry)
 #     - Fast_Fetch/test_catalog_v2.py        (v2 catalog projection)
 #     - Fast_Fetch/test_release_descriptor.py(release descriptor parsing)
 #     - Fast_Fetch/test_link_health.py       (link health prober; binds a
@@ -390,6 +391,12 @@ jobs:
       # Offline — fake connections, no live socket.
       - name: 🧪 test_http_keepalive.py
         run: python3 -S Fast_Fetch/importers/test_http_keepalive.py
+      # voe/stream `e` duration (latency audit fix 5, 2026-11-23):
+      # the signed `e` lifetime (14400 / 129600) parses into
+      # expires_in, so voe/stream rows bank a true expiry.
+      # Offline — fake fetch, no network.
+      - name: 🧪 test_expiry_voe_stream.py
+        run: python3 -S Fast_Fetch/importers/test_expiry_voe_stream.py
 
       - name: 🧪 test_catalog_v2.py
         run: python3 -S Fast_Fetch/test_catalog_v2.py

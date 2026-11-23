@@ -1467,6 +1467,30 @@ def duration_expiry_from_url(url: str) -> tuple[int | None, int | None]:
     return expires_at, expires_at - int(time.time())
 
 
+def duration_param_expiry(url: str) -> tuple[int | None, int | None]:
+    """
+    (expires_at, seconds-from-now) for a query whose `e` is a bare lifetime
+    in seconds — voe/stream's convention (`e=14400` = 4 h, `e=129600` = 36 h).
+
+    `expiry_from_url` reads `e` as an ABSOLUTE epoch (9–11 digits) and
+    `duration_expiry_from_url` needs an `s` issue epoch beside it, so a voe
+    source carrying only the lifetime got (None, None) from both and its row
+    banked a NULL expiry. This reads the lifetime on its own and counts it
+    from now. The bound (< 10^6 s, ~11.5 days) is what separates a lifetime
+    from an epoch: a 9-digit `e` is an epoch, not a duration, and
+    `expiry_from_url` already owns that shape — so this helper only ever
+    runs as the fallback after it returns (None, None).
+    """
+    query = urllib.parse.parse_qs(urllib.parse.urlsplit(url or "").query)
+    raw = (query.get("e") or [""])[0]
+    if not re.fullmatch(r"\d{1,6}", raw or ""):
+        return None, None
+    lifetime = int(raw)
+    if lifetime <= 0:
+        return None, None
+    return int(time.time()) + lifetime, lifetime
+
+
 def r2_presigned_expiry(url: str) -> tuple[int | None, int | None]:
     """
     (expires_at epoch seconds, seconds-from-now) for an R2/S3 presigned URL,
@@ -4239,6 +4263,9 @@ def unwrap_packer_hls(embed_url: str, service: str, fetch=None,
                           "label": "hls" if result["final_url"].endswith(".m3u8")
                           else ""}]
     _expires_at, result["expires_in"] = expiry_from_url(result["final_url"])
+    if result["expires_in"] is None:
+        _expires_at, result["expires_in"] = duration_param_expiry(
+            result["final_url"])
     result["signed_params"] = sorted(signature_params(result["final_url"]))
     if not verify:
         result["notes"].append("unpacked only; the byte endpoint was not probed")
@@ -4480,6 +4507,9 @@ def unwrap_voe(embed_url: str, fetch=None, verify: bool = True) -> dict:
                           "label": "hls" if result["final_url"].endswith(".m3u8")
                           else ""}]
     _expires_at, result["expires_in"] = expiry_from_url(result["final_url"])
+    if result["expires_in"] is None:
+        _expires_at, result["expires_in"] = duration_param_expiry(
+            result["final_url"])
     result["signed_params"] = sorted(signature_params(result["final_url"]))
     if not verify:
         result["notes"].append("decoded only; the byte endpoint was not probed")
