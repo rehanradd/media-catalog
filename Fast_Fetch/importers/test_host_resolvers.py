@@ -223,9 +223,13 @@ def scripted_fetch(script):
     (status, body, headers) triple or an Exception to raise.
     """
     calls = []
+    kw_calls = []
 
-    def fetch(url, headers=None, timeout=None, method="GET", follow=True, data=None):
+    def fetch(url, headers=None, timeout=None, method="GET", follow=True, data=None,
+              transport_retries=None):
         calls.append((url, headers or {}, method))
+        kw_calls.append({"timeout": timeout,
+                         "transport_retries": transport_retries})
         for key, value in script.items():
             if key in url:
                 if isinstance(value, Exception):
@@ -236,6 +240,7 @@ def scripted_fetch(script):
                 return status, body, merged, url
         return 404, b"", {"content-type": "text/html"}, url
     fetch.calls = calls                                    # type: ignore[attr-defined]
+    fetch.kw_calls = kw_calls                              # type: ignore[attr-defined]
     return fetch
 
 
@@ -1234,6 +1239,31 @@ class TestVidboltUnpack(unittest.TestCase):
         verdict = hr.unwrap_vidbolt("https://vidbolt.xyz/movie/999999", fetch=fetch)
         self.assertEqual(verdict["status"], "dead")
         self.assertIn("returned no stream", json.dumps(verdict["notes"]))
+
+    def test_fetch_runs_under_the_vidbolt_budget(self):
+        # 2026-11-23 (press-timing lane): a live vidbolt resolve ran 69 s
+        # then 404'd — the API fetch and the media probe used http_request's
+        # 25 s x 4 attempts. Both calls in this chain must carry the capped
+        # budget (10 s, 1 retry), so the worst case is ~40 s, not ~200 s.
+        api_resp = json.dumps({
+            "stream": {
+                "server": "orion",
+                "sources": [
+                    {"url": "https://cdn.example.com/stream.m3u8", "kind": "hls", "quality": "1080p"}
+                ]
+            }
+        }).encode("utf-8")
+        fetch = scripted_fetch({
+            "api/resolve": (200, api_resp, {"content-type": "application/json"}),
+            "stream.m3u8": (200, b"#EXTM3U\n#EXT-X-VERSION:3", {"content-type": "application/vnd.apple.mpegurl"}),
+        })
+        verdict = hr.unwrap_vidbolt("https://vidbolt.xyz/movie/550", fetch=fetch)
+        self.assertEqual(verdict["status"], "active")
+        self.assertEqual(len(fetch.kw_calls), 2,
+                         "one API fetch plus one media probe")
+        for kw in fetch.kw_calls:
+            self.assertEqual(kw["timeout"], hr.VIDBOLT_FETCH_TIMEOUT_SECONDS)
+            self.assertEqual(kw["transport_retries"], hr.VIDBOLT_FETCH_RETRIES)
 
 
 class TestVibuxerUnpack(unittest.TestCase):

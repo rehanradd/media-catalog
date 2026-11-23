@@ -281,6 +281,7 @@ from __future__ import annotations
 
 import base64
 from datetime import datetime, timezone
+import functools
 import gzip
 import hashlib
 import http.client
@@ -623,6 +624,20 @@ WECOLLEGE_FIND_URL = "https://db.wecollege.net/3/find/{imdb}?external_source=imd
 VIDOUT_API_BASE = ("https://raw.githubusercontent.com/Watchout2025/api/"
                    "refs/heads/main/hls")
 VIDBOLT_DEFAULT_EXPIRY_SECONDS = 14400  # 4 hours conservative cache window
+# Vidbolt fetch budget (2026-11-23, press-timing lane): the live press path
+# has no resolve deadline — `resolve_live_source` only ever passes a
+# deadline to failover siblings, never to the primary copy — so one
+# vidbolt resolve ran 69 s and then 404'd. The two fetches in
+# `unwrap_vidbolt` used `http_request`'s defaults (25 s x up to 4 attempts
+# each, ~200 s worst for the chain). A JSON API call and a Range probe of
+# a small HLS playlist need nothing like that: 10 s x 2 attempts each
+# bounds the whole chain near 40 s worst case, inside nginx's 60 s read
+# timeout, while a healthy vidbolt answers in ~1 s. The press-path
+# deadline itself (bound the ANSWER, let the resolve finish and bank) is
+# still owed as a follow-up; this cap is the unbounded piece it replaces
+# for the observed host.
+VIDBOLT_FETCH_TIMEOUT_SECONDS = 10.0
+VIDBOLT_FETCH_RETRIES = 1
 
 # uploadflix (Session 104b, verified live 2026-11-08): a generic XFS file
 # host. The file page (dl.uploadflix.com/<id> 302s to 1uploadflix.net/f/<id>)
@@ -2569,6 +2584,14 @@ def unwrap_vidbolt(url: str, fetch=None, verify: bool = True,
     The API returns HLS sources and subtitles.
     """
     fetch = fetch or http_request
+    # Capped fetch for this chain only (see VIDBOLT_FETCH_* above): the
+    # module's `http_request` defaults would let one slow resolve run
+    # ~200 s. `functools.partial` keeps the fetch protocol — the probe in
+    # `_finish_media` and the poster check call it with url/headers only —
+    # so the API call and the media probe below both run under the cap.
+    fetch = functools.partial(
+        fetch, timeout=VIDBOLT_FETCH_TIMEOUT_SECONDS,
+        transport_retries=VIDBOLT_FETCH_RETRIES)
     clean_url = (url or "").strip()
     result = _new_result(SERVICE_VIDBOLT, clean_url)
     _withheld_referrer(result, referer)
