@@ -9743,11 +9743,6 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                 # page says JWPlayer file: instead); since the vidmoly
                 # branch above, this marker is only a fallback for a
                 # vidmoly URL that reaches here without matching it.
-                # Vidmoly rides the same packer pattern (research:
-                # mediaflow-proxy VidMoly extractor, same 1-GET + unpack
-                # shape); it has 0 rows in the catalog, so this is wired
-                # but unproven live — the routing test proves the dispatch,
-                # not the host.
                 # 2026-11-23: the 32 sb*/wish*/strwish mirror services
                 # (11,391 rows, hr.STREAMWISH_MIRROR_SERVICES) ride the
                 # same packer shape and now match here too — before this
@@ -9756,7 +9751,8 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                 # that answers with the 819-byte JS loader shell instead
                 # of a packer page (strwish -> niramirus, measured live
                 # 2026-11-23) is rewritten to its packer URL below, so
-                # the unwrapper fetches the embed page, not the shell.                _unwrap_branch_taken = True
+                # the unwrapper fetches the embed page, not the shell.
+                _unwrap_branch_taken = True
                 _packer_markers = ("watch-online", "streamwish", "hglink",
                                    "embedwish", "vidmoly",
                                    *hr.STREAMWISH_MIRROR_SERVICES)
