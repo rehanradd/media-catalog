@@ -1087,6 +1087,12 @@ jobs:
       # _fetch/_probe seams, loopback probe server, temp-DB dispatch.
       - name: 🧪 test_vidmoly_unwrap.py
         run: python3 -S Fast_Fetch/test_vidmoly_unwrap.py
+      # kmhd bridge wiring (2026-11-23): resolve_live_source routes
+      # links.kmhd.me/file/<id> rows through fetch_kmhd_bridge, with the
+      # hubcloud mirror re-resolved via verified hr.unwrap_hubcloud.
+      # Offline — temp SQLite file, canned bridge mirrors + stub probe.
+      - name: 🧪 test_kmhd_dispatch.py
+        run: python3 -S Fast_Fetch/test_kmhd_dispatch.py
       # XprimeHub (Session 104): the 19th site, 18+ adult catalog — scrape only.
       # The flag is the feature: every row is_18_plus = 1 by site authority, and the
       # registry entry records scrape-only / never publish. Offline — temp SQLite files.

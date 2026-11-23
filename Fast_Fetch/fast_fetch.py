@@ -8633,7 +8633,10 @@ RESOLVE_FAILURE_CLASSES = ("probe_failed", "no_unwrapper", "unwrap_failed")
 #: proven bridge hosts (filemoon.sx, pixeldrain.com). Moviehax rows
 #: that pressed empty under v9 deserve one fresh press now that the
 #: bridges are collected.
-RESOLVER_VERSION = 10
+#: 11 — kmhd bridge wiring (2026-11-23): resolve_live_source gains a
+#: kmhd branch, so rows that answered no_unwrapper under v10 (the bridge
+#: API existed but no play-time branch called it) get one fresh press.
+RESOLVER_VERSION = 11
 
 def _is_transport_verdict(verdict) -> bool:
     """True when a probe/unwrapper verdict names a transport failure (HTTP 0).
@@ -9594,6 +9597,91 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                         fresh_url = _cand
                         fresh_temp = _item.get("is_temporary", fresh_temp)
                         break
+            elif (service == "kmhd" or "kmhd" in source_u.lower()
+                  or "kmhd" in cached_u.lower()):
+                # kmhd bridge wiring (2026-11-23): the KatMovieHD bridge
+                # API (fetch_kmhd_bridge) existed but no play-time branch
+                # called it, so the 30,253 kmhd rows always answered
+                # no_unwrapper — and every sampled one is a lone row in
+                # its release, so sibling failover has nothing to fall
+                # back to. Only the links.kmhd.me/file/<id> shape carries
+                # a bridge file id (80 rows live); the archive /
+                # gd.kmhd.eu / atchs shapes have no bridge path and fall
+                # through as before.
+                # Live flow, measured 2026-11-23 from Oracle egress
+                # (production fetch_kmhd_bridge): the API answers in
+                # ~2-3 s with hubdrive / gdflix / katdrive / 1fichier /
+                # sendcm mirrors, but the raw hubcloud_10g href is NOT
+                # playable — pixel.hubcloud.mov 302s to a workers.dev
+                # root and ends at an HTML "Link Generator" page. The
+                # playable hubcloud path is the verified unwrapper on
+                # the drive URL, rebuilt from the mirror row's
+                # resource_id (the bridge stores the hubdrive id there):
+                # hr.unwrap_hubcloud(verify=True) answered active for
+                # Ever_f8202fab. Direct mirrors (signed R2, pixeldrain)
+                # are tried first because they cost one gate probe
+                # instead of a re-unwrap. The gdflix mirror is NOT
+                # unwrapped here — unwrap_gdflix returns it unchanged
+                # from service egress (403 Turnstile; the sweep needs
+                # Tor for gdflix).
+                _unwrap_branch_taken = True
+                _kmhd_m = re.search(
+                    r"""links\.kmhd\.me/file/([A-Za-z0-9_\-]+)""",
+                    hoster_input("kmhd"))
+                if _kmhd_m:
+                    _kmhd_mirrors = fetch_kmhd_bridge(_kmhd_m.group(1))
+                    _kmhd_direct = ("fsl_r2", "pixeldrain")
+                    _kmhd_mirrors.sort(key=lambda _m: (
+                        0 if (_m.get("service") or "") in _kmhd_direct
+                        else 1))
+                    for _item in _kmhd_mirrors:
+                        _cand = (_item.get("final_url")
+                                 or _item.get("source_url") or "")
+                        _svc = (_item.get("service") or "")
+                        if not _cand or _svc == "kmhd":
+                            continue
+                        if (_svc in _kmhd_direct
+                                and not is_bridge_url(_cand)):
+                            fresh_url = _cand
+                            fresh_temp = _item.get("is_temporary",
+                                                   fresh_temp)
+                            break
+                        if _svc in ("hubcloud", "hubcloud_10g",
+                                    "hubcloud_zipdisk"):
+                            _hub_id = (_item.get("resource_id") or "")
+                            if not _hub_id or hr is None:
+                                continue
+                            _drive_u = (
+                                _host_base(
+                                    "hubcloud.ist",
+                                    "https://hubcloud.ist").rstrip("/")
+                                + f"/drive/{_hub_id}")
+                            _hub_verdict = hr.unwrap_hubcloud(
+                                _drive_u, verify=True)
+                            _hub_direct = embed_from_verdict(_hub_verdict)
+                            if _hub_direct:
+                                fresh_url = _hub_direct
+                                fresh_temp = (1 if _hub_verdict.get(
+                                    "is_temporary") else 0)
+                                embed_verdict = _hub_verdict
+                                _gate_from_verdict = True
+                                break
+                    else:
+                        # No direct mirror and no verified hubcloud
+                        # unwrap: last resort is the first non-bridge
+                        # candidate, exactly as the mobilejsr branch
+                        # does — a page URL (katdrive / 1fichier /
+                        # sendcm) fails the gate probe below and the
+                        # release falls through to sibling failover.
+                        for _item in _kmhd_mirrors:
+                            _cand = (_item.get("final_url")
+                                     or _item.get("source_url") or "")
+                            if (_cand and not is_bridge_url(_cand)
+                                    and "kmhd.me" not in _cand):
+                                fresh_url = _cand
+                                fresh_temp = _item.get(
+                                    "is_temporary", fresh_temp)
+                                break
             elif hr and (service == hr.SERVICE_GOFILE or "gofile" in source_u.lower()
                          or "gofile" in cached_u.lower()):
                 # Session 103: gofile cracked (wt API, header form). The
