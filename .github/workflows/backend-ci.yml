@@ -1412,6 +1412,12 @@ jobs:
         run: python3 -S Fast_Fetch/test_mood_search.py
       - name: 🧪 test_search_forgiving.py
         run: python3 -S Fast_Fetch/test_search_forgiving.py
+
+      # Search speed 2026-11-23: memoized normalize_text + FTS-backed
+      # suggest — both behaviour-preserving, pinned against a reference
+      # computed straight from cat_works, with and without the index.
+      - name: 🧪 test_search_speed_20261123.py
+        run: python3 -S Fast_Fetch/test_search_speed_20261123.py
       - name: 🧪 test_subtitle_tracks.py
         run: python3 -S Fast_Fetch/test_subtitle_tracks.py
       - name: 🧪 test_viewer_search_forgiving.py

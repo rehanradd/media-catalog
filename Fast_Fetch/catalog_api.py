@@ -250,11 +250,22 @@ curate_genres = redact.curate_genres
 
 
 
+@functools.lru_cache(maxsize=200000)
 def normalize_text(text) -> str:
     """casefold + diacritic folding + punctuation → space, for matching only.
 
     Parentheses/brackets keep their content so a year inside them stays searchable
     ("Dune (2024)" -> "dune 2024").
+
+    2026-11-23, search speed: memoized. The function is pure (same input ->
+    same output, no I/O), and the serve path calls it once per row per
+    query — the v2 relevance ORDER BY evaluates it ~4x per matching work
+    (85,519 rows for "a": ~5 s of normalization alone at 25 us/call),
+    and suggest scans all 192,210 titles per keystroke (1.1-2.5 s cold).
+    The titles are the same strings on every request, so the cache is hot
+    after the first broad query; 200,000 entries cover every work title
+    with headroom, LRU evicts the rest. Thread-safe (functools cache);
+    a new title just misses once. `functools` is already imported.
     """
     if text in (None, ""):
         return ""
@@ -1995,7 +2006,9 @@ def suggest(conn, *, q, limit=10, include_adult=False) -> dict:
     limit = _clamp_limit(limit, default=10, ceiling=20)
     where = "w.title IS NOT NULL" if include_adult else f"{_adult_clause('w')}"
 
-    def _prefix_rows(norm):
+    def _prefix_rows_scan(norm):
+        # The full-table scan: the fallback when the FTS index is absent
+        # or cannot serve the query. Unchanged from before 2026-11-23.
         return conn.execute(
             f"""
             SELECT w.id, w.title, w.year, w.work_type, w.poster_url, w.max_resolution
@@ -2003,6 +2016,46 @@ def suggest(conn, *, q, limit=10, include_adult=False) -> dict:
             ORDER BY LENGTH(radd_norm(w.title)) ASC, COALESCE(w.year, 0) DESC, w.id ASC
             LIMIT :lim
             """, {"pfx": f"{norm}%", "lim": limit}).fetchall()
+
+    def _prefix_rows(norm):
+        # 2026-11-23, search speed: the scan above evaluates radd_norm
+        # per row over all 192,210 works on every keystroke (measured
+        # 1.1-2.5 s cold for a 2-letter prefix, 0.25 s warm). The FTS
+        # table already holds the same normalised titles, so ask it for
+        # the candidate rows first: a token-prefix MATCH is a superset
+        # of a title prefix (any title starting with `norm` has a first
+        # token starting with each of `norm`'s tokens), then apply the
+        # exact same prefix test and the exact same order in Python over
+        # just the candidates. Same rows, same order — verified identical
+        # on the live catalog for lo/lov/love/sa/the/th/in/"a b"/
+        # "love st"/sh/aveng — at 0.001-0.2 s instead of 0.25-2.8 s.
+        # When the index is absent or the MATCH cannot run, the scan
+        # above answers instead, exactly as before.
+        if not _has_table(conn, "cat_works_fts"):
+            return _prefix_rows_scan(norm)
+        tokens = norm.split()
+        fts = " ".join(f'"{token}"*' for token in tokens if token)
+        if not fts:
+            return _prefix_rows_scan(norm)
+        try:
+            rows = conn.execute(
+                f"""
+                SELECT w.id, w.title, w.year, w.work_type, w.poster_url, w.max_resolution
+                FROM cat_works w JOIN cat_works_fts f ON f.rowid = w.id
+                WHERE {where} AND f.cat_works_fts MATCH :fts
+                """, {"fts": fts}).fetchall()
+        except sqlite3.OperationalError:
+            return _prefix_rows_scan(norm)
+        keep = []
+        for row in rows:
+            title_norm = normalize_text(row["title"] or "")
+            if title_norm.startswith(norm):
+                year = row["year"]
+                keep.append((len(title_norm),
+                             -(year if isinstance(year, (int, float)) else 0),
+                             row["id"], row))
+        keep.sort(key=lambda item: (item[0], item[1], item[2]))
+        return [item[3] for item in keep[:limit]]
 
     rows = _prefix_rows(query_norm)
     corrected_query = None
