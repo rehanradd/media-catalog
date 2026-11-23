@@ -9513,15 +9513,15 @@ RESOLVE_FAILURE_CLASSES = ("probe_failed", "no_unwrapper", "unwrap_failed")
 #: exists for them. (FIX2 itself adds no dispatch branch, so this
 #: is the queue-convention bump: one bump per landing, so stale
 #: negative-cache rows get a fresh press.)
-#: 15 — Keep-alive in http_request (2026-11-23): the production fetch
-#: now reuses one http.client connection per (scheme, host, port)
-#: instead of opening a fresh urllib connection per call, so a
-#: multi-hop resolve stops paying a TLS + TCP handshake per hop
-#: (audit: fastdl 5.0 -> 3.0 s, 1xplayer 5.1 -> 2.5 s, voe 3.1 ->
-#: 1.4 s cold). A dead pooled connection is dropped and the request
-#: retried once on a fresh one. Rows that pressed slow under v14
-#: deserve one fresh press at the new speed.
-RESOLVER_VERSION = 15
+#: 15 — RESERVED for the resolver-keepalive branch (built in
+#: parallel); this branch stacks on it, so it takes 16.
+#: 16 — voe/stream `e` duration (latency audit fix 5, 2026-11-23):
+#: unwrap_voe and unwrap_packer_hls now parse the signed `e`
+#: lifetime (voe 14400 = 4 h, stream 129600 = 36 h) into
+#: expires_in, so the 37,088 voe/stream rows bank a true expiry
+#: instead of NULL and presses inside the window serve banked
+#: instead of cold re-resolving (3.1 s / 1.7 s).
+RESOLVER_VERSION = 16
 
 
 def _is_transport_verdict(verdict) -> bool:
