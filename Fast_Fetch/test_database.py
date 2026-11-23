@@ -2405,6 +2405,31 @@ class DatabaseSaveTests(unittest.TestCase):
                 return url
             return ""
 
+        # 2026-11-23: keep in sync with
+        # host_resolvers.STREAMWISH_MIRROR_SERVICES — the dispatch reads
+        # this attribute before the packer branch, so a missing attribute
+        # aborts the whole dispatch (same rule as is_animahd_player
+        # above).
+        STREAMWISH_MIRROR_SERVICES = (
+            "asnwish", "cdnwish", "flastwish", "flaswish", "hlswish",
+            "jodwish", "obeywish", "playerwish", "sbanh", "sbbrisk",
+            "sbchill", "sbface", "sbfast", "sbfull", "sbhight", "sblanh",
+            "sblona", "sblongvu", "sbnet-mirror", "sbnetmirror", "sbrapid",
+            "sbrity", "sbsonic", "sbspeed", "sbthe", "sfastwish",
+            "strwish", "swdyu", "swhoi", "swishsrv", "wishfast",
+            "wishonly",
+        )
+
+        def streamwish_loader_redirect(self, url):
+            # 2026-11-23: the packer branch reads this after picking the
+            # packer URL. Faithful to the real helper: only strwish maps,
+            # to the niramirus packer page its main.js navigates to.
+            if url.startswith("https://strwish.com/e/"):
+                ident = url.rstrip("/").rsplit("/", 1)[-1]
+                if ident:
+                    return "https://niramirus.com/e/" + ident
+            return ""
+
         def unwrap_mxdrop(self, embed_url, fetch=None, verify=True, referer=None):
             self.calls.append(("mxdrop", embed_url, verify))
             return self.verdict or {

@@ -1069,6 +1069,12 @@ jobs:
       - name: 🧪 test_greenmotors_multicloud.py
         run: python3 -S Fast_Fetch/test_greenmotors_multicloud.py
 
+      # StreamWish-family dispatch (sweep H2b, 2026-11-23): 32 sb*/wish*/strwish
+      # mirror services route to the packer branch; strwish loader shells
+      # redirect to niramirus. Offline - mocked http_get.
+      - name: 🧪 test_streamwish_dispatch.py
+        run: python3 -S Fast_Fetch/test_streamwish_dispatch.py
+
       # XprimeHub (Session 104): the 19th site, 18+ adult catalog — scrape only.
       # The flag is the feature: every row is_18_plus = 1 by site authority, and the
       # registry entry records scrape-only / never publish. Offline — temp SQLite files.

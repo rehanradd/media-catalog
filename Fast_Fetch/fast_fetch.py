@@ -7805,7 +7805,12 @@ RESOLVE_FAILURE_CLASSES = ("probe_failed", "no_unwrapper", "unwrap_failed")
 #: extension-less URL with EBML/ftyp/AVI bytes passes instead of failing
 #: "unverified" — hubcdn R2 assets failed under v5 exactly that way, and
 #: the rows deserve one fresh press now that the bytes are read.
-RESOLVER_VERSION = 6
+#: 7 — StreamWish-family mirrors (2026-11-23): the packer branch now
+#: matches the 32 sb*/wish*/strwish service labels, and a strwish loader
+#: URL is rewritten to the niramirus packer page its main.js navigates
+#: to — those 11,391 rows deserve one fresh press now that a branch
+#: exists for them.
+RESOLVER_VERSION = 7
 
 
 def _is_transport_verdict(verdict) -> bool:
@@ -8873,6 +8878,9 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                     _gate_from_verdict = True
             elif hr and (service in (hr.SERVICE_STREAM, hr.SERVICE_STREAMWISH,
                                      hr.SERVICE_VIDMOLY)
+                         or service in hr.STREAMWISH_MIRROR_SERVICES
+                         or any(_m in source_u.lower() or _m in cached_u.lower()
+                                for _m in hr.STREAMWISH_MIRROR_SERVICES)
                          or "watch-online" in source_u.lower()
                          or "watch-online" in cached_u.lower()
                          or "streamwish" in source_u.lower()
@@ -8892,14 +8900,27 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                 # shape); it has 0 rows in the catalog, so this is wired
                 # but unproven live — the routing test proves the dispatch,
                 # not the host.
+                # 2026-11-23: the 32 sb*/wish*/strwish mirror services
+                # (11,391 rows, hr.STREAMWISH_MIRROR_SERVICES) ride the
+                # same packer shape and now match here too — before this
+                # they fell through as no_unwrapper, because neither the
+                # service list nor the markers above named them. A mirror
+                # that answers with the 819-byte JS loader shell instead
+                # of a packer page (strwish -> niramirus, measured live
+                # 2026-11-23) is rewritten to its packer URL below, so
+                # the unwrapper fetches the embed page, not the shell.
                 _unwrap_branch_taken = True
                 _packer_markers = ("watch-online", "streamwish", "hglink",
-                                   "embedwish", "vidmoly")
+                                   "embedwish", "vidmoly",
+                                   *hr.STREAMWISH_MIRROR_SERVICES)
                 _packer_url = source_u
                 for _marker in _packer_markers:
                     if _marker in source_u.lower() or _marker in cached_u.lower():
                         _packer_url = hoster_input(_marker)
                         break
+                _redirect = hr.streamwish_loader_redirect(_packer_url)
+                if _redirect:
+                    _packer_url = _redirect
                 _packer_svc = (service if service in (hr.SERVICE_STREAM,
                                                        hr.SERVICE_STREAMWISH,
                                                        hr.SERVICE_VIDMOLY)

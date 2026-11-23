@@ -523,6 +523,11 @@ VIBUXER_CONTENT_RE = re.compile(r"^/(?:e|embed)/([A-Za-z0-9_-]+)/?$", re.I)
 HGLINK_HOST_RE = re.compile(r"(?:^|\.)hglink\.to$", re.I)
 HGLINK_ID_RE = re.compile(r"^/([A-Za-z0-9_-]+)/?$", re.I)
 STREAMWISH_VIBUXER_PATH_RE = re.compile(r"^/([A-Za-z0-9_-]+)/?$", re.I)
+# strwish.com is a StreamWish-family loader mirror: its /e/<id> page is the
+# same 819-byte "Loading..." shell + /main.js?v=1.1.9 as hglink.to, and the
+# script navigates to niramirus.com/e/<same id> (measured live 2026-11-23).
+STRWISH_HOST_RE = re.compile(r"(?:^|\.)strwish\.com$", re.I)
+STRWISH_EMBED_RE = re.compile(r"^/e/([A-Za-z0-9_-]+)/?$", re.I)
 VIDRIFT_HOST_RE = re.compile(r"(?:^|\.)vidrift\.net$", re.I)
 VIDRIFT_CONTENT_RE = re.compile(
     r"^/(?:embed/)?(?:movie|tv)/([A-Za-z0-9_-]+)(?:/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+))?/?$",
@@ -1177,6 +1182,48 @@ def streamwish_vibuxer_url(url: str) -> str:
         parts = urllib.parse.urlsplit(clean)
         ident = STREAMWISH_VIBUXER_PATH_RE.match(parts.path or "").group(1)
         return f"https://vibuxer.com/{ident}"
+    return ""
+
+
+# StreamWish-family mirror services (coverage map 2026-11-23): the sb* /
+# wish* / strwish labels, 11,391 rows, whose stored URLs carry the same
+# P.A.C.K.E.R. embed shape as streamwish itself. The label is the mirror's
+# first DNS label (sbbrisk -> sbbrisk.com, strwish -> strwish.com), so the
+# same tuple doubles as the URL markers the dispatch matches on. Listed
+# explicitly, in one place, so a future unrelated "sb…" label cannot be
+# swept in by a prefix rule.
+STREAMWISH_MIRROR_SERVICES = (
+    "asnwish", "cdnwish", "flastwish", "flaswish", "hlswish", "jodwish",
+    "obeywish", "playerwish", "sbanh", "sbbrisk", "sbchill", "sbface",
+    "sbfast", "sbfull", "sbhight", "sblanh", "sblona", "sblongvu",
+    "sbnet-mirror", "sbnetmirror", "sbrapid", "sbrity", "sbsonic",
+    "sbspeed", "sbthe", "sfastwish", "strwish", "swdyu", "swhoi",
+    "swishsrv", "wishfast", "wishonly",
+)
+
+
+def streamwish_loader_redirect(url: str) -> str:
+    """
+    The packer URL a StreamWish-family loader URL redirects to, or "".
+
+    Measured live 2026-11-23: GET strwish.com/e/<id> returns the same
+    819-byte "Loading..." shell + /main.js?v=1.1.9 as hglink.to (71,214 B,
+    the same build), and running that main.js under node with a stubbed
+    DOM sets location.href to https://niramirus.com/e/<same id>. The
+    niramirus page is the classic packer embed (verified live the same
+    day: 200, packed eval, the same title as the watch-online.mom copy
+    of the same id). The redirect target is a property of the loader's
+    current main.js, not of the id — if strwish rows start failing with
+    "no packed config" on the niramirus URL, re-measure the hop before
+    assuming the files are dead. Only strwish is mapped: the other
+    mirrors were unreadable from this egress, so their hops are not
+    guessed here.
+    """
+    clean = (url or "").replace("\t", "").strip()
+    if _matches(clean, STRWISH_HOST_RE, STRWISH_EMBED_RE):
+        parts = urllib.parse.urlsplit(clean)
+        ident = STRWISH_EMBED_RE.match(parts.path or "").group(1)
+        return f"https://niramirus.com/e/{ident}"
     return ""
 
 
