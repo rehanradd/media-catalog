@@ -361,8 +361,15 @@ class TestEmbedRecognition(unittest.TestCase):
 # The transport seam
 # ---------------------------------------------------------------------------
 
+# http_request used to BE the urllib transport; since the 2026-11-23
+# keep-alive change it delegates HTTP(S) to the shared pool and the
+# urllib body lives in _http_request_urllib (the fallback for
+# non-HTTP(S) URLs). These tests pin the urllib path through that
+# name; http_request-through-the-pool is covered by
+# test_http_keepalive.py.
+
 class TestTransport(unittest.TestCase):
-    def test_http_request_returns_the_response_shape(self):
+    def test_urllib_request_returns_the_response_shape(self):
         def fake_open(request, timeout, follow=True):
             self.assertEqual(request.get_method(), "GET")
             self.assertEqual(request.get_header("User-agent"), hr.USER_AGENT)
@@ -371,11 +378,11 @@ class TestTransport(unittest.TestCase):
             self.assertTrue(follow)
             return FakeResponse(200, "ok", {"Content-Type": "text/plain"}, "https://x.test/a")
         with mock.patch.object(hr, "_open", fake_open):
-            status, body, headers, final = hr.http_request("https://x.test/a", timeout=5)
+            status, body, headers, final = hr._http_request_urllib("https://x.test/a", timeout=5)
         self.assertEqual((status, body, final), (200, b"ok", "https://x.test/a"))
         self.assertEqual(headers["content-type"], "text/plain")
 
-    def test_http_request_passes_extra_headers_and_method(self):
+    def test_urllib_request_passes_extra_headers_and_method(self):
         seen = {}
 
         def fake_open(request, timeout, follow=True):
@@ -383,42 +390,42 @@ class TestTransport(unittest.TestCase):
             seen["method"] = request.get_method()
             return FakeResponse(206, b"x")
         with mock.patch.object(hr, "_open", fake_open):
-            hr.http_request("https://x.test/a", headers={"Range": "bytes=0-1"},
+            hr._http_request_urllib("https://x.test/a", headers={"Range": "bytes=0-1"},
                             method="GET")
         self.assertEqual(seen, {"range": "bytes=0-1", "method": "GET"})
 
-    def test_no_follow_is_passed_to_the_primitive(self):
+    def test_urllib_no_follow_is_passed_to_the_primitive(self):
         seen = {}
 
         def fake_open(request, timeout, follow):
             seen["timeout"], seen["follow"] = timeout, follow
             return FakeResponse(302, b"")
         with mock.patch.object(hr, "_open", fake_open):
-            status, _body, _headers, _final = hr.http_request(
+            status, _body, _headers, _final = hr._http_request_urllib(
                 "https://x.test/a", follow=False, timeout=7)
         self.assertEqual((status, seen), (302, {"timeout": 7, "follow": False}))
 
-    def test_http_error_becomes_a_status_and_a_body(self):
+    def test_urllib_http_error_becomes_a_status_and_a_body(self):
         error = urllib.error.HTTPError("https://x.test/a", 403, "Forbidden",
                                        {"Content-Type": "text/html"}, io.BytesIO(b"no"))
         with mock.patch.object(hr, "_open", side_effect=error):
-            status, body, headers, final = hr.http_request("https://x.test/a")
+            status, body, headers, final = hr._http_request_urllib("https://x.test/a")
         self.assertEqual((status, body), (403, b"no"))
         self.assertEqual(headers["content-type"], "text/html")
         self.assertEqual(final, "https://x.test/a")
 
-    def test_http_error_without_headers_still_reports(self):
+    def test_urllib_http_error_without_headers_still_reports(self):
         error = urllib.error.HTTPError("https://x.test/a", 500, "Err", None, None)
         with mock.patch.object(hr, "_open", side_effect=error):
-            status, _body, headers, _final = hr.http_request("https://x.test/a")
+            status, _body, headers, _final = hr._http_request_urllib("https://x.test/a")
         self.assertEqual((status, headers), (500, {}))
 
-    def test_transport_failure_reports_status_zero(self):
+    def test_urllib_transport_failure_reports_status_zero(self):
         with mock.patch.object(hr, "_open", side_effect=OSError("dns down")):
-            status, body, headers, final = hr.http_request("https://x.test/a")
+            status, body, headers, final = hr._http_request_urllib("https://x.test/a")
         self.assertEqual((status, body, headers, final), (0, "dns down", {}, "https://x.test/a"))
 
-    def test_transport_failure_is_retried_then_succeeds(self):
+    def test_urllib_transport_failure_is_retried_then_succeeds(self):
         # Session 126 follow-up: the MovieBox edge resets ~2 of 3 handshakes,
         # so the first reset must not be the verdict — a retry that answers
         # is a success, not a transport failure.
@@ -432,10 +439,10 @@ class TestTransport(unittest.TestCase):
 
         with mock.patch.object(hr, "_open", flaky_open), \
                 mock.patch.object(time, "sleep"):
-            status, body, _headers, _final = hr.http_request("https://x.test/a")
+            status, body, _headers, _final = hr._http_request_urllib("https://x.test/a")
         self.assertEqual((status, body, calls["n"]), (200, b"ok", 3))
 
-    def test_transport_failure_after_all_retries_reports_status_zero(self):
+    def test_urllib_transport_failure_after_all_retries_reports_status_zero(self):
         calls = {"n": 0}
 
         def dead_open(request, timeout, follow=True):
@@ -444,11 +451,11 @@ class TestTransport(unittest.TestCase):
 
         with mock.patch.object(hr, "_open", dead_open), \
                 mock.patch.object(time, "sleep"):
-            status, _body, _headers, _final = hr.http_request("https://x.test/a")
+            status, _body, _headers, _final = hr._http_request_urllib("https://x.test/a")
         self.assertEqual((status, calls["n"]),
                          (0, hr.TRANSPORT_RETRIES + 1))
 
-    def test_http_error_is_never_retried(self):
+    def test_urllib_http_error_is_never_retried(self):
         # An HTTP answer is evidence about the URL, not the network: a 429
         # returns at once, however many transport retries are budgeted.
         error = urllib.error.HTTPError("https://x.test/a", 429, "Slow down",
@@ -461,10 +468,10 @@ class TestTransport(unittest.TestCase):
 
         with mock.patch.object(hr, "_open", counting_open), \
                 mock.patch.object(time, "sleep"):
-            status, _body, _headers, _final = hr.http_request("https://x.test/a")
+            status, _body, _headers, _final = hr._http_request_urllib("https://x.test/a")
         self.assertEqual((status, calls["n"]), (429, 1))
 
-    def test_explicit_zero_retries_means_one_attempt(self):
+    def test_urllib_explicit_zero_retries_means_one_attempt(self):
         calls = {"n": 0}
 
         def dead_open(request, timeout, follow=True):
@@ -473,7 +480,7 @@ class TestTransport(unittest.TestCase):
 
         with mock.patch.object(hr, "_open", dead_open), \
                 mock.patch.object(time, "sleep"):
-            status, _body, _headers, _final = hr.http_request(
+            status, _body, _headers, _final = hr._http_request_urllib(
                 "https://x.test/a", transport_retries=0)
         self.assertEqual((status, calls["n"]), (0, 1))
 
@@ -2526,30 +2533,21 @@ class TestUnwrapAnimahd(unittest.TestCase):
         # (An earlier version of this test asserted no Referer anywhere and
         # blamed the 403 on a missing User-Agent; both were wrong — the UA was
         # always sent, and the missing header was the Referer.)
-        seen = {}
-
-        def fake_open(request, timeout, follow=True):
-            seen.setdefault("headers", []).append(
-                (request.full_url, dict(request.header_items())))
-            body = (AH_PLAYER_PAGE if "animahd.com" in request.full_url
-                    else AH_SECURE_PAGE if "animahd.fun" in request.full_url
-                    else AH_WORKER_HEAD)
-            headers = ({"Content-Type": "video/x-matroska",
-                        "Content-Range": "bytes 0-511/253161185"}
-                       if "workers.dev" in request.full_url else {})
-            return FakeResponse(206 if "workers.dev" in request.full_url else 200,
-                                body, headers, request.full_url)
-
-        with mock.patch.object(hr, "_open", fake_open):
-            verdict = hr.unwrap_animahd(AH_PLAYER_URL, referer="https://animahd.com/x")
+        # NOTE (2026-11-23, keep-alive): the first version of this test
+        # patched hr._open and read the urllib Request headers. http_request
+        # now delegates HTTP(S) to the keep-alive pool, so _open is no longer
+        # on the path — the unwrapper is driven through its scripted fetch
+        # instead, which records the headers the unwrapper itself passes.
+        # The User-Agent itself is http_request's job (TestTransport covers
+        # the urllib path; test_http_keepalive.py covers the pool).
+        fetch = self.scripted()
+        verdict = hr.unwrap_animahd(AH_PLAYER_URL, fetch=fetch,
+                                    referer="https://animahd.com/x")
         self.assertEqual(verdict["status"], "active", verdict["notes"])
-        self.assertEqual(len(seen["headers"]), 3)
-        by_url = dict(seen["headers"])
-        self.assertEqual(by_url[AH_PLAYER_URL].get("User-agent"), hr.USER_AGENT)
+        self.assertEqual(len(fetch.calls), 3)
+        by_url = {url: headers for url, headers, _m in fetch.calls}
         self.assertNotIn("Referer", by_url[AH_PLAYER_URL])
-        self.assertEqual(by_url[AH_SECURE_URL].get("User-agent"), hr.USER_AGENT)
         self.assertEqual(by_url[AH_SECURE_URL].get("Referer"), AH_PLAYER_URL)
-        self.assertEqual(by_url[AH_WORKER_URL].get("User-agent"), hr.USER_AGENT)
         self.assertNotIn("Referer", by_url[AH_WORKER_URL])
 
     def test_the_signed_query_is_named_but_its_token_is_not_an_expiry(self):

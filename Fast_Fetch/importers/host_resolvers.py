@@ -945,13 +945,19 @@ def reset_host_timeout_state() -> None:
         _HOST_TIMEOUTS.clear()
 
 
-def http_request(url: str, headers: dict | None = None, timeout: float = DEFAULT_TIMEOUT,
+def _http_request_urllib(url: str, headers: dict | None = None, timeout: float = DEFAULT_TIMEOUT,
                  method: str = "GET", follow: bool = True,
                  data: bytes | None = None,
                  transport_retries: int = TRANSPORT_RETRIES,
                  timeout_retries: int = TIMEOUT_RETRIES):
     """
-    (status, body, headers, final_url) for one request.
+    (status, body, headers, final_url) for one request, via plain urllib.
+
+    This is the transport ``http_request`` used before the keep-alive
+    pool: it is still the transport for any URL that is not HTTP(S)
+    with a hostname (no pool to talk to), and for a caller that opts
+    into a timeout-retry budget (API-14, see below) — the pool does
+    not take that budget, so the opt-in routes here.
 
     A redirect that was asked not to be followed comes back as its 3xx with the
     Location in `headers`; a transport failure comes back as status 0 with the
@@ -1000,6 +1006,41 @@ def http_request(url: str, headers: dict | None = None, timeout: float = DEFAULT
     return last
 
 
+def http_request(url: str, headers: dict | None = None, timeout: float = DEFAULT_TIMEOUT,
+                 method: str = "GET", follow: bool = True,
+                 data: bytes | None = None,
+                 transport_retries: int = TRANSPORT_RETRIES):
+    """
+    (status, body, headers, final_url) for one request.
+
+    A redirect that was asked not to be followed comes back as its 3xx with the
+    Location in `headers`; a transport failure comes back as status 0 with the
+    reason in the body, because a resolver's job is to name what it saw.
+    A transport failure (DNS, TLS, timeout, refused — the ``except
+    Exception`` branch) is retried up to ``transport_retries`` times with a
+    short backoff, because on this edge a reset says nothing about the URL.
+    An HTTP answer, including a 429, is never retried.
+
+    Keep-alive (2026-11-23, latency-audit fix 3): HTTP(S) requests run
+    over the shared per-host ``http.client`` pool (``_KEEPALIVE``)
+    instead of a fresh urllib connection per call, so a multi-hop
+    resolve stops paying a TLS + TCP handshake per hop (audit: fastdl
+    5.0 -> 3.0 s, 1xplayer 5.1 -> 2.5 s, voe 3.1 -> 1.4 s cold). A dead
+    pooled connection is dropped and the request retried on a fresh
+    one. The pool tunnels through the WARP proxy exactly like the
+    urllib openers, so the egress is unchanged. Non-HTTP(S) URLs fall
+    back to ``_http_request_urllib``.
+    """
+    parts = urllib.parse.urlsplit(url or "")
+    if parts.scheme in ("http", "https") and parts.hostname:
+        return _KEEPALIVE.fetch(url, headers=headers, timeout=timeout,
+                                method=method, follow=follow, data=data,
+                                transport_retries=transport_retries)
+    return _http_request_urllib(url, headers=headers, timeout=timeout,
+                                method=method, follow=follow, data=data,
+                                transport_retries=transport_retries)
+
+
 #: Bound on the HubCloud keep-alive pool (2026-11-23, one-round refresh):
 #: one connection per (scheme, host, port) the resolver is talking to
 #: right now — drive page, gamerxyt, and the byte endpoints its Range
@@ -1008,6 +1049,12 @@ def http_request(url: str, headers: dict | None = None, timeout: float = DEFAULT
 #: holding a connection per host in the catalog. Past the bound the
 #: least-recently-used connection is closed and dropped.
 KEEPALIVE_MAX_CONNECTIONS = 8
+
+#: Bound on the redirects KeepAliveFetch follows for one fetch
+#: (2026-11-23, keep-alive in http_request): urllib follows up to 10,
+#: so the pool matches it — otherwise http_request would answer 3xx
+#: where it used to answer the final page.
+KEEPALIVE_MAX_REDIRECTS = 10
 
 
 class KeepAliveFetch:
@@ -1031,11 +1078,13 @@ class KeepAliveFetch:
     the connection was dead, not the server. A timeout is NOT retried
     (API-14): the host stayed silent for the whole timeout, so a fresh
     connection would re-pay it. Any other transport failure (DNS, TLS)
-    is retried like ``http_request``'s, up to three attempts with a short
-    sleep. An HTTP answer, including a 429, is never retried: it is
-    evidence, not a transport failure. After two consecutive timeouts
-    on one host the breaker skips the host without a socket call until
-    its cooldown lapses (see ``_host_timeout_blocked``).
+    is retried like ``http_request``'s, up to ``transport_retries``
+    times with a short sleep (default 2, i.e. three attempts, as before
+    — ``http_request`` passes its own budget through). An HTTP answer,
+    including a 429, is never retried: it is evidence, not a transport
+    failure. After two consecutive timeouts on one host the breaker
+    skips the host without a socket call until its cooldown lapses
+    (see ``_host_timeout_blocked``).
     """
 
     def __init__(self, connection_factory=None,
@@ -1089,7 +1138,8 @@ class KeepAliveFetch:
         return conn
 
     def fetch(self, url, headers=None, timeout=DEFAULT_TIMEOUT,
-              method="GET", follow=True, data=None):
+              method="GET", follow=True, data=None,
+              transport_retries: int = 2):
         """``(status, body, headers, final_url)``, ``http_request``'s shape.
 
         ``headers`` are lowercase-name in the answer, as ``http_request``
@@ -1097,6 +1147,11 @@ class KeepAliveFetch:
         like ``http_request``'s read; a longer body cannot be left
         half-read on a reusable connection, so that connection is
         dropped instead of poisoned for the next request.
+
+        ``transport_retries`` is the retry budget after the first
+        attempt, as in ``http_request`` (default 2: three attempts).
+        Redirects follow urllib's shape: up to KEEPALIVE_MAX_REDIRECTS
+        hops, and a POST becomes a GET on 301/302/303.
         """
         parts = urllib.parse.urlsplit(url or "")
         host = parts.hostname or ""
@@ -1118,9 +1173,9 @@ class KeepAliveFetch:
         current_url = url
         if _host_timeout_blocked(url):
             return 0, "host timeout budget exhausted", {}, url
-        for _redirect in range(6):
+        for _redirect in range(KEEPALIVE_MAX_REDIRECTS):
             status, body, resp_headers, error = 0, b"", {}, None
-            for attempt in range(3):
+            for attempt in range(max(1, transport_retries + 1)):
                 if attempt:
                     time.sleep(0.25 + 0.15 * (attempt % 4))
                 with self._lock:
@@ -1174,7 +1229,10 @@ class KeepAliveFetch:
                              or (443 if nparts.scheme == "https" else 80))
                 except ValueError:
                     return status, body, resp_headers, current_url
-                if status == 303:
+                if status == 303 or (status in (301, 302)
+                                     and method == "POST"):
+                    # urllib converts a POST to a GET on 301/302/303;
+                    # 307/308 keep the method and the body.
                     method, data = "GET", None
                 key = (nhost, nport, nparts.scheme == "https")
                 target = urllib.parse.quote(nparts.path or "/", safe="/%")
@@ -1193,10 +1251,12 @@ _KEEPALIVE = KeepAliveFetch()
 
 
 def keepalive_fetch(url, headers=None, timeout=DEFAULT_TIMEOUT,
-                    method="GET", follow=True, data=None):
+                    method="GET", follow=True, data=None,
+                    transport_retries: int = 2):
     """``http_request``'s shape over the shared keep-alive pool."""
     return _KEEPALIVE.fetch(url, headers=headers, timeout=timeout,
-                            method=method, follow=follow, data=data)
+                            method=method, follow=follow, data=data,
+                            transport_retries=transport_retries)
 
 
 def close_keepalive_pool():

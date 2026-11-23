@@ -300,14 +300,23 @@ class WarpTunnelTests(unittest.TestCase):
     def test_host_resolvers_http_request_via_proxy(self):
         url = f"http://127.0.0.1:{self.origin_port}/z"
         hr._OPENERS.clear()
+        hr.close_keepalive_pool()
         with mock.patch.dict(os.environ,
                              {"RADD_WARP_PROXY": self._proxy_url()}):
             status, body, _headers, _final = hr.http_request(
                 url, timeout=5, transport_retries=0)
         self.assertEqual(200, status)
         self.assertEqual(ORIGIN_BODY, body)
+        # NOTE (2026-11-23, keep-alive): http_request used to go through
+        # urllib's ProxyHandler, which sends the proxy an absolute-form
+        # request line ("GET http://127.0.0.1:<port>/z") — the old
+        # assertion matched "/z" in that line. The keep-alive pool
+        # tunnels with http.client's set_tunnel instead, so the proxy
+        # sees only "CONNECT 127.0.0.1:<port>" and the GET /z travels
+        # inside the tunnel, invisible to the proxy. A CONNECT to the
+        # origin port is the proof the fetch went through the proxy.
         self.assertTrue(
-            any("127.0.0.1" in line and "/z" in line
+            any(line.startswith(f"CONNECT 127.0.0.1:{self.origin_port}")
                 for line in self.proxy.seen),
             f"proxy saw: {self.proxy.seen}")
 

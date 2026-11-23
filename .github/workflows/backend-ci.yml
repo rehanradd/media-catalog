@@ -13,6 +13,8 @@ name: 🐍 Backend CI — Stdlib Python Tests
 #     - Fast_Fetch/test_fix1_dispatch.py    (FIX1: vidout+gdrive dispatch)
 #     - Fast_Fetch/test_fix2_dispatch.py    (FIX2: mp4moviez dispatch)
 #     - Fast_Fetch/test_expiry_bank.py       (API-03: resolve-time expiry banking)
+#     - Fast_Fetch/importers/test_http_keepalive.py (keep-alive: http_request
+#                                             over the per-host pool)
 #     - Fast_Fetch/test_catalog_v2.py        (v2 catalog projection)
 #     - Fast_Fetch/test_release_descriptor.py(release descriptor parsing)
 #     - Fast_Fetch/test_link_health.py       (link health prober; binds a
@@ -382,6 +384,12 @@ jobs:
       # Offline — loopback server mimicking the measured chain, temp SQLite.
       - name: 🧪 test_fix2_dispatch.py
         run: python3 -S Fast_Fetch/test_fix2_dispatch.py
+
+      # Keep-alive (latency audit fix 3, 2026-11-23): http_request now
+      # reuses one http.client connection per (scheme, host, port).
+      # Offline — fake connections, no live socket.
+      - name: 🧪 test_http_keepalive.py
+        run: python3 -S Fast_Fetch/importers/test_http_keepalive.py
 
       - name: 🧪 test_catalog_v2.py
         run: python3 -S Fast_Fetch/test_catalog_v2.py
