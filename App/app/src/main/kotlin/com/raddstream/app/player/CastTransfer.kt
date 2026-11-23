@@ -5,11 +5,12 @@ package com.raddstream.app.player
  * branch is a JVM test ([CastTransferTest]): who is playing where, what
  * position survives a hop, and what refuses a transfer outright.
  *
- * The shape mirrors the pre-1.9 Media3 pattern (see
- * RESEARCH-cast-20261119.md): one local player, one remote player, and a
- * manual swap on session availability — the app swaps the MediaSession
- * player itself, so the rules for *when* a swap may happen and *where*
- * playback resumes live here, not in the service.
+ * The shape mirrors the Media3 Cast pattern (see
+ * RESEARCH-cast-20261119.md): one local player, one remote player, and
+ * the CastPlayer swaps between them on session availability — the app
+ * no longer swaps the MediaSession player itself (since the 2026-11-23
+ * library bump), so the rules for *when* a transfer may happen and
+ * *where* playback resumes live here, not in the service.
  */
 
 /** Which player is carrying playback right now. */

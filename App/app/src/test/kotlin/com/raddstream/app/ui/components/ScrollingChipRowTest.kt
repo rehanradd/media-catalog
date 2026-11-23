@@ -217,17 +217,15 @@ class ScrollingChipRowTest {
         // Robolectric can prove.
         //
         // ROOT CAUSE (fixup 11, from the 1.6.8 sources): this project
-        // uses foundation 1.6.8 (BOM 2024.06.00 pins it there — NOT
-        // 1.7.0), and 1.6.8's rememberSnapFlingBehavior defaults to
-        // CenterToCenter: it snaps an item's CENTER to the viewport
-        // center. That is why the list settled mid-list at offset 36
-        // (run 44664168979) and offset 0 was never the settled state.
-        // The row and this test now build their provider with the
-        // shared ChipRowSnapPosition (Start: position returns 0), so
-        // the snap lands a chip flush at the row's start edge — the
-        // audit item and the KDoc both intend that. (There is no
-        // SnapPosition type in 1.6.8; the 1.7 SnapPosition.Start form
-        // tried in fixup 9 does not compile here.)
+        // rememberSnapFlingBehavior defaults to CenterToCenter: it snaps
+        // an item's CENTER to the viewport center. That is why the list
+        // settled mid-list at offset 36 (run 44664168979) and offset 0 was
+        // never the settled state. The row and this test now build their
+        // provider with the shared ChipRowSnapPosition (SnapPosition.Start:
+        // position returns 0), so the snap lands a chip flush at the row's
+        // start edge — the audit item and the KDoc both intend that.
+        // (Compose 1.9 removed SnapPositionInLayout; the position is
+        // SnapPosition.Start now — the 1.6.8/1.7 form is gone.)
         //
         // The fling velocity is 600px/s on purpose: it moves the list
         // ~200px, well past the first chip (so the index assertion means
@@ -246,7 +244,7 @@ class ScrollingChipRowTest {
                 // driven from the LaunchedEffect below because a
                 // Robolectric swipe produces no fling.
                 val snapLayoutInfoProvider = remember(state) {
-                    SnapLayoutInfoProvider(state, positionInLayout = ChipRowSnapPosition)
+                    SnapLayoutInfoProvider(state, snapPosition = ChipRowSnapPosition)
                 }
                 val snapBehavior = rememberSnapFlingBehavior(snapLayoutInfoProvider)
                 Box(Modifier.width(200.dp)) {

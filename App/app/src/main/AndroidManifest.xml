@@ -97,7 +97,10 @@
             </intent-filter>
 
             <!-- Deep link: <brand.deeplink.scheme>://stream/12345 (brand.properties) -->
-            <intent-filter android:autoVerify="true">
+            <!-- Library bump 2026-11-23: no autoVerify here — this is a custom-scheme
+                 deep link, not an App Link; autoVerify only works for http(s) filters
+                 (AGP 8.9 lint AppLinkUrlError, CI 45094024591). -->
+            <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />

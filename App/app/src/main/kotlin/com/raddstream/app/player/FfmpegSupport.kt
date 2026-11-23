@@ -3,26 +3,27 @@ package com.raddstream.app.player
 /**
  * MX idea #1 (2026-11-18): the FFmpeg software audio decoder.
  *
- * The FFmpeg extension (`androidx.media3.decoder.ffmpeg`) is built from source
- * (Media3 1.3.1 + FFmpeg 6.0, audio decoders AC-3 / E-AC-3 / DTS / TrueHD /
- * MLP) and bundled as a local AAR — it is not on Maven, and the native
- * libraries must be built (see `App/scripts/build-ffmpeg-aar.sh`). The player
- * itself needs no compile-time reference to it: `DefaultRenderersFactory`
- * loads `FfmpegAudioRenderer` by reflection, and this object answers the one
- * question the failover machine needs — "is the software decoder actually
- * there?" — by reflection too, so the app compiles, runs and plays exactly
- * as before on a build without the AAR. With the AAR present but the native
- * library unloadable (an ABI the build did not ship), the renderer simply
+ * The FFmpeg extension is NextLib's prebuilt `nextlib-media3ext`
+ * (Media3 1.11.1 + FFmpeg 9.0.1, audio decoders AC-3 / E-AC-3 / DTS /
+ * TrueHD / MLP) since the 2026-11-23 library bump — it replaced
+ * Jellyfin's `media3-ffmpeg-decoder`, which caps at Media3 1.9.0+1.
+ * The player itself needs no compile-time reference to it:
+ * `NextRenderersFactory` loads `FfmpegAudioRenderer` by reflection,
+ * and this object answers the one question the failover machine
+ * needs — "is the software decoder actually there?" — by reflection
+ * too, so the app compiles, runs and plays exactly as before on a
+ * build without the AAR. With the AAR present but the native library
+ * unloadable (an ABI the build did not ship), the renderer simply
  * never claims a format and MediaCodec handles everything, as before.
  *
- * LGPL: the FFmpeg libraries (libavcodec, libavutil, libswresample) are
- * LGPL-2.1. The build enables only LGPL decoders (no GPL components), and
- * the source + build configuration are in the repo (`App/ffmpeg/NOTICE.md`,
- * `App/scripts/build-ffmpeg-aar.sh`) so the .so can be rebuilt and swapped.
+ * GPL-3.0: the NextLib artifact is GPL-3.0 (FFmpeg itself LGPL 2.1+);
+ * see `App/ffmpeg/NOTICE.md` — the repo has no license file, so this
+ * is flagged for the owner, not a blocker.
  */
 object FfmpegSupport {
 
-    private const val FFMPEG_LIBRARY_CLASS = "androidx.media3.decoder.ffmpeg.FfmpegLibrary"
+    private const val FFMPEG_LIBRARY_CLASS =
+        "io.github.anilbeesetti.nextlib.media3ext.ffdecoder.FfmpegLibrary"
 
     /**
      * Whether the FFmpeg software audio decoder is available on this device:

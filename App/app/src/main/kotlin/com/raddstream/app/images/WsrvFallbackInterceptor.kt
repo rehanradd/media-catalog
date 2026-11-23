@@ -1,8 +1,8 @@
 package com.raddstream.app.images
 
-import coil.intercept.Interceptor
-import coil.request.ImageResult
-import coil.request.SuccessResult
+import coil3.intercept.Interceptor
+import coil3.request.ImageResult
+import coil3.request.SuccessResult
 
 /**
  * wsrv.nl fallback (2026-11-20): poster loads go to the wsrv.nl resize
@@ -18,7 +18,7 @@ import coil.request.SuccessResult
  * the probe) and exactly one extra fetch on the failure path. It covers
  * both load sites at once — [com.raddstream.app.ui.components.CatalogImage]
  * tiles and the [com.raddstream.app.ui.components.PosterPrefetch] warm —
- * because every request flows through the one [coil.ImageLoader].
+ * because every request flows through the one [coil3.ImageLoader].
  * [com.raddstream.app.ui.components.CatalogImage]'s own bounded
  * auto-retry still sits on top: if the direct retry also fails, the tile
  * retries the wsrv URL again (bounded), and each of those attempts falls
@@ -36,12 +36,12 @@ class WsrvFallbackInterceptor : Interceptor {
         val request = chain.request
         val data = request.data
         if (data !is String || !PosterUrlPolicy.isWsrvUrl(data)) {
-            return chain.proceed(request)
+            return chain.proceed()
         }
-        val result = chain.proceed(request)
+        val result = chain.proceed()
         if (result is SuccessResult) return result
         val direct = PosterUrlPolicy.directUrlOfWsrv(data) ?: return result
         if (PosterUrlPolicy.isWsrvUrl(direct)) return result
-        return chain.proceed(request.newBuilder().data(direct).build())
+        return chain.withRequest(request.newBuilder().data(direct).build()).proceed()
     }
 }

@@ -1,6 +1,5 @@
 package com.raddstream.app.work
 
-import android.os.Build
 import androidx.work.Constraints
 import androidx.work.NetworkType
 import com.raddstream.app.viewmodel.HomeSection
@@ -40,11 +39,14 @@ internal const val SYNC_POSTER_WARM_MAX: Int = 100
  * without UNMETERED the worker could burn the viewer's data plan, and
  * without battery-not-low it could spend the last of the battery.
  *
- * `setRequiresDeviceIdle` needs API 23 and the app's minSdk is 21, so it
- * is set only behind the SDK guard — the pattern lint's NewApi check
- * honours, and the one the codebase's own minSdk rule asks for. On an
- * API 21/22 device the warm runs on charging + Wi-Fi alone, which is the
- * same overnight window in practice.
+ * `setRequiresDeviceIdle` needs API 23. The app's minSdk is 23 (raised
+ * by the 2026-11-23 library bump — Media3 1.11.1/NextLib require it), so
+ * the call is unconditional now: the old SDK guard is gone, and with it
+ * the unit-test fragility it carried (in a plain-JUnit test
+ * Build.VERSION.SDK_INT comes from the android.jar stub, whose value
+ * changed with compileSdk 36 and made the guard false — CI 45103781080).
+ * On an API 21/22 device the warm ran on charging + Wi-Fi alone; those
+ * devices can no longer install the app, so that path is moot.
  */
 internal fun catalogPreloadConstraints(): Constraints {
     val builder = Constraints.Builder()
@@ -52,9 +54,7 @@ internal fun catalogPreloadConstraints(): Constraints {
         .setRequiresCharging(true)
         .setRequiresBatteryNotLow(true)
         .setRequiresStorageNotLow(true)
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-        builder.setRequiresDeviceIdle(true)
-    }
+        .setRequiresDeviceIdle(true)
     return builder.build()
 }
 

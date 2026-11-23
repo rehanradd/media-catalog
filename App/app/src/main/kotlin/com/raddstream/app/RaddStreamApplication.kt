@@ -6,8 +6,9 @@ import androidx.work.Configuration
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
-import coil.ImageLoader
-import coil.ImageLoaderFactory
+import coil3.ImageLoader
+import coil3.PlatformContext
+import coil3.SingletonImageLoader
 import com.raddstream.app.brand.Brand
 import com.raddstream.app.data.CrashReporting
 import com.raddstream.app.data.DeviceIdentity
@@ -39,7 +40,7 @@ import kotlinx.coroutines.launch
  * Referenced in AndroidManifest.xml as android:name=".RaddStreamApplication"
  */
 @HiltAndroidApp
-class RaddStreamApplication : Application(), Configuration.Provider, ImageLoaderFactory {
+class RaddStreamApplication : Application(), Configuration.Provider, SingletonImageLoader.Factory {
 
     @Inject
     lateinit var cacheEngineRunner: CacheEngineRunner
@@ -83,7 +84,7 @@ class RaddStreamApplication : Application(), Configuration.Provider, ImageLoader
     @Inject
     lateinit var imageLoader: ImageLoader
 
-    override fun newImageLoader(): ImageLoader = imageLoader
+    override fun newImageLoader(context: PlatformContext): ImageLoader = imageLoader
 
     /**
      * Feel-instant S7 — Startup diet: the scope the fallback timer below

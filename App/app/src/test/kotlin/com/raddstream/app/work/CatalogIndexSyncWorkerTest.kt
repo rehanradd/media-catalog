@@ -199,7 +199,7 @@ class CatalogIndexSyncWorkerTest {
     private fun buildWorker(catalog: CatalogPreloadCatalog): CatalogIndexSyncWorker {
         val assistedFactory: CatalogIndexSyncWorker_AssistedFactory =
             CatalogIndexSyncWorker_AssistedFactory_Impl.create(
-                CatalogIndexSyncWorker_Factory(Provider { catalog }),
+                CatalogIndexSyncWorker_Factory.create(dagger.internal.Provider { catalog }),
             ).get()
         val worker = TestListenableWorkerBuilder.from(context, CatalogIndexSyncWorker::class.java)
             .setWorkerFactory(hiltStyleFactory(assistedFactory))

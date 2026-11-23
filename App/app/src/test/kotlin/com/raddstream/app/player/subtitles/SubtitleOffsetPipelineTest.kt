@@ -124,7 +124,9 @@ class SubtitleOffsetPipelineTest {
 
         assertNotNull(out)
         assertTrue(out!!.isEndOfStream)
-        assertFalse(out.isDecodeOnly)
+        // Library bump 2026-11-23: Media3 1.11 removed Buffer.isDecodeOnly,
+        // so the decode-only assertion goes with it; the EOS propagation
+        // and the unshifted timeline below still pin this test's point.
         // Once the stream is ending, the remaining cues use the unshifted timeline.
         assertEquals(1_000_000L, out.getEventTime(0))
     }

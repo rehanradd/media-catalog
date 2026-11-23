@@ -106,7 +106,7 @@ class CacheSweepWorkerTest {
         //    interface, wrapping the delegate; its public static create(delegate) is the way in.
         val assistedFactory: CacheSweepWorker_AssistedFactory =
             CacheSweepWorker_AssistedFactory_Impl.create(
-                CacheSweepWorker_Factory(Provider { store() }, Provider { clock }),
+                CacheSweepWorker_Factory.create(dagger.internal.Provider { store() }, dagger.internal.Provider { clock }),
             ).get()
         // TestListenableWorkerBuilder's (Context, Class) constructor is package-private in
         // work-testing 2.9.0; the public entry point is the static from() factory.

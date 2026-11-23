@@ -1,4 +1,4 @@
-@file:OptIn(UnstableApi::class)
+@file:androidx.annotation.OptIn(UnstableApi::class)
 // Kotlin's `@file:OptIn` above satisfies the *compiler*; Media3's opt-in rule is enforced a
 // second time by the lint check `UnsafeOptInUsageError`, which only reads
 // `androidx.annotation.OptIn`. Both are required, and the class-level one below is what clears

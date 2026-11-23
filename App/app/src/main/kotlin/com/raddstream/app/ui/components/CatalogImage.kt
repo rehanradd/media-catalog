@@ -30,8 +30,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
-import coil.compose.SubcomposeAsyncImage
-import coil.request.ImageRequest
+import coil3.asDrawable
+import coil3.compose.SubcomposeAsyncImage
+import coil3.request.ImageRequest
+import coil3.request.crossfade
 import com.raddstream.app.data.ServerSettingsRepository
 import com.raddstream.app.images.ArtUrlPolicy
 import com.raddstream.app.images.ImageSizingHolder
@@ -62,7 +64,7 @@ import dagger.hilt.components.SingletonComponent
  * composes a ViewModel. Handing Coil an explicit [ImageRequest] size is the whole point: left to
  * itself Coil decodes to the view box, so "Battery saver" would still pull a full poster and the
  * setting would be a decoration. Passing the request as `model` (not a bare URL) is how the width
- * actually reaches the decoder in Coil 2.x.
+ * actually reaches the decoder in Coil 3.
  *
  * When the load is gated off — metered connection and no mobile-data permission — `model` is null, so
  * Coil makes no request at all and whatever the surrounding card already paints behind the image (the
@@ -282,7 +284,7 @@ fun CatalogImage(
         // reports nothing, so the caller keeps its fallback colour.
         onSuccess = { state ->
             loaded = true
-            onBitmap?.invoke(state.result.drawable.toBitmap())
+            onBitmap?.invoke(state.result.image.asDrawable(context.resources).toBitmap())
         },
         // A transient failure re-requests at once, bounded by
         // [shouldAutoRetryImage]: one failed fetch must not leave a live

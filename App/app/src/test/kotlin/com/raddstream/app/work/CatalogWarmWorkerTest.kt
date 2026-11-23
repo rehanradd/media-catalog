@@ -245,7 +245,7 @@ class CatalogWarmWorkerTest {
     private fun buildWorker(catalog: CatalogPreloadCatalog): CatalogWarmWorker {
         val assistedFactory: CatalogWarmWorker_AssistedFactory =
             CatalogWarmWorker_AssistedFactory_Impl.create(
-                CatalogWarmWorker_Factory(Provider { catalog }),
+                CatalogWarmWorker_Factory.create(dagger.internal.Provider { catalog }),
             ).get()
         val worker = TestListenableWorkerBuilder.from(context, CatalogWarmWorker::class.java)
             .setWorkerFactory(hiltStyleFactory(assistedFactory))

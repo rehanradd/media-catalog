@@ -139,12 +139,12 @@ class PlayerBufferingTest {
         )
 
         val installed = "        val exo = ExoPlayer.Builder(this)\n            .build()\n" +
-            "        exo.setSeekParameters(SeekParameters.CLOSEST_SYNC)\n        player = exo"
+            "        exo.setSeekParameters(SeekParameters.CLOSEST_SYNC)\n        return exo"
         val computedAndDropped = "        val exo = ExoPlayer.Builder(this)\n            .build()\n" +
-            "        val parameters = SeekParameters.CLOSEST_SYNC\n        player = exo"
+            "        val parameters = SeekParameters.CLOSEST_SYNC\n        return exo"
         val assigned = "        val exo = ExoPlayer.Builder(this)\n            .build()\n" +
-            "        exo.seekParameters = SeekParameters.CLOSEST_SYNC\n        player = exo"
-        val slice = { text: String -> text.substringAfter("ExoPlayer.Builder(this)").substringBefore("player = exo") }
+            "        exo.seekParameters = SeekParameters.CLOSEST_SYNC\n        return exo"
+        val slice = { text: String -> text.substringAfter("ExoPlayer.Builder(this)").substringBefore("return exo") }
         assertTrue("a wired player matches", slice(installed).contains("exo.setSeekParameters(SeekParameters.CLOSEST_SYNC)"))
         assertTrue("a value nobody installs does not", !slice(computedAndDropped).contains("setSeekParameters"))
         assertTrue(
@@ -317,7 +317,10 @@ class PlayerBufferingTest {
     private fun playerConstruction(service: String): String = requireSlice(
         service,
         after = "ExoPlayer.Builder(this)",
-        before = "player = exo",
+        // Library bump 2026-11-23 (CastPlayer rewrite): buildPlayer() returns
+        // the player now (`return exo` — the only occurrence in the service);
+        // the call sites assign it (`localPlayer = exo`, `player = sessionPlayer`).
+        before = "return exo",
         mustContain = ".build()",
     )
 

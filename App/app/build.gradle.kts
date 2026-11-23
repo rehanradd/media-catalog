@@ -18,7 +18,7 @@ plugins {
     // catalog (libs.versions.toml).
     alias(libs.plugins.google.services)
     alias(libs.plugins.crashlytics)
-    // Paparazzi 1.3.5 (trial 2026-11-15): JVM screenshot tests — renders real
+    // Paparazzi 2.0.0-alpha02 (2026-11-23): JVM screenshot tests — renders real
     // Compose UI via Layoutlib in CI, no emulator. Test-only wiring; no main
     // source changes. Snapshots live in src/test/snapshots (recorded by
     // :app:recordPaparazziDebug, verified by :app:verifyPaparazziDebug).
@@ -131,7 +131,12 @@ val brandDebugSuffix = brand("identity.application.id.debug.suffix", ".debug")
 
 android {
     namespace   = brand("identity.namespace", brandApplicationId)
-    compileSdk  = 35
+    // Library bump 2026-11-23: compileSdk 35 -> 36, forced by Media3
+    // 1.11.1 + NextLib (their AAR metadata requires compiling against
+    // API 36+; proven by CI 45089532958, :app:checkDebugAarMetadata).
+    // targetSdk stays 35: compileSdk can be raised separately from
+    // targetSdk, and 36's runtime behavior changes are untested.
+    compileSdk  = 36
 
     sourceSets {
         getByName("main") {
@@ -246,7 +251,11 @@ android {
 
     defaultConfig {
         applicationId = brandApplicationId
-        minSdk        = 21
+        // Library bump 2026-11-23: minSdk 21 -> 23, forced by Media3 1.11.1
+        // (its AAR manifests declare minSdk 23 since 1.9.0) and NextLib.
+        // Android 5.0/5.1 are dropped; the app is pre-launch, so no
+        // installed base is affected.
+        minSdk        = 23
         targetSdk     = 35
         versionCode   = versionCodeFromEnv
         versionName   = versionNameFromEnv
@@ -308,7 +317,7 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-        // MX idea #1 (2026-11-19): the Jellyfin FFmpeg decoder AAR requires
+        // MX idea #1 (2026-11-19): the NextLib FFmpeg decoder AAR requires
         // core library desugaring (its aar-metadata sets
         // coreLibraryDesugaringEnabled=true) — AGP's checkDebugAarMetadata
         // fails the build without it (proven by Android CI 44393698539).
@@ -327,6 +336,12 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            // Library bump 2026-11-23 (Hilt 2.58's transitive deps):
+            // error_prone_annotations 2.51.0 and jspecify 1.0.0 both ship
+            // META-INF/versions/9/OSGI-INF/MANIFEST.MF, and
+            // mergeDebugJavaResource fails on the duplicate (CI 45092811369).
+            // The file is an OSGi bundle manifest — irrelevant to the APK.
+            excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
         }
     }
 
@@ -347,6 +362,15 @@ android {
 // body — so an in-test Assume cannot catch it. Excluding here is the only place that works.
 // These classes therefore run on an x86_64 CI runner, never on this ARM host.
 tasks.withType<Test>().configureEach {
+    // Full failure output (2026-11-23): the default SHORT exception format
+    // prints only the exception type + one frame, which hid the message of
+    // the Paparazzi Renderer.prepare failure for two CI runs. FULL prints
+    // the message + the whole stack trace to the console log, so a failure
+    // is diagnosable from the log alone without the XML/HTML report.
+    testLogging {
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        showStackTraces = true
+    }
     if (System.getProperty("os.arch")?.lowercase() in setOf("aarch64", "arm64")) {
         filter {
             excludeTestsMatching("com.raddstream.app.ui.components.PosterCardProvenanceTest")
@@ -367,6 +391,31 @@ tasks.withType<Test>().configureEach {
                     "CatalogIndexSyncWorkerTest and CrashReportingTest: Robolectric has no native runtime for " +
                     "${System.getProperty("os.arch")}. Run these classes on an x86_64 CI runner."
             )
+        }
+    }
+}
+
+// ── Paparazzi vs Robolectric: separate JVMs ──────────────────────────────────
+// Paparazzi 2.x CONFLICTS with Robolectric tests in the same module
+// (cashapp/paparazzi#1979): if a Robolectric test runs first in a fork, the
+// Robolectric-loaded framework classes break Paparazzi's Bridge.init
+// ("Failed to init Bridge."), and every Paparazzi test in that fork fails.
+// testDebugUnitTest runs the whole suite in shared forks, so the
+// Paparazzi-rule classes are excluded here and run ONLY via
+// verifyPaparazziDebug — its own Test task, its own JVM, no Robolectric
+// classes loaded. The goldens still gate on verifyPaparazziDebug (ci.yml
+// runs it as a separate step). Applied via withType<Test>().configureEach
+// with a name guard: tasks.named("testDebugUnitTest") fails at configuration
+// time because AGP creates that task lazily ("Task with name
+// 'testDebugUnitTest' not found", CI 45103299471), and an unguarded
+// withType<Test> exclusion would also empty verifyPaparazziDebug.
+// ScreenSnapshotTest is NOT excluded — it is a Robolectric test (no Paparazzi
+// rule) and belongs in testDebugUnitTest.
+tasks.withType<Test>().configureEach {
+    if (name == "testDebugUnitTest") {
+        filter {
+            excludeTestsMatching("com.raddstream.app.ui.PaparazziPreviewTest")
+            excludeTestsMatching("com.raddstream.app.ui.PlayerLandscapePaparazziTest")
         }
     }
 }
@@ -497,18 +546,19 @@ dependencies {
 
     // MX idea #1 (2026-11-18): FFmpeg software audio decoder (AC-3 / E-AC-3 /
     // DTS / TrueHD / MLP) so titles those formats fail to decode on MediaCodec
-    // play instead of showing the give-up card. Jellyfin's prebuilt
-    // media3-ffmpeg-decoder (Maven Central) carries the same
-    // androidx.media3.decoder.ffmpeg classes as the Media3 source build, so
-    // DefaultRenderersFactory finds FfmpegAudioRenderer by the same
-    // reflective lookup and FfmpegSupport.isSoftwareAudioAvailable answers
-    // true. This replaced the in-CI native build on 2026-11-19 after it
-    // failed 4x in CI (nasm, blank-line configure, Maven 429, AAR path).
-    // License note: the Jellyfin artifact is GPL-3.0 (FFmpeg itself LGPL
+    // play instead of showing the give-up card. NextLib's prebuilt
+    // nextlib-media3ext (Maven Central, Media3 1.11.1 + FFmpeg 9.0.1)
+    // carries FfmpegAudioRenderer, so NextRenderersFactory finds it by the
+    // same reflective lookup and FfmpegSupport.isSoftwareAudioAvailable
+    // answers true. NextLib replaced Jellyfin's media3-ffmpeg-decoder in
+    // the 2026-11-23 library bump (Jellyfin caps at Media3 1.9.0+1); the
+    // in-CI native build it originally replaced failed 4x in CI on
+    // 2026-11-19 (nasm, blank-line configure, Maven 429, AAR path).
+    // License note: the NextLib artifact is GPL-3.0 (FFmpeg itself LGPL
     // 2.1+); see App/ffmpeg/NOTICE.md — the repo has no license file, so
     // this is flagged for the owner, not a blocker.
-    implementation(libs.media3.ffmpeg.decoder)
-    // MX idea #1: the Jellyfin decoder AAR requires core library desugaring
+    implementation(libs.nextlib.media3ext)
+    // MX idea #1: the NextLib decoder AAR requires core library desugaring
     // (see compileOptions above) — this is the library that provides it.
     coreLibraryDesugaring(libs.desugar.jdk.libs)
     implementation(libs.media3.exoplayer.dash)
@@ -538,8 +588,11 @@ dependencies {
     implementation(libs.paging.runtime)
     implementation(libs.paging.compose)
 
-    // ── Image loading (Coil) ──────────────────────────────────────────────────
+    // ── Image loading (Coil 3 since the 2026-11-23 library bump) ─────────────
+    // Coil 3 core no longer loads network images: coil-network-okhttp is
+    // the network fetcher (auto-registered via service loader).
     implementation(libs.coil.compose)
+    implementation(libs.coil.network.okhttp)
 
     // ── Lifecycle + Coroutines ────────────────────────────────────────────────
     implementation(libs.lifecycle.viewmodel)
@@ -564,7 +617,7 @@ dependencies {
 
     // ── Firebase (Crashlytics crash reporting + Analytics) ─────────────────
     // The BOM pins every Firebase library to one tested set (33.7.0:
-    // crashlytics 19.3.0, analytics 22.1.2 — both minSdk 21). Crashlytics
+    // crashlytics 19.3.0, analytics 22.1.2 — both minSdk 21, below the app's 23). Crashlytics
     // uploads the release mapping file automatically via its Gradle plugin,
     // so release stack traces de-obfuscate without a manual step.
     implementation(platform(libs.firebase.bom))
@@ -581,10 +634,12 @@ dependencies {
 
     // ── Google Cast sender (E2 slice 3 spike) ─────────────────────────────
     // CastContext / Default Media Receiver wiring only — no cast button UI
-    // yet (see App/docs/CAST_SPIKE_20261118.md). 21.4.0 keeps minSdk 21.
+    // yet (see App/docs/CAST_SPIKE_20261118.md). 21.4.0 stays pinned;
+    // the app's minSdk is 23 since the 2026-11-23 library bump.
     implementation(libs.play.services.cast.framework)
-    // MX #9 Cast: the real feature — media3-cast (pre-1.9 CastPlayer) for
-    // the remote player, mediarouter for the route-picker button.
+    // MX #9 Cast: the real feature — media3-cast 1.11.1 (CastPlayer.Builder
+    // + RemoteCastPlayer.Builder) for the remote player, mediarouter for
+    // the route-picker button.
     implementation(libs.media3.cast)
     implementation(libs.androidx.mediarouter)
 
@@ -598,6 +653,14 @@ dependencies {
     testImplementation(libs.work.testing)
     testImplementation(libs.compose.ui.test.junit4)
     debugImplementation(libs.compose.ui.test.manifest)
+
+    // Device proof (library bump 2026-11-23): the five-codec decode test
+    // (FfmpegDecodersTest) runs on a device (Firebase Test Lab / phone),
+    // never on the JVM. CI compile-checks it via
+    // :app:compileDebugAndroidTestKotlin.
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.core)
 
     // Feel-instant S7: the generated Baseline Profile ships with the app.
     // The `:baselineprofile` module produces it; without this line the

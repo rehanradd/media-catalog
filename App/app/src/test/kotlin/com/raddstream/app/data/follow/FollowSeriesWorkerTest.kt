@@ -80,9 +80,9 @@ class FollowSeriesWorkerTest {
     private fun buildWorker(catalog: FollowSeriesCatalog): FollowSeriesWorker {
         val assistedFactory: FollowSeriesWorker_AssistedFactory =
             FollowSeriesWorker_AssistedFactory_Impl.create(
-                FollowSeriesWorker_Factory(
-                    Provider { db.followedSeriesDao() },
-                    Provider { catalog },
+                FollowSeriesWorker_Factory.create(
+                    dagger.internal.Provider { db.followedSeriesDao() },
+                    dagger.internal.Provider { catalog },
                 ),
             ).get()
         val worker = TestListenableWorkerBuilder.from(context, FollowSeriesWorker::class.java)

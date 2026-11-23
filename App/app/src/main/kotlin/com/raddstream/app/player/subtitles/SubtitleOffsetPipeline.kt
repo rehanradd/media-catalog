@@ -132,7 +132,9 @@ internal class OffsetSubtitleOutputBuffer(
             skippedOutputBufferCount = delegate.skippedOutputBufferCount
             shouldBeSkipped = delegate.shouldBeSkipped
             if (delegate.isEndOfStream) addFlag(C.BUFFER_FLAG_END_OF_STREAM)
-            if (delegate.isDecodeOnly) addFlag(C.BUFFER_FLAG_DECODE_ONLY)
+            // Library bump 2026-11-23: Media3 1.11 removed the decode-only
+            // flag (C.BUFFER_FLAG_DECODE_ONLY / Buffer.isDecodeOnly) — there
+            // is no decode-only subtitle buffer to propagate anymore.
             if (delegate.isFirstSample) addFlag(C.BUFFER_FLAG_FIRST_SAMPLE)
             if (delegate.isKeyFrame) addFlag(C.BUFFER_FLAG_KEY_FRAME)
             if (delegate.isLastSample) addFlag(C.BUFFER_FLAG_LAST_SAMPLE)

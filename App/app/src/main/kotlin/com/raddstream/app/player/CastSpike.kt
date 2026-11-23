@@ -18,7 +18,7 @@ import com.google.android.gms.cast.framework.SessionProvider
  * plays (see `App/docs/CAST_SPIKE_20261118.md`).
  *
  * WHAT THIS PROVES (once CI is green): the dependency resolves at this
- * app's minSdk 21, the OptionsProvider is found through the manifest
+ * app's minSdk 23, the OptionsProvider is found through the manifest
  * meta-data, and a [MediaInfo] can be built from the same [PlaybackInfo]
  * the ExoPlayer path already uses. WHAT IT DOES NOT PROVE: that a real
  * receiver plays a resolved URL — there is no Cast device on this VM, and

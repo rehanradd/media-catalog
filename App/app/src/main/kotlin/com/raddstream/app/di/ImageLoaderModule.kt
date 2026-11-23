@@ -1,10 +1,10 @@
 package com.raddstream.app.di
 
 import android.content.Context
-import coil.ImageLoader
-import coil.disk.DiskCache
-import coil.memory.MemoryCache
-import coil.request.CachePolicy
+import coil3.ImageLoader
+import coil3.disk.DiskCache
+import coil3.memory.MemoryCache
+import coil3.request.CachePolicy
 import com.raddstream.app.images.WsrvFallbackInterceptor
 import dagger.Module
 import dagger.Provides
@@ -12,11 +12,12 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
+import okio.Path.Companion.toPath
 
 /**
  * Feel-instant S9 — Coil tuning: the image loader's caches, made explicit.
  *
- * Until this slice the app ran Coil 2's defaults, which happened to be
+ * Until the S9 slice the app ran Coil's defaults, which happened to be
  * close to the spec's numbers — memory 25% of the heap, disk 2% of storage
  * clamped to [10 MB, 250 MB] — but nothing pinned them, so a Coil upgrade
  * or a different device's storage size could quietly move either. The
@@ -31,7 +32,7 @@ import javax.inject.Singleton
  *   default today, pinned so a request-level override somewhere cannot
  *   silently turn the disk cache off for the whole app.
  *
- * The disk directory is Coil 2's own default (`image_cache` under the app
+ * The disk directory is Coil's own default (`image_cache` under the app
  * cache dir), named explicitly so the posters already on disk stay cached
  * across this change — a different directory would have wiped the cache
  * and re-fetched every poster on the next cold start.
@@ -45,7 +46,9 @@ import javax.inject.Singleton
  *   [com.raddstream.app.ui.components.CatalogImage] + the S2 prefetch pass
  *   an explicit `.size(width, width)` on every request — the spec's
  *   "size() resolvers" already exist, verified, not re-added.
- * - No Coil 3 migration: everything here exists in the pinned 2.6.0.
+ * - Coil 3 (2026-11-23 library bump): the same tuning on coil3
+ *   imports; network images now ride coil-network-okhttp (declared in
+ *   the version catalog, auto-registered via service loader).
  *
  * What the wsrv slice adds (2026-11-20): the loader carries
  * [WsrvFallbackInterceptor] — poster loads go to the wsrv.nl resize
@@ -63,7 +66,7 @@ object ImageLoaderModule {
     /** Disk cache: a flat 250 MB cap, independent of free storage. */
     const val IMAGE_DISK_CACHE_MAX_BYTES = 250L * 1024 * 1024
 
-    /** Coil 2's default disk-cache directory, named so it survives this change. */
+    /** Coil's default disk-cache directory, named so it survives this change. */
     const val IMAGE_DISK_CACHE_DIR_NAME = "image_cache"
 
     @Provides
@@ -79,13 +82,13 @@ object ImageLoaderModule {
     fun buildImageLoader(context: Context): ImageLoader =
         ImageLoader.Builder(context)
             .memoryCache {
-                MemoryCache.Builder(context)
-                    .maxSizePercent(IMAGE_MEMORY_CACHE_PERCENT)
+                MemoryCache.Builder()
+                    .maxSizePercent(context, IMAGE_MEMORY_CACHE_PERCENT)
                     .build()
             }
             .diskCache {
                 DiskCache.Builder()
-                    .directory(context.cacheDir.resolve(IMAGE_DISK_CACHE_DIR_NAME))
+                    .directory(context.cacheDir.resolve(IMAGE_DISK_CACHE_DIR_NAME).absolutePath.toPath())
                     .maxSizeBytes(IMAGE_DISK_CACHE_MAX_BYTES)
                     .build()
             }

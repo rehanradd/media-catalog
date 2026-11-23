@@ -4,7 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.snapping.SnapLayoutInfoProvider
-import androidx.compose.foundation.gestures.snapping.SnapPositionInLayout
+import androidx.compose.foundation.gestures.snapping.SnapPosition
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -66,17 +66,16 @@ import androidx.compose.ui.unit.dp
  */
 /**
  * The chip rows snap a chip flush to the row's start edge (audit #1).
- * 1.6.8's rememberSnapFlingBehavior defaults to CenterToCenter, which
- * centers a chip in the viewport — wrong for a filter strip — so the row
- * builds its provider with this Start position instead. A Start position
- * returns 0: the item's start aligns with the layout's start. (1.7
- * renamed this API to SnapPosition.Start; do not "simplify" this to a
- * SnapPosition import — it does not exist in 1.6.8, and fixup 9 proved
- * it does not compile.) Shared with the snap test so the row and the
+ * rememberSnapFlingBehavior defaults to CenterToCenter, which centers a
+ * chip in the viewport — wrong for a filter strip — so the row builds its
+ * provider with this Start position instead. A Start position returns 0:
+ * the item's start aligns with the layout's start. (Compose 1.9 removed
+ * SnapPositionInLayout — the 1.6.8/1.7 form — so the position is
+ * SnapPosition.Start now.) Shared with the snap test so the row and the
  * test can never drift apart on the position.
  */
 @OptIn(ExperimentalFoundationApi::class)
-internal val ChipRowSnapPosition = SnapPositionInLayout { _, _, _, _, _ -> 0 }
+internal val ChipRowSnapPosition = SnapPosition.Start
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -95,7 +94,7 @@ fun ScrollingChipRow(
     // recreated on every recomposition — a fresh provider object would
     // rebuild it mid-fling.
     val snapLayoutInfoProvider = remember(state) {
-        SnapLayoutInfoProvider(state, positionInLayout = ChipRowSnapPosition)
+        SnapLayoutInfoProvider(state, snapPosition = ChipRowSnapPosition)
     }
     Box(modifier = modifier.fillMaxWidth()) {
         var rowModifier = Modifier.fillMaxWidth()

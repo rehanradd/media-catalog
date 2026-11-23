@@ -5,7 +5,7 @@
 // is `BaselineProfileGenerator` — the Startup Profile covering
 // Home → Search → Detail.
 //
-// The plugin needs AGP 8.0+; this project is on 8.5.2. No Gradle-managed
+// The plugin needs AGP 8.0+; this project is on 8.9.3. No Gradle-managed
 // device is configured: generation runs on a connected device (rooted, or
 // API 33+) the operator provides — see the generator's KDoc for the
 // prerequisites and the exact command. CI never runs the generator
@@ -28,12 +28,12 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        // minSdk 23, not the app's 21: benchmark-macro-junit4 1.4.1
-        // declares minSdk 23, and the manifest merger refuses a module
-        // lower than its library (proven by Android CI 44426842277).
-        // This module never ships in the app — it is a test APK that runs
-        // on the generation device only — so its floor does not move the
-        // app's 21, and generation already needs a rooted device or
+        // minSdk 23, the same as the app's since the 2026-11-23 library
+        // bump: benchmark-macro-junit4 1.4.1 declares minSdk 23, and the
+        // manifest merger refuses a module lower than its library
+        // (proven by Android CI 44426842277). This module never ships in
+        // the app — it is a test APK that runs on the generation device
+        // only — and generation already needs a rooted device or
         // API 33+ anyway.
         minSdk = 23
         targetSdk = 35

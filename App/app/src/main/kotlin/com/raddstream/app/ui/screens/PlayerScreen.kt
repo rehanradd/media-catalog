@@ -357,7 +357,7 @@ fun PlayerScreen(
 
 // ── Root ───────────────────────────────────────────────────────────────────────
 
-@OptIn(UnstableApi::class, ExperimentalMaterial3Api::class)
+@androidx.annotation.OptIn(UnstableApi::class, ExperimentalMaterial3Api::class)
 @Composable
 private fun PlayerScreenContent(
     state: PlayerUiState,
@@ -374,6 +374,11 @@ private fun PlayerScreenContent(
     kidsLockViewModel: KidsLockViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
+    // Library bump 2026-11-23 (Compose 1.9 lint LocalContextGetResourceValueCall):
+    // these two strings are read inside the PIN-pad callback below, where
+    // stringResource() cannot run — resolve them here, at composition time.
+    val kidsPinWrong = stringResource(R.string.kids_pin_wrong)
+    val kidsPinIncomplete = stringResource(R.string.kids_pin_incomplete)
     val configuration = LocalConfiguration.current
     val activity = remember(context) { context.findActivity() }
     // MX #7 — Kids Lock: the unlock pad, raised when the VM answers an
@@ -859,9 +864,9 @@ private fun PlayerScreenContent(
                                 vm.unlockWithKidsPin()
                                 kidsPinRequested = false
                             }
-                            KidsPinOutcome.WrongPin -> kidsPinError = context.getString(R.string.kids_pin_wrong)
-                            KidsPinOutcome.InvalidFormat -> kidsPinError = context.getString(R.string.kids_pin_incomplete)
-                            KidsPinOutcome.Mismatch -> kidsPinError = context.getString(R.string.kids_pin_wrong)
+                            KidsPinOutcome.WrongPin -> kidsPinError = kidsPinWrong
+                            KidsPinOutcome.InvalidFormat -> kidsPinError = kidsPinIncomplete
+                            KidsPinOutcome.Mismatch -> kidsPinError = kidsPinWrong
                             // LockedOut clears the error — the dialog's own
                             // countdown line says it.
                             KidsPinOutcome.LockedOut -> kidsPinError = null
@@ -2945,6 +2950,7 @@ private fun QualityPill(
 ) {
     val context = LocalContext.current
     val label = stringResource(R.string.player_quality_label, state.qualityLabel)
+    val singleQualityMessage = stringResource(R.string.player_quality_single)
     val textColor = if (!state.qualityAuto) RaddCurrent500 else Color.White
     Box(
         modifier = Modifier
@@ -2956,7 +2962,7 @@ private fun QualityPill(
             .clickable(
                 onClick = {
                     if (state.canSwitchQuality) onShowQualitySheet()
-                    else onMessage(context.getString(R.string.player_quality_single))
+                    else onMessage(singleQualityMessage)
                 },
                 role = Role.Button,
             )
@@ -4692,9 +4698,10 @@ private fun SleepSheet(state: PlayerUiState, vm: PlayerViewModel) {
 @Composable
 private fun SubtitleSettingsSheet(state: PlayerUiState, vm: PlayerViewModel) {
     val ctx = LocalContext.current
+    val externalSubtitleFallback = stringResource(R.string.player_external_subtitle)
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) {
-            val name = queryDisplayName(ctx, uri) ?: ctx.getString(R.string.player_external_subtitle)
+            val name = queryDisplayName(ctx, uri) ?: externalSubtitleFallback
             val hint = name.substringAfterLast('.', "srt").lowercase()
             vm.addExternalSubtitle(url = uri.toString(), label = name, formatHint = hint)
         }
@@ -5591,6 +5598,11 @@ private fun shareMoment(context: Context, text: String) {
 private fun rememberPipLauncher(aspectRatio: Float? = null, sourceRect: androidx.compose.ui.geometry.Rect? = null): () -> Unit {
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
+    // Library bump 2026-11-23 (Compose 1.9 lint LocalContextGetResourceValueCall):
+    // the toasts fire inside the returned lambda, where stringResource()
+    // cannot run — resolve them here, at composition time.
+    val pipRefused = stringResource(R.string.player_pip_refused)
+    val pipUnsupported = stringResource(R.string.player_pip_unsupported)
     return {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && activity != null) {
             try {
@@ -5621,10 +5633,10 @@ private fun rememberPipLauncher(aspectRatio: Float? = null, sourceRect: androidx
                 // Single-token log message: PlayerChromeCopyTest forbids prose
                 // literals in this file, and a log line is not viewer copy.
                 Log.w("PlayerScreen", "enterPictureInPictureMode_failed", t)
-                Toast.makeText(context, context.getString(R.string.player_pip_refused), Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, pipRefused, Toast.LENGTH_SHORT).show()
             }
         } else {
-            Toast.makeText(context, context.getString(R.string.player_pip_unsupported), Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, pipUnsupported, Toast.LENGTH_SHORT).show()
         }
     }
 }

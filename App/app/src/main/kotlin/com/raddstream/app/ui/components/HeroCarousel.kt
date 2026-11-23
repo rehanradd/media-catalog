@@ -235,7 +235,7 @@ fun HeroCarousel(
                 // the hero read as empty mid-load (the Batch 0/1 empty-hero
                 // shots). One page of lookahead keeps the next slide's art
                 // warm, so an advance lands on a painted slide.
-                beyondBoundsPageCount = 1,
+                beyondViewportPageCount = 1,
                 modifier = Modifier.fillMaxSize().clipToBounds(),
             ) { page ->
                 val post = posts.getOrNull(page) ?: return@HorizontalPager

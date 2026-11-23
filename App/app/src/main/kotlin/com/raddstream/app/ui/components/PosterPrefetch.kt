@@ -1,8 +1,8 @@
 package com.raddstream.app.ui.components
 
 import android.content.Context
-import coil.imageLoader
-import coil.request.ImageRequest
+import coil3.imageLoader
+import coil3.request.ImageRequest
 import com.raddstream.app.images.ArtUrlPolicy
 import com.raddstream.app.images.ImageSizingPolicy
 import com.raddstream.app.images.PosterUrlPolicy

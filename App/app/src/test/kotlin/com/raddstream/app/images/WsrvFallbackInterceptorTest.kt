@@ -3,14 +3,15 @@ package com.raddstream.app.images
 import android.content.Context
 import android.graphics.drawable.ColorDrawable
 import androidx.test.core.app.ApplicationProvider
-import coil.annotation.ExperimentalCoilApi
-import coil.decode.DataSource
-import coil.intercept.Interceptor
-import coil.request.ErrorResult
-import coil.request.ImageRequest
-import coil.request.ImageResult
-import coil.request.SuccessResult
-import coil.size.Size
+import coil3.annotation.ExperimentalCoilApi
+import coil3.asImage
+import coil3.decode.DataSource
+import coil3.intercept.Interceptor
+import coil3.request.ErrorResult
+import coil3.request.ImageRequest
+import coil3.request.ImageResult
+import coil3.request.SuccessResult
+import coil3.size.Size
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -46,13 +47,17 @@ class WsrvFallbackInterceptorTest {
 
         override val size: Size = Size.ORIGINAL
 
-        override fun withRequest(request: ImageRequest) = FakeChain(request, answer)
+        // Coil 3's Chain is immutable in the real implementation, but this
+        // fake keeps one list: the interceptor retries via withRequest, and
+        // the assertions read a single `proceeded` list, so the retry must
+        // land in this same list (a fresh chain per withRequest would hide
+        // the retry from the assertions).
+        override fun withRequest(request: ImageRequest) = apply { this.request = request }
 
         override fun withSize(size: Size) = this
 
-        override suspend fun proceed(request: ImageRequest): ImageResult {
+        override suspend fun proceed(): ImageResult {
             proceeded += request
-            this.request = request
             return answer(request)
         }
     }
@@ -61,7 +66,7 @@ class WsrvFallbackInterceptorTest {
         ImageRequest.Builder(context).data(data).build()
 
     private fun success(request: ImageRequest) =
-        SuccessResult(ColorDrawable(), request, DataSource.NETWORK)
+        SuccessResult(ColorDrawable().asImage(), request, DataSource.NETWORK)
 
     private fun failure(request: ImageRequest) =
         ErrorResult(null, request, IllegalStateException("proxy down"))
