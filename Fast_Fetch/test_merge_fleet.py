@@ -155,6 +155,56 @@ class FleetSiteListTests(unittest.TestCase):
             self.assertIn(site, merge_fleet.SITES)
 
 
+class DroughtSiteListTests(unittest.TestCase):
+    """2026-11-23 catalog drought: six importers wrote staging DBs daily
+    but were never registered here, so autocrawl merged 0 new posts for
+    ~26h while their staging files grew. The wiring is pinned so a silent
+    drop of any entry skips the site forever with only a "[!] missing"
+    line in the fleet log.
+
+    Producer map (the test fails if a registered importer is missing from
+    SITES, and fails if a site in SITES has no producer on disk):
+      xprimehub  -> Fast_Fetch/import_xprimehub.py (unified family)
+      themoviebox/javmost/dramadog/megacartoons
+                 -> Fast_Fetch/importers/import_<site>.py (staging family)
+      animeworld -> Fast_Fetch/importers/import_wp_family.py entry
+    """
+
+    DROUGHT_SITES = (
+        "xprimehub", "themoviebox", "javmost", "animeworld", "dramadog",
+        "megacartoons",
+    )
+
+    def test_drought_sites_are_fleet_sites(self):
+        for site in self.DROUGHT_SITES:
+            self.assertIn(site, merge_fleet.SITES)
+
+    def test_drought_sites_use_the_default_staging_db(self):
+        # No SOURCES override: main() resolves each to DATA_DIR/<site>.db
+        # (SOURCES.get(site, DATA_DIR / f"{site}.db")). A stray override
+        # here would point the fleet at a file that does not exist.
+        for site in self.DROUGHT_SITES:
+            self.assertNotIn(site, merge_fleet.SOURCES)
+            self.assertEqual(
+                merge_fleet.SOURCES.get(
+                    site, merge_fleet.DATA_DIR / f"{site}.db").name,
+                f"{site}.db")
+
+    def test_every_drought_site_has_a_producer(self):
+        for site in self.DROUGHT_SITES:
+            if site == "xprimehub":
+                producer = BASE_DIR / "import_xprimehub.py"
+                self.assertTrue(producer.exists(), f"missing {producer}")
+            elif site == "animeworld":
+                wp_family = (BASE_DIR / "importers" / "import_wp_family.py")
+                self.assertTrue(wp_family.exists(), f"missing {wp_family}")
+                self.assertIn(
+                    "animeworld", wp_family.read_text(encoding="utf-8"))
+            else:
+                producer = BASE_DIR / "importers" / f"import_{site}.py"
+                self.assertTrue(producer.exists(), f"missing {producer}")
+
+
 class MainLoopTests(unittest.TestCase):
     """End-to-end through main() with a stubbed merge: skip / re-merge / retry."""
 

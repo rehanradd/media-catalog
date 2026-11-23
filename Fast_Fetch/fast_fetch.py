@@ -2323,7 +2323,17 @@ def extract_xml_tags(xml_text: str, tag: str) -> list[str]:
 def sync_sitemaps(site: str = "all", max_sub_sitemaps: int | None = None, include_categories: bool = False, cat_pages: int = 3, verbose: bool = True) -> int:
     """
     Fetches the main sitemap and post feeds, caching URLs into sitemap_cache.
-    Supports site='vegamovies', 'rogmovies', 'ssrmovies', '7starhd', 'katmoviehd', or 'all'.
+    Supports site='vegamovies', 'rogmovies', 'ssrmovies', '7starhd',
+    'katmoviehd', 'multimovies', '10xflix', 'hdhub4u', 'bollyshares',
+    'filmyzilla', or 'all'.
+
+    Every feed reports its outcome: a non-200 fetch or a 200-with-0-records
+    parse is printed loudly and collected for the summary line at the end,
+    so a dead feed can never again hide inside a successful-looking
+    "Global sync complete!" total (2026-11-23 drought: four feeds returned
+    nothing for days with no error line). The int return contract (total
+    cached) is unchanged, and a dead feed does not abort the cycle — the
+    autocrawl still runs the merge step after a partial sync.
     """
     init_db()
     # Hunk G (crown ruling 2026-11-05): fresh read of the three tables at every
@@ -2350,6 +2360,28 @@ def sync_sitemaps(site: str = "all", max_sub_sitemaps: int | None = None, includ
             max_sub_sitemaps = max(1, min(int(max_sub_sitemaps), int(_cap)))
     total_added_global = 0
 
+    # 2026-11-23 catalog drought: four feeds returned nothing for days with
+    # NO error line — a non-200 fetch printed nothing and a 200-with-0-records
+    # parse printed nothing, so the step still reported success. Every feed
+    # outcome is now reported loudly (HTTP failure vs empty parse) and the
+    # problems are collected for a summary line at the end, so a zero-feed
+    # cycle can never look clean again. Failure lines print unconditionally:
+    # the autocrawl log is the operator's only view of a feed, and a
+    # verbose=False caller must not be able to hide them.
+    sync_problems: list[str] = []
+
+    def _report_feed(label: str, code: int, url: str, n_records: int) -> None:
+        if code != 200:
+            line = (f"[!] [{label}] feed HTTP {code} from {url} — "
+                    f"0 records cached")
+        elif n_records == 0:
+            line = (f"[!] [{label}] feed returned 0 records from {url} — "
+                    f"empty feed or changed page shape")
+        else:
+            return
+        sync_problems.append(line)
+        print(line)
+
     # 1. Standard XML sitemap sites (Vegamovies, RogMovies)
     xml_sites = []
     if site in ("vegamovies", "all"):
@@ -2362,7 +2394,7 @@ def sync_sitemaps(site: str = "all", max_sub_sitemaps: int | None = None, includ
             print(f"\n[i] Fetching main sitemap for {site_name.upper()}: {sitemap_url}")
         code, _, xml = http_get(sitemap_url)
         if code != 200:
-            print(f"[!] Failed to fetch sitemap for {site_name}: HTTP {code}")
+            _report_feed(site_name.upper(), code, sitemap_url, 0)
             continue
 
         sub_sitemaps = re.findall(r"<loc>(https?://[^<]+/post-sitemap\d*\.xml)</loc>", xml)
@@ -2404,7 +2436,12 @@ def sync_sitemaps(site: str = "all", max_sub_sitemaps: int | None = None, includ
                     sub_records = fut.result()
                     records.extend(sub_records)
                     if verbose:
-                        print(f"  ✓ [{site_name}] Processed {sm_url.split('/')[-1]} ({len(sub_records)} entries)")
+                        if sub_records:
+                            print(f"  ✓ [{site_name}] Processed {sm_url.split('/')[-1]} ({len(sub_records)} entries)")
+                        else:
+                            # A sub-sitemap that answers 200 with 0 entries
+                            # is a dead feed wearing a success — say so.
+                            print(f"  ✗ [{site_name}] {sm_url.split('/')[-1]} returned 0 entries")
                 except Exception as ex:
                     if verbose:
                         print(f"  ✗ Error reading {sm_url}: {ex}")
@@ -2425,6 +2462,8 @@ def sync_sitemaps(site: str = "all", max_sub_sitemaps: int | None = None, includ
                 total_added_global += len(records)
             if verbose:
                 print(f"[✓] [{site_name.upper()}] Cached {len(records)} posts in database.")
+        else:
+            _report_feed(site_name.upper(), code, sitemap_url, 0)
 
     # 2. SSRMovies WP REST API feed
     if site in ("ssrmovies", "all"):
@@ -2458,7 +2497,12 @@ def sync_sitemaps(site: str = "all", max_sub_sitemaps: int | None = None, includ
                         total_added_global += len(ssr_records)
                     if verbose:
                         print(f"[✓] [SSRMOVIES] Cached {len(ssr_records)} posts in database.")
+                else:
+                    _report_feed("SSRMOVIES", c, ssr_api_url, 0)
+            else:
+                _report_feed("SSRMOVIES", c, ssr_api_url, 0)
         except Exception as e:
+            sync_problems.append(f"[!] [SSRMOVIES] feed error: {e}")
             if verbose:
                 print(f"[!] Error fetching SSRMovies feed: {e}")
 
@@ -2470,7 +2514,17 @@ def sync_sitemaps(site: str = "all", max_sub_sitemaps: int | None = None, includ
             s7_url = DOMAINS.get("7starhd", "https://7starhd.rich")
             c, _, s7_html = http_get(s7_url)
             if c == 200:
-                links7 = set(re.findall(r'href=["\'](https?://7starhd\.rich/[a-zA-Z0-9\-_]+/)["\']', s7_html))
+                # 2026-11-23: the host moved .rich -> .surgery and the old
+                # regex hardcoded `7starhd\.rich`, so a live homepage full
+                # of real post links parsed to 0 records, silently. Match
+                # the host that was actually fetched, not a stale literal.
+                s7_host = urllib.parse.urlparse(s7_url).netloc
+                s7_pattern = (
+                    r"""href=["'](https?://"""
+                    + re.escape(s7_host)
+                    + r"""/[a-zA-Z0-9\-_]+/)["']"""
+                )
+                links7 = set(re.findall(s7_pattern, s7_html))
                 s7_records = []
                 for l in links7:
                     if not any(x in l for x in ['/page/', '/category/', '/tag/', '/genre/', '/how-to', '/disclaimer', '/dmca']):
@@ -2492,7 +2546,12 @@ def sync_sitemaps(site: str = "all", max_sub_sitemaps: int | None = None, includ
                         total_added_global += len(s7_records)
                     if verbose:
                         print(f"[✓] [7STARHD] Cached {len(s7_records)} posts in database.")
+                else:
+                    _report_feed("7STARHD", c, s7_url, 0)
+            else:
+                _report_feed("7STARHD", c, s7_url, 0)
         except Exception as e:
+            sync_problems.append(f"[!] [7STARHD] feed error: {e}")
             if verbose:
                 print(f"[!] Error fetching 7StarHD feed: {e}")
 
@@ -2509,6 +2568,24 @@ def sync_sitemaps(site: str = "all", max_sub_sitemaps: int | None = None, includ
                 for sl in slugs:
                     full_loc = f"{km_url.rstrip('/')}/{sl}"
                     km_records.append((full_loc, "", sl, "katmoviehd"))
+                if not km_records:
+                    # 2026-11-23: the current domain serves a plain homepage
+                    # with no slug:"..." embeds (the old frontend's shape),
+                    # so the parse finds nothing even though the homepage
+                    # lists real posts. Harvest same-host post links
+                    # directly, mirroring the hdhub4u fallback below.
+                    km_host = urllib.parse.urlparse(km_url).netloc
+                    km_pattern = (
+                        r"""href=["'](https?://"""
+                        + re.escape(km_host)
+                        + r"""/[a-zA-Z0-9\-_]+/?)["']"""
+                    )
+                    for l in set(re.findall(km_pattern, km_html)):
+                        if not any(x in l for x in ['/category/', '/tag/', '/page/', '/genre/', '/about/', '/app/']):
+                            slug = l.rstrip("/").split("/")[-1]
+                            if slug:
+                                loc = l if l.endswith("/") else l + "/"
+                                km_records.append((loc, "", slug, "katmoviehd"))
                 if km_records:
                     with get_db() as conn:
                         conn.executemany(
@@ -2525,7 +2602,12 @@ def sync_sitemaps(site: str = "all", max_sub_sitemaps: int | None = None, includ
                         total_added_global += len(km_records)
                     if verbose:
                         print(f"[✓] [KATMOVIEHD] Cached {len(km_records)} posts in database.")
+                else:
+                    _report_feed("KATMOVIEHD", c, km_url, 0)
+            else:
+                _report_feed("KATMOVIEHD", c, km_url, 0)
         except Exception as e:
+            sync_problems.append(f"[!] [KATMOVIEHD] feed error: {e}")
             if verbose:
                 print(f"[!] Error fetching KatMovieHD feed: {e}")
 
@@ -2568,7 +2650,12 @@ def sync_sitemaps(site: str = "all", max_sub_sitemaps: int | None = None, includ
                         total_added_global += len(mm_records)
                     if verbose:
                         print(f"[✓] [MULTIMOVIES] Cached {len(mm_records)} titles in database.")
+                else:
+                    _report_feed("MULTIMOVIES", c, mm_sm_url, 0)
+            else:
+                _report_feed("MULTIMOVIES", c, mm_sm_url, 0)
         except Exception as e:
+            sync_problems.append(f"[!] [MULTIMOVIES] feed error: {e}")
             if verbose:
                 print(f"[!] Error fetching MultiMovies sitemap: {e}")
 
@@ -2577,6 +2664,12 @@ def sync_sitemaps(site: str = "all", max_sub_sitemaps: int | None = None, includ
         if verbose:
             print(f"\n[i] Fetching post feed for 10XFLIX: {DOMAINS.get('10xflix', 'https://10xflix.help')}/wp-json/wp/v2/posts")
         try:
+            # Registry drift, probed 2026-11-23 from Oracle egress:
+            # 10xflix.beer/wp-json/ 404s — the WP install now lives under
+            # /m (10xflix.beer/m/wp-json/ answers 200 with fresh posts).
+            # The /m base is owned by the 10xflix-beer branch; do NOT
+            # hardcode it here — this section only reports the failure
+            # loudly until that branch lands.
             t10_api_url = f"{DOMAINS.get('10xflix', 'https://10xflix.help')}/wp-json/wp/v2/posts?per_page=100"
             c, _, resp_body = http_get(t10_api_url)
             if c == 200:
@@ -2604,7 +2697,12 @@ def sync_sitemaps(site: str = "all", max_sub_sitemaps: int | None = None, includ
                         total_added_global += len(t10_records)
                     if verbose:
                         print(f"[✓] [10XFLIX] Cached {len(t10_records)} posts in database.")
+                else:
+                    _report_feed("10XFLIX", c, t10_api_url, 0)
+            else:
+                _report_feed("10XFLIX", c, t10_api_url, 0)
         except Exception as e:
+            sync_problems.append(f"[!] [10XFLIX] feed error: {e}")
             if verbose:
                 print(f"[!] Error fetching 10xflix feed: {e}")
 
@@ -2652,7 +2750,10 @@ def sync_sitemaps(site: str = "all", max_sub_sitemaps: int | None = None, includ
                     total_added_global += len(hub_records)
                 if verbose:
                     print(f"[✓] [HDHUB4U] Cached {len(hub_records)} posts in database.")
+            else:
+                _report_feed("HDHUB4U", c, hub_sm_url, 0)
         except Exception as e:
+            sync_problems.append(f"[!] [HDHUB4U] feed error: {e}")
             if verbose:
                 print(f"[!] Error fetching HDHub4u sitemap: {e}")
 
@@ -2661,6 +2762,12 @@ def sync_sitemaps(site: str = "all", max_sub_sitemaps: int | None = None, includ
         if verbose:
             print(f"\n[i] Fetching post sitemap for BOLLYSHARES: {DOMAINS.get('bollyshares', 'https://bollyshares.xyz')}/post-sitemap.xml")
         try:
+            # Registry drift, probed 2026-11-23 from Oracle egress:
+            # bollyshares.xyz/post-sitemap.xml 404s and the homepage is a
+            # RunCloud "Website Unavailable" parking page — the site is
+            # DOWN, not just a moved feed. Nothing here can fix that; the
+            # loud report below is what surfaces it until the site returns
+            # or the registry marks it down.
             bs_sm_url = DOMAINS.get("bollyshares_sitemap", "https://bollyshares.xyz/post-sitemap.xml")
             c, _, bs_xml = http_get(bs_sm_url)
             bs_records = []
@@ -2699,7 +2806,10 @@ def sync_sitemaps(site: str = "all", max_sub_sitemaps: int | None = None, includ
                     total_added_global += len(bs_records)
                 if verbose:
                     print(f"[✓] [BOLLYSHARES] Cached {len(bs_records)} posts in database.")
+            else:
+                _report_feed("BOLLYSHARES", c, bs_sm_url, 0)
         except Exception as e:
+            sync_problems.append(f"[!] [BOLLYSHARES] feed error: {e}")
             if verbose:
                 print(f"[!] Error fetching BollyShares sitemap: {e}")
 
@@ -2758,7 +2868,10 @@ def sync_sitemaps(site: str = "all", max_sub_sitemaps: int | None = None, includ
                     total_added_global += len(fz_records)
                 if verbose:
                     print(f"[✓] [FILMYZILLA] Cached {len(fz_records)} posts in database.")
+            else:
+                _report_feed("FILMYZILLA", c, fz_sm_url, 0)
         except Exception as e:
+            sync_problems.append(f"[!] [FILMYZILLA] feed error: {e}")
             if verbose:
                 print(f"[!] Error fetching FilmyZilla sitemap: {e}")
 
@@ -2768,6 +2881,12 @@ def sync_sitemaps(site: str = "all", max_sub_sitemaps: int | None = None, includ
 
     if verbose:
         print(f"\n[✓] Global sync complete! Total {total_added_global} posts cached across configured sites.")
+    if sync_problems:
+        # Always printed, even with verbose=False: a cycle that cached
+        # posts from some feeds while others silently died must not look
+        # clean in the autocrawl log. The "Global sync complete!" line
+        # above is untouched — the cron script greps for it.
+        print(f"[!] Sync problems ({len(sync_problems)}): " + "; ".join(sync_problems))
     return total_added_global
 
 

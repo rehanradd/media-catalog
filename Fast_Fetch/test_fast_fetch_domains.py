@@ -26,12 +26,14 @@ temp files / in-memory sqlite.
 from __future__ import annotations
 
 import contextlib
+import io
 import json
 import pathlib
 import sqlite3
 import sys
 import tempfile
 import unittest
+import urllib.parse
 from unittest import mock
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -556,6 +558,138 @@ class TestKatmovieBlockShadowing(unittest.TestCase):
         # is out of this slice's scope and would change ingest output.
         self.assertEqual(ff.normalize_url("https://notkatmovie.example/x"),
                          self.ACTIVE + "/x")
+
+
+class TestSyncSitemapsReportsEmptyFeeds(unittest.TestCase):
+    """2026-11-23 catalog drought: 7starhd / katmoviehd / 10xflix /
+    bollyshares returned nothing for days with NO error line, and the step
+    still reported "Global sync complete!" success. Every feed must now
+    report its outcome loudly (HTTP failure vs empty parse) and the cycle
+    must end with a "[!] Sync problems" summary line naming the dead
+    feeds. The two feed-shape fixes are pinned too: the 7starhd regex
+    must follow the host that was actually fetched (it hardcoded
+    `7starhd.rich` after the move to .surgery), and katmoviehd must fall
+    back to harvesting homepage post links when the page carries no
+    slug:"..." embeds (the current domain's shape).
+
+    Offline: http_get is stubbed, the DB is a temp file, no network, no
+    production DB. The stubbed HTML is built on the host the sync
+    actually requested, so the tests do not depend on the registry's
+    current domain values.
+    """
+
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self._db = pathlib.Path(self._td.name) / "sync.db"
+        self._db_patch = mock.patch.object(ff, "DB_PATH", self._db)
+        self._db_patch.start()
+        self.addCleanup(self._db_patch.stop)
+        self._snapshot = dict(ff.DOMAINS)
+        self.addCleanup(ff.DOMAINS.update, self._snapshot)
+        self._calls: list[str] = []
+
+    def _run(self, site, responses):
+        """responses: URL-substring -> (code, body) or callable(url)
+        returning (code, body). Longest substring wins, so a sitemap URL
+        beats the generic homepage rule. Returns (total_cached, stdout)."""
+        def fake_http_get(url, *a, **k):
+            self._calls.append(url)
+            for key in sorted(responses, key=len, reverse=True):
+                if key in url:
+                    resp = responses[key]
+                    code, body = resp(url) if callable(resp) else resp
+                    return (code, url, body)
+            return (404, url, "")
+
+        out = io.StringIO()
+        with mock.patch.object(ff, "http_get", fake_http_get), \
+             contextlib.redirect_stdout(out):
+            total = ff.sync_sitemaps(site=site, verbose=True)
+        return total, out.getvalue()
+
+    def _cached_locs(self, site):
+        with sqlite3.connect(self._db) as conn:
+            return [r[0] for r in conn.execute(
+                "SELECT loc FROM sitemap_cache WHERE site = ?", (site,))]
+
+    def test_7starhd_harvests_links_on_the_fetched_host(self):
+        def homepage(url):
+            host = urllib.parse.urlparse(url).netloc
+            return (200, (
+                f'<a href="https://{host}/angel-has-fallen-2019-hindi-org-dual-audio-bluray-1080p-720p-480p-esubs-2/">post</a>'
+                f'<a href="https://{host}/category/hindi-movies/">cat</a>'
+                f'<a href="https://{host}/dmca/">dmca</a>'))
+        total, out = self._run("7starhd", {"https://": homepage})
+        self.assertEqual(total, 1)
+        self.assertEqual(len(self._cached_locs("7starhd")), 1)
+        self.assertIn("angel-has-fallen-2019", self._cached_locs("7starhd")[0])
+        self.assertIn("[✓] [7STARHD]", out)
+        self.assertNotIn("[!] [7STARHD]", out)
+        self.assertNotIn("Sync problems", out)
+
+    def test_7starhd_empty_homepage_reports_loudly(self):
+        total, out = self._run("7starhd", {"https://": (200, "<html></html>")})
+        self.assertEqual(total, 0)
+        self.assertIn("[!] [7STARHD] feed returned 0 records", out)
+        self.assertIn("[!] Sync problems (1)", out)
+
+    def test_katmoviehd_homepage_fallback_harvests_links(self):
+        def homepage(url):
+            host = urllib.parse.urlparse(url).netloc
+            return (200, (
+                # No slug:"..." embeds: the current domain's shape.
+                f'<a href="https://{host}/black-box-2026-hindi/">post 1</a>'
+                f'<a href="https://{host}/the-social-reckoning-2026-hindi">post 2</a>'
+                f'<a href="https://{host}/category/bollywood/">cat</a>'
+                f'<a href="https://{host}/about/">about</a>'))
+        total, out = self._run("katmoviehd", {"https://": homepage})
+        self.assertEqual(total, 2)
+        locs = sorted(self._cached_locs("katmoviehd"))
+        self.assertIn("black-box-2026-hindi", locs[0])
+        self.assertIn("the-social-reckoning-2026-hindi", locs[1])
+        self.assertIn("[✓] [KATMOVIEHD]", out)
+        self.assertNotIn("[!] [KATMOVIEHD]", out)
+
+    def test_katmoviehd_slug_embeds_still_work(self):
+        total, out = self._run(
+            "katmoviehd",
+            {"https://": (200, 'slug:"clashing-through-the-snow-2026-hindi"')})
+        self.assertEqual(total, 1)
+        self.assertIn("clashing-through-the-snow-2026-hindi",
+                      self._cached_locs("katmoviehd")[0])
+
+    def test_katmoviehd_empty_reports_loudly(self):
+        total, out = self._run(
+            "katmoviehd", {"https://": (200, "<html></html>")})
+        self.assertEqual(total, 0)
+        self.assertIn("[!] [KATMOVIEHD] feed returned 0 records", out)
+        self.assertIn("[!] Sync problems (1)", out)
+
+    def test_10xflix_http_error_reports_loudly(self):
+        total, out = self._run("10xflix", {"https://": (404, "")})
+        self.assertEqual(total, 0)
+        self.assertIn("[!] [10XFLIX] feed HTTP 404", out)
+        self.assertIn("[!] Sync problems (1)", out)
+
+    def test_ssrmovies_empty_json_reports_loudly(self):
+        total, out = self._run("ssrmovies", {"https://": (200, "[]")})
+        self.assertEqual(total, 0)
+        self.assertIn("[!] [SSRMOVIES] feed returned 0 records", out)
+        self.assertIn("[!] Sync problems (1)", out)
+
+    def test_bollyshares_dead_site_reports_loudly(self):
+        # Sitemap 404s; the homepage fallback is a "Website Unavailable"
+        # parking page with no /free- links — the site is down, not just
+        # a moved feed. Both fetches must still end in a loud report.
+        parking = "<html><head><title>Website Unavailable</title></head></html>"
+        total, out = self._run("bollyshares", {
+            "post-sitemap.xml": (404, ""),
+            "https://": (200, parking),
+        })
+        self.assertEqual(total, 0)
+        self.assertIn("[!] [BOLLYSHARES] feed HTTP 404", out)
+        self.assertIn("[!] Sync problems (1)", out)
 
 
 if __name__ == "__main__":

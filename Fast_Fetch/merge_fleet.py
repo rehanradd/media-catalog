@@ -24,6 +24,14 @@ SITES = [
     "hindilinks4u", "hdhub4u", "7starhd", "katmoviehd", "vegamovies",
     "multimovies", "rogmovies", "ssrmovies", "10xflix", "bolly4u",
     "filmyzilla", "9xmovies", "world4ufree", "mp4moviez", "humtv",
+    # 2026-11-23 catalog drought: these six importers write staging DBs
+    # daily but were never registered here, so autocrawl merged 0 new
+    # posts for ~26h while their staging files grew. All six use the
+    # default `<site>.db` name (no SOURCES override): xprimehub is the
+    # "unified" family (download_sources), the other five are the older
+    # "staging" family (sources table) — both merge via merge_site_db.
+    "xprimehub", "themoviebox", "javmost", "animeworld", "dramadog",
+    "megacartoons",
 ]
 
 #: A site whose staging database was re-derived after it was first scraped. Merging
