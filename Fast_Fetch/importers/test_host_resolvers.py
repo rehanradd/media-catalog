@@ -3333,7 +3333,7 @@ class TestUnwrapHubcloud(unittest.TestCase):
         self.assertTrue(verdict["is_temporary"])
         self.assertEqual(verdict["final_url"], HC_FSLV2_URL)
         self.assertEqual([s["label"] for s in verdict["sources"]],
-                         ["FSLv2", "FSL", "PixelServer", "10Gbps"])
+                         ["FSLv2", "FSL", "PixelServer"])
         self.assertEqual(verdict["quality"], "1080p")
         self.assertGreater(verdict["expires_in"], 17000)
         self.assertLessEqual(verdict["expires_in"], 18000)
@@ -3466,18 +3466,21 @@ class TestUnwrapHubcloud(unittest.TestCase):
         self.assertEqual(verdict["final_url"], HC_FSLV2_URL)
 
     def test_10gbps_only_page_is_not_served(self):
+        # Dropped 2026-11-24: the 10Gbps button dispatches to no kind,
+        # so a page carrying ONLY it publishes no server buttons at all
+        # — status "unknown", no candidate, no final URL — instead of
+        # the old shape (10Gbps as the lone candidate, never served).
         gx_page = ("<html><body><div class=\"card-header\">x 720p</div>"
                    f"<a href=\"{HC_10GBPS_URL}\" class=\"btn btn-danger\">"
                    "Download [Server : 10Gbps]</a></body></html>")
         fetch = scripted_fetch({
             "hubcloud.pw/drive/rn_37lnqqexentk": (200, HC_DRIVE_PAGE, {}),
             "gamerxyt.com/hubcloud.php": (200, gx_page, {}),
-            "pixel.hubcloud.pw": (200, b"<html>download page</html>",
-                                  {"content-type": "text/html"}),
         })
         verdict = hr.unwrap_hubcloud(HC_DRIVE_URL, fetch=fetch)
         self.assertEqual(verdict["status"], "unknown")
-        self.assertEqual(verdict["final_url"], HC_10GBPS_URL)
+        self.assertEqual(verdict["sources"], [])
+        self.assertEqual(verdict["final_url"], "")
 
     def test_zipdisk_dispatch(self):
         self.assertEqual(
