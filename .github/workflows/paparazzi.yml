@@ -79,8 +79,20 @@ jobs:
 
       - name: "📸 Record Paparazzi snapshots"
         working-directory: App
+        # --tests: Paparazzi classes ONLY. The record/verify tasks drive
+        # testDebugUnitTest, which runs the whole suite in shared forks;
+        # if a Robolectric test loads first in a fork, Paparazzi's
+        # Bridge.init fails (cashapp/paparazzi#1979) and every Paparazzi
+        # test in that fork dies — the APP-10 verify step proved it
+        # (06:31Z 24 Nov: "Failed to init Bridge" + "sessionParamsBuilder
+        # has not been initialized" + a Robolectric UnsatisfiedLinkError,
+        # all in one run). The PaparazziTask forwards --tests to the Test
+        # tasks, so only the two Paparazzi-rule classes execute here and
+        # no Robolectric class ever loads in their forks. (APP-10, 2026-11-24.)
         run: |
           ./gradlew :app:recordPaparazziDebug \
+            --tests "com.raddstream.app.ui.PaparazziPreviewTest" \
+            --tests "com.raddstream.app.ui.PlayerLandscapePaparazziTest" \
             --no-daemon --stacktrace --console=plain
 
       - name: 📤 Upload snapshots + report
