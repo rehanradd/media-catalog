@@ -50,12 +50,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Flag
-import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Notifications
@@ -64,6 +64,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.ThumbDown
 import androidx.compose.material.icons.filled.ThumbUp
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
@@ -126,6 +127,7 @@ import com.raddstream.app.network.models.WireText
 import com.raddstream.app.network.models.parseCastNames
 import com.raddstream.app.ui.components.CapabilityChip
 import com.raddstream.app.ui.components.CatalogImage
+import com.raddstream.app.ui.components.channelMonogram
 import com.raddstream.app.ui.components.DetailBodySkeleton
 import com.raddstream.app.ui.components.DetailSkeleton
 import com.raddstream.app.ui.components.ErrorState
@@ -144,9 +146,11 @@ import com.raddstream.app.ui.components.prefetchPosterArt
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.components.ScrollingChipRow
 import com.raddstream.app.ui.layout.CardGeometry
+import com.raddstream.app.player.LadderForScope
 import com.raddstream.app.player.QualityOption
 import com.raddstream.app.ui.navigation.DeepLinks
 import com.raddstream.app.ui.theme.PressHaptics
+import com.raddstream.app.ui.theme.RaddTokens
 import com.raddstream.app.ui.theme.pressScale
 import com.raddstream.app.ui.theme.rememberArtworkAccent
 import com.raddstream.app.viewmodel.DetailNavigationEvent
@@ -567,6 +571,8 @@ fun DetailScreen(
                 playHint = state.playHint,
                 downloadHint = state.downloadHint,
                 onTryAgain = viewModel::tryAgainPlay,
+                videoQualityText = state.videoQualityText,
+                onOpenQualitySheet = viewModel::openQualityBrowse,
                 // Detail redesign (Nov 2026): a season row opens its
                 // sub-page — the episode list no longer lives here.
                 onOpenSeason = onOpenSeason,
@@ -626,6 +632,8 @@ fun DetailScreen(
             onBatchBand = { band -> viewModel.startBatchDownload(band) },
             onLockedRow = viewModel::onLockedQualityRow,
             onDismiss = viewModel::dismissQualitySheet,
+            onSelectOption = { option -> viewModel.selectQualityBand(option.band) },
+            onSelectAuto = { viewModel.selectQualityBand(LadderForScope.AUTO) },
         )
     }
 }
@@ -901,11 +909,12 @@ internal fun DetailContent(
     /**
      * 2-button detail (Nov 2026): the two buttons, computed by the
      * ViewModel from the same state the tap decision reads — the label
-     * names the quality ("Play · 720p" / "Resume S1:E3 · 23 min left ·
-     * 720p" / "Play · Auto"), the hint says why a greyed button is
-     * greyed, and [onTryAgain] reloads the title from the dead end.
-     * [playStarting] is the press-in-flight guard: while true the Play
-     * button reads "Starting…" and a second tap is ignored.
+     * is plain Play / Resume (the quality lives in the Video row
+     * below, not baked into the button), the hint says why a greyed
+     * button is greyed, and [onTryAgain] reloads the title from the
+     * dead end. [playStarting] is the press-in-flight guard: while
+     * true the Play button reads "Starting…" and a second tap is
+     * ignored.
      */
     playLabel: String = "Play",
     playEnabled: Boolean = false,
@@ -917,6 +926,14 @@ internal fun DetailContent(
     playHint: String? = null,
     downloadHint: String? = null,
     onTryAgain: () -> Unit = {},
+    /**
+     * Audit Detail #1 (Nov 2026): the Video row's value — the picked
+     * band, or what Auto reaches. Null when this title has no playable
+     * qualities to choose from, so the row hides. [onOpenQualitySheet]
+     * opens the quality sheet in browse mode (pick, don't play).
+     */
+    videoQualityText: String? = null,
+    onOpenQualitySheet: () -> Unit = {},
     /**
      * Detail redesign (Nov 2026): a season row opens that season's
      * sub-page, where the episodes live as plain numbered tiles. The
@@ -985,9 +1002,15 @@ internal fun DetailContent(
     ) {
         reloadError?.let { failure ->
             // InlineLoadFailure insets itself 16dp horizontally, so it
-            // needs no pageSides of its own.
+            // needs no pageSides of its own. Audit Detail #5: the stale
+            // note says what survived — this banner only renders over
+            // cached content, so "saved details" is always true here.
             item(contentType = "reload-failure") {
-                InlineLoadFailure(message = failure, onRetry = onRetryReload)
+                InlineLoadFailure(
+                    message = failure,
+                    onRetry = onRetryReload,
+                    staleNote = stringResource(R.string.detail_showing_saved),
+                )
             }
         }
 
@@ -1025,12 +1048,39 @@ internal fun DetailContent(
             )
         }
 
+        // Audit Detail #1 (Nov 2026): the Video row — the visible
+        // quality control, mirroring the Audio row further down. It
+        // sits between the actions and the synopsis, where the choice
+        // is made, not buried under the page.
+        videoQualityText?.let { qualityText ->
+            item(contentType = "video-quality") {
+                DetailVideoRow(
+                    qualityText = qualityText,
+                    onClick = onOpenQualitySheet,
+                    modifier = pageSides,
+                )
+            }
+        }
+
+        // Audit Detail #3 (Nov 2026): the cam warning as a card,
+        // directly under the actions it qualifies — not bare red text
+        // two sections below Play.
+        if (allPrints.any { it.isCam }) {
+            item(contentType = "cam-warning") {
+                CamWarningCard(
+                    onReportCopy = onReport,
+                    modifier = pageSides,
+                )
+            }
+        }
+
         // Detail redesign (Nov 2026): the story comes first — Netflix and
         // Disney+ both put the synopsis directly under the actions, and
         // ours buried it under a quality ladder and two upsell cards.
         // 2-button detail (Nov 2026): the ladder is gone from this page
-        // entirely — quality is chosen in the sheet, never here — and the
-        // hero's included pill already states the tier.
+        // as cards — quality is chosen in the Video row's browse sheet
+        // above, never in a rung list — and the hero's included pill
+        // already states the tier.
         val synopsis = post.synopsis?.takeIf { it.isNotBlank() }
         if (synopsis != null) {
             item { Box(pageSides) { ExpandableSynopsis(text = UserWords.stripSectionMarkers(synopsis)) } }
@@ -1075,7 +1125,14 @@ internal fun DetailContent(
         // the Languages screen, where the viewer picks their audio and
         // subtitle languages. The chevron is the affordance; the whole
         // row is the target, 48dp tall.
-        audioSubtitleLine(allPrints)?.let { line ->
+        // Audit Detail #4 (Nov 2026): the work's own languages, so a
+        // dubbed audio track can say so instead of contradicting the
+        // header ("English" work, "Audio: Hindi"). Plain val, not
+        // remember: this runs in the LazyColumn's scope, which is not
+        // a @Composable context, and the list is one short parse.
+        val originalLanguages =
+            WireText.listOf(post.language).map { it.trim() }.filter(::isKnownLanguage)
+        audioSubtitleLine(allPrints, originalLanguages)?.let { line ->
             item {
                 Row(
                     modifier = pageSides
@@ -1145,20 +1202,6 @@ internal fun DetailContent(
                         onClick = { onOpenSeason(season.number) },
                     )
                 }
-            }
-        }
-
-        // A cam warning is a quality fact, not a count: the version
-        // summary that used to carry it is gone, but a title whose only
-        // copies are cam recordings must still say so in plain words.
-        if (allPrints.any { it.isCam }) {
-            item {
-                Text(
-                    text = "Some copies here are cam recordings — low quality.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = pageSides,
-                )
             }
         }
 
@@ -1271,7 +1314,10 @@ private fun DetailHeroSection(
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
-                fallbackLabel = detailDisplayTitle(post),
+                // Audit #9 (Nov 2026): initials only on a failed
+                // backdrop load — the title block over the scrim
+                // already carries the title.
+                fallbackLabel = channelMonogram(detailDisplayTitle(post)),
             )
             Box(
                 modifier = Modifier
@@ -1491,8 +1537,9 @@ private fun PosterHeader(
                     url = post.posterUrl,
                     contentDescription = "${detailDisplayTitle(post)} poster",
                     modifier = Modifier.fillMaxSize(),
-                    // F6 (Batch A): the full title, not initials.
-                    fallbackLabel = detailDisplayTitle(post),
+                    // Audit #9 (Nov 2026): initials only — the title
+                    // block beside the poster already carries the title.
+                    fallbackLabel = channelMonogram(detailDisplayTitle(post)),
                     onBitmap = { posterBitmap = it },
                     // S5: the loading slot paints in the poster's own
                     // accent, like the rail tiles — the accent is already
@@ -1502,7 +1549,9 @@ private fun PosterHeader(
             } else {
                 ImageFallbackCard(
                     modifier = Modifier.fillMaxSize(),
-                    label = detailDisplayTitle(post),
+                    // Audit #9 (Nov 2026): initials only — the title
+                    // block beside the poster already carries the title.
+                    label = channelMonogram(detailDisplayTitle(post)),
                 )
             }
         }
@@ -1583,19 +1632,20 @@ private fun DetailCastButton() {
 
 /**
  * 2-button detail (Nov 2026): exactly two buttons — Play (filled,
- * first) and Download (outlined, directly below). The label names the
- * quality, the hint under a button says why it is greyed or what it
- * will do, and both are at least 48dp. The quality choice lives in
- * the sheet, never here. A dead end greys Play, says why in plain
- * words, and offers [Try again] — the viewer is never left at a wall
- * with no way out. The name stays `PrimaryActions` and both buttons
- * keep `heightIn(min = 48.dp)`: SkeletonParityTest reads the source
- * for both.
+ * first) and Download (outlined, directly below). The label is plain
+ * Play / Resume, the hint under a button says why it is greyed or
+ * what it will do, and both are at least 48dp. The quality choice
+ * lives in the Video row below, chosen in its browse sheet, never in
+ * the buttons. A dead end greys Play, says why in plain words, and
+ * offers [Try again] — the viewer is never left at a wall with no way
+ * out. The name stays `PrimaryActions` and both buttons keep
+ * `heightIn(min = 48.dp)`: SkeletonParityTest reads the source for
+ * both.
  */
 @Composable
 private fun PrimaryActions(
     modifier: Modifier = Modifier,
-    /** The Play label from the ViewModel: "Play · 720p", "Resume S1:E3 · 23 min left · 720p", "Play · Auto". */
+    /** The Play label from the ViewModel: "Play", "Resume S1:E3 · 23 min left". */
     playLabel: String,
     playEnabled: Boolean,
     /** The press-in-flight guard: while true Play reads "Starting…" and a second tap is ignored. */
@@ -1706,9 +1756,90 @@ private fun PrimaryActions(
 }
 
 /**
- * 2-button detail (Nov 2026): the quality sheet — one component, two
+ * Audit Detail #1 (Nov 2026): the Video row — the visible quality
+ * control, mirroring the Audio row further down the page. One line,
+ * 48dp, chevron: "Video: 720p" for a pick, "Video: Auto · up to
+ * 1080p" for Auto. Tapping opens the quality sheet in browse mode
+ * (pick, don't play).
+ */
+@Composable
+private fun DetailVideoRow(
+    qualityText: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .clickable(onClick = onClick, role = Role.Button),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = stringResource(R.string.detail_video_quality, qualityText),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(
+            Icons.Default.ChevronRight,
+            contentDescription = null,
+            modifier = Modifier.size(20.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/**
+ * Audit Detail #3 (Nov 2026): the cam warning as a card, directly
+ * under the actions it qualifies — warning icon + tonal container,
+ * not error-red text two sections below Play. "Report copy" opens
+ * the same report dialog as the utility row's Report ("Bad quality"
+ * is one of its reasons).
+ */
+@Composable
+private fun CamWarningCard(
+    onReportCopy: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Default.Warning,
+                contentDescription = null,
+                tint = RaddTokens.Color.Warning,
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(Modifier.width(12.dp))
+            Text(
+                text = stringResource(R.string.detail_cam_warning),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(
+                onClick = onReportCopy,
+                modifier = Modifier.heightIn(min = 48.dp),
+            ) {
+                Text(stringResource(R.string.detail_report_copy))
+            }
+        }
+    }
+}
+
+/**
+ * 2-button detail (Nov 2026): the quality sheet — one component, three
  * modes, in the shared [PlayerSheet] container. One row per quality
- * band, best first, with the Auto row on top in PLAY mode only. Each
+ * band, best first, with the Auto row on top in PLAY and BROWSE modes. Each
  * row names its quality in plain words, shows the size when the server
  * named one (never invented), the data per hour in PLAY mode, and a
  * "Best for" line. Exactly one row carries the Recommended badge — the
@@ -1733,66 +1864,119 @@ internal fun DetailQualitySheet(
     onBatchBand: (String) -> Unit,
     onLockedRow: () -> Unit,
     onDismiss: () -> Unit,
+    /** Audit Detail #1: BROWSE mode only — a row tap picks the band. */
+    onSelectOption: (QualityOption) -> Unit = {},
+    /** Audit Detail #1: BROWSE mode only — the Auto row picks Auto. */
+    onSelectAuto: () -> Unit = {},
 ) {
     PlayerSheet(onDismiss = onDismiss) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp)
-                .padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
+        DetailQualitySheetContent(
+            sheet = sheet,
+            onPlayOption = onPlayOption,
+            onDownloadOption = onDownloadOption,
+            onSeriesRow = onSeriesRow,
+            onBatchBand = onBatchBand,
+            onLockedRow = onLockedRow,
+            onSelectOption = onSelectOption,
+            onSelectAuto = onSelectAuto,
+        )
+    }
+}
+
+/**
+ * Audit Detail #1 (Nov 2026): the sheet's rows without their container —
+ * the title, the series/batch rows, and one [DetailQualityRowView] per
+ * quality band, with the tap dispatch (PLAY plays, DOWNLOAD saves,
+ * BROWSE picks). Extracted from [DetailQualitySheet] so the row taps
+ * are testable without the [PlayerSheet] dialog window: Robolectric
+ * clicks land in the activity window, and a tap inside a
+ * ModalBottomSheet never reaches its row (the node is found and
+ * displayed, the click silently does nothing). The sheet itself is
+ * still only ever shown through [DetailQualitySheet].
+ */
+@Composable
+internal fun DetailQualitySheetContent(
+    sheet: QualitySheetState,
+    onPlayOption: (QualityOption) -> Unit,
+    onDownloadOption: (QualityOption) -> Unit,
+    onSeriesRow: (SeriesDownloadKind) -> Unit,
+    onBatchBand: (String) -> Unit,
+    onLockedRow: () -> Unit,
+    /** Audit Detail #1: BROWSE mode only — a row tap picks the band. */
+    onSelectOption: (QualityOption) -> Unit = {},
+    /** Audit Detail #1: BROWSE mode only — the Auto row picks Auto. */
+    onSelectAuto: () -> Unit = {},
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp)
+            .padding(bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text = when {
+                sheet.batchBands != null -> stringResource(R.string.detail_sheet_choose_save)
+                sheet.nextEpisodeRow != null || sheet.wholeSeasonRow != null -> stringResource(R.string.detail_sheet_choose_what_save)
+                sheet.mode == QualitySheetMode.PLAY -> stringResource(R.string.detail_sheet_choose_play)
+                sheet.mode == QualitySheetMode.BROWSE -> stringResource(R.string.detail_sheet_choose_quality)
+                else -> stringResource(R.string.detail_sheet_choose_save)
+            },
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.SemiBold,
+        )
+        sheet.title?.let { title ->
             Text(
-                text = when {
-                    sheet.batchBands != null -> stringResource(R.string.detail_sheet_choose_save)
-                    sheet.nextEpisodeRow != null || sheet.wholeSeasonRow != null -> stringResource(R.string.detail_sheet_choose_what_save)
-                    sheet.mode == QualitySheetMode.PLAY -> stringResource(R.string.detail_sheet_choose_play)
-                    else -> stringResource(R.string.detail_sheet_choose_save)
-                },
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            sheet.title?.let { title ->
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+        }
+        Spacer(Modifier.height(4.dp))
+        sheet.nextEpisodeRow?.let { row ->
+            DetailQualitySeriesRow(row = row, onClick = { onSeriesRow(row.kind) })
+        }
+        sheet.wholeSeasonRow?.let { row ->
+            DetailQualitySeriesRow(row = row, onClick = { onSeriesRow(row.kind) })
+        }
+        val bands = sheet.batchBands
+        if (bands != null) {
+            for (band in bands) {
+                DetailQualityBatchRow(
+                    band = band,
+                    isRecommended = band == sheet.recommendedBand,
+                    onClick = { onBatchBand(band) },
                 )
             }
-            Spacer(Modifier.height(4.dp))
-            sheet.nextEpisodeRow?.let { row ->
-                DetailQualitySeriesRow(row = row, onClick = { onSeriesRow(row.kind) })
-            }
-            sheet.wholeSeasonRow?.let { row ->
-                DetailQualitySeriesRow(row = row, onClick = { onSeriesRow(row.kind) })
-            }
-            val bands = sheet.batchBands
-            if (bands != null) {
-                for (band in bands) {
-                    DetailQualityBatchRow(
-                        band = band,
-                        isRecommended = band == sheet.recommendedBand,
-                        onClick = { onBatchBand(band) },
-                    )
-                }
-                Text(
-                    text = "Saves ${sheet.batchEpisodes?.size ?: 0} episodes at the same quality.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+            Text(
+                text = "Saves ${sheet.batchEpisodes?.size ?: 0} episodes at the same quality.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else if (sheet.nextEpisodeRow == null && sheet.wholeSeasonRow == null) {
+            for (row in sheet.rows) {
+                DetailQualityRowView(
+                    row = row,
+                    onClick = {
+                        val option = row.option
+                        if (option == null) {
+                            // The Auto row has no option: in browse
+                            // mode it is a real pick (back to Auto);
+                            // in PLAY mode it is already the choice
+                            // and stays a dead tap — APP-01 owns
+                            // that path (see the fix note).
+                            if (sheet.mode == QualitySheetMode.BROWSE) onSelectAuto()
+                            return@DetailQualityRowView
+                        }
+                        when (sheet.mode) {
+                            QualitySheetMode.PLAY -> onPlayOption(option)
+                            QualitySheetMode.DOWNLOAD -> onDownloadOption(option)
+                            QualitySheetMode.BROWSE -> onSelectOption(option)
+                        }
+                    },
+                    onLocked = onLockedRow,
                 )
-            } else if (sheet.nextEpisodeRow == null && sheet.wholeSeasonRow == null) {
-                for (row in sheet.rows) {
-                    DetailQualityRowView(
-                        row = row,
-                        onClick = {
-                            val option = row.option ?: return@DetailQualityRowView
-                            if (sheet.mode == QualitySheetMode.PLAY) onPlayOption(option)
-                            else onDownloadOption(option)
-                        },
-                        onLocked = onLockedRow,
-                    )
-                }
             }
         }
     }
@@ -2018,7 +2202,7 @@ private fun DetailUtilityRow(
             icon = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
             label = if (isFavorite) "Saved" else "Save",
             contentDescription = favoriteActionLabel(isFavorite),
-            tint = if (isFavorite) MaterialTheme.colorScheme.secondary else Color.Unspecified,
+            tint = if (isFavorite) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
             onClick = onToggleFavorite,
         )
         // REA #2 (Netflix, Nov 2026): the thumbs — the input behind the
@@ -2029,14 +2213,14 @@ private fun DetailUtilityRow(
                 icon = Icons.Default.ThumbUp,
                 label = "Like",
                 contentDescription = thumbActionLabel(thumb, 1),
-                tint = if (thumb == 1) MaterialTheme.colorScheme.secondary else Color.Unspecified,
+                tint = if (thumb == 1) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
                 onClick = { onThumb(1) },
             )
             UtilityAction(
                 icon = Icons.Default.ThumbDown,
                 label = "Dislike",
                 contentDescription = thumbActionLabel(thumb, -1),
-                tint = if (thumb == -1) MaterialTheme.colorScheme.secondary else Color.Unspecified,
+                tint = if (thumb == -1) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
                 onClick = { onThumb(-1) },
             )
         }
@@ -2045,7 +2229,7 @@ private fun DetailUtilityRow(
                 icon = if (isFollowed) Icons.Default.NotificationsActive else Icons.Default.Notifications,
                 label = if (isFollowed) "Following" else "Notify me",
                 contentDescription = followActionLabel(isFollowed),
-                tint = if (isFollowed) MaterialTheme.colorScheme.secondary else Color.Unspecified,
+                tint = if (isFollowed) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
                 onClick = onToggleFollow,
             )
         }
@@ -2055,8 +2239,12 @@ private fun DetailUtilityRow(
             onClick = onShare,
         )
         if (hasSimilar) {
+            // Audit Detail #8: a recognisable related-content glyph —
+            // the 2×2 grid read as "apps". AutoAwesome is the same
+            // sparkle family as the audit's auto_awesome_movies
+            // suggestion, and the member this icons version proves.
             UtilityAction(
-                icon = Icons.Default.GridView,
+                icon = Icons.Default.AutoAwesome,
                 label = "Similar",
                 onClick = onBrowseSimilar,
             )
@@ -2077,7 +2265,11 @@ private fun RowScope.UtilityAction(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     contentDescription: String? = null,
-    tint: Color = Color.Unspecified,
+    // Audit Detail #8: an explicit onSurfaceVariant tint — the old
+    // Color.Unspecified left the vectors' baked-in black in place, so
+    // the icons painted near-black on black while their labels read
+    // light. Selected states pass their own secondary tint instead.
+    tint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -2274,7 +2466,17 @@ internal fun printSpokenLabel(print: RankedPrint, copyIndex: Int, copyTotal: Int
  * language data shows no line at all, never an empty "Audio:" label.
  * Pure, so DetailAudioLineTest pins it.
  */
-internal fun audioSubtitleLine(prints: List<RankedPrint>): String? {
+internal fun audioSubtitleLine(
+    prints: List<RankedPrint>,
+    /**
+     * Audit Detail #4 (Nov 2026): the work's own languages, from its
+     * language column. An audio language outside that set is a dubbed
+     * track, and the row says so — otherwise the row contradicts the
+     * header ("English" work, "Audio: Hindi"). Empty means the work's
+     * languages are unknown, so nothing is marked.
+     */
+    originalLanguages: List<String> = emptyList(),
+): String? {
     // The server's language lists carry the literal words "Unknown" and
     // "N/A" where a print's language was never recorded — a missing value,
     // not a language — so drop those the same way the detail meta line
@@ -2290,9 +2492,12 @@ internal fun audioSubtitleLine(prints: List<RankedPrint>): String? {
     // has one.
     val layout = prints.firstNotNullOfOrNull { it.channelLayout }
     if (audio.isEmpty() && subtitles.isEmpty()) return null
+    val originals = originalLanguages.map { it.trim().lowercase() }.toSet()
     return buildString {
         if (audio.isNotEmpty()) {
-            append("Audio: ").append(audio.joinToString(", "))
+            append("Audio: ").append(audio.joinToString(", ") { lang ->
+                if (originals.isNotEmpty() && lang.lowercase() !in originals) "$lang (dubbed)" else lang
+            })
             layout?.let { append(" · ").append(it) }
         }
         if (subtitles.isNotEmpty()) {

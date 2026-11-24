@@ -161,7 +161,9 @@ class FlowMockupTest {
                 )
             }
         }
-        compose.onNodeWithText("Could not load more.").assertIsDisplayed()
+        // The failure row rides below the tile, below the fold until
+        // scrolled — the test already scrolls for Retry below.
+        compose.onNodeWithText("Could not load more.").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Retry").performScrollTo().performClick()
         compose.onNodeWithText("Apex Horizon", useUnmergedTree = true).assertIsDisplayed()
         compose.onNodeWithText("Could not load more.").assertIsDisplayed()

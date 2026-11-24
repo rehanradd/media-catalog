@@ -379,4 +379,112 @@ class TwoButtonDetailTest {
             notEnoughSpaceMessage(1_073_741_824L, 838_860_800L),
         )
     }
+
+    // ── Audit Detail #1: BROWSE mode (the Video row's sheet) ──
+
+    @Test
+    fun browseSheetLeadsWithAutoAndShowsPlayRows() {
+        val rows = sheetRowsFor(ladder(), QualitySheetMode.BROWSE, premiumAccess = false, freeQualityCap = "720p")
+        // BROWSE rows are the PLAY rows: Auto leads, then best first.
+        assertEquals(listOf("auto", "1080p", "720p", "480p"), rows.map { it.band })
+        // And like PLAY, they show data/hour, never a size.
+        assertEquals("≈ 3 GB/hour", rows.first { it.band == "1080p" }.dataPerHour)
+        assertTrue(rows.all { it.sizeLine == null })
+        // A locked row stays visible and greyed, never hidden.
+        assertTrue(rows.first { it.band == "1080p" }.isLocked)
+    }
+
+    @Test
+    fun browseSheetRecommendsTheSelectionNotAuto() {
+        val rows = sheetRowsFor(
+            ladder(), QualitySheetMode.BROWSE, premiumAccess = false, freeQualityCap = "720p",
+            selectedBand = "720p",
+        )
+        assertEquals(1, rows.count { it.isRecommended })
+        assertTrue(rows.first { it.band == "720p" }.isRecommended)
+        assertFalse(rows.first { it.band == "auto" }.isRecommended)
+    }
+
+    @Test
+    fun browseSheetWithNoSelectionRecommendsAuto() {
+        val rows = sheetRowsFor(ladder(), QualitySheetMode.BROWSE, premiumAccess = false, freeQualityCap = "720p")
+        assertEquals(1, rows.count { it.isRecommended })
+        assertTrue(rows.first { it.band == "auto" }.isRecommended)
+    }
+
+    @Test
+    fun browseSheetStaleSelectionFallsBackToAuto() {
+        // A pick the scope no longer offers is not recommended —
+        // Auto is, and the row never strands on a dead rung.
+        val rows = sheetRowsFor(
+            ladder(), QualitySheetMode.BROWSE, premiumAccess = false, freeQualityCap = "720p",
+            selectedBand = "2160p",
+        )
+        assertEquals(1, rows.count { it.isRecommended })
+        assertTrue(rows.first { it.band == "auto" }.isRecommended)
+    }
+
+    // ── Audit Detail #1: the Video row's value ──
+
+    @Test
+    fun videoQualityTextShowsAutoUpToBest() {
+        assertEquals("Auto · up to 720p", videoQualityTextFor(ladder(), null))
+        assertEquals("Auto · up to 720p", videoQualityTextFor(ladder(), LadderForScope.AUTO))
+    }
+
+    @Test
+    fun videoQualityTextShowsThePickedBand() {
+        assertEquals("1080p", videoQualityTextFor(ladder(), "1080p"))
+    }
+
+    @Test
+    fun videoQualityTextFallsBackWhenThePickIsStale() {
+        assertEquals("Auto · up to 720p", videoQualityTextFor(ladder(), "2160p"))
+    }
+
+    @Test
+    fun videoQualityTextIsNullWhenNothingPlays() {
+        assertNull(videoQualityTextFor(LadderForScope.EMPTY, null))
+        val dead = ladder().copy(options = ladder().options.map { it.copy(playsHere = false) })
+        assertNull(videoQualityTextFor(dead, null))
+    }
+
+    // ── Audit Detail #2: the Download button's label ──
+
+    @Test
+    fun downloadLabelNamesBandAndSizeForAMovie() {
+        assertEquals(
+            "Download · 1080p · 1.0 GB",
+            downloadLabelFor(band = "1080p", sizeLine = "1.0 GB", season = null, episode = null, downloaded = false),
+        )
+    }
+
+    @Test
+    fun downloadLabelNamesTheEpisodeForASeries() {
+        assertEquals(
+            "Download S1:E2 · 720p · 1.3 GB",
+            downloadLabelFor(band = "720p", sizeLine = "1.3 GB", season = 1, episode = 2, downloaded = false),
+        )
+    }
+
+    @Test
+    fun downloadLabelOmitsWhatTheServerNeverNamed() {
+        // No band, no size: the plain word, never an invented number.
+        assertEquals(
+            "Download",
+            downloadLabelFor(band = null, sizeLine = null, season = null, episode = null, downloaded = false),
+        )
+        assertEquals(
+            "Download S1:E2 · 720p",
+            downloadLabelFor(band = "720p", sizeLine = null, season = 1, episode = 2, downloaded = false),
+        )
+    }
+
+    @Test
+    fun downloadLabelSaysDownloadedWhenSaved() {
+        assertEquals(
+            "✓ Downloaded",
+            downloadLabelFor(band = "1080p", sizeLine = "1.0 GB", season = null, episode = null, downloaded = true),
+        )
+    }
 }

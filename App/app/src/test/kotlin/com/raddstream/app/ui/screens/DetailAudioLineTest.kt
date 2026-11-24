@@ -240,4 +240,72 @@ class DetailAudioLineTest {
             ),
         )
     }
+
+    // Audit Detail #4 (Nov 2026): an audio language outside the work's
+    // own languages is a dubbed track, and the row says so — otherwise
+    // the row contradicts the header ("English" work, "Audio: Hindi").
+
+    @Test
+    fun nonOriginalAudioIsMarkedDubbed() {
+        assertEquals(
+            "Audio: Hindi (dubbed)",
+            audioSubtitleLine(
+                listOf(print(1, listOf("Hindi"))),
+                originalLanguages = listOf("English"),
+            ),
+        )
+    }
+
+    @Test
+    fun originalAudioIsNotMarkedDubbed() {
+        assertEquals(
+            "Audio: Hindi",
+            audioSubtitleLine(
+                listOf(print(1, listOf("Hindi"))),
+                originalLanguages = listOf("Hindi"),
+            ),
+        )
+    }
+
+    @Test
+    fun mixedAudioMarksOnlyTheDubbedLanguage() {
+        assertEquals(
+            "Audio: English, Hindi (dubbed)",
+            audioSubtitleLine(
+                listOf(print(1, listOf("English", "Hindi"))),
+                originalLanguages = listOf("English"),
+            ),
+        )
+    }
+
+    @Test
+    fun dubbedMarkingIsCaseInsensitive() {
+        // The originals list arrives in the work's own casing; the
+        // comparison lowercases both sides, and the printed word keeps
+        // the print's casing.
+        assertEquals(
+            "Audio: Hindi (dubbed)",
+            audioSubtitleLine(
+                listOf(print(1, listOf("Hindi"))),
+                originalLanguages = listOf("english"),
+            ),
+        )
+        assertEquals(
+            "Audio: hindi (dubbed)",
+            audioSubtitleLine(
+                listOf(print(1, listOf("hindi"))),
+                originalLanguages = listOf("English"),
+            ),
+        )
+    }
+
+    @Test
+    fun unknownOriginalLanguagesMeanNoMarking() {
+        // Empty originals means the work's languages are unknown — the
+        // row must not guess that everything is dubbed.
+        assertEquals(
+            "Audio: Hindi",
+            audioSubtitleLine(listOf(print(1, listOf("Hindi")))),
+        )
+    }
 }

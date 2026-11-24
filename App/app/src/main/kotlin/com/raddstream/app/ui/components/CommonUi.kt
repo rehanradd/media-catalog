@@ -1105,6 +1105,12 @@ fun InlineLoadFailure(
     message: String,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * Audit Detail #5 (Nov 2026): what survived the failed load, in
+     * plain words — e.g. "Showing saved details." Null when the caller
+     * has nothing stale to name.
+     */
+    staleNote: String? = null,
 ) {
     Row(
         modifier = modifier
@@ -1119,12 +1125,28 @@ fun InlineLoadFailure(
             modifier = Modifier.size(20.dp),
         )
         Spacer(Modifier.width(10.dp))
-        Text(
-            text = message,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.weight(1f),
-        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            staleNote?.let { note ->
+                Text(
+                    text = note,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        // Audit Detail #5: Retry stays a text link, not an outlined
+        // button — the outlined variant was tried and reverted (CI
+        // 45342265965: 2 failures → 45344244123: green on the revert):
+        // in the Browse grid the failure row is one narrow cell, and
+        // the wider outlined button squeezes the message out of view.
+        // The weightier Retry is a follow-up for the Browse lane (the
+        // failure row wants a full-width span first). The stale marker
+        // above — the part that tells the viewer the data is old — stays.
         TextButton(
             onClick = onRetry,
             modifier = Modifier.heightIn(min = 48.dp),

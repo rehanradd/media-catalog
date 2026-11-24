@@ -153,4 +153,19 @@ class SeasonScreenTest {
         compose.onNodeWithText("Play season").performClick()
         assertEquals(true, played)
     }
+
+    @Test
+    fun unplayableTilesNoteExplainsDimmedTiles() {
+        // Audit Detail #10 (Nov 2026): a dimmed tile looks like a bug
+        // until the screen says why — the note renders under the grid
+        // whenever some tile has no playable copy.
+        compose.setContent {
+            RaddStreamTheme {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    UnplayableTilesNote()
+                }
+            }
+        }
+        compose.onNodeWithText("Dimmed episodes have no playable copy yet.").assertIsDisplayed()
+    }
 }

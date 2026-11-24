@@ -26,11 +26,11 @@ import org.robolectric.RobolectricTestRunner
  * 2-button detail (Nov 2026): that disagreement is now structurally
  * impossible — there is ONE Play button, and its label, enabled state
  * and hint all come from the ViewModel's single decision, which print
- * to play. These tests pin what the page itself can pin: the button
- * names the quality the ViewModel chose, the tap fires the one primary
- * action, and a title with nothing playable shows a greyed Play with
- * its reason in plain words — never a hidden Play, never a second
- * Play somewhere else on the page.
+ * to play. These tests pin what the page itself can pin: the button is
+ * plain Play / Resume — the quality lives in the Video row below it —
+ * the tap fires the one primary action, and a title with nothing
+ * playable shows a greyed Play with its reason in plain words — never
+ * a hidden Play, never a second Play somewhere else on the page.
  */
 @RunWith(RobolectricTestRunner::class)
 class DetailHeroPlayTest {
@@ -99,20 +99,25 @@ class DetailHeroPlayTest {
     }
 
     @Test
-    fun playButtonNamesTheQualityAndFiresPrimary() {
+    fun playButtonIsPlainPlayAndFiresPrimary() {
+        // Audit Detail #1 (Nov 2026): Play names no quality — the
+        // Video row below it carries the quality, so the button is
+        // just "Play" and the tap fires the one primary action.
         var fired = false
         content(
-            playLabel = "Play · 720p",
+            playLabel = "Play",
             onPlayPrimary = { fired = true },
         )
-        compose.onNodeWithText("Play · 720p").assertIsDisplayed().assertIsEnabled().performClick()
+        compose.onNodeWithText("Play").assertIsDisplayed().assertIsEnabled().performClick()
         assertTrue(fired)
     }
 
     @Test
     fun playButtonNamesTheResumePoint() {
-        content(playLabel = "Resume · 23 min left · 720p")
-        compose.onNodeWithText("Resume · 23 min left · 720p").assertIsDisplayed()
+        // Audit Detail #1: resume names the episode and the time left,
+        // never the band.
+        content(playLabel = "Resume · 23 min left")
+        compose.onNodeWithText("Resume · 23 min left").assertIsDisplayed()
     }
 
     @Test
