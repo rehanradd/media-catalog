@@ -411,11 +411,32 @@ tasks.withType<Test>().configureEach {
 // withType<Test> exclusion would also empty verifyPaparazziDebug.
 // ScreenSnapshotTest is NOT excluded — it is a Robolectric test (no Paparazzi
 // rule) and belongs in testDebugUnitTest.
+//
+// APP-10 (2026-11-24), CORRECTION to the paragraph above: recordPaparazziDebug
+// and verifyPaparazziDebug are NOT their own Test tasks. Per the Paparazzi
+// 2.x plugin (PaparazziPlugin.kt: record/verify are PaparazziTask lifecycle
+// tasks that dependOn the test task provider, and pass
+// paparazzi.test.record / paparazzi.test.verify as system properties into
+// the test JVM), BOTH drive testDebugUnitTest. The exclusion above therefore
+// emptied BOTH: record runs 2–5 on this branch "succeeded" in ~0s having
+// rendered nothing (artifact PNG set byte-identical to the repo's 33), and
+// verify would pass vacuously with a missing golden. The exclusion applies
+// only to a plain testDebugUnitTest run (the CI build+test step, where the
+// #1979 fork conflict lives); when recordPaparazzi or verifyPaparazzi is in
+// the requested tasks, the Paparazzi classes stay in so the gate actually
+// executes. Record runs before this exclusion (15/21 Nov) were green with
+// the Paparazzi classes in the shared forks, so the #1979 risk on a record
+// run is the pre-existing flake, not a new one.
 tasks.withType<Test>().configureEach {
     if (name == "testDebugUnitTest") {
-        filter {
-            excludeTestsMatching("com.raddstream.app.ui.PaparazziPreviewTest")
-            excludeTestsMatching("com.raddstream.app.ui.PlayerLandscapePaparazziTest")
+        val paparazziRun = gradle.startParameter.taskNames.any {
+            it.contains("recordPaparazzi") || it.contains("verifyPaparazzi")
+        }
+        if (!paparazziRun) {
+            filter {
+                excludeTestsMatching("com.raddstream.app.ui.PaparazziPreviewTest")
+                excludeTestsMatching("com.raddstream.app.ui.PlayerLandscapePaparazziTest")
+            }
         }
     }
 }
