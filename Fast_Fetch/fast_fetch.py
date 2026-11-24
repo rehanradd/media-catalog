@@ -44,6 +44,7 @@ import title_clean  # shared title/synopsis/rating rules (stdlib only)
 import quality  # release-quality spelling (DB checkup fix #6); stdlib only
 import backfill_year_from_title  # conservative year-from-title rules; stdlib only
 import redact  # shared placeholder / genre vocabulary (stdlib only)
+import expiry_bank  # resolve-time expiry parse + measured windows (API-03); stdlib only
 try:
     import warp_proxy  # WARP proxy routing for the resolver (stdlib only)
 except ImportError:  # package-style import when run from the repo root
@@ -8541,6 +8542,22 @@ def _expiry_fields(src: dict, *, now: float | None = None) -> dict:
     return {"expires_at": stamp, "expires_in": max(0.0, round(remaining, 3))}
 
 
+def _derive_resolve_expiry(fresh_url: str) -> dict | None:
+    """Expiry to bank for a freshly minted URL, or None (API-03).
+
+    `expiry_bank.derive_expiry` reads the signed lifetime off the URL
+    itself (R2 SigV4, s+e, absolute e/exp) or banks the measured
+    window for a token-bound origin with no parsable expiry (Google
+    usercontent, 900 s). Permanent hosts and hosts with no measured
+    death derive nothing. Never raises: a press must never fail
+    because an expiry could not be read.
+    """
+    try:
+        return expiry_bank.derive_expiry(fresh_url)
+    except Exception:
+        return None
+
+
 _RESOLVERS = None
 
 
@@ -9063,11 +9080,20 @@ def _bank_hubcloud_siblings(*, release_id, pressed_id, candidates):
                 record_link_expiry(sid, expires_at=cand["expires_at"],
                                    observed_via="signed_params")
             else:
-                # The new URL carries no signed lifetime (10Gbps /
-                # PixelServer): drop any older measurement so a stale,
-                # longer window cannot outlive the token it was read from.
-                record_link_expiry(sid, clear=True,
-                                   observed_via="signed_params")
+                # API-03: a sibling URL with no signed lifetime may
+                # still have a measured window for its origin (the
+                # hubcloud_10g Google URL banks 900 s); a permanent
+                # sibling (PixelServer) derives nothing, so the old
+                # measurement is dropped exactly as before — a stale,
+                # longer window must not outlive the token it was read
+                # from.
+                _derived = _derive_resolve_expiry(cand["final_url"])
+                if _derived is not None:
+                    record_link_expiry(sid, expires_at=_derived["expires_at"],
+                                       observed_via=_derived["observed_via"])
+                else:
+                    record_link_expiry(sid, clear=True,
+                                       observed_via="signed_params")
         except Exception:
             pass
     return len(banked)
@@ -10550,9 +10576,21 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                                    observed_via="signed_params")
                 src["expires_at"] = expires_at
             else:
-                record_link_expiry(src["id"], clear=True,
-                                   observed_via="signed_params")
-                src["expires_at"] = None
+                # API-03: a non-R2 winner (10Gbps Google URL) carries
+                # no parsable signed lifetime — bank the measured
+                # window for its origin instead of clearing to NULL.
+                # A permanent winner (PixelServer) derives nothing and
+                # still clears, exactly as before.
+                _derived = _derive_resolve_expiry(fresh_url)
+                if _derived is not None:
+                    record_link_expiry(src["id"],
+                                       expires_at=_derived["expires_at"],
+                                       observed_via=_derived["observed_via"])
+                    src["expires_at"] = _derived["expires_at"]
+                else:
+                    record_link_expiry(src["id"], clear=True,
+                                       observed_via="signed_params")
+                    src["expires_at"] = None
         else:
             # Ask the URL itself how long it lives, instead of assuming. A fresh token
             # whose host declares no freshness window keeps `expires_at` NULL, and the
@@ -10576,11 +10614,26 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                 record_link_expiry(src["id"], expires_at=expires_at,
                                    observed_via="signed_params")
                 src["expires_at"] = expires_at
-            elif observed_info.get("reason") == "no_directive":
-                # The host answered and declared nothing: drop any older measurement
-                # so a stale, longer window cannot outlive the token it was read from.
-                record_link_expiry(src["id"], clear=True, observed_via="no_directive")
-                src["expires_at"] = None
+            else:
+                # API-03: neither the response headers nor the unwrapper
+                # verdict carried a lifetime — but the fresh URL itself
+                # may (R2 SigV4, s+e, absolute e/exp: greenmotors' exp,
+                # streamtape's e), or its origin may have a measured
+                # death window (Google usercontent, 900 s). A permanent
+                # host derives nothing and keeps the no_directive clear
+                # below; an unreachable probe still leaves the old
+                # measurement alone, exactly as before.
+                _derived = _derive_resolve_expiry(fresh_url)
+                if _derived is not None:
+                    record_link_expiry(src["id"],
+                                       expires_at=_derived["expires_at"],
+                                       observed_via=_derived["observed_via"])
+                    src["expires_at"] = _derived["expires_at"]
+                elif observed_info.get("reason") == "no_directive":
+                    # The host answered and declared nothing: drop any older measurement
+                    # so a stale, longer window cannot outlive the token it was read from.
+                    record_link_expiry(src["id"], clear=True, observed_via="no_directive")
+                    src["expires_at"] = None
         return {
             "success": True,
             "id": src["id"],
