@@ -9481,7 +9481,26 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
     if deadline is not None and time.monotonic() > deadline:
         return _deadline_expired_answer(src["id"])
 
-    if _negative_cache_hit:
+    # Bank defect (a) — a dead banked URL must re-mint, not 404: a
+    # temporary copy's negative record usually names an expired token,
+    # not a dead source. The token is re-minted from the bridge, and the
+    # record must not refuse that re-mint — a live drive re-mints fine
+    # while the system served a 25 ms 404 (latency audit 2026-11-23,
+    # fsl_r2 release 3122427). Re-mintable means there is a bridge to
+    # mint from: a recognised bridge URL, or a source_url distinct from
+    # the stored final_url (the embed the token was minted from). A
+    # temporary copy with no bridge — the stored URL is the token
+    # itself — and every permanent copy keep the skip below, so the
+    # negative cache still refuses a genuinely dead copy fast. The
+    # cached probes stay skipped (needs_refresh is already True), so
+    # only the fresh unwrap runs; if it fails, the old record stands
+    # (the fall-through does not refresh it) and the sibling failover
+    # below still runs.
+    _remintable = bool(src["is_temporary"]) and (
+        is_bridge_url(source_u)
+        or (bool(src.get("source_url"))
+            and src.get("source_url") != src.get("final_url")))
+    if _negative_cache_hit and not _remintable:
         # The picked copy failed recently: its own unwrap would only
         # repeat the same negative, so skip straight to the sibling
         # failover below. The Stage-1 sibling path still runs when
@@ -10705,6 +10724,24 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                 # so a stale, longer window cannot outlive the token it was read from.
                 record_link_expiry(src["id"], clear=True, observed_via="no_directive")
                 src["expires_at"] = None
+        # Bank defect (b) — a stillborn banked row: the resolve just proved
+        # this URL plays NOW (the Stage-2 gate probe passed), so an expiry
+        # already in the past is a stale parse, not a dead token — the
+        # packer served an old `s` epoch, or the bare TTL probe 403'd and
+        # no fresh window was measured, leaving the ledger's old value in
+        # place. Banking it would make the row servable for only the
+        # 120 s reverify floor and force a re-resolve on every press
+        # (latency audit 2026-11-23, mxdrop release 2221661: the pkembed
+        # row banked an expires_at 3.5 days before its resolved_at).
+        # Drop it: the answer falls back to the documented 6-hour
+        # temporary-link ceiling, and the serve-time re-probe catches
+        # the URL when it actually dies.
+        _fresh_expiry = _expiry_fields(src)
+        if _fresh_expiry["expires_at"] is not None \
+                and _fresh_expiry["expires_in"] <= 0:
+            record_link_expiry(src["id"], clear=True,
+                               observed_via="stale_expiry")
+            src["expires_at"] = None
         return {
             "success": True,
             "id": src["id"],
