@@ -255,7 +255,12 @@ internal fun resultsSummary(loaded: Int, serverTotal: Int, hasMore: Boolean, tot
  * nothing, so "All" stays the honest answer there.
  */
 internal fun effectiveTypeChip(selectedType: String?, groups: List<TypeGroup>): String? {
-    if (selectedType != null) return selectedType
+    // Audit Search #9 (Nov 2026): "Complete series" is a switch refining
+    // Series in the sheet, and complete series are series — so the rail
+    // reads Series as the active chip while the switch is on, instead of
+    // showing no selection at all. Display only: the server still gets
+    // `complete_season` via [effectiveSearchType].
+    if (selectedType != null) return if (selectedType == "complete_season") "series" else selectedType
     if (groups.size != 1) return null
     return when (groups.single().typeKey) {
         "movie", "series", "anime" -> groups.single().typeKey

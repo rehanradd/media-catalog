@@ -193,6 +193,10 @@ class CatalogHelpersTest {
         // An explicit filter always wins over the visible section.
         assertEquals("movie", effectiveTypeChip("movie", seriesOnly))
         assertEquals("kpop", effectiveTypeChip("kpop", seriesOnly))
+        // Audit Search #9: "Complete series" is a switch refining Series
+        // in the sheet — the rail reads Series as the active chip while
+        // it is on (the server still gets complete_season).
+        assertEquals("series", effectiveTypeChip("complete_season", seriesOnly))
     }
 
     // Feel-instant S6: the "Show all" affordance is retired with the

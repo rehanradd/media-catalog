@@ -28,9 +28,10 @@ class ClientErrorsTest {
     }
 
     @Test
-    fun `unresolved host points at the catalog address the viewer typed`() {
+    fun `unresolved host points at Settings in plain words, never an address`() {
         val message = friendlyNetworkError(UnknownHostException("example.invalid"), fallback)
-        assertTrue(message, message.contains("Check its address in Settings"))
+        assertTrue(message, message.contains("Check the connection in Settings"))
+        assertTrue(message, !message.contains("address"))
     }
 
     @Test

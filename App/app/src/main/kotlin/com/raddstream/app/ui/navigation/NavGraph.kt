@@ -675,6 +675,8 @@ fun RaddStreamNavGraph(
                     initialLanguage = backStackEntry.arguments?.getString(Screen.Search.ARG_LANGUAGE)?.takeIf { it.isNotBlank() },
                     onPostClick = { post -> navController.navigateToPost(post) },
                     onBrowse = { type -> navController.navigate(Screen.Browse.createRoute(type)) },
+                    // Audit Search #3: the error state offers "Open Settings".
+                    onOpenSettings = { navController.navigate(Screen.Settings.route) },
                     onPlayDirectUrl = { url, title ->
                         // The address is staged, never routed: the player
                         // opens the opaque key and reads the address from

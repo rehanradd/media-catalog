@@ -34,8 +34,12 @@ fun friendlyNetworkError(
         raw.contains("CLEARTEXT communication") ->
             "This connection isn't allowed over an unsecured address. " +
                 "Use an address that starts with https, or keep using the catalog you're on."
+        // Audit Search #3 (Nov 2026): "address" is backend jargon — a
+        // viewer has no model of what an address is. Plain words: the
+        // catalog could not be reached, and Settings is where the
+        // connection lives (the error state offers "Open Settings").
         error is UnknownHostException || raw.contains("Unable to resolve host") ->
-            "We couldn't find the catalog at that address. Check its address in Settings."
+            "We couldn't reach the catalog. Check the connection in Settings."
         error is ConnectException || raw.contains("Failed to connect") ->
             "The catalog didn't answer. It may be offline — try again in a moment."
         error is SocketTimeoutException || raw.contains("timeout", ignoreCase = true) ->

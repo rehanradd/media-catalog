@@ -35,8 +35,6 @@ import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Language
@@ -58,6 +56,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
@@ -81,6 +80,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -115,6 +115,7 @@ import com.raddstream.app.ui.components.prefetchPosterArt
 import com.raddstream.app.ui.components.searchNextPrefetchUrls
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.components.RaddChip
+import com.raddstream.app.ui.components.RaddChipStyle
 import com.raddstream.app.ui.components.ScrollingChipRow
 import com.raddstream.app.ui.layout.CardGeometry
 import com.raddstream.app.viewmodel.GenreFilter
@@ -139,16 +140,19 @@ private val typeChips = listOf(
     "Series" to "series",
     // Not a `content_type`: the server answers `type=anime` from the `is_animated` flag.
     "Anime" to "anime",
-    "Complete series" to "complete_season",
+    // Audit Search #9 (Nov 2026): "Complete series" is a type value
+    // (`complete_season`), not a fifth chip — it wrapped alone onto a
+    // second row inside this grid. It lives below as a switch that
+    // refines Series, not here.
 )
 
 /**
  * Mockup (Nov 2026): the rail's own chips — All / Movies / Series / Anime /
  * K-Pop, Title Case like the sheet's Type group (the old ALL-CAPS read as
  * shouting next to the pill search bar — Gemini review, Nov 2026). "Complete
- * series" lives in the sheet's Type group, not here: the rail is the five
- * most-reached-for choices, and the sheet owns the rest. KPOP is a query
- * preset, not a content_type — see [SearchViewModel.selectType].
+ * series" lives in the sheet as a switch refining Series, not here: the rail
+ * is the five most-reached-for choices, and the sheet owns the rest. KPOP is
+ * a query preset, not a content_type — see [SearchViewModel.selectType].
  */
 private val railTypeChips = listOf(
     "All" to null,
@@ -164,6 +168,9 @@ internal const val SeeAllRecommendedTag = "see-all-recommended"
 
 /** Test tag on the filter rail's right-edge fade mask. */
 internal const val FilterRailFadeTag = "filter-rail-fade"
+
+/** Test tag on the did-you-mean suggestion chip in the results list. */
+internal const val DidYouMeanTag = "searchDidYouMean"
 
 /**
  * The Browse route's type for a "See all" tap: the rail's type values are
@@ -189,6 +196,8 @@ fun SearchScreen(
     onPlayDirectUrl: (url: String, title: String) -> Unit = { _, _ -> },
     /** A "See all" tap expands a discovery section in Browse, with the active type filter. */
     onBrowse: (String?) -> Unit = {},
+    /** Audit Search #3 (Nov 2026): the error state offers "Open Settings" — the copy sends the viewer there, so the screen carries the door. NavGraph navigates to the Settings tab. */
+    onOpenSettings: () -> Unit = {},
     /** A query to run at once — an actor tap on a detail card lands here with the name filled in. */
     initialQuery: String? = null,
     /** A genre filter to apply at once — a facet chip on Home lands here with the genre filled in. */
@@ -383,6 +392,7 @@ fun SearchScreen(
                     onShowExactOnly = viewModel::showExactOnly,
                     onRunSuggestion = viewModel::runSuggestion,
                     onPostClick = onPostClick,
+                    onOpenSettings = onOpenSettings,
                     onSeeAllTrending = { onBrowse(browseTypeForSeeAll(state.filters.type)) },
                     onSeeAllRecommended = { onBrowse(browseTypeForSeeAll(state.filters.type)) },
                 )
@@ -602,11 +612,13 @@ internal fun FilterRail(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // Audit Search #7 (Nov 2026): this chip opens the filter sheet —
+        // it is an action, not a selection — so it never wears the filled
+        // selected style the "Movies" chip wears. Tonal fill + outline,
+        // and the count in the label is the only active signal. The
+        // spoken name still carries the count ("Filters, 3 active").
         FilterChip(
             colors = FilterChipDefaults.filterChipColors(
-                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                selectedLabelColor = MaterialTheme.colorScheme.primary,
-                selectedLeadingIconColor = MaterialTheme.colorScheme.primary,
                 containerColor = MaterialTheme.colorScheme.surfaceContainer,
                 labelColor = MaterialTheme.colorScheme.onSurface,
                 // This Compose version names the unselected icon colour
@@ -614,7 +626,7 @@ internal fun FilterRail(
                 // not exist and fails compileDebugKotlin (CI 43738577241).
                 iconColor = MaterialTheme.colorScheme.onSurface,
             ),
-            selected = activeFilterCount > 0,
+            selected = false,
             onClick = onOpenFilters,
             label = {
                 Row(
@@ -626,6 +638,14 @@ internal fun FilterRail(
                 }
             },
             shape = RoundedCornerShape(24.dp),
+            border = FilterChipDefaults.filterChipBorder(
+                enabled = true,
+                selected = false,
+                borderColor = MaterialTheme.colorScheme.outlineVariant,
+                selectedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+                borderWidth = 1.dp,
+                selectedBorderWidth = 1.dp,
+            ),
             // Audit #54: a FilterChip is 32 dp tall — the touch-target floor is 48 dp, so the chip itself carries it.
             modifier = Modifier
                 .heightIn(min = 48.dp)
@@ -1059,6 +1079,7 @@ internal fun SearchContent(
     onShowExactOnly: () -> Unit,
     onRunSuggestion: (String) -> Unit,
     onPostClick: (Post) -> Unit,
+    onOpenSettings: () -> Unit = {},
     onSeeAllTrending: () -> Unit = {},
     onSeeAllRecommended: () -> Unit = {},
 ) {
@@ -1108,6 +1129,10 @@ internal fun SearchContent(
             title = "Couldn't search",
             message = friendlyNetworkError(refreshState.error, "Search failed. Check the server connection."),
             onRetry = { pagingItems.retry() },
+            // Audit Search #3: the message sends the viewer to Settings —
+            // the screen offers the door, not just the direction.
+            secondaryLabel = "Open Settings",
+            onSecondary = onOpenSettings,
         )
         // Feel-instant S3a/S3c: the instant local answer — titles this
         // device already knows, painted while the server search is still
@@ -1180,14 +1205,21 @@ internal fun SearchContent(
 
             // Audit #37: the server's "did you mean" spelling, one tap to
             // search for it — shown only when it differs from the query.
+            // Audit Search #4 (Nov 2026): it used to be a fillMaxWidth
+            // TextButton, so it centred itself in the column and read as
+            // a plain-text label, not an action. It is a chip now — the
+            // outlined pill says "tap me" — left-aligned with the rest of
+            // the stack, and the fuzzy line below is the one statement of
+            // what happened, so the mismatch is stated once, not twice.
             state.didYouMean?.let { suggestion ->
                 item {
-                    TextButton(
+                    RaddChip(
+                        style = RaddChipStyle.Navigation,
+                        selected = false,
                         onClick = { onRunSuggestion(suggestion) },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text("Did you mean $suggestion?")
-                    }
+                        label = { Text("Did you mean $suggestion?") },
+                        modifier = Modifier.padding(bottom = 8.dp).testTag(DidYouMeanTag),
+                    )
                 }
             }
 
@@ -1344,9 +1376,6 @@ internal fun FilterSheetBody(
     // Apply button off the bottom on a small phone, so the only way to
     // leave was the swipe-down the re-review called out as hard to find.
     // The footer sits under a hairline, always in reach.
-    // The Language list is the long one (11 languages); it starts folded
-    // so the sheet opens on Type, not on a wall of language chips.
-    var languageExpanded by remember { mutableStateOf(false) }
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -1377,11 +1406,58 @@ internal fun FilterSheetBody(
                 title = "Type",
                 options = typeChips,
                 label = { it.first },
-                isSelected = { state.filters.type == it.second },
+                isSelected = { option ->
+                    // Audit Search #9: "Complete series" is a switch below
+                    // now, and complete series are series — the Series chip
+                    // reads selected while the switch is on, so the sheet
+                    // never shows no Type active with a type filter applied.
+                    if (option.second == "series") {
+                        state.filters.type == "series" || state.filters.type == "complete_season"
+                    } else {
+                        state.filters.type == option.second
+                    }
+                },
                 onSelect = { onSelectType(it.second) },
                 allDescription = "All types",
                 icon = Icons.Default.Category,
             )
+            // Audit Search #9: "Complete series" is a type value
+            // (content_type complete_season), not a boolean — but it sat
+            // as a lone wrapped row inside the Type chip grid. It is a
+            // switch now, refining Series: on selects complete_season,
+            // off returns to plain Series. The Switch itself carries the
+            // toggle (Settings' SwitchRow pattern: the painted labels are
+            // paint-only, the control announces label + state).
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "Complete series only",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.clearAndSetSemantics { },
+                    )
+                    Text(
+                        "Only series with every episode available.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.clearAndSetSemantics { },
+                    )
+                }
+                Switch(
+                    checked = state.filters.type == "complete_season",
+                    onCheckedChange = { checked ->
+                        onSelectType(if (checked) "complete_season" else "series")
+                    },
+                    modifier = Modifier.semantics { contentDescription = "Complete series only" },
+                )
+            }
+            HorizontalDivider(Modifier.padding(top = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
             FacetChips(
                 title = "Industry",
                 options = IndustryFilter.entries,
@@ -1400,60 +1476,24 @@ internal fun FilterSheetBody(
                 allDescription = "All genres",
                 icon = Icons.Default.Theaters,
             )
-            // Language, folded by default: eleven chips is the longest group
-            // in the sheet, and the header always shows what is picked, so
-            // a folded section still says what it holds.
-            Column {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 48.dp)
-                        .clickable { languageExpanded = !languageExpanded }
-                        .semantics(mergeDescendants = true) {
-                            contentDescription = "Language: ${state.filters.language.label}"
-                        },
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(
-                        Icons.Default.Language,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(20.dp),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text("Language", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
-                    Spacer(Modifier.weight(1f))
-                    Text(
-                        displayLanguageName(state.filters.language.label),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Icon(
-                        if (languageExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                if (languageExpanded) {
-                    Spacer(Modifier.height(8.dp))
-                    FacetChips(
-                        title = "Language",
-                        options = LanguageFilter.entries,
-                        // F23 (Batch B): the chip paints both scripts —
-                        // "Hindi · हिन्दी" — so the language is findable by
-                        // a reader of either. The stored value stays the
-                        // English name; only the paint carries both.
-                        label = { displayLanguageName(it.label) },
-                        isSelected = { state.filters.language == it },
-                        onSelect = onSelectLanguage,
-                        allDescription = "All languages",
-                        showHeader = false,
-                    )
-                } else {
-                    HorizontalDivider(Modifier.padding(top = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
-                }
-            }
+            // Audit Search #10 (Nov 2026): Language was a collapsed "All ⌄"
+            // dropdown while every other section shows chips. The chips are
+            // visible now, like the rest — eleven chips in a FlowRow, the
+            // longest group in the sheet, but the sheet scrolls and the fold
+            // hid the section whose value the viewer picks most.
+            FacetChips(
+                title = "Language",
+                options = LanguageFilter.entries,
+                // F23 (Batch B): the chip paints both scripts —
+                // "Hindi · हिन्दी" — so the language is findable by
+                // a reader of either. The stored value stays the
+                // English name; only the paint carries both.
+                label = { displayLanguageName(it.label) },
+                isSelected = { state.filters.language == it },
+                onSelect = onSelectLanguage,
+                allDescription = "All languages",
+                icon = Icons.Default.Language,
+            )
             FacetChips(
                 title = "Quality",
                 options = QualityFilter.entries,
@@ -1525,7 +1565,10 @@ internal fun FilterSheetBody(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TextButton(
+            // Audit Search #11 (Nov 2026): Reset was tiny plain text next
+            // to the large filled Apply pill. It is a real button now —
+            // outlined, 48dp, the same footer weight as Apply.
+            OutlinedButton(
                 onClick = onResetFilters,
                 modifier = Modifier.heightIn(min = 48.dp),
             ) {
@@ -1601,13 +1644,10 @@ private fun <T> FacetChips(
     allDescription: String,
     // F10 (Batch B): the section's icon, painted beside the title so the
     // groups read apart at a glance instead of five bare headings in a
-    // row. The Language accordion passes its own header and hides this one.
+    // row.
     icon: ImageVector? = null,
-    showHeader: Boolean = true,
 ) {
-    if (showHeader) {
-        FacetHeader(title = title, icon = icon)
-    }
+    FacetHeader(title = title, icon = icon)
     // F10 (Batch B): 8dp gaps read as five separate rows of buttons; 6dp
     // reads as one group. The 48dp touch floor stays — density is the
     // gaps, never the targets.

@@ -154,6 +154,20 @@ class PaparazziPreviewTest {
         language = "English",
     )
 
+    // Audit E9 (Nov 2026): the search-results fixture put McLintock! — a
+    // 1963 movie — in the Series group while its own metadata says Movie.
+    // The Series group holds a real series now.
+    private val moneyHeist = fakePost(
+        id = 5,
+        title = "Money Heist",
+        year = 2017,
+        contentType = "series",
+        rating = "8.2",
+        genres = "Crime, Drama",
+        industry = "Hollywood",
+        language = "English",
+    )
+
     // Rail-title cleanup (Nov 2026): the third rail card carries the
     // suffix stack the catalog actually sends, so the golden proves the
     // tile paints the stripped title ("No Hard Feelings"), not the raw
@@ -736,7 +750,7 @@ class PaparazziPreviewTest {
 
     private val searchResultGroups = listOf(
         TypeGroup(label = "Movies", typeKey = "movie", items = listOf(jawan, salaars)),
-        TypeGroup(label = "Series", typeKey = "series", items = listOf(mclintock)),
+        TypeGroup(label = "Series", typeKey = "series", items = listOf(moneyHeist)),
     )
 
     private val searchResults = SearchUiState(
@@ -765,7 +779,7 @@ class PaparazziPreviewTest {
             searchResults,
             groups = searchResultGroups,
             pagingData = PagingData.from(
-                data = listOf(jawan, salaars, mclintock),
+                data = listOf(jawan, salaars, moneyHeist),
                 sourceLoadStates = LoadStates(refresh = idle, prepend = idle, append = idle),
             ),
         )
