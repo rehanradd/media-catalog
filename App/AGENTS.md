@@ -192,7 +192,7 @@ never persist the token in the repository.
     enforced:** latest debug APKs are ~23.3 MB (`app-debug-256`, 23,374,190 B,
     `App/docs/SESSION_HISTORY.md`). Do not quote 15 MB as a met budget until the size is back
     under it or the rule is re-decided by the owner.
-9. **Minimum SDK 21** — guard anything below API 21 with Build.VERSION_CODES
+9. **Minimum SDK 23** — guard anything below API 23 with Build.VERSION_CODES
 10. **Session logs go in `App/docs/SESSION_HISTORY.md`, never in this file** — this file is
     instructions-only and is auto-loaded into every agent's context. (An older line here said
     to update this AGENTS.md with the session log; that line is retired by the root rule.)
