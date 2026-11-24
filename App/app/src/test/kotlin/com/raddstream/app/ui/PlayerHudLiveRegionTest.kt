@@ -2,7 +2,6 @@ package com.raddstream.app.ui
 
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.SemanticsProperties
-import androidx.compose.ui.test.fetchSemanticsNode
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import com.raddstream.app.player.PlayerUiState
@@ -66,7 +65,11 @@ class PlayerHudLiveRegionTest {
         val node = compose.onNodeWithContentDescription("Volume 80%").fetchSemanticsNode()
         assertEquals(
             LiveRegionMode.Polite,
-            node.config.getOrNull(SemanticsProperties.LiveRegion),
+            // getOrElse, not getOrNull: this Compose version's
+            // SemanticsConfiguration has no getOrNull (compile error in
+            // record runs 2–3). Absent reads as None, which fails the
+            // assert exactly like a missing live region should.
+            node.config.getOrElse(SemanticsProperties.LiveRegion) { LiveRegionMode.None },
         )
     }
 
@@ -81,7 +84,7 @@ class PlayerHudLiveRegionTest {
         val node = compose.onNodeWithContentDescription("Buffering…").fetchSemanticsNode()
         assertEquals(
             LiveRegionMode.Polite,
-            node.config.getOrNull(SemanticsProperties.LiveRegion),
+            node.config.getOrElse(SemanticsProperties.LiveRegion) { LiveRegionMode.None },
         )
     }
 
