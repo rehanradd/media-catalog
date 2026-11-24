@@ -8,6 +8,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
@@ -19,12 +20,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.FavoriteBorder
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -42,6 +37,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -58,6 +54,7 @@ import com.raddstream.app.network.models.isNewReleaseYear
 import com.raddstream.app.ui.layout.CardGeometry
 import com.raddstream.app.ui.theme.PressHaptics
 import com.raddstream.app.ui.theme.RaddArtScrim
+import com.raddstream.app.ui.theme.RaddTokens
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.ui.theme.pressScale
 import com.raddstream.app.ui.theme.rememberArtworkAccent
@@ -234,7 +231,7 @@ fun PosterCard(
     val titleSlotHeight = with(LocalDensity.current) {
         // TextUnit has no isSpecified in this Compose version — Unspecified
         // is the sentinel to compare against.
-        if (titleLineHeight != TextUnit.Unspecified) titleLineHeight.value.sp.toDp() else 20.dp
+        if (titleLineHeight != TextUnit.Unspecified) titleLineHeight.value.sp.toDp() else 20.dp // token-exempt: typography fallback (a line height), not spacing
     }
 
     val clickable = Modifier.semantics { contentDescription = a11y }
@@ -282,20 +279,20 @@ fun PosterCard(
                     else -> Modifier
                 }
             ),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(RaddTokens.Space.Xxs),
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(CardGeometry.POSTER_ASPECT)
-                .clip(RoundedCornerShape(10.dp))
+                .clip(RaddTokens.Shape.Poster)
                 .background(MaterialTheme.colorScheme.surfaceVariant)
                 .then(
                     if (isFocused) {
                         Modifier.border(
-                            width = 2.dp,
+                            width = 2.dp, // token-exempt: focus-border width, not spacing
                             color = MaterialTheme.colorScheme.primary,
-                            shape = RoundedCornerShape(10.dp),
+                            shape = RaddTokens.Shape.Poster,
                         )
                     } else Modifier
                 ),
@@ -319,7 +316,7 @@ fun PosterCard(
             // half the clearance, so the title never reaches the numeral.
             // The numeral is ~54dp tall (displayMedium + bottom padding);
             // 56dp clears it with room for a three-line title.
-            val rankClearance = if (rank != null && rank in 1..10) 56.dp else 0.dp
+            val rankClearance = if (rank != null && rank in 1..10) 56.dp else 0.dp // token-exempt: rank-numeral clearance, a layout constant derived from the ~54dp numeral
             if (posterUrl == null) {
                 ImageFallbackCard(
                     modifier = Modifier.fillMaxSize(),
@@ -366,7 +363,7 @@ fun PosterCard(
                             )
                         )
                     )
-                    .height(36.dp),
+                    .height(36.dp), // token-exempt: bottom-scrim height, fixed component geometry
             )
 
             progressFraction?.let { fraction ->
@@ -374,7 +371,7 @@ fun PosterCard(
                     Modifier
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
-                        .height(3.dp)
+                        .height(3.dp) // token-exempt: progress-bar thickness, not spacing
                         .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.55f)),
                 ) {
                     // My List review (Nov 2026): the bar is jade, not grey —
@@ -419,7 +416,7 @@ fun PosterCard(
                     ),
                     modifier = Modifier
                         .align(Alignment.BottomStart)
-                        .padding(start = 8.dp, bottom = 2.dp)
+                        .padding(start = RaddTokens.Space.Sm, bottom = RaddTokens.Space.Micro)
                         .clearAndSetSemantics { },
                 )
             }
@@ -439,10 +436,10 @@ fun PosterCard(
                 Box(
                     modifier = Modifier
                         .align(newAlignment)
-                        .padding(6.dp)
-                        .clip(RoundedCornerShape(8.dp))
+                        .padding(RaddTokens.Space.Xxs)
+                        .clip(RaddTokens.Shape.Poster)
                         .background(RaddArtScrim)
-                        .padding(horizontal = 7.dp, vertical = 2.dp)
+                        .padding(horizontal = RaddTokens.Space.Sm, vertical = RaddTokens.Space.Micro)
                         .clearAndSetSemantics { },
                 ) {
                     Text(
@@ -467,7 +464,7 @@ fun PosterCard(
                     onClick = onToggleFavorite,
                     modifier = Modifier
                         .align(Alignment.TopStart)
-                        .padding(4.dp)
+                        .padding(RaddTokens.Space.Xs)
                         .size(48.dp)
                         .background(
                             MaterialTheme.colorScheme.scrim.copy(alpha = 0.55f),
@@ -475,7 +472,7 @@ fun PosterCard(
                         ),
                 ) {
                     Icon(
-                        imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                        painter = painterResource(if (isFavorite) R.drawable.ic_action_favorite_filled else R.drawable.ic_tab_my_list),
                         contentDescription = if (isFavorite) {
                             "Remove $title from My List"
                         } else {
@@ -492,7 +489,7 @@ fun PosterCard(
                         } else {
                             MaterialTheme.colorScheme.onSurface
                         },
-                        modifier = Modifier.size(24.dp),
+                        modifier = Modifier.size(24.dp), // token-exempt: icon size, not spacing
                     )
                 }
             }
@@ -508,7 +505,7 @@ fun PosterCard(
                     onClick = onPlayClick,
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .padding(4.dp)
+                        .padding(RaddTokens.Space.Xs)
                         .size(48.dp)
                         .background(
                             MaterialTheme.colorScheme.scrim.copy(alpha = 0.55f),
@@ -516,10 +513,10 @@ fun PosterCard(
                         ),
                 ) {
                     Icon(
-                        imageVector = Icons.Default.PlayArrow,
+                        painter = painterResource(R.drawable.ic_player_play),
                         contentDescription = "Play $title",
                         tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(24.dp),
+                        modifier = Modifier.size(24.dp), // token-exempt: icon size, not spacing
                     )
                 }
             }
@@ -541,7 +538,7 @@ fun PosterCard(
         ) {
             Column(
                 modifier = Modifier.weight(1f).clearAndSetSemantics { },
-                verticalArrangement = Arrangement.spacedBy(2.dp),
+                verticalArrangement = Arrangement.spacedBy(RaddTokens.Space.Micro),
             ) {
                 // M2 (home review, Nov 2026): Compose's Ellipsis cuts at
                 // the last fitting character, not the last word
@@ -575,23 +572,38 @@ fun PosterCard(
                     modifier = Modifier.height(titleSlotHeight * titleMaxLines),
                 )
                 if (showDetails) {
-                    Text(
-                        text = details,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.labelSmall,
-                        // F7 (Batch B): one line, not two — year + type
-                        // never needs a second line, and the second line
-                        // was the other half of the uneven card heights.
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    // S2: width-aware meta line (see metaLineForWidth) —
+                    // the tile drops segments before Compose ellipsizes.
+                    BoxWithConstraints(Modifier.fillMaxWidth()) {
+                        val narrowLine = metaLineForWidth(post, compactMeta, matchPercent, maxWidth)
+                        var displayDetails by remember(narrowLine) { mutableStateOf(narrowLine) }
+                        Text(
+                            text = displayDetails,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.labelSmall,
+                            // F7 (Batch B): one line, not two — year + type
+                            // never needs a second line, and the second line
+                            // was the other half of the uneven card heights.
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            onTextLayout = { result ->
+                                if (result.lineCount > 0 && result.isLineEllipsized(0)) {
+                                    val trimmed = trimMetaLineToWordBoundary(
+                                        displayDetails,
+                                        result.getLineEnd(0, visibleEnd = true),
+                                    )
+                                    if (trimmed != displayDetails) displayDetails = trimmed
+                                }
+                            },
+                        )
+                    }
                 }
                 // Session 121 (P-28): the badge row only exists when a title has
                 // badges, so cards in one rail had different heights and a badge
                 // could straddle the rail's clip edge ("Dual Audio" cut mid-glyph).
                 // The slot is always 24 dp — the pill's own height — so card height
                 // is invariant to badge presence and rails stay uniform.
-                Box(Modifier.fillMaxWidth().height(24.dp), contentAlignment = Alignment.CenterStart) {
+                Box(Modifier.fillMaxWidth().height(24.dp), contentAlignment = Alignment.CenterStart) { // token-exempt: badge-slot height, fixed component geometry
                     // Dub status decides whether this title is watchable at all for a
                     // Hindi/Urdu-first viewer, so it is said on the tile, not after a tap.
                     AudioBadgeChipRow(badges = tileBadges)
@@ -625,16 +637,58 @@ fun PosterCard(
                         ),
                 ) {
                     Icon(
-                        Icons.Default.Close,
+                        painter = painterResource(R.drawable.ic_action_close),
                         contentDescription = "Remove $title from My List",
                         tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(16.dp),
+                        modifier = Modifier.size(16.dp), // token-exempt: icon size, not spacing
                     )
                 }
             }
         }
     }
 }
+/**
+ * S2 thresholds: the tile widths (dp) below which the meta line drops a
+ * segment — type below 140dp, year below 100dp. Named constants, not
+ * spacing literals, so the spacing gate does not read them as layout.
+ */
+private const val META_DROP_TYPE_BELOW_DP = 140f
+private const val META_DROP_YEAR_BELOW_DP = 100f
+
+/**
+ * S2 (2027 Home fix): the priority-dropped meta line. Segments paint in
+ * priority order — match, rating, year, type — and the narrow tile drops
+ * the lowest-priority segment first: below 140dp the type word goes
+ * ("★ 7.0 · 2023"), below 100dp the year goes too ("★ 7.0"). Rating and
+ * match never drop — they are the reason the tile is on screen. Pure, so
+ * the gate test asserts it without a layout.
+ */
+internal fun metaLineForWidth(post: Post, compact: Boolean, matchPercent: Int? = null, width: Dp): String {
+    val dropType = compact || width < META_DROP_TYPE_BELOW_DP.dp
+    val dropYear = width < META_DROP_YEAR_BELOW_DP.dp
+    val match = matchPercent?.let { "$it% Match" }
+    return listOfNotNull(
+        match,
+        UserWords.displayRating(post.imdbRating)?.let { "★ $it" },
+        if (dropYear) null else post.yearLabel,
+        if (dropType) null else post.typeLabel,
+    ).joinToString(" · ")
+}
+
+/**
+ * S2 (2027 Home fix): word-safe trim for the meta line. When the line
+ * still ellipsizes after priority dropping, back off to the previous word
+ * boundary and strip a dangling separator ("★ 7.0 · …" → "★ 7.0 …").
+ * Mirrors the title's [UserWords.trimToWordBoundary] for the meta line.
+ */
+internal fun trimMetaLineToWordBoundary(text: String, cutIndex: Int): String {
+    val trimmed = UserWords.trimToWordBoundary(text, cutIndex)
+    // trimToWordBoundary appends "…" after the boundary — if the boundary
+    // fell just after a separator ("★ 7.0 · …"), drop the separator first
+    // so the line never ends on a dangling "·".
+    return trimmed.removeSuffix("·…").let { if (it != trimmed) "${it.trimEnd()}…" else trimmed }
+}
+
 /**
  * My List review (Nov 2026): the rail meta line, as one pure function so
  * the compact form is assertable without a layout. Full form is
@@ -688,7 +742,7 @@ private fun PosterCardPlaceholderPreview() {
                 contentType = "movie",
                 posterUrl = null,
             ),
-            modifier = Modifier.width(180.dp),
+            modifier = Modifier.width(180.dp), // token-exempt: preview-only width
         )
     }
 }

@@ -18,10 +18,8 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SelectableChipColors
 import androidx.compose.material3.Surface
@@ -35,6 +33,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.raddstream.app.ui.theme.RaddTokens
 
 /**
  * A4-F3: the one scrolling chip row. Before this, every screen hand-rolled
@@ -82,9 +81,9 @@ internal val ChipRowSnapPosition = SnapPosition.Start
 fun ScrollingChipRow(
     modifier: Modifier = Modifier,
     state: LazyListState = rememberLazyListState(),
-    contentPadding: PaddingValues = PaddingValues(horizontal = 16.dp),
+    contentPadding: PaddingValues = PaddingValues(horizontal = RaddTokens.Space.Gutter),
     verticalAlignment: Alignment.Vertical = Alignment.Top,
-    horizontalSpacing: Dp = 8.dp,
+    horizontalSpacing: Dp = RaddTokens.Space.Sm,
     fadeHeight: Dp = 48.dp,
     rowTestTag: String? = null,
     fadeTestTag: String? = null,
@@ -170,8 +169,9 @@ enum class RaddChipStyle {
  * 12dp/16dp inner padding).
  *
  * Per-screen selected fills are deliberate and survive through [colors]:
- * Home and My List use primary/onPrimary, the Search rail uses
- * primaryContainer/primary, Live TV and the rest use [raddFilterChipColors].
+ * every screen uses [raddFilterChipColors] now (H3: Home's
+ * primary/onPrimary override is gone — the selected fill is
+ * primaryContainer, the unselected container surfaceContainerHigh).
  * The label stays a slot so each site's bold-when-selected and maxLines
  * survive untouched.
  */
@@ -184,7 +184,9 @@ fun RaddChip(
     modifier: Modifier = Modifier,
     style: RaddChipStyle = RaddChipStyle.Filter,
     colors: SelectableChipColors = raddFilterChipColors(),
-    shape: Shape = FilterChipDefaults.shape,
+    // H3: chips are pills — the default shape is the token pill, not
+    // FilterChipDefaults.shape (8dp rounded).
+    shape: Shape = RaddTokens.Shape.Pill,
     leadingIcon: @Composable (() -> Unit)? = null,
     trailingIcon: @Composable (() -> Unit)? = null,
     enabled: Boolean = true,
@@ -208,13 +210,13 @@ fun RaddChip(
             onClick = onClick,
             modifier = modifier,
             enabled = enabled,
-            shape = RoundedCornerShape(24.dp),
+            shape = RaddTokens.Shape.Pill,
             color = Color.Transparent,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), // token-exempt: hairline border, not spacing
             contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
         ) {
             // E-T4: 16dp of vertical padding takes the tile to >= 48dp.
-            Box(Modifier.padding(horizontal = 12.dp, vertical = 16.dp)) {
+            Box(Modifier.padding(horizontal = RaddTokens.Space.Md, vertical = RaddTokens.Space.Gutter)) {
                 label()
             }
         }

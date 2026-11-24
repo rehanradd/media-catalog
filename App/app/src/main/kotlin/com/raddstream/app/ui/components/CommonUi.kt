@@ -26,10 +26,6 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CloudOff
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -58,6 +54,7 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -80,6 +77,7 @@ import androidx.compose.ui.window.Dialog
 import com.raddstream.app.ui.layout.CardGeometry
 import com.raddstream.app.ui.theme.RaddEmphasized
 import com.raddstream.app.ui.theme.RaddStreamTheme
+import com.raddstream.app.ui.theme.RaddTokens
 
 /**
  * Shared page-level building blocks: section headers, empty/error/loading states,
@@ -101,7 +99,15 @@ import com.raddstream.app.ui.theme.RaddStreamTheme
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
+// H3 (2027 Home fix): the shared chip colors are fully tonal now —
+// the UNSELECTED container is surfaceContainerHigh (not transparent
+// with an outline), so a chip row reads as a row of tonal pills and
+// the selected fill (primaryContainer) is one step up from it, not a
+// different language. Every screen that uses these colors (Home, the
+// Search rail, Live TV) gets the same tonal row.
 fun raddFilterChipColors() = FilterChipDefaults.filterChipColors(
+    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+    labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
     selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
     selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
     selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -120,8 +126,8 @@ fun raddFilterChipColors() = FilterChipDefaults.filterChipColors(
 private fun FilterChipStatesPreview() {
     RaddStreamTheme {
         Row(
-            modifier = Modifier.padding(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(RaddTokens.Space.Gutter),
+            horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Sm),
         ) {
             FilterChip(
                 selected = true,
@@ -1031,6 +1037,12 @@ fun ErrorState(
     // what the action changes. Null keeps the old two-button shape.
     secondaryHint: String? = null,
     fillScreen: Boolean = true,
+    // S4(c) (2027 Home fix): the Settings path — a third action for the
+    // fatal error, where the server address and everything else lives.
+    // Null keeps the old two-button shape. These sit AFTER fillScreen on
+    // purpose: no existing caller's positional order changes.
+    tertiaryLabel: String? = null,
+    onTertiary: (() -> Unit)? = null,
 ) {
     EmptyState(
         title = title,
@@ -1046,10 +1058,10 @@ fun ErrorState(
             // with its line through it), not a grey "info" — the tint stays
             // muted, only the shape says what broke.
             Icon(
-                Icons.Default.CloudOff,
+                painter = painterResource(R.drawable.ic_action_cloud_off),
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(40.dp),
+                modifier = Modifier.size(40.dp), // token-exempt: icon size, not spacing
             )
         },
         action = {
@@ -1066,15 +1078,15 @@ fun ErrorState(
                     onClick = onRetry,
                     modifier = Modifier.heightIn(min = 48.dp),
                 ) {
-                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
+                    Icon(painter = painterResource(R.drawable.ic_action_refresh), contentDescription = null, modifier = Modifier.size(18.dp)) // token-exempt: icon size, not spacing
+                    Spacer(Modifier.width(RaddTokens.Space.Sm))
                     Text("Retry")
                 }
                 // A server that is down has two honest answers: try again, or go
                 // talk to a different server. Without the second one a person whose
                 // configured address is simply wrong can only retry forever.
                 if (secondaryLabel != null && onSecondary != null) {
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(RaddTokens.Space.Sm))
                     TextButton(onClick = onSecondary) { Text(secondaryLabel) }
                     if (secondaryHint != null) {
                         Text(
@@ -1084,6 +1096,12 @@ fun ErrorState(
                             textAlign = TextAlign.Center,
                         )
                     }
+                }
+                // S4(c): the Settings path — the third door on a fatal
+                // error, after Retry and the server address.
+                if (tertiaryLabel != null && onTertiary != null) {
+                    Spacer(Modifier.height(RaddTokens.Space.Sm))
+                    TextButton(onClick = onTertiary) { Text(tertiaryLabel) }
                 }
             }
         },
@@ -1115,16 +1133,16 @@ fun InlineLoadFailure(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = RaddTokens.Space.Gutter, vertical = RaddTokens.Space.Sm),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
-            Icons.Default.Info,
+            painter = painterResource(R.drawable.ic_action_info),
             contentDescription = null,
             tint = MaterialTheme.colorScheme.error,
-            modifier = Modifier.size(20.dp),
+            modifier = Modifier.size(20.dp), // token-exempt: icon size, not spacing
         )
-        Spacer(Modifier.width(10.dp))
+        Spacer(Modifier.width(RaddTokens.Space.Md))
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = message,
@@ -1151,8 +1169,8 @@ fun InlineLoadFailure(
             onClick = onRetry,
             modifier = Modifier.heightIn(min = 48.dp),
         ) {
-            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(6.dp))
+            Icon(painter = painterResource(R.drawable.ic_action_refresh), contentDescription = null, modifier = Modifier.size(16.dp)) // token-exempt: icon size, not spacing
+            Spacer(Modifier.width(RaddTokens.Space.Xxs))
             Text("Retry")
         }
     }

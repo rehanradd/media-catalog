@@ -5,7 +5,6 @@ import android.os.SystemClock
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.snap
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -28,11 +27,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.FavoriteBorder
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -62,8 +56,11 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -75,11 +72,9 @@ import com.raddstream.app.brand.Brand
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.network.models.WireText
 import com.raddstream.app.ui.theme.PressHaptics
-import com.raddstream.app.ui.theme.RaddArtScrim
 import com.raddstream.app.ui.theme.RaddEmphasized
 import com.raddstream.app.ui.theme.RaddHeroPlaceholderHigh
 import com.raddstream.app.ui.theme.RaddHeroPlaceholderLow
-import com.raddstream.app.ui.theme.RaddMotion
 import com.raddstream.app.ui.theme.RaddStreamMark
 import com.raddstream.app.ui.theme.RaddTokens
 import com.raddstream.app.ui.theme.brandSp
@@ -173,6 +168,10 @@ fun HeroCarousel(
     // A drag that snaps back to the same page changes no page, so the
     // page effect below would not see it — the scroll flag is the record
     // that the viewer is handling the banner right now.
+    // S7: the auto-advance + dot-tap scroll spec, hoisted out of the
+    // LaunchedEffect / scrollScope lambdas — a CompositionLocal read has
+    // no composition scope inside an effect body or a launched coroutine.
+    val heroSpatialSpec = MaterialTheme.motionScheme.defaultSpatialSpec<Float>()
     LaunchedEffect(pagerState.isScrollInProgress) {
         if (pagerState.isScrollInProgress) lastChangeMs = SystemClock.uptimeMillis()
     }
@@ -208,7 +207,7 @@ fun HeroCarousel(
             lastChangeMs = SystemClock.uptimeMillis()
             pagerState.animateScrollToPage(
                 nextHeroPage(pagerState.currentPage, posts.size),
-                animationSpec = RaddMotion.defaultSpatial(),
+                animationSpec = heroSpatialSpec,
             )
         }
     }
@@ -264,13 +263,14 @@ fun HeroCarousel(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 4.dp),
+                .padding(top = RaddTokens.Space.Xs),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             HeroIndicator(
                 count = posts.size,
                 current = pagerState.currentPage,
+                titles = posts.map { it.displayTitle },
                 // Scrolling is a suspending pager call, so the dot's click launches it on the
                 // composition's scope instead of pretending the tap can wait for it inline.
                 // The tap also restarts the auto-advance clock outright: tapping the
@@ -280,7 +280,7 @@ fun HeroCarousel(
                 onSelect = { index ->
                     lastChangeMs = SystemClock.uptimeMillis()
                     scrollScope.launch {
-                        pagerState.animateScrollToPage(index, animationSpec = RaddMotion.defaultSpatial())
+                        pagerState.animateScrollToPage(index, animationSpec = heroSpatialSpec)
                     }
                 },
                 // Below the card, on the page background: no pill behind the
@@ -302,7 +302,7 @@ fun HeroCarousel(
                     modifier = Modifier.size(48.dp),
                 ) {
                     Icon(
-                        imageVector = if (paused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                        painter = painterResource(if (paused) R.drawable.ic_player_play else R.drawable.ic_player_pause),
                         contentDescription = if (paused) {
                             "Resume banner rotation"
                         } else {
@@ -437,48 +437,50 @@ fun HeroSkeleton(modifier: Modifier = Modifier) {
     // Mockup (Nov 2026): the skeleton mirrors the real hero — inset card,
     // then the dots BELOW it, bare. The dots used to shimmer inside the card
     // at the top end; they ride under it now, like the real indicator.
-    Column(modifier.fillMaxWidth()) {
+    Column(
+        modifier.fillMaxWidth().semantics {
+            contentDescription = "Loading home"
+            liveRegion = LiveRegionMode.Polite
+        },
+    ) {
     Box(Modifier.fillMaxWidth().height(heroHeight())) {
         Box(Modifier.fillMaxSize().padding(heroInset).clip(RoundedCornerShape(HERO_CORNER))) {
             ShimmerBox(Modifier.fillMaxSize(), highlightAlpha = HERO_SKELETON_SHIMMER_ALPHA)
-            RaddStreamMark(
-                diameter = 56.dp,
-                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
-                modifier = Modifier.align(Alignment.Center),
-            )
+            // H4: no mark in the skeleton — the mark's two open arcs read as
+            // a loading spinner in the hero centre. Pure shimmer instead.
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
-                    .padding(bottom = 20.dp),
+                    .padding(horizontal = RaddTokens.Space.Gutter)
+                    .padding(bottom = RaddTokens.Space.Step20),
                 // The real slide's text column is 8dp-spaced, not 10dp.
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(RaddTokens.Space.Sm),
             ) {
                 // Title: 28sp displaySmall, one 32dp line. The real title allows
                 // two lines, but a one-line title is the common case — a
                 // second bar would over-reserve every short title.
                 ShimmerBox(
-                    Modifier.fillMaxWidth(0.55f).height(32.dp).testTag("heroTitleSkeleton"),
-                    shape = RoundedCornerShape(8.dp),
+                    Modifier.fillMaxWidth(0.55f).height(32.dp).testTag("heroTitleSkeleton"), // token-exempt: skeleton title bar, fixed illustration geometry
+                    shape = RaddTokens.Shape.Poster,
                 )
                 // Meta line: one bodyMedium line (16dp) — the real meta line
                 // is a single 20dp line, not the 22dp badge pills it replaced.
                 ShimmerBox(
-                    Modifier.width(180.dp).height(20.dp),
-                    shape = RoundedCornerShape(8.dp),
+                    Modifier.width(180.dp).height(20.dp), // token-exempt: skeleton meta bar, fixed illustration geometry
+                    shape = RaddTokens.Shape.Poster,
                 )
                 // Action row: Watch Now AND My List, each 40dp min, 8dp
                 // apart, 28dp corners — the old skeleton drew one bar and
                 // the second button appeared out of nowhere on load.
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Sm)) {
                     ShimmerBox(
-                        Modifier.width(150.dp).height(HERO_BUTTON_HEIGHT_DP.dp),
-                        shape = RoundedCornerShape(28.dp),
+                        Modifier.width(192.dp).height(HERO_BUTTON_HEIGHT_DP.dp), // token-exempt: skeleton button bar, fixed illustration geometry
+                        shape = RaddTokens.Shape.Pill,
                     )
                     ShimmerBox(
-                        Modifier.width(130.dp).height(HERO_BUTTON_HEIGHT_DP.dp),
-                        shape = RoundedCornerShape(28.dp),
+                        Modifier.width(88.dp).height(HERO_BUTTON_HEIGHT_DP.dp), // token-exempt: skeleton button bar, fixed illustration geometry
+                        shape = RaddTokens.Shape.Pill,
                     )
                 }
             }
@@ -488,12 +490,12 @@ fun HeroSkeleton(modifier: Modifier = Modifier) {
         // painted dot centred in it — the same footprint as the real
         // indicator. Six dots is the hero's default count; a smaller hero
         // shows no dots at all. The painted dots match the real ones
-        // (review redesign, Nov 2026): the first is the 16×4dp active
-        // pill, the rest 4dp circles.
+        // (Audit #10): the first is the 24×6dp active dash, the rest 6dp
+        // circles.
         Row(
             modifier = Modifier
                 .align(Alignment.CenterHorizontally)
-                .padding(top = 10.dp)
+                .padding(top = RaddTokens.Space.Md)
                 .height(48.dp),
             horizontalArrangement = Arrangement.spacedBy(0.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -505,8 +507,8 @@ fun HeroSkeleton(modifier: Modifier = Modifier) {
                 ) {
                     ShimmerBox(
                         Modifier
-                            .width(if (index == 0) 16.dp else 4.dp)
-                            .height(4.dp),
+                            .width(if (index == 0) 24.dp else 6.dp) // token-exempt: dot geometry, not spacing
+                            .height(6.dp), // token-exempt: dot geometry, not spacing
                         shape = RaddTokens.Shape.Pill,
                         highlightAlpha = HERO_SKELETON_SHIMMER_ALPHA,
                     )
@@ -528,7 +530,7 @@ private fun HeroAmbientGlow(currentPage: Int, modifier: Modifier = Modifier) {
         listOf(scheme.primary, scheme.secondary, scheme.tertiary)
     }
     val reduceMotion = rememberReduceMotion()
-    val fade = if (reduceMotion) snap<Color>() else RaddMotion.slowEffects()
+    val fade = if (reduceMotion) snap<Color>() else MaterialTheme.motionScheme.slowEffectsSpec()
     val leading by animateColorAsState(accents[currentPage % accents.size], fade, label = "heroGlowLeading")
     val trailing by animateColorAsState(accents[(currentPage + 1) % accents.size], fade, label = "heroGlowTrailing")
 
@@ -608,7 +610,7 @@ private fun HeroSlide(
                 ),
             ) {
                 RaddStreamMark(
-                    diameter = 48.dp,
+                    diameter = 48.dp, // token-exempt: fallback-mark size, not spacing
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.align(Alignment.TopCenter).padding(top = 48.dp),
                 )
@@ -678,10 +680,20 @@ private fun HeroSlide(
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp)
+                .padding(horizontal = RaddTokens.Space.Gutter)
                 .padding(bottom = HERO_ACTION_BOTTOM_DP.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(RaddTokens.Space.Sm),
         ) {
+            // H1 (2027 Home fix): the reason line — the hero says WHY
+            // this title, in jade, before the title itself.
+            Text(
+                text = "Tonight's pick for you",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
             // Gemini home review + Stitch redesign (Nov 2026): 28sp
             // Bold, -0.3sp tracking. The title was 36sp Bold
             // (displaySmall) — bigger than the redesign asks, and the
@@ -717,7 +729,7 @@ private fun HeroSlide(
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Sm),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 // UI-fix P1-X1: press scale + haptic on the hero's primary action.
@@ -731,7 +743,7 @@ private fun HeroSlide(
                 LaunchedEffect(watchNowPressed) { onWatchNowPressChange(watchNowPressed) }
                 Button(
                     onClick = onWatchNow,
-                    shape = RoundedCornerShape(28.dp),
+                    shape = RaddTokens.Shape.Pill,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.primary,
                         contentColor = MaterialTheme.colorScheme.onPrimary,
@@ -745,37 +757,35 @@ private fun HeroSlide(
                     // "WATCH NOW" onto two lines — so both buttons take
                     // 12dp of content padding and an 18dp icon, which fits
                     // the longest label on one line with room to spare.
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                    modifier = Modifier.weight(1f).heightIn(min = HERO_BUTTON_HEIGHT_DP.dp).pressScale(watchNowSource),
+                    contentPadding = PaddingValues(horizontal = RaddTokens.Space.Md, vertical = RaddTokens.Space.Sm),
+                    modifier = Modifier.weight(2f).heightIn(min = HERO_BUTTON_HEIGHT_DP.dp).pressScale(watchNowSource),
                 ) {
                     Icon(
-                        imageVector = Icons.Default.PlayArrow,
+                        painter = painterResource(R.drawable.ic_player_play),
                         contentDescription = null,
-                        modifier = Modifier.size(18.dp),
+                        modifier = Modifier.size(18.dp), // token-exempt: icon size, not spacing
                     )
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(Modifier.width(RaddTokens.Space.Sm))
                     Text(Brand.copy("hero_watch_now", "Watch Now").uppercase(), fontWeight = FontWeight.Bold)
                 }
                 // Session 121 (P-26): My List on the hero, so saving a title does not
                 // need a trip to its details page first. The filled heart says saved.
-                // A4-F2: a solid dark scrim pill — the old 12% white fill was a
-                // translucent outline that washed out over dense, bright art
-                // (Dragon Ball Super in the Robo capture), so the secondary
-                // action read as weaker than the filled Watch Now. RaddArtScrim
-                // is the token badges already sit on over artwork (Color.kt
-                // §10): 70% black, white text, so the label survives any art.
+                // H1 (2027 Home fix): tonal now, not a scrim pill — the secondary
+                // action sits on surfaceContainerHigh with onSurface text, no
+                // border, no scrim: the hierarchy reads Play (2f, filled jade)
+                // vs My List (1f, tonal), and the tonal surface survives any
+                // art behind it without pretending to be part of the artwork.
                 Button(
                     onClick = onToggleFavorite,
-                    shape = RoundedCornerShape(28.dp),
+                    shape = RaddTokens.Shape.Pill,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = RaddArtScrim,
-                        contentColor = Color.White,
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        contentColor = MaterialTheme.colorScheme.onSurface,
                     ),
-                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.22f)),
                     // Same 12dp content padding as Watch Now (see above):
                     // the two buttons share the width, so they share the
                     // padding that keeps their labels on one line.
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                    contentPadding = PaddingValues(horizontal = RaddTokens.Space.Md, vertical = RaddTokens.Space.Sm),
                     // CL-6: the button's visible text is "My List", the same words
                     // as the nav tab — so it announces what the tap does instead:
                     // "Save to My List", or "Saved to My List" once saved.
@@ -785,11 +795,11 @@ private fun HeroSlide(
                         .semantics { contentDescription = if (isFavorite) "Saved to My List" else "Save to My List" },
                 ) {
                     Icon(
-                        imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                        painter = painterResource(if (isFavorite) R.drawable.ic_action_favorite_filled else R.drawable.ic_tab_my_list),
                         contentDescription = null,
-                        modifier = Modifier.size(18.dp),
+                        modifier = Modifier.size(18.dp), // token-exempt: icon size, not spacing
                     )
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(Modifier.width(RaddTokens.Space.Sm))
                     Text((if (isFavorite) "Saved" else "My List").uppercase(), fontWeight = FontWeight.Bold)
                 }
             }
@@ -806,7 +816,7 @@ private fun HeroSlide(
  * sits inside the [DOT_TOUCH_WIDTH] by [DOT_TOUCH_HEIGHT] box — 48dp square, the WCAG 2.2 AA
  * minimum in both directions (the 24dp width it used to have failed Robo's 48dp touch-target
  * floor). Audit #10 (Nov 2026): the 16×4dp dash and 4dp dots at 50% were nearly invisible
- * on black — the active dash is 24×6dp in the accent now, the inactive dots 6dp at 70%.
+ * on black — the active dash is 24×6dp in the accent now, the inactive dots 6dp at 85% (H7).
  * Mockup (Nov 2026): the row rides BELOW the card, centred and bare — it used to
  * ride the top end in a contrast pill, and before that the bottom strip, where its hit
  * boxes covered the Watch Now button's centre. Below the card no dot can cover any
@@ -826,6 +836,8 @@ internal fun HeroIndicator(
     count: Int,
     current: Int,
     onSelect: (Int) -> Unit,
+    // H5: the slide titles — a dot announces "Slide N of 6, <title>".
+    titles: List<String> = emptyList(),
     modifier: Modifier = Modifier,
     /**
      * Mockup (Nov 2026): below the card the dots sit on the page
@@ -845,8 +857,8 @@ internal fun HeroIndicator(
                     Modifier.drawBehind {
                         // Visual capsule is a compact 18dp-tall pill centered over the
                         // dot strip while every dot retains its full 48x48dp touch target.
-                        val pillHeight = 18.dp.toPx().coerceAtMost(size.height)
-                        val insetX = 12.dp.toPx().coerceAtMost(size.width * 0.15f)
+                        val pillHeight = 18.dp.toPx().coerceAtMost(size.height) // token-exempt: dot-pill height, fixed component geometry
+                        val insetX = 12.dp.toPx().coerceAtMost(size.width * 0.15f) // token-exempt: dot-pill inset, fixed component geometry
                         val pillWidth = (size.width - insetX * 2f).coerceAtLeast(pillHeight)
                         val top = (size.height - pillHeight) / 2f
                         val corner = CornerRadius(pillHeight / 2f, pillHeight / 2f)
@@ -861,7 +873,7 @@ internal fun HeroIndicator(
                             topLeft = Offset(insetX, top),
                             size = Size(pillWidth, pillHeight),
                             cornerRadius = corner,
-                            style = Stroke(width = 0.75.dp.toPx()),
+                            style = Stroke(width = 0.75.dp.toPx()), // token-exempt: hairline stroke, not spacing
                         )
                     }
                 } else Modifier
@@ -873,17 +885,18 @@ internal fun HeroIndicator(
             val active = index == current
             // Audit #10: the dots were nearly invisible — a 16×4dp dash
             // and 4dp dots at 50% on black. The active dash stretches to
-            // 24×6dp in the accent, and the inactive dots are 6dp at 70%,
-            // so the row reads as a control, not a smudge. The 48dp hit
-            // boxes are untouched (HeroIndicatorTest pins them).
+            // 24×6dp in the accent, and the inactive dots are 6dp at 85%
+            // (H7: 70% still read as a smudge on black), so the row reads
+            // as a control, not a smudge. The 48dp hit boxes are untouched
+            // (HeroIndicatorTest pins them).
             val dotWidth by animateDpAsState(
-                targetValue = if (active) 24.dp else 6.dp,
-                animationSpec = if (reduceMotion) snap() else RaddMotion.fastSpatial(),
+                targetValue = if (active) 24.dp else 6.dp, // token-exempt: dot geometry, not spacing
+                animationSpec = if (reduceMotion) snap() else MaterialTheme.motionScheme.fastSpatialSpec(),
                 label = "heroDotWidth",
             )
             val dotColor by animateColorAsState(
-                targetValue = if (active) scheme.primary else scheme.onSurface.copy(alpha = 0.70f),
-                animationSpec = if (reduceMotion) snap() else RaddMotion.defaultEffects(),
+                targetValue = if (active) scheme.primary else scheme.onSurface.copy(alpha = 0.85f),
+                animationSpec = if (reduceMotion) snap() else MaterialTheme.motionScheme.defaultEffectsSpec(),
                 label = "heroDotColor",
             )
             Box(
@@ -891,14 +904,16 @@ internal fun HeroIndicator(
                     .size(width = DOT_TOUCH_WIDTH, height = DOT_TOUCH_HEIGHT)
                     .clickable(onClickLabel = "Show banner ${index + 1} of $count") { onSelect(index) }
                     .semantics {
-                        contentDescription = "Banner ${index + 1} of $count"
+                        contentDescription = titles.getOrNull(index)?.let { title ->
+                            "Slide ${index + 1} of $count, $title"
+                        } ?: "Banner ${index + 1} of $count"
                         selected = active
                     },
                 contentAlignment = Alignment.Center,
             ) {
                 Box(
                     Modifier
-                        .size(width = dotWidth, height = 6.dp)
+                        .size(width = dotWidth, height = 6.dp) // token-exempt: dot geometry, not spacing
                         .clip(RaddTokens.Shape.Pill)
                         .background(dotColor),
                 )
@@ -996,27 +1011,23 @@ private val DOT_TOUCH_WIDTH: Dp = 48.dp
  */
 @Composable
 /**
- * Home fix (Nov 2026): 240dp on a narrow phone, 280dp otherwise — down from
- * 320/400dp. The hero dominated the first viewport and buried Continue
- * Watching below the fold; the slide's content is ~168dp (28sp title over
- * two lines, the meta line, 48dp buttons, 20dp bottom padding), so 240dp
- * still fits it with room. A tablet (expanded width, 840dp+) keeps a
- * taller banner — it has the room, and the hero is the first paint there
- * too. [HeroSkeleton] reads this same height, so the loading footprint
- * shrinks with it.
+ * H1 (2027 Home fix): 16:9-derived — the hero is a 16:9 backdrop, so its
+ * height follows the screen width (220dp floor, 360dp cap). Phones get
+ * 220dp where they had 240/280dp — a smaller hero, more rail above the
+ * fold. A tablet (expanded width, 840dp+) caps at 360dp. [HeroSkeleton]
+ * reads this same height, so the loading footprint shrinks with it.
  */
+private const val HERO_HEIGHT_MIN_DP = 220f
+private const val HERO_HEIGHT_MAX_DP = 360f
+
 private fun heroHeight(): Dp {
     val width = LocalConfiguration.current.screenWidthDp
-    return when {
-        width >= 840 -> 360.dp
-        width < 400 -> 240.dp
-        else -> 280.dp
-    }
+    return (width * 9f / 16f).dp.coerceIn(HERO_HEIGHT_MIN_DP.dp, HERO_HEIGHT_MAX_DP.dp)
 }
 
 /** Mockup (Nov 2026): the hero is a rounded inset card, 16dp in from the
  *  screen edges — not the full-bleed cinematic banner it used to be. The
  *  page background shows on both sides of the card. */
-private val heroInset = PaddingValues(horizontal = 16.dp)
+private val heroInset = PaddingValues(horizontal = RaddTokens.Space.Gutter)
 
-private val HERO_CORNER: Dp = 16.dp
+private val HERO_CORNER: Dp = RaddTokens.Shape.Card

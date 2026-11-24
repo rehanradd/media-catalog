@@ -15,7 +15,9 @@ import androidx.compose.animation.core.snap
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -33,19 +35,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -72,14 +69,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import com.raddstream.app.R
@@ -115,8 +117,8 @@ import com.raddstream.app.ui.components.prefetchHeroArt
 import com.raddstream.app.ui.components.prefetchPosterArt
 import com.raddstream.app.ui.components.rememberReduceMotion
 import com.raddstream.app.ui.layout.CardGeometry
-import com.raddstream.app.ui.theme.RaddMotion
 import com.raddstream.app.ui.theme.RaddStreamMark
+import com.raddstream.app.ui.theme.RaddTokens
 import com.raddstream.app.update.InAppUpdate
 import kotlinx.coroutines.delay
 import com.raddstream.app.viewmodel.HomeFilter
@@ -186,6 +188,12 @@ fun HomeScreen(
      */
     onFacetSelected: (genre: String?, industry: String?, language: String?) -> Unit = { _, _, _ -> },
     onSetupServerClick: () -> Unit = {},
+    /**
+     * S4(c) (2027 Home fix): the fatal error's tertiary action — the
+     * Settings screen, where the server address and everything else about
+     * the catalog lives. The graph wires it to the Settings route.
+     */
+    onOpenSettingsClick: () -> Unit = {},
     /** The operator's hero knobs from the panel theme: 0 hides the hero slot. */
     heroMax: Int = HERO_LIMIT,
     /** M5 (home review, Nov 2026): manual-swipe by default — see [HeroCarousel]. */
@@ -253,7 +261,7 @@ fun HomeScreen(
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        snackbarHost = { SnackbarHost(snackbarHostState) },
+        snackbarHost = { SnackbarHost(snackbarHostState, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) },
     ) { contentPadding ->
         HomeContent(
             state = state,
@@ -271,6 +279,7 @@ fun HomeScreen(
             onBrowseType = onBrowseType,
             onFacetSelected = onFacetSelected,
             onSetupServerClick = onSetupServerClick,
+            onOpenSettingsClick = onOpenSettingsClick,
             kidsMode = kidsMode,
             onExitKidsMode = onExitKidsMode,
             onRefresh = viewModel::refresh,
@@ -360,6 +369,11 @@ internal fun HomeContent(
     onBrowseType: (String?) -> Unit = {},
     onFacetSelected: (genre: String?, industry: String?, language: String?) -> Unit = { _, _, _ -> },
     onSetupServerClick: () -> Unit = {},
+    /**
+     * S4(c) (2027 Home fix): the fatal error's tertiary action — the
+     * Settings screen. Passed through from [HomeScreen].
+     */
+    onOpenSettingsClick: () -> Unit = {},
     /** MX #7 — Kids Lock: the banner and the filtered view ride this flag. */
     kidsMode: Boolean = false,
     /** MX #7: the banner's Exit — the graph raises the PIN dialog. */
@@ -514,7 +528,7 @@ internal fun HomeContent(
         // Screenshot-fix D8 (2026-11-16): 4dp, not 8dp — the chips row is
         // 48dp already, and the gap under it is dead space before the hero.
         item(key = "filterSpacer") {
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(RaddTokens.Space.Xs))
         }
 
         // M6 (home review, Nov 2026): the home search bar is gone. It was
@@ -524,34 +538,20 @@ internal fun HomeContent(
         // filter chips when Home has loaded before). SearchField itself stays:
         // the Search screen still uses it.
 
-        // The operator's channel to every phone: a broadcast shows above the
-        // catalog, even when the catalog itself failed to load — that is
-        // exactly when the operator has something to say.
-        state.broadcasts.forEach { broadcast ->
-            item(key = "broadcast:${broadcast.id}") {
-                BroadcastBanner(
-                    broadcast = broadcast,
-                    onDismiss = { onDismissBroadcast(broadcast.id) },
-                )
-                Spacer(Modifier.height(8.dp))
-            }
-        }
-
-        // Freshness (home fix, Nov 2026): the "Updated X ago" line, only
-        // when the cache is stale or the phone is offline (see above).
-        if (showSyncLine) {
-            item(key = "syncLine") {
-                Text(
-                    text = syncLine ?: "",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                )
-            }
-        }
-
         // Fatal error only when *every* rail failed and none has data to show.
         if (state.fatal != null && !anyVisible) {
+            // H1: the operator's channel stays above the error — a broadcast
+            // is exactly what the operator has to say when the catalog is
+            // down, and there is no Continue Watching here to displace.
+            state.broadcasts.forEach { broadcast ->
+                item(key = "broadcast:${broadcast.id}") {
+                    BroadcastBanner(
+                        broadcast = broadcast,
+                        onDismiss = { onDismissBroadcast(broadcast.id) },
+                    )
+                    Spacer(Modifier.height(RaddTokens.Space.Sm))
+                }
+            }
             item(key = "fatal") {
                 ErrorState(
                     message = state.fatal ?: "Couldn't reach the catalog.",
@@ -560,7 +560,9 @@ internal fun HomeContent(
                     // stranded at the top — a lazy item's fillMaxSize is a
                     // no-op against infinite constraints, so the item
                     // itself takes the viewport height.
-                    modifier = Modifier.fillParentMaxHeight(),
+                    // H5: the error announces itself (polite live region,
+                    // no merge — the Retry button keeps its own node).
+                    modifier = Modifier.fillParentMaxHeight().semantics { liveRegion = LiveRegionMode.Polite },
                     // Dev-cleanup (Nov 2026): Home's fatal error names its own
                     // screen instead of the shared "Something went wrong".
                     title = stringResource(R.string.home_fatal_title),
@@ -572,6 +574,10 @@ internal fun HomeContent(
                     secondaryLabel = "Change server address",
                     secondaryHint = "Titles load from this address — if it changed, update it here.",
                     onSecondary = onSetupServerClick,
+                    // S4(c): the Settings path — the server address and
+                    // everything else about the catalog lives there.
+                    tertiaryLabel = "Open Settings",
+                    onTertiary = onOpenSettingsClick,
                 )
             }
         } else {
@@ -582,7 +588,7 @@ internal fun HomeContent(
             if (state.isOffline && hasSaved) {
                 item(key = "offline") {
                     OfflineBanner()
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(RaddTokens.Space.Sm))
                 }
             }
             // D (home fix, Nov 2026): Continue Watching sits ABOVE the hero
@@ -602,7 +608,7 @@ internal fun HomeContent(
                     Column {
                         SectionHeader(
                             title = "Continue watching",
-                            modifier = Modifier.padding(horizontal = 16.dp),
+                            modifier = Modifier.padding(horizontal = RaddTokens.Space.Gutter),
                         )
                         // Mockup (Nov 2026): full-width rows, not a poster rail —
                         // thumb, title, remaining label, green progress bar. Three
@@ -619,15 +625,42 @@ internal fun HomeContent(
                                 onRemove = { onRemoveFromContinueWatching(tile) },
                             )
                         }
-                        Spacer(Modifier.height(8.dp))
+                        Spacer(Modifier.height(RaddTokens.Space.Sm))
                     }
                 }
             } else if (anyVisible && state.hasWatchHistory) {
                 item(key = "startWatching") {
                     StartWatchingPlaceholder(onBrowse = { onBrowseType(null) })
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(RaddTokens.Space.Sm))
                 }
             }
+            // H1 (2027 Home fix): broadcasts + the sync line ride BELOW
+            // Continue Watching now — a returning viewer sees their shows
+            // first, not chores. The fatal branch above keeps broadcasts
+            // above the error, where there is no CW to displace.
+            state.broadcasts.forEach { broadcast ->
+                item(key = "broadcast:${broadcast.id}") {
+                    BroadcastBanner(
+                        broadcast = broadcast,
+                        onDismiss = { onDismissBroadcast(broadcast.id) },
+                    )
+                    Spacer(Modifier.height(RaddTokens.Space.Sm))
+                }
+            }
+
+            // Freshness (home fix, Nov 2026): the "Updated X ago" line, only
+            // when the cache is stale or the phone is offline (see above).
+            if (showSyncLine) {
+                item(key = "syncLine") {
+                    Text(
+                        text = syncLine ?: "",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = RaddTokens.Space.Gutter, vertical = RaddTokens.Space.Xs),
+                    )
+                }
+            }
+
             // The hero, below Continue Watching now (see D above). The
             // carousel is 240/280dp (home fix, Nov 2026) — down from
             // 320/400dp — so the first rail peeks over the fold.
@@ -651,7 +684,7 @@ internal fun HomeContent(
                     // gap between the dots and the next row was the second
                     // dead gap in the hero stack.
                     item(key = "heroSpacer") {
-                        Spacer(Modifier.height(6.dp))
+                        Spacer(Modifier.height(RaddTokens.Space.Xxs))
                     }
                 } else if (state.visibleSections.any { it.loading }) {
                     item(key = "heroSkeleton") {
@@ -662,7 +695,7 @@ internal fun HomeContent(
                     // D7: same 6dp as the loaded hero — the skeleton must
                     // hold the same footprint, not a taller one.
                     item(key = "heroSkeletonSpacer") {
-                        Spacer(Modifier.height(6.dp))
+                        Spacer(Modifier.height(RaddTokens.Space.Xxs))
                     }
                 }
             }
@@ -723,7 +756,7 @@ internal fun HomeContent(
                         onDismiss = onDismissPickThree,
                         onShown = onPickThreeShown,
                     )
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(RaddTokens.Space.Sm))
                 }
             }
 
@@ -736,7 +769,7 @@ internal fun HomeContent(
                         daysRemaining = days,
                         onDismiss = onDismissTrialNote,
                     )
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(RaddTokens.Space.Sm))
                 }
             }
 
@@ -749,7 +782,7 @@ internal fun HomeContent(
                     facets = state.facets,
                     onFacetSelected = onFacetSelected,
                 )
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(RaddTokens.Space.Sm))
             }
 
             // The remaining rails (rail 2 onward) — the first rail was
@@ -794,6 +827,8 @@ internal fun HomeContent(
             ) {
                 item(key = "emptyFilter") {
                     EmptyState(
+                        // H5: the empty-filter result announces itself.
+                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                         title = filter.emptyMessage,
                         message = "Try another filter, or show everything.",
                         action = {
@@ -815,14 +850,39 @@ internal fun HomeContent(
                 state.visibleSections.none { it.loading } && state.fatal == null
             ) {
                 item(key = "empty") {
+                    // H6: the empty state is vertically centred in the
+                    // viewport (fillParentMaxHeight), not stranded at the
+                    // top over a void — and the art is an illustration,
+                    // the mark at 64dp inside a jade hairline ring, not a
+                    // bare 56dp icon.
+                    Box(
+                        modifier = Modifier.fillParentMaxHeight(),
+                        contentAlignment = Alignment.Center,
+                    ) {
                     EmptyState(
                         title = "Nothing here yet",
                         message = "No titles to show right now.",
+                        fillScreen = false,
                         icon = {
-                            RaddStreamMark(
-                                diameter = 56.dp,
-                                color = MaterialTheme.colorScheme.primary,
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(120.dp) // token-exempt: empty-state art size, fixed illustration geometry
+                                    .background(
+                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                        shape = CircleShape,
+                                    )
+                                    .border(
+                                        width = 1.dp, // token-exempt: hairline ring, not spacing
+                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
+                                        shape = CircleShape,
+                                    ),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                RaddStreamMark(
+                                    diameter = 64.dp, // token-exempt: empty-state art size
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
                         },
                         action = {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -832,7 +892,7 @@ internal fun HomeContent(
                                 ) {
                                     Text("Browse titles")
                                 }
-                                Spacer(Modifier.height(8.dp))
+                                Spacer(Modifier.height(RaddTokens.Space.Sm))
                                 TextButton(onClick = onSetupServerClick) {
                                     Text("Change server address")
                                 }
@@ -845,6 +905,7 @@ internal fun HomeContent(
                             }
                         },
                     )
+                    }
                 }
             }
             // Home fix (Nov 2026): the Library strip is gone. Its two doors
@@ -853,7 +914,7 @@ internal fun HomeContent(
             // strip sat below all the rails, where almost no one scrolled,
             // and its original reason (the paste-a-link door) is gone.
             item(key = "bottomSpacer") {
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(RaddTokens.Space.SectionGap))
             }
         }
         }
@@ -888,7 +949,7 @@ internal fun HomeHeader(scrolled: Boolean = false) {
                 if (scrolled) MaterialTheme.colorScheme.background
                 else Color.Transparent,
             )
-            .padding(horizontal = 16.dp, vertical = 4.dp),
+            .padding(horizontal = RaddTokens.Space.Gutter, vertical = RaddTokens.Space.Xs),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -941,10 +1002,6 @@ internal fun HomeFilterRow(
                         fontWeight = if (filter == selected) FontWeight.Bold else FontWeight.Normal,
                     )
                 },
-                colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = MaterialTheme.colorScheme.primary,
-                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-                ),
                 modifier = Modifier.testTag("filterChip_${filter.name}"),
             )
         }
@@ -968,18 +1025,18 @@ private fun ContinueWatchingRow(
         onClick = onClick,
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
-        shape = RoundedCornerShape(16.dp),
+            .padding(horizontal = RaddTokens.Space.Gutter, vertical = RaddTokens.Space.Xs),
+        shape = RaddTokens.Shape.Card,
         color = MaterialTheme.colorScheme.surfaceVariant,
     ) {
         Row(
-            modifier = Modifier.padding(12.dp),
+            modifier = Modifier.padding(RaddTokens.Space.Md),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val thumbModifier = Modifier
                 .width(CardGeometry.CONTINUE_WATCHING_ROW_THUMB_WIDTH_DP.dp)
                 .aspectRatio(CardGeometry.POSTER_ASPECT)
-                .clip(RoundedCornerShape(12.dp))
+                .clip(RaddTokens.Shape.Input)
             if (tile.post.posterUrl != null) {
                 CatalogImage(
                     url = tile.post.posterUrl,
@@ -999,8 +1056,8 @@ private fun ContinueWatchingRow(
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .padding(start = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                    .padding(start = RaddTokens.Space.Md),
+                verticalArrangement = Arrangement.spacedBy(RaddTokens.Space.Xs),
             ) {
                 Text(
                     text = tile.post.displayTitle,
@@ -1039,8 +1096,16 @@ private fun ContinueWatchingRow(
                         progress = { fraction },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(4.dp)
-                            .clip(RoundedCornerShape(50)),
+                            .height(4.dp) // token-exempt: progress-bar thickness, not spacing
+                            .clip(RoundedCornerShape(50))
+                            .semantics {
+                                progressBarRangeInfo = ProgressBarRangeInfo(
+                                    fraction,
+                                    0f..1f,
+                                )
+                                contentDescription = tile.resumeLabel
+                                    ?: "Continue watching progress"
+                            },
                         color = MaterialTheme.colorScheme.primary,
                         trackColor = MaterialTheme.colorScheme.surface,
                     )
@@ -1056,7 +1121,7 @@ private fun ContinueWatchingRow(
                 modifier = Modifier.size(48.dp).align(Alignment.Top),
             ) {
                 Icon(
-                    Icons.Default.Close,
+                    painter = painterResource(R.drawable.ic_action_close),
                     contentDescription = "Remove ${tile.post.displayTitle} from Continue Watching",
                 )
             }
@@ -1097,15 +1162,15 @@ private fun OfflineBanner() {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp),
-        shape = RoundedCornerShape(12.dp),
+            .padding(horizontal = RaddTokens.Space.Gutter),
+        shape = RaddTokens.Shape.Input,
         color = MaterialTheme.colorScheme.surfaceVariant,
     ) {
         Text(
             text = "You are offline — only titles saved on this device are available.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            modifier = Modifier.padding(horizontal = RaddTokens.Space.Md, vertical = RaddTokens.Space.Md),
         )
     }
 }
@@ -1128,15 +1193,15 @@ private fun StartWatchingPlaceholder(onBrowse: () -> Unit) {
             .fillMaxWidth()
             // Screenshot-fix D7 (2026-11-16): 8dp vertical, not 12dp —
             // the third dead gap in the hero stack, above this row.
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = RaddTokens.Space.Gutter, vertical = RaddTokens.Space.Sm),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Sm),
     ) {
         Icon(
-            Icons.Default.History,
+            painter = painterResource(R.drawable.ic_action_history),
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(20.dp),
+            modifier = Modifier.size(20.dp), // token-exempt: icon size, not spacing
         )
         Text(
             text = "No active shows — start exploring picks",
@@ -1185,10 +1250,10 @@ internal fun PickThreeCard(
     LaunchedEffect(Unit) { onShown() }
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        shape = RoundedCornerShape(16.dp),
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        shape = RaddTokens.Shape.Card,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = RaddTokens.Space.Gutter),
     ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(modifier = Modifier.padding(RaddTokens.Space.Gutter), verticalArrangement = Arrangement.spacedBy(RaddTokens.Space.Sm)) {
             Text(
                 text = "Pick 3 you like",
                 style = MaterialTheme.typography.titleMedium,
@@ -1204,7 +1269,7 @@ internal fun PickThreeCard(
             )
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Sm),
             ) {
                 candidates.take(3).forEach { post ->
                     PosterCard(
@@ -1247,12 +1312,12 @@ internal fun PickThreeCard(
 @Composable
 private fun TrialNoteLine(daysRemaining: Int, onDismiss: () -> Unit) {
     Surface(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = RaddTokens.Space.Gutter),
+        shape = RaddTokens.Shape.Input,
         color = MaterialTheme.colorScheme.surfaceVariant,
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 4.dp, bottom = 4.dp, end = 4.dp),
+            modifier = Modifier.fillMaxWidth().padding(start = RaddTokens.Space.Md, top = RaddTokens.Space.Xs, bottom = RaddTokens.Space.Xs, end = RaddTokens.Space.Xs),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
@@ -1270,7 +1335,7 @@ private fun TrialNoteLine(daysRemaining: Int, onDismiss: () -> Unit) {
                 modifier = Modifier.size(48.dp),
             ) {
                 Icon(
-                    Icons.Default.Close,
+                    painter = painterResource(R.drawable.ic_action_close),
                     contentDescription = "Dismiss trial note",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1289,10 +1354,10 @@ private fun BroadcastBanner(broadcast: PanelBroadcast, onDismiss: () -> Unit) {
     }
     Card(
         colors = CardDefaults.cardColors(containerColor = container),
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = RaddTokens.Space.Gutter),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 4.dp),
+            modifier = Modifier.fillMaxWidth().padding(start = RaddTokens.Space.Gutter, top = RaddTokens.Space.Md, bottom = RaddTokens.Space.Md, end = RaddTokens.Space.Xs),
             verticalAlignment = Alignment.Top,
         ) {
             Column(Modifier.weight(1f)) {
@@ -1302,7 +1367,7 @@ private fun BroadcastBanner(broadcast: PanelBroadcast, onDismiss: () -> Unit) {
                     color = onContainer,
                 )
                 if (broadcast.body.isNotBlank()) {
-                    Spacer(Modifier.height(2.dp))
+                    Spacer(Modifier.height(RaddTokens.Space.Micro))
                     Text(
                         broadcast.body,
                         style = MaterialTheme.typography.bodySmall,
@@ -1318,7 +1383,7 @@ private fun BroadcastBanner(broadcast: PanelBroadcast, onDismiss: () -> Unit) {
                 modifier = Modifier.size(48.dp),
             ) {
                 Icon(
-                    Icons.Default.Close,
+                    painter = painterResource(R.drawable.ic_action_close),
                     contentDescription = "Dismiss announcement",
                     tint = onContainer,
                 )
@@ -1341,7 +1406,7 @@ internal fun AppUpdateDialog(
 ) {
     CenteredMockupDialog(
         onDismissRequest = if (required) ({}) else onDismiss,
-        icon = Icons.Default.AutoAwesome,
+        icon = ImageVector.vectorResource(R.drawable.ic_action_update),
         title = Brand.copy(
             if (required) "update_required_title" else "update_title",
             if (required) "Update required" else "A new version is ready",
@@ -1393,20 +1458,20 @@ private fun KidsModeBanner(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp)
+            .padding(horizontal = RaddTokens.Space.Gutter)
             .background(
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 shape = MaterialTheme.shapes.medium,
             )
-            .padding(horizontal = 12.dp, vertical = 4.dp),
+            .padding(horizontal = RaddTokens.Space.Md, vertical = RaddTokens.Space.Xs),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Sm),
     ) {
         Icon(
-            imageVector = Icons.Default.Lock,
+            painter = painterResource(R.drawable.ic_action_lock),
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(18.dp),
+            modifier = Modifier.size(18.dp), // token-exempt: icon size, not spacing
         )
         Text(
             text = "Kids Mode is on",
@@ -1444,9 +1509,9 @@ internal fun BrowseSection(
     onFacetSelected: (genre: String?, industry: String?, language: String?) -> Unit,
 ) {
     val chips = remember(facets) { browseFacetChips(facets) }
-    Column(Modifier.padding(top = 4.dp)) {
+    Column(Modifier.padding(top = RaddTokens.Space.Xs)) {
         // Audit #15: every section heading carries the 16 dp phone margin.
-        SectionHeader(title = "Browse", modifier = Modifier.padding(horizontal = 16.dp))
+        SectionHeader(title = "Browse", modifier = Modifier.padding(horizontal = RaddTokens.Space.Gutter))
         // Density (2026-11-15), revised by the home review: one scrollable
         // pill row, not two. The type jump-offs and the facet chips were two
         // 48 dp rows with an 8 dp spacer between them (104 dp); they are
@@ -1524,7 +1589,7 @@ private fun PlaySomethingButton(onClick: () -> Unit) {
     Button(
         onClick = onClick,
         colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.primary),
-        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+        contentPadding = PaddingValues(horizontal = RaddTokens.Space.Md, vertical = RaddTokens.Space.Xs),
         modifier = Modifier.heightIn(min = 48.dp),
     ) {
         Text(
@@ -1553,8 +1618,8 @@ private fun HomeRailSection(
     // rise — the Region screen's index * 90 pattern, extended to rails).
     // Reduced-motion users get a plain fade, never the rise.
     // Home fix (Nov 2026): the entrance is spring-based now (M3 Expressive
-    // springs — [RaddMotion.defaultSpatial] for the rise,
-    // [RaddMotion.defaultEffects] for the fade), not a tween: the old
+    // springs — [MaterialTheme.motionScheme.defaultSpatialSpec] for the rise,
+    // [MaterialTheme.motionScheme.defaultEffectsSpec] for the fade), not a tween: the old
     // tween + EmphasizedDecelerate easing was the only non-spring motion
     // on Home. The stagger stays — a short delay before the rail becomes
     // visible, since a spring carries no delay of its own. (A lazy item
@@ -1581,43 +1646,43 @@ private fun HomeRailSection(
     AnimatedVisibility(
         visible = visible,
         enter = fadeIn(
-            animationSpec = if (reduceMotion) snap() else RaddMotion.defaultEffects(),
+            animationSpec = if (reduceMotion) snap() else MaterialTheme.motionScheme.defaultEffectsSpec(),
         ) + if (reduceMotion) {
             EnterTransition.None
         } else {
             slideInVertically(
                 initialOffsetY = { it / 4 },
-                animationSpec = RaddMotion.defaultSpatial(),
+                animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec(),
             )
         },
     ) {
     when {
         section.error != null && section.items.isEmpty() -> {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = RaddTokens.Space.Gutter, vertical = RaddTokens.Space.Md)) {
                 SectionHeader(title = section.title)
                 Text(
                     text = section.error ?: "This row could not load.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(RaddTokens.Space.Sm))
                 OutlinedButton(onClick = onRetry) { Text("Retry") }
             }
         }
         section.loading && section.items.isEmpty() -> {
             Column {
-                SectionHeader(title = section.title, modifier = Modifier.padding(horizontal = 16.dp))
+                SectionHeader(title = section.title, modifier = Modifier.padding(horizontal = RaddTokens.Space.Gutter))
                 PosterRailSkeleton()
                 // The loaded rail ends with this 8dp spacer — without it the
                 // page grows 8dp at this rail when its rows arrive.
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(RaddTokens.Space.Sm))
             }
         }
         section.items.isNotEmpty() -> {
             Column {
                 SectionHeader(
                     title = section.title,
-                    modifier = Modifier.padding(horizontal = 16.dp),
+                    modifier = Modifier.padding(horizontal = RaddTokens.Space.Gutter),
                     // E2 "For you": the reason line under the rail title
                     // ("Because you watched One Piece"). Ordinary rails
                     // carry no subtitle, so nothing else moves.
@@ -1686,7 +1751,7 @@ private fun HomeRailSection(
                 section.refreshFailure?.let { reason ->
                     InlineLoadFailure(message = reason, onRetry = onRetry)
                 }
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(RaddTokens.Space.Sm))
             }
         }
     }
