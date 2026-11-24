@@ -3,7 +3,6 @@ package com.raddstream.app.data
 import android.content.Context
 import com.google.firebase.analytics.FirebaseAnalytics
 import com.google.firebase.crashlytics.FirebaseCrashlytics
-import com.google.firebase.sessions.FirebaseSessions
 
 /**
  * Applies the viewer's analytics-consent answer to Firebase collection.
@@ -24,10 +23,16 @@ import com.google.firebase.sessions.FirebaseSessions
  *   switch is answered — so the Firebase switches follow the same answer at the
  *   same moment the local snapshot does, without a restart.
  *
- * Sessions rides the same answer: its data is collection too, and a declined
- * viewer sends none of it. There is no other Firebase collection path in the
- * app — no `logEvent`, no `recordException`, no `setUserId`, no Performance
- * or Messaging dependency — so these three switches are the whole gate.
+ * Sessions is gated by the manifest default only: its runtime toggle
+ * (`FirebaseSessions.getInstance().isSessionCollectionEnabled`) is internal
+ * to the firebase-sessions library and not callable from app code — Android
+ * CI 45433573772 proved it (`Cannot access 'class FirebaseSessions': it is
+ * internal in file`). So a consenting viewer does not re-enable Sessions;
+ * it stays off, which is more privacy than the dialog promises, not less.
+ * A declined viewer sends none of it either way. There is no other Firebase
+ * collection path in the app — no `logEvent`, no `recordException`, no
+ * `setUserId`, no Performance or Messaging dependency — so these two runtime
+ * switches plus the manifest default are the whole gate.
  *
  * Never throws: collection is observability, not a launch dependency. A
  * missing Firebase config (no `google-services.json` in a local build) just
@@ -42,8 +47,10 @@ object FirebaseConsent {
 
     /**
      * The real application. Internal so tests can stand in a recorder; the
-     * production value is the three Firebase switches, each guarded on its
-     * own so one SDK failing cannot block the other two.
+     * production value is the two Firebase switches, each guarded on its
+     * own so one SDK failing cannot block the other. Sessions has no runtime
+     * switch here — its toggle is internal to the SDK, so the manifest
+     * default-off is its whole gate (see the class KDoc).
      */
     @Volatile
     internal var applier: (Context, Boolean) -> Unit = { context, consented ->
@@ -52,9 +59,6 @@ object FirebaseConsent {
         }
         runCatching {
             FirebaseCrashlytics.getInstance().setCrashlyticsCollectionEnabled(consented)
-        }
-        runCatching {
-            FirebaseSessions.getInstance().isSessionCollectionEnabled = consented
         }
     }
 

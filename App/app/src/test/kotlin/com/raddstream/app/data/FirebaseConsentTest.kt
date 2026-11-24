@@ -19,11 +19,12 @@ import org.robolectric.RobolectricTestRunner
  *   answer takes effect at the same moment the local snapshot does.
  *
  * The wiring test records the calls through [FirebaseConsent.applier] instead
- * of touching Firebase itself: the real switches are three SDK calls, and
- * this test pins that the consent answer reaches them — true then false, in
- * order — not what the SDKs do with it. The applier is restored afterwards;
- * the test ends on a decline, so the shared [Telemetry] snapshot is left at
- * its default (not consented).
+ * of touching Firebase itself: the real switches are two SDK calls (Sessions
+ * rides the manifest default only — its runtime toggle is internal to the
+ * SDK), and this test pins that the consent answer reaches them — true then
+ * false, in order — not what the SDKs do with it. The applier is restored
+ * afterwards; the test ends on a decline, so the shared [Telemetry] snapshot
+ * is left at its default (not consented).
  *
  * Prod-leak audit (2026-11-20) pattern: the manifest test reads the file
  * from the repo root the way CleartextFallbackTest reads brand.properties —
