@@ -1053,8 +1053,12 @@ def project(conn: sqlite3.Connection, *, rev: int | None = None, reset: bool = T
     works: dict[str, _WorkAccumulator] = {}
     now = time.time()
     post_count = 0
+    # DB-08: high-water post id, stamped into cat_projection_meta below so the
+    # gap auditor can tell exactly which posts a later run has never seen.
+    max_post_id = 0
     for row in ledger:
         post_count += 1
+        max_post_id = max(max_post_id, int(row["post_id"]))
         clean_title = _post_column(row, "clean_title", default="") or _post_column(
             row, "title", default="") or "Unknown"
         year = _post_column(row, "year")
@@ -1190,6 +1194,9 @@ def project(conn: sqlite3.Connection, *, rev: int | None = None, reset: bool = T
                      (key, str(value)))
     conn.execute("INSERT OR REPLACE INTO cat_projection_meta (key, value) VALUES ('projected_at', ?)",
                  (str(now),))
+    # DB-08: high-water post id at projection time (see projection_gap()).
+    conn.execute("INSERT OR REPLACE INTO cat_projection_meta (key, value) VALUES ('posts_max_id', ?)",
+                 (str(max_post_id),))
     # How much of the projected catalog has actually been knocked on. Recorded every
     # rebuild so ops can see the honest coverage number in the same table that says
     # when the projection was made — a 100%-active catalog with coverage 0.0 is the
@@ -1217,6 +1224,69 @@ def project(conn: sqlite3.Connection, *, rev: int | None = None, reset: bool = T
     if verbose:
         print(f"[✓] catalog v2 projected: {summary}", flush=True)
     return summary
+
+
+def projection_gap(conn: sqlite3.Connection) -> dict:
+    """Read-only census of the posts→works projection gap (DB-08).
+
+    ``posts - works`` is NOT a defect count on its own: most of it is
+    legitimate folding (several posts — one per site — share one work key).
+    This splits the arithmetic gap into its two real parts:
+
+    * ``posts_since_projection`` — posts the last ``project()`` run never
+      saw (id above the stamped ``posts_max_id`` watermark, or
+      ``created_at`` past ``projected_at`` on pre-DB-08 projections);
+    * ``new_works`` — how many of those posts would mint a NEW work on a
+      re-projection (keys computed with the same ``work_key_for`` the
+      projector uses), vs ``folding_posts`` that collapse into a work that
+      already exists.
+
+    Never writes. On the live catalog of 2026-11-24 this answers
+    posts_since_projection=1508, new_works=1503, folding_posts=5, against
+    an arithmetic gap of 34,891 — i.e. the gap is folding + staleness, and
+    the projector itself drops nothing.
+    """
+    meta = {row[0]: row[1]
+            for row in conn.execute("SELECT key, value FROM cat_projection_meta")}
+    projected_at = float(meta.get("projected_at") or 0)
+    posts = conn.execute("SELECT COUNT(*) FROM posts").fetchone()[0]
+    works = conn.execute("SELECT COUNT(*) FROM cat_works").fetchone()[0]
+    work_keys = {row[0] for row in conn.execute("SELECT work_key FROM cat_works")}
+    watermark = meta.get("posts_max_id")
+    cols = ("id, clean_title, title, year, content_type, is_animated,"
+            " imdb_id, tmdb_id")
+    if watermark is not None:
+        new_rows = conn.execute(
+            f"SELECT {cols} FROM posts WHERE id > ? ORDER BY id",
+            (int(watermark),)).fetchall()
+    else:
+        # Pre-DB-08 projection: no watermark — fall back to the wall-clock
+        # stamp. created_at is written by SQLite CURRENT_TIMESTAMP (UTC), so
+        # the epoch converts with gmtime, not localtime.
+        stamp = (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(projected_at))
+                 if projected_at else "0000-00-00 00:00:00")
+        new_rows = conn.execute(
+            f"SELECT {cols} FROM posts WHERE created_at > ? ORDER BY id",
+            (stamp,)).fetchall()
+    new_keys: dict[str, int] = {}
+    for row in new_rows:
+        clean_title = row[1] or row[2] or "Unknown"
+        wtype = work_type_for(
+            row[4] or "movie", int(row[5] or 0), clean_title)
+        key = work_key_for(clean_title, row[3], wtype, row[6] or "", row[7])
+        new_keys[key] = new_keys.get(key, 0) + 1
+    new_works = sum(1 for key in new_keys if key not in work_keys)
+    folding = sum(count for key, count in new_keys.items() if key in work_keys)
+    return {
+        "posts": posts,
+        "works": works,
+        "gap_posts_minus_works": posts - works,
+        "projected_at": projected_at,
+        "posts_max_id": int(watermark) if watermark is not None else None,
+        "posts_since_projection": len(new_rows),
+        "new_works": new_works,
+        "folding_posts": folding,
+    }
 
 
 def _project_pages(conn, works, work_ids, release_descriptor, now,

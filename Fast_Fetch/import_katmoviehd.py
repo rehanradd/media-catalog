@@ -1499,6 +1499,21 @@ def resolve_file_sources(
             "quality": "720p",
         })
 
+    # DB-08 (2026-11-24): the REST API answered but carried no usable mirror —
+    # every section above skipped — which left 18,916 live katmoviehd releases
+    # sourceless. The no-data branch above already keeps a gateway fallback;
+    # do the same here so a bare API answer cannot erase the pointer.
+    if not sources:
+        sources.append({
+            "source_name": "🔗 KatMovieHD Gateway",
+            "service": "kmhd",
+            "resource_id": file_id,
+            "source_url": bridge_url,
+            "final_url": bridge_url,
+            "is_temporary": 0,
+            "quality": "720p",
+        })
+
     return size_bytes, sources
 
 

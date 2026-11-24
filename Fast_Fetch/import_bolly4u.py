@@ -714,6 +714,36 @@ def sync_api_catalog(client: Bolly4uClient, db_path: Path, max_pages: int | None
     return total_new
 
 
+def _bridge_fallback_source(link_url: str) -> dict | None:
+    """Bridge URL kept as an unverified source when its unwrap yields nothing.
+
+    DB-08 (2026-11-24): 26,430 live bolly4u releases are sourceless because
+    ``unwrap_linkskeep`` / ``unwrap_photojin`` return ``[]`` silently on any
+    failure and the release is saved anyway — the pointer (the bridge URL)
+    survived only in ``releases.bridge_url``. Keeping the bridge itself as a
+    source (same shape as the bbupload gateway fallback in
+    ``import_katmoviehd.resolve_file_sources``) preserves the pointer in the
+    served set so a later unwrap / JIT resolve can still reach the file.
+    Returns None for hosts this importer does not bridge (movcloud links are
+    stored directly by the caller).
+    """
+    low = link_url.lower()
+    if "linkskeep" in low:
+        service, name = "linkskeep", "🔗 LinksKeep Bridge"
+    elif "photojin." in low:
+        service, name = "photojin", "🔗 PhotoJin Bridge"
+    else:
+        return None
+    return {
+        "source_name": name,
+        "service": service,
+        "resource_id": link_url.rstrip("/").split("/")[-1],
+        "source_url": link_url,
+        "final_url": link_url,
+        "is_temporary": 0,
+    }
+
+
 def scrape_post_item(item: tuple, client: Bolly4uClient) -> dict | None:
     """Processes a single Bolly4u post item, unwrapping photojin/linkskeep links."""
     loc, lastmod, slug, raw_json_str = item
@@ -757,9 +787,19 @@ def scrape_post_item(item: tuple, client: Bolly4uClient) -> dict | None:
                 if "photojin." in link_url:
                     sources = client.unwrap_photojin(link_url)
                     resolved_sources.extend(sources)
+                    if not sources:
+                        # DB-08: a failed unwrap must not erase the pointer.
+                        fallback = _bridge_fallback_source(link_url)
+                        if fallback is not None:
+                            resolved_sources.append(fallback)
                 elif "linkskeep" in link_url:
                     sources = client.unwrap_linkskeep(link_url)
                     resolved_sources.extend(sources)
+                    if not sources:
+                        # DB-08: a failed unwrap must not erase the pointer.
+                        fallback = _bridge_fallback_source(link_url)
+                        if fallback is not None:
+                            resolved_sources.append(fallback)
                 elif "movcloud" in link_url:
                     resolved_sources.append({
                         "source_name": "⚡ MovCloud [G-Drive]",

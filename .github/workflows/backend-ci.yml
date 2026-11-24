@@ -62,6 +62,9 @@ name: 🐍 Backend CI — Stdlib Python Tests
 #       stats=full, and a scan-free default path proven by a trace callback)
 #     - Fast_Fetch/test_project_readonly.py  (v2 rebuild over an ATTACHed mode=ro ledger:
 #       source sha256 unchanged, zero link loss, safe stamps written)
+#     - Fast_Fetch/test_db08_projection_gaps.py (DB-08: bridge fallbacks at
+#       scrape time, the sourceless-bridge backfill, the source_site guard,
+#       and the projection-gap auditor — all offline, no sockets)
 #     - Fast_Fetch/test_link_sweep_budget.py    (the link-health sweep's budget maths:
 #       probe cost, why a full 3.7 M sweep is infeasible, sample sizes and margins — pure
 #       arithmetic over link_health's own constants, no sockets, no catalog read)
@@ -787,6 +790,11 @@ jobs:
       # is red here before it can be run against production.
       - name: 🧪 test_project_readonly.py
         run: python3 -S Fast_Fetch/test_project_readonly.py
+
+      # DB-08 projection gaps: bridge fallbacks, sourceless backfill,
+      # source_site guard, projection-gap auditor. Offline, no sockets.
+      - name: 🧪 test_db08_projection_gaps.py
+        run: python3 -S Fast_Fetch/test_db08_projection_gaps.py
 
       # Query-plan evidence for the findings in docs/SEARCH_LATENCY_FINDINGS.md. It
       # builds its own throwaway catalog because `catalog_v2.ensure_schema` does not

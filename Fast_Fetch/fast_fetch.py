@@ -347,6 +347,58 @@ SITE_CANDIDATE_TLDS = {
     "vcloud": ["my", "beer", "live", "lol", "one"],
 }
 
+# DB-08 (2026-11-24): page host -> site, for attribution at the save choke
+# point. 1,073 foreign pages were filed as NEW posts under source_site
+# 'vegamovies' (moviesflix.casa 786 on 2026-11-22, mp4moviez.deal 157 on
+# 2026-11-09, filmyhit.mobile 129) with zero parseable releases, because the
+# generic save funnel trusted the passed label while the page lived on
+# another site's host — and that site's own importer never re-parsed it.
+# The page's own host is ground truth for its site. Entries are the hosts
+# evidenced in the live catalog plus the rotating-TLD derivations below;
+# add a host only with live evidence (a wrong entry mislabels at scale).
+SITE_HOSTS = {
+    "moviesflix.casa": "moviesflix",
+    "mp4moviez.deal": "mp4moviez",
+    "filmyhit.mobile": "filmyhit",
+    "themoviebox.xyz": "themoviebox",
+    "aryplus.tv": "aryplus",
+    "multimovies.courses": "multimovies",
+    "desicinemas.pk": "desicinemas",
+    "bolly4uz.click": "bolly4u",
+    "vegamovies.lease": "vegamovies",
+    "katmoviehd.top": "katmoviehd",
+}
+
+
+def source_site_from_url(url: str) -> str:
+    """Site owning the host of ``url`` ("" when the host is not a known site).
+
+    Matches the bare host and any subdomain of a mapped host
+    (``m1.multimovies.courses`` -> ``multimovies``), plus the rotating
+    ``<site>.<tld>`` hosts from SITE_CANDIDATE_TLDS. A ``www.`` prefix and
+    any port are ignored. Never raises.
+    """
+    try:
+        host = (urllib.parse.urlparse(str(url or "")).hostname or "").lower()
+    except Exception:
+        return ""
+    if not host:
+        return ""
+    if host.startswith("www."):
+        host = host[4:]
+    for mapped, site in SITE_HOSTS.items():
+        if host == mapped or host.endswith("." + mapped):
+            return site
+    # Rotating <site>.<tld> hosts — catalog sites only. nexdrive / fastdl /
+    # vcloud share the TLD table but are download services, not catalog
+    # sites, so a page hosted on one must never be labelled as a site.
+    for site in ("vegamovies", "rogmovies", "ssrmovies", "7starhd",
+                 "katmoviehd", "multimovies", "10xflix"):
+        for tld in SITE_CANDIDATE_TLDS.get(site, ()):
+            if host == f"{site}.{tld}" or host.endswith(f".{site}.{tld}"):
+                return site
+    return ""
+
 #: domain_resolver.py is the SOLE writer of this file (flock + atomic replace).
 #: Here it is a READ-ONLY live authority — see get_domains() below. It is also
 #: an input to redact._registry_needles() (the PUBLIC SCRUBBER harvests every
@@ -1967,7 +2019,7 @@ def _init_db(db_path: Path | None = None) -> None:
             "cast_names": "TEXT",
             "is_18_plus": "INTEGER DEFAULT 0",
             "is_animated": "INTEGER DEFAULT 0",
-            "source_site": "TEXT DEFAULT 'vegamovies'",
+            "source_site": "TEXT",
             "industry": "TEXT DEFAULT 'Hollywood'",
             "country": "TEXT DEFAULT 'USA'",
             "language": "TEXT DEFAULT 'English'",
@@ -7808,7 +7860,12 @@ def _validate_scraped_data(data: dict):
     url = str(data.get("url") or "").strip()
     clean_title = str(data.get("clean_title") or data.get("title") or "").strip()
     title = str(data.get("title") or clean_title).strip()
-    source_site = str(data.get("source_site") or "vegamovies").strip().lower()
+    # DB-08: a missing label used to default to 'vegamovies' here, which is how
+    # foreign pages were filed under that site. Derive it from the page's own
+    # host when known, else 'unknown' — never a guessed site.
+    source_site = str(
+        data.get("source_site") or source_site_from_url(url) or "unknown"
+    ).strip().lower()
     content_type = str(data.get("content_type") or "movie").strip().lower()
     if not url:
         raise ValueError("Scraped media data is missing its source URL")
@@ -7972,6 +8029,15 @@ def _save_scraped_data(data: dict, *, ensure_db: bool = True,
     explicitly instead of silently corrupting cross-site records.
     """
     url, clean_title, title, source_site, content_type, valid_releases = _validate_scraped_data(data)
+
+    # DB-08: the page's own host overrides a contradicting label. A caller may
+    # pass 'vegamovies' for a moviesflix.casa / mp4moviez.deal / filmyhit.mobile
+    # page (1,073 such rows live, all release-less because the wrong site's
+    # parser never ran on them); the host is ground truth. The UPDATE path
+    # below never touches source_site, so this only corrects NEW rows.
+    _host_site = source_site_from_url(url)
+    if _host_site:
+        source_site = _host_site
 
     # The sitemap row that queued this page is the row to mark scraped, not
     # necessarily the URL the page was fetched from: a domain rotation makes

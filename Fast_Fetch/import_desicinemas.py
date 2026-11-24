@@ -825,6 +825,22 @@ def scrape_post_item(item: tuple, client: DesiCinemasClient, unwrap_bridges: boo
                 "is_temporary": 0,
             })
 
+        # DB-08 (2026-11-24): a trembed unwrap that yields nothing must not
+        # erase the pointer — keep the bridge itself as an unverified source
+        # (same shape as the bbupload gateway fallback in
+        # import_katmoviehd.resolve_file_sources). Pages with no trembed URL
+        # and no iframe stay genuinely sourceless; nothing is fabricated.
+        if not sources and trembed_urls:
+            for tr_url in trembed_urls:
+                sources.append({
+                    "source_name": "🌐 Trembed Bridge",
+                    "service": "trembed",
+                    "resource_id": tr_url.rstrip("/").split("/")[-1],
+                    "source_url": tr_url,
+                    "final_url": tr_url,
+                    "is_temporary": 0,
+                })
+
         # Build release
         releases = []
         label = raw_title
