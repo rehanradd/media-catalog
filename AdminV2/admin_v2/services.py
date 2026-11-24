@@ -25,7 +25,20 @@ from .errors import ApiError, bad, conflict, forbidden, not_found
 from .live_stores import (
     FLEET_SITES as _LIVE_FLEET_SITES,  # noqa: F401  (same list, live-verified)
     LiveStores, LiveUnavailable, PLAN_DAYS, REMOTE_CONFIG_FIELDS,
+    V2_ONLY_SNAPSHOT_FIELDS,
+    ensure_live_remote_config_columns,
 )
+
+# PNL-08's BackupGuard, enforced as a publish pre-flight (process
+# guard, §0A).
+# The guard lands before this redesign in gate order; until it is on
+# main the import fails and the pre-flight is skipped (the guard's own
+# _rw backstop is absent too) — the dependency is explicit, not hidden.
+# Tests inject a stub through this name to prove the call-site.
+try:
+    from .backup_guard import BackupGuard
+except ImportError:  # PNL-08 not landed yet
+    BackupGuard = None
 from .security import (
     SESSION_ABSOLUTE_S, SESSION_IDLE_S, check_password, check_totp,
     hash_password, mask_contact, mask_hint, mask_ip, mask_secret,
@@ -38,6 +51,22 @@ from .store import (
 )
 
 NOW = lambda: int(time.time())
+
+# PNL-01 §0A N1: the canonical draft allow-list — every field a draft
+# may carry, and the single place the map is defined. Exactly 12:
+# 3 live-row fields (maintenance_mode, apk_update_url,
+# free_quality_cap — each in both MONETIZATION_FIELDS and
+# REMOTE_CONFIG_FIELDS) + 9 panel-feed fields (V2_ONLY_SNAPSHOT_FIELDS,
+# read by panel_feed, never written to the catalog). The APK descriptor
+# trio and feature_link_shorteners are deliberately NOT here: they are
+# v1-owned (release-owned), served from the live row but edited only
+# through v1 /admin. test_publish_redesign pins the whole partition.
+DRAFT_REMOTE_CONFIG_FIELDS = frozenset({
+    "min_version_code", "latest_version_code", "latest_version_name",
+    "force_update", "force_update_message", "maintenance_message",
+    "brand_primary", "brand_accent", "region_order", "free_quality_cap",
+    "maintenance_mode", "apk_update_url",
+})
 
 
 def _coerce_bool(value, default=True):
@@ -161,6 +190,14 @@ class Service:
         import os
         self.base_dir = base_dir
         os.makedirs(base_dir, exist_ok=True)
+        # PNL-01 redesign §0A N3: the fixture/production split is keyed
+        # on CONFIGURATION, not on a flag — self.live is None means no
+        # live store was ever configured (fixture/test behaviour: panel
+        # publishes, labelled "not_configured"); a live store that is
+        # configured but unreachable is a 503 at publish time. run.py
+        # aborts at boot when no live catalog path is configured at all,
+        # so a production panel can never be in the first state by
+        # accident.
         self.admin_path = os.path.join(base_dir, "admin_v2.db")
         self.catalog_path = os.path.join(base_dir, "catalog_fixture.db")
         self.ledger_path = os.path.join(base_dir, "ledger_fixture.db")
@@ -188,6 +225,12 @@ class Service:
                 host_registry_path=live_host_registry_path)
         else:
             self.live = None
+        # D7: the live catalog's remote-config columns are migrated at
+        # startup, never mid-request (save_remote_config raises
+        # schema_drift instead of ALTER-ing). A missing file/table is a
+        # no-op here — the live-availability guard below owns that.
+        if self.live is not None:
+            ensure_live_remote_config_columns(self.live.catalog_path)
         self._bg_stop = None
         self._seed_published_home()
         if self.live is not None:
@@ -1206,18 +1249,34 @@ class Service:
                  NOW()))
             self.admin.commit()
 
-    def _record_versioned_snapshot(self, published_by):
+    def _record_versioned_snapshot(self, published_by, expected_version=None):
         """Bump config_version and write the history snapshot for it.
 
         One helper for every version bump that is not the remote-config
         publish (which has its own guards in _do_publish): the monetization
         publish and a feature pause/resume both need version + snapshot
-        together, never a bare bump. Returns the new version."""
-        row = self._config_row()
-        new_version = row["config_version"] + 1
-        snap = {"config": self._redacted_config(row), "home": self._home_snapshot()}
-        snap["config"]["config_version"] = new_version
+        together, never a bare bump. Returns the new version.
+
+        expected_version is the version this operation already stamped
+        on the live row: pass it through instead of recomputing, so the
+        snapshot and the served row can never disagree about which
+        version they belong to. When it is None the version is allocated
+        fresh from a read taken inside WRITE_LOCK. Callers that
+        pre-stamp the live row (publish/rollback) hold WRITE_LOCK
+        across the allocate + live write + snapshot; pause/resume call
+        it without an expected version (panel+1 inside the lock). That
+        lock serialises panel threads only: the live catalog is a
+        separate SQLite DB/connection, so there is still no cross-DB
+        atomicity. (Expected-version form ported from the PNL-11 fixup
+        tip.)"""
         with WRITE_LOCK:
+            if expected_version is None:
+                new_version = self._config_row()["config_version"] + 1
+            else:
+                new_version = expected_version
+            snap = {"config": self._redacted_config(self._config_row()),
+                    "home": self._home_snapshot()}
+            snap["config"]["config_version"] = new_version
             self.admin.execute(
                 "UPDATE app_remote_config_v2 SET config_version=?, updated_by=?, updated_at=? WHERE id=1",
                 (new_version, published_by, NOW()))
@@ -1226,6 +1285,113 @@ class Service:
                 "VALUES (?,?,?,?)", (new_version, json.dumps(snap), published_by, NOW()))
             self.admin.commit()
         return new_version
+
+    # -- publish audit helpers (PNL-01 redesign D8) ----------------------
+    def _snapshot_sha256(self, snap):
+        return hashlib.sha256(
+            json.dumps(snap, sort_keys=True).encode("utf-8")).hexdigest()
+
+    def _refuse(self, actor_id, action, code, message, status, ip=""):
+        """Record a refusal audit row, then raise it (N3/D8). An audit
+        entry is not a success record: refusals carry {reason, code}
+        in the after payload and no version fields."""
+        try:
+            self.audit(actor_id, action, "app_remote_config", 1,
+                       None, {"reason": message, "code": code}, ip)
+        except Exception:
+            pass
+        raise ApiError(code, message, status)
+
+    def _live_catalog_or_refuse(self, actor_id, action, ip=""):
+        """The live catalog for a write, plus which mode we are in (N3).
+
+        Returns (live, status): "ok" (live wired and reachable), or
+        "not_configured" (no live store was ever configured — fixture /
+        test behaviour: the caller proceeds panel-only and labels the
+        response "live": "not_configured"). A live store that IS
+        configured but unreachable (its file is gone) is a 503 with no
+        panel write and no version recorded — recorded as a refusal
+        audit row first."""
+        live = self._live_catalog()
+        if live is not None:
+            return live, "ok"
+        if self.live is None:
+            return None, "not_configured"
+        detail = ("The live catalog is configured but unreachable — "
+                  "check the catalog file, then retry.")
+        self._refuse(actor_id, action, "live_unavailable", detail, 503, ip)
+
+    def _backup_preflight(self, live, actor_id, action, ip=""):
+        """Backup-guard pre-flight, BEFORE any version is allocated
+        (process guard, §0A): a refusal consumes no version and writes
+        nothing. PNL-08's BackupGuard is the authority; LiveStores._rw
+        remains the enforcing backstop once PNL-08 lands. Until then
+        the guard module is absent and this is a documented no-op (see
+        the import at the top of this file)."""
+        if BackupGuard is None:
+            return
+        guard = BackupGuard.from_env()
+        try:
+            guard.require("catalog", live.catalog_path)
+        except ApiError as exc:
+            self._refuse(actor_id, action, exc.code, exc.message,
+                         exc.status, ip)
+
+    def _live_write(self, live, fields, config_version):
+        """The single live-write boundary (process guard, §0A): every
+        publisher funnels its live write through here, so the backup
+        pre-flight cannot be bypassed by the next writer. PNL-08's
+        guard lives in LiveStores._rw as the backstop; the pre-flight
+        runs first so a refusal consumes no version. An ApiError is
+        re-raised as-is; anything else becomes a 500 with the cause."""
+        try:
+            live.save_remote_config(dict(fields),
+                                    config_version=config_version)
+        except ApiError:
+            raise
+        except Exception as exc:
+            raise ApiError(
+                "internal",
+                "The live catalog could not be updated: %s" % exc, 500)
+
+    def _paused_features_note(self):
+        """Feature pauses active right now, for audit annotation ONLY
+        (N4): publish/rollback consult is_paused() to NAME the paused
+        features in the audit record — never to rewrite flags. A pause
+        is a pauses-table row, not a config flag; no publish overwrites
+        it, and a rollback to a pre-pause snapshot does not resume
+        anything. Pause→live propagation is PNL-11's."""
+        rows = self.admin.execute(
+            "SELECT target_id FROM pauses WHERE target_type='feature' "
+            "AND is_paused=1 AND resumed_at IS NULL "
+            "ORDER BY target_id").fetchall()
+        return sorted({r["target_id"] for r in rows})
+
+    def _allocate_version(self, live):
+        """One version, computed INSIDE the publish lock from fresh
+        reads (N2): the version is max(live, panel) + 1, so it never
+        repeats and never regresses on EITHER side. Pure live+1 would
+        repeat a version whenever the panel is ahead of the live row
+        — a feature pause bumps the panel version without writing
+        live, and a v1 /admin edit stamps the live row without
+        touching the panel — and the history table does not enforce
+        uniqueness on config_version, so the repeat would land as a
+        silent second history row. In the normal state (live >= panel
+        after every publish, live > panel after a v1 edit) this IS
+        live+1. `live` is None when no live store is configured: the
+        panel row is the only source, so panel+1."""
+        panel_version = self._config_row()["config_version"]
+        if live is not None:
+            try:
+                current = live.read_remote_config_masked().get("config_version")
+                if current is not None:
+                    return max(int(current), panel_version) + 1
+            except Exception:
+                pass
+        return panel_version + 1
+
+
+
 
     def _publish_staged_monetization(self, actor, before, ip=""):
         """The publish itself, in the design's order (§3.1):
@@ -1236,38 +1402,94 @@ class Service:
         catalog published but not snapshotted: the catalog is never rolled
         back silently, the failure is recorded, and the next publish
         repairs it (re-snapshot + re-audit). Returns the publish status.
-        """
-        row = self._config_row()
-        staged = {k: row[k] for k in MONETIZATION_FIELDS}
-        # The version this publish will land at: the snapshot below
-        # bumps to exactly this number, so the served row and the
-        # snapshot agree. Stamped in the same catalog write as the
-        # flags themselves — a flag change is never live unversioned.
-        expected_version = row["config_version"] + 1
-        live = self._live_catalog()
-        if live is not None:
-            # WRITE path: tests run this on a COPY; live use needs a
-            # catalog backup before first use (see handoff).
-            live.save_remote_config(dict(staged), config_version=expected_version)
-        before_version = row["config_version"]
-        try:
-            new_version = self._record_versioned_snapshot(actor["id"])
-            after = self.get_monetization(actor)
-            before_audit = dict(before)
-            before_audit["config_version"] = before_version
-            after_audit = dict(after)
-            after_audit["config_version"] = new_version
-            self.audit(actor["id"], "monetization.save", "app_remote_config", 1,
-                       before_audit, after_audit, ip)
-        except Exception as exc:
-            self._set_monetization_publish_state(
-                "published_but_not_snapshotted",
-                {"error": str(exc),
-                 "config_version": self._config_row()["config_version"]})
-            return {"publish_status": "published_but_not_snapshotted",
-                    "config_version": self._config_row()["config_version"]}
-        self._set_monetization_publish_state("ok")
-        return {"publish_status": "ok", "config_version": new_version}
+
+        PNL-01 redesign §0A: N1 — MONETIZATION_FIELDS now includes
+        free_quality_cap, so a cap staged here reaches live with the
+        rest; N2 — the whole publish, version computation through the
+        panel commit, runs under the single process-wide WRITE_LOCK,
+        the version computed inside it from fresh reads; N3 — a live
+        store that is configured but unreachable is a 503 with nothing
+        written, while no live store configured at all is fixture
+        behaviour, labelled "live": "not_configured" in the response.
+        The audit carries the field diff + snapshot hash (D8) and names
+        paused features (annotation only — never rewritten, N4). No
+        adult/home guards here: the monetization path never had them,
+        and a price edit must not be refused for an unrelated empty
+        home section."""
+        with WRITE_LOCK:
+            before_version = self._config_row()["config_version"]
+            live, live_status = self._live_catalog_or_refuse(
+                actor["id"], "publish.refused", ip)
+            row = self._config_row()
+            staged = {k: row[k] for k in MONETIZATION_FIELDS}
+            # The version this publish will land at: the snapshot below
+            # bumps to exactly this number, so the served row and the
+            # snapshot agree. Stamped in the same catalog write as the
+            # flags themselves — a flag change is never live unversioned.
+            new_version = self._allocate_version(live)
+            old_live = {}
+            if live is not None:
+                try:
+                    old_live = live.read_remote_config_masked()
+                except Exception:
+                    old_live = {}
+            old_snap = {}
+            hist = self.admin.execute(
+                "SELECT snapshot_json FROM app_remote_config_history "
+                "ORDER BY config_version DESC LIMIT 1").fetchone()
+            if hist is not None:
+                try:
+                    old_snap = json.loads(hist["snapshot_json"]).get("config", {})
+                except (TypeError, ValueError):
+                    old_snap = {}
+            if live is not None:
+                self._backup_preflight(live, actor["id"], "publish.refused", ip)
+                self._live_write(live, staged, new_version)
+            paused_active = self._paused_features_note()
+            snap = {"config": self._redacted_config(row),
+                    "home": self._home_snapshot()}
+            snap["config"]["config_version"] = new_version
+            snap_sha = self._snapshot_sha256(snap)
+            fields_changed = {}
+            for key in MONETIZATION_FIELDS:
+                if key in ("shrinkme_api_token", "droplink_api_token"):
+                    continue  # tokens never land in audit (D8)
+                old = old_live.get(key, old_snap.get(key))
+                new = staged.get(key)
+                if key == "apk_update_url":
+                    old, new = bool(old), bool(new)
+                if old != new:
+                    fields_changed[key] = [old, new]
+            try:
+                self._record_versioned_snapshot(actor["id"], new_version)
+                after = self.get_monetization(actor)
+                before_audit = dict(before)
+                before_audit["config_version"] = before_version
+                after_audit = dict(after)
+                after_audit["config_version"] = new_version
+                after_audit["fields_changed"] = fields_changed
+                after_audit["snapshot_sha256"] = snap_sha
+                after_audit["paused_active"] = paused_active
+                self.audit(actor["id"], "monetization.save", "app_remote_config", 1,
+                           before_audit, after_audit, ip)
+            except Exception as exc:
+                # The version UPDATE must not linger uncommitted on the
+                # shared connection: a later commit would silently land
+                # a panel version whose snapshot never existed. Discard
+                # it — the live row stays at the new version (catalog
+                # first, never rolled back), and the next publish
+                # repairs the snapshot at the next version.
+                self.admin.rollback()
+                self._set_monetization_publish_state(
+                    "published_but_not_snapshotted",
+                    {"error": str(exc),
+                     "config_version": self._config_row()["config_version"]})
+                return {"publish_status": "published_but_not_snapshotted",
+                        "config_version": self._config_row()["config_version"],
+                        "live": live_status}
+            self._set_monetization_publish_state("ok")
+            return {"publish_status": "ok", "config_version": new_version,
+                    "live": live_status}
 
     def put_monetization(self, actor, body, ip=""):
         self.require_role(actor, write=True)
@@ -1325,15 +1547,13 @@ class Service:
         after = self.get_monetization(actor)
         after["publish_status"] = status["publish_status"]
         after["config_version"] = status["config_version"]
+        after["live"] = status["live"]
         return after
 
     def draft_remote_config(self, actor, body, ip=""):
         """Draft only: writes the row, does NOT bump config_version."""
         self.require_role(actor, write=True)
-        allowed = {"min_version_code", "latest_version_code", "latest_version_name",
-                   "force_update", "force_update_message", "maintenance_message",
-                   "brand_primary", "brand_accent", "region_order", "free_quality_cap",
-                   "maintenance_mode", "apk_update_url"}
+        allowed = DRAFT_REMOTE_CONFIG_FIELDS
         self._validate_body(body, allowed)
         # A cleared text field arrives as "" (JSON) or is dropped
         # entirely (HTML form, whose blank values never reach the body):
@@ -1414,64 +1634,121 @@ class Service:
 
         Shared by the manual publish and the scheduled fire, so the two can
         never drift apart: the same adult blockers and the same empty-home
-        refusal apply at fire time as at click time. Returns the new version.
-        Raises the same ApiError the manual path raises; the caller decides
-        what a refusal means (an error to the operator, a blocked schedule).
-        """
-        blockers = self._adult_blockers()
-        if blockers:
-            raise forbidden("Publish is blocked: an adult or unknown-flag work is in a non-adult section.")
-        sections = self.admin.execute(
-            "SELECT COUNT(*) AS n FROM home_sections WHERE is_enabled=1").fetchone()["n"]
-        if sections == 0:
-            raise forbidden("This would leave the app home empty. Enable at least one section first.")
-        row = self._config_row()
-        new_version = row["config_version"] + 1
-        # The draft fields the live catalog carries go out with the
-        # publish, not at draft time: before this, draft_remote_config
-        # wrote maintenance_mode straight to the catalog, so the app saw
-        # a draft the Live page still called "waiting to go out" — and
-        # publish itself wrote nothing the app reads. Catalog first
-        # (§3.1): a failure here leaves the draft and the version
-        # untouched, and the operator gets the real reason instead of a
-        # half-published state. The new version is stamped onto the
-        # served row in the same write, so a flag change is never live
-        # without a version the panel (and the app) can see.
-        live = self._live_catalog()
-        if live is not None:
+        refusal apply at fire time as at click time. Returns the publish
+        result dict (config_version, field diff, snapshot hash, paused
+        features annotated, live mode). Raises the same ApiError the manual
+        path raises; the caller decides what a refusal means (an error to
+        the operator, a blocked schedule).
+
+        PNL-01 redesign §0A: N1 — the draft's live-row fields go out
+        (maintenance_mode, apk_update_url, AND free_quality_cap — the
+        cap is the headline fix: a draft cap change reaches the live row
+        now); the 9 v2-only fields ride the snapshot as before. N2 —
+        the whole publish, version computation through the panel commit,
+        runs under the single process-wide WRITE_LOCK, the version
+        computed inside it from fresh reads. N3 — fixture / production
+        split at the live catalog (see _live_catalog_or_refuse)."""
+        with WRITE_LOCK:
+            blockers = self._adult_blockers()
+            if blockers:
+                raise forbidden("Publish is blocked: an adult or unknown-flag work is in a non-adult section.")
+            sections = self.admin.execute(
+                "SELECT COUNT(*) AS n FROM home_sections WHERE is_enabled=1").fetchone()["n"]
+            if sections == 0:
+                raise forbidden("This would leave the app home empty. Enable at least one section first.")
+            live, live_status = self._live_catalog_or_refuse(
+                published_by, "publish.refused")
+            row = self._config_row()
+            new_version = self._allocate_version(live)
+            # The draft fields the live catalog carries go out with the
+            # publish, not at draft time: before this, draft_remote_config
+            # wrote maintenance_mode straight to the catalog, so the app saw
+            # a draft the Live page still called "waiting to go out" — and
+            # publish itself wrote nothing the app reads. Catalog first
+            # (§3.1): a failure here leaves the draft and the version
+            # untouched, and the operator gets the real reason instead of a
+            # half-published state. The new version is stamped onto the
+            # served row in the same write, so a flag change is never live
+            # without a version the panel (and the app) can see.
             live_fields = {
                 "maintenance_mode": int(row.get("maintenance_mode") or 0),
                 "apk_update_url": row.get("apk_update_url") or "",
+                "free_quality_cap": row.get("free_quality_cap") or "720p",
             }
+            old_live = {}
+            if live is not None:
+                try:
+                    old_live = live.read_remote_config_masked()
+                except Exception:
+                    old_live = {}
+            old_snap = {}
+            hist = self.admin.execute(
+                "SELECT snapshot_json FROM app_remote_config_history "
+                "ORDER BY config_version DESC LIMIT 1").fetchone()
+            if hist is not None:
+                try:
+                    old_snap = json.loads(hist["snapshot_json"]).get("config", {})
+                except (TypeError, ValueError):
+                    old_snap = {}
+            if live is not None:
+                self._backup_preflight(live, published_by, "publish.refused")
+                self._live_write(live, live_fields, new_version)
+            paused_active = self._paused_features_note()
+            snap = {"config": self._redacted_config(row), "home": self._home_snapshot()}
+            snap["config"]["config_version"] = new_version
+            snap_sha = self._snapshot_sha256(snap)
+            fields_changed = {}
+            for key in ("maintenance_mode", "apk_update_url", "free_quality_cap"):
+                old = old_live.get(key, old_snap.get(key))
+                new = live_fields.get(key)
+                if key == "apk_update_url":
+                    old, new = bool(old), bool(new)
+                if old != new:
+                    fields_changed[key] = [old, new]
+            for key in V2_ONLY_SNAPSHOT_FIELDS:
+                old = old_snap.get(key)
+                new = snap["config"].get(key)
+                if old != new:
+                    fields_changed[key] = [old, new]
             try:
-                live.save_remote_config(live_fields, config_version=new_version)
-            except ApiError:
+                self._record_versioned_snapshot(published_by, new_version)
+            except Exception:
+                # A half-committed panel state must not linger on the
+                # shared connection (see _publish_staged_monetization).
+                # The live row stays at the new version — catalog first,
+                # never rolled back — and the next publish repairs the
+                # snapshot at the next version.
+                self.admin.rollback()
                 raise
-            except Exception as exc:
-                raise ApiError("internal",
-                               "The live catalog could not be updated: %s" % exc, 500)
-        snap = {"config": self._redacted_config(row), "home": self._home_snapshot()}
-        snap["config"]["config_version"] = new_version
-        with WRITE_LOCK:
-            self.admin.execute(
-                "UPDATE app_remote_config_v2 SET config_version=?, updated_by=?, updated_at=? WHERE id=1",
-                (new_version, published_by, NOW()))
-            self.admin.execute(
-                "INSERT INTO app_remote_config_history (config_version, snapshot_json, published_by, published_at) "
-                "VALUES (?,?,?,?)", (new_version, json.dumps(snap), published_by, NOW()))
-            self.admin.commit()
-        return new_version
+            return {"config_version": new_version,
+                    "fields_changed": fields_changed,
+                    "snapshot_sha256": snap_sha,
+                    "paused_active": paused_active,
+                    "live": live_status}
 
     def publish_remote_config(self, actor, body, ip=""):
         self.require_role(actor, write=True)
         self._validate_body(body or {}, {"confirm"})
         if not body or not body.get("confirm"):
             raise bad("Publish needs confirm set to true.")
-        before_version = self._config_row()["config_version"]
-        new_version = self._do_publish(actor["id"])
-        self.audit(actor["id"], "remote_config.publish", "app_remote_config", 1,
-                   {"config_version": before_version}, {"config_version": new_version}, ip)
-        return {"config_version": new_version, "refresh_note": "visible on next app refresh"}
+        # N2: the whole publish — the before-read, the core, the audit —
+        # runs under the single lock. The panel connection is shared
+        # across threads (check_same_thread=False) but its cursors are
+        # not thread-safe: a concurrent publish racing this read could
+        # clobber the cursor and return None.
+        with WRITE_LOCK:
+            before_version = self._config_row()["config_version"]
+            result = self._do_publish(actor["id"])
+            self.audit(actor["id"], "remote_config.publish", "app_remote_config", 1,
+                       {"config_version": before_version},
+                       {"config_version": result["config_version"],
+                        "fields_changed": result["fields_changed"],
+                        "snapshot_sha256": result["snapshot_sha256"],
+                        "paused_active": result["paused_active"],
+                        "live": result["live"]}, ip)
+        return {"config_version": result["config_version"],
+                "live": result["live"],
+                "refresh_note": "visible on next app refresh (within ~5 min)"}
 
     def _admin_display_name(self, user_id):
         """Who an author id is, for the Live page: the admin's username
@@ -1498,8 +1775,13 @@ class Service:
         `live` is the newest published snapshot (None before the first
         publish); `draft` is the current draft row plus its home snapshot.
         `changed_keys` names the config keys whose draft value differs from
-        the live snapshot's — the honest answer to "what would publishing do
-        right now". Section counts are the same question for the home rails.
+        what the app serves — live-covered fields against the LIVE ROW,
+        v2-only fields against the last snapshot (PNL-01 F8: diffing
+        against the snapshot alone hid v1 edits and failed publishes).
+        `live_drift` is set when the live row is ahead of the panel (a
+        v1 edit or a crashed publish); `publish_blocked` names why
+        Publish would refuse right now, if it would. Section counts are
+        the same question for the home rails.
         """
         self.require_role(actor, write=False)
         hist = self.admin.execute(
@@ -1519,36 +1801,92 @@ class Service:
         draft_config = self._redacted_config(draft_row)
         draft_sections = self.admin.execute(
             "SELECT COUNT(*) AS n FROM home_sections WHERE is_enabled=1").fetchone()["n"]
-        changed = []
-        if live is not None:
-            live_config = live["config"]
-            for key in sorted(set(draft_config) | set(live_config)):
-                # Bookkeeping, not operator settings: the publish itself
-                # bumps these, so they would differ after every publish.
-                if key in ("config_version", "updated_at", "updated_by"):
-                    continue
-                if draft_config.get(key) != live_config.get(key):
-                    changed.append(key)
-        # The version the app is actually serving, read off the served
-        # row itself — not the panel's snapshot version. The two agree
-        # after a clean publish; they differ while a draft is waiting,
-        # or after a publish that reached the catalog but not the
-        # snapshot. None when no live catalog is wired (or the row
-        # predates version stamping).
+        # PNL-01 redesign (N1/F8): changed_keys used to diff the draft
+        # against the last SNAPSHOT only, so a v1 edit or a failed
+        # publish was invisible. Now live-covered fields diff against
+        # the LIVE ROW (what the app is actually serving) and v2-only
+        # fields diff against the last snapshot. Tokens compare as
+        # configured flags and the APK URL as a configured flag on both
+        # sides, so no secret or URL ever lands in this diff.
+        live_changed = []
+        snapshot_changed = []
         live_catalog_version = None
+        live_config = None
         catalog = self._live_catalog()
         if catalog is not None:
             try:
-                live_catalog_version = catalog.read_remote_config_masked().get(
-                    "config_version")
+                live_config = catalog.read_remote_config_masked()
+                live_catalog_version = live_config.get("config_version")
             except Exception:
+                live_config = None
                 live_catalog_version = None
+        if live_config is not None:
+            for key in REMOTE_CONFIG_FIELDS:
+                if key in ("shrinkme_api_token", "droplink_api_token"):
+                    flag = ("shrinkme_configured" if key == "shrinkme_api_token"
+                            else "droplink_configured")
+                    dval = draft_config.get(flag)
+                    lval = live_config.get(flag)
+                elif key == "apk_update_url":
+                    dval = draft_config.get("apk_update_url_configured")
+                    lval = bool(live_config.get("apk_update_url"))
+                else:
+                    dval = draft_config.get(key)
+                    lval = live_config.get(key)
+                if dval != lval:
+                    live_changed.append(key)
+        if live is not None:
+            live_config_snap = live["config"]
+            for key in V2_ONLY_SNAPSHOT_FIELDS:
+                if draft_config.get(key) != live_config_snap.get(key):
+                    snapshot_changed.append(key)
+        changed = sorted(set(live_changed) | set(snapshot_changed))
+        # Adopt-and-alert (N2/F6): the live row ahead of the panel
+        # means something wrote it outside a panel publish (a v1
+        # /admin edit, or a crashed publish). The next publish
+        # allocates from the live version; nothing here adopts it
+        # silently — the drift is surfaced until then.
+        live_drift = None
+        if (live_catalog_version is not None
+                and live_catalog_version > draft_row["config_version"]):
+            live_drift = {
+                "live_version": live_catalog_version,
+                "panel_version": draft_row["config_version"],
+                "alert": ("The live catalog is ahead of the panel — "
+                          "something wrote the live row outside a panel "
+                          "publish. The next publish allocates from the "
+                          "live version."),
+            }
+        # Why Publish would refuse right now, if it would (N3/process
+        # guard): the Live page disables the button with this reason.
+        # The server still enforces; this is a hint, never the guard.
+        # A live store that was never configured is NOT blocked — that
+        # is the fixture branch, which publishes panel-only, labelled.
+        publish_blocked = None
+        if self.live is not None and catalog is None:
+            publish_blocked = ("live_unavailable: The live catalog is "
+                               "configured but unreachable — publish is "
+                               "disabled until it is reachable.")
+        elif catalog is not None and BackupGuard is not None:
+            try:
+                status = BackupGuard.from_env().status(
+                    "catalog", catalog.catalog_path)
+            except Exception:
+                status = {"ok": False,
+                          "reason": "the backup guard could not be read"}
+            if not status["ok"]:
+                publish_blocked = ("backup_required: %s"
+                                   % status["reason"])
         return {
             "live": live,
             "draft": {"config_version": draft_row["config_version"],
                       "config": draft_config, "sections": draft_sections},
             "changed_keys": changed,
+            "live_changed_keys": live_changed,
+            "snapshot_changed_keys": snapshot_changed,
             "live_catalog_version": live_catalog_version,
+            "live_drift": live_drift,
+            "publish_blocked": publish_blocked,
         }
 
     def schedule_publish(self, actor, body, ip=""):
@@ -1625,7 +1963,7 @@ class Service:
         fired = 0
         for row in due:
             try:
-                new_version = self._do_publish(row["created_by"])
+                new_version = self._do_publish(row["created_by"])["config_version"]
             except ApiError:
                 with WRITE_LOCK:
                     self.admin.execute(
@@ -1646,6 +1984,26 @@ class Service:
         return fired
 
     def rollback_remote_config(self, actor, body, ip=""):
+        """Restore a published snapshot as a NEW version.
+
+        PNL-01 redesign §0A N4: the live write moves BEFORE the panel
+        commit (catalog-first order, same as publish). A live-write
+        failure aborts before any panel mutation and is recorded as a
+        rollback.refused audit row — no half-rolled-back state, no
+        silent panel-ahead-of-live. The live push carries the same
+        field set as the monetization publish (MONETIZATION_FIELDS,
+        which after N1 includes free_quality_cap); the 15 v1-only
+        fields stay out of scope — no snapshots exist for them, and a
+        rollback must not invent values for them. Paused features are
+        only ANNOTATED in the audit (is_paused consult); the restored
+        flag values are written as the snapshot holds them — a pause
+        is a pauses-table row, not a config flag, so a rollback to a
+        pre-pause snapshot does not resume anything, and pause→live
+        propagation is PNL-11's. New version = max(live, panel) + 1,
+        allocated under WRITE_LOCK from fresh reads: the live version
+        NEVER regresses. Tokens are never restored (snapshots are
+        redacted). History rows are never edited; rollback always
+        appends."""
         self.require_role(actor, write=True)
         self._validate_body(body, {"version", "confirm"})
         if not body.get("confirm"):
@@ -1657,13 +2015,13 @@ class Service:
             raise not_found("That config version was not found in history.")
         snap = json.loads(hist["snapshot_json"])
         cfg = snap["config"]
-        row = self._config_row()
-        new_version = row["config_version"] + 1
         # Apply the snapshot as a NEW version; history rows are never edited.
-        allowed = [k for k in cfg if k in MONETIZATION_FIELDS or k in (
-            "min_version_code", "latest_version_code", "latest_version_name", "force_update",
-            "force_update_message", "maintenance_message", "brand_primary", "brand_accent",
-            "region_order", "free_quality_cap")]
+        # The restore allow-list is the monetization set (live-row) plus
+        # the v2-only snapshot fields (panel-feed): exactly the fields a
+        # publish can carry, so a rollback can never restore a value no
+        # writer could have published.
+        allowed = [k for k in cfg if k in MONETIZATION_FIELDS
+                   or k in V2_ONLY_SNAPSHOT_FIELDS]
         values = {}
         for k in allowed:
             v = cfg[k]
@@ -1671,35 +2029,84 @@ class Service:
                 continue  # tokens are never restored from a redacted snapshot
             values[k] = v
         with WRITE_LOCK:
-            if values:
-                self.admin.execute(
-                    "UPDATE app_remote_config_v2 SET %s WHERE id=1"
-                    % ", ".join("%s=?" % k for k in values), list(values.values()))
-            self.admin.execute(
-                "UPDATE app_remote_config_v2 SET config_version=?, updated_by=?, updated_at=? WHERE id=1",
-                (new_version, actor["id"], NOW()))
-            new_snap = {"config": self._redacted_config(self._config_row()), "home": snap.get("home")}
-            new_snap["config"]["config_version"] = new_version
-            self.admin.execute(
-                "INSERT INTO app_remote_config_history (config_version, snapshot_json, published_by, published_at) "
-                "VALUES (?,?,?,?)", (new_version, json.dumps(new_snap), actor["id"], NOW()))
-            self.admin.commit()
-        # The live catalog is the source of truth the app reads: a
-        # rollback that only restores the panel row leaves the app
-        # seeing the pre-rollback prices/flags. Push the restored
-        # monetization fields (the ones the live catalog carries) back
-        # to the live app_remote_config row as well. v2-only fields
-        # (versions, brand, region order) stay panel-only.
-        live = self._live_catalog()
-        if live is not None and values:
+            before_version = self._config_row()["config_version"]
+            # N3 first: a refused rollback must not leave restored values
+            # sitting in the draft row — the live check runs before any
+            # staging, and a configured-but-unavailable catalog is a 503.
+            live, live_status = self._live_catalog_or_refuse(
+                actor["id"], "rollback.refused", ip)
+            new_version = self._allocate_version(live)
             live_fields = {k: v for k, v in values.items()
                            if k in MONETIZATION_FIELDS}
-            if live_fields:
-                live.save_remote_config(live_fields, config_version=new_version)
-        self.audit(actor["id"], "remote_config.rollback", "app_remote_config", 1,
-                   {"config_version": row["config_version"]}, {"config_version": new_version}, ip)
+            old_live = {}
+            if live is not None:
+                try:
+                    old_live = live.read_remote_config_masked()
+                except Exception:
+                    old_live = {}
+            old_hist = self.admin.execute(
+                "SELECT snapshot_json FROM app_remote_config_history "
+                "ORDER BY config_version DESC LIMIT 1").fetchone()
+            old_snap = {}
+            if old_hist is not None:
+                try:
+                    old_snap = json.loads(old_hist["snapshot_json"]).get("config", {})
+                except (TypeError, ValueError):
+                    old_snap = {}
+            # Catalog FIRST (N4): the live write lands before any panel
+            # mutation. A failure here is recorded as a refusal and
+            # raises before the draft row or the version is touched.
+            if live is not None and live_fields:
+                self._backup_preflight(live, actor["id"], "rollback.refused", ip)
+                try:
+                    self._live_write(live, live_fields, new_version)
+                except ApiError as exc:
+                    self._refuse(actor["id"], "rollback.refused",
+                                 exc.code, exc.message, exc.status, ip)
+            paused_active = self._paused_features_note()
+            fields_changed = {}
+            for key, new in live_fields.items():
+                if key in ("shrinkme_api_token", "droplink_api_token"):
+                    continue  # tokens never land in audit (D8)
+                old = old_live.get(key, old_snap.get(key))
+                if key == "apk_update_url":
+                    old, new = bool(old), bool(new)
+                if old != new:
+                    fields_changed[key] = [old, new]
+            for key in V2_ONLY_SNAPSHOT_FIELDS:
+                if key in values:
+                    old = old_snap.get(key)
+                    new = values[key]
+                    if old != new:
+                        fields_changed[key] = [old, new]
+            try:
+                if values:
+                    self.admin.execute(
+                        "UPDATE app_remote_config_v2 SET %s WHERE id=1"
+                        % ", ".join("%s=?" % k for k in values), list(values.values()))
+                self.admin.execute(
+                    "UPDATE app_remote_config_v2 SET config_version=?, updated_by=?, updated_at=? WHERE id=1",
+                    (new_version, actor["id"], NOW()))
+                new_snap = {"config": self._redacted_config(self._config_row()), "home": snap.get("home")}
+                new_snap["config"]["config_version"] = new_version
+                self.admin.execute(
+                    "INSERT INTO app_remote_config_history (config_version, snapshot_json, published_by, published_at) "
+                    "VALUES (?,?,?,?)", (new_version, json.dumps(new_snap), actor["id"], NOW()))
+                self.admin.commit()
+            except Exception:
+                self.admin.rollback()
+                raise
+            self.audit(actor["id"], "remote_config.rollback", "app_remote_config", 1,
+                       {"config_version": before_version},
+                       {"config_version": new_version,
+                        "restored_from": body["version"],
+                        "fields_changed": fields_changed,
+                        "snapshot_sha256": self._snapshot_sha256(new_snap),
+                        "paused_active": paused_active,
+                        "live": live_status}, ip)
         return {"config_version": new_version, "restored_from": body["version"],
-                "refresh_note": "visible on next app refresh"}
+                "live": live_status,
+                "refresh_note": "visible on next app refresh (within ~5 min)"}
 
     def list_config_history(self, actor):
         self.require_role(actor, write=False)
@@ -2562,6 +2969,9 @@ class Service:
         rows = self.admin.execute(
             "SELECT * FROM pauses WHERE is_paused=1 AND resumed_at IS NULL ORDER BY id DESC").fetchall()
         return {"items": [_row(r) for r in rows]}
+
+
+
 
     def pause(self, actor, body, ip=""):
         self.require_role(actor, write=True)

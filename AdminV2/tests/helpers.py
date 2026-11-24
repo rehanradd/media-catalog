@@ -11,6 +11,12 @@ from admin_v2.services import Service  # noqa: E402
 
 
 def make_service():
+    """Panel-only service for the suites that never wire a live catalog.
+
+    PNL-01 redesign §0A N3: no live store is configured here, so this
+    is the fixture branch — publish works panel-only and labels the
+    response "live": "not_configured". Suites that exercise the live
+    catalog pass live= explicitly and are unaffected."""
     tmp = tempfile.mkdtemp(prefix="adminv2-test-")
     svc = Service(tmp)
     owner_id = svc.create_owner("owner", "correct horse battery staple")

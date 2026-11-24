@@ -11,7 +11,8 @@ import urllib.parse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from helpers import make_service  # noqa: E402
-from admin_v2.live_stores import LiveStores  # noqa: E402
+from admin_v2.errors import ApiError  # noqa: E402
+from admin_v2.live_stores import LiveStores, ensure_live_remote_config_columns  # noqa: E402
 from admin_v2.server import AdminApp  # noqa: E402
 from admin_v2.services import Service  # noqa: E402
 
@@ -118,8 +119,10 @@ class TestDraft(PublishFlowBase):
         self.assertEqual(self.svc._config_row()["config_version"], before)
         live = self.svc.get_live(self.owner)
         self.assertIn("maintenance_mode", live["changed_keys"])
-        # The redacted draft renames the raw URL to a configured flag.
-        self.assertIn("apk_update_url_configured", live["changed_keys"])
+        # PNL-01 F8: changed_keys now names live-row fields (what the
+        # app serves), so the APK URL appears under its own field name,
+        # not the redacted draft's *_configured flag.
+        self.assertIn("apk_update_url", live["changed_keys"])
 
     def test_draft_on_old_catalog_cannot_half_save(self):
         """Before this fix, a draft carrying a real apk_update_url 500'd
@@ -158,10 +161,17 @@ class TestPublish(PublishFlowBase):
         self.assertEqual(live["changed_keys"], [])
 
     def test_publish_without_live_catalog_still_works(self):
+        """§0A N3 fixture branch: no live store CONFIGURED, so publish
+        works panel-only — and says so in the response
+        ("live": "not_configured"), instead of reporting a success
+        that silently skipped the live write. A live store that IS
+        configured but unreachable refuses with 503 instead — see
+        test_publish_redesign.py."""
         svc, owner, _aud = make_service()
         svc.draft_remote_config(owner, {"maintenance_mode": 1})
         out = svc.publish_remote_config(owner, {"confirm": True})
         self.assertIn("config_version", out)
+        self.assertEqual(out["live"], "not_configured")
         self.assertIsNone(svc.get_live(owner)["live_catalog_version"])
 
     def test_publish_catalog_failure_bumps_nothing(self):
@@ -190,14 +200,47 @@ class TestPublish(PublishFlowBase):
         self.assertEqual(row["config_version"], before + 1)
         self.assertEqual(self.svc._config_row()["config_version"], before + 1)
 
-    def test_save_remote_config_adds_missing_columns_on_old_catalog(self):
-        """An old catalog gains the columns being written, the way v1
-        _ensure_monetization adds them at read time."""
-        self._live_service(ddl=OLD_DDL)
-        out = self.live.save_remote_config(
+    def test_save_remote_config_refuses_missing_columns_on_old_catalog(self):
+        """PNL-01 D7: a publish-time write no longer ALTERs the live
+        schema mid-request. On an old catalog a save of a field whose
+        column is missing raises schema_drift (500) instead of adding
+        the column — the startup migration owns schema changes now.
+        A bare LiveStores (no Service construction, which would
+        migrate the catalog first) pins the refusal."""
+        tmp = tempfile.mkdtemp(prefix="adminv2-oldcat-")
+        path = os.path.join(tmp, "catalog.db")
+        conn = sqlite3.connect(path)
+        conn.executescript(OLD_DDL)
+        conn.execute("INSERT INTO app_remote_config (id) VALUES (1)")
+        conn.commit()
+        conn.close()
+        live = LiveStores(catalog_path=path)
+        with self.assertRaises(ApiError) as ctx:
+            live.save_remote_config(
+                {"apk_update_url": "https://example.test/app.apk",
+                 "maintenance_mode": 1, "coins_enabled": 0},
+                config_version=4)
+        self.assertEqual(ctx.exception.code, "schema_drift")
+        self.assertEqual(ctx.exception.status, 500)
+
+    def test_startup_migration_then_save_works_on_old_catalog(self):
+        """After the startup migration (ensure_live_remote_config_columns)
+        the same old catalog accepts the save — columns incl.
+        config_version are added idempotently, and the stamped version
+        lands on the row."""
+        tmp = tempfile.mkdtemp(prefix="adminv2-oldcat-")
+        path = os.path.join(tmp, "catalog.db")
+        conn = sqlite3.connect(path)
+        conn.executescript(OLD_DDL)
+        conn.execute("INSERT INTO app_remote_config (id) VALUES (1)")
+        conn.commit()
+        conn.close()
+        ensure_live_remote_config_columns(path)
+        live = LiveStores(catalog_path=path)
+        out = live.save_remote_config(
             {"apk_update_url": "https://example.test/app.apk",
              "maintenance_mode": 1, "coins_enabled": 0}, config_version=4)
-        cols = {r[1] for r in self._catalog().execute(
+        cols = {r[1] for r in sqlite3.connect(path).execute(
             "PRAGMA table_info(app_remote_config)")}
         self.assertIn("apk_update_url", cols)
         self.assertIn("coins_enabled", cols)

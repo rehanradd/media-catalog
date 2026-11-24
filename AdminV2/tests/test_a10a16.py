@@ -184,8 +184,10 @@ class TestLiveAuthorName(unittest.TestCase):
         self.assertEqual(live["live"]["published_by_name"], "owner")
         hist = self.svc.list_config_history(self.owner)["items"]
         names = {h["config_version"]: h["published_by_name"] for h in hist}
-        self.assertEqual(names[1], "system")
-        self.assertEqual(names[2], "owner")
+        # PNL-01: the seed row is version 0 ("nothing published yet");
+        # the first publish is version 1.
+        self.assertEqual(names[0], "system")
+        self.assertEqual(names[1], "owner")
 
     def test_live_page_names_the_author(self):
         self.svc.publish_remote_config(self.owner, {"confirm": True})
