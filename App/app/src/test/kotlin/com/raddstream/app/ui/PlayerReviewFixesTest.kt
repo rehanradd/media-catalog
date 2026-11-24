@@ -151,9 +151,12 @@ class PlayerReviewFixesTest {
         assertFalse("QualityPill still dims a tappable control", pill.contains("dimmed"))
         // The 40% white still lives in the border (the Auto pill's outline),
         // which is fine — the TEXT must print full white, never dimmed.
+        // P3 (player fixes): the white is spelled PlayerOnVideo.text now —
+        // the token IS full white (Color.White, see Color.kt), so the pill
+        // prints exactly what this test pinned before, under the role name.
         assertTrue(
             "QualityPill text must print full white",
-            pill.contains("val textColor = if (!state.qualityAuto) RaddCurrent500 else Color.White"),
+            pill.contains("val textColor = if (!state.qualityAuto) RaddCurrent500 else PlayerOnVideo.text"),
         )
     }
 
