@@ -552,7 +552,11 @@ def _resolve_one(*, fast_fetch, resolved_cache, source_id, title,
             "yielding sweep")
         return "timed_out"
     try:
-        result = fast_fetch.resolve_live_source(source_id, v2=True)
+        # background=True: this is a sweep warm, not a press — slow
+        # unwraps (the FilePress prepare poll, ~2 min) may use their
+        # long budget here, and the banked answer serves the next press.
+        result = fast_fetch.resolve_live_source(source_id, v2=True,
+                                                background=True)
     except Exception as exc:  # a broken resolve must not kill the daemon
         result = {"success": False, "error": f"{type(exc).__name__}: {exc}"}
     if result.get("success"):
