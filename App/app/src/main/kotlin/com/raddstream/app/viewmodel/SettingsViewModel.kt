@@ -1183,7 +1183,7 @@ class SettingsViewModel @Inject constructor(
          * the catalog they chose speaks — the shipped default is HTTPS, a catalog the viewer
          * points at over plain HTTP still sends the code where anyone on the network can read
          * it, and the plain-HTTP fallback never gets the code at all (account traffic refuses
-         * rather than crossing in the clear, H-4, 2026-11-24) — so the copy never claims a
+         * rather than travelling over plain HTTP, H-4, 2026-11-24) — so the copy never claims a
          * protection the transport does not provide, and never claims an exposure that no
          * longer exists. [revealWarning] picks the sentence for the catalog in use;
          * [REVEAL_WARNING] is the plain-HTTP variant, [REVEAL_WARNING_FALLBACK] the
@@ -1234,7 +1234,7 @@ internal fun refusalSentence(reason: Refusal): String = when (reason) {
  * Four rules they all obey, and the reason each one is a rule rather than a style:
  *  - **no security claim.** A catalog the viewer points at over plain HTTP has no TLS, so the
  *    PIN and the phone cross the wire where anyone on the network can read them — except on
- *    the plain-HTTP fallback, where the account calls refuse rather than cross in the clear
+ *    the plain-HTTP fallback, where the account calls refuse rather than cross over plain HTTP
  *    (H-4, 2026-11-24) and nothing is sent at all — the shipped default is HTTPS, and the
  *    transport warning says which one is in use. Nothing here may say secure, encrypted,
  *    private, or "only you" about a plain-HTTP catalog;

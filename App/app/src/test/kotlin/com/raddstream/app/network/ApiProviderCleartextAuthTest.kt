@@ -3,7 +3,10 @@ package com.raddstream.app.network
 import java.io.IOException
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.Request
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
@@ -17,12 +20,12 @@ import org.junit.Test
  * on — and a viewer-pointed HTTP server (a LAN catalog, a loopback test
  * server) is not a fallback session, so it keeps working.
  *
- * The interceptor test builds a real OkHttpClient around the guard and
- * points it at unroutable hosts (`127.0.0.1:9`, the same unroutable address
- * ApiProviderSessionFallbackTest already uses): a refused request throws the
- * guard's IOException before any socket opens, and an allowed request gets
- * past the guard and fails on the connection instead — which is the proof
- * the guard let it through, not a test failure.
+ * The interceptor test builds a real OkHttpClient around the guard with a
+ * synthetic-200 downstream: the guard is the only thing that can refuse, so
+ * a 200 proves it let the request through and a thrown IOException proves it
+ * refused — with no network at all. (The fallback address is a live host, so
+ * executing against it and expecting a connection failure proved the
+ * runner's route to it, not the guard.)
  */
 class ApiProviderCleartextAuthTest {
 
@@ -97,9 +100,18 @@ class ApiProviderCleartextAuthTest {
         assertFalse(isAccountRoute("/api/v2/accountant"))
     }
 
-    private fun guardedClient(isFallbackSession: Boolean): OkHttpClient =
+    private fun shortCircuitClient(isFallbackSession: Boolean): OkHttpClient =
         OkHttpClient.Builder()
             .addInterceptor(cleartextAuthGuardInterceptor(isFallbackSession))
+            .addInterceptor { chain ->
+                Response.Builder()
+                    .request(chain.request())
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(200)
+                    .message("OK")
+                    .body("".toResponseBody())
+                    .build()
+            }
             .build()
 
     @Test
@@ -112,7 +124,7 @@ class ApiProviderCleartextAuthTest {
         // flag makes this a refusal — which is exactly the production shape:
         // the deadman switch hands the client its flag at build time.
         val error = assertThrows(IOException::class.java) {
-            guardedClient(isFallbackSession = true).newCall(request).execute()
+            shortCircuitClient(isFallbackSession = true).newCall(request).execute()
         }
         assertTrue(error.message ?: "", error.message!!.contains("fallback"))
     }
@@ -125,7 +137,7 @@ class ApiProviderCleartextAuthTest {
             .url("$fallback/api/v2/account")
             .build()
         val error = assertThrows(IOException::class.java) {
-            guardedClient(isFallbackSession = true).newCall(request).execute()
+            shortCircuitClient(isFallbackSession = true).newCall(request).execute()
         }
         assertTrue(error.message ?: "", error.message!!.contains("fallback"))
     }
@@ -135,11 +147,9 @@ class ApiProviderCleartextAuthTest {
         val request = Request.Builder()
             .url("$fallback/api/v1/posts")
             .build()
-        val error = assertThrows(IOException::class.java) {
-            guardedClient(isFallbackSession = true).newCall(request).execute()
+        shortCircuitClient(isFallbackSession = true).newCall(request).execute().use { response ->
+            assertEquals(200, response.code)
         }
-        // A connection refusal, not the guard: the guard let it through.
-        assertFalse(error.message ?: "", error.message!!.contains("fallback"))
     }
 
     @Test
@@ -148,10 +158,9 @@ class ApiProviderCleartextAuthTest {
             .url("$loopback/api/v2/account")
             .header("Authorization", "Bearer test-key-that-must-not-travel")
             .build()
-        val error = assertThrows(IOException::class.java) {
-            guardedClient(isFallbackSession = false).newCall(request).execute()
+        shortCircuitClient(isFallbackSession = false).newCall(request).execute().use { response ->
+            assertEquals(200, response.code)
         }
-        assertFalse(error.message ?: "", error.message!!.contains("fallback"))
     }
 
     @Test
@@ -160,9 +169,8 @@ class ApiProviderCleartextAuthTest {
             .url("https://127.0.0.1:9/api/v2/account")
             .header("Authorization", "Bearer test-key-that-must-not-travel")
             .build()
-        val error = assertThrows(IOException::class.java) {
-            guardedClient(isFallbackSession = true).newCall(request).execute()
+        shortCircuitClient(isFallbackSession = true).newCall(request).execute().use { response ->
+            assertEquals(200, response.code)
         }
-        assertFalse(error.message ?: "", error.message!!.contains("fallback"))
     }
 }

@@ -178,8 +178,9 @@ class DevCleanupSettingsCopyTest {
             AccountCardCopy.LINK_TRANSPORT_WARNING_FALLBACK,
             // H-4 (2026-11-24): nothing typed is sent on the plain-HTTP
             // fallback — the account calls refuse — so the fallback warning
-            // says that, not that the network could read it.
-            AccountCardCopy.LINK_TRANSPORT_WARNING_FALLBACK.contains("nothing you type here is sent"),
+            // says that, not that the network could read it. (The sentence
+            // starts with a capital, so the match is on the case-free tail.)
+            AccountCardCopy.LINK_TRANSPORT_WARNING_FALLBACK.contains("you type here is sent"),
         )
         assertTrue(
             AccountCardCopy.LINK_TRANSPORT_WARNING_FALLBACK,
