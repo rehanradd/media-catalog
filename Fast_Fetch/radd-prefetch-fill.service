@@ -12,6 +12,12 @@ WorkingDirectory=/opt/radd-stream
 # worker reads it through RADD_DB_PATH at import (config.py freezes DB_PATH),
 # so it must be set here rather than left to a --db flag.
 Environment=RADD_DB_PATH=/home/ubuntu/radd-stream-data/merged_catalog_20261025.db
+# The panel database the worker reads the operator's tuning knobs from
+# (panel_feed.tuning_knob: warmup_count, prefetch_queue,
+# prefetch_concurrency). Without it the knobs fall back to shipped
+# defaults and the panel controls do nothing for this process — the
+# same value the live API service carries.
+Environment=RADD_ADMIN_V2_DB=/home/ubuntu/admin-v2-workspace-20261105/data-live/admin_v2.db
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
 # One --fill run of the top 200 titles at 18:00 PKT: the start rung (480p)
