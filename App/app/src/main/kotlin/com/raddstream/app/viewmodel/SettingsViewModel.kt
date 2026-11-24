@@ -6,6 +6,7 @@ import com.raddstream.app.data.ServerSettingsRepository
 import com.raddstream.app.data.Telemetry
 import com.raddstream.app.data.UserRegion
 import com.raddstream.app.network.friendlyNetworkError
+import com.raddstream.app.network.isFallbackCleartextUrl
 import com.raddstream.app.network.models.PanelDisclaimer
 import com.raddstream.app.player.AudioBoost
 import com.raddstream.app.player.AudioBoostUi
@@ -1181,24 +1182,38 @@ class SettingsViewModel @Inject constructor(
          * a viewer can actually be harmed by: it is shown once, and the transport is whatever
          * the catalog they chose speaks — the shipped default is HTTPS, a catalog the viewer
          * points at over plain HTTP still sends the code where anyone on the network can read
-         * it — so the copy never claims a protection the transport does not provide.
-         * [revealWarning] picks the sentence for the catalog in use; [REVEAL_WARNING] is the
-         * plain-HTTP variant.
+         * it, and the plain-HTTP fallback never gets the code at all (account traffic refuses
+         * rather than crossing in the clear, H-4, 2026-11-24) — so the copy never claims a
+         * protection the transport does not provide, and never claims an exposure that no
+         * longer exists. [revealWarning] picks the sentence for the catalog in use;
+         * [REVEAL_WARNING] is the plain-HTTP variant, [REVEAL_WARNING_FALLBACK] the
+         * fallback variant.
          */
         const val REVEAL_WARNING =
             "This is the only time the account code is shown. Write it down now: anyone on " +
                 "this network could read it, and anyone who reads it can open your list. " +
                 "Losing it means starting a new list."
 
+        const val REVEAL_WARNING_FALLBACK =
+            "This is the only time the account code is shown. Write it down now: anyone who reads it can " +
+                "open your list. Losing it means starting a new list. This catalog is plain HTTP, so " +
+                "account sync is off here and the code is never sent over this connection."
+
         const val REVEAL_WARNING_SECURED =
             "This is the only time the account code is shown. Write it down now: anyone who reads it can " +
                 "open your list. Losing it means starting a new list."
 
-        /** The reveal warning for the catalog in use: the plain-HTTP sentence only when the
-         * catalog actually speaks plain HTTP. */
-        fun revealWarning(serverUrl: String): String =
-            if (serverUrl.trim().startsWith("https", ignoreCase = true)) REVEAL_WARNING_SECURED
-            else REVEAL_WARNING
+        /** The reveal warning for the catalog in use: the secured sentence over HTTPS, the
+         * fallback sentence on the plain-HTTP fallback (sync is off there), the plain-HTTP
+         * sentence for any other plain-HTTP catalog. */
+        fun revealWarning(serverUrl: String): String {
+            val url = serverUrl.trim()
+            return when {
+                url.startsWith("https", ignoreCase = true) -> REVEAL_WARNING_SECURED
+                isFallbackCleartextUrl(url) -> REVEAL_WARNING_FALLBACK
+                else -> REVEAL_WARNING
+            }
+        }
     }
 }
 
@@ -1218,9 +1233,11 @@ internal fun refusalSentence(reason: Refusal): String = when (reason) {
  *
  * Four rules they all obey, and the reason each one is a rule rather than a style:
  *  - **no security claim.** A catalog the viewer points at over plain HTTP has no TLS, so the
- *    PIN and the phone cross the wire where anyone on the network can read them — the shipped
- *    default is HTTPS, and the transport warning says which one is in use. Nothing here may say
- *    secure, encrypted, private, or "only you" about a plain-HTTP catalog;
+ *    PIN and the phone cross the wire where anyone on the network can read them — except on
+ *    the plain-HTTP fallback, where the account calls refuse rather than cross in the clear
+ *    (H-4, 2026-11-24) and nothing is sent at all — the shipped default is HTTPS, and the
+ *    transport warning says which one is in use. Nothing here may say secure, encrypted,
+ *    private, or "only you" about a plain-HTTP catalog;
  *  - **no lock claim.** The trial is opened by a device id this app makes up about itself
  *    (`accounts.py:240`: "client-reported … spoofable on a rooted phone"), so it is a gate, and no
  *    copy may call it verified, locked to a device, or proof of who somebody is;
@@ -1253,21 +1270,33 @@ object AccountCardCopy {
     /**
      * The transport warning. It is the sentence the whole modal exists to earn the right to show,
      * and it states what is true about the catalog in use rather than what a TLS deployment would
-     * be: the plain-HTTP sentence only when the catalog actually speaks plain HTTP.
-     * [linkTransportWarning] picks the sentence for the catalog in use;
-     * [LINK_TRANSPORT_WARNING] is the plain-HTTP variant.
+     * be: the plain-HTTP sentence only when the catalog actually speaks plain HTTP — and the
+     * fallback sentence on the plain-HTTP fallback, where nothing typed is sent at all (H-4,
+     * 2026-11-24). [linkTransportWarning] picks the sentence for the catalog in use;
+     * [LINK_TRANSPORT_WARNING] is the plain-HTTP variant, [LINK_TRANSPORT_WARNING_FALLBACK]
+     * the fallback variant.
      */
     internal const val LINK_TRANSPORT_WARNING =
         "Anyone on this network could read what you type here, so don't use a PIN you use " +
             "anywhere else."
 
+    internal const val LINK_TRANSPORT_WARNING_FALLBACK =
+        "Nothing you type here is sent on this connection — account features are off until " +
+            "this catalog is reached over HTTPS. Don't use a PIN you use anywhere else."
+
     internal const val LINK_TRANSPORT_WARNING_SECURED =
         "Don't use a PIN you use anywhere else."
 
-    /** The transport warning for the catalog in use. */
-    internal fun linkTransportWarning(serverUrl: String): String =
-        if (serverUrl.trim().startsWith("https", ignoreCase = true)) LINK_TRANSPORT_WARNING_SECURED
-        else LINK_TRANSPORT_WARNING
+    /** The transport warning for the catalog in use: secured over HTTPS, fallback on the
+     * plain-HTTP fallback, plain-HTTP for any other plain-HTTP catalog. */
+    internal fun linkTransportWarning(serverUrl: String): String {
+        val url = serverUrl.trim()
+        return when {
+            url.startsWith("https", ignoreCase = true) -> LINK_TRANSPORT_WARNING_SECURED
+            isFallbackCleartextUrl(url) -> LINK_TRANSPORT_WARNING_FALLBACK
+            else -> LINK_TRANSPORT_WARNING
+        }
+    }
 
     /**
      * What the number is worth, in the same words the card above uses. This sentence used to say a

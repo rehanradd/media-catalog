@@ -78,7 +78,9 @@ enum class Refusal { NO_SERVER, WEAK_KEY, REJECTED, THROTTLED, OFFLINE, SIGNED_O
  *
  * The key lives in the app's private DataStore beside the server URL
  * ([ServerSettingsRepository.syncKey]) — the same file as everything else the user typed
- * into this app, which is to say: as safe as the device, and sent over plain HTTP.
+ * into this app, which is to say: as safe as the device, and sent over HTTPS only — on
+ * the plain-HTTP fallback the account calls are refused before they leave the phone
+ * (H-4, 2026-11-24).
  */
 @Singleton
 class SyncAccountRepository @Inject constructor(

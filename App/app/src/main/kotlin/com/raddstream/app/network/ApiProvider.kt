@@ -4,6 +4,7 @@ import com.google.gson.Gson
 import com.raddstream.app.brand.Brand
 import com.raddstream.app.data.ServerSettingsRepository
 import com.raddstream.app.data.Telemetry
+import java.io.IOException
 import java.net.URI
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
@@ -14,6 +15,8 @@ import javax.inject.Singleton
 import kotlinx.coroutines.flow.first
 import okhttp3.Cache
 import okhttp3.CertificatePinner
+import okhttp3.HttpUrl
+import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
@@ -46,6 +49,89 @@ internal fun readTimeoutSecondsForPath(path: String): Int = when {
 }
 
 /**
+ * The account surface: every route whose request carries the sync key, or
+ * whose response mints one. POST /api/v2/account and /anonymous take no key
+ * but answer one — so the path rule, not just the header rule, has to cover
+ * them. (H-4, 2026-11-24.)
+ */
+internal fun isAccountRoute(path: String): Boolean {
+    val clean = path.trim().trimEnd('/')
+    return clean == "/api/v2/account" || clean.startsWith("/api/v2/account/")
+}
+
+/**
+ * True when this address is the plain-HTTP fallback itself: the deadman-switch
+ * address from Brand (http://92.4.95.252), reached over plain HTTP. A
+ * viewer-pointed server on the same address counts too — it is the fallback
+ * whether the deadman switch handed it over or the viewer typed it in.
+ * Anything else — an HTTPS catalog, a LAN server, a loopback test server —
+ * is not the fallback, and this function says so. Pure, so the guard tests
+ * pin it without a network call.
+ */
+internal fun isFallbackCleartextUrl(url: String): Boolean {
+    val uri = runCatching { URI(url.trim()) }.getOrNull() ?: return false
+    if (uri.scheme?.lowercase(Locale.ROOT) != "http") return false
+    val fallbackHost = runCatching { URI(Brand.fallbackServerUrl).host }.getOrNull()
+        ?: return false
+    return uri.host?.equals(fallbackHost, ignoreCase = true) == true
+}
+
+/**
+ * True when this request must never leave the phone over its own transport:
+ * the client is running on a cleartext fallback session and the request
+ * carries a credential — the sync key in `Authorization`, the VIP pass in
+ * [VIP_PASS_HEADER] — or it targets the account surface, whose responses
+ * carry a freshly minted key. A signed-out catalog read on the same session
+ * is not blocked: the catalog is not private, and the deadman-switch
+ * fallback exists for exactly those reads. Pure, so
+ * ApiProviderCleartextAuthTest pins it without a network call.
+ */
+internal fun isAuthTrafficBlocked(
+    url: HttpUrl,
+    hasAuthorization: Boolean,
+    hasVipPass: Boolean,
+    isFallbackSession: Boolean,
+): Boolean {
+    if (!url.scheme.equals("http", ignoreCase = true)) return false
+    if (!isFallbackSession && !isFallbackCleartextUrl(url.toString())) return false
+    if (hasAuthorization || hasVipPass) return true
+    return isAccountRoute(url.encodedPath)
+}
+
+/**
+ * The fail-closed guard for authenticated traffic (H-4, 2026-11-24): the
+ * sync key used to cross in cleartext whenever the deadman switch had handed
+ * the app the plain-HTTP fallback, because the fallback steers the whole
+ * Retrofit client. A factory, not a single instance: the flag is baked in at
+ * client-build time in [ApiProvider.forServer], from the session decision —
+ * a client built for a fallback session refuses, any other client passes
+ * everything through. Installed first, so a refused request never reaches
+ * the cache, the timeout or the header interceptors — and never leaves the
+ * phone. A refusal throws [IOException], the same failure the callers
+ * already treat as "couldn't reach the catalog", so sign-in, sync, coins
+ * and VIP simply read as unavailable until the catalog is reached over
+ * HTTPS again.
+ */
+internal fun cleartextAuthGuardInterceptor(isFallbackSession: Boolean): Interceptor =
+    Interceptor { chain ->
+        val request = chain.request()
+        if (isAuthTrafficBlocked(
+                request.url,
+                request.header("Authorization") != null,
+                request.header(VIP_PASS_HEADER) != null,
+                isFallbackSession,
+            )
+        ) {
+            throw IOException(
+                "Account and authenticated traffic never travels over the plain-HTTP " +
+                    "fallback: sign-in, sync, coins and VIP are unavailable until " +
+                    "the catalog is reached over HTTPS again.",
+            )
+        }
+        chain.proceed(request)
+    }
+
+/**
  * Builds (and caches) the Retrofit client for the server the user picked.
  *
  * WHAT IS DELIBERATELY NOT INSTALLED: no `HttpLoggingInterceptor`. Even with provenance gone
@@ -66,6 +152,13 @@ internal fun readTimeoutSecondsForPath(path: String): Int = when {
  * calls never touch the cache. The two constructor parameters default to
  * null so plain-JVM tests keep constructing `ApiProvider(settings)` — a
  * null cache means no disk cache, exactly as before.
+ *
+ * H-4 (2026-11-24): the client DOES carry one guard interceptor —
+ * [cleartextAuthGuardInterceptor], installed first — that refuses account and
+ * authenticated traffic on a cleartext fallback session. The deadman-switch
+ * fallback is catalog reads only; the sync key never crosses it in the clear
+ * again. A viewer-pointed HTTP server is not a fallback session and keeps
+ * working, with the transport disclosed on the account screen.
  *
  * Open, with [current] open, so a test can stand in a provider that throws
  * without a server (Session 157): the detail path must answer null on a
@@ -157,6 +250,16 @@ open class ApiProvider @Inject constructor(
             }
 
             val defaultHost = runCatching { URI(Brand.defaultServerUrl).host }.getOrNull()
+            // H-4 (2026-11-24): the guard applies only on a cleartext fallback
+            // session — the deadman switch handed this process a plain-HTTP
+            // override, so the client it builds must never carry a credential.
+            // A viewer-pointed HTTP server (a LAN catalog, a loopback test
+            // server) is not a fallback session and keeps working; the
+            // fallback address itself is also caught by
+            // isFallbackCleartextUrl inside the rule, so a viewer who typed
+            // the fallback address in by hand is refused the same way.
+            val isFallbackSession = sessionDecision?.sessionUrl == baseUrl &&
+                URI(baseUrl).scheme?.lowercase(Locale.ROOT) == "http"
             val clientBuilder = OkHttpClient.Builder()
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(15, TimeUnit.SECONDS)
@@ -168,6 +271,10 @@ open class ApiProvider @Inject constructor(
                 // a build without the module) means no disk cache, as before.
                 .cache(httpCache)
                 .addNetworkInterceptor(CacheControlNetworkInterceptor())
+                // H-4 (2026-11-24): the cleartext guard goes first, before the
+                // cache-freshness interceptor — a refused request must never be
+                // served stale from the cache either, and never leave the phone.
+                .addInterceptor(cleartextAuthGuardInterceptor(isFallbackSession))
                 .apply { cacheFreshnessInterceptor?.let { addInterceptor(it) } }
                 // Screenshot-fix (2026-11-16): the 15 s read timeout is a
                 // per-read silence budget, and the big catalog bodies do
@@ -334,9 +441,16 @@ fun downloadRedirectUrl(baseUrl: String, streamId: String): String {
  * pointed at a person. Callers fetch it once per URL build from
  * `SyncAccountRepository.currentVipPass()`; the value is cached there, so
  * this never costs a network call at play time.
+ *
+ * H-4 (2026-11-24): the fallback's plain-HTTP URL is also left untouched.
+ * The pass is a bearer credential and a URL query is logged everywhere —
+ * server logs, WebView history, bug reports — so it never rides the fallback
+ * in cleartext: there the pass is dropped and the press answers 402 instead
+ * of leaking it. Any other URL is untouched.
  */
 fun withVipPass(url: String, pass: String?): String {
     if (pass.isNullOrBlank()) return url
+    if (isFallbackCleartextUrl(url)) return url
     val encoded = URLEncoder.encode(pass.trim(), StandardCharsets.UTF_8.name())
     return url + if ("?" in url) "&vip=$encoded" else "?vip=$encoded"
 }

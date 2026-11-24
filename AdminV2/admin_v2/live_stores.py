@@ -49,6 +49,7 @@ Rules:
 """
 import glob
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -61,6 +62,7 @@ import threading
 import socket
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
@@ -420,28 +422,109 @@ def check_host_move(old_host, new_host, fleet_base_dir=None):
     return host_registry.validate_host_move(old_host, new_host)
 
 
+def _is_public_url(url):
+    """True only when every address `url`'s host resolves to is a public
+    (global) IP. A hostname that resolves to a private, loopback, link-local,
+    reserved, multicast or unspecified address — or that does not resolve at
+    all — is not public. Pure except for the DNS lookup; an IP literal never
+    touches DNS."""
+    try:
+        host = (urllib.parse.urlparse(url).hostname or "").strip()
+    except (ValueError, AttributeError):
+        return False
+    if not host:
+        return False
+    try:
+        return ipaddress.ip_address(host).is_global
+    except ValueError:
+        pass
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except (socket.gaierror, OSError, ValueError):
+        return False
+    if not infos:
+        return False
+    for info in infos:
+        try:
+            address = ipaddress.ip_address(info[4][0])
+        except (ValueError, IndexError):
+            return False
+        if not address.is_global:
+            return False
+    return True
+
+
+class _PublicOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Follows a redirect only to a public target. A redirect to a
+    private/reserved address is not followed: returning None hands the
+    redirect response back to the caller, so the probe sees the 3xx and
+    reports the stream as not alive — the probe never fetches an internal
+    target (the panel itself, the VM's metadata address, a loopback
+    service)."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not _is_public_url(newurl):
+            return None
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _refused_redirect_error(resp):
+    """The error for a 3xx the probe did not follow: a redirect is only left
+    unfollowed when its target is not a public address, so name that. A 3xx
+    with no Location, or a public Location the probe stopped at for another
+    reason, keeps a null error."""
+    location = ""
+    try:
+        location = (resp.headers.get("Location") or "").strip()
+    except (AttributeError, KeyError):
+        location = ""
+    if location and not _is_public_url(location):
+        return "redirect target is not a public address"
+    return None
+
+
 def check_stream_url(url, timeout=STREAM_CHECK_TIMEOUT):
     """Probe one stream URL without downloading it.
 
     HEAD first; if the host rejects HEAD (405/501), retry with a
     1-byte Range GET. Alive = HTTP 200/206. Never reads a body larger
     than 1 byte. Returns {"alive": bool, "status": int|None,
-    "error": str|None}."""
+    "error": str|None}.
+
+    SSRF guard (2026-11-24): the URL comes from an admin-typed field, so the
+    probe refuses a target that is not a public address — private, loopback,
+    link-local, reserved or unresolvable — before fetching, and follows a
+    redirect only to another public address. A refused redirect answers as a
+    3xx with a "redirect target is not a public address" error, never as a
+    fetch of the internal target. The 1-byte cap and the admin-only route
+    around this probe are unchanged."""
     if not isinstance(url, str) or not url.strip():
         return {"alive": False, "status": None, "error": "empty URL"}
     url = url.strip()
     if not re.match(r"^https?://", url, re.I):
         return {"alive": False, "status": None, "error": "URL must be http(s)"}
+    if not _is_public_url(url):
+        return {"alive": False, "status": None,
+                "error": "URL does not resolve to a public address"}
+    opener = urllib.request.build_opener(_PublicOnlyRedirectHandler())
     for method, headers in (("HEAD", {}), ("GET", {"Range": "bytes=0-0"})):
         req = urllib.request.Request(url, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with opener.open(req, timeout=timeout) as resp:
                 status = getattr(resp, "status", 200)
-                return {"alive": status in (200, 206), "status": status, "error": None}
+                if status in (200, 206):
+                    return {"alive": True, "status": status, "error": None}
+                if status in (301, 302, 303, 307, 308):
+                    return {"alive": False, "status": status,
+                            "error": _refused_redirect_error(resp)}
+                return {"alive": False, "status": status, "error": None}
         except urllib.error.HTTPError as exc:
             # 405/501 = HEAD not allowed; fall through to the Range GET.
             if method == "HEAD" and exc.code in (405, 501):
                 continue
+            if exc.code in (301, 302, 303, 307, 308):
+                return {"alive": False, "status": exc.code,
+                        "error": _refused_redirect_error(exc)}
             return {"alive": exc.code in (200, 206), "status": exc.code, "error": None}
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
             return {"alive": False, "status": None, "error": str(exc)[:200]}

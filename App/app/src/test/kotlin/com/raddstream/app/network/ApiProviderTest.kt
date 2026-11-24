@@ -114,9 +114,9 @@ class ApiProviderTest {
 
     @Test
     fun `a vip pass appends to a redirector url and nothing without one`() {
-        val url = streamRedirectUrl("http://92.4.95.252", "tok1")
+        val url = streamRedirectUrl("https://raddstream.duckdns.org", "tok1")
         assertEquals(
-            "http://92.4.95.252/api/v1/stream?id=tok1&vip=ABC123",
+            "https://raddstream.duckdns.org/api/v1/stream?id=tok1&vip=ABC123",
             withVipPass(url, "ABC123"),
         )
         assertEquals(url, withVipPass(url, null))
@@ -126,8 +126,33 @@ class ApiProviderTest {
     @Test
     fun `a vip pass starts the query on a url without one`() {
         assertEquals(
-            "http://92.4.95.252/api/v1/download?vip=ABC123",
+            "https://raddstream.duckdns.org/api/v1/download?vip=ABC123",
+            withVipPass("https://raddstream.duckdns.org/api/v1/download", "ABC123"),
+        )
+    }
+
+    @Test
+    fun `a vip pass never rides the plain-http fallback redirector url`() {
+        // H-4 (2026-11-24): the pass is a bearer credential and a URL query is
+        // logged everywhere, so on the plain-HTTP fallback it is dropped and the
+        // press answers 402 instead of leaking it. The fallback IP is the case
+        // that used to append it — pinned here so it never comes back.
+        val streamUrl = streamRedirectUrl("http://92.4.95.252", "tok1")
+        assertEquals(streamUrl, withVipPass(streamUrl, "ABC123"))
+        assertEquals(
+            "http://92.4.95.252/api/v1/download",
             withVipPass("http://92.4.95.252/api/v1/download", "ABC123"),
+        )
+    }
+
+    @Test
+    fun `a vip pass still appends on a viewer-pointed plain-http catalog`() {
+        // H-4 is fallback-scoped: a LAN catalog is not the fallback, so the
+        // pass still rides there (the transport is disclosed on the account
+        // screen). Only the fallback address drops it.
+        assertEquals(
+            "http://192.168.1.5:8080/api/v1/stream?id=tok1&vip=ABC123",
+            withVipPass("http://192.168.1.5:8080/api/v1/stream?id=tok1", "ABC123"),
         )
     }
 }

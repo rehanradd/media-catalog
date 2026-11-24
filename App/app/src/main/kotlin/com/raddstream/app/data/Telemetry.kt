@@ -67,11 +67,25 @@ object Telemetry {
     private var counters: UsageCounters? = null
 
     /**
+     * The application context [init] keeps so [refresh] can hand the viewer's
+     * consent answer to Firebase (H-2, 2026-11-24). Null until [init] runs; a
+     * [refresh] before that leaves collection at its manifest default (off) —
+     * fail-closed, never fail-open.
+     */
+    @Volatile
+    private var appContext: Context? = null
+
+    /**
      * Build the counter store and the device class. Safe to call twice: the
      * store is created once, and RAM does not change under a running process.
-     * Does not touch consent — [refresh] owns that, once DataStore has loaded.
+     * Does not touch consent — [refresh] owns that, once DataStore has loaded —
+     * but it does keep the application context, so [refresh] can apply the
+     * same answer to Firebase collection.
      */
     fun init(context: Context) {
+        if (appContext == null) {
+            appContext = context.applicationContext
+        }
         if (counters == null) {
             counters = UsageCounters(
                 SharedPreferencesUsageCounterStore(context),
@@ -86,7 +100,9 @@ object Telemetry {
     /**
      * Read the viewer's answers from DataStore into the snapshot. Runs on
      * launch and again right after the consent dialog or the Settings switch
-     * is answered, so a changed answer takes effect without a restart.
+     * is answered, so a changed answer takes effect without a restart. It also
+     * hands the answer to [FirebaseConsent], so the Firebase collection
+     * switches follow the same answer at the same moment (H-2, 2026-11-24).
      *
      * The install id is minted only for a viewer who said yes: a declined or
      * unanswered consent leaves [installId] null, and the interceptor then
@@ -107,6 +123,12 @@ object Telemetry {
             audioLanguage = null
             subtitleLanguage = null
         }
+        // H-2: the Firebase gate follows the same answer, at the same moment.
+        // Collection defaults OFF (manifest meta-data), so a viewer who never
+        // answers, or who declines, is never collected from — and a changed
+        // answer takes effect here, without a restart. [FirebaseConsent.apply]
+        // never throws, so a missing Firebase config cannot break the refresh.
+        appContext?.let { FirebaseConsent.apply(it, consentAccepted) }
     }
 
     /**

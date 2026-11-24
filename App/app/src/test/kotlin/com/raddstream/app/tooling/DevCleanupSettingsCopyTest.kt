@@ -147,7 +147,14 @@ class DevCleanupSettingsCopyTest {
         assertTrue(secured, secured.startsWith("This is the only time the account code is shown."))
         assertTrue(secured, secured.contains("anyone who reads it can open your list."))
         assertFalse("the secured warning must not claim the network can read it", secured.contains("could read it"))
-        for (warning in listOf(plain, secured)) {
+        // H-4 (2026-11-24): on the plain-HTTP fallback the code is never sent —
+        // account traffic refuses rather than crossing in the clear — so the
+        // warning says sync is off, not that the network could read it.
+        val fallback = SettingsViewModel.revealWarning("http://92.4.95.252")
+        assertTrue(fallback, fallback.startsWith("This is the only time the account code is shown."))
+        assertTrue(fallback, fallback.contains("account sync is off here"))
+        assertTrue(fallback, fallback.contains("Losing it means starting a new list."))
+        for (warning in listOf(plain, secured, fallback)) {
             assertFalse("the warning must not say server: $warning", warning.contains("server", ignoreCase = true))
             assertFalse("the warning must not say sync key: $warning", warning.contains("sync key", ignoreCase = true))
         }
@@ -167,6 +174,17 @@ class DevCleanupSettingsCopyTest {
             AccountCardCopy.LINK_TRANSPORT_WARNING,
             AccountCardCopy.LINK_TRANSPORT_WARNING.contains("don't use a PIN you use anywhere else"),
         )
+        assertTrue(
+            AccountCardCopy.LINK_TRANSPORT_WARNING_FALLBACK,
+            // H-4 (2026-11-24): nothing typed is sent on the plain-HTTP
+            // fallback — the account calls refuse — so the fallback warning
+            // says that, not that the network could read it.
+            AccountCardCopy.LINK_TRANSPORT_WARNING_FALLBACK.contains("nothing you type here is sent"),
+        )
+        assertTrue(
+            AccountCardCopy.LINK_TRANSPORT_WARNING_FALLBACK,
+            AccountCardCopy.LINK_TRANSPORT_WARNING_FALLBACK.contains("don't use a PIN you use anywhere else"),
+        )
         assertEquals(
             "Don't use a PIN you use anywhere else.",
             AccountCardCopy.LINK_TRANSPORT_WARNING_SECURED,
@@ -182,6 +200,7 @@ class DevCleanupSettingsCopyTest {
         for (sentence in listOf(
             AccountCardCopy.TRIAL_HONESTY,
             AccountCardCopy.LINK_TRANSPORT_WARNING,
+            AccountCardCopy.LINK_TRANSPORT_WARNING_FALLBACK,
             AccountCardCopy.LINK_TRANSPORT_WARNING_SECURED,
             AccountCardCopy.LINK_PIN_MEANING,
             AccountCardCopy.LINK_WHICH_SERVER,
@@ -189,6 +208,24 @@ class DevCleanupSettingsCopyTest {
             assertFalse("trial/link copy must not say server: $sentence", sentence.contains("server", ignoreCase = true))
             assertFalse("trial/link copy must not say sync key: $sentence", sentence.contains("sync key", ignoreCase = true))
         }
+    }
+
+    @Test
+    fun `the link transport warning picks the fallback sentence on the fallback`() {
+        // H-4 (2026-11-24): the picker is three-way — secured over HTTPS,
+        // fallback on the plain-HTTP fallback, plain-HTTP anywhere else.
+        assertEquals(
+            AccountCardCopy.LINK_TRANSPORT_WARNING_SECURED,
+            AccountCardCopy.linkTransportWarning("https://raddstream.duckdns.org"),
+        )
+        assertEquals(
+            AccountCardCopy.LINK_TRANSPORT_WARNING_FALLBACK,
+            AccountCardCopy.linkTransportWarning("http://92.4.95.252"),
+        )
+        assertEquals(
+            AccountCardCopy.LINK_TRANSPORT_WARNING,
+            AccountCardCopy.linkTransportWarning("http://192.168.1.4:8080"),
+        )
     }
 
     // ── hiddenNotice and the version line ────────────────────────────────────

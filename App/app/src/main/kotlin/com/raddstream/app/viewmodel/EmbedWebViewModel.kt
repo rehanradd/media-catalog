@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.raddstream.app.network.ApiProvider
 import com.raddstream.app.network.VIP_PASS_HEADER
+import com.raddstream.app.network.isFallbackCleartextUrl
 import com.raddstream.app.network.isSameOriginAsServer
 import com.raddstream.app.network.streamRedirectUrl
 import com.raddstream.app.sync.SyncAccountRepository
@@ -79,8 +80,13 @@ class EmbedWebViewModel @Inject constructor(
             // Embed player gets 402 without the pass. The pass travels as a
             // request header on the initial redirector request only — never in
             // the URL, never in history. Null for guests and free accounts.
+            // H-4 (2026-11-24): the header rides everywhere except the
+            // plain-HTTP fallback, where it is dropped — so the pass never
+            // crosses the fallback in cleartext. A viewer-pointed HTTP server
+            // keeps the header; the fallback is the refused case.
             val headers = runCatching { syncAccountRepository.currentVipPass() }.getOrNull()
                 ?.takeIf { it.isNotBlank() }
+                ?.takeIf { url?.let { u -> !isFallbackCleartextUrl(u) } == true }
                 ?.let { mapOf(VIP_PASS_HEADER to it) }
                 .orEmpty()
             _page.value = when {

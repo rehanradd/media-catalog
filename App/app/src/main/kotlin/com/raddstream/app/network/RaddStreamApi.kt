@@ -70,9 +70,14 @@ fun bearerHeader(syncKey: String?): String? =
  * signed-out caller passes `null`, which Retrofit omits, so the four v1 routes and the
  * signed-out app are untouched by anything below this line.
  *
- * The key goes out as a header value: over HTTPS to the shipped default, in the clear to a
- * server the viewer points at over plain HTTP. The account screen says which one is in use
- * out loud, and never claims a protection the transport does not provide.
+ * The key goes out as a header value over HTTPS only — and never over the
+ * plain-HTTP fallback, whether the deadman switch handed it over or the viewer
+ * typed the fallback address in by hand: [com.raddstream.app.network.ApiProvider]
+ * refuses account and authenticated traffic on a fallback session (H-4, 2026-11-24),
+ * so sign-in, sync, coins and VIP fail closed there and the catalog reads carry on.
+ * A server the viewer points at over plain HTTP is their own choice, and the account
+ * screen says which transport is in use out loud, never claiming a protection the
+ * transport does not provide.
  */
 interface RaddStreamApi {
 
@@ -367,9 +372,10 @@ interface RaddStreamApi {
      * The bearer key is mandatory and is the only thing that decides which account is written:
      * a body `account_id` is ignored on purpose, not refused. The server stores the PIN as
      * PBKDF2-HMAC-SHA256 with a per-row salt and 120k iterations, which slows a stolen database
-     * file and does nothing for the wire — to a server the viewer points at over plain HTTP the
-     * digits cross it in the clear and the attempt limiter is the only thing between a 4-digit
-     * PIN and a guesser; the shipped default speaks HTTPS. No copy about this call may say
+     * file and does nothing for the wire — on the plain-HTTP fallback the call is refused
+     * outright, so the digits never cross it, and the attempt limiter is the only thing
+     * between a 4-digit PIN and a guesser on an HTTPS server; the shipped default speaks
+     * HTTPS. No copy about this call may say
      * secure, encrypted, private, or "only you can access this" about a plain-HTTP server.
      *
      * **201 means the +1 day bonus was granted; 200 means it already was** (`linked_at` makes it

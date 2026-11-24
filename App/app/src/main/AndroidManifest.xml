@@ -83,6 +83,23 @@
             android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
             android:value="com.raddstream.app.player.RaddCastOptionsProvider" />
 
+        <!-- Analytics consent (H-2, 2026-11-24): Firebase collection defaults OFF.
+             The first-run dialog promises "nothing is counted, nothing is sent" on a
+             decline, and the manifest default is what keeps that promise before the
+             app has read the answer — FirebaseConsent.apply() (from Telemetry.refresh)
+             turns collection on only for a viewer who said yes, and off again the
+             moment the answer changes. Sessions rides the same answer: its data is
+             collection too, and a declined viewer sends none of it. -->
+        <meta-data
+            android:name="firebase_analytics_collection_enabled"
+            android:value="false" />
+        <meta-data
+            android:name="firebase_crashlytics_collection_enabled"
+            android:value="false" />
+        <meta-data
+            android:name="firebase_sessions_collection_enabled"
+            android:value="false" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

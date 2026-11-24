@@ -25,17 +25,19 @@ WHAT THIS IS NOT. Read it before "hardening" anything.
   against a profile that already exists, and a customer who forgets four digits
   cannot get their account back through any route here. If somebody later wants
   phone+PIN sign-in, that is a different feature with a different threat model
-  (10^4 guesses against a national numbering plan, on a host with no TLS) and it
+  (10^4 guesses against a national numbering plan) and it
   must not be built by quietly removing the bearer requirement from these routes.
-* **Not confidential in transit.** The deployed host is plain HTTP with no TLS
-  (see ORACLE_DEPLOYMENT.md; ``http://92.4.95.252/``). The sync key in the
-  ``Authorization`` header therefore travels in the clear, and anyone on the
-  path between the app and this VM can read it and *become* that account —
-  its favorites and resume points, which is all an account holds. No header
-  trick, hash or token format fixes that; only TLS does, and this VM has no
-  certificate. The app must warn the user once, at account creation, and the
-  operator must not put anything sensitive behind an account. This paragraph
-  is the honest state of the feature, not a TODO to delete.
+* **Confidential in transit — on the HTTPS primary only.** The deployed
+  primary is HTTPS (``https://raddstream.duckdns.org``, HSTS + SPKI pinning
+  in the app); the sync key in the ``Authorization`` header travels under
+  that TLS, and no header trick, hash or token format is what protects it —
+  the transport is. The plain-HTTP fallback (``http://92.4.95.252``, the
+  deadman switch for when HTTPS is unreachable) is catalog reads only: the
+  app refuses account and authenticated traffic over it rather than sending
+  the key in the clear, so a fallback session cannot become an account. The
+  app must warn the user once, at account creation, and the operator must
+  not put anything sensitive behind an account. This paragraph is the honest
+  state of the feature, not a TODO to delete.
 * **Not an access-control system for the catalog.** Everything a signed-out
   client may see, a signed-in client may see. An account changes what is
   *stored* for you, never what you are *allowed to read*.
@@ -63,14 +65,16 @@ WHAT THIS IS NOT. Read it before "hardening" anything.
   posted. That pair is also why no earning route may take an `amount`: "+10 coins" is
   `streak_day1_coins`, an operator setting, and a caller that could name its own reward
   is a caller that is setting its own price.
-* **A wallet over plain HTTP.** `/api/v2/account*` is already in the nginx allow-list,
-  so these routes are public the moment they exist, and this host serves HTTP with no
-  TLS (root `AGENTS.md`, `ORACLE_DEPLOYMENT.md`). For catalog reads that is a settled
-  decision — "the catalog is not private". A balance is not the catalog: the whole
-  credential for moving real rupee-value is a 16-character sync key that crosses the
-  path in the clear, next to the phone+PIN that already does. That is a hazard for the
-  owner to accept or fix, not a reason to hide the route and not something this file can
-  fix; it is recorded in `Fast_Fetch/checkpoints/` with the rest of the plaintext list.
+* **A wallet over HTTPS only.** `/api/v2/account*` is already in the nginx allow-list,
+  so these routes are public the moment they exist — public is not the same as
+  unprotected: every one of them is bearer-authenticated, and the bearer <redacted>
+  crosses only under the primary's TLS. For catalog reads the plain-HTTP fallback
+  is a settled decision — "the catalog is not private" — but a balance is not the
+  catalog: the whole credential for moving real rupee-value is a 16-character sync
+  key, and on the fallback the app refuses the call instead of sending it in the
+  clear, next to the phone+PIN that are likewise never sent there. That refusal is
+  the fix for the hazard this paragraph used to record; the history of the hazard
+  is recorded in `Fast_Fetch/checkpoints/` with the rest of the plaintext list.
 
 PROVENANCE (absolute; `redact.py` is the vocabulary owner):
   A `cat_works.work_key` is built from scraped data and can contain a site

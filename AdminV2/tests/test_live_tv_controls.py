@@ -8,11 +8,17 @@ import os
 import sys
 import tempfile
 import unittest
+import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from admin_v2.errors import ApiError  # noqa: E402
-from admin_v2.live_stores import LiveStores, check_stream_url  # noqa: E402
+from admin_v2.live_stores import (  # noqa: E402
+    LiveStores,
+    _PublicOnlyRedirectHandler,
+    _is_public_url,
+    check_stream_url,
+)
 from admin_v2.services import Service  # noqa: E402
 
 
@@ -319,6 +325,49 @@ class TestCheckStreamUrl(unittest.TestCase):
         self.assertFalse(check_stream_url("")["alive"])
         self.assertFalse(check_stream_url("ftp://example.com/x")["alive"])
         self.assertFalse(check_stream_url(None)["alive"])
+
+    def test_rejects_private_loopback_and_link_local_targets(self):
+        # SSRF guard (2026-11-24): the probe must never be steered at the
+        # panel itself, the metadata address, or any internal target. IP
+        # literals never touch DNS, so these run offline.
+        for url in (
+            "http://127.0.0.1:18080/",
+            "http://127.0.0.1:9/x",
+            "http://10.0.0.5/x",
+            "http://192.168.1.5:8080/x",
+            "http://172.16.0.9/x",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://0.0.0.0/",
+            "http://[::1]/x",
+            "http://localhost:18080/",
+            "http://user:pass@127.0.0.1/admin",
+        ):
+            result = check_stream_url(url)
+            self.assertFalse(result["alive"], url)
+            self.assertIn("public", result["error"] or "", url)
+
+    def test_rejects_unresolvable_hosts(self):
+        result = check_stream_url("http://256.256.256.256/x")
+        self.assertFalse(result["alive"])
+        self.assertIn("public", result["error"] or "")
+
+    def test_is_public_url_allows_public_literals(self):
+        self.assertTrue(_is_public_url("https://8.8.8.8/x"))
+        self.assertTrue(_is_public_url("http://1.1.1.1:8080/x"))
+        self.assertFalse(_is_public_url("https://192.168.0.1/x"))
+        self.assertFalse(_is_public_url("not a url"))
+
+    def test_redirect_handler_refuses_private_targets(self):
+        handler = _PublicOnlyRedirectHandler()
+        req = urllib.request.Request("https://8.8.8.8/start")
+        self.assertIsNone(handler.redirect_request(
+            req, None, 302, "Found", {}, "http://127.0.0.1:18080/admin"))
+        self.assertIsNone(handler.redirect_request(
+            req, None, 302, "Found", {}, "http://169.254.169.254/"))
+        followed = handler.redirect_request(
+            req, None, 302, "Found", {}, "https://8.8.8.8/next")
+        self.assertIsNotNone(followed)
+        self.assertEqual(followed.full_url, "https://8.8.8.8/next")
 
 
 if __name__ == "__main__":
