@@ -51,6 +51,7 @@ import com.raddstream.app.ui.screens.FilterRail
 import com.raddstream.app.ui.screens.FilterSheetBody
 import com.raddstream.app.ui.screens.CenterPlayPause
 import com.raddstream.app.ui.screens.CenterSpinner
+import com.raddstream.app.ui.screens.StuckBufferCard
 import com.raddstream.app.ui.screens.ChipRow
 import com.raddstream.app.ui.screens.EdgeFeedbackLine
 import com.raddstream.app.ui.screens.EdgeHud
@@ -1179,6 +1180,21 @@ class PaparazziPreviewTest {
             themed {
                 CenterSpinner(
                     state = playerBase().copy(isBuffering = true),
+                )
+            }
+        }
+    }
+
+    // P12 (round 2): the stuck-rebuffer card — the honest line, the
+    // buffered percent, Retry + "Play at 480p".
+    @Test
+    fun playerCenterStuckBuffer() {
+        paparazzi.snapshot {
+            themed {
+                StuckBufferCard(
+                    bufferedPct = 42,
+                    onRetry = {},
+                    onPlay480p = {},
                 )
             }
         }

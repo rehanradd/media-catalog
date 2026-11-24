@@ -5,6 +5,7 @@
 // the five `AspectRatioFrameLayout` constant references in this enum.
 package com.raddstream.app.player
 
+import androidx.compose.ui.geometry.Offset
 import androidx.media3.common.TrackGroup
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
@@ -239,6 +240,8 @@ data class PlayerUiState(
     // transport
     val isPlaying: Boolean = false,
     val isBuffering: Boolean = false,
+    /** P12 (round 2): a mid-playback rebuffer that has lasted 5 s. */
+    val stuckBuffering: Boolean = false,
     val isEnded: Boolean = false,
     /** The ended episode has a numbered successor and autoplay-next is off: the ended overlay offers the Next Episode button instead of advancing. */
     val endedHasNextEpisode: Boolean = false,
@@ -335,6 +338,12 @@ data class PlayerUiState(
      */
     val kidsMode: Boolean = false,
     val aspect: AspectMode = AspectMode.FIT,
+    /**
+     * P10 (round 2): the two-finger pan while zoomed, as fractions of the
+     * surface (±0.25 — the picture can be dragged, never lost off-screen).
+     * Zero unless zoomed; leaving ZOOM resets it.
+     */
+    val videoPan: Offset = Offset.Zero,
     val orientation: PlayerOrientation = PlayerOrientation.LANDSCAPE,
     /** Immersive fullscreen (system bars hidden) or normal (system bars shown). */
     val fullscreen: Boolean = true,
@@ -568,3 +577,17 @@ data class PlayerUiState(
     /** A switch is only honest when the scope actually offers more than one rung. */
     val canSwitchQuality: Boolean get() = qualityRungs.size > 1
 }
+
+/** P10 (round 2): the farthest a zoomed picture may be panned, as a fraction of the surface. */
+const val MAX_VIDEO_PAN_FRACTION = 0.25f
+
+/**
+ * P10 (round 2): clamp a two-finger pan to [MAX_VIDEO_PAN_FRACTION] on
+ * each axis, so a zoomed picture can be dragged but never lost
+ * off-screen. The pan is a fraction of the surface, not pixels — the
+ * surface size is the composable's, not the ViewModel's.
+ */
+fun clampVideoPan(pan: Offset): Offset = Offset(
+    x = pan.x.coerceIn(-MAX_VIDEO_PAN_FRACTION, MAX_VIDEO_PAN_FRACTION),
+    y = pan.y.coerceIn(-MAX_VIDEO_PAN_FRACTION, MAX_VIDEO_PAN_FRACTION),
+)

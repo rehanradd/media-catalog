@@ -30,4 +30,15 @@ object PlayerBuffering {
     const val BUFFER_FOR_PLAYBACK_MS = 500
     const val BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS = 1_000
     const val PRIORITIZE_TIME_OVER_SIZE = true
+    /**
+     * P12 (round 2): a mid-playback rebuffer counts as stuck once it has
+     * lasted 5 s. The bare "Buffering… 42%" plate is honest for a hiccup;
+     * past 5 s the viewer needs to know the connection looks slow, and
+     * needs two ways out (retry the rung, or drop to 480p). The start
+     * path is excluded — it has its own deadline card (StartDeadline).
+     */
+    const val STUCK_AFTER_MS = 5_000
 }
+
+/** P12 (round 2): true once a stall has lasted [PlayerBuffering.STUCK_AFTER_MS]. */
+fun isStuckBuffering(elapsedMs: Long): Boolean = elapsedMs >= PlayerBuffering.STUCK_AFTER_MS

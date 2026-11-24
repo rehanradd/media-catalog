@@ -21,8 +21,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -49,6 +51,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.R
@@ -335,6 +338,40 @@ internal fun SleepSheet(state: PlayerUiState, vm: PlayerViewModel) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
+/**
+ * P10 (round 2) — the button equivalent of a slider: a − button, the
+ * current value, a + button. A tap moves exactly one step, for the
+ * viewer who cannot or will not drag. The value label is the caller's —
+ * the same string the slider above it prints, so the two never disagree.
+ */
+@Composable
+private fun StepperRow(
+    valueLabel: String,
+    onDown: () -> Unit,
+    onUp: () -> Unit,
+    downDescription: String,
+    upDescription: String,
+) {
+    Row(
+        Modifier.padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onDown) {
+            Icon(Icons.Default.Remove, contentDescription = downDescription, tint = Color.White)
+        }
+        Text(
+            valueLabel,
+            color = Color.White,
+            fontSize = brandSp(14),
+            textAlign = TextAlign.Center,
+            modifier = Modifier.weight(1f),
+        )
+        IconButton(onClick = onUp) {
+            Icon(Icons.Default.Add, contentDescription = upDescription, tint = Color.White)
+        }
+    }
+}
+
 internal fun SubtitleSettingsSheet(state: PlayerUiState, vm: PlayerViewModel) {
     val ctx = LocalContext.current
     val externalSubtitleFallback = stringResource(R.string.player_external_subtitle)
@@ -434,6 +471,17 @@ internal fun SubtitleSettingsSheet(state: PlayerUiState, vm: PlayerViewModel) {
                 valueRange = 50f..200f,
                 modifier = Modifier.padding(horizontal = 16.dp),
             )
+            // P10 (round 2): the steppers are the button equivalents of
+            // the sliders — a tap moves one step (10% size, 5% height),
+            // and the value shown is the slider's own label, so the two
+            // can never disagree.
+            StepperRow(
+                valueLabel = stringResource(R.string.player_subtitle_size, state.subtitle.sizePercent),
+                onDown = { vm.setSubtitleSettings(state.subtitle.copy(sizePercent = (state.subtitle.sizePercent - 10).coerceIn(50, 200))) },
+                onUp = { vm.setSubtitleSettings(state.subtitle.copy(sizePercent = (state.subtitle.sizePercent + 10).coerceIn(50, 200))) },
+                downDescription = stringResource(R.string.player_subtitle_size_down),
+                upDescription = stringResource(R.string.player_subtitle_size_up),
+            )
 
             Text(
                 stringResource(R.string.player_subtitle_position, (state.subtitle.bottomFraction * 100).toInt()),
@@ -446,6 +494,13 @@ internal fun SubtitleSettingsSheet(state: PlayerUiState, vm: PlayerViewModel) {
                 onValueChange = { vm.setSubtitleSettings(state.subtitle.copy(bottomFraction = it)) },
                 valueRange = 0f..0.3f,
                 modifier = Modifier.padding(horizontal = 16.dp),
+            )
+            StepperRow(
+                valueLabel = stringResource(R.string.player_subtitle_position, (state.subtitle.bottomFraction * 100).toInt()),
+                onDown = { vm.setSubtitleSettings(state.subtitle.copy(bottomFraction = (state.subtitle.bottomFraction - 0.05f).coerceIn(0f, 0.3f))) },
+                onUp = { vm.setSubtitleSettings(state.subtitle.copy(bottomFraction = (state.subtitle.bottomFraction + 0.05f).coerceIn(0f, 0.3f))) },
+                downDescription = stringResource(R.string.player_subtitle_position_down),
+                upDescription = stringResource(R.string.player_subtitle_position_up),
             )
 
             // One control owns the offset: this row hands over to the sheet with the live

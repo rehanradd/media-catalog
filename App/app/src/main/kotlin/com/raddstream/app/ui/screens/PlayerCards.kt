@@ -1,5 +1,6 @@
 package com.raddstream.app.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,6 +30,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -52,6 +54,7 @@ import com.raddstream.app.ui.components.CatalogImage
 import com.raddstream.app.ui.layout.CardGeometry
 import com.raddstream.app.ui.theme.RaddCoral400
 import com.raddstream.app.ui.theme.RaddCurrent500
+import com.raddstream.app.ui.theme.RaddPlayerStage
 import com.raddstream.app.ui.theme.PlayerChromeTheme
 import com.raddstream.app.ui.theme.RaddHudPillIdle
 import com.raddstream.app.ui.theme.RaddTokens
@@ -404,6 +407,80 @@ Button(
                     stringResource(R.string.player_retry),
                     fontWeight = FontWeight.SemiBold,
                 )
+            }
+        }
+    }
+}
+
+// P12 (round 2): the stuck-rebuffer card. The bare "Buffering… 42%"
+// plate is honest for a hiccup; past 5 s of stall it is not — the
+// viewer needs to know the connection looks slow, and needs two ways
+// out. Retry re-runs the same rung's candidates; "Play at 480p" drops
+// to the rung this title actually offers. The 480p button is only
+// composed when 480p is offered — on a title without the rung it would
+// show a snackbar and do nothing, which is a button that lies.
+@Composable
+internal fun StuckBufferCard(
+    bufferedPct: Int?,
+    onRetry: () -> Unit,
+    onPlay480p: (() -> Unit)?,
+) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Surface(
+            color = RaddPlayerStage,
+            shape = MaterialTheme.shapes.medium,
+            modifier = Modifier.fillMaxWidth(0.86f),
+        ) {
+            Column(
+                Modifier.padding(horizontal = 20.dp, vertical = 18.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    stringResource(R.string.player_still_loading),
+                    color = Color.White,
+                    fontSize = brandSp(14),
+                    textAlign = TextAlign.Center,
+                )
+                bufferedPct?.let { pct ->
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        stringResource(R.string.player_buffering_percent, pct),
+                        color = Color.White.copy(alpha = 0.7f),
+                        fontSize = brandSp(12),
+                        textAlign = TextAlign.Center,
+                    )
+                }
+                Spacer(Modifier.height(14.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = onRetry,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = RaddCurrent500,
+                            contentColor = Color.Black,
+                        ),
+                        shape = RoundedCornerShape(28.dp),
+                        modifier = Modifier.heightIn(min = MinControlTarget),
+                    ) {
+                        Text(
+                            stringResource(R.string.player_retry),
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                    if (onPlay480p != null) {
+                        OutlinedButton(
+                            onClick = onPlay480p,
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.4f)),
+                            shape = RoundedCornerShape(28.dp),
+                            modifier = Modifier.heightIn(min = MinControlTarget),
+                        ) {
+                            Text(
+                                stringResource(R.string.player_play_480p),
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
+                }
             }
         }
     }

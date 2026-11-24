@@ -18,6 +18,7 @@ import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import androidx.compose.ui.geometry.Offset
 import com.raddstream.app.brand.Brand
 import com.raddstream.app.player.AbRepeat
 import com.raddstream.app.player.AspectMode
@@ -83,6 +84,8 @@ import com.raddstream.app.player.TracksInfo
 import com.raddstream.app.player.ViewMode
 import com.raddstream.app.player.abRepeatWithA
 import com.raddstream.app.player.abRepeatWithB
+import com.raddstream.app.player.clampVideoPan
+import com.raddstream.app.player.isStuckBuffering
 import com.raddstream.app.player.loopTargetMs
 import com.raddstream.app.player.mergePostPlayPreviews
 import com.raddstream.app.player.resolveStartBand
@@ -230,6 +233,15 @@ class PlayerViewModel @Inject constructor(
      */
     private var playedReportHandle: String? = null
     private var failedReportAttemptAtMs: Long? = null
+
+    /**
+     * P12 (round 2): the monotonic instant the current mid-playback
+     * rebuffer began (null when not stalled). The ticker stamps it on
+     * the first stalled tick and clears it the moment buffering ends or
+     * playback resumes — a stall that clears and returns is a new stall,
+     * not the old one continuing.
+     */
+    private var bufferingSinceMs: Long? = null
 
     private var keepJob: Job? = null
     private var settingsJob: Job? = null
@@ -1000,6 +1012,26 @@ class PlayerViewModel @Inject constructor(
                     // the gate is a boolean read, so this tick costs nothing when it is not due.
                     if (c.isPlaying) reportResume(c, c.currentPosition, forced = false)
                     lastSleepTick = now
+                    // P12 (round 2): the stuck-rebuffer clock. The ticker
+                    // already visits every 200 ms, so it is the clock — no
+                    // second thread. A stall is buffering with no playback
+                    // outside the start phase (the start path has its own
+                    // deadline card); past 5 s the state flips and the
+                    // stuck card replaces the bare plate. The clock stamps
+                    // on the first stalled tick and clears the moment the
+                    // stall ends, so a stall that clears and returns is a
+                    // new stall.
+                    val s = _ui.value
+                    val stalled = s.isBuffering && !s.isPlaying && s.startPhase == StartPhase.NONE
+                    if (stalled) {
+                        val since = bufferingSinceMs ?: SystemClock.elapsedRealtime().also { bufferingSinceMs = it }
+                        if (!s.stuckBuffering && isStuckBuffering(SystemClock.elapsedRealtime() - since)) {
+                            _ui.update { it.copy(stuckBuffering = true) }
+                        }
+                    } else if (s.stuckBuffering || bufferingSinceMs != null) {
+                        bufferingSinceMs = null
+                        _ui.update { it.copy(stuckBuffering = false) }
+                    }
                 }
                 delay(200)
             }
@@ -2472,11 +2504,23 @@ class PlayerViewModel @Inject constructor(
     // ── Aspect / rotation / lock / audio-only ────────────────────────────────────
 
     fun cycleAspect() {
-        _ui.update { it.copy(aspect = AspectMode.nextOf(it.aspect)) }
+        // P10 (round 2): leaving an aspect resets the zoom pan — a pan
+        // from ZOOM must not survive into FIT, where it would offset a
+        // picture that fills the frame.
+        _ui.update { it.copy(aspect = AspectMode.nextOf(it.aspect), videoPan = Offset.Zero) }
     }
 
     fun setAspect(mode: AspectMode) {
-        _ui.update { it.copy(aspect = mode) }
+        _ui.update { it.copy(aspect = mode, videoPan = Offset.Zero) }
+    }
+
+    /**
+     * P10 (round 2): the two-finger pan while zoomed — a fraction of the
+     * surface, clamped to ±0.25 so the picture can be dragged but never
+     * lost off-screen. Leaving ZOOM resets it (see [setAspect]).
+     */
+    fun setVideoPan(pan: Offset) {
+        _ui.update { it.copy(videoPan = clampVideoPan(pan)) }
     }
 
     fun toggleOrientation() {

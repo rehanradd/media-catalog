@@ -27,7 +27,11 @@
     <string name="player_time_of">%1$s / %2$s</string>
     <string name="player_boost_badge">Boosting speed</string>
     <string name="player_back">Back</string>
-    <string name="player_tag_auto">Auto: %1$s</string>
+    <!-- Round 2 (P4 single-owner): the subtitle's Auto tag names the mode
+         only — the rung lives in the QualityPill + HUD, so "Auto: 1080p"
+         (the old player_tag_auto) printed quality in three places. The
+         bare "Auto" is the Auto indicator; the rung is never repeated. -->
+    <string name="player_tag_auto_plain">Auto</string>
     <string name="player_sleep_remaining">Sleep in %1$s</string>
     <string name="player_speed_short">%1$s×</string>
     <!-- MX idea #3: the decoder chip — one tap, HW ↔ SW, far right of the top bar. -->
@@ -77,6 +81,9 @@
     <string name="player_more_to_watch">More to watch</string>
     <string name="player_sleep_timer">Sleep timer</string>
     <string name="player_aspect_label">Aspect: %1$s</string>
+    <!-- Round 2 (P10): the zoom-reset chip — the visible way back to Fit
+         while zoomed; pinch alone is not discoverable. -->
+    <string name="player_zoom_reset">Fit video to screen</string>
     <string name="player_orientation_label">Orientation: %1$s</string>
     <string name="player_audio_only_toggle">Audio-only playback</string>
     <string name="player_stereo_only_toggle">Stereo-only track selection</string>
@@ -85,6 +92,10 @@
     <string name="player_off">off</string>
     <string name="player_play_again">Play again from 0:00</string>
     <string name="player_retry">Retry</string>
+    <!-- Round 2 (P12): the stuck-rebuffer card — a stall past 5 s stops
+         being "Buffering…" and says so, with two ways out. -->
+    <string name="player_still_loading">Still loading — your connection looks slow</string>
+    <string name="player_play_480p">Play at 480p</string>
     <string name="player_notice_spaced">%1$s %2$s</string>
     <string name="player_giveup_download_only">Download only</string>
     <string name="player_giveup_no_candidate">Nothing playable here right now</string>
@@ -226,6 +237,12 @@
     <string name="player_subtitle_turn_off">Turn subtitles off</string>
     <string name="player_subtitle_size">Size %1$d%%</string>
     <string name="player_subtitle_position">Bottom position %1$d%%</string>
+    <!-- Round 2 (P10): the subtitle-sheet steppers — the button equivalents
+         of the size/position sliders, a tap moves one step. -->
+    <string name="player_subtitle_size_down">Decrease subtitle size</string>
+    <string name="player_subtitle_size_up">Increase subtitle size</string>
+    <string name="player_subtitle_position_down">Move subtitles down</string>
+    <string name="player_subtitle_position_up">Move subtitles up</string>
     <string name="player_subtitle_bold">Bold</string>
     <string name="player_subtitle_background">Text background</string>
     <string name="player_subtitle_colour">Colour</string>

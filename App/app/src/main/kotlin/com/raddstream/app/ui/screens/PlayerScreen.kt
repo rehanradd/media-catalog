@@ -53,6 +53,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInWindow
@@ -78,6 +79,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import com.raddstream.app.R
 import com.raddstream.app.network.models.Post
+import com.raddstream.app.player.AspectMode
 import com.raddstream.app.player.CacheAffordance
 import com.raddstream.app.player.initialBrightnessBase
 import com.raddstream.app.player.GestureMapper
@@ -652,6 +654,23 @@ private fun PlayerScreenContent(
                 ) {
                     TopBar(state = state, onBack = onBackClick, onLock = { vm.setLocked(true) }, onToggleDecoderMode = { vm.toggleDecoderMode() })
                 }
+                // P10 (round 2): the zoom-reset chip — a visible way back
+                // to Fit while zoomed. It rides the chrome visibility, so
+                // it hides with the bars; it never shows at FIT, locked,
+                // or in Ghost mode (that branch has no chip at all). The
+                // 80dp top clearance sits it just below the top bar.
+                AnimatedVisibility(
+                    visible = chromeVisible && state.aspect != AspectMode.FIT,
+                    enter = chromeEnter,
+                    exit = chromeExit,
+                ) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopEnd) {
+                        ZoomResetChip(
+                            onReset = { vm.setAspect(AspectMode.FIT) },
+                            modifier = Modifier.padding(top = 80.dp, end = 16.dp),
+                        )
+                    }
+                }
                 AnimatedVisibility(
                     visible = controlsVisible,
                     enter = chromeEnter,
@@ -860,28 +879,47 @@ private fun PlayerScreenContent(
         if (state.isBuffering && !state.isPlaying && state.giveUp == null &&
             state.startPhase == StartPhase.NONE
         ) {
-            // Robo run 7: the loading notice's title was unreadable over the
-            // frame on a translucent plate — the same rule holds here. The
-            // bare "Buffering…" sat directly on the video frame; it gets the
-            // notice's solid plate, so the wait is readable over any frame.
-            Surface(
-                color = RaddPlayerStage,
-                shape = MaterialTheme.shapes.medium,
-                modifier = Modifier.align(Alignment.Center),
-            ) {
-                // F4 (Batch B): the notice names how much is buffered ahead
-                // ("Buffering… 42%") on a VOD, so a stall shows progress, not
-                // just a spinner. A live stream never shows a percent — see
-                // [bufferingPercent].
-                val bufferedPct = bufferingPercent(state.bufferedMs, state.durationMs, state.isLive)
-                PlayerLoadingIndicator(
-                    label = if (bufferedPct != null) {
-                        stringResource(R.string.player_buffering_percent, bufferedPct)
+            // P12 (round 2): a stall past 5 s gets the stuck card — the
+            // bare plate stops being honest then. Otherwise the plate as
+            // before. The percent is computed once for both branches; a
+            // live stream never shows one (see [bufferingPercent]).
+            val bufferedPct = bufferingPercent(state.bufferedMs, state.durationMs, state.isLive)
+            if (state.stuckBuffering) {
+                StuckBufferCard(
+                    bufferedPct = bufferedPct,
+                    onRetry = { vm.retryCurrentCandidates() },
+                    // The 480p button only exists when the title offers
+                    // the rung — a button that shows a snackbar and does
+                    // nothing is a button that lies.
+                    onPlay480p = if (state.qualityRungs.any { it.band == "480p" }) {
+                        { vm.selectQualityBand("480p") }
                     } else {
-                        stringResource(R.string.player_buffering)
+                        null
                     },
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                 )
+            } else {
+                // Robo run 7: the loading notice's title was unreadable over the
+                // frame on a translucent plate — the same rule holds here. The
+                // bare "Buffering…" sat directly on the video frame; it gets the
+                // notice's solid plate, so the wait is readable over any frame.
+                Surface(
+                    color = RaddPlayerStage,
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.align(Alignment.Center),
+                ) {
+                    // F4 (Batch B): the notice names how much is buffered ahead
+                    // ("Buffering… 42%") on a VOD, so a stall shows progress, not
+                    // just a spinner. A live stream never shows a percent — see
+                    // [bufferingPercent].
+                    PlayerLoadingIndicator(
+                        label = if (bufferedPct != null) {
+                            stringResource(R.string.player_buffering_percent, bufferedPct)
+                        } else {
+                            stringResource(R.string.player_buffering)
+                        },
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                    )
+                }
             }
         }
 
@@ -1109,6 +1147,14 @@ private fun PlayerSurface(
     AndroidView(
         modifier = Modifier
             .fillMaxSize()
+            // P10 (round 2): the two-finger pan while zoomed. The pan is
+            // a fraction of the surface, clamped in the ViewModel to
+            // ±0.25 — the picture can be dragged, never lost off-screen.
+            // Zero unless zoomed; leaving ZOOM resets it.
+            .graphicsLayer {
+                translationX = state.videoPan.x * size.width
+                translationY = state.videoPan.y * size.height
+            }
             .then(
                 if (onBounds != null) {
                     Modifier.onGloballyPositioned { onBounds(it.boundsInWindow()) }

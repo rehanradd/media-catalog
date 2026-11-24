@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Bedtime
@@ -66,6 +67,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.R
 import com.raddstream.app.brand.Brand
+import com.raddstream.app.player.AspectMode
 import com.raddstream.app.player.AudioBoostUi
 import com.raddstream.app.player.DecoderMode
 import com.raddstream.app.player.GestureSettings
@@ -172,13 +174,15 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
                 onTextLayout = { titleLines = it.lineCount },
             )
             if (print != null) {
-                val autoTag = state.autoQualityBand?.let { band -> stringResource(R.string.player_tag_auto, band) }
+                val autoTag = if (state.autoQualityBand != null) stringResource(R.string.player_tag_auto_plain) else null
                 // P4 (player fixes): the subtitle is year · Auto — quality
                 // moves OUT of it. Quality is owned by the persistent HUD +
                 // the QualityPill (single-owner rule), so the subtitle never
-                // repeats it. The Auto tag still says out loud that the rung
-                // shown is Auto's current choice, so a quality that moves on
-                // its own is never mistaken for a hand-picked one.
+                // repeats it. Round 2: the old tag said "Auto: 1080p" — the
+                // rung in a third place, after the HUD and the pill. The
+                // bare "Auto" is the Auto indicator; the rung is the pill's
+                // and the HUD's alone. A quality that moves on its own is
+                // still never mistaken for a hand-picked one: Auto says so.
                 // Review fix (16 Nov): a live channel has no subtitle at all — the
                 // single live mark rides the bottom row, and a live picture has
                 // no year or rung to print. The title centres vertically on its own.
@@ -653,31 +657,58 @@ internal fun BottomControls(
                 .heightIn(min = CinemaChrome.BOTTOM_BAR_MIN_DP.dp)
                 .padding(start = rail, end = rail, bottom = 0.dp),
         ) {
-            // SC §3: pause is discovery — the cast strip. Tapping an actor
-            // searches them. Only while paused: a strip that appears mid-play
-            // is a strip that steals the picture. The cast list itself is the
-            // loaded signal — it is empty until the title stages it.
-            if (!state.isPlaying && state.castNames.isNotEmpty()) {
-                // A4-F3: rides ScrollingChipRow + RaddChip now — the fade
-                // and the row are the shared component, not a hand-rolled
-                // copy. The cast strip gains the fade the other rows
-                // already had.
-                ScrollingChipRow(
-                    modifier = Modifier.padding(top = 8.dp),
-                    contentPadding = PaddingValues(start = 0.dp, end = 16.dp),
-                ) {
-                    // F-06: keyed by index + name, not by name alone —
-                    // staged cast data can list the same actor twice, and
-                    // two items sharing a Lazy key throw at composition.
-                    // The duplicate chip still renders (same label, same
-                    // search target); only the crash is gone.
-                    itemsIndexed(state.castNames, key = { index, actor -> "$index:$actor" }) { _, actor ->
-                        RaddChip(
-                            selected = false,
-                            onClick = { onActorClick(actor) },
-                            label = { Text(actor, maxLines = 1) },
-                            colors = raddFilterChipColors(),
-                        )
+            // SC §3: pause is discovery — the X-Ray overlay. The context
+            // line above the cast strip names what is playing and on which
+            // track (P9 round 2); the strip below is the "who", this line
+            // is the "what". Only while paused: a strip that appears
+            // mid-play is a strip that steals the picture. The cast list
+            // itself is the loaded signal — it is empty until the title
+            // stages it. The line shows whenever paused (the rung alone is
+            // worth naming); the chips only when cast is known.
+            if (!state.isPlaying) {
+                val xrayLine = xrayContextLine(
+                    season = if (state.isSeriesScope) state.activeRendition?.coverage?.season ?: 0 else 0,
+                    episode = if (state.isSeriesScope) state.activeRendition?.coverage?.ordinal ?: 0 else 0,
+                    quality = state.qualityLabel,
+                    audio = state.audioTracks.firstOrNull { it.selected }?.label?.takeIf { it.isNotBlank() }
+                        ?.let { stringResource(R.string.player_audio_label, it) },
+                    subtitle = stringResource(
+                        R.string.player_subtitles_label,
+                        subtitleStatusLabel(state, stringResource(R.string.player_off_label)),
+                    ),
+                )
+                if (xrayLine.isNotBlank()) {
+                    Text(
+                        xrayLine,
+                        color = PlayerOnVideo.text.copy(alpha = 0.75f),
+                        fontSize = brandSp(12),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                }
+                if (state.castNames.isNotEmpty()) {
+                    // A4-F3: rides ScrollingChipRow + RaddChip now — the fade
+                    // and the row are the shared component, not a hand-rolled
+                    // copy. The cast strip gains the fade the other rows
+                    // already had.
+                    ScrollingChipRow(
+                        modifier = Modifier.padding(top = 8.dp),
+                        contentPadding = PaddingValues(start = 0.dp, end = 16.dp),
+                    ) {
+                        // F-06: keyed by index + name, not by name alone —
+                        // staged cast data can list the same actor twice, and
+                        // two items sharing a Lazy key throw at composition.
+                        // The duplicate chip still renders (same label, same
+                        // search target); only the crash is gone.
+                        itemsIndexed(state.castNames, key = { index, actor -> "$index:$actor" }) { _, actor ->
+                            RaddChip(
+                                selected = false,
+                                onClick = { onActorClick(actor) },
+                                label = { Text(actor, maxLines = 1) },
+                                colors = raddFilterChipColors(),
+                            )
+                        }
                     }
                 }
             }
@@ -1005,3 +1036,51 @@ internal fun subtitleStatusLabel(state: PlayerUiState, offWord: String): String 
     state.customSubtitleLoaded
         ?: state.selectedSubtitleId?.let { id -> state.subtitleTracks.firstOrNull { it.id == id }?.label }
         ?: offWord
+
+/**
+ * P9 (round 2) — the X-Ray context line: episode, rung, audio track,
+ * subtitle track, joined with middots. Any part that is blank is
+ * omitted — a missing track is never invented, and a movie (season and
+ * episode 0) never prints an episode. The episode format matches the
+ * up-next card's ("S1 E2").
+ */
+internal fun xrayContextLine(
+    season: Int,
+    episode: Int,
+    quality: String?,
+    audio: String?,
+    subtitle: String?,
+): String = listOfNotNull(
+    if (season > 0 && episode > 0) "S$season E$episode" else null,
+    quality?.takeIf { it.isNotBlank() },
+    audio?.takeIf { it.isNotBlank() },
+    subtitle?.takeIf { it.isNotBlank() },
+).joinToString(" · ")
+
+/**
+ * P10 (round 2) — the zoom reset chip. Pinch is the only on-screen path
+ * out of ZOOM today, and it is not discoverable; while zoomed, this chip
+ * is the one visible tap back to Fit. The screen composes it only while
+ * the aspect is not FIT, the player is not locked, and Ghost mode is
+ * off — the chip itself never decides visibility.
+ */
+@Composable
+internal fun ZoomResetChip(
+    onReset: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        color = Color.Black.copy(alpha = 0.55f),
+        shape = RoundedCornerShape(16.dp),
+        modifier = modifier
+            .semantics { contentDescription = stringResource(R.string.player_zoom_reset) }
+            .clickableNoRipple(onClick = onReset),
+    ) {
+        Text(
+            text = AspectMode.FIT.label,
+            color = Color.White,
+            fontSize = brandSp(13),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+        )
+    }
+}

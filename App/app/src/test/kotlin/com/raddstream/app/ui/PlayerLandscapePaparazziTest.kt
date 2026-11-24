@@ -6,6 +6,8 @@ import androidx.compose.runtime.Composable
 import app.cash.paparazzi.DeviceConfig
 import app.cash.paparazzi.Paparazzi
 import com.android.resources.ScreenOrientation
+import com.raddstream.app.player.Coverage
+import com.raddstream.app.player.EpisodeCoverage
 import com.raddstream.app.player.KeepUiState
 import com.raddstream.app.player.LadderRung
 import com.raddstream.app.player.PlaybackInfo
@@ -116,6 +118,36 @@ class PlayerLandscapePaparazziTest {
             playerBase(isPlaying = false).copy(
                 castNames = listOf("Shah Rukh Khan", "Nayanthara", "Vijay Sethupathi"),
                 keep = KeepUiState.Stored(playableOffline = true, note = null),
+                // P9 (round 2): the X-Ray line renders with the episode,
+                // the rung and the subtitle state — the audio part is
+                // omitted (no track selected), never invented.
+                isSeriesScope = true,
+                activeRendition = playerRendition.copy(
+                    coverage = Coverage(season = 1, ordinal = 2),
+                ),
+            ),
+        )
+    }
+
+    // P2 (round 2): the chapter markers render — one tick behind the
+    // playhead (white, on the jade played track) and two ahead (jade, on
+    // the white unplayed track). Every earlier golden passes no episode
+    // data, so the tick list is empty in all of them; this is the first
+    // shot with a marker in it at all. Position 45:30 of 2:39:00 puts
+    // the 30:00 boundary behind the playhead and 1:00:00 / 1:30:00 ahead.
+    @Test
+    fun playerBottomChapters() {
+        shotBottom(
+            playerBase().copy(
+                activeRendition = playerRendition.copy(
+                    coverage = Coverage(
+                        episodes = listOf(
+                            EpisodeCoverage(number = 2, offsetSeconds = 1800, chapterTitle = "Chapter 2"),
+                            EpisodeCoverage(number = 3, offsetSeconds = 3600, chapterTitle = "Chapter 3"),
+                            EpisodeCoverage(number = 4, offsetSeconds = 5400, chapterTitle = "Chapter 4"),
+                        ),
+                    ),
+                ),
             ),
         )
     }

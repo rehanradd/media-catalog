@@ -21,6 +21,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.player.AspectMode
+import com.raddstream.app.player.clampVideoPan
 import com.raddstream.app.player.EDGE_DEAD_ZONE_DP
 import com.raddstream.app.player.DominantAxis
 import com.raddstream.app.player.DragCommand
@@ -73,6 +74,11 @@ internal fun GestureOverlay(
     val latestPosition by rememberUpdatedState(state.positionMs)
     val latestSubtitle by rememberUpdatedState(state.subtitle)
     val latestCustomSubtitleLoaded by rememberUpdatedState(state.customSubtitleLoaded)
+    // P10 (round 2): the zoom state and the pan, fresh inside the
+    // long-lived Lane D loop — the pan bank restarts from live state
+    // after a 500 ms gap, like the re-time bank below.
+    val latestAspect by rememberUpdatedState(state.aspect)
+    val latestVideoPan by rememberUpdatedState(state.videoPan)
     // Volume-gesture fix (Nov 2026): onVolume reads state.userVolume, a
     // snapshot — inside Lane C's never-restarted pointerInput(Unit) loop
     // the first composition's closure kept adding each frame's tiny delta
@@ -290,19 +296,24 @@ internal fun GestureOverlay(
                 // The re-time banks sub-step travel across transform callbacks; a gap over
                 // half a second means a new gesture, and the bank starts over. The size
                 // banks the same way, for the same frame-lag reason as the Lane C seat.
+                // P10 (round 2): the video pan banks the same way — the bank restarts
+                // from live state after the same gap, so a pan that left ZOOM (and was
+                // reset by setAspect) never resumes from a stale sum.
                 var retimeAccumPx = 0f
                 var lastTransformMs = 0L
                 var subtitleSize = 0
+                var videoPanAccum = Offset.Zero
                 detectTransformGestures { centroid, pan, zoom, _ ->
+                    val nowMs = System.currentTimeMillis()
+                    if (nowMs - lastTransformMs > 500L) {
+                        retimeAccumPx = 0f
+                        subtitleSize = latestSubtitle.sizePercent
+                        videoPanAccum = latestVideoPan
+                    }
+                    lastTransformMs = nowMs
                     if (isInSubtitleZone(centroid.x, centroid.y, paneSize.width.toFloat(), paneSize.height.toFloat()) &&
                         !latestSettings.lockGestures
                     ) {
-                        val nowMs = System.currentTimeMillis()
-                        if (nowMs - lastTransformMs > 500L) {
-                            retimeAccumPx = 0f
-                            subtitleSize = latestSubtitle.sizePercent
-                        }
-                        lastTransformMs = nowMs
                         val sizeDelta = subtitleSizeDelta(zoom)
                         if (sizeDelta != 0) {
                             subtitleSize = (subtitleSize + sizeDelta).coerceIn(50, 200)
@@ -322,6 +333,25 @@ internal fun GestureOverlay(
                             }
                         }
                         return@detectTransformGestures
+                    }
+                    // P10 (round 2): while zoomed, two fingers drag the
+                    // picture. The pan is a fraction of the pane, clamped
+                    // to ±0.25 in the ViewModel, so the picture can be
+                    // dragged but never lost off-screen. Leaving ZOOM
+                    // resets it (see setAspect) — and a pinch below that
+                    // toggles out of ZOOM resets it with it, so the pan
+                    // write above is undone in the same gesture. Locked:
+                    // no pan, like no pinch.
+                    if (latestAspect == AspectMode.ZOOM && !latestSettings.lockGestures) {
+                        if (pan.x != 0f || pan.y != 0f) {
+                            videoPanAccum = clampVideoPan(
+                                videoPanAccum + Offset(
+                                    x = pan.x / paneSize.width.toFloat(),
+                                    y = pan.y / paneSize.height.toFloat(),
+                                ),
+                            )
+                            vm.setVideoPan(videoPanAccum)
+                        }
                     }
                     val cause = when {
                         zoom > 1.02f -> "out"

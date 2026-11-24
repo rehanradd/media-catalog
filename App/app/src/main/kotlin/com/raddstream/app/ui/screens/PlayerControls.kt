@@ -288,6 +288,18 @@ internal fun resolveFlexiblePlayerControls(
     return candidates.take(2)
 }
 
+/**
+ * P2 (round 2) — the chapter-marker tone rule. The played portion of the
+ * track is the theme's played colour (jade [RaddCurrent500] in the
+ * default theme, blue in Midnight, amber in Ember), so a jade tick there
+ * is invisible by construction; the unplayed portion is white at 28%,
+ * so jade reads there. A tick exactly on the playhead counts as played
+ * — the playhead has just passed it. White on jade, jade on white: the
+ * marker is visible on both sides of the playhead, never on neither.
+ */
+internal fun chapterMarkerColor(tickFraction: Float, posFraction: Float): Color =
+    if (tickFraction <= posFraction) Color.White else RaddCurrent500
+
 /** Thin MX scrubber: grey track, brighter buffered segment, theme played segment + thumb. */
 @Composable
 internal fun Scrubber(
@@ -402,9 +414,14 @@ internal fun Scrubber(
                 .background(chrome.played),
         )
         // P2 (player fixes): the ticks were computed but invisible — 1dp
-        // offsets in white that no render ever showed. They are thin JADE
+        // offsets in white that no render ever showed. They are thin
         // chapter markers now (3dp wide, 12dp tall, straddling the track),
         // so the scrubber shows the shape of what is being watched.
+        // Round 2: the tone is two-sided ([chapterMarkerColor]) — a jade
+        // tick on the jade played track is invisible by construction, so
+        // the played portion wears white and only the unplayed portion
+        // wears jade. The playerBottomChapters golden proves both tones
+        // in one render (one tick behind the playhead, two ahead).
         // AMBER ad-break segments are NOT drawn: no ad-break data exists
         // anywhere in the player ([MediaSegment] is intro/recap/credits/
         // preview only, and the wire sends no ad windows) — an ad segment
@@ -419,7 +436,7 @@ internal fun Scrubber(
                     .offset(x = (maxWidth * tick.fraction) - 1.5.dp)
                     .width(3.dp)
                     .height(12.dp)
-                    .background(RaddCurrent500),
+                    .background(chapterMarkerColor(tick.fraction, posFraction)),
             )
         }
         // Cinema (Nov 2026): the thumb is a solid white dot — the old 2dp
