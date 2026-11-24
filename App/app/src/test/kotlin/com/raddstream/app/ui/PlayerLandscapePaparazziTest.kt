@@ -118,6 +118,20 @@ class PlayerLandscapePaparazziTest {
     }
 
     @Test
+    fun playerBottomPausedDuplicateCast() {
+        // F-06 (APP-10): staged cast data can list the same actor twice —
+        // the strip used to key rows by name and throw at composition.
+        // The golden pins the fixed render: the duplicate name twice, no
+        // crash, the row otherwise identical to playerBottomPaused.
+        shotBottom(
+            playerBase(isPlaying = false).copy(
+                castNames = listOf("Shah Rukh Khan", "Shah Rukh Khan", "Nayanthara"),
+                keep = KeepUiState.Stored(playableOffline = true, note = null),
+            ),
+        )
+    }
+
+    @Test
     fun playerBottomLive() {
         // F29: a live HLS playlist can report a finite DVR-window duration
         // (Discover Pakistan: 2:00:12) — the shot must show the LIVE mark

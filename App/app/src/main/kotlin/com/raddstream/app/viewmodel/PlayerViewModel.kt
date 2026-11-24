@@ -1785,7 +1785,24 @@ class PlayerViewModel @Inject constructor(
         val clamped = AudioBoostUi.offeredLevel(level)
         _ui.update { it.copy(audioBoostLevel = clamped) }
         applyPlayerVolume()
-        viewModelScope.launch { settingsRepository.saveAudioBoostLevel(clamped) }
+        // F-03: the boost slider fires per tick — the persisted write is
+        // debounced (same 500 ms pattern as scheduleSyncPrefsSave) so a
+        // drag writes once, with the last value, instead of once per tick.
+        // The live gain applies immediately in applyPlayerVolume above;
+        // only the DataStore write waits.
+        scheduleAudioBoostSave()
+    }
+
+    /** Debounced persistence for [setAudioBoostLevel]; reads the live state at fire time. */
+    private var audioBoostSaveJob: Job? = null
+
+    private fun scheduleAudioBoostSave() {
+        audioBoostSaveJob?.cancel()
+        audioBoostSaveJob = viewModelScope.launch {
+            delay(SYNC_PREFS_SAVE_DEBOUNCE_MS)
+            val level = _ui.value.audioBoostLevel
+            settingsRepository.saveAudioBoostLevel(level)
+        }
     }
 
     /**
@@ -1838,7 +1855,22 @@ class PlayerViewModel @Inject constructor(
     private fun updateEqState(next: EqState) {
         _ui.update { it.copy(eqState = next) }
         pushAudioEnhancement(AudioBoostUi.splitGain(_ui.value.audioBoostLevel, _ui.value.userVolume).dspGain)
-        viewModelScope.launch { settingsRepository.saveEqState(next) }
+        // F-03: the EQ band sliders fire per tick — same debounce as the
+        // boost level above; the live mix applies immediately in
+        // pushAudioEnhancement, only the DataStore write waits.
+        scheduleEqStateSave()
+    }
+
+    /** Debounced persistence for [updateEqState]; reads the live state at fire time. */
+    private var eqStateSaveJob: Job? = null
+
+    private fun scheduleEqStateSave() {
+        eqStateSaveJob?.cancel()
+        eqStateSaveJob = viewModelScope.launch {
+            delay(SYNC_PREFS_SAVE_DEBOUNCE_MS)
+            val state = _ui.value.eqState
+            settingsRepository.saveEqState(state)
+        }
     }
 
     /** The EQ sheet, opened from the More sheet's Audio row. */
@@ -2727,7 +2759,24 @@ class PlayerViewModel @Inject constructor(
     fun setSubtitleSettings(settings: SubtitleUiSettings) {
         val style = settings.clamped()
         _ui.update { it.copy(subtitle = style) }
-        viewModelScope.launch { settingsRepository.saveSubtitleStyle(style) }
+        // F-03: the subtitle-seat drag fires per pointer event and the
+        // size/position sliders per tick — the persisted write is debounced
+        // (same 500 ms pattern as scheduleSyncPrefsSave) so a drag writes
+        // once, with the last value, instead of once per event. The UI
+        // updates immediately above; only the DataStore write waits.
+        scheduleSubtitleStyleSave()
+    }
+
+    /** Debounced persistence for [setSubtitleSettings]; reads the live state at fire time. */
+    private var subtitleStyleSaveJob: Job? = null
+
+    private fun scheduleSubtitleStyleSave() {
+        subtitleStyleSaveJob?.cancel()
+        subtitleStyleSaveJob = viewModelScope.launch {
+            delay(SYNC_PREFS_SAVE_DEBOUNCE_MS)
+            val style = _ui.value.subtitle
+            settingsRepository.saveSubtitleStyle(style)
+        }
     }
 
     /** Bundle-provided or SAF-picked external subtitle. SRT/VTT/ASS → our overlay (delay read
@@ -2746,7 +2795,21 @@ class PlayerViewModel @Inject constructor(
                     _events.emit(PlayerEvent.Message("Could not load subtitle file: $label"))
                     return@launch
                 }
-                customSubtitleFile = SubtitleParser.parseOverlay(text, SubtitleFormat.fromFileNameOrMime(formatHint))
+                // APP-10 open item, resolved: the SRT/VTT/ASS parsers are
+                // all defensive (malformed lines return null, numbers parse
+                // with *OrNull), so parseOverlay cannot throw on a malformed
+                // file — but this is the one unguarded launch in the file,
+                // and a parser throw here would crash the app from a
+                // viewModelScope coroutine. Guard it anyway and say so out
+                // loud with the same message the fetch failure uses.
+                val file = runCatching {
+                    SubtitleParser.parseOverlay(text, SubtitleFormat.fromFileNameOrMime(formatHint))
+                }.getOrNull()
+                if (file == null) {
+                    _events.emit(PlayerEvent.Message("Could not load subtitle file: $label"))
+                    return@launch
+                }
+                customSubtitleFile = file
                 customSubtitleFromBundle = false
                 _ui.update { it.copy(customSubtitleLoaded = label) }
             } else {

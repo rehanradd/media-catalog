@@ -59,7 +59,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -140,9 +140,11 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
@@ -1809,7 +1811,13 @@ internal fun EdgeFeedbackLine(hud: Hud) {
         contentAlignment = if (spec.side == EdgeSide.LEFT) Alignment.CenterStart else Alignment.CenterEnd,
     ) {
         Column(
-            Modifier.padding(horizontal = 12.dp),
+            // F-04: the edge readout is transient paint — without a live
+            // region TalkBack never announces a brightness/volume/boost
+            // change as it happens. Polite, merged so the icon's spoken
+            // label ("Volume 80%") is the announced text.
+            Modifier
+                .padding(horizontal = 12.dp)
+                .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite },
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             // The spoken label stays as the content description so the string is
@@ -1870,6 +1878,12 @@ private fun ScrubToast(
             Surface(
                 color = RaddHudToast,
                 shape = MaterialTheme.shapes.small,
+                // F-04: the scrub readout is a transient toast — a polite
+                // live region so TalkBack announces the target time as it
+                // moves. Merged so the time text is the announced text.
+                modifier = Modifier.semantics(mergeDescendants = true) {
+                    liveRegion = LiveRegionMode.Polite
+                },
             ) {
                 Text(
                     stringResource(R.string.player_time_of, target.formatTime(), durationMs.formatTime()),
@@ -1906,7 +1920,11 @@ private fun SubtitleToast(value: SubtitleHudValue) {
             shape = MaterialTheme.shapes.small,
             // Cinema (Nov 2026): same 116dp seat as the scrub toast — above the
             // slimmer bottom bar, not floating mid-picture.
-            modifier = Modifier.padding(bottom = 116.dp),
+            // F-04: polite live region, merged so the pill's own text is
+            // what TalkBack announces when a subtitle gesture lands.
+            modifier = Modifier
+                .padding(bottom = 116.dp)
+                .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite },
         ) {
             Text(
                 text,
@@ -1925,7 +1943,11 @@ private fun BoostBadge() {
             color = RaddCurrent500,
             shape = MaterialTheme.shapes.small,
             // Cinema (Nov 2026): the seat clears the slimmer top bar (56dp).
-            modifier = Modifier.padding(top = 64.dp),
+            // F-04: polite live region, merged so the badge text is what
+            // TalkBack announces when the speed boost starts.
+            modifier = Modifier
+                .padding(top = 64.dp)
+                .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite },
         ) {
             Row(Modifier.padding(horizontal = 8.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.FastForward, null, tint = Color.Black, modifier = Modifier.size(14.dp))
@@ -2334,7 +2356,17 @@ internal fun CenterSpinner(state: PlayerUiState) {
     ) return
     val chrome = PlayerChromeTheme.forId(state.playerTheme)
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Surface(color = chrome.chip, shape = CircleShape) {
+        Surface(
+            color = chrome.chip,
+            shape = CircleShape,
+            // F-04: the spinner is paint only — without a live region
+            // TalkBack never says the player is buffering. Polite, with
+            // the buffering sentence as the spoken text.
+            modifier = Modifier.semantics(mergeDescendants = true) {
+                liveRegion = LiveRegionMode.Polite
+                contentDescription = stringResource(R.string.player_buffering)
+            },
+        ) {
             // F4 (Batch B): the centre spinner was 44dp in a 72dp chip —
             // the round-2 re-review read it as very small against the
             // playback area, with no visible buffering progress. The ring
@@ -2574,7 +2606,12 @@ internal fun BottomControls(
                     modifier = Modifier.padding(top = 8.dp),
                     contentPadding = PaddingValues(start = 0.dp, end = 16.dp),
                 ) {
-                    items(state.castNames, key = { it }) { actor ->
+                    // F-06: keyed by index + name, not by name alone —
+                    // staged cast data can list the same actor twice, and
+                    // two items sharing a Lazy key throw at composition.
+                    // The duplicate chip still renders (same label, same
+                    // search target); only the crash is gone.
+                    itemsIndexed(state.castNames, key = { index, actor -> "$index:$actor" }) { _, actor ->
                         RaddChip(
                             selected = false,
                             onClick = { onActorClick(actor) },
@@ -2805,12 +2842,20 @@ internal fun BottomControls(
                             valueRange = 0f..1f,
                             modifier = Modifier.fillMaxWidth(),
                         )
-                        // Volume boost, honest UI only (Session 126, player review
-                        // D2): the slider stops at the 100% player ceiling
-                        // (AudioBoostUi.MAX_OFFERED_LEVEL) — this build has no
-                        // software gain stage, so a thumb the viewer could drag
-                        // to 200% would be a promise the build breaks on every
-                        // drag. The summary below says what was requested and
+                        // Volume boost (MX idea #8, verified 2026-11-24):
+                        // the slider runs the full 0..200%
+                        // (AudioBoostUi.MAX_OFFERED_LEVEL) because the
+                        // software gain stage is real — the part of the
+                        // level above unity goes to the enhancement
+                        // processor in the service's audio sink chain
+                        // (PlaybackService collects the store's
+                        // audioEnhancement and applies it live), so
+                        // every stop on it is applied. The old comment
+                        // here said this build had no gain stage and the
+                        // slider stopped at the 100% player ceiling; both
+                        // were wrong — the slider never stopped at 100%,
+                        // and the processor has been wired since MX #8.
+                        // The summary below says what was requested and
                         // what was actually applied. The requested level lives
                         // in this dialog only — the stored level is the
                         // clamped one, and a request that was never applied is
@@ -4413,7 +4458,11 @@ private fun PlayFromDialog(
         text = {
             OutlinedTextField(
                 value = text,
-                onValueChange = { text = it },
+                // F-01: digits and ':' only, capped at 11 chars ("999:59:59"
+                // plus slack) — a pasted 19-digit number can never reach
+                // the parser. The parser itself is still overflow-safe
+                // (see parseTimeToMs); the filter is UX, not the guard.
+                onValueChange = { text = it.filter { c -> c.isDigit() || c == ':' }.take(11) },
                 label = { Text(stringResource(R.string.player_play_from_hint), color = Color.White.copy(alpha = 0.6f)) },
                 singleLine = true,
             )
@@ -4427,16 +4476,33 @@ private fun PlayFromDialog(
     )
 }
 
-/** "12:34" → 754 000 ms; "1:02:03" → ms; single number = minutes; garbage → 0. */
-private fun parseTimeToMs(raw: String): Long {
+/**
+ * "12:34" → 754 000 ms; "1:02:03" → ms; single number = minutes; garbage → 0.
+ * F-01: a part that does not fit in a Long (a ~19-digit paste) used to throw
+ * NumberFormatException out of toLong() inside the confirm click handler and
+ * crash the player. Every part parses with toLongOrNull now, and the
+ * multiply/add use the exact forms, so an overflowing time returns 0
+ * instead of throwing. Internal so PlayFromTimeTest can feed it directly.
+ */
+internal fun parseTimeToMs(raw: String): Long {
     val parts = raw.trim().split(':').map { it.trim() }
     if (parts.isEmpty() || parts.any { it.isEmpty() || !it.all { c -> c.isDigit() } }) return 0L
-    val nums = parts.map { it.toLong() }
-    return when (nums.size) {
-        1 -> nums[0] * 60_000L
-        2 -> (nums[0] * 60 + nums[1]) * 1000L
-        3 -> (nums[0] * 3600 + nums[1] * 60 + nums[2]) * 1000L
-        else -> 0L
+    val nums = parts.map { it.toLongOrNull() ?: return 0L }
+    return try {
+        when (nums.size) {
+            1 -> Math.multiplyExact(nums[0], 60_000L)
+            2 -> Math.multiplyExact(Math.addExact(Math.multiplyExact(nums[0], 60L), nums[1]), 1000L)
+            3 -> Math.multiplyExact(
+                Math.addExact(
+                    Math.addExact(Math.multiplyExact(nums[0], 3600L), Math.multiplyExact(nums[1], 60L)),
+                    nums[2],
+                ),
+                1000L,
+            )
+            else -> 0L
+        }
+    } catch (_: ArithmeticException) {
+        0L
     }
 }
 
@@ -5626,7 +5692,14 @@ private fun rememberPipLauncher(aspectRatio: Float? = null, sourceRect: androidx
                         )
                     }
                 }.build()
-                activity.enterPictureInPictureMode(params)
+                // F-05: a false return (PiP disallowed for this activity,
+                // or the auto-PiP call racing ON_PAUSE) used to be
+                // swallowed — the viewer tapped PiP and nothing happened
+                // with no message. The refusal toast is the same one the
+                // exception path already shows.
+                if (!activity.enterPictureInPictureMode(params)) {
+                    Toast.makeText(context, pipRefused, Toast.LENGTH_SHORT).show()
+                }
             } catch (t: Throwable) {
                 // Dev-cleanup (Nov 2026, E2): the toast is one fixed line — the
                 // exception's own words are logcat-only, never viewer copy.
