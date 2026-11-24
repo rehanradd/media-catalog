@@ -431,7 +431,9 @@ class DownloadsViewModel @Inject constructor(
     }
 
     fun resumeDownload(item: DeviceDownload) {
-        deviceDownloads.requestResume(item.id)
+        // Phase 4 (Downloads #5): resume is suspend — a 404/410 retry
+        // re-resolves the handle before re-queueing (see requestResume).
+        viewModelScope.launch { deviceDownloads.requestResume(item.id) }
     }
 
     fun removeDownload(item: DeviceDownload) {
@@ -575,6 +577,25 @@ internal fun failureReasonFor(lastError: String?): String? = when (lastError) {
     "no_fresh_url" -> "The link expired and could not be refreshed."
     "transient" -> "A network error interrupted the download."
     "sequential_failed" -> "The download could not be completed."
+    else -> null
+}
+
+/**
+ * Phase 4 (Downloads #5): the device side's stable failure kind, in viewer
+ * words — the mirror of [failureReasonFor] for the keep side. Same shape:
+ * an unknown or null kind renders nothing, so the generic status line
+ * stands alone rather than leaking a raw code ("HTTP 404") or a wire
+ * value ("Unexpected content type: text/html") onto the screen. Applied in
+ * [DeviceDownloadsRepository.toUi]; the composable stays dumb and keeps
+ * painting `failureReason` verbatim.
+ */
+internal fun deviceFailureReasonFor(errorKind: String?): String? = when (errorKind) {
+    "link_expired" -> "This copy is no longer available. Retry to get a fresh link."
+    "host_refused" -> "The host refused this download. Try another version."
+    "rate_limited" -> "Too many requests at once. Wait a minute, then retry."
+    "transfer_failed" -> "The connection dropped. Retry to resume where it stopped."
+    "incomplete_file" -> "The download stopped before it finished."
+    "save_failed" -> "Could not save the file on this device. Check storage and retry."
     else -> null
 }
 

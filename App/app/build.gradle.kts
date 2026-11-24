@@ -436,6 +436,7 @@ tasks.withType<Test>().configureEach {
             filter {
                 excludeTestsMatching("com.raddstream.app.ui.PaparazziPreviewTest")
                 excludeTestsMatching("com.raddstream.app.ui.PlayerLandscapePaparazziTest")
+                excludeTestsMatching("com.raddstream.app.ui.DownloadsPaparazziTest")
             }
         }
     }

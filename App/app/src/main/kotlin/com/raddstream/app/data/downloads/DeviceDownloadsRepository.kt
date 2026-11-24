@@ -15,6 +15,7 @@ import com.raddstream.app.network.buildRaddGson
 import com.raddstream.app.network.downloadRedirectUrl
 import com.raddstream.app.network.withVipPass
 import com.raddstream.app.sync.SyncAccountRepository
+import com.raddstream.app.viewmodel.deviceFailureReasonFor
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.util.Locale
@@ -34,6 +35,21 @@ import kotlinx.coroutines.withContext
  * READY, and a Resume retries only the missing segments.
  */
 enum class DeviceDownloadState { QUEUED, DOWNLOADING, PAUSED, READY, FAILED, PARTIAL }
+
+/**
+ * Stable failure kinds for device downloads (Phase 4, Downloads #5). The
+ * kind is what the row's viewer sentence is mapped from; the stored
+ * free-text `error` is a diagnostic only and is never displayed. One
+ * spelling, in one place, so a typo cannot silently unmap a failure.
+ */
+object DeviceDownloadErrorKind {
+    const val LINK_EXPIRED = "link_expired"
+    const val HOST_REFUSED = "host_refused"
+    const val RATE_LIMITED = "rate_limited"
+    const val TRANSFER_FAILED = "transfer_failed"
+    const val INCOMPLETE_FILE = "incomplete_file"
+    const val SAVE_FAILED = "save_failed"
+}
 
 /** One public download as the Downloads screen and the service both see it. */
 data class DeviceDownload(
@@ -67,8 +83,20 @@ data class DeviceDownload(
      * [DeviceDownloadEntity.error] (the completion gate's specific reason,
      * or the exception that stopped the transfer). Null when the download
      * never failed, or when there is nothing specific to say.
+     *
+     * Phase 4 (Downloads #5): the stored string is a diagnostic only — it
+     * can hold raw backend words ("HTTP 404", byte counts, content types)
+     * and must never be painted. What the row paints comes from
+     * [errorKind] through [deviceFailureReasonFor] instead; see [toUi].
      */
     val failureReason: String? = null,
+    /**
+     * The stable failure kind behind [failureReason] — `link_expired`,
+     * `host_refused`, `rate_limited`, `transfer_failed`, `incomplete_file`,
+     * `save_failed`, or null when the failure was never classified. Old
+     * persisted rows carry null and fall back to the generic status line.
+     */
+    val errorKind: String? = null,
 ) {
     val progress: Float
         get() = if (bytesTotal > 0) {
@@ -133,6 +161,13 @@ data class DeviceDownloadEntity(
     val localUri: String? = null,
     val enqueuedAt: Long = 0L,
     val error: String? = null,
+    /**
+     * Phase 4 (Downloads #5): the stable failure kind behind [error] —
+     * see [DeviceDownload.errorKind]. Gson tolerates the missing field on
+     * old persisted rows (null). The stored [error] string stays as the
+     * diagnostic; it stops being displayed.
+     */
+    val errorKind: String? = null,
 )
 
 /**
@@ -297,7 +332,16 @@ class DeviceDownloadsRepository @Inject constructor(
         DownloadService.pause(context, id)
     }
 
-    fun requestResume(id: String) {
+    /**
+     * Phase 4 (Downloads #5 + APP-05 §3.1): a 404/410 retry must re-resolve
+     * the handle first — re-GETting the same redirector URL can only 404
+     * again unless the server's bank is refreshed. One user tap = at most
+     * one `resolveStream` call; no automatic retry loop, no retry on
+     * 429/403. A re-resolved retry restarts from zero by default: the fresh
+     * resolve may name a different file than the dead one, and resuming at
+     * the old byte offset into a different file corrupts it.
+     */
+    suspend fun requestResume(id: String) {
         val current = load().firstOrNull { it.id == id } ?: return
         if (current.state != DeviceDownloadState.PAUSED &&
             current.state != DeviceDownloadState.FAILED &&
@@ -305,8 +349,45 @@ class DeviceDownloadsRepository @Inject constructor(
         ) {
             return
         }
-        update(id) { it.copy(state = DeviceDownloadState.QUEUED, error = null) }
-        DownloadService.start(context, id)
+        if (current.errorKind == DeviceDownloadErrorKind.LINK_EXPIRED) {
+            val handle = current.handle
+            val meta = runCatching { apiProvider.current().resolveStream(handle, "0") }.getOrNull()
+            if (meta == null || !meta.success || meta.streamId == null) {
+                // The fresh link could not be minted: stay FAILED with the
+                // link_expired kind — the row already says so in viewer
+                // words. Do not start the service, do not loop.
+                return
+            }
+            val baseUrl = runCatching { apiProvider.currentBaseUrl() }.getOrNull() ?: return
+            val downloadUrl = if (meta.decrypt?.lowercase() == "aes-ctr") {
+                // Mega AES-CTR entries take the proxy branch: their URL is a
+                // loopback proxy URL, not the redirector. Detect via the
+                // fresh resolve metadata, never by sniffing the URL string.
+                MegaProxyHolder.start(meta) ?: return
+            } else {
+                withVipPass(
+                    downloadRedirectUrl(baseUrl, handle),
+                    syncAccountRepository.currentVipPass(),
+                )
+            }
+            // Restart from zero: the fresh resolve may name a different
+            // file, and resetResume also clears the segment journal, whose
+            // ranges describe bytes of a download that no longer exists.
+            resetResume(id)
+            update(id) {
+                it.copy(
+                    url = downloadUrl,
+                    state = DeviceDownloadState.QUEUED,
+                    bytesTotal = meta.fileSizeBytes?.takeIf { size -> size > 0 } ?: it.bytesTotal,
+                    error = null,
+                    errorKind = null,
+                )
+            }
+            runCatching { DownloadService.start(context, id) }
+            return
+        }
+        update(id) { it.copy(state = DeviceDownloadState.QUEUED, error = null, errorKind = null) }
+        runCatching { DownloadService.start(context, id) }
     }
 
     fun requestRemove(id: String) {
@@ -376,6 +457,7 @@ class DeviceDownloadsRepository @Inject constructor(
                 state = DeviceDownloadState.PAUSED,
                 bytesDownloaded = downloaded,
                 error = null,
+                errorKind = null,
             )
         }
     }
@@ -385,6 +467,7 @@ class DeviceDownloadsRepository @Inject constructor(
         downloaded: Long,
         total: Long,
         reason: String = "Download stopped before it finished.",
+        errorKind: String? = null,
     ) {
         dropLiveRate(id)
         update(id) {
@@ -393,6 +476,7 @@ class DeviceDownloadsRepository @Inject constructor(
                 bytesDownloaded = downloaded,
                 bytesTotal = if (total > 0) total else it.bytesTotal,
                 error = reason,
+                errorKind = errorKind,
             )
         }
     }
@@ -409,6 +493,7 @@ class DeviceDownloadsRepository @Inject constructor(
         downloaded: Long,
         total: Long,
         reason: String,
+        errorKind: String? = null,
     ) {
         dropLiveRate(id)
         update(id) {
@@ -417,6 +502,7 @@ class DeviceDownloadsRepository @Inject constructor(
                 bytesDownloaded = downloaded,
                 bytesTotal = if (total > 0) total else it.bytesTotal,
                 error = reason,
+                errorKind = errorKind,
             )
         }
     }
@@ -444,6 +530,7 @@ class DeviceDownloadsRepository @Inject constructor(
                 bytesTotal = if (total > 0) total else it.bytesTotal,
                 localUri = localUri,
                 error = null,
+                errorKind = null,
             )
         }
         persistedAt.remove(id)
@@ -547,12 +634,23 @@ class DeviceDownloadsRepository @Inject constructor(
         fileName = fileName,
         bytesPerSec = liveRates[id]?.first ?: 0L,
         etaSeconds = liveRates[id]?.second,
-        // The failure reason is stored, not guessed: the row renders it
-        // under the generic line instead of hiding it in the database.
-        // A PARTIAL row shows its reason the same way — how many parts are
-        // missing is the one thing the viewer needs to decide on a retry.
-        failureReason = if (state == DeviceDownloadState.FAILED || state == DeviceDownloadState.PARTIAL) error else null,
+        // Phase 4 (Downloads #5): the failure reason is mapped from the
+        // stable kind, never the stored string — the stored string can hold
+        // raw backend words ("HTTP 404", byte counts, content types) and
+        // must never reach the screen. A PARTIAL row keeps its stored
+        // sentence when no kind maps: it is constructed ("3 of 4 parts did
+        // not finish."), never an exception message, and it is the one thing
+        // the viewer needs to decide on a retry.
+        failureReason = when (state) {
+            DeviceDownloadState.FAILED -> deviceFailureReasonFor(errorKind)
+            DeviceDownloadState.PARTIAL -> deviceFailureReasonFor(errorKind) ?: error
+            else -> null
+        },
+        errorKind = errorKind,
     )
+
+    /** Live (speed, ETA) per download, for the foreground notification. */
+    internal fun liveRate(id: String): Pair<Long, Long?>? = liveRates[id]
 
     /** Rolling progress samples per download (bytes, monotonic ms), last five only. */
     private val speedSamples = HashMap<String, ArrayDeque<Pair<Long, Long>>>()

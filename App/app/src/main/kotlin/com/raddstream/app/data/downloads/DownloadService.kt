@@ -43,6 +43,15 @@ import okhttp3.Request
 import java.util.concurrent.TimeUnit
 
 /**
+ * Phase 4 (Downloads #5): a non-2xx answer from our own download endpoint,
+ * typed so the failure kind rides with the failure instead of a bare
+ * `IOException("HTTP ${code}")` whose message would end up painted on the
+ * Downloads row. The message stays as the stored diagnostic; the screen
+ * never sees it.
+ */
+internal class DownloadHttpException(val code: Int) : IOException("HTTP $code")
+
+/**
  * The one writer of public downloads. A foreground service is used instead of
  * `DownloadManager` because the platform's public API has no pause/resume (only remove),
  * while the requirement is an honest pause that keeps its bytes.
@@ -245,7 +254,7 @@ class DownloadService : Service() {
             }
             is SegmentedOutcome.Failed -> {
                 clearSegmentState(id)
-                repo.markFailed(id, outcome.journal.bytesDownloaded(), total, outcome.reason)
+                repo.markFailed(id, outcome.journal.bytesDownloaded(), total, outcome.reason, errorKind = outcome.kind)
                 repo.entity(id)?.let { notifyFailed(it, outcome.journal.bytesDownloaded(), total) }
                 outcome
             }
@@ -270,7 +279,7 @@ class DownloadService : Service() {
         val defect = completionDefect(total, total, contentType)
         if (defect != null) {
             clearSegmentState(id)
-            repo.markFailed(id, total, total, defect)
+            repo.markFailed(id, total, total, defect, errorKind = DeviceDownloadErrorKind.INCOMPLETE_FILE)
             repo.entity(id)?.let { repo.deleteOutput(it) }
             repo.entity(id)?.let { notifyFailed(it, total, total) }
             return
@@ -299,6 +308,7 @@ class DownloadService : Service() {
                 id, total, total,
                 failure.message?.takeIf { it.isNotBlank() }
                     ?: "The download could not be saved.",
+                errorKind = DeviceDownloadErrorKind.SAVE_FAILED,
             )
             repo.entity(id)?.let { notifyFailed(it, total, total) }
             return
@@ -353,7 +363,7 @@ class DownloadService : Service() {
             if (downloaded > 0) builder.header("Range", "bytes=$downloaded-")
             val response = client.newCall(builder.build()).execute()
             response.use { answer ->
-                if (!answer.isSuccessful) throw IOException("HTTP ${answer.code}")
+                if (!answer.isSuccessful) throw DownloadHttpException(answer.code)
                 val body = answer.body ?: throw IOException("empty body")
                 contentType = answer.header("Content-Type").orEmpty()
                 if (downloaded > 0 && answer.code != 206) downloaded = 0L
@@ -401,7 +411,7 @@ class DownloadService : Service() {
             // so it fails too.
             val defect = completionDefect(downloaded, total, contentType)
             if (defect != null) {
-                repo.markFailed(id, downloaded, total, defect)
+                repo.markFailed(id, downloaded, total, defect, errorKind = DeviceDownloadErrorKind.INCOMPLETE_FILE)
                 repo.entity(id)?.let { repo.deleteOutput(it) }
                 repo.resetResume(id)
                 repo.entity(id)?.let { notifyFailed(it, downloaded, total) }
@@ -430,10 +440,13 @@ class DownloadService : Service() {
             if (now != null && now.state != DeviceDownloadState.PAUSED) {
                 // The real exception, not the default sentence: a disk-full
                 // failure and a network failure must not store the same words.
+                // The message stays the stored diagnostic; the row paints the
+                // mapped sentence for the kind, never this string.
                 repo.markFailed(
                     id, downloaded, total,
                     failure.message?.takeIf { it.isNotBlank() }
                         ?: "Download stopped before it finished.",
+                    errorKind = downloadFailureKind(failure),
                 )
                 notifyFailed(now, downloaded, total)
             }
@@ -588,7 +601,12 @@ class DownloadService : Service() {
         val percent = if (total > 0) ((downloaded * 100) / total).toInt().coerceIn(0, 100) else 0
         val text = when (state) {
             DeviceDownloadState.QUEUED -> "Queued"
-            DeviceDownloadState.DOWNLOADING -> if (total > 0) "Downloading $percent%" else "Downloading"
+            // Phase 4 (Downloads #6): the same percent + bytes + speed +
+            // ETA as the row — never percent alone.
+            DeviceDownloadState.DOWNLOADING -> {
+                val (rate, eta) = repo.liveRate(entry.id) ?: (0L to null)
+                downloadNotificationText(downloaded, total, rate, eta)
+            }
             DeviceDownloadState.PAUSED -> "Paused — ${formatBytes(downloaded)} saved"
             DeviceDownloadState.READY -> "Saved to Movies/$SUBDIR"
             DeviceDownloadState.FAILED -> "Stopped — open Downloads to resume"
@@ -676,15 +694,64 @@ class DownloadService : Service() {
         stopSelf()
     }
 
-    private fun formatBytes(bytes: Long): String = when {
-        bytes >= 1_000_000_000 -> "%.1f GB".format(bytes / 1_000_000_000.0)
-        bytes >= 1_000_000 -> "%.0f MB".format(bytes / 1_000_000.0)
-        bytes >= 1_000 -> "%.0f KB".format(bytes / 1_000.0)
-        else -> "$bytes B"
-    }
-
     companion object {
         private const val CHANNEL_ID = "radd_downloads"
+
+        /** "450 MB", "1.0 GB" — the decimal units the rows use. */
+        internal fun formatBytes(bytes: Long): String = when {
+            bytes >= 1_000_000_000 -> "%.1f GB".format(bytes / 1_000_000_000.0)
+            bytes >= 1_000_000 -> "%.0f MB".format(bytes / 1_000_000.0)
+            bytes >= 1_000 -> "%.0f KB".format(bytes / 1_000.0)
+            else -> "$bytes B"
+        }
+
+        /**
+         * Phase 4 (Downloads #5): a download failure → its stable kind.
+         * A 404/410 means the banked link is dead (retry must re-resolve);
+         * 403 is a refusal, not a retry; 429 is honoured, never hammered;
+         * anything else is a dropped transfer. Pure, so a unit test pins it.
+         */
+        internal fun downloadFailureKind(failure: Throwable): String = when (failure) {
+            is DownloadHttpException -> when (failure.code) {
+                404, 410 -> DeviceDownloadErrorKind.LINK_EXPIRED
+                403 -> DeviceDownloadErrorKind.HOST_REFUSED
+                429 -> DeviceDownloadErrorKind.RATE_LIMITED
+                else -> DeviceDownloadErrorKind.TRANSFER_FAILED
+            }
+            else -> DeviceDownloadErrorKind.TRANSFER_FAILED
+        }
+
+        /**
+         * Phase 4 (Downloads #6): the foreground notification carries the
+         * same percent + bytes + speed + ETA as the row — "Downloading 45% ·
+         * 450 MB / 1.0 GB · 12.0 MB/s · about 1 min left" — never percent
+         * alone. Pure, so a unit test pins it without a service.
+         */
+        internal fun downloadNotificationText(
+            downloaded: Long,
+            total: Long,
+            bytesPerSec: Long,
+            etaSeconds: Long?,
+        ): String {
+            if (downloaded <= 0L && total <= 0L) return "Downloading — starting…"
+            val percent = if (total > 0) {
+                "${((downloaded * 100) / total).toInt().coerceIn(0, 100)}% · "
+            } else {
+                ""
+            }
+            val bytes = if (total > 0) {
+                "${formatBytes(downloaded)} / ${formatBytes(total)}"
+            } else {
+                formatBytes(downloaded)
+            }
+            val speed = if (bytesPerSec > 0) {
+                DownloadSpeed.formatSpeed(bytesPerSec) +
+                    (DownloadSpeed.formatEta(etaSeconds)?.let { " · $it" } ?: "")
+            } else {
+                "calculating…"
+            }
+            return "Downloading $percent$bytes · $speed"
+        }
         private const val NOTIFICATION_ID = 7101
         private const val COMPLETE_NOTIFICATION_ID = 7102
         private const val EXTRA_ID = "download_id"
