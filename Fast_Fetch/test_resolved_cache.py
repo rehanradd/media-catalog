@@ -1677,5 +1677,71 @@ class TestMegaNoBanking(unittest.TestCase):
         self.assertIsNone(resolved_cache.lookup_cache(conn, 77))
 
 
+# A HubCDN R2 resolve answer, shaped like resolve_live_source's fresh
+# return (API-11): the bucket label rides in the answer so the bank can
+# record which bucket the URL came from.
+def hubcdn_resolve(**over) -> dict:
+    data = {
+        "success": True, "id": 99,
+        "url": "https://pub-5703108c07374cf4bf82a6a6e2041364.r2.dev/"
+               "4fc9754173225efe5164b44ee56e5cd1",
+        "service": "fsl_r2", "is_temporary": False, "is_resumable": True,
+        "mime_type": "video/x-matroska",
+        "r2_bucket": "5703108c07374cf4bf82a6a6e2041364",
+    }
+    data.update(over)
+    return data
+
+
+class TestR2Bucket(unittest.TestCase):
+    def test_r2_bucket_round_trips_record_to_lookup(self):
+        conn = fresh_conn()
+        now = time.time()
+        stored = resolved_cache.record_resolved_cache(
+            conn, 99, hubcdn_resolve(), now=now)
+        self.assertEqual(stored["r2_bucket"],
+                         "5703108c07374cf4bf82a6a6e2041364")
+        hit = resolved_cache.lookup_cache(conn, 99, want="watch", now=now + 5)
+        self.assertIsNotNone(hit)
+        self.assertEqual(hit["r2_bucket"],
+                         "5703108c07374cf4bf82a6a6e2041364")
+
+    def test_r2_bucket_absent_is_null(self):
+        conn = fresh_conn()
+        now = time.time()
+        resolved_cache.record_resolved_cache(conn, 77, file_resolve(), now=now)
+        hit = resolved_cache.lookup_cache(conn, 77, want="watch", now=now + 5)
+        self.assertIsNotNone(hit)
+        self.assertIsNone(hit["r2_bucket"])
+
+    def test_old_schema_table_gains_the_column_on_first_use(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            "CREATE TABLE resolved_cache (link_id INTEGER PRIMARY KEY,"
+            " url TEXT NOT NULL, category TEXT NOT NULL, kind TEXT NOT NULL,"
+            " mime_type TEXT, file_size_bytes INTEGER,"
+            " resolved_at REAL NOT NULL, expires_at REAL,"
+            " reverify_after REAL NOT NULL, is_resumable INTEGER NOT NULL"
+            " DEFAULT 0, http_status INTEGER, source TEXT NOT NULL"
+            " DEFAULT 'jit', ip_bound INTEGER, fail_count INTEGER NOT NULL"
+            " DEFAULT 0)")
+        cols_before = {row[1] for row in
+                       conn.execute("PRAGMA table_info(resolved_cache)")}
+        self.assertNotIn("r2_bucket", cols_before)
+        resolved_cache._SCHEMA_OK = None
+        try:
+            now = time.time()
+            resolved_cache.record_resolved_cache(
+                conn, 99, hubcdn_resolve(), now=now)
+        finally:
+            resolved_cache._SCHEMA_OK = "resolved_cache"
+        cols_after = {row[1] for row in
+                      conn.execute("PRAGMA table_info(resolved_cache)")}
+        self.assertIn("r2_bucket", cols_after)
+        hit = resolved_cache.lookup_cache(conn, 99, want="watch", now=now + 5)
+        self.assertEqual(hit["r2_bucket"],
+                         "5703108c07374cf4bf82a6a6e2041364")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
