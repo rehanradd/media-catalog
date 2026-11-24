@@ -104,32 +104,21 @@ class TestSevenStarHDImport(unittest.TestCase):
         self.assertEqual(len(r0["sources"]), 1)
         self.assertEqual(r0["sources"][0]["service"], "mobilejsr")
 
-    def test_mobilejsr_unwrapping_mock(self):
-        mock_html = """
-        <html>
-        <body>
-            <a href="https://hubcloud.ist/video/test12345">HubCloud Direct</a>
-            <a href="https://1fichier.com/?testfile1fichier">1fichier Stream</a>
-            <a href="https://new2.filepress.lat/file/abcdef">Filepress Drive</a>
-        </body>
-        </html>
-        """
-        with patch.object(fast_fetch, "http_get", return_value=(200, "https://mobilejsr.com/view/test", mock_html)):
-            with patch.object(fast_fetch, "unwrap_hubcloud_drive", return_value=[{
-                "source_name": "⚡ HubCloud [FSL Cloudflare R2]",
-                "service": "fsl_r2",
-                "resource_id": "test12345",
-                "source_url": "https://hubcloud.ist/video/test12345",
-                "final_url": "https://pub-r2.dev/video.mp4",
-                "is_temporary": 1,
-            }]):
-                with patch.object(fast_fetch, "unwrap_filepress", return_value=("https://drive.google.com/uc?id=abc", "abcdef", 0)):
-                    sources = fast_fetch.unwrap_mobilejsr("https://mobilejsr.com/view/test")
-                    self.assertGreaterEqual(len(sources), 3)
-                    services = [s["service"] for s in sources]
-                    self.assertIn("fsl_r2", services)
-                    self.assertIn("1fichier", services)
-                    self.assertIn("filepress", services)
+    def test_mobilejsr_dead_host_returns_bridge_row(self):
+        # mobilejsr.com is dead in the host registry (audit 2026-11-18), so
+        # unwrap_mobilejsr short-circuits to a single bridge row WITHOUT
+        # fetching: the old mock-based test asserted >=3 unwrapped sources
+        # from the CSRF-unlock path, which no longer runs for this host.
+        # The bridge row is what the caller (resolve_live_source) falls
+        # through from to sibling failover.
+        with patch.object(fast_fetch, "http_get") as mock_get:
+            sources = fast_fetch.unwrap_mobilejsr("https://mobilejsr.com/view/test")
+        mock_get.assert_not_called()
+        self.assertEqual(len(sources), 1)
+        self.assertEqual(sources[0]["service"], "mobilejsr")
+        self.assertEqual(sources[0]["resource_id"], "test")
+        self.assertEqual(sources[0]["source_url"], "https://mobilejsr.com/view/test")
+        self.assertEqual(sources[0]["final_url"], "https://mobilejsr.com/view/test")
 
     def test_sync_api_to_db(self):
         mock_posts = [
