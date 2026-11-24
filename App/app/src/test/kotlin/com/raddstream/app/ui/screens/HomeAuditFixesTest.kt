@@ -176,6 +176,10 @@ class HomeAuditFixesTest {
         // tree and prove the node carries a click action before clicking.
         compose.onRoot().printToLog("HOME-EMPTY-TEST")
         compose.onNodeWithText("Browse titles").assertHasClickAction()
+        // The taller H6 art pushes the Button lower; scroll it into view
+        // before clicking (standard lazy-list practice — the click needs
+        // the node in the viewport).
+        compose.onNodeWithText("Browse titles").performScrollTo()
         compose.waitForIdle()
         compose.onNodeWithText("Browse titles").performClick()
         compose.waitForIdle()
