@@ -551,7 +551,7 @@ class FailoverSliceTests(HostRankingFixture):
         calls = []
 
         def _recorder(source_id, *, v2=False, want="either",
-                      _failover=True, deadline=None):
+                      _failover=True, deadline=None, background=False):
             calls.append((int(source_id), deadline))
             return {"success": False, "id": int(source_id),
                     "error": "no_playable_source",
@@ -577,7 +577,7 @@ class FailoverSliceTests(HostRankingFixture):
         calls = {}
 
         def _recorder(source_id, *, v2=False, want="either",
-                      _failover=True, deadline=None):
+                      _failover=True, deadline=None, background=False):
             calls[int(source_id)] = deadline
             return {"success": False, "id": int(source_id),
                     "error": "no_playable_source",
