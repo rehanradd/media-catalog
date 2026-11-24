@@ -177,7 +177,10 @@ class HomeAuditFixesTest {
         compose.onRoot().printToLog("HOME-EMPTY-TEST")
         compose.onNodeWithText("Browse titles").assertHasClickAction()
         compose.onNodeWithText("Browse titles").performClick()
-        assertTrue(browsed == null)
+        // DIAGNOSTIC: assertEquals prints the actual value — "unset" means
+        // the click never reached onBrowseType; a type string means some
+        // other caller fired it.
+        assertEquals(null, browsed)
     }
 
     // ── Audit #5 + #6: the error state retries filled, address renamed ──
