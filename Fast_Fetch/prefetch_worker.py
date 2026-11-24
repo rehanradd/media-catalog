@@ -555,8 +555,14 @@ def _resolve_one(*, fast_fetch, resolved_cache, source_id, title,
         # background=True: this is a sweep warm, not a press — slow
         # unwraps (the FilePress prepare poll, ~2 min) may use their
         # long budget here, and the banked answer serves the next press.
+        # API-06: this is a background worker, not the request path, so it
+        # may mint the filemoon PoW token (allow_pow_solve=True). The mint
+        # runs here, off the press path, and the session-scoped token is
+        # banked on disk for presses to reuse — a press never waits on a
+        # solve. (load-gated above: the sweep yields under load first.)
         result = fast_fetch.resolve_live_source(source_id, v2=True,
-                                                background=True)
+                                                background=True,
+                                                allow_pow_solve=True)
     except Exception as exc:  # a broken resolve must not kill the daemon
         result = {"success": False, "error": f"{type(exc).__name__}: {exc}"}
     if result.get("success"):
