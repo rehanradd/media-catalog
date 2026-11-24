@@ -25,13 +25,21 @@ class PlayerControlSemanticsTest {
      */
     private val OFF_WORD = "no text track"
 
-    private val playerScreen: File by lazy {
+    /** The 11 files the PlayerScreen split (APP-10) produced, in split order. */
+    private val playerScreenFiles: List<String> = listOf(
+        "PlayerScreen.kt", "PlayerGestures.kt", "PlayerHud.kt",
+        "PlayerChrome.kt", "PlayerControls.kt", "PlayerCards.kt",
+        "PlayerNotices.kt", "PlayerSubtitles.kt", "PlayerDialogs.kt",
+        "PlayerSheets.kt", "PlayerScreenUtils.kt",
+    )
+
+    private val screensDir: File by lazy {
         var dir: File? = File("").absoluteFile
         while (dir != null) {
             if (File(dir, "brand.properties").isFile) {
                 return@lazy File(
                     dir,
-                    "App/app/src/main/kotlin/com/raddstream/app/ui/screens/PlayerScreen.kt",
+                    "App/app/src/main/kotlin/com/raddstream/app/ui/screens",
                 )
             }
             dir = dir.parentFile
@@ -62,7 +70,7 @@ class PlayerControlSemanticsTest {
     fun `hate-audit fixes stay in the player`() {
         // H16: live is the LIVE mark only — no seek bar, no elapsed counter.
         // The mockup's live bar is not copied; the regression (073e454e) stays fixed.
-        assertTrue("the live mark is missing", source.contains("private fun LiveMark("))
+        assertTrue("the live mark is missing", source.contains("fun LiveMark("))
         assertFalse(
             "the live progress row is back — the mockup's seek bar must not be copied",
             source.contains("LiveProgressRow"),
@@ -80,7 +88,7 @@ class PlayerControlSemanticsTest {
         // H5: the edge dead zone gates vertical gestures in Lane C.
         assertTrue("the edge dead zone is missing from Lane C", source.contains("isInEdgeDeadZone("))
         // H6: the scrubber's touch height is 48dp (24dp track + 12dp each side).
-        val scrubber = functionBody("private fun Scrubber(")
+        val scrubber = functionBody("fun Scrubber(")
         assertTrue("the scrubber must pad 12dp vertically", scrubber.contains("vertical = 12.dp"))
         // H14/H5: the centre button's double-tap guard — one toggle per double-tap.
         assertTrue("the centre double-tap guard is missing", source.contains("lastCentreToggleNs"))
@@ -105,7 +113,7 @@ class PlayerControlSemanticsTest {
         // Up-next: a bottom card with a jade countdown ring, "Up next:
         // S2:E5" bold, an X, and Cancel + Play now pills. The old
         // centred pill + text buttons are gone.
-        val upNext = functionBody("private fun AutoplayCountdownCard(")
+        val upNext = functionBody("fun AutoplayCountdownCard(")
         assertTrue("the up-next card must sit at the bottom", upNext.contains("Alignment.BottomCenter"))
         assertTrue("the ring must read the countdown total", upNext.contains("AUTOPLAY_COUNTDOWN_SECONDS"))
         assertTrue("the headline needs the season and episode", upNext.contains("player_season_episode"))
@@ -115,7 +123,7 @@ class PlayerControlSemanticsTest {
         assertFalse("the old centred layout is back", upNext.contains("CenterHorizontally"))
         // Resume: a centred card with a jade Resume pill and a dark Start
         // over pill. The old bottom chip and its X are gone.
-        val resume = functionBody("private fun ResumeChip(")
+        val resume = functionBody("fun ResumeChip(")
         assertTrue("the resume prompt must be a centred card", resume.contains("Alignment.Center"))
         assertTrue("the resume prompt needs its Resume pill", resume.contains("R.string.player_resume)"))
         assertTrue("the resume prompt needs Start over", resume.contains("player_start_over"))
@@ -125,25 +133,25 @@ class PlayerControlSemanticsTest {
         // Finding: a jade spinner ring, a bold headline, the "Trying the
         // best version first" line while finding, a dark Try-another pill,
         // and no logo mark on the card.
-        val finding = functionBody("private fun StartNoticeCard(")
+        val finding = functionBody("fun StartNoticeCard(")
         assertTrue("the finding card needs its subtitle", finding.contains("player_finding_note"))
         assertTrue("the finding headline must be bold", finding.contains("FontWeight.Bold"))
         assertTrue("Try another must be the dark pill", finding.contains("RaddHudPillIdle"))
         assertFalse("the logo mark is back on the finding card", finding.contains("ic_logo_mark"))
         assertTrue("the finding card must be rounder", finding.contains("RoundedCornerShape(24.dp)"))
-        val spinner = functionBody("private fun PlayerLoadingIndicator(")
+        val spinner = functionBody("fun PlayerLoadingIndicator(")
         assertTrue("the spinner ring must be jade", spinner.contains("RaddCurrent500"))
         assertFalse("the spinner is grey again", spinner.contains("onSurfaceVariant"))
         // Speed: vertical rows over the mockup's six speeds, with the
         // boost note kept; the horizontal chip strip is gone.
-        val speed = functionBody("private fun SpeedSheet(")
+        val speed = functionBody("fun SpeedSheet(")
         assertTrue("the speed sheet must read its six rows", speed.contains("GestureMapper.SHEET_PRESETS"))
         assertTrue("the speed rows must be vertical", speed.contains("SheetRow("))
         assertFalse("the horizontal chip strip is back", speed.contains("horizontalScroll"))
         assertTrue("the boost note must stay", speed.contains("player_boost_note"))
         // Sleep: Off first, then the four presets, then End of episode;
         // the fading line and the fade note stay.
-        val sleep = functionBody("private fun SleepSheet(")
+        val sleep = functionBody("fun SleepSheet(")
         val offAt = sleep.indexOf("player_off_label")
         val presetsAt = sleep.indexOf("SHEET_PRESETS_MS.forEach")
         val endAt = sleep.indexOf("player_sleep_at_end")
@@ -152,12 +160,12 @@ class PlayerControlSemanticsTest {
         assertTrue("the sleep note must stay", sleep.contains("player_sleep_note"))
         // Switch version: rows with size + Playing pill, a footer that
         // switching keeps the viewer's place, and an X on the title.
-        val switch = functionBody("private fun PrintLogSheet(")
+        val switch = functionBody("fun PrintLogSheet(")
         assertTrue("the source rows must be SwitchSourceRows", switch.contains("SwitchSourceRow("))
         assertTrue("the sheet needs its footer", switch.contains("player_switch_keeps_place"))
         assertFalse("the old header note is back", switch.contains("player_prints_note"))
         assertFalse("the old plain rendition rows are back", switch.contains("SheetRow(label = rowText"))
-        val title = functionBody("private fun SheetTitle(")
+        val title = functionBody("fun SheetTitle(")
         assertTrue("sheet titles must take an X", title.contains("onDismiss"))
         assertTrue("the X must be drawn", title.contains("Icons.Default.Close"))
         // Strings: the two dropped notes are gone from the file, and the
@@ -184,8 +192,14 @@ class PlayerControlSemanticsTest {
     }
 
     private val source: String by lazy {
-        assertTrue("PlayerScreen.kt is missing at ${playerScreen.path}", playerScreen.isFile)
-        playerScreen.readText()
+        // The drift asserts read the split files concatenated, in split
+        // order, so a declaration's neighbours are the same as when the
+        // screen was one file.
+        playerScreenFiles.joinToString("\n") { name ->
+            val file = File(screensDir, name)
+            assertTrue("Player split file $name is missing at ${file.path}", file.isFile)
+            file.readText()
+        }
     }
 
     /**
@@ -279,7 +293,7 @@ class PlayerControlSemanticsTest {
     fun `the minimum touch target is the Android minimum`() {
         assertTrue(
             "every player press must be at least 48 dp",
-            source.contains("private val MinControlTarget = 48.dp"),
+            source.contains("val MinControlTarget = 48.dp"),
         )
     }
 
@@ -296,7 +310,7 @@ class PlayerControlSemanticsTest {
 
     @Test
     fun `the press a control uses gives its label to a screen reader`() {
-        val body = functionBody("private fun ControlTarget(")
+        val body = functionBody("fun ControlTarget(")
         assertTrue(
             "ControlTarget declares a label and never publishes it, which is how sixteen " +
                 "named controls became invisible",
@@ -312,7 +326,7 @@ class PlayerControlSemanticsTest {
 
     @Test
     fun `the lane button hands its label down instead of dropping it`() {
-        val body = functionBody("private fun PlayerControlButton(")
+        val body = functionBody("fun PlayerControlButton(")
         assertTrue(
             "a contentDescription parameter nobody reads is the bug this test exists for",
             !body.contains("contentDescription: String"),
@@ -372,7 +386,7 @@ class PlayerControlSemanticsTest {
 
     /** The More sheet, from its signature to the next sheet's opt-in annotation. */
     private fun moreSheetBody(): String {
-        val start = source.indexOf("private fun MoreSheet(")
+        val start = source.indexOf("fun MoreSheet(")
         assertTrue("PlayerScreen.kt no longer declares MoreSheet", start >= 0)
         // The next sheet is PrintLogSheet, whose opt-in also covers the
         // ExperimentalFoundationApi its long-press title needs — the marker
@@ -449,7 +463,7 @@ class PlayerControlSemanticsTest {
 
     @Test
     fun `a slow start earns a hint and, later, actions`() {
-        val card = functionBody("private fun StartNoticeCard(")
+        val card = functionBody("fun StartNoticeCard(")
         assertTrue(
             "the notice must say the wait is normal once it passes two seconds",
             card.contains("R.string.player_start_slow"),
@@ -478,7 +492,7 @@ class PlayerControlSemanticsTest {
 
     @Test
     fun `the thirty-second give-up is its own reason`() {
-        val card = functionBody("private fun GiveUpCard(")
+        val card = functionBody("fun GiveUpCard(")
         assertTrue(
             "the give-up card must know the timeout reason",
             card.contains("HandoffWhy.START_TIMEOUT"),
@@ -503,7 +517,7 @@ class PlayerControlSemanticsTest {
 
     @Test
     fun `the start timing is a debug line, not viewer copy`() {
-        val start = source.indexOf("private fun PrintLogSheet(")
+        val start = source.indexOf("fun PrintLogSheet(")
         assertTrue("PlayerScreen.kt no longer declares PrintLogSheet", start >= 0)
         val end = source.indexOf("\n@Composable", start)
         assertTrue("cannot find the end of PrintLogSheet", end >= 0)
@@ -549,7 +563,7 @@ class PlayerControlSemanticsTest {
         // adding to the ORIGINAL volume, so a full swipe moved it ~1%.
         // The lane must call the rememberUpdatedState wrapper, never the
         // bare lambda; same for brightness, which only worked by accident.
-        val overlay = functionBody("private fun GestureOverlay(")
+        val overlay = functionBody("fun GestureOverlay(")
         assertTrue(
             "GestureOverlay must wrap onVolume in rememberUpdatedState",
             overlay.contains("val latestOnVolume by rememberUpdatedState(onVolume)"),
