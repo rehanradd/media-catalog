@@ -230,15 +230,19 @@ class Phase1Publish(unittest.TestCase):
             self.owner, {"feature_quality_gate": 1})
         v1 = first["config_version"]
 
-        def _bump_then_fail(published_by):
+        def _bump_then_fail(published_by, expected_version=None):
             from admin_v2.services import WRITE_LOCK, NOW
-            row = self.svc._config_row()
-            new_version = row["config_version"] + 1
+            # PNL-11 fixup: callers pass the version they already
+            # allocated under WRITE_LOCK; honour it instead of
+            # recomputing, so the mock still simulates "the bump
+            # lands, the snapshot insert fails".
+            if expected_version is None:
+                expected_version = self.svc._config_row()["config_version"] + 1
             with WRITE_LOCK:
                 self.svc.admin.execute(
                     "UPDATE app_remote_config_v2 SET config_version=?, "
                     "updated_by=?, updated_at=? WHERE id=1",
-                    (new_version, published_by, NOW()))
+                    (expected_version, published_by, NOW()))
                 self.svc.admin.commit()
             raise RuntimeError("simulated snapshot insert failure")
 
