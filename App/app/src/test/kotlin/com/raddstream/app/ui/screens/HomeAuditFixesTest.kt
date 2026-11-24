@@ -8,8 +8,6 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.onRoot
-import androidx.compose.ui.test.printToLog
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.performClick
@@ -172,21 +170,12 @@ class HomeAuditFixesTest {
         compose.onNodeWithText("Browse titles").assertExists()
         compose.onNodeWithText("Change server address").assertExists()
         compose.onNodeWithText("Try a different address").assertDoesNotExist()
-        // DIAGNOSTIC (2027 Home fix, 24 Nov): the click below stopped
-        // reaching onBrowseType once the empty-state art changed. Dump the
-        // tree and prove the node carries a click action before clicking.
-        compose.onRoot().printToLog("HOME-EMPTY-TEST")
-        compose.onNodeWithText("Browse titles").assertHasClickAction()
-        // The taller H6 art pushes the Button lower; scroll it into view
-        // before clicking (standard lazy-list practice — the click needs
-        // the node in the viewport).
+        // The taller H6 art pushes the Button below the fold in the test
+        // viewport — scroll it into view before clicking (standard
+        // lazy-list practice; without this the click never lands).
         compose.onNodeWithText("Browse titles").performScrollTo()
-        compose.waitForIdle()
+        compose.onNodeWithText("Browse titles").assertHasClickAction()
         compose.onNodeWithText("Browse titles").performClick()
-        compose.waitForIdle()
-        // DIAGNOSTIC: assertEquals prints the actual value — "unset" means
-        // the click never reached onBrowseType; a type string means some
-        // other caller fired it.
         assertEquals(null, browsed)
     }
 
