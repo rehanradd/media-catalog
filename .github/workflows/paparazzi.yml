@@ -7,8 +7,8 @@ name: 📸 Paparazzi — render UI snapshots
 #
 #   First run on a branch records the goldens (`:app:recordPaparazziDebug` writes
 #   them to App/app/src/test/snapshots/). Commit those PNGs and later runs verify
-#   against them (`:app:verifyPaparazziDebug`, which also runs inside the main
-#   ci.yml's testDebugUnitTest). Until the goldens are committed, the main ci.yml
+#   against them (`:app:verifyPaparazziDebug`; the Paparazzi tests also run
+#   inside the main ci.yml's testDebugUnitTest). Until the goldens are committed, the main ci.yml
 #   run on this branch fails on the Paparazzi tests (verify mode, missing goldens)
 #   — that is the expected onboarding state, not a code regression.
 #
@@ -81,6 +81,8 @@ jobs:
         working-directory: App
         run: |
           ./gradlew :app:recordPaparazziDebug \
+            --tests "com.raddstream.app.ui.PaparazziPreviewTest" \
+            --tests "com.raddstream.app.ui.PlayerLandscapePaparazziTest" \
             --no-daemon --stacktrace --console=plain
 
       - name: 📤 Upload snapshots + report

@@ -395,30 +395,29 @@ tasks.withType<Test>().configureEach {
     }
 }
 
-// ── Paparazzi vs Robolectric: separate JVMs ──────────────────────────────────
+// ── Paparazzi vs Robolectric: separate invocations, not an exclusion ────────
 // Paparazzi 2.x CONFLICTS with Robolectric tests in the same module
 // (cashapp/paparazzi#1979): if a Robolectric test runs first in a fork, the
 // Robolectric-loaded framework classes break Paparazzi's Bridge.init
 // ("Failed to init Bridge."), and every Paparazzi test in that fork fails.
-// testDebugUnitTest runs the whole suite in shared forks, so the
-// Paparazzi-rule classes are excluded here and run ONLY via
-// verifyPaparazziDebug — its own Test task, its own JVM, no Robolectric
-// classes loaded. The goldens still gate on verifyPaparazziDebug (ci.yml
-// runs it as a separate step). Applied via withType<Test>().configureEach
-// with a name guard: tasks.named("testDebugUnitTest") fails at configuration
-// time because AGP creates that task lazily ("Task with name
-// 'testDebugUnitTest' not found", CI 45103299471), and an unguarded
-// withType<Test> exclusion would also empty verifyPaparazziDebug.
+// The exclusion that used to live here (withType<Test> + name guard on
+// testDebugUnitTest, excluding PaparazziPreviewTest and
+// PlayerLandscapePaparazziTest) is REMOVED. It was written for Paparazzi
+// 1.x, where record/verify were separate Test tasks with their own JVM.
+// In Paparazzi 2.x, recordPaparazziDebug / verifyPaparazziDebug are
+// lifecycle tasks (PaparazziTask : DefaultTask) that delegate ALL test
+// execution to testDebugUnitTest — so excluding the Paparazzi classes from
+// testDebugUnitTest removed their only execution path: record/verify ran
+// zero tests and succeeded vacuously, and no golden was ever produced or
+// compared (diagnosed 2026-11-24). The #1979 separation is now achieved
+// by the --tests filter on the record/verify invocations (paparazzi.yml
+// and ci.yml): those run ONLY the Paparazzi classes in a clean invocation
+// with no Robolectric test in the same fork. The Paparazzi tests also run
+// in the plain testDebugUnitTest (verify mode by default), so a branch
+// adding a Paparazzi test without its golden goes red until the golden is
+// recorded and committed.
 // ScreenSnapshotTest is NOT excluded — it is a Robolectric test (no Paparazzi
 // rule) and belongs in testDebugUnitTest.
-tasks.withType<Test>().configureEach {
-    if (name == "testDebugUnitTest") {
-        filter {
-            excludeTestsMatching("com.raddstream.app.ui.PaparazziPreviewTest")
-            excludeTestsMatching("com.raddstream.app.ui.PlayerLandscapePaparazziTest")
-        }
-    }
-}
 
 // ── Unit-test worker heap: 2g ───────────────────────────────────────────────
 // No maxHeapSize was configured, so Gradle ran the test worker at its

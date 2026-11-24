@@ -152,13 +152,18 @@ jobs:
 
       - name: "📸 Verify Paparazzi goldens (explicit gate)"
         working-directory: App
-        # testDebugUnitTest does NOT fail on missing or stale goldens (proven
-        # 2026-11-15: main-ci went green twice with uncommitted snapshots),
-        # so the goldens gate on nothing unless this task runs. verify fails
-        # the build when a render differs from its golden or one is missing —
-        # that is the onboarding flow: record, commit the PNGs, then green.
+        # The Paparazzi tests also run in testDebugUnitTest (verify mode by
+        # default). This step is the explicit gate: it runs ONLY the
+        # Paparazzi classes (--tests) in a clean invocation with no
+        # Robolectric test in the same fork (cashapp/paparazzi#1979), and
+        # fails when a render differs from its golden or one is missing.
+        # (The old comment claimed testDebugUnitTest "does NOT fail on
+        # missing or stale goldens" — that was a symptom of the 1.x-era
+        # exclusion; the exclusion is removed, 2026-11-24.)
         run: |
           ./gradlew :app:verifyPaparazziDebug \
+            --tests "com.raddstream.app.ui.PaparazziPreviewTest" \
+            --tests "com.raddstream.app.ui.PlayerLandscapePaparazziTest" \
             --no-daemon --stacktrace --console=plain
 
       - name: 📤 Upload debug APK
