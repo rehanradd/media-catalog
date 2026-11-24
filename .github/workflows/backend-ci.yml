@@ -161,7 +161,7 @@ name: 🐍 Backend CI — Stdlib Python Tests
 #
 #   ADMIN PANEL V2 SUITES — SEPARATE JOB `panel-tests` (added 2026-11-23).
 #   The Admin Panel v2 (AdminV2/) has its own unittest suites under
-#   AdminV2/tests/ — 278 tests, stdlib only (http.server, sqlite3, unittest),
+#   AdminV2/tests/ — 316 tests, stdlib only (http.server, sqlite3, unittest),
 #   run as `python3 -S AdminV2/tests/test_*.py` from the repo root. They were
 #   in git and passing locally but NOT in CI; this workflow now runs them.
 #   They live in a SEPARATE job, not in the `tests` job, for one reason: time.
@@ -187,7 +187,8 @@ name: 🐍 Backend CI — Stdlib Python Tests
 #     - test_live_tv_controls.py (27 tests)
 #     - test_vip_grant_atomic.py (2 tests; `from tests.helpers` -> `from
 #       helpers`, the standard pattern)
-#   After the fix, all 14 files pass: 278 tests.
+#   After the fix, all 14 files pass: 278 tests. PNL-08 (2026-11-24)
+#   adds a 15th suite, test_backup_guard.py (38 tests): 316 tests.
 #
 #   MACHINE-READABLE EXCLUSION BLOCK (parsed by Fast_Fetch/test_ci_manifest.py
 #   — the drift guard). One line per top-level Fast_Fetch/test_*.py that is
@@ -1301,7 +1302,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/radd-data-dir"
           echo "RADD_DATA_DIR=$RUNNER_TEMP/radd-data-dir" >> "$GITHUB_ENV"
 
-      # Admin Panel v2 suites (AdminV2/tests/, 278 tests, stdlib only).
+      # Admin Panel v2 suites (AdminV2/tests/, 316 tests, stdlib only).
       # One step per suite: a red X names the exact failing suite. Run as
       # `python3 -S` from the repo root — the tests insert AdminV2/ into
       # sys.path themselves (helpers.py), so they import AdminV2/admin_v2/,
@@ -1311,6 +1312,9 @@ jobs:
 
       - name: 🧪 test_api.py (panel)
         run: python3 -S AdminV2/tests/test_api.py
+
+      - name: 🧪 test_backup_guard.py (panel)
+        run: python3 -S AdminV2/tests/test_backup_guard.py
 
       - name: 🧪 test_domain_check.py (panel)
         run: python3 -S AdminV2/tests/test_domain_check.py
