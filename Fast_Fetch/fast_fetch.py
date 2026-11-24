@@ -3835,6 +3835,44 @@ _FILEMOON_FINGERPRINT = {
 _FILEMOON_CAPTCHA = {"token": None, "expires_at": 0.0}
 _FILEMOON_CAPTCHA_LOCK = threading.Lock()
 _FILEMOON_POW_TIMEOUT_S = 300.0
+#: API-06 (2026-11-24): the PoW solve is OFF the request path. A solve at
+#: difficulty 16 costs ~65k hashes expected (~3 min CPU on the 1-vCPU
+#: server), and the press path used to pay it inline: the primary copy is
+#: never called with a deadline (see resolve_live_source), so a cold-token
+#: press burned the whole 300 s timeout — and every coalesced waiter that
+#: timed out after 12 s started its own solve. The solve now lives only in
+#: filemoon_ensure_token(), which background workers call; the request path
+#: (unwrap_filemoon with allow_pow_solve=False, the default) never solves
+#: and fails fast with pow_required instead.
+#:
+#: The minted token is session-scoped, not per-video, so one mint serves
+#: every filemoon press for its ~1800 s life — but only if the token
+#: survives a process restart and is shared across serve processes. The
+#: in-process cache cannot do either, so a verified token is also banked
+#: on disk (see _filemoon_token_path) and re-read from there.
+#: Above this difficulty the expected solve cost explodes (difficulty 20
+#: is ~1M hashes, ~1 h) — the minter refuses rather than burning a worker.
+_FILEMOON_POW_MAX_DIFFICULTY = 20
+_FILEMOON_TOKEN_FILENAME = "filemoon_captcha_token.json"
+
+
+def _filemoon_token_path() -> Path:
+    """Where the banked captcha token lives: $RADD_FILEMOON_TOKEN_PATH,
+    else the data dir (config.DATA_DIR — /home/ubuntu/radd-stream-data on
+    the Oracle VM, outside the git checkout), else the temp dir. The file
+    holds a bearer-ish session token, so it is written mode 0600."""
+    override = os.environ.get("RADD_FILEMOON_TOKEN_PATH", "").strip()
+    if override:
+        return Path(override)
+    try:
+        import config
+        data_dir = Path(getattr(config, "DATA_DIR", "") or "")
+        if str(data_dir):
+            return data_dir / _FILEMOON_TOKEN_FILENAME
+    except Exception:  # noqa: BLE001 — config is optional; fall through
+        pass
+    import tempfile
+    return Path(tempfile.gettempdir()) / _FILEMOON_TOKEN_FILENAME
 
 
 def _filemoon_b64url_decode(text: str) -> bytes:
@@ -4076,8 +4114,9 @@ def _filemoon_pow_solve(nonce: str, difficulty: int, timeout_s: float = 300.0,
     """Find decimal counter s with gr("<nonce>:<s>") >= difficulty leading
     zero bits (JS `Er`). Returns the counter as a string, or None on
     timeout/deadline. ~3 ms/hash on the Oracle VM; difficulty 16 needs
-    ~65k tries expected (~3 min) — the caller caches the captcha token,
-    so this is paid rarely."""
+    ~65k tries expected (~3 min) — only filemoon_ensure_token calls this,
+    off the request path (API-06); the minted token is then banked, so the
+    solve is paid once per ~30 min, not once per file."""
     if difficulty <= 0:
         return "0"
     prefix = (nonce + ":").encode()
@@ -4088,7 +4127,10 @@ def _filemoon_pow_solve(nonce: str, difficulty: int, timeout_s: float = 300.0,
         if _filemoon_pow_leading_zero_bits(words) >= difficulty:
             return str(counter)
         counter += 1
-        if counter % 1024 == 0:
+        # API-06: check the cap every 256 hashes (~0.9 s), not 1024 —
+        # a timeout/deadline must cut the solve promptly, not up to
+        # ~3.5 s late, and the monotonic() call is free next to ~3 ms/hash.
+        if counter % 256 == 0:
             now = time.monotonic()
             if now - start > timeout_s:
                 return None
@@ -4096,24 +4138,137 @@ def _filemoon_pow_solve(nonce: str, difficulty: int, timeout_s: float = 300.0,
                 return None
 
 
+def _filemoon_load_banked_token() -> str | None:
+    """The banked token from disk while >60 s of life remains, else None.
+    A missing, corrupt, or expired file is \"no banked token\", never an
+    error — the caller then mints (background) or fails fast (request)."""
+    try:
+        raw = json.loads(_filemoon_token_path().read_text("utf-8"))
+    except Exception:  # noqa: BLE001 — missing/corrupt/unreadable: no token
+        return None
+    if not isinstance(raw, dict):
+        return None
+    token = raw.get("token")
+    try:
+        expires_at = float(raw.get("expires_at") or 0.0)
+    except (TypeError, ValueError):
+        return None
+    if not token or not isinstance(token, str):
+        return None
+    if expires_at - time.time() <= 60:
+        return None
+    with _FILEMOON_CAPTCHA_LOCK:
+        _FILEMOON_CAPTCHA["token"] = token
+        _FILEMOON_CAPTCHA["expires_at"] = expires_at
+    return token
+
+
+def _filemoon_write_banked_token(token: str, expires_at: float) -> None:
+    """Bank a verified token on disk (atomic replace, mode 0600).
+    Best-effort: a write failure must never break a resolve — the
+    in-process cache still holds the token for this process."""
+    try:
+        path = _filemoon_token_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps({"token": token,
+                              "expires_at": float(expires_at)}).encode()
+        tmp = path.with_name(path.name + ".tmp")
+        with open(tmp, "wb") as fh:
+            fh.write(payload)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except Exception:  # noqa: BLE001 — banking is best-effort, never fatal
+        pass
+
+
 def _filemoon_cached_token() -> str | None:
-    """The in-process captcha token while >60 s of life remains, else None."""
+    """The captcha token while >60 s of life remains, else None. The
+    in-process cache first; the disk bank second, so a token minted by a
+    background worker (or before a restart) is usable without a re-solve."""
     with _FILEMOON_CAPTCHA_LOCK:
         if (_FILEMOON_CAPTCHA["token"]
                 and _FILEMOON_CAPTCHA["expires_at"] - time.time() > 60):
             return _FILEMOON_CAPTCHA["token"]
-        return None
+    return _filemoon_load_banked_token()
 
 
 def _filemoon_store_token(token: str, expires_in) -> None:
-    """Cache a verified captcha token for its lifetime (1800 s live)."""
+    """Cache a verified captcha token for its lifetime (1800 s live) —
+    in-process AND on disk, so the next press (any process, after any
+    restart inside the token's life) reuses it instead of re-solving."""
     try:
         ttl = float(expires_in)
     except (TypeError, ValueError):
         ttl = 1800.0
+    expires_at = time.time() + max(0.0, ttl)
     with _FILEMOON_CAPTCHA_LOCK:
         _FILEMOON_CAPTCHA["token"] = token
-        _FILEMOON_CAPTCHA["expires_at"] = time.time() + max(0.0, ttl)
+        _FILEMOON_CAPTCHA["expires_at"] = expires_at
+    _filemoon_write_banked_token(token, expires_at)
+
+
+def filemoon_ensure_token(code: str, fetch=None,
+                          pow_timeout_s: float = _FILEMOON_POW_TIMEOUT_S,
+                          deadline: float | None = None) -> tuple:
+    """Mint (or reuse) a filemoon captcha token. THE ONLY PLACE that solves
+    the PoW — background workers (prefetch) call this; the request path
+    never does (API-06). Returns (token, reason): \"banked\" when a fresh
+    token already exists (no network, no PoW), \"minted\" on a fresh solve +
+    verify, otherwise (None, reason) with reason naming the failure
+    (captcha_start_http_<n>, difficulty_<n>_refused,
+    pow_timeout_difficulty_<n>, captcha_verify_http_<n>_<status>).
+    A minted token is stored in-process AND on disk, so presses reuse it.
+    `fetch` is the test seam, as in unwrap_filemoon."""
+    token = _filemoon_cached_token()
+    if token:
+        return (token, "banked")
+    if deadline is not None and time.monotonic() > deadline:
+        return (None, "deadline_passed_before_mint")
+    api = f"{_FILEMOON_API_BASE}/api/videos/{code}/embed"
+    headers = {"Accept": "application/json",
+               "Referer": f"{_FILEMOON_API_BASE}/e/{code}",
+               "User-Agent": USER_AGENT, "Content-Type": "application/json"}
+
+    def parse_json(body):
+        try:
+            data = json.loads(body.decode("utf-8", "replace"))
+            return data if isinstance(data, dict) else {}
+        except (ValueError, UnicodeDecodeError):
+            return {}
+
+    status, body, _ctype = _filemoon_api_request(
+        "POST", api + "/captcha", headers, b"{}", _request=fetch)
+    if status != 200:
+        return (None, f"captcha_start_http_{status}")
+    challenge = parse_json(body)
+    nonce = challenge.get("pow_nonce") or ""
+    pow_token = challenge.get("pow_token") or ""
+    try:
+        difficulty = int(challenge.get("pow_difficulty") or 0)
+    except (TypeError, ValueError):
+        difficulty = 0
+    if not nonce or not pow_token or difficulty <= 0:
+        return (None, "captcha_challenge_missing_nonce_token_difficulty")
+    if difficulty > _FILEMOON_POW_MAX_DIFFICULTY:
+        return (None, f"difficulty_{difficulty}_refused")
+    solution = _filemoon_pow_solve(nonce, difficulty,
+                                   timeout_s=pow_timeout_s,
+                                   deadline=deadline)
+    if solution is None:
+        return (None, f"pow_timeout_difficulty_{difficulty}")
+    status, body, _ctype = _filemoon_api_request(
+        "POST", api + "/captcha/verify", headers,
+        json.dumps({"pow_token": pow_token,
+                    "solution": solution}).encode(), _request=fetch)
+    verified = parse_json(body)
+    token = verified.get("token") if status == 200 else None
+    if not token or verified.get("status") != "ok":
+        return (None, f"captcha_verify_http_{status}_"
+                      f"{verified.get('status')}")
+    _filemoon_store_token(token, verified.get("expires_in"))
+    return (token, "minted")
 
 
 def filemoon_code_from_url(url: str) -> str:
@@ -4229,21 +4384,31 @@ def _filemoon_expiry_seconds(source_url: str, dec: dict) -> float | None:
 
 def unwrap_filemoon(url: str, verify: bool = True, fetch=None,
                    pow_timeout_s: float = _FILEMOON_POW_TIMEOUT_S,
-                   deadline: float | None = None) -> dict:
+                   deadline: float | None = None,
+                   allow_pow_solve: bool = False) -> dict:
     """filemoon embed/download URL -> verdict dict (host_resolvers shape).
 
     Chain (all JSON, fresh connection per call, ~1 req/s pacing is the
     caller's job): details (liveness) -> settings -> playback POST
-    {fingerprint} -> on 428 captcha_required: captcha start -> PoW solve
-    -> verify -> retry playback with X-Captcha-Token -> AES-GCM decrypt
+    {fingerprint} -> on 428 captcha_required: retry with the banked token,
+    else (allow_pow_solve=True only) mint one via filemoon_ensure_token
+    -> retry playback with X-Captcha-Token -> AES-GCM decrypt
     -> best source -> Range/capped-GET probe of the master (verify=True).
     `fetch` is the test seam: (method, url, headers, data) ->
     (status, body_bytes, content_type). Never raises for a host answer:
     a dead file is "dead", a challenge/timeout is "unverified", a crypto
     failure is "unknown" (the file exists; our decrypt failed).
+
+    API-06: the PoW solve is OFF the request path. allow_pow_solve
+    defaults False: with no banked token the call returns at once with
+    status "unverified" and pow_required True — it never starts a
+    captcha, never solves, never waits ~3 min. Only background workers
+    (prefetch, via resolve_live_source(allow_pow_solve=True)) opt in,
+    and the token they mint is banked on disk for presses to reuse.
     """
     result = {"service": "filemoon", "embed_url": url, "final_url": "",
               "is_temporary": True, "expires_in": None, "status": "unverified",
+              "pow_required": False,
               "notes": [], "poster_url": "", "signed_params": [],
               "subtitles": [], "sources": [], "quality": "",
               "file_id": "", "http_status": None, "content_type": None,
@@ -4313,49 +4478,37 @@ def unwrap_filemoon(url: str, verify: bool = True, fetch=None,
     if status == 428 or (status in (401, 403)
                          and "captcha" in body.decode("utf-8", "replace").lower()):
         # A cached token that the server just rejected is stale: drop it
-        # so the next call does not retry the same dead token first.
+        # from BOTH caches so the next call does not retry the same dead
+        # token first (a stale banked token would otherwise loop forever).
         with _FILEMOON_CAPTCHA_LOCK:
             _FILEMOON_CAPTCHA["token"] = None
             _FILEMOON_CAPTCHA["expires_at"] = 0.0
-        # 4. PoW captcha: start -> solve -> verify -> retry playback.
+        try:
+            _filemoon_token_path().unlink(missing_ok=True)
+        except Exception:  # noqa: BLE001 — dropping the bank is best-effort
+            pass
+        # 4. PoW captcha — OFF the request path (API-06). Without a
+        # banked token and without an explicit opt-in, fail fast: never
+        # start a challenge we will not solve, never burn ~3 min of CPU
+        # on a press. Background workers mint via filemoon_ensure_token.
+        if not allow_pow_solve:
+            result["pow_required"] = True
+            result["notes"].append(
+                "filemoon captcha required but no banked token: the PoW "
+                "solve lives off the request path — a background mint "
+                "(filemoon_ensure_token) must bank a token first")
+            return result
         if deadline is not None and time.monotonic() > deadline:
             result["notes"].append("captcha required but the call deadline "
                                    "passed before the PoW could start")
             return result
-        status, body, _ctype = api_call("POST", "/captcha", data=b"{}")
-        if status != 200:
-            result["notes"].append(f"captcha start HTTP {status}")
-            return result
-        challenge = parse_json(body)
-        nonce = challenge.get("pow_nonce") or ""
-        try:
-            difficulty = int(challenge.get("pow_difficulty") or 0)
-        except (TypeError, ValueError):
-            difficulty = 0
-        pow_token = challenge.get("pow_token") or ""
-        if not nonce or not pow_token or difficulty <= 0:
-            result["notes"].append("captcha challenge is missing nonce/token/"
-                                   "difficulty")
-            return result
-        solution = _filemoon_pow_solve(nonce, difficulty,
-                                       timeout_s=pow_timeout_s,
-                                       deadline=deadline)
-        if solution is None:
+        token, reason = filemoon_ensure_token(
+            code, fetch=fetch, pow_timeout_s=pow_timeout_s,
+            deadline=deadline)
+        if token is None:
             result["notes"].append(
-                f"PoW solve timed out (difficulty {difficulty})")
+                f"filemoon captcha mint failed: {reason}")
             return result
-        status, body, _ctype = api_call(
-            "POST", "/captcha/verify",
-            data=json.dumps({"pow_token": pow_token,
-                             "solution": solution}).encode())
-        verified = parse_json(body)
-        token = verified.get("token") if status == 200 else None
-        if not token or verified.get("status") != "ok":
-            result["notes"].append(
-                f"captcha verify HTTP {status} status "
-                f"{verified.get('status')}")
-            return result
-        _filemoon_store_token(token, verified.get("expires_in"))
         status, body, _ctype = playback_call(token)
     if status == 0:
         result["notes"].append("playback request failed at transport level")
@@ -9821,7 +9974,8 @@ def _bank_hubcloud_siblings(*, release_id, pressed_id, candidates):
 def resolve_live_source(source_id: int, *, v2: bool = False,
                         want: str = "either", _failover: bool = True,
                         deadline: float | None = None,
-                        background: bool = False) -> dict:
+                        background: bool = False,
+                        allow_pow_solve: bool = False) -> dict:
     """
     Just-In-Time (JIT) live stream resolver:
     Given a download_sources ID, returns an active, stream-ready URL.
@@ -9860,6 +10014,12 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
     ``deadline_expired`` failure fast instead of starting new work, and
     records nothing — an unanswered sibling is not a dead sibling. The
     primary copy is never called with a deadline.
+
+    ``allow_pow_solve`` (API-06) is False on the request path: the
+    filemoon branch then never solves the PoW — a cold token fails fast
+    with pow_required. Background workers (prefetch) pass True, so the
+    mint happens off the request path and its token is banked on disk
+    for presses to reuse.
     """
     if want not in ("watch", "download", "either"):
         want = "either"
@@ -11268,9 +11428,15 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                 # master 200 application/vnd.apple.mpegurl, real #EXTM3U).
                 # The unwrapper's Range/capped-GET probe of the master IS
                 # the gate evidence, same as gofile/streamtape.
+                # API-06 (2026-11-24): the PoW solve is off the request
+                # path — this branch never solves unless the caller opted
+                # in (prefetch passes allow_pow_solve=True); a press with
+                # no banked token fails fast with pow_required instead of
+                # burning ~3 min of CPU (the primary copy has no deadline).
                 _unwrap_branch_taken = True
                 verdict = unwrap_filemoon(hoster_input("filemoon"),
-                                          verify=True, deadline=deadline)
+                                          verify=True, deadline=deadline,
+                                          allow_pow_solve=allow_pow_solve)
                 direct_u = embed_from_verdict(verdict)
                 if direct_u:
                     fresh_url = direct_u
@@ -11859,7 +12025,8 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                         int(_sid), v2=v2, want=want, _failover=False,
                         deadline=min(_failover_deadline,
                                      time.monotonic() + _slice),
-                        background=background)
+                        background=background,
+                        allow_pow_solve=allow_pow_solve)
                 except Exception:
                     continue
                 # A stale-flagged sibling is NOT a failover win: it means
