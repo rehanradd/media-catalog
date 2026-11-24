@@ -113,13 +113,16 @@ private fun playerChromeRail(): Dp {
 }
 
 @Composable
-internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit, onToggleDecoderMode: () -> Unit) {
+internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit, onToggleDecoderMode: () -> Unit, scrimScale: Float = 1f) {
     val print = state.activeRendition
     val rail = playerChromeRail()
+    // P3 (round 2): the scrim scales with the staged poster's luminance —
+    // bright art gets a stronger scrim, dark art a lighter one. The stops
+    // clamp at 1.0, and 1.0x is the long-standing scrim (no poster = 1.0x).
     val topGradient = Brush.verticalGradient(
         colors = listOf(
-            Color.Black.copy(alpha = 0.82f),
-            Color.Black.copy(alpha = 0.35f),
+            Color.Black.copy(alpha = (0.82f * scrimScale).coerceAtMost(1f)),
+            Color.Black.copy(alpha = (0.35f * scrimScale).coerceAtMost(1f)),
             Color.Transparent,
         )
     )
@@ -627,6 +630,9 @@ internal fun BottomControls(
     // 25c: the single-rung Quality button explains itself through the
     // screen's snackbar, which lives in the content scope, not here.
     onMessage: (String) -> Unit = {},
+    // P3 (round 2): the scrim multiplier from the staged poster's
+    // luminance (1.0x = the long-standing scrim; no poster = 1.0x).
+    scrimScale: Float = 1f,
 ) {
     var showVolumeDialog by remember { mutableStateOf(false) }
     val chrome = PlayerChromeTheme.forId(state.playerTheme)
@@ -637,8 +643,8 @@ internal fun BottomControls(
     val bottomGradient = Brush.verticalGradient(
         colors = listOf(
             Color.Transparent,
-            Color.Black.copy(alpha = 0.48f),
-            Color.Black.copy(alpha = 0.92f),
+            Color.Black.copy(alpha = (0.48f * scrimScale).coerceAtMost(1f)),
+            Color.Black.copy(alpha = (0.92f * scrimScale).coerceAtMost(1f)),
         )
     )
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {

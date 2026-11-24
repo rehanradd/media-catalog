@@ -34,11 +34,14 @@ import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalMotionScheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MotionScheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -104,13 +107,14 @@ import com.raddstream.app.ui.components.PinPadDialog
 import com.raddstream.app.ui.components.rememberReduceMotion
 import com.raddstream.app.ui.theme.RaddCaptionPlateArgb
 import com.raddstream.app.ui.theme.RaddCurrent500
-import com.raddstream.app.ui.theme.RaddMotion
 import com.raddstream.app.ui.theme.PlayerChromeTheme
 import com.raddstream.app.ui.theme.RaddNarrationCheck
 import com.raddstream.app.ui.theme.RaddNarrationPlate
 import com.raddstream.app.ui.theme.RaddPlayerSnackbarPlate
 import com.raddstream.app.ui.theme.RaddPlayerStage
 import com.raddstream.app.ui.theme.brandSp
+import com.raddstream.app.ui.theme.rememberPosterLuminance
+import com.raddstream.app.ui.theme.scrimScaleFor
 import com.raddstream.app.viewmodel.KidsLockViewModel
 import com.raddstream.app.viewmodel.KidsPinOutcome
 import com.raddstream.app.viewmodel.PlayerViewModel
@@ -175,7 +179,14 @@ fun PlayerScreen(
             viewModel.startStreamHandle(streamId, title)
         }
     }
-    PlayerScreenContent(state, viewModel, onBackClick, onPlayNextEpisode, onActorClick, onHomeClick, onOpenPost = onOpenPost, onPlaySomethingClick = onPlaySomethingClick)
+    // BOM bump (round 2): the player reads the public M3 Expressive motion
+    // scheme (material3 1.5.0) — the same springs RaddMotion carried, from
+    // the framework instead of a hand copy. The provider is scoped to the
+    // player only: the rest of the app keeps plain MaterialTheme (and
+    // RaddMotion) until its own migration.
+    CompositionLocalProvider(LocalMotionScheme provides MotionScheme.expressive()) {
+        PlayerScreenContent(state, viewModel, onBackClick, onPlayNextEpisode, onActorClick, onHomeClick, onOpenPost = onOpenPost, onPlaySomethingClick = onPlaySomethingClick)
+    }
 }
 
 /** Bundle-driven entry (PlayBundle already installed into the session store by the caller). */
@@ -193,7 +204,10 @@ fun PlayerScreen(
     viewModel: PlayerViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
-    PlayerScreenContent(state, viewModel, onBackClick, onPlayNextEpisode, onActorClick, onHomeClick, onOpenPost = onOpenPost, onPlaySomethingClick = onPlaySomethingClick)
+    // BOM bump (round 2): see the other overload — same provider, same springs.
+    CompositionLocalProvider(LocalMotionScheme provides MotionScheme.expressive()) {
+        PlayerScreenContent(state, viewModel, onBackClick, onPlayNextEpisode, onActorClick, onHomeClick, onOpenPost = onOpenPost, onPlaySomethingClick = onPlaySomethingClick)
+    }
 }
 
 // ── Root ───────────────────────────────────────────────────────────────────────
@@ -232,6 +246,10 @@ private fun PlayerScreenContent(
     // transient overlays that take no state of their own; the stateful chrome
     // pieces resolve it from `state.playerTheme` themselves.
     val chrome = PlayerChromeTheme.forId(state.playerTheme)
+    // P3 (round 2): the staged poster's luminance drives the chrome scrims —
+    // bright art gets a stronger scrim, dark art a lighter one. Null (no
+    // poster, or not loaded yet) is 1.0x: the long-standing scrims.
+    val scrimScale = scrimScaleFor(rememberPosterLuminance(state.posterUrl))
 
     // BM rule 9: low-end devices get solid chrome, not frosted glass — the
     // blur is a cost they pay for nothing, and a solid plate reads the same.
@@ -625,18 +643,19 @@ private fun PlayerScreenContent(
         // Player review D1: the chrome fades, never cuts. The AnimatedVisibility
         // below IS the gate now — a plain `if` would remove the bars in one
         // frame before the exit fade could play. Same fade the double-tap
-        // ripple uses (RaddMotion effects springs; 30 ms crossfade under reduced
+        // ripple uses (motionScheme effects springs; 30 ms crossfade under reduced
         // motion). The lock still cuts: locking is a mode change, not an
         // auto-hide, and the UnlockFab replaces the chrome at once.
         // P5 (player fixes): the chrome fades ride the M3 Expressive effects
-        // springs via RaddMotion — fastEffects in, defaultEffects out — and
-        // Ghost mode's edge strip fades with them instead of cutting in/out
-        // on a plain `if`. (MaterialTheme.motionScheme itself is internal in
-        // the pinned material3 1.4.0; wiring it is the BOM-bump follow-up.)
+        // springs via MaterialTheme.motionScheme — fastEffects in,
+        // defaultEffects out — and Ghost mode's edge strip fades with them
+        // instead of cutting in/out on a plain `if`. (The BOM bump, round 2,
+        // made motionScheme public in material3 1.5.0; the player provides
+        // the expressive scheme at its root.)
         val chromeVisible = controlsVisible || state.startPhase != StartPhase.NONE
         val reduceMotion = rememberReduceMotion()
-        val chromeEnter = fadeIn(if (reduceMotion) tween(REDUCED_MOTION_FADE_MS) else RaddMotion.fastEffects())
-        val chromeExit = fadeOut(if (reduceMotion) tween(REDUCED_MOTION_FADE_MS) else RaddMotion.defaultEffects())
+        val chromeEnter = fadeIn(if (reduceMotion) tween(REDUCED_MOTION_FADE_MS) else MaterialTheme.motionScheme.fastEffectsSpec())
+        val chromeExit = fadeOut(if (reduceMotion) tween(REDUCED_MOTION_FADE_MS) else MaterialTheme.motionScheme.defaultEffectsSpec())
         if (!state.locked) {
             if (state.pureCinema) {
                 AnimatedVisibility(
@@ -652,7 +671,7 @@ private fun PlayerScreenContent(
                     enter = chromeEnter,
                     exit = chromeExit,
                 ) {
-                    TopBar(state = state, onBack = onBackClick, onLock = { vm.setLocked(true) }, onToggleDecoderMode = { vm.toggleDecoderMode() })
+                    TopBar(state = state, onBack = onBackClick, onLock = { vm.setLocked(true) }, onToggleDecoderMode = { vm.toggleDecoderMode() }, scrimScale = scrimScale)
                 }
                 // P10 (round 2): the zoom-reset chip — a visible way back
                 // to Fit while zoomed. It rides the chrome visibility, so
@@ -709,6 +728,7 @@ private fun PlayerScreenContent(
                         },
                         onActorClick = onActorClick,
                         onMessage = { snackbar = PlayerSnackbar(it) },
+                        scrimScale = scrimScale,
                     )
                 }
             }
