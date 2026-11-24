@@ -928,6 +928,15 @@ jobs:
       - name: 🧪 test_host_resolvers.py
         run: python3 -S Fast_Fetch/importers/test_host_resolvers.py
 
+      # FilePress prepare/download resolver (API-04, 2026-11-24): the
+      # attempts chain (create -> poll while PREPARING -> mint -> follow
+      # /download/ when needed), the Turnstile challenge never attempted,
+      # Telegram deep links never served, a timed-out prepare transient
+      # rather than a failure. Offline: every fetch is scripted and the
+      # poll loop runs on a fake clock, so no socket is ever opened.
+      - name: 🧪 test_filepress_resolver.py
+        run: python3 -S Fast_Fetch/importers/test_filepress_resolver.py
+
       # The documentation diet's guard (2026-10-30). The diet moved ~690 KB of LOG and SPEC out of
       # the files every agent auto-loads; this suite is what proves no LAW sentence was lost in the
       # move — it greps the trimmed AGENTS.md files for each invariant phrase, checks the rotated
