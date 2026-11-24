@@ -9249,6 +9249,30 @@ def _first_slice_for_service(service: str) -> float:
     except (TypeError, ValueError):
         return FAILOVER_FIRST_SLICE_SECONDS
 
+
+#: FilePress prepare poll budgets (API-04, 2026-11-24): the server-side
+#: copy takes ~2 min, and a play request must never block on it. A press
+#: gets 30 s — enough to catch a nearly-ready prep, short enough to
+#: fail fast — while the background prefetch pass gets the full 150 s
+#: the unwrapper defaults to, so one background call rides a cold prep
+#: to READY and banks it. A sibling call's deadline caps either budget:
+#: the ladder's slice is the caller's patience, not a suggestion.
+FILEPRESS_PRESS_POLL_BUDGET_SECONDS = 30.0
+FILEPRESS_BACKGROUND_POLL_BUDGET_SECONDS = 150.0
+
+
+def _filepress_poll_budget(*, background: bool = False,
+                           deadline: float | None = None) -> float:
+    """Seconds the FilePress prepare poll may run on this call."""
+    budget = (FILEPRESS_BACKGROUND_POLL_BUDGET_SECONDS if background
+              else FILEPRESS_PRESS_POLL_BUDGET_SECONDS)
+    if deadline is not None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return 0.0
+        budget = min(budget, remaining)
+    return budget
+
 #: Seconds a copy recorded as failed stays refused without re-probing
 #: (Session 101 negative cache). The audit's range was 6–24 h; 12 h is
 #: the midpoint and a named constant so the operator can tune it in one
@@ -9356,6 +9380,18 @@ def _is_transport_verdict(verdict) -> bool:
     if verdict.get("failure") == "transport":
         return True
     return verdict.get("http_status") == 0
+
+
+def _is_transient_verdict(verdict) -> bool:
+    """True when an unwrapper verdict names a still-warming job, not a
+    failure: the FilePress prepare poll ran out of budget while the
+    server-side copy was still PREPARING. The copy must not spend 12h
+    in the negative cache for being slow — the next press, or the next
+    background warm, re-polls the attempt instead of refusing on a
+    verdict that said nothing about the file. Deliberately separate
+    from `_is_transport_verdict`: the network answered fine here.
+    """
+    return isinstance(verdict, dict) and bool(verdict.get("transient"))
 
 #: Host health (Session 103, in-process only): per-service timestamps of
 #: failures this process has recorded, pruned to the last hour. A service
@@ -9784,13 +9820,20 @@ def _bank_hubcloud_siblings(*, release_id, pressed_id, candidates):
 
 def resolve_live_source(source_id: int, *, v2: bool = False,
                         want: str = "either", _failover: bool = True,
-                        deadline: float | None = None) -> dict:
+                        deadline: float | None = None,
+                        background: bool = False) -> dict:
     """
     Just-In-Time (JIT) live stream resolver:
     Given a download_sources ID, returns an active, stream-ready URL.
     - If permanent (is_temporary == 0) and active: returns cached final_url instantly.
     - If temporary (is_temporary == 1) or expired: re-resolves the source_url
       bridge on-the-fly, updates the database cache with the fresh token, and returns it.
+
+    ``background=True`` marks a prefetch/sweep call: slow unwraps (the
+    FilePress prepare poll, ~2 min) may use their long budget, because no
+    client is waiting on the answer. A press leaves it False, so a play
+    request never blocks on a prep — the short press budget fails fast
+    and the background warm banks the link for the next press.
 
     ``v2=True`` selects the honest resolution contract for the v2 API (API_V2.md §12,
     HANDOFF_apidocs B13) and changes nothing on the default path, which the shipped
@@ -10703,19 +10746,28 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                          or "filepress" in cached_u.lower()
                          or "filebee" in source_u.lower()
                          or "filebee" in cached_u.lower()):
-                # Filepress cracked 2026-11-13 (FileBee downlaod/downlaod2
-                # API chain, no browser, no captcha — see host_resolvers).
-                # The unwrapper's Range probe IS the gate evidence: only a
-                # 206 with real video bytes is "active". Measured limits:
-                # the download origin aws.flapdoodle.cyou answers 522 on
-                # every /download/* path (both egresses, ~50 min), and the
-                # Oracle VM egress is 403-challenged on the API itself, so
-                # no filepress link plays from production yet — this branch
-                # mints correctly and serves the moment the origin/API
-                # answers from the production egress again.
+                # Filepress (API-04, 2026-11-24): the old downlaod/downlaod2
+                # method indexDownlaod is dead (METHOD_HIDDEN since 23 Nov)
+                # and the current API is the attempts prepare/download flow
+                # (see host_resolvers). The unwrapper's Range probe IS the
+                # gate evidence: only a 206 with real video bytes is
+                # "active". The ~2 min server-side prep is polled on a
+                # budget, never unbounded: a press gets 30 s, a background
+                # warm gets 150 s, and a sibling call's deadline caps
+                # either. A Turnstile challenge is "blocked", never
+                # attempted; a prep that outruns the budget is "transient"
+                # and is not recorded as a failure. Measured limits: the
+                # direct Oracle egress is 403-challenged on every
+                # filepress route (page, /prepare/, both APIs), so no
+                # filepress link plays from production until the egress
+                # changes (WARP plumbing exists; the switch is the
+                # owner's) — this branch mints correctly and serves the
+                # moment the egress answers again.
                 _unwrap_branch_taken = True
-                verdict = hr.unwrap_filepress(hoster_input("filepress"),
-                                              verify=True)
+                verdict = hr.unwrap_filepress(
+                    hoster_input("filepress"), verify=True,
+                    poll_budget_seconds=_filepress_poll_budget(
+                        background=background, deadline=deadline))
                 direct_u = embed_from_verdict(verdict)
                 if direct_u:
                     fresh_url = direct_u
@@ -11344,8 +11396,11 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
         # Session 107: when the most recent verdict is a transport error
         # (HTTP 0 — the network blipped, not the link), record nothing:
         # the copy must not spend 12h in the negative cache for a failure
-        # that says nothing about it.
-        if not _is_transport_verdict(_last_failure_verdict):
+        # that says nothing about it. Same for a transient verdict (a
+        # FilePress prepare still warming when the poll budget ran out):
+        # slowness is not a failure either.
+        if (not _is_transport_verdict(_last_failure_verdict)
+                and not _is_transient_verdict(_last_failure_verdict)):
             _record_resolve_failure(
                 src["id"],
                 "unwrap_failed" if (_unwrap_branch_taken or stage1_tried)
@@ -11803,7 +11858,8 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                     _alt = resolve_live_source(
                         int(_sid), v2=v2, want=want, _failover=False,
                         deadline=min(_failover_deadline,
-                                     time.monotonic() + _slice))
+                                     time.monotonic() + _slice),
+                        background=background)
                 except Exception:
                     continue
                 # A stale-flagged sibling is NOT a failover win: it means
