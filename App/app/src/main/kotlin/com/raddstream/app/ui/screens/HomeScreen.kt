@@ -412,6 +412,11 @@ internal fun HomeContent(
     // cards — the 150dp phone card leaves a tablet rail mostly empty.
     val screenWidthDp = LocalConfiguration.current.screenWidthDp
     val railCardWidthDp = if (screenWidthDp >= 840) 180 else CardGeometry.RAIL_CARD_WIDTH_DP
+    // H6: the empty state's centering box (below) is a fraction of the
+    // screen height — a concrete height, not fillParentMaxHeight (the
+    // lazy item's fillParentMaxHeight misbehaves under Robolectric: the
+    // empty-state click test's Button stops receiving its click).
+    val emptyStateHeightDp = (LocalConfiguration.current.screenHeightDp * 0.6f).dp
 
     // The feed's shared facts, computed once per state/filter — not per
     // item, and not inside the lazy list (a LaunchedEffect inside a lazy
@@ -853,13 +858,15 @@ internal fun HomeContent(
                 state.visibleSections.none { it.loading } && state.fatal == null
             ) {
                 item(key = "empty") {
-                    // H6: the empty state is vertically centred in the
-                    // viewport (fillParentMaxHeight), not stranded at the
-                    // top over a void — and the art is an illustration,
-                    // the mark at 64dp inside a jade hairline ring, not a
-                    // bare 56dp icon.
+                    // H6: the empty state is vertically centred in a
+                    // 60%-of-screen box, not stranded at the top over a
+                    // void — and the art is an illustration, the mark at
+                    // 64dp inside a jade hairline ring, not a bare 56dp
+                    // icon. The height is a screen fraction on purpose:
+                    // fillParentMaxHeight() in a lazy item breaks the
+                    // empty-state click test under Robolectric.
                     Box(
-                        modifier = Modifier.fillParentMaxHeight(),
+                        modifier = Modifier.fillMaxWidth().height(emptyStateHeightDp),
                         contentAlignment = Alignment.Center,
                     ) {
                     EmptyState(
