@@ -2355,6 +2355,11 @@ internal fun CenterSpinner(state: PlayerUiState) {
         state.startDeadlineStage != StartDeadlineStage.SILENT
     ) return
     val chrome = PlayerChromeTheme.forId(state.playerTheme)
+    // F-04: resolved here, at composition time — stringResource() is a
+    // @Composable call and cannot run inside the semantics {} lambda below
+    // (compile error: "@Composable invocations can only happen from the
+    // context of a @Composable function").
+    val bufferingLabel = stringResource(R.string.player_buffering)
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Surface(
             color = chrome.chip,
@@ -2364,7 +2369,7 @@ internal fun CenterSpinner(state: PlayerUiState) {
             // the buffering sentence as the spoken text.
             modifier = Modifier.semantics(mergeDescendants = true) {
                 liveRegion = LiveRegionMode.Polite
-                contentDescription = stringResource(R.string.player_buffering)
+                contentDescription = bufferingLabel
             },
         ) {
             // F4 (Batch B): the centre spinner was 44dp in a 72dp chip —
