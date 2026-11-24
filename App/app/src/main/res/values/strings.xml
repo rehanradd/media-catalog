@@ -32,6 +32,10 @@
          (the old player_tag_auto) printed quality in three places. The
          bare "Auto" is the Auto indicator; the rung is never repeated. -->
     <string name="player_tag_auto_plain">Auto</string>
+    <!-- Round 2 (P9): the X-Ray episode label — the format lives here, not
+         in code: PlayerChromeCopyTest forbids user-visible words in
+         source, and the "S1 E2" shape is the up-next card's. -->
+    <string name="player_episode_label">S%1$d E%2$d</string>
     <string name="player_sleep_remaining">Sleep in %1$s</string>
     <string name="player_speed_short">%1$s×</string>
     <!-- MX idea #3: the decoder chip — one tap, HW ↔ SW, far right of the top bar. -->

@@ -666,9 +666,22 @@ internal fun BottomControls(
             // stages it. The line shows whenever paused (the rung alone is
             // worth naming); the chips only when cast is known.
             if (!state.isPlaying) {
+                // The episode label is formatted from the string resource
+                // here (series only, both numbers > 0) — the pure line
+                // below only joins parts that already exist.
+                val episodeLabel = if (state.isSeriesScope) {
+                    state.activeRendition?.coverage?.let { cov ->
+                        if (cov.season > 0 && cov.ordinal > 0) {
+                            stringResource(R.string.player_episode_label, cov.season, cov.ordinal)
+                        } else {
+                            null
+                        }
+                    }
+                } else {
+                    null
+                }
                 val xrayLine = xrayContextLine(
-                    season = if (state.isSeriesScope) state.activeRendition?.coverage?.season ?: 0 else 0,
-                    episode = if (state.isSeriesScope) state.activeRendition?.coverage?.ordinal ?: 0 else 0,
+                    episodeLabel = episodeLabel,
                     quality = state.qualityLabel,
                     audio = state.audioTracks.firstOrNull { it.selected }?.label?.takeIf { it.isNotBlank() }
                         ?.let { stringResource(R.string.player_audio_label, it) },
@@ -1040,18 +1053,18 @@ internal fun subtitleStatusLabel(state: PlayerUiState, offWord: String): String 
 /**
  * P9 (round 2) — the X-Ray context line: episode, rung, audio track,
  * subtitle track, joined with middots. Any part that is blank is
- * omitted — a missing track is never invented, and a movie (season and
- * episode 0) never prints an episode. The episode format matches the
- * up-next card's ("S1 E2").
+ * omitted — a missing track is never invented, and a movie (no episode
+ * label) never prints an episode. The episode label arrives already
+ * formatted from the string resource ([R.string.player_episode_label]) —
+ * user-visible words live in strings.xml, never in code.
  */
 internal fun xrayContextLine(
-    season: Int,
-    episode: Int,
+    episodeLabel: String?,
     quality: String?,
     audio: String?,
     subtitle: String?,
 ): String = listOfNotNull(
-    if (season > 0 && episode > 0) "S$season E$episode" else null,
+    episodeLabel?.takeIf { it.isNotBlank() },
     quality?.takeIf { it.isNotBlank() },
     audio?.takeIf { it.isNotBlank() },
     subtitle?.takeIf { it.isNotBlank() },
@@ -1083,7 +1096,7 @@ internal fun ZoomResetChip(
         Text(
             text = AspectMode.FIT.label,
             color = Color.White,
-            fontSize = brandSp(13),
+            fontSize = brandSp(12),
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
         )
     }

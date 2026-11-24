@@ -46,8 +46,7 @@ class PlayerRound2Test {
         assertEquals(
             "S1 E2 · 1080P · Audio: Hindi · Subtitles: English",
             xrayContextLine(
-                season = 1,
-                episode = 2,
+                episodeLabel = "S1 E2",
                 quality = "1080P",
                 audio = "Audio: Hindi",
                 subtitle = "Subtitles: English",
@@ -60,25 +59,10 @@ class PlayerRound2Test {
         assertEquals(
             "720P · Subtitles: Off",
             xrayContextLine(
-                season = 0,
-                episode = 0,
+                episodeLabel = null,
                 quality = "720P",
                 audio = null,
                 subtitle = "Subtitles: Off",
-            ),
-        )
-    }
-
-    @Test
-    fun `an episode without a season is omitted, not half-printed`() {
-        assertEquals(
-            "1080P",
-            xrayContextLine(
-                season = 0,
-                episode = 2,
-                quality = "1080P",
-                audio = null,
-                subtitle = null,
             ),
         )
     }
@@ -88,8 +72,7 @@ class PlayerRound2Test {
         assertEquals(
             "S1 E1",
             xrayContextLine(
-                season = 1,
-                episode = 1,
+                episodeLabel = "S1 E1",
                 quality = "  ",
                 audio = "",
                 subtitle = null,
@@ -101,7 +84,7 @@ class PlayerRound2Test {
     fun `with nothing to say the line is empty`() {
         assertEquals(
             "",
-            xrayContextLine(season = 0, episode = 0, quality = null, audio = null, subtitle = null),
+            xrayContextLine(episodeLabel = null, quality = null, audio = null, subtitle = null),
         )
     }
 
