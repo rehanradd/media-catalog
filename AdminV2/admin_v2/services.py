@@ -152,19 +152,35 @@ def _public_user(row):
 
 
 class Service:
-    def __init__(self, base_dir, totp_key=b"workspace-totp-key-change-at-gate",
+    def __init__(self, base_dir, totp_key=None,
                  live_catalog_path=None, live_ledger_path=None,
                  live_registry_path=None, live_status_dir=None,
                  live_cert_path=None, live_fleet_base_dir=None,
                  live_fleet_runner=None, live=None,
                  live_host_registry_path=None):
+        # PNL-04 fail-closed: there is no default TOTP key. A previous
+        # build silently fell back to a public literal when no key was
+        # configured, so every TOTP secret would have been wrapped
+        # under a key anyone could read. Refuse to construct without
+        # an explicit key of at least 16 bytes; run.py loads it from
+        # RADD_TOTP_KEY and tests pass an explicit fixture key.
+        if totp_key is None:
+            raise ValueError(
+                "TOTP encryption key is not configured: set RADD_TOTP_KEY "
+                "(base64, at least 16 bytes). The panel refuses to start "
+                "without it; there is no default key.")
+        if not isinstance(totp_key, (bytes, bytearray)) or len(totp_key) < 16:
+            raise ValueError(
+                "TOTP encryption key is invalid: RADD_TOTP_KEY must decode "
+                "to at least 16 bytes. The panel refuses to start without "
+                "it; there is no default key.")
         import os
         self.base_dir = base_dir
         os.makedirs(base_dir, exist_ok=True)
         self.admin_path = os.path.join(base_dir, "admin_v2.db")
         self.catalog_path = os.path.join(base_dir, "catalog_fixture.db")
         self.ledger_path = os.path.join(base_dir, "ledger_fixture.db")
-        self.totp_key = totp_key
+        self.totp_key = bytes(totp_key)
         self.admin = connect(self.admin_path)
         migrate(self.admin)
         self.catalog = init_catalog_fixture(self.catalog_path)
