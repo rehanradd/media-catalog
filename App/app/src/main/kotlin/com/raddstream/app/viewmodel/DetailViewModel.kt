@@ -702,12 +702,10 @@ class DetailViewModel @Inject constructor(
                 publishViewerContent()
             }
         }
-        viewModelScope.launch {
-            settingsRepository.rewardedVipExpiresAt.collect { expiresAt ->
-                rewardedExpiresAt = expiresAt
-                publishViewerContent()
-            }
-        }
+        // N-05 (APP-03): no rewarded-pass collector here — the pass gates nothing on
+        // Detail (the quality gate reads server VIP only, and "direct downloads" are not
+        // gated by the pass), so collecting its expiry was dead state. AdFreeReader is
+        // the one reader that needs the stored expiry, for the ad surfaces.
         viewModelScope.launch {
             settingsRepository.qualityGateEnabled.collect { enabled ->
                 qualityGateEnabled = enabled
@@ -764,7 +762,6 @@ class DetailViewModel @Inject constructor(
     }
 
     private var serverVip: Boolean = false
-    private var rewardedExpiresAt: Long = 0L
 
     /**
      * The operator's switch, not this screen's opinion. On is the shipped default — the
