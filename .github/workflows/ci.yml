@@ -157,8 +157,14 @@ jobs:
         # so the goldens gate on nothing unless this task runs. verify fails
         # the build when a render differs from its golden or one is missing —
         # that is the onboarding flow: record, commit the PNGs, then green.
+        # --tests: Paparazzi classes ONLY, same reason as paparazzi.yml —
+        # the verify task drives testDebugUnitTest, and a Robolectric test
+        # loading first in a shared fork breaks Paparazzi's Bridge.init
+        # (cashapp/paparazzi#1979; APP-10 verify step 06:31Z 24 Nov).
         run: |
           ./gradlew :app:verifyPaparazziDebug \
+            --tests "com.raddstream.app.ui.PaparazziPreviewTest" \
+            --tests "com.raddstream.app.ui.PlayerLandscapePaparazziTest" \
             --no-daemon --stacktrace --console=plain
 
       - name: 📤 Upload debug APK
