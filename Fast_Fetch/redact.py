@@ -1827,6 +1827,30 @@ def client_ip(handler) -> str:
 
 # ── needles for the tests ────────────────────────────────────────────────────
 
+def _has_service_index(conn) -> bool:
+    """True when any index on download_sources covers its `service` column.
+
+    SEC-02 (2026-11-24): the needle guard used to match the single index
+    name `idx_sources_service`, which no schema ever created — so on every
+    production-size DB the DISTINCT scan below was skipped and ~714 of 718
+    services never reached the needle set. Match on coverage instead of
+    on a name, so any index the schema (or a DBA) created counts,
+    whatever it is called. Read-only introspection, safe on the mode=ro
+    connection site_needles() opens.
+    """
+    try:
+        names = [row[1] for row in
+                 conn.execute("PRAGMA index_list('download_sources')")]
+        for name in names:
+            safe = str(name).replace('"', '""')
+            for info in conn.execute(f'PRAGMA index_info("{safe}")'):
+                if info[2] == "service":
+                    return True
+    except Exception:
+        return False
+    return False
+
+
 def site_needles(db_path=None) -> frozenset[str]:
     """Every provenance token we can name: the frozen baseline, the domain
     registry, and whatever the live ledger records. For *detection*."""
@@ -1873,9 +1897,15 @@ def site_needles(db_path=None) -> frozenset[str]:
                 if snapshot is not None:
                     needles.update(snapshot)
                 else:
-                    has_service_idx = conn.execute(
-                        "SELECT 1 FROM sqlite_master WHERE type='index' AND tbl_name='download_sources' AND name='idx_sources_service'"
-                    ).fetchone()
+                    # SEC-02 (2026-11-24): the old guard matched the single
+                    # index name `idx_sources_service`, which no schema ever
+                    # created — so on every production-size DB the scan below
+                    # was skipped and ~714 of 718 services never reached the
+                    # needle set. Match on coverage instead: any index on
+                    # download_sources that covers `service`, whatever it is
+                    # called. The index itself is created by
+                    # fast_fetch.init_db() as idx_sources_service.
+                    has_service_idx = _has_service_index(conn)
                     sub_cnt = conn.execute("SELECT count(*) FROM (SELECT 1 FROM download_sources LIMIT 100000)").fetchone()[0]
                     if has_service_idx or sub_cnt < 100000:
                         for (value,) in conn.execute("SELECT DISTINCT service FROM download_sources"):
