@@ -75,6 +75,7 @@ import com.raddstream.app.ui.theme.PressHaptics
 import com.raddstream.app.ui.theme.RaddEmphasized
 import com.raddstream.app.ui.theme.RaddHeroPlaceholderHigh
 import com.raddstream.app.ui.theme.RaddHeroPlaceholderLow
+import com.raddstream.app.ui.theme.RaddMotion
 import com.raddstream.app.ui.theme.RaddStreamMark
 import com.raddstream.app.ui.theme.RaddTokens
 import com.raddstream.app.ui.theme.brandSp
@@ -168,10 +169,6 @@ fun HeroCarousel(
     // A drag that snaps back to the same page changes no page, so the
     // page effect below would not see it — the scroll flag is the record
     // that the viewer is handling the banner right now.
-    // S7: the auto-advance + dot-tap scroll spec, hoisted out of the
-    // LaunchedEffect / scrollScope lambdas — a CompositionLocal read has
-    // no composition scope inside an effect body or a launched coroutine.
-    val heroSpatialSpec = MaterialTheme.motionScheme.defaultSpatialSpec<Float>()
     LaunchedEffect(pagerState.isScrollInProgress) {
         if (pagerState.isScrollInProgress) lastChangeMs = SystemClock.uptimeMillis()
     }
@@ -207,7 +204,7 @@ fun HeroCarousel(
             lastChangeMs = SystemClock.uptimeMillis()
             pagerState.animateScrollToPage(
                 nextHeroPage(pagerState.currentPage, posts.size),
-                animationSpec = heroSpatialSpec,
+                animationSpec = RaddMotion.defaultSpatial(),
             )
         }
     }
@@ -280,7 +277,7 @@ fun HeroCarousel(
                 onSelect = { index ->
                     lastChangeMs = SystemClock.uptimeMillis()
                     scrollScope.launch {
-                        pagerState.animateScrollToPage(index, animationSpec = heroSpatialSpec)
+                        pagerState.animateScrollToPage(index, animationSpec = RaddMotion.defaultSpatial())
                     }
                 },
                 // Below the card, on the page background: no pill behind the
@@ -530,7 +527,7 @@ private fun HeroAmbientGlow(currentPage: Int, modifier: Modifier = Modifier) {
         listOf(scheme.primary, scheme.secondary, scheme.tertiary)
     }
     val reduceMotion = rememberReduceMotion()
-    val fade = if (reduceMotion) snap<Color>() else MaterialTheme.motionScheme.slowEffectsSpec()
+    val fade = if (reduceMotion) snap<Color>() else RaddMotion.slowEffects()
     val leading by animateColorAsState(accents[currentPage % accents.size], fade, label = "heroGlowLeading")
     val trailing by animateColorAsState(accents[(currentPage + 1) % accents.size], fade, label = "heroGlowTrailing")
 
@@ -891,12 +888,12 @@ internal fun HeroIndicator(
             // (HeroIndicatorTest pins them).
             val dotWidth by animateDpAsState(
                 targetValue = if (active) 24.dp else 6.dp, // token-exempt: dot geometry, not spacing
-                animationSpec = if (reduceMotion) snap() else MaterialTheme.motionScheme.fastSpatialSpec(),
+                animationSpec = if (reduceMotion) snap() else RaddMotion.fastSpatial(),
                 label = "heroDotWidth",
             )
             val dotColor by animateColorAsState(
                 targetValue = if (active) scheme.primary else scheme.onSurface.copy(alpha = 0.85f),
-                animationSpec = if (reduceMotion) snap() else MaterialTheme.motionScheme.defaultEffectsSpec(),
+                animationSpec = if (reduceMotion) snap() else RaddMotion.defaultEffects(),
                 label = "heroDotColor",
             )
             Box(
@@ -1002,6 +999,13 @@ private const val HERO_SKELETON_SHIMMER_ALPHA = 0.30f
 private val DOT_TOUCH_HEIGHT: Dp = DOT_TOUCH_HEIGHT_DP.dp
 private val DOT_TOUCH_WIDTH: Dp = 48.dp
 
+// H1 (2027 Home fix): the 16:9 floor/cap for heroHeight() below — kept
+// with the other hero geometry consts, NOT above the function: the
+// @Composable annotation between the two KDocs belongs to heroHeight(),
+// and a const placed there steals it (CI, 24 Nov 2026).
+private const val HERO_HEIGHT_MIN_DP = 220f
+private const val HERO_HEIGHT_MAX_DP = 360f
+
 /**
  * The banner's height. A rounded, inset hero wants ~16:9 of a phone screen plus the text
  * block; 400dp keeps the first rail's posters peeking over the fold, so the page still
@@ -1017,9 +1021,6 @@ private val DOT_TOUCH_WIDTH: Dp = 48.dp
  * fold. A tablet (expanded width, 840dp+) caps at 360dp. [HeroSkeleton]
  * reads this same height, so the loading footprint shrinks with it.
  */
-private const val HERO_HEIGHT_MIN_DP = 220f
-private const val HERO_HEIGHT_MAX_DP = 360f
-
 private fun heroHeight(): Dp {
     val width = LocalConfiguration.current.screenWidthDp
     return (width * 9f / 16f).dp.coerceIn(HERO_HEIGHT_MIN_DP.dp, HERO_HEIGHT_MAX_DP.dp)
@@ -1030,4 +1031,4 @@ private fun heroHeight(): Dp {
  *  page background shows on both sides of the card. */
 private val heroInset = PaddingValues(horizontal = RaddTokens.Space.Gutter)
 
-private val HERO_CORNER: Dp = RaddTokens.Shape.Card
+private val HERO_CORNER: Dp = RaddTokens.Radius.Card

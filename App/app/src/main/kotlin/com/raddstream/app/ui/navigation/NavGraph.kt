@@ -211,7 +211,7 @@ internal fun RowScope.BottomNavTab(
     // Expressive fast spatial) instead of snapping to 1.12x.
     val iconScale by animateFloatAsState(
         targetValue = if (selected) 1.12f else 1f,
-        animationSpec = if (reduceMotion) snap() else MaterialTheme.motionScheme.fastSpatialSpec(),
+        animationSpec = if (reduceMotion) snap() else RaddMotion.fastSpatial(),
         label = "navIconScale",
     )
     val pillColor by animateColorAsState(
@@ -220,7 +220,7 @@ internal fun RowScope.BottomNavTab(
         } else {
             Color.Transparent
         },
-        animationSpec = if (reduceMotion) snap() else MaterialTheme.motionScheme.defaultEffectsSpec(),
+        animationSpec = if (reduceMotion) snap() else RaddMotion.defaultEffects(),
         label = "navPillColor",
     )
     Box(

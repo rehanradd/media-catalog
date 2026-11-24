@@ -119,6 +119,7 @@ import com.raddstream.app.ui.components.prefetchHeroArt
 import com.raddstream.app.ui.components.prefetchPosterArt
 import com.raddstream.app.ui.components.rememberReduceMotion
 import com.raddstream.app.ui.layout.CardGeometry
+import com.raddstream.app.ui.theme.RaddMotion
 import com.raddstream.app.ui.theme.RaddStreamMark
 import com.raddstream.app.ui.theme.RaddTokens
 import com.raddstream.app.update.InAppUpdate
@@ -1620,8 +1621,8 @@ private fun HomeRailSection(
     // rise — the Region screen's index * 90 pattern, extended to rails).
     // Reduced-motion users get a plain fade, never the rise.
     // Home fix (Nov 2026): the entrance is spring-based now (M3 Expressive
-    // springs — [MaterialTheme.motionScheme.defaultSpatialSpec] for the rise,
-    // [MaterialTheme.motionScheme.defaultEffectsSpec] for the fade), not a tween: the old
+    // springs — [RaddMotion.defaultSpatial] for the rise,
+    // [RaddMotion.defaultEffects] for the fade), not a tween: the old
     // tween + EmphasizedDecelerate easing was the only non-spring motion
     // on Home. The stagger stays — a short delay before the rail becomes
     // visible, since a spring carries no delay of its own. (A lazy item
@@ -1648,13 +1649,13 @@ private fun HomeRailSection(
     AnimatedVisibility(
         visible = visible,
         enter = fadeIn(
-            animationSpec = if (reduceMotion) snap() else MaterialTheme.motionScheme.defaultEffectsSpec(),
+            animationSpec = if (reduceMotion) snap() else RaddMotion.defaultEffects(),
         ) + if (reduceMotion) {
             EnterTransition.None
         } else {
             slideInVertically(
                 initialOffsetY = { it / 4 },
-                animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec(),
+                animationSpec = RaddMotion.defaultSpatial(),
             )
         },
     ) {
