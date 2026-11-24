@@ -1055,7 +1055,7 @@ internal fun subtitleStatusLabel(state: PlayerUiState, offWord: String): String 
  * subtitle track, joined with middots. Any part that is blank is
  * omitted — a missing track is never invented, and a movie (no episode
  * label) never prints an episode. The episode label arrives already
- * formatted from the string resource ([R.string.player_episode_label]) —
+ * formatted from the player_episode_label string resource —
  * user-visible words live in strings.xml, never in code.
  */
 internal fun xrayContextLine(
