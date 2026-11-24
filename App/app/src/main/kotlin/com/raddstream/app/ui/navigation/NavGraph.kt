@@ -832,6 +832,10 @@ fun RaddStreamNavGraph(
                         }
                     },
                     onOpenLocalFiles = { navController.navigate(Screen.LocalFiles.route) },
+                    // Phase 4 (Downloads #4/#14): a gated keep offers the
+                    // VIP upgrade; the empty state's action goes to Search.
+                    onOpenVipUpgrade = { navController.navigate(Screen.VipUpgrade.route) },
+                    onBrowseClick = { navController.navigate(Screen.Search.PLAIN_ROUTE) },
                 )
             }
 

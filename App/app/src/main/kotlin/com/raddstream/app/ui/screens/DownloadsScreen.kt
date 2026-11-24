@@ -46,6 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import com.raddstream.app.R
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -74,12 +75,24 @@ fun DownloadsScreen(
     onPlay: (KeptItem) -> Unit = {},
     onPlayLocal: (uri: String, title: String) -> Unit = { _, _ -> },
     onOpenLocalFiles: () -> Unit = {},
+    // Phase 4 (Downloads #4): a VIP-gated keep offers an upgrade path.
+    onOpenVipUpgrade: () -> Unit = {},
+    // Phase 4 (Downloads #14): the empty state's action goes to browsable
+    // content (Search), not back to wherever the viewer came from.
+    onBrowseClick: () -> Unit = onBackClick,
     viewModel: DownloadsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
     // A keep tap has to ask the engine a question before it can navigate, and navigation is a
     // side effect — so it runs on the composition's own scope and dies with the screen.
     val clicks = rememberCoroutineScope()
+    // Phase 4 (Downloads #7): a queued device row names its place in line —
+    // 1-based among queued device rows, in list order.
+    val queuedDevicePositions: Map<String, Int> = state.allDownloads
+        .filterIsInstance<DownloadRow.Device>()
+        .filter { it.download.state == DeviceDownloadState.QUEUED }
+        .mapIndexed { index, row -> row.download.id to index + 1 }
+        .toMap()
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -161,6 +174,7 @@ fun DownloadsScreen(
                     when (row) {
                         is DownloadRow.Device -> DeviceDownloadRow(
                             item = row.download,
+                            queuePosition = queuedDevicePositions[row.download.id],
                             onPlay = { row.download.localUri?.let { onPlayLocal(it, row.download.title) } },
                             onPause = { viewModel.pauseDownload(row.download) },
                             onResume = { viewModel.resumeDownload(row.download) },
@@ -189,6 +203,7 @@ fun DownloadsScreen(
                             onCancel = { viewModel.cancel(row.item) },
                             onRetry = { viewModel.retry(row.item) },
                             onPause = { viewModel.pause(row.item) },
+                            onUpgrade = onOpenVipUpgrade,
                         )
                     }
                 }
@@ -211,7 +226,7 @@ fun DownloadsScreen(
                     EmptyState(
                         title = "Nothing downloaded yet",
                         message = "Use the Download button on a movie or episode. " +
-                            "Files go to Movies/RaddStream and play anywhere; downloads play here.",
+                            "Files go to Movies/RaddStream and play in any video player.",
                         icon = {
                             Icon(
                                 Icons.Default.Download,
@@ -223,14 +238,19 @@ fun DownloadsScreen(
                         fillScreen = false,
                         modifier = Modifier.fillMaxWidth(),
                         action = {
-                            // A downloads tab nobody has used yet is not a dead end: the way
-                            // to fill it is one tap away, on the title they came from.
+                            // Phase 4 (Downloads #14): the way to fill this
+                            // screen is one tap away, on browsable content —
+                            // not back to wherever the viewer came from.
                             OutlinedButton(
-                                onClick = onBackClick,
+                                onClick = onBrowseClick,
                                 modifier = Modifier.heightIn(min = 48.dp),
                             ) { Text("Find something to download") }
                         },
                     )
+                    // Phase 4 (Downloads #14): a small preview of the
+                    // populated state, so the empty screen shows what
+                    // belongs here instead of only saying it.
+                    DownloadsEmptyPreview()
                 }
             }
         }
@@ -338,12 +358,15 @@ internal fun StorageCard(
             )
             if (storage != null) {
                 TextButton(
+                    // Phase 4 (Downloads #9): the button explains how to
+                    // free space — it deletes nothing itself, so the label
+                    // says what it does instead of promising an action.
                     onClick = onFreeUpSpace,
                     modifier = Modifier
                         .heightIn(min = 48.dp)
-                        .semantics { contentDescription = "Free up space" },
+                        .semantics { contentDescription = "How to free space" },
                 ) {
-                    Text("FREE UP SPACE")
+                    Text("HOW TO FREE SPACE")
                 }
             }
         }
@@ -380,6 +403,7 @@ internal fun StorageCard(
 @Composable
 internal fun DeviceDownloadRow(
     item: DeviceDownload,
+    queuePosition: Int? = null,
     onPlay: () -> Unit,
     onPause: () -> Unit,
     onResume: () -> Unit,
@@ -424,49 +448,98 @@ internal fun DeviceDownloadRow(
                 // download is moving.
                 sizeText = if (item.bytesTotal > 0) formatMiB(item.bytesTotal) else null,
             )
-            if (item.state == DeviceDownloadState.DOWNLOADING ||
-                item.state == DeviceDownloadState.QUEUED
-            ) {
-                // Restyle 2026-11-13: rounded ends + a visible track — the bar
-                // reads as a progress bar, not a hairline. Jade now, so the
-                // bar reads as progress, not a grey hairline.
-                // An unknown size is an indeterminate bar, not a flat 0%: the
-                // bytes are moving, the total is what is unknown — and the
-                // completion gate still refuses to mark it READY.
-                if (item.bytesTotal > 0) {
-                    LinearProgressIndicator(
-                        progress = { item.progress },
-                        modifier = Modifier.fillMaxWidth(),
-                        color = MaterialTheme.colorScheme.primary,
-                        trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                        strokeCap = StrokeCap.Round,
-                    )
-                } else {
-                    LinearProgressIndicator(
-                        modifier = Modifier.fillMaxWidth(),
-                        color = MaterialTheme.colorScheme.primary,
-                        trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                        strokeCap = StrokeCap.Round,
+            when (item.state) {
+                DeviceDownloadState.DOWNLOADING -> {
+                    // Restyle 2026-11-13: rounded ends + a visible track — the bar
+                    // reads as a progress bar, not a hairline. Jade now, so the
+                    // bar reads as progress, not a grey hairline.
+                    // An unknown size is an indeterminate bar, not a flat 0%: the
+                    // bytes are moving, the total is what is unknown — and the
+                    // completion gate still refuses to mark it READY.
+                    if (item.bytesTotal > 0) {
+                        LinearProgressIndicator(
+                            progress = { item.progress },
+                            modifier = Modifier.fillMaxWidth(),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                            strokeCap = StrokeCap.Round,
+                        )
+                    } else {
+                        LinearProgressIndicator(
+                            modifier = Modifier.fillMaxWidth(),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                            strokeCap = StrokeCap.Round,
+                        )
+                    }
+                    Text(
+                        deviceProgressLine(item),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Text(
-                    deviceProgressLine(item),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            } else {
-                Text(
-                    deviceStatusLine(item),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                // The stored reason, under the generic line: a dead source, a
-                // wrong content type and a full disk must not all read the same.
-                item.failureReason?.let { reason ->
+                DeviceDownloadState.QUEUED -> {
+                    // Phase 4 (Downloads #7): a queued download is waiting,
+                    // not downloading at 0% — no determinate bar, and the
+                    // line names its place in line when it is not next.
                     Text(
-                        reason,
+                        if (queuePosition != null && queuePosition > 1) {
+                            "Queued · #$queuePosition in queue"
+                        } else {
+                            "Queued"
+                        },
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    bytesSavedLine(item.bytesDownloaded, item.bytesTotal, item.percent)?.let { saved ->
+                        Text(
+                            saved,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                DeviceDownloadState.PAUSED, DeviceDownloadState.FAILED, DeviceDownloadState.PARTIAL -> {
+                    // Phase 4 (Downloads #2): a stalled row keeps its
+                    // progress — a dimmed bar at the saved share, so the
+                    // viewer can see how far it got instead of losing the
+                    // bar the moment it stops moving.
+                    if (item.bytesTotal > 0) {
+                        LinearProgressIndicator(
+                            progress = { item.progress },
+                            modifier = Modifier.fillMaxWidth(),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                            strokeCap = StrokeCap.Round,
+                        )
+                    }
+                    Text(
+                        deviceStatusLine(item),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    bytesSavedLine(item.bytesDownloaded, item.bytesTotal, item.percent)?.let { saved ->
+                        Text(
+                            saved,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    // The stored reason, under the generic line: a dead source, a
+                    // wrong content type and a full disk must not all read the same.
+                    item.failureReason?.let { reason ->
+                        Text(
+                            reason,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                DeviceDownloadState.READY -> {
+                    Text(
+                        deviceStatusLine(item),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface,
                     )
                 }
             }
@@ -517,7 +590,9 @@ internal fun DeviceDownloadRow(
 private fun deviceStatusLine(item: DeviceDownload): String {
     val percent = item.percent?.let { " $it%" } ?: ""
     return when (item.state) {
-        DeviceDownloadState.QUEUED -> "Queued$percent"
+        // Phase 4 (Downloads #7): a queued row says it is waiting — never
+        // "Queued 0%", which reads as downloading at 0%.
+        DeviceDownloadState.QUEUED -> "Queued"
         DeviceDownloadState.DOWNLOADING -> "Downloading$percent"
         DeviceDownloadState.PAUSED -> "Paused — resume when you are ready"
         DeviceDownloadState.READY -> "Saved on device — plays here or in any video player"
@@ -526,18 +601,45 @@ private fun deviceStatusLine(item: DeviceDownload): String {
     }
 }
 
-/** The downloading line: real percent + real speed + ETA, from the same rolling rate the service reports — "calculating" until the second tick, never a guessed number (Audit #12). */
-private fun deviceProgressLine(item: DeviceDownload): String {
-    val parts = mutableListOf<String>()
-    item.percent?.let { parts += "$it%" }
+/**
+ * Phase 4 (Downloads #2): the bytes a stalled row has already saved —
+ * "300 MB of 1.3 GB saved · 23%" — so a paused or failed row keeps its
+ * progress in words as well as in the dimmed bar. Null while nothing has
+ * arrived yet.
+ */
+internal fun bytesSavedLine(bytesDownloaded: Long, bytesTotal: Long, percent: Int?): String? {
+    if (bytesDownloaded <= 0L) return null
+    val bytes = if (bytesTotal > 0) {
+        "${formatMiB(bytesDownloaded)} of ${formatMiB(bytesTotal)} saved"
+    } else {
+        "${formatMiB(bytesDownloaded)} saved"
+    }
+    return if (percent != null) "$bytes · $percent%" else bytes
+}
+
+/**
+ * The downloading line: real percent + real bytes + real speed + ETA, from
+ * the same rolling rate the service reports — "calculating" until the second
+ * tick, never a guessed number. Phase 4 (Downloads #1): mirrors
+ * [keepProgressLine] exactly — the device row was the only one missing its
+ * bytes. "Starting…" while nothing has arrived and the total is unknown;
+ * bytes-alone when the total is unknown, never "X / unknown size".
+ */
+internal fun deviceProgressLine(item: DeviceDownload): String {
+    if (item.bytesDownloaded <= 0L && item.bytesTotal <= 0L) return "Starting…"
+    val percent = item.percent?.let { "$it% · " } ?: ""
+    val bytes = if (item.bytesTotal > 0) {
+        "${formatMiB(item.bytesDownloaded)} / ${formatMiB(item.bytesTotal)}"
+    } else {
+        formatMiB(item.bytesDownloaded)
+    }
     val speed = if (item.bytesPerSec > 0) {
         DownloadSpeed.formatSpeed(item.bytesPerSec) +
             (DownloadSpeed.formatEta(item.etaSeconds)?.let { " · $it" } ?: "")
     } else {
         "calculating…"
     }
-    parts += speed
-    return parts.joinToString(" · ")
+    return "$percent$bytes · $speed"
 }
 
 // Robo run 9: the print label is painted only when it says something the
@@ -557,6 +659,8 @@ internal fun KeptItemRow(
     onCancel: () -> Unit,
     onRetry: () -> Unit,
     onPause: () -> Unit = {},
+    // Phase 4 (Downloads #4): a VIP-gated keep offers the upgrade, not Retry.
+    onUpgrade: () -> Unit = {},
 ) {
     val cleanTitle = cleanDownloadTitle(item.title)
     Row(
@@ -579,33 +683,78 @@ internal fun KeptItemRow(
                 printLabelDescription = item.printLabelDescription(),
                 sizeText = if (item.bytesTotal > 0) formatMiB(item.bytesTotal) else null,
             )
-            if (item.state == KeepState.DOWNLOADING || item.state == KeepState.QUEUED || item.state == KeepState.NO_SPACE) {
-                // Restyle 2026-11-13: rounded ends + a visible track, same as
-                // the active-download bar above — one progress language. Jade now.
-                LinearProgressIndicator(
-                    progress = { item.progress },
-                    modifier = Modifier.fillMaxWidth(),
-                    color = MaterialTheme.colorScheme.primary,
-                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                    strokeCap = StrokeCap.Round,
-                )
-                Text(keepProgressLine(item), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                // The bar is the progress, the line is the reason: a stalled
-                // NO_SPACE row and a waiting QUEUED row must say why, not
-                // just show a frozen bar and a button.
-                if (item.state == KeepState.NO_SPACE || item.state == KeepState.QUEUED) {
-                    Text(statusLine(item), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
-                }
-            } else {
-                Text(statusLine(item), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
-                // The stored reason, under the generic line — same rule as
-                // the device row.
-                item.failureReason?.let { reason ->
-                    Text(
-                        reason,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+            when (item.state) {
+                KeepState.DOWNLOADING, KeepState.NO_SPACE -> {
+                    // Restyle 2026-11-13: rounded ends + a visible track, same as
+                    // the active-download bar above — one progress language. Jade now.
+                    LinearProgressIndicator(
+                        progress = { item.progress },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                        strokeCap = StrokeCap.Round,
                     )
+                    Text(keepProgressLine(item), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    // The bar is the progress, the line is the reason: a stalled
+                    // NO_SPACE row must say why, not just show a frozen bar and
+                    // a button.
+                    if (item.state == KeepState.NO_SPACE) {
+                        Text(statusLine(item), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
+                    }
+                }
+                KeepState.QUEUED -> {
+                    // Phase 4 (Downloads #7): waiting, not downloading at
+                    // 0% — no determinate bar, just the reason it waits.
+                    Text(statusLine(item), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
+                    bytesSavedLine(item.bytesDownloaded, item.bytesTotal, item.percent)?.let { saved ->
+                        Text(
+                            saved,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                KeepState.PAUSED, KeepState.FAILED -> {
+                    // Phase 4 (Downloads #2): a stalled row keeps its
+                    // progress — a dimmed bar at the saved share.
+                    if (item.bytesTotal > 0) {
+                        LinearProgressIndicator(
+                            progress = { item.progress },
+                            modifier = Modifier.fillMaxWidth(),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                            strokeCap = StrokeCap.Round,
+                        )
+                    }
+                    Text(statusLine(item), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
+                    bytesSavedLine(item.bytesDownloaded, item.bytesTotal, item.percent)?.let { saved ->
+                        Text(
+                            saved,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    // The stored reason, under the generic line — same rule as
+                    // the device row.
+                    item.failureReason?.let { reason ->
+                        Text(
+                            reason,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                KeepState.READY, KeepState.EXPIRING -> {
+                    Text(statusLine(item), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
+                    // The stored reason, under the generic line — same rule as
+                    // the device row.
+                    item.failureReason?.let { reason ->
+                        Text(
+                            reason,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
         }
@@ -624,12 +773,42 @@ internal fun KeptItemRow(
                 }
             }
             when (item.state) {
-                KeepState.FAILED, KeepState.NO_SPACE, KeepState.GATED -> OutlinedButton(
-                    onClick = onRetry,
-                    modifier = Modifier
-                        .heightIn(min = 48.dp)
-                        .semantics { contentDescription = "Retry $cleanTitle" },
-                ) { Text("Retry") }
+                KeepState.FAILED, KeepState.NO_SPACE -> {
+                    // Phase 4 (Downloads #3): a dead keep can be removed,
+                    // not only retried forever.
+                    OutlinedButton(
+                        onClick = onRetry,
+                        modifier = Modifier
+                            .heightIn(min = 48.dp)
+                            .semantics { contentDescription = "Retry $cleanTitle" },
+                    ) { Text("Retry") }
+                    IconButton(
+                        onClick = onCancel,
+                        modifier = Modifier.semantics {
+                            contentDescription = "Cancel $cleanTitle"
+                        },
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = null)
+                    }
+                }
+                KeepState.GATED -> {
+                    // Phase 4 (Downloads #4): Retry cannot succeed — the
+                    // gate will refuse again. Offer the upgrade, or dismiss.
+                    OutlinedButton(
+                        onClick = onUpgrade,
+                        modifier = Modifier
+                            .heightIn(min = 48.dp)
+                            .semantics { contentDescription = "View VIP options $cleanTitle" },
+                    ) { Text("View VIP options") }
+                    IconButton(
+                        onClick = onCancel,
+                        modifier = Modifier.semantics {
+                            contentDescription = "${keepActionLabel(item.state) ?: "Dismiss"} $cleanTitle"
+                        },
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = null)
+                    }
+                }
                 KeepState.PAUSED -> {
                     OutlinedButton(
                         onClick = onRetry,
@@ -678,12 +857,15 @@ internal fun KeptItemRow(
 
 /**
  * The destructive/cancellation action label for a kept item:
- * "Cancel" while in-flight or waiting, "Delete" once completed on device.
+ * "Cancel" while in-flight or waiting, "Delete" once completed on device,
+ * "Dismiss" for a VIP-gated row (Phase 4, Downloads #4 — its × dismisses
+ * the row; there is no Retry to label any more).
  */
 internal fun keepActionLabel(state: KeepState): String? = when (state) {
     KeepState.READY, KeepState.EXPIRING -> "Delete"
     KeepState.DOWNLOADING, KeepState.QUEUED, KeepState.PAUSED -> "Cancel"
-    KeepState.FAILED, KeepState.NO_SPACE, KeepState.GATED -> "Retry"
+    KeepState.FAILED, KeepState.NO_SPACE -> "Retry"
+    KeepState.GATED -> "Dismiss"
 }
 
 /** One honest sentence per state. No provenance, no invented progress. */
@@ -762,6 +944,69 @@ internal const val DOWNLOADS_QUIET_LINE = "Downloads play here, even after the a
  */
 internal fun cleanDownloadTitle(title: String): String =
     UserWords.stripTitleSuffixes(title, year = null, contentType = null, languages = emptyList())
+
+/**
+ * Phase 4 (Downloads #14): a small preview of the populated state for the
+ * empty screen — a faded sample row under a caption, so the viewer sees
+ * what belongs here instead of only reading about it. Static and clearly
+ * a sample: no actions, no real data.
+ */
+@Composable
+internal fun DownloadsEmptyPreview() {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            "Your downloads will look like this:",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .alpha(0.6f)
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            DownloadThumb()
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    "Example title",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                )
+                Text(
+                    "1080p · 1.2 GB",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                LinearProgressIndicator(
+                    progress = { 0.45f },
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                    strokeCap = StrokeCap.Round,
+                )
+                Text(
+                    "45% · 540 MB / 1.2 GB · calculating…",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
 
 /**
  * The row's poster slot. Neither download system stores poster art on

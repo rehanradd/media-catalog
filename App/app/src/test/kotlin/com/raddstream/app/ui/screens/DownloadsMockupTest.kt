@@ -115,14 +115,184 @@ class DownloadsMockupTest {
                 )
             }
         }
-        // Real percent + real speed + ETA, from the engine's own numbers.
-        compose.onNodeWithText("45% · 12.0 MB/s · about 1 min left").assertIsDisplayed()
+        // Real percent + real bytes + real speed + ETA, from the engine's own numbers.
+        // Phase 4 (Downloads #1): the device row carries its bytes, like the keep row.
+        compose.onNodeWithText("45% · 450 MB / 1.0 GB · 12.0 MB/s · about 1 min left").assertIsDisplayed()
         compose.onNode(hasContentDescription("Pause Echoes of Silence")).assertIsDisplayed()
         compose.onNode(hasContentDescription("Cancel Echoes of Silence")).assertIsDisplayed()
         compose.onNode(hasContentDescription("Play Echoes of Silence")).assertDoesNotExist()
         // Quality + size, one meta line.
         compose.onNodeWithText("1080p · High bitrate").assertIsDisplayed()
         compose.onNodeWithText("1.0 GB").assertIsDisplayed()
+    }
+
+    @Test
+    fun downloadingDeviceRowShowsBytesWhileCalculating() {
+        compose.setContent {
+            RaddStreamTheme {
+                DeviceDownloadRow(
+                    item = deviceFile(
+                        id = "d1c",
+                        title = "Echoes of Silence",
+                        printLabel = "1080p · High bitrate",
+                        state = DeviceDownloadState.DOWNLOADING,
+                        bytesDownloaded = 450_000_000L,
+                        bytesTotal = 1_000_000_000L,
+                    ),
+                    onPlay = {},
+                    onPause = {},
+                    onResume = {},
+                    onRemove = {},
+                )
+            }
+        }
+        // No live rate yet, so "calculating", never a guessed number — but
+        // the bytes are already there (Phase 4, Downloads #1).
+        compose.onNodeWithText("45% · 450 MB / 1.0 GB · calculating…").assertIsDisplayed()
+    }
+
+    @Test
+    fun startingDeviceRowShowsJustStarting() {
+        compose.setContent {
+            RaddStreamTheme {
+                DeviceDownloadRow(
+                    item = deviceFile(
+                        id = "d1s",
+                        title = "Echoes of Silence",
+                        printLabel = "1080p · High bitrate",
+                        state = DeviceDownloadState.DOWNLOADING,
+                    ),
+                    onPlay = {},
+                    onPause = {},
+                    onResume = {},
+                    onRemove = {},
+                )
+            }
+        }
+        compose.onNodeWithText("Starting…").assertIsDisplayed()
+    }
+
+    @Test
+    fun downloadingDeviceRowWithUnknownTotalShowsBytesAlone() {
+        compose.setContent {
+            RaddStreamTheme {
+                DeviceDownloadRow(
+                    item = deviceFile(
+                        id = "d1u",
+                        title = "Echoes of Silence",
+                        printLabel = "1080p · High bitrate",
+                        state = DeviceDownloadState.DOWNLOADING,
+                        bytesDownloaded = 450_000_000L,
+                        bytesTotal = 0L,
+                    ),
+                    onPlay = {},
+                    onPause = {},
+                    onResume = {},
+                    onRemove = {},
+                )
+            }
+        }
+        // No percent without a total — the bytes-so-far stand alone, never
+        // "X / unknown size" (Phase 4, Downloads #1).
+        compose.onNodeWithText("450 MB · calculating…").assertIsDisplayed()
+    }
+
+    @Test
+    fun pausedDeviceRowShowsBytesSaved() {
+        compose.setContent {
+            RaddStreamTheme {
+                DeviceDownloadRow(
+                    item = deviceFile(
+                        id = "d3b",
+                        title = "Solaris Drift",
+                        printLabel = "1080p · High bitrate",
+                        state = DeviceDownloadState.PAUSED,
+                        bytesDownloaded = 300_000_000L,
+                        bytesTotal = 1_300_000_000L,
+                    ),
+                    onPlay = {},
+                    onPause = {},
+                    onResume = {},
+                    onRemove = {},
+                )
+            }
+        }
+        // Phase 4 (Downloads #2): a paused row keeps its progress in words
+        // as well as in the dimmed bar.
+        compose.onNodeWithText("Paused — resume when you are ready").assertIsDisplayed()
+        compose.onNodeWithText("300 MB of 1.3 GB saved · 23%").assertIsDisplayed()
+    }
+
+    @Test
+    fun failedDeviceRowShowsBytesSaved() {
+        compose.setContent {
+            RaddStreamTheme {
+                DeviceDownloadRow(
+                    item = deviceFile(
+                        id = "d6b",
+                        title = "Fall",
+                        printLabel = "1080p · High bitrate",
+                        state = DeviceDownloadState.FAILED,
+                        bytesDownloaded = 100_000_000L,
+                        bytesTotal = 1_000_000_000L,
+                        failureReason = "The download stopped before it finished.",
+                    ),
+                    onPlay = {},
+                    onPause = {},
+                    onResume = {},
+                    onRemove = {},
+                )
+            }
+        }
+        compose.onNodeWithText("Download failed — resume, or cancel and try again").assertIsDisplayed()
+        compose.onNodeWithText("100 MB of 1.0 GB saved · 10%").assertIsDisplayed()
+        compose.onNodeWithText("The download stopped before it finished.").assertIsDisplayed()
+    }
+
+    @Test
+    fun queuedDeviceRowSaysItIsWaitingNotDownloading() {
+        compose.setContent {
+            RaddStreamTheme {
+                DeviceDownloadRow(
+                    item = deviceFile(
+                        id = "d1q",
+                        title = "Echoes of Silence",
+                        printLabel = "1080p · High bitrate",
+                        state = DeviceDownloadState.QUEUED,
+                    ),
+                    onPlay = {},
+                    onPause = {},
+                    onResume = {},
+                    onRemove = {},
+                )
+            }
+        }
+        // Phase 4 (Downloads #7): waiting, not downloading at 0%.
+        compose.onNodeWithText("Queued").assertIsDisplayed()
+        compose.onAllNodes(hasText("0%")).assertCountEquals(0)
+        compose.onAllNodes(hasText("Downloading")).assertCountEquals(0)
+    }
+
+    @Test
+    fun queuedDeviceRowNamesItsPlaceInLine() {
+        compose.setContent {
+            RaddStreamTheme {
+                DeviceDownloadRow(
+                    item = deviceFile(
+                        id = "d1q2",
+                        title = "Echoes of Silence",
+                        printLabel = "1080p · High bitrate",
+                        state = DeviceDownloadState.QUEUED,
+                    ),
+                    queuePosition = 2,
+                    onPlay = {},
+                    onPause = {},
+                    onResume = {},
+                    onRemove = {},
+                )
+            }
+        }
+        compose.onNodeWithText("Queued · #2 in queue").assertIsDisplayed()
     }
 
     @Test
@@ -229,7 +399,11 @@ class DownloadsMockupTest {
     }
 
     @Test
-    fun gatedKeepRowSaysWhyItWaitsAndOffersRetry() {
+    fun gatedKeepRowOffersUpgradeAndDismissNotRetry() {
+        // Phase 4 (Downloads #4): Retry cannot succeed — the gate will
+        // refuse again. The row offers the upgrade, or dismiss.
+        var upgraded = false
+        var dismissed = false
         compose.setContent {
             RaddStreamTheme {
                 KeptItemRow(
@@ -240,14 +414,99 @@ class DownloadsMockupTest {
                         state = KeepState.GATED,
                     ),
                     onPlay = {},
+                    onCancel = { dismissed = true },
+                    onRetry = {},
+                    onUpgrade = { upgraded = true },
+                )
+            }
+        }
+        compose.onNodeWithText("Locked to VIP — this quality needs a VIP plan").assertIsDisplayed()
+        compose.onNodeWithText("View VIP options").assertIsDisplayed()
+        compose.onNodeWithText("Retry").assertDoesNotExist()
+        compose.onNode(hasContentDescription("Dismiss Salaar")).assertIsDisplayed()
+        compose.onNodeWithText("View VIP options").performClick()
+        assertTrue(upgraded)
+        compose.onNode(hasContentDescription("Dismiss Salaar")).performClick()
+        assertTrue(dismissed)
+        compose.onNode(hasContentDescription("Play Salaar")).assertDoesNotExist()
+    }
+
+    @Test
+    fun failedKeepRowShowsRemove() {
+        // Phase 4 (Downloads #3): a dead keep can be removed, not only
+        // retried forever.
+        var cancelled = false
+        compose.setContent {
+            RaddStreamTheme {
+                KeptItemRow(
+                    item = keep(
+                        id = "15r",
+                        title = "Fall",
+                        printLabel = "1080p · High bitrate",
+                        state = KeepState.FAILED,
+                        failureReason = "The source stopped responding.",
+                    ),
+                    onPlay = {},
+                    onCancel = { cancelled = true },
+                    onRetry = {},
+                )
+            }
+        }
+        compose.onNodeWithText("Retry").assertIsDisplayed()
+        compose.onNode(hasContentDescription("Cancel Fall")).assertIsDisplayed()
+        compose.onNode(hasContentDescription("Cancel Fall")).performClick()
+        assertTrue(cancelled)
+    }
+
+    @Test
+    fun noSpaceKeepRowShowsRemove() {
+        var cancelled = false
+        compose.setContent {
+            RaddStreamTheme {
+                KeptItemRow(
+                    item = keep(
+                        id = "12r",
+                        title = "Echoes of Silence",
+                        printLabel = "1080p · High bitrate",
+                        state = KeepState.NO_SPACE,
+                        bytesDownloaded = 450_000_000L,
+                        bytesTotal = 1_000_000_000L,
+                    ),
+                    onPlay = {},
+                    onCancel = { cancelled = true },
+                    onRetry = {},
+                )
+            }
+        }
+        compose.onNodeWithText("Not enough space to finish — free room and retry").assertIsDisplayed()
+        compose.onNodeWithText("Retry").assertIsDisplayed()
+        compose.onNode(hasContentDescription("Cancel Echoes of Silence")).assertIsDisplayed()
+        compose.onNode(hasContentDescription("Cancel Echoes of Silence")).performClick()
+        assertTrue(cancelled)
+    }
+
+    @Test
+    fun pausedKeepRowShowsBytesSaved() {
+        compose.setContent {
+            RaddStreamTheme {
+                KeptItemRow(
+                    item = keep(
+                        id = "11b",
+                        title = "Echoes of Silence",
+                        printLabel = "1080p · High bitrate",
+                        state = KeepState.PAUSED,
+                        bytesDownloaded = 450_000_000L,
+                        bytesTotal = 1_000_000_000L,
+                    ),
+                    onPlay = {},
                     onCancel = {},
                     onRetry = {},
                 )
             }
         }
-        compose.onNodeWithText("Locked to VIP — this quality needs a VIP plan").assertIsDisplayed()
-        compose.onNodeWithText("Retry").assertIsDisplayed()
-        compose.onNode(hasContentDescription("Play Salaar")).assertDoesNotExist()
+        // Phase 4 (Downloads #2): a paused keep keeps its progress too.
+        compose.onNodeWithText("Paused").assertIsDisplayed()
+        compose.onNodeWithText("450 MB of 1.0 GB saved · 45%").assertIsDisplayed()
     }
 
     @Test
@@ -379,7 +638,10 @@ class DownloadsMockupTest {
                         state = DeviceDownloadState.FAILED,
                         bytesDownloaded = 100_000_000L,
                         bytesTotal = 1_000_000_000L,
-                        failureReason = "Server did not report a size, so completeness cannot be verified.",
+                        // Phase 4 (Downloads #5): the fixture is the mapped
+                        // sentence now — the raw stored reason is never
+                        // painted (see DeviceDownloadRefreshTest).
+                        failureReason = "The download stopped before it finished.",
                     ),
                     onPlay = {},
                     onPause = {},
@@ -389,7 +651,7 @@ class DownloadsMockupTest {
             }
         }
         compose.onNodeWithText("Download failed — resume, or cancel and try again").assertIsDisplayed()
-        compose.onNodeWithText("Server did not report a size, so completeness cannot be verified.").assertIsDisplayed()
+        compose.onNodeWithText("The download stopped before it finished.").assertIsDisplayed()
     }
 
     @Test
@@ -414,6 +676,66 @@ class DownloadsMockupTest {
             compose.onNodeWithText("Retry").fetchSemanticsNode().boundsInRoot.height.toDp()
         }
         assertTrue("Retry measures $height, expected at least the 48dp floor", height >= 48.dp)
+    }
+
+    @Test
+    fun deviceProgressLineReadsPercentBytesSpeedEta() {
+        // Phase 4 (Downloads #1): the device line mirrors the keep line.
+        val moving = deviceFile(
+            id = "d7",
+            title = "Echoes of Silence",
+            printLabel = "1080p · High bitrate",
+            state = DeviceDownloadState.DOWNLOADING,
+            bytesDownloaded = 450_000_000L,
+            bytesTotal = 1_000_000_000L,
+            bytesPerSec = 12_000_000L,
+            etaSeconds = 60L,
+        )
+        assertEquals("45% · 450 MB / 1.0 GB · 12.0 MB/s · about 1 min left", deviceProgressLine(moving))
+        val calculating = deviceFile(
+            id = "d8",
+            title = "Echoes of Silence",
+            printLabel = "1080p · High bitrate",
+            state = DeviceDownloadState.DOWNLOADING,
+            bytesDownloaded = 450_000_000L,
+            bytesTotal = 1_000_000_000L,
+        )
+        assertEquals("45% · 450 MB / 1.0 GB · calculating…", deviceProgressLine(calculating))
+        val starting = deviceFile(
+            id = "d9",
+            title = "Echoes of Silence",
+            printLabel = "1080p · High bitrate",
+            state = DeviceDownloadState.DOWNLOADING,
+        )
+        assertEquals("Starting…", deviceProgressLine(starting))
+        val unknownTotal = deviceFile(
+            id = "d10",
+            title = "Echoes of Silence",
+            printLabel = "1080p · High bitrate",
+            state = DeviceDownloadState.DOWNLOADING,
+            bytesDownloaded = 450_000_000L,
+            bytesTotal = 0L,
+        )
+        assertEquals("450 MB · calculating…", deviceProgressLine(unknownTotal))
+    }
+
+    @Test
+    fun bytesSavedLineReadsSavedShare() {
+        assertEquals("300 MB of 1.3 GB saved · 23%", bytesSavedLine(300_000_000L, 1_300_000_000L, 23))
+        assertEquals("450 MB saved", bytesSavedLine(450_000_000L, 0L, null))
+        assertEquals(null, bytesSavedLine(0L, 1_000_000_000L, 0))
+    }
+
+    @Test
+    fun emptyPreviewShowsSampleRow() {
+        // Phase 4 (Downloads #14): the empty screen previews the
+        // populated state.
+        compose.setContent {
+            RaddStreamTheme { DownloadsEmptyPreview() }
+        }
+        compose.onNodeWithText("Your downloads will look like this:").assertIsDisplayed()
+        compose.onNodeWithText("Example title").assertIsDisplayed()
+        compose.onNodeWithText("45% · 540 MB / 1.2 GB · calculating…").assertIsDisplayed()
     }
 
     @Test
@@ -577,7 +899,7 @@ class DownloadsMockupTest {
             }
         }
         compose.onNodeWithText("2.4 GB of 32 GB used").assertIsDisplayed()
-        compose.onNode(hasContentDescription("Free up space")).performClick()
+        compose.onNode(hasContentDescription("How to free space")).performClick()
         assertTrue(clicked)
     }
 
@@ -589,7 +911,7 @@ class DownloadsMockupTest {
             }
         }
         compose.onNodeWithText("Storage information unavailable.").assertIsDisplayed()
-        compose.onNodeWithText("FREE UP SPACE").assertDoesNotExist()
+        compose.onNodeWithText("HOW TO FREE SPACE").assertDoesNotExist()
     }
 
     @Test

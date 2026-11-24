@@ -197,7 +197,9 @@ class DownloadsRulesTest {
         assertEquals("Cancel", keepActionLabel(KeepState.PAUSED))
         assertEquals("Retry", keepActionLabel(KeepState.FAILED))
         assertEquals("Retry", keepActionLabel(KeepState.NO_SPACE))
-        assertEquals("Retry", keepActionLabel(KeepState.GATED))
+        // Phase 4 (Downloads #4): a gated row has no Retry to label — its
+        // × dismisses the row.
+        assertEquals("Dismiss", keepActionLabel(KeepState.GATED))
     }
 
     @Test
@@ -211,5 +213,41 @@ class DownloadsRulesTest {
         // The park reasons are states, not failures: they never reach this mapping.
         assertNull(failureReasonFor("gated"))
         assertNull(failureReasonFor("no_space"))
+    }
+
+    @Test
+    fun `device failure kinds map to viewer words, unknown kinds map to nothing`() {
+        // Phase 4 (Downloads #5): the device side's mirror of the keep
+        // mapping — no raw HTTP text ever reaches the screen.
+        assertEquals(
+            "This copy is no longer available. Retry to get a fresh link.",
+            deviceFailureReasonFor("link_expired"),
+        )
+        assertEquals(
+            "The host refused this download. Try another version.",
+            deviceFailureReasonFor("host_refused"),
+        )
+        assertEquals(
+            "Too many requests at once. Wait a minute, then retry.",
+            deviceFailureReasonFor("rate_limited"),
+        )
+        assertEquals(
+            "The connection dropped. Retry to resume where it stopped.",
+            deviceFailureReasonFor("transfer_failed"),
+        )
+        assertEquals(
+            "The download stopped before it finished.",
+            deviceFailureReasonFor("incomplete_file"),
+        )
+        assertEquals(
+            "Could not save the file on this device. Check storage and retry.",
+            deviceFailureReasonFor("save_failed"),
+        )
+        assertNull(deviceFailureReasonFor("something_new"))
+        assertNull(deviceFailureReasonFor(null))
+        // A raw backend string is not a kind: it maps to nothing, so the
+        // generic line stands alone rather than leaking it.
+        assertNull(deviceFailureReasonFor("HTTP 404"))
+        assertNull(deviceFailureReasonFor("Unexpected content type: text/html"))
     }
 }

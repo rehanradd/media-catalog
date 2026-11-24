@@ -216,7 +216,16 @@ sealed interface SegmentedOutcome {
     data class Partial(val journal: SegmentJournal, val missingSegments: List<Int>) : SegmentedOutcome
 
     /** A hard failure (dead source, gate refusal, probe I/O) — nothing to resume against. */
-    data class Failed(val journal: SegmentJournal, val reason: String) : SegmentedOutcome
+    data class Failed(
+        val journal: SegmentJournal,
+        val reason: String,
+        /**
+         * Phase 4 (Downloads #5): the stable failure kind behind [reason]
+         * — the same vocabulary as [DeviceDownloadErrorKind]. The reason
+         * stays the stored diagnostic; the row paints the mapped sentence.
+         */
+        val kind: String = DeviceDownloadErrorKind.TRANSFER_FAILED,
+    ) : SegmentedOutcome
 
     /** The host will not do Range (200 to a Range request, or 403) — run the single connection. */
     data object FallbackToSingle : SegmentedOutcome
@@ -260,8 +269,13 @@ class SegmentedDownloader(
         } catch (e: SegmentFetchException) {
             return when (e.kind) {
                 SegmentFailureKind.HTTP_403 -> SegmentedOutcome.FallbackToSingle
+                // Phase 4 (Downloads #5): the raw code never survives into
+                // the reason — the clean form is the precedent (the
+                // SourceDead branch below already says it this way).
                 SegmentFailureKind.HTTP_404, SegmentFailureKind.HTTP_410 ->
-                    SegmentedOutcome.Failed(journal, "The source is no longer available (HTTP ${if (e.kind == SegmentFailureKind.HTTP_404) 404 else 410}).")
+                    SegmentedOutcome.Failed(journal, "The source is no longer available.", "link_expired")
+                SegmentFailureKind.HTTP_429 ->
+                    SegmentedOutcome.Failed(journal, e.message ?: "The download could not start.", "rate_limited")
                 else -> SegmentedOutcome.Failed(journal, e.message ?: "The download could not start.")
             }
         } catch (io: IOException) {
@@ -275,8 +289,9 @@ class SegmentedDownloader(
         }
         if (probe.totalBytes != journal.totalBytes) {
             // The server's file is not the one the journal describes — never
-            // stitch bytes from two different files together.
-            return SegmentedOutcome.Failed(journal, "The file changed on the server; the saved parts no longer match it.")
+            // stitch bytes from two different files together. A retry must
+            // re-resolve and restart from zero, like a dead link.
+            return SegmentedOutcome.Failed(journal, "The file changed on the server; the saved parts no longer match it.", "link_expired")
         }
 
         RandomAccessFile(tempFile, "rw").use { it.setLength(journal.totalBytes) }
@@ -320,7 +335,7 @@ class SegmentedDownloader(
             results.any { it is SegmentResult.HostRefusedParallel } -> SegmentedOutcome.FallbackToSingle
             results.any { it is SegmentResult.NoRange } -> SegmentedOutcome.FallbackToSingle
             results.any { it is SegmentResult.SourceDead } ->
-                SegmentedOutcome.Failed(finalJournal, "The source is no longer available.")
+                SegmentedOutcome.Failed(finalJournal, "The source is no longer available.", "link_expired")
             results.any { it is SegmentResult.Missing } ->
                 SegmentedOutcome.Partial(finalJournal, results.filterIsInstance<SegmentResult.Missing>().map { it.index })
             else -> SegmentedOutcome.Complete(finalJournal, probe.contentType)
