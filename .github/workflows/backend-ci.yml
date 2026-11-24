@@ -482,6 +482,13 @@ jobs:
       - name: 🧪 test_redact.py
         run: python3 -S Fast_Fetch/test_redact.py
 
+      # SEC-05 nginx hardening (2026-11-24): validates the repo-tracked
+      # nginx patch files (real-ip ranges vs Cloudflare's published lists;
+      # 28 HSTS insertions) and the HSTS inheritance audit. Offline —
+      # parses patch files only, no nginx binary, no network.
+      - name: 🧪 test_nginx_hardening.py
+        run: python3 -S Fast_Fetch/test_nginx_hardening.py
+
       # Socket-level download twin of /api/v1/stream: the 302, the JSON
       # descriptor, the shortener waterfall, the credit path and the 720p
       # free cap. Offline — temp ledger, loopback servers, no catalog read.

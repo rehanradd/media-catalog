@@ -1,0 +1,243 @@
+# HSTS inheritance fix (SEC-05, 2026-11-24):
+# nginx `add_header` is NOT inherited: any location that defines its own
+# add_header loses every server-level add_header, including
+# Strict-Transport-Security. Both HTTPS servers set HSTS at server level
+# (lines 128, 807), but 28 locations define their own add_headers without
+# HSTS, so their responses carry no HSTS header today. This patch adds the
+# identical HSTS line (same value as the server level, no preload) after the
+# last add_header in each of those 28 locations (14 per HTTPS server).
+# NOT touched: the port-80 default server (plain HTTP — HSTS is ignored over
+# HTTP), the two Certbot port-80 redirect servers (301 to https), and every
+# location that already re-adds HSTS (cached GET routes) or defines no
+# add_header at all (inherits server HSTS).
+# Anchor: live /etc/nginx/sites-enabled/radd-stream, md5 73fdcff003edb79b246ac77705f27f3e,
+# fetched 2026-11-24 (1,465 lines). Gate step: verify `git apply --check`
+# against the then-current file, apply, `sudo nginx -t`, reload, then prove
+# with `curl -sI` that /api/v2/play, /api/v2/resolve and /api/v1/stream
+# responses carry Strict-Transport-Security.
+--- a/radd-stream
++++ b/radd-stream
+@@ -269,6 +269,7 @@
+         add_header Cache-Control "private, no-store" always;
+         add_header X-Cache $upstream_cache_status always;
+         add_header X-Cache-Status $upstream_cache_status always;
++        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+     }
+ 
+     location = /api/v1/app/remote-config {
+@@ -312,6 +313,7 @@
+         add_header Cache-Control "private, no-store" always;
+         add_header X-Cache $upstream_cache_status always;
+         add_header X-Cache-Status $upstream_cache_status always;
++        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+     }
+ 
+     location = /api/v1/search/by-media {
+@@ -330,6 +332,7 @@
+         add_header Cache-Control "private, no-store" always;
+         add_header X-Cache $upstream_cache_status always;
+         add_header X-Cache-Status $upstream_cache_status always;
++        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+     }
+ 
+     location = /api/v1/download {
+@@ -349,6 +352,7 @@
+         add_header Cache-Control "private, no-store" always;
+         add_header X-Cache $upstream_cache_status always;
+         add_header X-Cache-Status $upstream_cache_status always;
++        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+     }
+ 
+     # Operator Console & Database Explorer (loopback port 8081)
+@@ -395,6 +399,7 @@
+         add_header Cache-Control "private, no-store" always;
+         add_header X-Cache $upstream_cache_status always;
+         add_header X-Cache-Status $upstream_cache_status always;
++        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+     }
+ 
+     location = /api/v2/enrich {
+@@ -413,6 +418,7 @@
+         proxy_cache_bypass 1;
+         proxy_hide_header Cache-Control;
+         add_header Cache-Control "private, no-store" always;
++        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+     }
+ 
+     location = /api/v2/suggest {
+@@ -460,6 +466,7 @@
+         add_header Cache-Control "private, no-store" always;
+         add_header X-Cache $upstream_cache_status always;
+         add_header X-Cache-Status $upstream_cache_status always;
++        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+     }
+ 
+     # Protect administrative internal API endpoints
+@@ -507,6 +514,7 @@
+         add_header Cache-Control "private, no-store" always;
+         add_header X-Cache $upstream_cache_status always;
+         add_header X-Cache-Status $upstream_cache_status always;
++        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+     }
+ 
+     location ^~ /api/v2/episodes/ {
+@@ -526,6 +534,7 @@
+         add_header Cache-Control "private, no-store" always;
+         add_header X-Cache $upstream_cache_status always;
+         add_header X-Cache-Status $upstream_cache_status always;
++        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+     }
+ 
+ # Phase 7 (M1): the v2 GET catalog routes the app now calls, v1 as fallback.
+@@ -550,6 +559,7 @@
+     proxy_cache_bypass $http_authorization $http_x_admin_token;
+     add_header X-Cache $upstream_cache_status always;
+     add_header X-Cache-Status $upstream_cache_status always;
++    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+ }
+ location = /api/v2/browse {
+     limit_req zone=radd_stream_api burst=30;
+@@ -572,6 +582,7 @@
+     proxy_cache_bypass $http_authorization $http_x_admin_token;
+     add_header X-Cache $upstream_cache_status always;
+     add_header X-Cache-Status $upstream_cache_status always;
++    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+ }
+ location = /api/v2/search {
+     limit_req zone=radd_stream_api burst=30;
+@@ -594,6 +605,7 @@
+     proxy_cache_bypass $http_authorization $http_x_admin_token;
+     add_header X-Cache $upstream_cache_status always;
+     add_header X-Cache-Status $upstream_cache_status always;
++    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+ }
+ # Phase 7 (M7): GET /api/v2/feed.m3u — the playlist feed route
+ # (EndpointGaps.FEED); without this location it 403s at the catch-all.
+@@ -614,6 +626,7 @@
+     add_header Cache-Control "private, no-store" always;
+     add_header X-Cache $upstream_cache_status always;
+     add_header X-Cache-Status $upstream_cache_status always;
++    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+ }
+ # Phase 7 (M3): GET /api/v2/resolve/{handle} — the real resolve route
+ # (EndpointGaps.RESOLVE); without this location it 403s at the catch-all.
+@@ -631,6 +644,7 @@
+     add_header Cache-Control "private, no-store" always;
+     add_header X-Cache $upstream_cache_status always;
+     add_header X-Cache-Status $upstream_cache_status always;
++    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+ }
+ 
+     # Home rails (2026-11-11, rev-8 code deploy): public GET-only browse endpoints.
+@@ -948,6 +962,7 @@
+         add_header Cache-Control "private, no-store" always;
+         add_header X-Cache $upstream_cache_status always;
+         add_header X-Cache-Status $upstream_cache_status always;
++        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+     }
+ 
+     location = /api/v1/app/remote-config {
+@@ -991,6 +1006,7 @@
+         add_header Cache-Control "private, no-store" always;
+         add_header X-Cache $upstream_cache_status always;
+         add_header X-Cache-Status $upstream_cache_status always;
++        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+     }
+ 
+     location = /api/v1/search/by-media {
+@@ -1009,6 +1025,7 @@
+         add_header Cache-Control "private, no-store" always;
+         add_header X-Cache $upstream_cache_status always;
+         add_header X-Cache-Status $upstream_cache_status always;
++        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+     }
+ 
+     location = /api/v1/download {
+@@ -1028,6 +1045,7 @@
+         add_header Cache-Control "private, no-store" always;
+         add_header X-Cache $upstream_cache_status always;
+         add_header X-Cache-Status $upstream_cache_status always;
++        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+     }
+ 
+     # Operator Console & Database Explorer (loopback port 8081)
+@@ -1074,6 +1092,7 @@
+         add_header Cache-Control "private, no-store" always;
+         add_header X-Cache $upstream_cache_status always;
+         add_header X-Cache-Status $upstream_cache_status always;
++        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+     }
+ 
+     location = /api/v2/enrich {
+@@ -1092,6 +1111,7 @@
+         proxy_cache_bypass 1;
+         proxy_hide_header Cache-Control;
+         add_header Cache-Control "private, no-store" always;
++        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+     }
+ 
+     location = /api/v2/suggest {
+@@ -1139,6 +1159,7 @@
+         add_header Cache-Control "private, no-store" always;
+         add_header X-Cache $upstream_cache_status always;
+         add_header X-Cache-Status $upstream_cache_status always;
++        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+     }
+ 
+     # Protect administrative internal API endpoints
+@@ -1186,6 +1207,7 @@
+         add_header Cache-Control "private, no-store" always;
+         add_header X-Cache $upstream_cache_status always;
+         add_header X-Cache-Status $upstream_cache_status always;
++        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+     }
+ 
+     location ^~ /api/v2/episodes/ {
+@@ -1205,6 +1227,7 @@
+         add_header Cache-Control "private, no-store" always;
+         add_header X-Cache $upstream_cache_status always;
+         add_header X-Cache-Status $upstream_cache_status always;
++        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+     }
+ 
+ # Phase 7 (M1): the v2 GET catalog routes the app now calls, v1 as fallback.
+@@ -1229,6 +1252,7 @@
+     proxy_cache_bypass $http_authorization $http_x_admin_token;
+     add_header X-Cache $upstream_cache_status always;
+     add_header X-Cache-Status $upstream_cache_status always;
++    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+ }
+ location = /api/v2/browse {
+     limit_req zone=radd_stream_api burst=30;
+@@ -1251,6 +1275,7 @@
+     proxy_cache_bypass $http_authorization $http_x_admin_token;
+     add_header X-Cache $upstream_cache_status always;
+     add_header X-Cache-Status $upstream_cache_status always;
++    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+ }
+ location = /api/v2/search {
+     limit_req zone=radd_stream_api burst=30;
+@@ -1273,6 +1298,7 @@
+     proxy_cache_bypass $http_authorization $http_x_admin_token;
+     add_header X-Cache $upstream_cache_status always;
+     add_header X-Cache-Status $upstream_cache_status always;
++    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+ }
+ # Phase 7 (M7): GET /api/v2/feed.m3u — the playlist feed route
+ # (EndpointGaps.FEED); without this location it 403s at the catch-all.
+@@ -1293,6 +1319,7 @@
+     add_header Cache-Control "private, no-store" always;
+     add_header X-Cache $upstream_cache_status always;
+     add_header X-Cache-Status $upstream_cache_status always;
++    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+ }
+ # Phase 7 (M3): GET /api/v2/resolve/{handle} — the real resolve route
+ # (EndpointGaps.RESOLVE); without this location it 403s at the catch-all.
+@@ -1310,6 +1337,7 @@
+     add_header Cache-Control "private, no-store" always;
+     add_header X-Cache $upstream_cache_status always;
+     add_header X-Cache-Status $upstream_cache_status always;
++    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+ }
+ 
+     # Home rails (2026-11-11, rev-8 code deploy): public GET-only browse endpoints.
