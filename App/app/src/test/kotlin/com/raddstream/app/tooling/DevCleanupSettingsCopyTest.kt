@@ -184,7 +184,9 @@ class DevCleanupSettingsCopyTest {
         )
         assertTrue(
             AccountCardCopy.LINK_TRANSPORT_WARNING_FALLBACK,
-            AccountCardCopy.LINK_TRANSPORT_WARNING_FALLBACK.contains("don't use a PIN you use anywhere else"),
+            // The sentence starts with a capital, so the match is on the
+            // case-free tail.
+            AccountCardCopy.LINK_TRANSPORT_WARNING_FALLBACK.contains("use a PIN you use anywhere else"),
         )
         assertEquals(
             "Don't use a PIN you use anywhere else.",

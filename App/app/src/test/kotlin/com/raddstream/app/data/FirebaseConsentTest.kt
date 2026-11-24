@@ -72,6 +72,14 @@ class FirebaseConsentTest {
         val previous = FirebaseConsent.applier
         FirebaseConsent.applier = { _, consented -> seen.add(consented) }
         try {
+            // Flush first: RaddStreamApplication's onCreate launches its own
+            // Telemetry.refresh on a background scope, and that refresh reads
+            // the same DataStore load this one awaits — so by the time this
+            // returns, the application's apply (of the initial, unanswered
+            // consent: false) has landed in `seen`. Clear it so the assertion
+            // sees only this test's two refreshes.
+            Telemetry.refresh(settings)
+            seen.clear()
             settings.saveAnalyticsConsent(true)
             Telemetry.refresh(settings)
             settings.saveAnalyticsConsent(false)
