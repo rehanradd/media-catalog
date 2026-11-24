@@ -1,4 +1,4 @@
-"""Filemoon REST resolver tests (Fix 4, 2026-11-23).
+"""Filemoon REST resolver tests (Fix 4, 2026-11-23; API-06, 2026-11-24).
 
 Offline/mocked only: a fake `_filemoon_api_request` serves canned
 API-shaped responses built with the module's own AES-GCM encryptor, so
@@ -7,6 +7,11 @@ and the decrypt — no network, no production DB. Live proof (real file
 `fihge8dsk4wd`, PoW solve, decrypt matching `cryptography`, master 200
 with a real #EXTM3U) is recorded in the Fix 4 section of
 `~/workspace/resolver-build-20261123.md`, not re-run here.
+
+API-06 (PoW off the request path): PowOffPathTests pins that a cold-token
+press never solves (no captcha start, no PoW call, fast fail with
+pow_required), that only an explicit opt-in mints, and that the minted
+token is banked on disk for presses to reuse.
 
 Run: python3 -m pytest test_filemoon_unwrap.py -q   (from Fast_Fetch/)
 """
@@ -66,6 +71,37 @@ SOURCES_1080 = [{"quality": "x", "label": "1080p",
 TRACKS = [{"language": "en", "title": "English",
            "url": "https://sub.test-cdn.example/en.vtt",
            "kind": "subtitles", "default": True}]
+
+
+def _token_bank_env():
+    """Point the disk token bank at a fresh temp file that does not exist
+    yet (missing file = no banked token). Returns (path, old_env). Keeps
+    every test hermetic: a real banked token on the dev machine must never
+    leak into a test, and a test token must never leak onto disk."""
+    fd, path = tempfile.mkstemp(suffix=".token.json")
+    os.close(fd)
+    os.unlink(path)
+    old = os.environ.get("RADD_FILEMOON_TOKEN_PATH")
+    os.environ["RADD_FILEMOON_TOKEN_PATH"] = path
+    return path, old
+
+
+def _restore_token_bank_env(path, old):
+    if old is None:
+        os.environ.pop("RADD_FILEMOON_TOKEN_PATH", None)
+    else:
+        os.environ["RADD_FILEMOON_TOKEN_PATH"] = old
+    for suffix in ("", ".tmp"):
+        try:
+            os.unlink(path + suffix)
+        except OSError:
+            pass
+
+
+def _clear_token_state(ffmod):
+    with ffmod._FILEMOON_CAPTCHA_LOCK:
+        ffmod._FILEMOON_CAPTCHA["token"] = None
+        ffmod._FILEMOON_CAPTCHA["expires_at"] = 0.0
 
 
 class _FakeFilemoon:
@@ -242,15 +278,13 @@ class DecryptTests(unittest.TestCase):
 class UnwrapTests(unittest.TestCase):
     def setUp(self):
         self._orig = ff._filemoon_api_request
-        with ff._FILEMOON_CAPTCHA_LOCK:
-            ff._FILEMOON_CAPTCHA["token"] = None
-            ff._FILEMOON_CAPTCHA["expires_at"] = 0.0
+        self._bank_path, self._bank_old = _token_bank_env()
+        _clear_token_state(ff)
 
     def tearDown(self):
         ff._filemoon_api_request = self._orig
-        with ff._FILEMOON_CAPTCHA_LOCK:
-            ff._FILEMOON_CAPTCHA["token"] = None
-            ff._FILEMOON_CAPTCHA["expires_at"] = 0.0
+        _clear_token_state(ff)
+        _restore_token_bank_env(self._bank_path, self._bank_old)
 
     def test_unwrap_no_captcha_active(self):
         fake = _FakeFilemoon()
@@ -279,13 +313,17 @@ class UnwrapTests(unittest.TestCase):
         self.assertIn(MASTER_URL, [u for _m, u in fake.calls])
 
     def test_unwrap_captcha_pow_flow_and_token_reuse(self):
+        # API-06: the solve is opt-in now — a background caller passes
+        # allow_pow_solve=True; the default call must NOT solve.
         fake = _FakeFilemoon(captcha=True, difficulty=4)
         ff._filemoon_api_request = fake
-        verdict = ff.unwrap_filemoon("https://filemoon.sx/e/testcode12")
+        verdict = ff.unwrap_filemoon("https://filemoon.sx/e/testcode12",
+                                     allow_pow_solve=True)
         self.assertEqual(verdict["status"], "active")
         self.assertEqual(verdict["final_url"], MASTER_URL)
         self.assertEqual(fake.captcha_started, 1)
-        # Second call reuses the cached token: no second captcha start.
+        # Second call reuses the cached token: no second captcha start —
+        # and it needs no opt-in, because no solve is required.
         verdict2 = ff.unwrap_filemoon("https://filemoon.sx/e/testcode12")
         self.assertEqual(verdict2["status"], "active")
         self.assertEqual(fake.captcha_started, 1)
@@ -316,6 +354,129 @@ class UnwrapTests(unittest.TestCase):
         self.assertEqual(verdict["status"], "unverified")
         self.assertEqual(verdict["final_url"], MASTER_URL)
         self.assertNotIn(MASTER_URL, [u for _m, u in fake.calls])
+
+
+class PowOffPathTests(unittest.TestCase):
+    """API-06: the PoW solve is off the request path.
+
+    A cold-token press (the default call) must answer at once with
+    pow_required — no captcha start, no PoW hash, no ~3 min wait. Only
+    an explicit opt-in mints, and the minted token is banked on disk.
+    """
+
+    def setUp(self):
+        self._orig_api = ff._filemoon_api_request
+        self._orig_solve = ff._filemoon_pow_solve
+        self._bank_path, self._bank_old = _token_bank_env()
+        _clear_token_state(ff)
+
+    def tearDown(self):
+        ff._filemoon_api_request = self._orig_api
+        ff._filemoon_pow_solve = self._orig_solve
+        _clear_token_state(ff)
+        _restore_token_bank_env(self._bank_path, self._bank_old)
+
+    def _forbid_solve(self):
+        def _boom(*args, **kwargs):
+            raise AssertionError("PoW solve called where none is allowed")
+        ff._filemoon_pow_solve = _boom
+
+    def test_request_path_never_solves(self):
+        # Live difficulty 16: a solve here would burn ~3 min of CPU.
+        # The default call must answer at once, with no captcha start
+        # at all (there is nothing to solve for).
+        fake = _FakeFilemoon(captcha=True, difficulty=16)
+        ff._filemoon_api_request = fake
+        self._forbid_solve()
+        started = time.monotonic()
+        verdict = ff.unwrap_filemoon("https://filemoon.sx/e/testcode12")
+        elapsed = time.monotonic() - started
+        self.assertEqual(verdict["status"], "unverified")
+        self.assertTrue(verdict["pow_required"])
+        self.assertIn("off the request path", " ".join(verdict["notes"]))
+        self.assertEqual(fake.captcha_started, 0)
+        self.assertLess(elapsed, 10)
+
+    def test_opt_in_mints_and_banks_token_to_disk(self):
+        fake = _FakeFilemoon(captcha=True, difficulty=4)
+        ff._filemoon_api_request = fake
+        verdict = ff.unwrap_filemoon("https://filemoon.sx/e/testcode12",
+                                     allow_pow_solve=True)
+        self.assertEqual(verdict["status"], "active")
+        self.assertEqual(fake.captcha_started, 1)
+        # The minted token is banked on disk: a fresh process state
+        # (in-process cache cleared) reuses it with no second mint.
+        banked = json.loads(Path(self._bank_path).read_text("utf-8"))
+        self.assertEqual(banked["token"], fake.captcha_token)
+        self.assertGreater(banked["expires_at"], time.time() + 60)
+        _clear_token_state(ff)
+        verdict2 = ff.unwrap_filemoon("https://filemoon.sx/e/testcode12")
+        self.assertEqual(verdict2["status"], "active")
+        self.assertEqual(fake.captcha_started, 1)
+
+    def test_pow_timeout_fails_fast_with_reason(self):
+        fake = _FakeFilemoon(captcha=True, difficulty=16)
+        ff._filemoon_api_request = fake
+        started = time.monotonic()
+        verdict = ff.unwrap_filemoon("https://filemoon.sx/e/testcode12",
+                                     allow_pow_solve=True, pow_timeout_s=0.05)
+        elapsed = time.monotonic() - started
+        self.assertEqual(verdict["status"], "unverified")
+        self.assertIn("mint failed", " ".join(verdict["notes"]))
+        self.assertIn("pow_timeout", " ".join(verdict["notes"]))
+        self.assertLess(elapsed, 10)
+
+    def test_deadline_passed_fails_fast_without_solving(self):
+        fake = _FakeFilemoon(captcha=True, difficulty=4)
+        ff._filemoon_api_request = fake
+        self._forbid_solve()
+        verdict = ff.unwrap_filemoon(
+            "https://filemoon.sx/e/testcode12",
+            allow_pow_solve=True, deadline=time.monotonic() - 1)
+        self.assertEqual(verdict["status"], "unverified")
+        self.assertIn("deadline", " ".join(verdict["notes"]))
+        self.assertEqual(fake.captcha_started, 0)
+
+    def test_ensure_token_banked_shortcircuit(self):
+        fake = _FakeFilemoon(captcha=True, difficulty=4)
+        ff._filemoon_api_request = fake
+        token, reason = ff.filemoon_ensure_token("testcode12")
+        self.assertEqual(token, fake.captcha_token)
+        self.assertEqual(reason, "minted")
+        self.assertEqual(fake.captcha_started, 1)
+        token2, reason2 = ff.filemoon_ensure_token("testcode12")
+        self.assertEqual(token2, fake.captcha_token)
+        self.assertEqual(reason2, "banked")
+        self.assertEqual(fake.captcha_started, 1)
+
+    def test_ensure_token_refuses_absurd_difficulty(self):
+        fake = _FakeFilemoon(captcha=True, difficulty=24)
+        ff._filemoon_api_request = fake
+        self._forbid_solve()
+        token, reason = ff.filemoon_ensure_token("testcode12")
+        self.assertIsNone(token)
+        self.assertEqual(reason, "difficulty_24_refused")
+        # The challenge was started (that is cheap); the solve was not.
+        self.assertEqual(fake.captcha_started, 1)
+
+    def test_banked_token_roundtrip_and_expiry(self):
+        good = {"token": "banked-token",
+                "expires_at": time.time() + 1800}
+        Path(self._bank_path).write_text(json.dumps(good), "utf-8")
+        self.assertEqual(ff._filemoon_cached_token(), "banked-token")
+        # Expired banked tokens are ignored, never served.
+        stale = {"token": "stale-token",
+                 "expires_at": time.time() - 10}
+        Path(self._bank_path).write_text(json.dumps(stale), "utf-8")
+        _clear_token_state(ff)
+        self.assertIsNone(ff._filemoon_cached_token())
+
+    def test_banked_token_corrupt_is_ignored(self):
+        Path(self._bank_path).write_text("not json{{", "utf-8")
+        self.assertIsNone(ff._filemoon_cached_token())
+        Path(self._bank_path).write_text(
+            json.dumps({"token": 123, "expires_at": "soon"}), "utf-8")
+        self.assertIsNone(ff._filemoon_cached_token())
 
 
 class DispatchTests(unittest.TestCase):
@@ -414,6 +575,72 @@ class DispatchTests(unittest.TestCase):
             self.assertEqual(res.get("code"), "no_playable_source")
         finally:
             self._restore(old_env, saved)
+            os.unlink(path)
+
+    def test_dispatch_cold_token_request_path_never_solves(self):
+        # API-06: the press path (resolve_live_source with its defaults)
+        # must fail fast on a cold token — no captcha start, no PoW.
+        bank_path, bank_old = _token_bank_env()
+        path, old_env, saved = self._fresh_db()
+        try:
+            import fast_fetch as ffmod
+            ffmod.init_db()
+            self._insert_row(ffmod, "filemoon",
+                             "https://filemoon.sx/e/testcode12",
+                             "https://filemoon.sx/e/testcode12", "expired")
+            fake = _FakeFilemoon(captcha=True, difficulty=16)
+            orig_api = ffmod._filemoon_api_request
+            orig_solve = ffmod._filemoon_pow_solve
+            ffmod._filemoon_api_request = fake
+
+            def _no_solve(*args, **kwargs):
+                raise AssertionError(
+                    "PoW solve called on the request path")
+            ffmod._filemoon_pow_solve = _no_solve
+            try:
+                _clear_token_state(ffmod)
+                res = ffmod.resolve_live_source(42, v2=True)
+            finally:
+                ffmod._filemoon_api_request = orig_api
+                ffmod._filemoon_pow_solve = orig_solve
+            self.assertFalse(res.get("success"))
+            self.assertEqual(res.get("code"), "no_playable_source")
+            self.assertEqual(fake.captcha_started, 0)
+        finally:
+            self._restore(old_env, saved)
+            _restore_token_bank_env(bank_path, bank_old)
+            os.unlink(path)
+
+    def test_dispatch_background_mint_resolves(self):
+        # API-06: the background path (prefetch) opts in, mints once,
+        # and resolves — the same fake, the same cold token.
+        bank_path, bank_old = _token_bank_env()
+        path, old_env, saved = self._fresh_db()
+        try:
+            import fast_fetch as ffmod
+            ffmod.init_db()
+            self._insert_row(ffmod, "filemoon",
+                             "https://filemoon.sx/e/testcode12",
+                             "https://filemoon.sx/e/testcode12", "expired")
+            fake = _FakeFilemoon(captcha=True, difficulty=4)
+            orig_api = ffmod._filemoon_api_request
+            orig_ttl = ffmod.probe_url_ttl
+            ffmod._filemoon_api_request = fake
+            ffmod.probe_url_ttl = lambda url, **kw: (
+                None, {"observed": False, "reason": "no_directive"})
+            try:
+                _clear_token_state(ffmod)
+                res = ffmod.resolve_live_source(
+                    42, v2=True, allow_pow_solve=True)
+            finally:
+                ffmod._filemoon_api_request = orig_api
+                ffmod.probe_url_ttl = orig_ttl
+            self.assertTrue(res.get("success"), res)
+            self.assertEqual(res.get("url"), MASTER_URL)
+            self.assertEqual(fake.captcha_started, 1)
+        finally:
+            self._restore(old_env, saved)
+            _restore_token_bank_env(bank_path, bank_old)
             os.unlink(path)
 
 
