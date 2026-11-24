@@ -511,6 +511,22 @@ class PlayPathTests(Fixture):
             if os.path.exists(missing):
                 os.unlink(missing)
 
+    def test_a_missing_art_database_file_still_answers_true(self):
+        """A catalog path that does not exist yet is not clean art.
+
+        `sqlite3.connect` creates the file on open, so the lookup still runs
+        (against an empty database) and answers True; the created file is
+        removed afterwards.
+        """
+        missing = os.path.join(tempfile.gettempdir(),
+                               "sec07-no-such-catalog-%d.db" % os.getpid())
+        try:
+            self.assertFalse(os.path.exists(missing))
+            self.assertTrue(redact.art_is_adult(1, missing))
+        finally:
+            if os.path.exists(missing):
+                os.unlink(missing)
+
     def test_a_database_in_a_missing_directory_still_answers_true(self):
         """Was `sqlite3.OperationalError`: the connect sat outside the guarded
         block, so an unopenable database raised instead of refusing. The
@@ -529,6 +545,27 @@ class PlayPathTests(Fixture):
         directory = tempfile.mkdtemp()
         try:
             self.assertTrue(redact.link_is_adult(1, directory))
+        finally:
+            os.rmdir(directory)
+
+    def test_an_art_database_in_a_missing_directory_still_answers_true(self):
+        """Was `sqlite3.OperationalError`: the connect sat outside the guarded
+        block, so an unopenable database raised instead of refusing. The
+        artwork redirector calls this with no guard of its own, so the raise
+        would have surfaced as a 500 instead of the intended 404 refusal.
+        """
+        missing_dir = os.path.join(tempfile.gettempdir(),
+                                   "sec07-no-such-dir-%d" % os.getpid())
+        self.assertFalse(os.path.exists(missing_dir))
+        self.assertTrue(redact.art_is_adult(
+            1, os.path.join(missing_dir, "catalog.db")))
+        self.assertFalse(os.path.exists(missing_dir))
+
+    def test_a_directory_as_the_art_database_still_answers_true(self):
+        """A directory in place of the catalog file is unopenable, not clean."""
+        directory = tempfile.mkdtemp()
+        try:
+            self.assertTrue(redact.art_is_adult(1, directory))
         finally:
             os.rmdir(directory)
 

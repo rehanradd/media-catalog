@@ -1609,9 +1609,17 @@ def art_url_for(post_id: int, kind: str, index: int, db_path,
 
 
 def art_is_adult(target_id: int, db_path, table: str = "posts") -> bool:
-    """Adult rule for the artwork redirector, in whichever table the art lives."""
+    """Adult rule for the artwork redirector, in whichever table the art lives.
+
+    A database that cannot be opened at all answers True too, so no failure
+    mode of the lookup can show the art.
+    """
     from_table = ART_TABLES.get(str(table or "posts"), "posts")
-    with sqlite3.connect(db_path) as conn:
+    try:
+        conn = sqlite3.connect(db_path)
+    except sqlite3.Error:
+        return True          # unopenable database: refuse, never show
+    with conn:
         try:
             # Session 125: serve-path pragmas.
             db_pragmas.apply_serve_pragmas(conn)
