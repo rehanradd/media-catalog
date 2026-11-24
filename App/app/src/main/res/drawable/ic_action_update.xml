@@ -1,0 +1,18 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+>
+    <!-- S8 (2027 Home fix): the house update glyph — Feather "download".
+         A download arrow, not sparkles: the update dialog's icon is an
+         update, and the arrow says so. Replaces Icons.Default.AutoAwesome
+         in Home's update dialog. Same stroke style as the tab icons. -->
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"
+        android:strokeWidth="2"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"/>
+</vector>

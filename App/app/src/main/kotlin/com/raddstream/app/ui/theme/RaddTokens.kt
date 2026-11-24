@@ -28,6 +28,10 @@ object RaddTokens {
     /** Spacing — the 8pt grid (benchmark §14: 4, 8, 12, 16, 20, 24, 32, 48). */
     object Space {
         val Xs: Dp = RaddSpacing.xs
+        /** Half-step 6dp: the hero-stack gaps (D7) — below the 8dp grid step. */
+        val Xxs: Dp = 6.dp
+        /** Half-step 2dp: hairline gaps and thin dividers. */
+        val Micro: Dp = 2.dp
         val Sm: Dp = RaddSpacing.sm
         val Md: Dp = RaddSpacing.md
         val Lg: Dp = RaddSpacing.lg
@@ -91,17 +95,18 @@ object RaddTokens {
         val MinGap: Dp = 8.dp
 
         /**
-         * Bottom-nav active-indicator pill, 56×32dp (density, Nov 2026 —
-         * M3 Expressive's spec pill on a 64dp bar). The pill is VISUAL
-         * only: the tab itself is the touch target at 64dp, still above
-         * the 48dp floor, so the pill no longer needs to clear the floor
-         * on its own. Robo runs 4–6 measured the 32dp pill under the
-         * floor, but run 6 proved the measured node is the tab, not the
-         * pill — and the pill carries no click action. A Robo re-run on
-         * a 3-button-nav device is still the verification owed for this
-         * change (see BottomNavTouchTargetTest).
+         * Bottom-nav active-indicator pill, 64×32dp (S6/H3, Nov 2026 —
+         * the brief's 64×32 spring pill; was 56dp). M3 Expressive's spec
+         * pill on a 64dp bar. The pill is VISUAL only: the tab itself is
+         * the touch target at 64dp, still above the 48dp floor, so the
+         * pill no longer needs to clear the floor on its own. Robo runs
+         * 4–6 measured the 32dp pill under the floor, but run 6 proved
+         * the measured node is the tab, not the pill — and the pill
+         * carries no click action. A Robo re-run on a 3-button-nav device
+         * is still the verification owed for this change (see
+         * BottomNavTouchTargetTest).
          */
-        val NavIndicatorWidth: Dp = 56.dp
+        val NavIndicatorWidth: Dp = 64.dp
         val NavIndicatorHeight: Dp = 32.dp
 
         /**

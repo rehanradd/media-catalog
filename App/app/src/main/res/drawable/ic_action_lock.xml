@@ -1,0 +1,25 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+>
+    <!-- S8 (2027 Home fix): the house lock glyph — Feather "lock" (shackle +
+         rounded body, as strokes). Same stroke style as the tab icons.
+         Replaces Icons.Default.Lock on Home's Kids Mode row. One glyph, one
+         meaning here: do NOT reuse the player lock (ic_player_lock) for it. -->
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M5 11h14a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2z"
+        android:strokeWidth="2"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"/>
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M7 11V7a5 5 0 0 1 10 0v4"
+        android:strokeWidth="2"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"/>
+</vector>

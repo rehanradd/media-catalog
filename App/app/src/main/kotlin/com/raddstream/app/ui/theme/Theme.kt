@@ -6,6 +6,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MotionScheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
@@ -168,10 +169,15 @@ object RaddMotion {
     // life; effects springs (fades, colour) are critically damped (1.0) so
     // they never overshoot. Screen enter/exit transitions keep the legacy
     // tween durations above — the skill keeps those for transitions.
-    // (MotionScheme itself is not read from MaterialTheme here: the pinned
-    // BOM 2024.06.00 / material3 1.3.0 could not be confirmed to carry it,
-    // so these specs carry the same token values directly. Wiring
-    // MaterialTheme.motionScheme is the BOM-bump follow-up.)
+    // S7 (2027 Home fix): MaterialTheme.motionScheme IS wired now —
+    // BOM 2025.11.01 / material3 1.4.x carries MotionScheme, and
+    // RaddStreamTheme passes MotionScheme.expressive() below, so the
+    // screens read the system springs. The RaddMotion specs below carry
+    // the same token values and stay for the call sites the scheme does
+    // not cover (PlayerScreen's defaultEffects, QualityRungCard's
+    // defaultSpatial, PressFeedback's defaultEffects — all out of the
+    // Home scope; delete the spring fns once the Player split lands and
+    // those call sites migrate).
     /** Fast move: small shape/bounds changes. */
     fun <T> fastSpatial() = spring<T>(dampingRatio = 0.6f, stiffness = 800f)
 
@@ -203,7 +209,7 @@ object RaddSpacing {
     val xl = 24.dp
     val xxl = 32.dp
     val gutter = 16.dp
-    val railGap = 8.dp      // between poster cards in a row/grid
+    val railGap = 12.dp     // between poster cards in a row/grid (S6: shipped rails use 12dp)
     val sectionGap = 24.dp  // between home rails
     val thumbBarClearance = 24.dp // content padding under edge-to-edge nav
 }
@@ -261,6 +267,7 @@ fun RaddStreamTheme(
         colorScheme = colorScheme,
         typography = RaddTypography,
         shapes = RaddShapes,
+        motionScheme = MotionScheme.expressive(),
         content = content,
     )
 }
