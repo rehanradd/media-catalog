@@ -41,7 +41,19 @@ UTC offset (5h on this PKT box); this module must not inherit that bug.
 ``ip_bound`` (NULL=untested / 0=no / 1=yes) guards the one thing a shared cache
 gets wrong: a CDN token bound to the *requesting* IP must not be replayed to
 another client.  ``lookup_cache`` refuses ``ip_bound=1`` rows unless the caller
-explicitly opts in (same-IP serving), which the request path never does today.
+opts in with the minting IP (same-IP serving) — the press path does, via
+``viewer._servable_banked_hit``; every other caller keeps the default refusal.
+API-01 (2026-11-24) makes the guard real: ``record_resolved_cache`` stamps
+``ip_bound=1`` at bank time from ``host_classifier``'s proven-IP-bound table
+(the 6 hosts of the final-origin map — mixdrop, vidhide, streamtape, voe,
+1xplayer, mega — by final-URL host first, service label second), or from an
+explicit ``ip_bound`` in the resolve answer when an unwrapper's probe proved
+it. ``minted_ip`` records the client IP the row was minted for (press path
+only; pool/warm mints leave it NULL), and ``lookup_cache`` serves an
+``ip_bound=1`` row only to that IP (VOE: same /16) — any other client reads
+a miss and re-resolves. A client-less bank never clobbers a minted IP a
+same-IP row already holds (the upsert keeps it); a row banked before the
+guard has ``minted_ip`` NULL and is never served while bound.
 """
 
 from __future__ import annotations
@@ -154,6 +166,12 @@ _DDL_STATEMENTS = (
         source            TEXT NOT NULL DEFAULT 'jit'
                               CHECK (source IN ('pool','jit')),
         ip_bound          INTEGER CHECK (ip_bound IN (0,1)),   -- NULL = untested
+        minted_ip         TEXT,   -- API-01: the client IP this row was minted
+                                  -- for; NULL = pool/warm mint, or a row
+                                  -- banked before the guard existed. Only
+                                  -- ever set on ip_bound=1 rows, and never
+                                  -- emitted in a response (lookup_cache pops
+                                  -- it before returning the hit).
         fail_count        INTEGER NOT NULL DEFAULT 0
     )
     """,
@@ -201,6 +219,28 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         conn.execute("SELECT 1 FROM resolved_cache LIMIT 0")
     except sqlite3.OperationalError:
         init_resolved_cache(conn)
+    _ensure_minted_ip_column(conn)
+
+
+def _ensure_minted_ip_column(conn: sqlite3.Connection) -> None:
+    """API-01 migration: a table created before the IP-bound guard has no
+    ``minted_ip`` column. ADD COLUMN is idempotent-safe (a concurrent
+    creator's duplicate-column error reads as success); a live DB keeps
+    its rows, which read back as minted_ip NULL — never served to any
+    client while ip_bound, exactly the fail-closed direction. Runs one
+    statement, never commits (the caller's transaction owns that)."""
+    try:
+        columns = {row[1] for row in conn.execute(
+            "PRAGMA table_info(resolved_cache)").fetchall()}
+    except sqlite3.Error:
+        return
+    if "minted_ip" in columns:
+        return
+    try:
+        conn.execute("ALTER TABLE resolved_cache ADD COLUMN minted_ip TEXT")
+    except sqlite3.OperationalError as exc:
+        if "duplicate column" not in str(exc).lower():
+            raise
 
 
 def _strip_fragment(url: str) -> str:
@@ -331,6 +371,48 @@ def _compute_reverify_after(*, resolved_at: float, expires_at: float | None,
                resolved_at + MIN_USABLE_REVERIFY_SECONDS)
 
 
+def _normalize_ip(value) -> str | None:
+    """A client IP as stored, or None when there is nothing storable.
+
+    Only a parseable address is ever kept (``ipaddress`` normalises IPv6
+    spellings to one form); anything else — empty, loopback-unknown,
+    garbage — reads as "no IP on record", which the lookup gate treats as
+    "cannot prove same IP" and refuses. Never raises.
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        import ipaddress
+        return str(ipaddress.ip_address(raw))
+    except ValueError:
+        return None
+
+
+def _derive_ip_bound(data: dict, url: str) -> int | None:
+    """API-01: 1 when this resolve minted an IP-bound token, else None.
+
+    An explicit ``ip_bound`` in the answer wins — the unwrapper's probe is
+    fresher than any table. Otherwise the proven-IP-bound table in
+    ``host_classifier`` decides (final-URL host first, service label
+    second). A host the table does not know stays NULL (untested), never 0:
+    stamping 0 would claim a measurement nobody made.
+    """
+    explicit = data.get("ip_bound")
+    if explicit is not None:
+        return 1 if explicit else 0
+    try:
+        import host_classifier
+    except Exception:      # noqa: BLE001 — degraded: stamp nothing
+        return None
+    try:
+        scope = host_classifier.ip_binding_scope(
+            url, data.get("service") or "")
+    except Exception:      # noqa: BLE001 — degraded: stamp nothing
+        return None
+    return 1 if scope is not None else None
+
+
 def record_resolved_cache(conn: sqlite3.Connection, link_id: int,
                           data: dict, *, source: str = "jit",
                           now: float | None = None) -> dict | None:
@@ -339,7 +421,9 @@ def record_resolved_cache(conn: sqlite3.Connection, link_id: int,
     ``data`` is the dict ``resolve_live_source`` returns (``url`` required;
     ``mime_type``, ``file_size_bytes``, ``is_resumable``, ``http_status``,
     ``expires_at``/``expires_in``, ``is_temporary``, ``service``, ``ip_bound``
-    used where present). Returns the stored row summary, or None when there was
+    used where present). ``minted_ip`` (the pressing client's IP) is stored
+    only on ``ip_bound=1`` rows — a client IP is never kept where the guard
+    does not need it. Returns the stored row summary, or None when there was
     nothing to cache (no url). Does NOT commit — the caller's transaction owns
     that, matching ``fast_fetch.get_db`` and ``viewer.get_db`` semantics.
     """
@@ -379,15 +463,14 @@ def record_resolved_cache(conn: sqlite3.Connection, link_id: int,
     reverify_after = _compute_reverify_after(
         resolved_at=resolved_at, expires_at=expires_at, category=category,
         is_temporary=is_temporary, now=now or time.time())
-    ip_bound = data.get("ip_bound")
-    if ip_bound is not None:
-        ip_bound = 1 if ip_bound else 0
+    ip_bound = _derive_ip_bound(data, url)
+    minted_ip = _normalize_ip(data.get("minted_ip")) if ip_bound == 1 else None
     conn.execute(
         """
         INSERT INTO resolved_cache (link_id, url, category, kind, mime_type,
             file_size_bytes, resolved_at, expires_at, reverify_after,
-            is_resumable, http_status, source, ip_bound, fail_count)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,0)
+            is_resumable, http_status, source, ip_bound, minted_ip, fail_count)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
         ON CONFLICT(link_id) DO UPDATE SET
             url=excluded.url, category=excluded.category, kind=excluded.kind,
             mime_type=excluded.mime_type,
@@ -396,15 +479,20 @@ def record_resolved_cache(conn: sqlite3.Connection, link_id: int,
             reverify_after=excluded.reverify_after,
             is_resumable=excluded.is_resumable,
             http_status=excluded.http_status, source=excluded.source,
-            ip_bound=excluded.ip_bound, fail_count=0
+            ip_bound=excluded.ip_bound,
+            minted_ip=CASE
+                WHEN excluded.ip_bound = 1
+                THEN COALESCE(excluded.minted_ip, resolved_cache.minted_ip)
+                ELSE NULL END,
+            fail_count=0
         """,
         (int(link_id), url, category, kind, data.get("mime_type"),
          data.get("file_size_bytes"), resolved_at, expires_at, reverify_after,
          1 if data.get("is_resumable") else 0, data.get("http_status"),
-         source, ip_bound))
+         source, ip_bound, minted_ip))
     return {"link_id": int(link_id), "url": url, "category": category,
             "kind": kind, "expires_at": expires_at, "source": source,
-            "reverify_after": reverify_after}
+            "reverify_after": reverify_after, "ip_bound": ip_bound}
 
 
 #: Fill-hit measurement (play-fast §2 (j), 2026-11-16): one aggregate row
@@ -768,8 +856,45 @@ def _ledger_recently_failed(conn: sqlite3.Connection, link_id: int, *,
     return failed_v >= version
 
 
+def _ip_bound_servable(hit: dict, *, allow_ip_bound: bool,
+                       client_ip=None) -> bool:
+    """API-01: the same-IP rule for a banked row that may be IP-bound.
+
+    Bound means the stored flag says so (``ip_bound=1``), or — for rows
+    banked before the guard, whose flag is NULL (untested) — the final-URL
+    host proves it. A stored ``ip_bound=0`` is an explicit probe verdict
+    for *this* URL and outvotes the host table: the table generalises a
+    host, the probe measured the URL. A bound row serves only when the
+    caller opted in AND passes the IP the row was minted for (VOE: same
+    /16); a missing ``minted_ip`` (pool/warm mint, pre-guard row) can prove
+    no IP, so it is refused and the press re-resolves. Anything that cannot
+    be proven is a miss, never a serve — the fail-closed direction. A row
+    no evidence binds serves exactly as before.
+    """
+    try:
+        import host_classifier
+    except Exception:      # noqa: BLE001 — degraded: a stored flag still binds
+        return hit.get("ip_bound") != 1
+    stored = hit.get("ip_bound")
+    if stored == 0:
+        return True
+    scope = host_classifier.ip_binding_scope(hit.get("url") or "")
+    if stored != 1 and scope is None:
+        return True
+    if not allow_ip_bound:
+        return False
+    if scope is None:
+        # Stored flag, host rotated off the table: exact-IP only.
+        scope = "ip"
+    minted = hit.get("minted_ip")
+    if not minted or not client_ip:
+        return False
+    return host_classifier.ip_matches_scope(scope, minted, client_ip)
+
+
 def lookup_cache(conn: sqlite3.Connection, link_id: int, want: str = "watch", *,
                  allow_ip_bound: bool = False,
+                 client_ip=None,
                  now: float | None = None) -> dict | None:
     """Return a servable cache row for ``link_id``, or None (miss).
 
@@ -782,11 +907,15 @@ def lookup_cache(conn: sqlite3.Connection, link_id: int, want: str = "watch", *,
     when its horizon has passed, when the failure circuit is open, when its
     ledger row carries a fresh negative-cache record (H4 R7 — a link the
     resolver or a dead-handle client report just proved dead is not served
-    again from the bank while that record is fresh), or (unless the caller
-    opts in) when it is marked IP-bound, because a shared cache must not
-    replay one client's token to another. This is the only check the cache
-    path adds over the request route's own adult/18+ gate, which must ALWAYS
-    run before this function.
+    again from the bank while that record is fresh), or when it is IP-bound
+    and the caller cannot prove the request comes from the IP the row was
+    minted for (API-01 — see ``_ip_bound_servable``). Opting in with
+    ``allow_ip_bound=True`` alone no longer serves a bound row: the old
+    opt-in replayed one client's token to any caller, which is the hole
+    this closes. ``client_ip`` is the pressing client's address; it is
+    used only for that comparison and is never returned in the hit.
+    This is the only check the cache path adds over the request route's own
+    adult/18+ gate, which must ALWAYS run before this function.
     """
     if want not in ("watch", "download", "either"):
         want = "either"
@@ -794,7 +923,7 @@ def lookup_cache(conn: sqlite3.Connection, link_id: int, want: str = "watch", *,
     now = now if now is not None else time.time()
     sql = ("SELECT link_id, url, category, kind, mime_type, file_size_bytes, "
            "resolved_at, expires_at, reverify_after, is_resumable, http_status, "
-           "source, ip_bound, fail_count FROM resolved_cache "
+           "source, ip_bound, minted_ip, fail_count FROM resolved_cache "
            "WHERE link_id = ? AND reverify_after > ? AND fail_count < ?")
     params: list = [int(link_id), now, MAX_FAIL_COUNT]
     if want == "download":
@@ -809,6 +938,13 @@ def lookup_cache(conn: sqlite3.Connection, link_id: int, want: str = "watch", *,
     row = conn.execute(sql, params).fetchone()
     if row is None:
         return None
+    hit = dict(zip((c for c in _ROW_COLUMNS), tuple(row)))
+    if not _ip_bound_servable(hit, allow_ip_bound=allow_ip_bound,
+                              client_ip=client_ip):
+        # A bound row for another IP reads as a cache miss — the caller
+        # falls through to the live resolver, which re-resolves (and fails
+        # over) instead of 302-ing a token that 403s on this client.
+        return None
     if _ledger_recently_failed(conn, int(link_id), now=now):
         # H4 R7: the banked row is fresh and its circuit is closed, but the
         # ledger just proved this link dead (a probe failure, or one dead-handle
@@ -816,7 +952,6 @@ def lookup_cache(conn: sqlite3.Connection, link_id: int, want: str = "watch", *,
         # winner. Refuse it so the press misses the cache and re-resolves onto
         # the next verified candidate.
         return None
-    hit = dict(zip((c for c in _ROW_COLUMNS), tuple(row)))
     # Task #24 law (c), the legacy-row defence: rows banked with kind='file'
     # BEFORE the shape law existed may carry viewer shapes, so the stored
     # kind is not evidence for them. The download gate re-checks the URL
@@ -829,10 +964,13 @@ def lookup_cache(conn: sqlite3.Connection, link_id: int, want: str = "watch", *,
             return None
     hit["expires_in"] = (max(0.0, round(hit["expires_at"] - now, 3))
                          if hit["expires_at"] is not None else None)
+    # The minting IP never leaves the cache layer: no response, log line or
+    # downstream dict carries it (provenance rule, Fast_Fetch/AGENTS.md §6).
+    hit.pop("minted_ip", None)
     return hit
 
 
 _ROW_COLUMNS = ("link_id", "url", "category", "kind", "mime_type",
                 "file_size_bytes", "resolved_at", "expires_at",
                 "reverify_after", "is_resumable", "http_status", "source",
-                "ip_bound", "fail_count")
+                "ip_bound", "minted_ip", "fail_count")

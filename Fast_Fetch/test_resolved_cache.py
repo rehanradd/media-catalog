@@ -239,13 +239,25 @@ class TestServingGuards(unittest.TestCase):
         self.assertIsNone(resolved_cache.lookup_cache(conn, 77, now=now))
 
     def test_ip_bound_row_not_shared_by_default(self):
+        # API-01: opting in alone no longer serves a bound row — the old
+        # opt-in replayed one client's token to any caller, which is the
+        # hole (F-01). The row serves only to the IP it was minted for.
         conn = fresh_conn()
         now = time.time()
-        resolved_cache.record_resolved_cache(conn, 77, file_resolve(ip_bound=1), now=now)
+        resolved_cache.record_resolved_cache(
+            conn, 77, file_resolve(ip_bound=1, minted_ip="203.0.113.7"),
+            now=now)
         self.assertIsNone(resolved_cache.lookup_cache(conn, 77, now=now),
                           "a token bound to another client's IP must not be replayed")
+        self.assertIsNone(resolved_cache.lookup_cache(
+            conn, 77, now=now, allow_ip_bound=True),
+            "opt-in without the minting IP proves nothing")
+        self.assertIsNone(resolved_cache.lookup_cache(
+            conn, 77, now=now, allow_ip_bound=True, client_ip="198.51.100.9"),
+            "a foreign IP reads as a miss and re-resolves")
         self.assertIsNotNone(resolved_cache.lookup_cache(
-            conn, 77, now=now, allow_ip_bound=True))
+            conn, 77, now=now, allow_ip_bound=True, client_ip="203.0.113.7"),
+            "the IP the row was minted for is served it")
 
     def test_ip_bound_zero_and_null_are_servable(self):
         conn = fresh_conn()
@@ -575,6 +587,33 @@ class TestViewerRouteContract(unittest.TestCase):
                 body = self._route_source(route)
                 self.assertIn("except Exception", body,
                               f"{route}: cache errors must degrade to the old path")
+
+    def test_press_routes_pass_client_ip_to_banked_lookup(self):
+        # API-01: the press path opts the lookup into same-IP serving and
+        # hands it the pressing client's address — a bound row for another
+        # IP reads as a miss and the press re-resolves instead of 302-ing
+        # a token that 403s on this client.
+        for route in ("/api/v1/stream", "/api/v1/download"):
+            with self.subTest(route=route):
+                body = self._route_source(route)
+                self.assertIn("client_ip=_press_client_ip(self)", body,
+                              f"{route}: the banked lookup must carry the "
+                              f"pressing client's IP for the same-IP rule")
+
+    def test_press_routes_stamp_minted_ip_when_banking(self):
+        # API-01: a fresh resolve is banked for THIS press's client, on a
+        # copy — the answer itself is untouched — and the cache keeps the
+        # IP only on ip_bound=1 rows.
+        for route in ("/api/v1/stream", "/api/v1/download"):
+            with self.subTest(route=route):
+                body = self._route_source(route)
+                self.assertIn('banked["minted_ip"] = _press_client_ip(self)',
+                              body,
+                              f"{route}: the banked row must record which "
+                              f"client it was minted for")
+                self.assertIn("banked = dict(res)", body,
+                              f"{route}: the minting-IP stamp must not "
+                              f"mutate the answer the press is served")
 
     def test_routes_incremente_the_circuit_on_measured_death(self):
         """The circuit's incrementer must sit where a probe FOUND the URL
@@ -1650,6 +1689,204 @@ class PruneTests(unittest.TestCase):
                          "the caller's rolled-back write must have actually died")
         self.assertEqual(self._link_ids(conn), [1, 2, 3, 4],
                          "the prune's own deletes must roll back with it")
+
+
+class TestIpBoundServing(unittest.TestCase):
+    """API-01 (F-01): the IP-bound guard, end to end at the bank.
+
+    Bank time stamps ip_bound=1 for the 6 proven hosts (flag table in
+    host_classifier, by final-URL host first, service label second) and
+    records the minting client IP; serve time serves a bound row only to
+    that IP (VOE: same /16) and every other client reads a miss and
+    re-resolves. No network: in-memory SQLite throughout.
+    """
+
+    CLIENT = "203.0.113.7"
+    FOREIGN = "198.51.100.9"
+
+    def _stored(self, conn, link_id):
+        return conn.execute(
+            "SELECT ip_bound, minted_ip FROM resolved_cache WHERE link_id = ?",
+            (link_id,)).fetchone()
+
+    def test_bank_time_stamps_ip_bound_for_the_six_hosts(self):
+        cases = [
+            (1, "https://a.mxcontent.net/v2/xyz.mp4?token=abc", "mixdrop"),
+            (2, "https://x.cdn-centaurus.com/hls2/01/1/a_n/master.m3u8?t=1&e=129600", "vidhide"),
+            (3, "https://1.tapecontent.net/radosgw/a/t/f.mp4?expires=1893456000", "streamtape"),
+            (4, "https://y.cloudwindow-route.com/engine/hls2/a/master.m3u8?t=1&e=14400&i=92.4", "voe"),
+            (5, "https://cdn30091.asrmo449ddj.com/stream2/cdn/h/s/index.m3u8", "1xplayer"),
+            (6, "https://gfs1.userstorage.mega.co.nz/dl/TOKEN", "mega"),
+        ]
+        conn = fresh_conn()
+        now = time.time()
+        for link_id, url, service in cases:
+            with self.subTest(service=service):
+                stored = resolved_cache.record_resolved_cache(
+                    conn, link_id, file_resolve(url=url, service=service),
+                    now=now)
+                self.assertEqual(stored["ip_bound"], 1)
+                self.assertEqual(self._stored(conn, link_id), (1, None))
+
+    def test_label_alone_stamps_when_the_host_has_rotated(self):
+        conn = fresh_conn()
+        stored = resolved_cache.record_resolved_cache(
+            conn, 1, file_resolve(url="https://cdn.example.test/f.mp4",
+                                  service="voe"), now=time.time())
+        self.assertEqual(stored["ip_bound"], 1)
+        self.assertEqual(self._stored(conn, 1), (1, None))
+
+    def test_non_ip_bound_hosts_stay_untested(self):
+        conn = fresh_conn()
+        now = time.time()
+        for link_id, url, service in [
+                (1, "https://dr1.multidownload.click/d/1?token=x", "greenmotors"),
+                (2, "https://pixeldrain.com/api/file/s2yMcLkb", "pixeldrain"),
+                (3, "https://hubcloud.ist/drive/ABC123", "hubcloud")]:
+            with self.subTest(service=service):
+                stored = resolved_cache.record_resolved_cache(
+                    conn, link_id, file_resolve(url=url, service=service),
+                    now=now)
+                self.assertIsNone(stored["ip_bound"])
+                self.assertEqual(self._stored(conn, link_id), (None, None))
+
+    def test_explicit_unwrapper_verdict_beats_the_table(self):
+        conn = fresh_conn()
+        now = time.time()
+        # A probe that proved binding on an unlisted host stamps 1.
+        stored = resolved_cache.record_resolved_cache(
+            conn, 1, file_resolve(url="https://pixeldrain.com/api/file/x",
+                                  service="pixeldrain", ip_bound=1),
+            now=now)
+        self.assertEqual(stored["ip_bound"], 1)
+        # A probe that proved THIS url plays cross-IP clears the table's
+        # verdict: the per-URL measurement outvotes the host generalisation.
+        stored = resolved_cache.record_resolved_cache(
+            conn, 2, file_resolve(url="https://a.mxcontent.net/v2/x.mp4",
+                                  service="mixdrop", ip_bound=0),
+            now=now)
+        self.assertEqual(stored["ip_bound"], 0)
+        self.assertIsNotNone(resolved_cache.lookup_cache(conn, 2, now=now))
+
+    def test_minted_ip_kept_only_on_bound_rows(self):
+        conn = fresh_conn()
+        resolved_cache.record_resolved_cache(
+            conn, 1, file_resolve(url="https://pixeldrain.com/api/file/x",
+                                  service="pixeldrain", minted_ip=self.CLIENT),
+            now=time.time())
+        self.assertEqual(self._stored(conn, 1), (None, None))
+
+    def test_bad_minted_ip_is_dropped_not_stored(self):
+        conn = fresh_conn()
+        resolved_cache.record_resolved_cache(
+            conn, 1, file_resolve(url="https://a.mxcontent.net/v2/x.mp4",
+                                  service="mixdrop", minted_ip="not-an-ip"),
+            now=time.time())
+        self.assertEqual(self._stored(conn, 1), (1, None))
+
+    def test_same_ip_serves_foreign_ip_misses_and_hit_carries_no_ip(self):
+        conn = fresh_conn()
+        now = time.time()
+        resolved_cache.record_resolved_cache(
+            conn, 77, file_resolve(url="https://a.mxcontent.net/v2/x.mp4",
+                                   service="mixdrop", minted_ip=self.CLIENT),
+            now=now)
+        self.assertIsNone(resolved_cache.lookup_cache(conn, 77, now=now))
+        self.assertIsNone(resolved_cache.lookup_cache(
+            conn, 77, now=now, allow_ip_bound=True, client_ip=self.FOREIGN))
+        hit = resolved_cache.lookup_cache(
+            conn, 77, now=now, allow_ip_bound=True, client_ip=self.CLIENT)
+        self.assertIsNotNone(hit)
+        self.assertNotIn("minted_ip", hit,
+                         "the minting IP never leaves the cache layer")
+
+    def test_voe_sixteen_scope(self):
+        conn = fresh_conn()
+        now = time.time()
+        resolved_cache.record_resolved_cache(
+            conn, 77, file_resolve(
+                url="https://y.cloudwindow-route.com/engine/hls2/a/master.m3u8?t=1&e=14400&i=92.4",
+                service="voe", minted_ip="92.4.95.252"), now=now)
+        self.assertIsNotNone(resolved_cache.lookup_cache(
+            conn, 77, now=now, allow_ip_bound=True, client_ip="92.4.7.19"))
+        self.assertIsNone(resolved_cache.lookup_cache(
+            conn, 77, now=now, allow_ip_bound=True, client_ip="93.4.95.252"))
+
+    def test_legacy_row_with_an_ip_bound_host_is_never_served(self):
+        # A row banked before the guard: ip_bound NULL, minted_ip NULL, but
+        # a tapecontent URL. The host proves the binding, so no client —
+        # not even an opted-in one — is served it; the press re-resolves.
+        conn = fresh_conn()
+        now = time.time()
+        conn.execute(
+            "INSERT INTO resolved_cache (link_id, url, category, kind,"
+            " resolved_at, reverify_after, source)"
+            " VALUES (77, 'https://1.tapecontent.net/radosgw/a/t/f.mp4',"
+            " 'B', 'file', ?, ?, 'jit')", (now, now + 3600))
+        self.assertIsNone(resolved_cache.lookup_cache(conn, 77, now=now))
+        self.assertIsNone(resolved_cache.lookup_cache(
+            conn, 77, now=now, allow_ip_bound=True, client_ip=self.CLIENT))
+
+    def test_pool_bank_without_an_ip_is_never_served(self):
+        conn = fresh_conn()
+        now = time.time()
+        resolved_cache.record_resolved_cache(
+            conn, 77, file_resolve(url="https://a.mxcontent.net/v2/x.mp4",
+                                   service="mixdrop"),
+            source="pool", now=now)
+        self.assertEqual(self._stored(conn, 77), (1, None))
+        self.assertIsNone(resolved_cache.lookup_cache(
+            conn, 77, now=now, allow_ip_bound=True, client_ip=self.CLIENT))
+
+    def test_clientless_rebank_keeps_the_minted_ip(self):
+        # Detail warm (no client) must not clobber the JIT mint a same-IP
+        # press can still be served: the upsert keeps the minted IP.
+        conn = fresh_conn()
+        now = time.time()
+        resolved_cache.record_resolved_cache(
+            conn, 77, file_resolve(url="https://a.mxcontent.net/v2/x.mp4",
+                                   service="mixdrop", minted_ip=self.CLIENT),
+            now=now)
+        resolved_cache.record_resolved_cache(
+            conn, 77, file_resolve(url="https://a.mxcontent.net/v2/y.mp4",
+                                   service="mixdrop"),
+            source="pool", now=now + 10)
+        self.assertEqual(self._stored(conn, 77), (1, self.CLIENT))
+        self.assertIsNotNone(resolved_cache.lookup_cache(
+            conn, 77, now=now + 10, allow_ip_bound=True,
+            client_ip=self.CLIENT))
+
+    def test_jit_rebank_for_another_ip_overwrites_the_minted_ip(self):
+        conn = fresh_conn()
+        now = time.time()
+        resolved_cache.record_resolved_cache(
+            conn, 77, file_resolve(url="https://a.mxcontent.net/v2/x.mp4",
+                                   service="mixdrop", minted_ip=self.CLIENT),
+            now=now)
+        resolved_cache.record_resolved_cache(
+            conn, 77, file_resolve(url="https://a.mxcontent.net/v2/y.mp4",
+                                   service="mixdrop", minted_ip=self.FOREIGN),
+            now=now + 10)
+        self.assertEqual(self._stored(conn, 77), (1, self.FOREIGN))
+        self.assertIsNone(resolved_cache.lookup_cache(
+            conn, 77, now=now + 10, allow_ip_bound=True,
+            client_ip=self.CLIENT))
+        self.assertIsNotNone(resolved_cache.lookup_cache(
+            conn, 77, now=now + 10, allow_ip_bound=True,
+            client_ip=self.FOREIGN))
+
+    def test_old_schema_without_minted_ip_migrates_on_first_use(self):
+        conn = fresh_conn()
+        conn.execute("ALTER TABLE resolved_cache DROP COLUMN minted_ip")
+        columns = {row[1] for row in conn.execute(
+            "PRAGMA table_info(resolved_cache)").fetchall()}
+        self.assertNotIn("minted_ip", columns)
+        stored = resolved_cache.record_resolved_cache(
+            conn, 77, file_resolve(url="https://a.mxcontent.net/v2/x.mp4",
+                                   service="mixdrop", minted_ip=self.CLIENT),
+            now=time.time())
+        self.assertEqual(stored["ip_bound"], 1)
+        self.assertEqual(self._stored(conn, 77), (1, self.CLIENT))
 
 
 class TestMegaNoBanking(unittest.TestCase):
