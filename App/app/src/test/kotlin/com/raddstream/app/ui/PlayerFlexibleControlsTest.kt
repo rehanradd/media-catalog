@@ -179,10 +179,18 @@ class PlayerFlexibleControlsTest {
             "QualityPill(",
             "onToggleFullscreen()",
             "onShowMoreSheet()",
-            "onShowSpeedSheet()",
             "onShowAudioSheet()",
             "onRequestNextEpisode()",
         ).forEach { call -> assertTrue("bottom row lost $call", row.contains(call)) }
+        // Speed is a pill, not an icon button: it takes the handler as a
+        // value (`onShowSpeedSheet = onShowSpeedSheet`), it never calls it
+        // inline — so the wiring check is the pill + the passed handler,
+        // not a `onShowSpeedSheet()` call (which no pill slot ever has).
+        assertTrue("bottom row lost SpeedPill(", row.contains("SpeedPill("))
+        assertTrue(
+            "bottom row lost the speed-sheet wiring",
+            row.contains("onShowSpeedSheet = onShowSpeedSheet"),
+        )
         assertFalse("the bottom row must not scroll", row.contains("horizontalScroll"))
     }
 }

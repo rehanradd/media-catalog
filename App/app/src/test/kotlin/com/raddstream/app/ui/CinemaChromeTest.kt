@@ -21,10 +21,12 @@ class CinemaChromeTest {
     // ── chrome budget ────────────────────────────────────────────────────────
 
     @Test
-    fun chromeBudgetIs160dp() {
+    fun chromeBudgetIs152dp() {
+        // P1 (player fixes): the bottom bar shrank 104 → 96dp by removing the
+        // scrubber-to-controls gap (targets stay 48dp) — the budget follows it.
         assertEquals(56, CinemaChrome.TOP_BAR_MIN_DP)
-        assertEquals(104, CinemaChrome.BOTTOM_BAR_MIN_DP)
-        assertEquals(160, CinemaChrome.TOP_BAR_MIN_DP + CinemaChrome.BOTTOM_BAR_MIN_DP)
+        assertEquals(96, CinemaChrome.BOTTOM_BAR_MIN_DP)
+        assertEquals(152, CinemaChrome.TOP_BAR_MIN_DP + CinemaChrome.BOTTOM_BAR_MIN_DP)
     }
 
     @Test
@@ -40,9 +42,9 @@ class CinemaChromeTest {
 
     @Test
     fun videoShareOnLandscapePhone() {
-        // PIXEL_5 landscape is 411dp tall: 160dp of chrome leaves 61% video
+        // PIXEL_5 landscape is 411dp tall: 152dp of chrome leaves 63% video
         // while the chrome is up (was 47% at the old 216dp budget).
-        assertEquals(0.611f, CinemaChrome.videoSharePercent(411), 0.001f)
+        assertEquals(0.630f, CinemaChrome.videoSharePercent(411), 0.001f)
     }
 
     @Test
