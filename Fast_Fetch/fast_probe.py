@@ -108,6 +108,19 @@ Run ``nice -n 19`` (the operator handles that). The writer waits on locks
 acceptable: same verdict, last write wins — and this pass only ever writes
 the five verdict columns, never enrichment.
 
+Stopping a batch (INF-05)
+--------------------------
+A batch used to be unstoppable except by SIGTERM to the exact child PID:
+the sweep loop only reads the STOP file between batches, and a batch runs
+30 min to 14 h. Now a batch stops gracefully, within one in-flight URL
+per host thread, on either a SIGTERM/SIGINT (the handler only sets the
+stop event; a second signal still kills at once) or the STOP file itself
+(``--stop-file``, default ``/tmp/fast-probe-sweep.stop``) — so even a
+child orphaned by a dead wrapper sees the gate's stop file and exits on
+its own. A stopped run flushes the verdicts it earned, reports
+``"stopped": true``, and exits 0, so the wrapper counts it as a clean
+batch end instead of a failure. Rows never reached stay unchecked.
+
 Standard library only. Never imports ``config``.
 """
 
@@ -118,8 +131,10 @@ import concurrent.futures
 import errno
 import http.client
 import json
+import os
 import queue
 import re
+import signal
 import socket
 import sqlite3
 import ssl
@@ -160,6 +175,10 @@ __all__ = [
     "get_chain",
     "is_known_head_liar",
     "KNOWN_HEAD_LIARS",
+    "SWEEP_STOP_FILE",
+    "install_stop_handlers",
+    "request_stop",
+    "stop_requested",
     "select_rows",
     "run_pilot",
     "run_compare",
@@ -214,6 +233,114 @@ KNOWN_HEAD_LIARS = frozenset({"vcloud.beer", "rozgarlelo.modiplay.xyz"})
 #: is dropped afterwards (a half-read body cannot be reused).
 GET_RANGE = "bytes=0-0"
 GET_READ_CAP = 1024
+
+
+# ── graceful stop (INF-05) ───────────────────────────────────────────────────
+#
+# Root cause, measured 2026-11-23/24 (see Fast_Fetch/checkpoints/
+# 20261124-inf05-sweep-stuck-child.md): the sweep loop only reads the STOP
+# file BETWEEN batches, and a batch runs 30 min to 14 h, so a gate stop
+# could only ever land as a hand-sent SIGTERM to the exact child PID
+# (every "batch exit 143" in /tmp/fast-probe-sweep.log). That SIGTERM
+# killed the child mid-write (queued verdicts lost, writer never flushed)
+# and counted as a wrapper failure — three stops in a row exited the loop
+# for good. Worse, the wrapper runs the child in the foreground with no
+# trap, so killing the WRAPPER orphans the child: it never reads the STOP
+# file (only the wrapper does) and keeps writing through the backup
+# window — greenmotors, 23 Nov: wrapper gone 18:54:17, a fast_probe.py
+# child still matched pgrep until 19:09:22.
+#
+# The fix has three layers, all in this module (the wrapper's own trap is
+# the shipped Fast_Fetch/fast-probe-sweep-loop.sh, installed at the next
+# relaunch):
+#   1. SIGTERM/SIGINT no longer kill the process: the handler only sets
+#      the stop event. Workers finish their in-flight URL, then stop;
+#      the writer flushes what was queued; the run exits 0 with
+#      "stopped": true, so the wrapper counts it as a clean batch end,
+#      not a failure. A SECOND signal restores the default disposition
+#      and re-delivers, so a wedged shutdown can still be forced.
+#   2. The batch itself watches the STOP file (``--stop-file``, default
+#      /tmp/fast-probe-sweep.stop, env RADD_SWEEP_STOP_FILE): a child
+#      orphaned by a dead wrapper still sees the gate's stop file and
+#      exits on its own, within one in-flight URL per host thread.
+#   3. Nothing here changes the verdict path: a stopped batch writes
+#      exactly the verdicts it earned before the stop, and the rows it
+#      never reached stay unchecked for the next batch.
+
+#: Stop file the sweep loop and the gate touch to ask a running batch to
+#: stop (same path the live ``fast-probe-sweep-loop.sh`` uses).
+SWEEP_STOP_FILE = "/tmp/fast-probe-sweep.stop"
+#: Env var overriding the stop-file path (tests / non-standard layouts).
+SWEEP_STOP_FILE_ENV = "RADD_SWEEP_STOP_FILE"
+
+_STOP_EVENT = threading.Event()
+_STOP_SIGNAL_COUNT = [0]  # mutable cell: how many stop signals arrived
+
+
+def request_stop() -> None:
+    """Ask the running batch to stop after its in-flight URLs (INF-05)."""
+    _STOP_EVENT.set()
+
+
+def stop_requested() -> bool:
+    """True once a stop was requested by signal (stop file: caller's check)."""
+    return _STOP_EVENT.is_set()
+
+
+def stop_file_path(explicit: str | None = None) -> str | None:
+    """Effective stop-file path: explicit arg, else env, else the default.
+
+    An explicit empty string disables the stop-file watch.
+    """
+    if explicit is not None:
+        return explicit or None
+    return os.environ.get(SWEEP_STOP_FILE_ENV) or SWEEP_STOP_FILE
+
+
+def _stop_file_present(path: str | None) -> bool:
+    if not path:
+        return False
+    try:
+        return Path(path).exists()
+    except OSError:
+        return False
+
+
+def _should_stop(stop_event: threading.Event | None,
+                 stop_file: str | None) -> bool:
+    """True when the batch must stop: signal event set, or stop file present."""
+    if stop_event is not None and stop_event.is_set():
+        return True
+    return _stop_file_present(stop_file)
+
+
+def _stop_signal_handler(signum, _frame) -> None:
+    """First stop signal: request a graceful stop. Second: die at once."""
+    _STOP_SIGNAL_COUNT[0] += 1
+    if _STOP_SIGNAL_COUNT[0] == 1:
+        _STOP_EVENT.set()
+        return
+    try:
+        signal.signal(signum, signal.SIG_DFL)
+    except (OSError, ValueError):
+        pass
+    os.kill(os.getpid(), signum)
+
+
+def install_stop_handlers() -> threading.Event:
+    """Install SIGTERM/SIGINT graceful-stop handlers; return the event.
+
+    A no-op (returns the unset event) when the handlers cannot be
+    installed — signal handlers only exist in the main thread, so library
+    use from a worker thread keeps the old behaviour. Safe to call twice:
+    re-installing the same handler is harmless.
+    """
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(sig, _stop_signal_handler)
+        except (OSError, ValueError):
+            pass
+    return _STOP_EVENT
 
 
 def is_known_head_liar(host: str) -> bool:
@@ -1047,7 +1174,7 @@ class VerdictWriter(threading.Thread):
 def _probe_host(host: str, groups: list[dict], *, session_factory=None,
                 timeout: float, spacing_s: float | None,
                 headers: dict, out_queue=None, clearance=None,
-                resolvers=None) -> dict:
+                resolvers=None, stop_event=None, stop_file=None) -> dict:
     """Probe one host's distinct URLs, strictly serially, in id order.
 
     Returns per-host stats. When ``out_queue`` is given, verdicts are
@@ -1060,12 +1187,17 @@ def _probe_host(host: str, groups: list[dict], *, session_factory=None,
     stored clearance rides on every hop (with the UA that earned it), and
     a 403/503 verdict invalidates the host at once, so a dead clearance
     is never re-sent on the next run. ``None`` probes exactly as before.
+
+    ``stop_event`` / ``stop_file`` (INF-05) are checked before every URL:
+    when either asks, the walk stops at once, ``stats["stopped"]`` is True,
+    and the verdicts earned so far are already queued. The in-flight URL
+    (at most one per host thread) still finishes first.
     """
     session = HostSession(connection_factory=session_factory, timeout=timeout)
     stats: dict = {"host": host, "probed": 0, "verdicts": 0, "by_status": {},
                    "no_verdict": 0, "blocked": 0, "reconnects": 0,
                    "redirects_seen": 0, "moves_applied": 0,
-                   "get_fallbacks": 0,
+                   "get_fallbacks": 0, "stopped": False,
                    "results": {} if out_queue is None else None}
     # H4 R8: one stored clearance per host, read once per host (not once
     # per URL — the store is the same for the whole serial walk).
@@ -1080,6 +1212,9 @@ def _probe_host(host: str, groups: list[dict], *, session_factory=None,
         if c_ua:
             hop_headers["User-Agent"] = c_ua
     for group in groups:
+        if _should_stop(stop_event, stop_file):
+            stats["stopped"] = True
+            break
         url = group["url"]
         blocked = link_health._block_reason(url, allow_private=False)
         if blocked:
@@ -1154,7 +1289,8 @@ def _probe_host(host: str, groups: list[dict], *, session_factory=None,
 def _merge_stats(stats_list: list[dict]) -> dict:
     merged: dict = {"hosts": 0, "probed": 0, "verdicts": 0, "by_status": {},
                     "no_verdict": 0, "blocked": 0, "reconnects": 0,
-                    "redirects_seen": 0, "moves_applied": 0, "get_fallbacks": 0}
+                    "redirects_seen": 0, "moves_applied": 0, "get_fallbacks": 0,
+                    "stopped": False}
     for stats in stats_list:
         merged["hosts"] += 1
         merged["probed"] += stats["probed"]
@@ -1165,6 +1301,7 @@ def _merge_stats(stats_list: list[dict]) -> dict:
         merged["redirects_seen"] += stats.get("redirects_seen", 0)
         merged["moves_applied"] += stats.get("moves_applied", 0)
         merged["get_fallbacks"] += stats.get("get_fallbacks", 0)
+        merged["stopped"] = merged["stopped"] or bool(stats.get("stopped"))
         for status, count in stats["by_status"].items():
             merged["by_status"][status] = merged["by_status"].get(status, 0) + count
     return merged
@@ -1176,7 +1313,8 @@ def run_pilot(conn: sqlite3.Connection, *, max_rows: int = DEFAULT_MAX_ROWS,
               workers: int = DEFAULT_WORKERS,
               timeout: float = DEFAULT_TIMEOUT,
               spacing_s: float | None = None,
-              session_factory=None, progress=None) -> dict:
+              session_factory=None, progress=None,
+              stop_event=None, stop_file=None) -> dict:
     """Apply mode: probe ``max_rows`` fresh unchecked distinct URLs, write verdicts.
 
     ``conn`` is the read-only selection connection (closed by the caller);
@@ -1184,9 +1322,25 @@ def run_pilot(conn: sqlite3.Connection, *, max_rows: int = DEFAULT_MAX_ROWS,
     summary (JSON-serialisable). Raises ``sqlite3.OperationalError`` when
     the writer exhausts its lock retries — a lock error must be 0, and a
     silent drop would be worse than a loud failure.
+
+    ``stop_event`` / ``stop_file`` (INF-05): when either asks, the run
+    stops after each host thread's in-flight URL, the writer flushes the
+    verdicts earned so far, and the summary carries ``"stopped": True``
+    (``distinct_urls`` still counts the selected batch; unreached rows
+    stay unchecked for the next batch). ``stop_event=None`` uses the
+    module event set by the SIGTERM/SIGINT handler; ``stop_file=None``
+    uses ``stop_file_path()`` (env ``RADD_SWEEP_STOP_FILE``, else
+    ``/tmp/fast-probe-sweep.stop``); ``stop_file=""`` disables the file
+    watch.
     """
     db_path = _db_path_of(conn)
     selection = select_rows(conn, max_rows=max_rows, dry_run=False)
+    event = stop_event if stop_event is not None else _STOP_EVENT
+    stop_path = stop_file_path(stop_file)
+    if _should_stop(event, stop_path):
+        # Stop asked before the pool started: probe nothing, keep the
+        # summary shape (writer zeros, selection counts, stopped True).
+        selection["hosts"] = []
     headers = probe_headers()
     # H4 R8: the apply sweep reads the shared clearance store (and
     # invalidates a host the moment it challenges again). An absent
@@ -1216,7 +1370,8 @@ def run_pilot(conn: sqlite3.Connection, *, max_rows: int = DEFAULT_MAX_ROWS,
                                    session_factory=session_factory,
                                    timeout=timeout, spacing_s=spacing_s,
                                    headers=headers, out_queue=writer.queue,
-                                   clearance=clearance)
+                                   clearance=clearance,
+                                   stop_event=event, stop_file=stop_path)
                        for host, groups in selection["hosts"]]
             for future in concurrent.futures.as_completed(futures):
                 stats = future.result()
@@ -1228,6 +1383,7 @@ def run_pilot(conn: sqlite3.Connection, *, max_rows: int = DEFAULT_MAX_ROWS,
     finally:
         writer_conn.close()
     merged = _merge_stats(stats_list)
+    merged["stopped"] = merged["stopped"] or _should_stop(event, stop_path)
     merged.update({
         "mode": "apply",
         "distinct_urls": selection["distinct_urls"],
@@ -1246,7 +1402,8 @@ def run_compare(conn: sqlite3.Connection, *, max_rows: int = DEFAULT_MAX_ROWS,
                 workers: int = DEFAULT_WORKERS,
                 timeout: float = DEFAULT_TIMEOUT,
                 spacing_s: float | None = None,
-                session_factory=None, progress=None) -> dict:
+                session_factory=None, progress=None,
+                stop_event=None, stop_file=None) -> dict:
     """Dry-run compare mode: re-probe ``max_rows`` already-verdict rows, write NOTHING.
 
     Compares the HEAD-only verdict against the stored status the full prober
@@ -1254,8 +1411,16 @@ def run_compare(conn: sqlite3.Connection, *, max_rows: int = DEFAULT_MAX_ROWS,
     verdict; rows with no verdict are reported separately (HEAD refused, or
     a transport error — the row stays eligible either way). Disagreements
     are broken down by (stored, new) pair with up to 25 examples.
+
+    ``stop_event`` / ``stop_file`` behave as in :func:`run_pilot` (INF-05):
+    a stop ends the walk after each host thread's in-flight URL and the
+    summary carries ``"stopped": True``.
     """
     selection = select_rows(conn, max_rows=max_rows, dry_run=True)
+    event = stop_event if stop_event is not None else _STOP_EVENT
+    stop_path = stop_file_path(stop_file)
+    if _should_stop(event, stop_path):
+        selection["hosts"] = []
     headers = probe_headers()
     started = time.monotonic()
     stats_list: list[dict] = []
@@ -1264,7 +1429,8 @@ def run_compare(conn: sqlite3.Connection, *, max_rows: int = DEFAULT_MAX_ROWS,
         futures = [pool.submit(_probe_host, host, groups,
                                session_factory=session_factory,
                                timeout=timeout, spacing_s=spacing_s,
-                               headers=headers, out_queue=None)
+                               headers=headers, out_queue=None,
+                               stop_event=event, stop_file=stop_path)
                    for host, groups in selection["hosts"]]
         for future in concurrent.futures.as_completed(futures):
             stats = future.result()
@@ -1273,6 +1439,7 @@ def run_compare(conn: sqlite3.Connection, *, max_rows: int = DEFAULT_MAX_ROWS,
                 progress(stats)
     elapsed = time.monotonic() - started
     merged = _merge_stats(stats_list)
+    merged["stopped"] = merged["stopped"] or _should_stop(event, stop_path)
     # Per-row agreement: every row sharing a URL compares against that URL's
     # new verdict (or no-verdict).
     by_url: dict[str, dict] = {}
@@ -1359,6 +1526,11 @@ def parse_args(argv=None):
                              "link_health DEFAULT_HOST_SPACING_S / RADD_HOST_SPACING_S)")
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT,
                         help="per-socket seconds (default 8.0)")
+    parser.add_argument("--stop-file", type=str, default=None,
+                        help="path whose presence asks a running batch to "
+                             "stop gracefully (default: $RADD_SWEEP_STOP_FILE "
+                             "or " + SWEEP_STOP_FILE + "; empty string "
+                             "disables the watch)")
     return parser.parse_args(argv)
 
 
@@ -1373,6 +1545,11 @@ def main(argv=None) -> int:
         print(f"[!] no such database: {path}", file=sys.stderr)
         return 2
     spacing = args.host_spacing if args.host_spacing is not None else None
+    # INF-05: a SIGTERM/SIGINT now asks for a graceful stop (flush + exit 0
+    # with "stopped": true) instead of killing the process mid-write; a
+    # second signal still kills at once. The batch also watches the stop
+    # file, so an orphaned child exits on its own when the gate stops it.
+    stop_event = install_stop_handlers()
     if args.dry_run:
         conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True,
                                 timeout=WRITER_BUSY_TIMEOUT_MS / 1000.0)
@@ -1380,12 +1557,16 @@ def main(argv=None) -> int:
             summary = run_compare(
                 conn, max_rows=args.max_rows, workers=args.workers,
                 timeout=args.timeout, spacing_s=spacing,
+                stop_event=stop_event, stop_file=args.stop_file,
                 progress=lambda s: print(
                     f"  [{s['host']}] probed={s['probed']} verdicts={s['verdicts']} "
                     f"{s['by_status']} no_verdict={s['no_verdict']}", flush=True))
         finally:
             conn.close()
         print(json.dumps(summary, indent=2, sort_keys=True))
+        if summary.get("stopped"):
+            print("[i] stopped early (signal or stop file); "
+                  "nothing was written (dry-run)", file=sys.stderr)
         return 0
     conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True,
                             timeout=WRITER_BUSY_TIMEOUT_MS / 1000.0)
@@ -1393,12 +1574,16 @@ def main(argv=None) -> int:
         summary = run_pilot(
             conn, max_rows=args.max_rows, workers=args.workers,
             timeout=args.timeout, spacing_s=spacing,
+            stop_event=stop_event, stop_file=args.stop_file,
             progress=lambda s: print(
                 f"  [{s['host']}] probed={s['probed']} verdicts={s['verdicts']} "
                 f"{s['by_status']} no_verdict={s['no_verdict']}", flush=True))
     finally:
         conn.close()
     print(json.dumps(summary, indent=2, sort_keys=True))
+    if summary.get("stopped"):
+        print("[i] stopped early (signal or stop file); verdicts earned "
+              "so far are flushed", file=sys.stderr)
     if summary["writer"]["lock_errors"] > 0:
         print("[!] writer lock errors > 0 — the pilot FAILED its lock criterion",
               file=sys.stderr)
