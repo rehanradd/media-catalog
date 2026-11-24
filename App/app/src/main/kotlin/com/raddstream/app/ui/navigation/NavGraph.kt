@@ -39,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.semantics.Role
@@ -68,6 +69,7 @@ import com.raddstream.app.resolve.PressTestScreen
 import com.raddstream.app.resolve.ResolveTestScreen
 import com.raddstream.app.ui.components.PinPadDialog
 import com.raddstream.app.ui.components.rememberReduceMotion
+import com.raddstream.app.ui.theme.brandSp
 import com.raddstream.app.viewmodel.KidsLockViewModel
 import com.raddstream.app.viewmodel.KidsPinOutcome
 import kotlinx.coroutines.launch
@@ -112,6 +114,22 @@ private data class BottomNavItem(
 
 /** Test tag on a bottom-nav tab's indicator pill, so the a11y test can measure it directly. */
 internal const val BottomNavIndicatorTag = "bottomNavIndicator"
+
+/** Test tag on a bottom-nav tab's label, so the large-font test can measure it directly. */
+internal const val BottomNavLabelTag = "bottomNavLabel"
+
+/**
+ * APP-09 (mobile-tester run 4, 00:26 PKT 24 Nov): the bottom-nav label
+ * shrinks to fit its slot instead of truncating — "Settings" read
+ * "Settin..." at 1.3x font scale on a small phone, because five tabs share
+ * the width and labelMedium at 1.3x needs more than a fifth of it. The
+ * label backs off in 15% steps until it fits, never below this floor; the
+ * ellipsis stays as the last resort for a slot narrower than the floor can
+ * fit. The floor is still a readable 10sp (via brandSp, the only sanctioned
+ * way to write an sp size — see BrandDriftTest), and the spoken label (the
+ * tab's contentDescription) is never truncated.
+ */
+private val BottomNavLabelMinFontSize = brandSp(10)
 
 /**
  * The bottom bar's container (density, Nov 2026). M3 1.3.0's
@@ -161,8 +179,9 @@ internal fun RaddBottomBar(
  * The bar no longer uses NavigationBarItem at all: this tab owns its own
  * clickable — the full 64dp bar height — and its own indicator pill.
  * Never fillMaxHeight() on a tab — that expands the bar to fill the
- * screen (run 4). The label keeps M3's labelMedium. A Robo re-run on a
- * 3-button-nav device is the verification owed for the 64dp/56×32
+ * screen (run 4). The label keeps M3's labelMedium, shrinking in 15%
+ * steps (APP-09) when it would otherwise ellipsize at large font scales.
+ * A Robo re-run on a 3-button-nav device is the verification owed for the 64dp/56×32
  * change.)
  * Internal so BottomNavTouchTargetTest can pin the pill size directly.
  */
@@ -244,19 +263,65 @@ internal fun RowScope.BottomNavTab(
                         .graphicsLayer(scaleX = iconScale, scaleY = iconScale),
                 )
             }
+            // APP-09: shrink-to-fit. The label starts at labelMedium and
+            // backs off in 15% steps while it overflows its slot, so a
+            // large font scale shrinks the label instead of truncating it
+            // ("Settings" -> "Settin..." at 1.3x on a small phone, run 4).
+            // The state is keyed on the font scale as well as the label,
+            // so shrinking back down restores the design size instead of
+            // keeping a stale shrink. PosterCard's word-boundary trim is
+            // the house pattern for onTextLayout fixes: a guarded state
+            // change that can only move one way, so it can never loop —
+            // here the guard is the floor, and the ellipsis stays as the
+            // last resort below it.
+            val fontScale = LocalDensity.current.fontScale
+            val labelStyle = MaterialTheme.typography.labelMedium
+            var labelFontSize by remember(label, fontScale) {
+                mutableStateOf(labelStyle.fontSize)
+            }
             Text(
                 label,
-                style = MaterialTheme.typography.labelMedium,
+                style = labelStyle,
+                fontSize = labelFontSize,
                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                 maxLines = 1,
                 softWrap = false,
                 overflow = TextOverflow.Ellipsis,
+                // The ellipsis is the signal: the didOverflowWidth guard
+                // never fired — the golden from record 45344429076 still
+                // read "Settin..." with it in place. isLineEllipsized(0)
+                // is true exactly when the single line shows the ellipsis,
+                // and it is the house pattern (PosterCard's word-boundary
+                // trim, DetailScreen's hasVisualOverflow). The guard is the
+                // floor, and the ellipsis stays as the last resort below it.
+                onTextLayout = { result ->
+                    if (result.lineCount > 0 && result.isLineEllipsized(0) &&
+                        labelFontSize > BottomNavLabelMinFontSize
+                    ) {
+                        // TextUnit has operator compareTo but does not
+                        // implement Comparable<TextUnit>, so the generic
+                        // coerceAtLeast does not resolve on it — floor
+                        // with the comparison instead (CI 45308364603).
+                        val shrunk = labelFontSize * 0.85f
+                        labelFontSize = if (shrunk < BottomNavLabelMinFontSize) {
+                            BottomNavLabelMinFontSize
+                        } else {
+                            shrunk
+                        }
+                    }
+                },
                 color = if (selected) {
                     MaterialTheme.colorScheme.onPrimaryContainer
                 } else {
                     MaterialTheme.colorScheme.onSurfaceVariant
                 },
-                modifier = Modifier.clearAndSetSemantics { },
+                // The tag MUST sit before clearAndSetSemantics: the clear
+                // wipes every semantics set after it in the chain, so a tag
+                // after it is never on the node at all (LiveTvScreen's
+                // liveTv_channelMeta, same trap, CI 44236763707/44238820887).
+                // Before the clear, the tag survives and the text stays
+                // paint-only, which is what the touch-target test queries.
+                modifier = Modifier.testTag(BottomNavLabelTag).clearAndSetSemantics { },
             )
         }
     }

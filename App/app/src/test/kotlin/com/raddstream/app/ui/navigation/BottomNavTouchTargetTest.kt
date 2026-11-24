@@ -1,20 +1,25 @@
 package com.raddstream.app.ui.navigation
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tv
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.ui.theme.RaddStreamTheme
@@ -199,5 +204,66 @@ class BottomNavTouchTargetTest {
         for ((label, _) in items) {
             compose.onNode(hasContentDescription(label)).assertExists()
         }
+    }
+
+    private fun showBarAtWidth(width: Dp, fontScale: Float) {
+        // The SearchFilterSheetTest shape: a fixed-width Box under a
+        // font-scale-providing density, so the bar is measured at exactly
+        // the width and scale the device finding had.
+        compose.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = fontScale)) {
+                RaddStreamTheme {
+                    Box(Modifier.width(width)) {
+                        RaddBottomBar(modifier = Modifier.windowInsetsPadding(WindowInsets(bottom = 0.dp))) {
+                            items.forEach { (label, icon) ->
+                                BottomNavTab(
+                                    label = label,
+                                    icon = icon,
+                                    selected = label == "Home",
+                                    onClick = {},
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun assertLabelsFit(width: Dp, fontScale: Float) {
+        // APP-09 (mobile-tester run 4): "Settings" read "Settin..." at
+        // 1.3x font scale on a small phone — five tabs share the width
+        // and labelMedium at 1.3x needs more than a fifth of it. A
+        // truncated label fills its slot exactly (the Column pads 2dp
+        // each side, so the laid-out Text is the tab width minus 4dp);
+        // a fitted label is strictly narrower. The label nodes are found
+        // by test tag in the unmerged tree — the tab's
+        // clearAndSetSemantics hides them in the merged tree, the same
+        // reason the pill test uses the unmerged tree. Both node lists
+        // come back in layout order, so index i of each is the same tab.
+        showBarAtWidth(width, fontScale)
+        val tabs = compose.onAllNodes(hasClickAction()).fetchSemanticsNodes()
+        val labels = compose.onAllNodesWithTag(BottomNavLabelTag, useUnmergedTree = true)
+            .fetchSemanticsNodes()
+        assertTrue("expected ${items.size} label nodes, found ${labels.size}", labels.size == items.size)
+        for (i in items.indices) {
+            val tabWidth = with(compose.density) { tabs[i].boundsInRoot.width.toDp() }
+            val labelWidth = with(compose.density) { labels[i].boundsInRoot.width.toDp() }
+            assertTrue(
+                "\"${items[i].first}\" label is $labelWidth wide in a $tabWidth tab " +
+                    "at ${width}dp / ${fontScale}x font — it truncates",
+                labelWidth < tabWidth - 4.dp,
+            )
+        }
+    }
+
+    @Test
+    fun bottomNavLabelsDoNotTruncateAtLargeFontOnSmallPhone() {
+        assertLabelsFit(width = 360.dp, fontScale = 1.3f)
+    }
+
+    @Test
+    fun bottomNavLabelsDoNotTruncateAtLargeFontOnNarrowestPhone() {
+        assertLabelsFit(width = 320.dp, fontScale = 1.3f)
     }
 }

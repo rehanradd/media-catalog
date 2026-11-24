@@ -401,42 +401,50 @@ tasks.withType<Test>().configureEach {
 // Robolectric-loaded framework classes break Paparazzi's Bridge.init
 // ("Failed to init Bridge."), and every Paparazzi test in that fork fails.
 // testDebugUnitTest runs the whole suite in shared forks, so the
-// Paparazzi-rule classes are excluded here and run ONLY via
-// verifyPaparazziDebug — its own Test task, its own JVM, no Robolectric
-// classes loaded. The goldens still gate on verifyPaparazziDebug (ci.yml
-// runs it as a separate step). Applied via withType<Test>().configureEach
-// with a name guard: tasks.named("testDebugUnitTest") fails at configuration
-// time because AGP creates that task lazily ("Task with name
-// 'testDebugUnitTest' not found", CI 45103299471), and an unguarded
-// withType<Test> exclusion would also empty verifyPaparazziDebug.
-// ScreenSnapshotTest is NOT excluded — it is a Robolectric test (no Paparazzi
-// rule) and belongs in testDebugUnitTest.
-//
-// APP-10 (2026-11-24), CORRECTION to the paragraph above: recordPaparazziDebug
-// and verifyPaparazziDebug are NOT their own Test tasks. Per the Paparazzi
-// 2.x plugin (PaparazziPlugin.kt: record/verify are PaparazziTask lifecycle
-// tasks that dependOn the test task provider, and pass
-// paparazzi.test.record / paparazzi.test.verify as system properties into
-// the test JVM), BOTH drive testDebugUnitTest. The exclusion above therefore
-// emptied BOTH: record runs 2–5 on this branch "succeeded" in ~0s having
-// rendered nothing (artifact PNG set byte-identical to the repo's 33), and
-// verify would pass vacuously with a missing golden. The exclusion applies
-// only to a plain testDebugUnitTest run (the CI build+test step, where the
-// #1979 fork conflict lives); when recordPaparazzi or verifyPaparazzi is in
-// the requested tasks, the Paparazzi classes stay in so the gate actually
-// executes. Record runs before this exclusion (15/21 Nov) were green with
-// the Paparazzi classes in the shared forks, so the #1979 risk on a record
-// run is the pre-existing flake, not a new one.
+// Paparazzi-rule classes are excluded from the PLAIN testDebugUnitTest run
+// and run ONLY in record/verify invocations — where the filter flips to
+// Paparazzi-ONLY, so no Robolectric class loads first in the fork.
+// The wiring matters because Paparazzi 2.x changed the model under us:
+// recordPaparazziDebug / verifyPaparazziDebug are NOT their own Test tasks
+// (that was 1.x). In 2.0.0-alpha02 they are plain DefaultTasks that dependOn
+// testDebugUnitTest, and record/verify is just a system property on that
+// task (PaparazziPlugin.kt: recordTaskProvider/verifyTaskProvider dependOn
+// testTaskProvider; isRecordRun/isVerifyRun are task-graph flags). So an
+// unconditional excludeTestsMatching on testDebugUnitTest excludes a class
+// from record and verify too — that is exactly what happened to APP-09's
+// new class (fixup 5): the record run 45340615417 went SUCCESS while
+// recording nothing, and its artifact carried no BottomNav golden and no
+// BottomNavLargeFont XML at all. The mode is detected from the requested
+// tasks (startParameter.taskNames, available at configuration time), so no
+// workflow flag has to be remembered: any invocation that names a
+// record/verify task runs Paparazzi-only; every other invocation runs the
+// full suite minus the Paparazzi classes. ScreenSnapshotTest is NOT in
+// either list — it is a Robolectric test (no Paparazzi rule) and belongs in
+// the plain suite.
 tasks.withType<Test>().configureEach {
+    // Name guard, not tasks.named("testDebugUnitTest"): AGP creates that
+    // task lazily, and named() fails at configuration time ("Task with name
+    // 'testDebugUnitTest' not found", CI 45103299471).
     if (name == "testDebugUnitTest") {
+        // APP-09 (fixup 6): the large-font bottom-nav shot is a
+        // Paparazzi-rule class too — without the include below, the
+        // record/verify runs never execute it (Bridge.init failure in
+        // the plain run was Android 45327173433 / 45337492256 and
+        // record 45327411168 / 45337665943; the vacuous record success
+        // was 45340615417).
         val paparazziRun = gradle.startParameter.taskNames.any {
             it.contains("recordPaparazzi") || it.contains("verifyPaparazzi")
         }
-        if (!paparazziRun) {
-            filter {
+        filter {
+            if (paparazziRun) {
+                includeTestsMatching("com.raddstream.app.ui.PaparazziPreviewTest")
+                includeTestsMatching("com.raddstream.app.ui.PlayerLandscapePaparazziTest")
+                includeTestsMatching("com.raddstream.app.ui.navigation.BottomNavLargeFontPaparazziTest")
+            } else {
                 excludeTestsMatching("com.raddstream.app.ui.PaparazziPreviewTest")
                 excludeTestsMatching("com.raddstream.app.ui.PlayerLandscapePaparazziTest")
                 excludeTestsMatching("com.raddstream.app.ui.DownloadsPaparazziTest")
+                excludeTestsMatching("com.raddstream.app.ui.navigation.BottomNavLargeFontPaparazziTest")
             }
         }
     }
