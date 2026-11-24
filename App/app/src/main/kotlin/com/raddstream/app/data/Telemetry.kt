@@ -3,6 +3,7 @@ package com.raddstream.app.data
 import android.app.ActivityManager
 import android.content.Context
 import com.raddstream.app.brand.Brand
+import com.raddstream.app.diagnostics.DiagnosticsBus
 import java.util.Locale
 import java.util.UUID
 import kotlinx.coroutines.flow.first
@@ -184,13 +185,30 @@ object Telemetry {
         }
     }
 
-    fun recordPlaybackAttempt() = counters?.record("playback_attempts")
+    // APP-13 (review N-6): every counter increment is also fed into the
+    // diagnostics bus, so the debug timeline can show it. In release the
+    // bus is the NoOp and this costs one dead call. The `crashes` record in
+    // installCrashHandler does NOT feed the bus — the process is dying and
+    // the in-memory buffer dies with it.
+    fun recordPlaybackAttempt() {
+        counters?.record("playback_attempts")
+        DiagnosticsBus.recordCounter("playback_attempts")
+    }
 
-    fun recordPlaybackBufferFailure() = counters?.record("playback_buffer_failures")
+    fun recordPlaybackBufferFailure() {
+        counters?.record("playback_buffer_failures")
+        DiagnosticsBus.recordCounter("playback_buffer_failures")
+    }
 
-    fun recordPlaybackError() = counters?.record("playback_errors")
+    fun recordPlaybackError() {
+        counters?.record("playback_errors")
+        DiagnosticsBus.recordCounter("playback_errors")
+    }
 
-    fun recordRewardedCompletion() = counters?.record("rewarded_completions")
+    fun recordRewardedCompletion() {
+        counters?.record("rewarded_completions")
+        DiagnosticsBus.recordCounter("rewarded_completions")
+    }
 
     /** The non-zero counts to ride the next progress report, if any. */
     fun takeUsageSnapshot(): Map<String, Int> = counters?.snapshot() ?: emptyMap()

@@ -28,6 +28,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -51,6 +52,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.navigation.NavController
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -62,6 +64,7 @@ import com.raddstream.app.BuildConfig
 import com.raddstream.app.R
 import com.raddstream.app.brand.Brand
 import com.raddstream.app.data.RemoteFeatures
+import com.raddstream.app.diagnostics.DiagnosticsBus
 import com.raddstream.app.network.models.PanelTheme
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.player.PlayerSessionStore
@@ -404,6 +407,16 @@ fun RaddStreamNavGraph(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
+    // APP-13: record navigation for the debug-only diagnostics timeline.
+    // The record call itself no-ops in release; the listener costs one
+    // add/remove per NavGraph lifetime either way.
+    DisposableEffect(navController) {
+        val listener = NavController.OnDestinationChangedListener { _, destination, _ ->
+            DiagnosticsBus.recordNavigation(destination.route)
+        }
+        navController.addOnDestinationChangedListener(listener)
+        onDispose { navController.removeOnDestinationChangedListener(listener) }
+    }
     // MX #7 — Kids Lock: the session-scoped adult unlock. Settings is the
     // one door that stays reachable in kids mode, and it opens only after
     // this flips true — once per kids session, never persisted, and it
@@ -817,6 +830,12 @@ fun RaddStreamNavGraph(
                     onOpenWatchHistory = { navController.navigate(Screen.WatchHistory.route) },
                     onOpenResolveTest = { navController.navigate(Screen.ResolveTest.route) },
                     onOpenPressTest = { navController.navigate(Screen.PressTest.route) },
+                    onOpenDiagnostics = {
+                        if (DiagnosticsBus.isEnabled()) {
+                            navController.navigate(Screen.Diagnostics.route)
+                        }
+                    },
+                    showDiagnostics = DiagnosticsBus.isEnabled(),
                     scrollToContact = backStackEntry.arguments?.getString(Screen.Settings.ARG_SCROLL_TO) == Screen.Settings.SCROLL_TO_CONTACT,
                     )
                 }
@@ -837,6 +856,13 @@ fun RaddStreamNavGraph(
                     )
                 }
             }
+
+            // APP-13 (review B-2): the diagnostics destination is registered
+            // through the Diagnostics interface — the NoOp implementation
+            // (release) registers nothing, the debug implementation registers
+            // the screen. The navigation itself is gated on isEnabled() at
+            // the Settings entry above.
+            DiagnosticsBus.addDestination(this) { navController.popBackStack() }
 
             composable(Screen.Help.route) {
                 HelpScreen(

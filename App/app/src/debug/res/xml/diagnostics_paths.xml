@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  APP-13 (review N-4): the debug-only FileProvider serves only the cache
+  dir, where the diagnostics Markdown/JSONL exports are written. Nothing
+  else is exposed.
+-->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="diagnostics" path="." />
+</paths>

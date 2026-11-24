@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  APP-13 — Diagnostics (debug-only): the diagnostics screen's own strings.
+  They live here, in the debug source set, because the debug-only screen
+  and ViewModel are their only readers. A string only debug code reads
+  must not sit in main res: DeadCodeGuard scans main only, so it reads
+  as an unreferenced resource there. The one diagnostics string main
+  code reads (the Settings entry label) stays in main res/values.
+-->
+<resources>
+    <string name="diagnostics_title">Diagnostics (debug)</string>
+    <string name="diagnostics_intro">Debug-only event log. It records navigation, API calls with timings, resolver decisions, playback and downloads from this session — events are kept in memory and saved to a private file when you leave this screen, and nothing leaves the phone except what you export or copy here.</string>
+    <string name="diagnostics_search_hint">Search events</string>
+    <string name="diagnostics_filter_all">All</string>
+    <string name="diagnostics_filter_errors">Errors</string>
+    <string name="diagnostics_filter_warnings">Warnings</string>
+    <string name="diagnostics_tab_timeline">Timeline (%1$d)</string>
+    <string name="diagnostics_tab_problems">Problems (%1$d)</string>
+    <string name="diagnostics_tab_session">Session</string>
+    <string name="diagnostics_empty_timeline">No events recorded yet. Browse, play something, then come back.</string>
+    <string name="diagnostics_empty_problems">No problems — no errors or warnings recorded.</string>
+    <string name="diagnostics_export">Export diagnostics</string>
+    <string name="diagnostics_copy_jsonl">Copy diagnostics JSONL</string>
+    <string name="diagnostics_clear">Clear events</string>
+    <string name="diagnostics_export_failed">Export failed.</string>
+    <string name="diagnostics_copied">Diagnostics JSONL copied.</string>
+    <string name="diagnostics_truncated">Too many events — older data truncated.</string>
+    <string name="diagnostics_share_title">Share diagnostics</string>
+    <string name="diagnostics_share_subject">Diagnostics</string>
+</resources>

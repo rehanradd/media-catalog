@@ -147,7 +147,7 @@ jobs:
         # release-like build generation runs against, nonMinifiedRelease
         # = the unminified one) with no connected test in the graph.
         run: |
-          ./gradlew :app:assembleDebug :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin :baselineprofile:assembleBenchmarkRelease :baselineprofile:assembleNonMinifiedRelease \
+          ./gradlew :app:checkDebugOnly :app:assembleDebug :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin :baselineprofile:assembleBenchmarkRelease :baselineprofile:assembleNonMinifiedRelease \
             --no-daemon --stacktrace --continue --console=plain
 
       - name: "📸 Verify Paparazzi goldens (explicit gate)"

@@ -37,3 +37,9 @@
 -keepattributes Signature
 -keepattributes Exceptions
 -keep class retrofit2.** { *; }
+
+# APP-13 (review B-2): the diagnostics implementation lives in the debug
+# source set and is never compiled into a release build, so R8 has nothing
+# to strip — source-set exclusion is the mechanism, and this is belt and
+# braces so a future reference warns instead of breaking the release build.
+-dontwarn com.raddstream.app.diagnostics.debug.**

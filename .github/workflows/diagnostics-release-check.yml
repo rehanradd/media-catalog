@@ -1,0 +1,115 @@
+# Diagnostics — release APK has no debug code (APP-13, review B-2)
+#
+# The debug-only diagnostics implementation lives in `src/debug`, so the
+# release variant must not compile it — but "must not" deserves a proof,
+# not a belief. This workflow builds the (unsigned) release APK, decodes
+# it with apktool, and fails if any debug-only diagnostics class is in it.
+#
+# What it greps for: the debug-only class names and the debug package path.
+# What it deliberately does NOT grep for: `DiagnosticsBus`, `Diagnostics`
+# (the interface), `NoOpDiagnostics`, `DiagnosticsEvent` — those live in
+# `src/main` by design, and the release implementation behind the bus is
+# the NoOp. Grepping for the bus would fail a correct build.
+#
+# Triggers: pushes that touch diagnostics code, plus manual dispatch.
+# The cheap per-push guard is `:app:checkDebugOnly` in ci.yml; this is the
+# release-APK proof, and it runs only when diagnostics code changes.
+
+name: 🔍 Diagnostics — release APK has no debug code
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["**"]
+    paths:
+      - "App/app/src/debug/**"
+      - "App/app/src/main/kotlin/com/raddstream/app/diagnostics/**"
+      - "App/app/src/main/kotlin/com/raddstream/app/di/DiagnosticsModule.kt"
+      - ".github/workflows/diagnostics-release-check.yml"
+  pull_request:
+    paths:
+      - "App/app/src/debug/**"
+      - "App/app/src/main/kotlin/com/raddstream/app/diagnostics/**"
+      - "App/app/src/main/kotlin/com/raddstream/app/di/DiagnosticsModule.kt"
+      - ".github/workflows/diagnostics-release-check.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: diagnostics-release-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release-apk-check:
+    name: assembleRelease + apktool grep
+    runs-on: ubuntu-24.04   # pinned, not `ubuntu-latest`, so runner drift is visible
+    timeout-minutes: 30
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: ☕ Set up JDK 17 (temurin)
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad  # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "17"   # matches compileOptions VERSION_17 / jvmTarget 17
+
+      - name: 📦 Restore Gradle caches
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-java17-${{ hashFiles('App/gradle/wrapper/gradle-wrapper.properties', 'App/gradle/libs.versions.toml', 'App/**/*.gradle.kts', 'App/**/*.gradle', 'App/settings.gradle.kts') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-java17-
+            gradle-${{ runner.os }}-
+
+      - name: 📱 Install Android SDK (platform-tools, android-35, android-36, build-tools 35.0.0)
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd  # v4.0.4
+        with:
+          packages: "platform-tools platforms;android-35 platforms;android-36 build-tools;35.0.0"
+
+      - name: 🔧 Make gradlew executable
+        run: chmod +x App/gradlew
+
+      - name: 🔑 Restore google-services.json (CI secret, never committed)
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -z "$GOOGLE_SERVICES_JSON" ]; then echo "GOOGLE_SERVICES_JSON secret is empty" >&2; exit 1; fi
+          echo "$GOOGLE_SERVICES_JSON" | base64 -d > App/app/google-services.json
+
+      - name: "🏗️ Gradle: assembleRelease (unsigned — no signing secrets needed)"
+        working-directory: App
+        run: |
+          ./gradlew :app:assembleRelease \
+            --no-daemon --stacktrace --console=plain
+
+      - name: "🔍 apktool the release APK and grep for debug-only diagnostics code"
+        run: |
+          APK="App/app/build/outputs/apk/release/app-release-unsigned.apk"
+          test -f "$APK" || { echo "::error::$APK missing after assembleRelease"; exit 1; }
+          sudo apt-get update -qq && sudo apt-get install -y -qq apktool
+          apktool d "$APK" -o /tmp/apktool-out --force
+          # Debug-only class names + the debug package path. Any hit fails.
+          if grep -r "DebugDiagnostics\|DiagnosticsRedactor\|DiagnosticsScreen\|DiagnosticsViewModel\|DiagnosticsExport\|DiagnosticsFilters\|DiagnosticsSessionInfo\|diagnostics/debug" /tmp/apktool-out/smali_classes* /tmp/apktool-out/smali 2>/dev/null; then
+            echo "::error::debug-only diagnostics code found in the release APK"
+            exit 1
+          fi
+          # The debug-only FileProvider authority must not be in the manifest.
+          # Match the authority suffix (".diagnostics" as an authorities
+          # value), NOT the bare word: WorkManager ships its own
+          # androidx.work.impl.diagnostics.DiagnosticsReceiver (plus the
+          # androidx.work.diagnostics.REQUEST_DIAGNOSTICS action) in EVERY
+          # release build, and the bare word false-positives on it — proven
+          # by run 45344962930, which printed exactly those two lines and
+          # no com.raddstream.app.diagnostics authority. grep -n (not -q)
+          # so the run log shows WHAT matched if this fires.
+          if grep -n '\.diagnostics"' /tmp/apktool-out/AndroidManifest.xml; then
+            echo "::error::debug-only diagnostics FileProvider found in the release manifest"
+            exit 1
+          fi
+          echo "release APK clean: no debug-only diagnostics classes, no diagnostics provider"

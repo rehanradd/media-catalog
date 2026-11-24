@@ -410,6 +410,12 @@
     <string name="press_test_summary_repeat_heading">Repeat runs (scored separately):</string>
     <string name="press_test_summary_group">%1$s:</string>
     <string name="press_test_summary_bar">  %1$s: %2$d of %3$d pass (Wilson 95%% CI %4$s–%5$s)</string>
+    <!-- APP-13 — Diagnostics (debug-only): the Settings entry label. This
+         is the ONLY diagnostics string in main — the screen's own strings
+         live in src/debug/res/values/diagnostics_strings.xml, because the
+         debug-only screen is their only reader (DeadCodeGuard scans main
+         only, and a string only debug code reads looks dead there). -->
+    <string name="diagnostics_open">Open diagnostics</string>
     <!-- MX #7 — Kids Lock: the player unlock pad's words. PlayerScreen holds
          no prose of its own (PlayerChromeCopyTest), so these live here. -->
     <string name="kids_pin_title">Enter PIN</string>

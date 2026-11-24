@@ -23,6 +23,8 @@ import com.raddstream.app.data.follow.FollowSeriesWorker
 import com.raddstream.app.work.CatalogIndexSyncWorker
 import com.raddstream.app.work.CatalogWarmWorker
 import com.raddstream.app.data.downloads.DeviceDownloadsRepository
+import com.raddstream.app.diagnostics.Diagnostics
+import com.raddstream.app.diagnostics.DiagnosticsBus
 import com.raddstream.app.images.ImageSizingHolder
 import com.raddstream.app.share.LanShareRunner
 import com.raddstream.app.sync.SyncAccountRepository
@@ -160,6 +162,22 @@ class RaddStreamApplication : Application(), Configuration.Provider, SingletonIm
 
     override fun onCreate() {
         super.onCreate()
+        // APP-13 (review B-2): install the debug implementation into the
+        // process-wide bus first, before anything can record. The
+        // implementation lives in the debug source set, which src/main
+        // cannot name (it is not compiled into release), so it is loaded
+        // reflectively — and only inside BuildConfig.DEBUG, so release
+        // keeps the NoOp and never performs the lookup. Any failure
+        // leaves the safe NoOp in place. Until this runs, the bus holds
+        // the NoOp, so an early record call is a no-op, never a crash.
+        if (BuildConfig.DEBUG) {
+            runCatching {
+                val debugClass =
+                    Class.forName("com.raddstream.app.diagnostics.debug.DebugDiagnostics")
+                val instance = debugClass.getField("INSTANCE").get(null) as Diagnostics
+                DiagnosticsBus.install(instance)
+            }
+        }
         // Swap in the runtime brand snapshot before any screen composes. Until this runs,
         // every Brand getter falls back to its compiled BuildConfig constant, so this call
         // can only make the brand *more* current, never blank it.

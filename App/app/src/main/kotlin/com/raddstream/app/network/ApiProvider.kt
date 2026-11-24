@@ -1,9 +1,11 @@
 package com.raddstream.app.network
 
 import com.google.gson.Gson
+import com.raddstream.app.BuildConfig
 import com.raddstream.app.brand.Brand
 import com.raddstream.app.data.ServerSettingsRepository
 import com.raddstream.app.data.Telemetry
+import com.raddstream.app.diagnostics.DiagnosticsBus
 import java.io.IOException
 import java.net.URI
 import java.net.URLEncoder
@@ -12,6 +14,7 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import okhttp3.Cache
 import okhttp3.CertificatePinner
@@ -337,6 +340,46 @@ open class ApiProvider @Inject constructor(
             // catalog is never pinned and the platform trust store decides.
             certificatePinnerFor(baseUrl, defaultHost, Brand.tlsPins)?.let {
                 clientBuilder.certificatePinner(it)
+            }
+            // APP-13: the diagnostics timing interceptor (review B-2 + U-1).
+            // Added ONLY in debug builds — the release client has no
+            // diagnostics interceptor at all. It records structured fields
+            // only — method, redacted path, status, duration — never headers
+            // or bodies (a media URL is a bearer credential; App/AGENTS.md
+            // §3). The duration is measured with `System.nanoTime()` around
+            // `chain.proceed` BEFORE any recording happens (review R-2), so
+            // logging cannot push a borderline call over the slow threshold;
+            // the `Date` header rides along for the R-4 clock offset. A
+            // cancelled call records nothing: a debounce cancel is not an
+            // error, and the Problems tab must not fill with them. The
+            // recording itself lives in the debug implementation via
+            // `DiagnosticsBus` — a no-op in release.
+            if (BuildConfig.DEBUG) {
+                clientBuilder.addInterceptor { chain ->
+                    val request = chain.request()
+                    val startedNs = System.nanoTime()
+                    try {
+                        val response = chain.proceed(request)
+                        DiagnosticsBus.recordApi(
+                            method = request.method,
+                            url = request.url.toString(),
+                            status = response.code,
+                            durationMs = (System.nanoTime() - startedNs) / 1_000_000,
+                            dateHeader = response.header("Date"),
+                        )
+                        response
+                    } catch (failure: Exception) {
+                        if (failure is CancellationException) throw failure
+                        DiagnosticsBus.recordApi(
+                            method = request.method,
+                            url = request.url.toString(),
+                            status = null,
+                            durationMs = (System.nanoTime() - startedNs) / 1_000_000,
+                            failure = failure::class.java.simpleName,
+                        )
+                        throw failure
+                    }
+                }
             }
             val client = clientBuilder.build()
             // MUST be buildRaddGson(), not GsonBuilder().create(): the v1 wire sends

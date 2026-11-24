@@ -22,6 +22,8 @@ import androidx.core.content.ContextCompat
 import com.raddstream.app.MainActivity
 import com.raddstream.app.brand.Brand
 import com.raddstream.app.data.cache.ConnectivityProbe
+import com.raddstream.app.diagnostics.DiagnosticsBus
+import com.raddstream.app.diagnostics.DiagnosticsSeverity
 import dagger.hilt.android.AndroidEntryPoint
 import java.io.File
 import java.io.FileOutputStream
@@ -442,13 +444,13 @@ class DownloadService : Service() {
                 // failure and a network failure must not store the same words.
                 // The message stays the stored diagnostic; the row paints the
                 // mapped sentence for the kind, never this string.
+                val reason = failure.message?.takeIf { it.isNotBlank() }
+                    ?: "Download stopped before it finished."
                 repo.markFailed(
-                    id, downloaded, total,
-                    failure.message?.takeIf { it.isNotBlank() }
-                        ?: "Download stopped before it finished.",
+                    id, downloaded, total, reason,
                     errorKind = downloadFailureKind(failure),
                 )
-                notifyFailed(now, downloaded, total)
+                notifyFailed(now, downloaded, total, reason)
             }
         }
     }
@@ -581,7 +583,25 @@ class DownloadService : Service() {
         )
     }
 
-    private fun notifyFailed(entry: DeviceDownloadEntity, downloaded: Long, total: Long) {
+    private fun notifyFailed(
+        entry: DeviceDownloadEntity,
+        downloaded: Long,
+        total: Long,
+        reason: String? = null,
+    ) {
+        // APP-13: the failed download joins the diagnostics timeline with
+        // its title, print label (quality language), bytes, and the failure
+        // reason — never the raw exception, never the URL. The reason is
+        // passed explicitly because one call site notifies with the
+        // pre-failure entity snapshot, whose stored error is stale.
+        DiagnosticsBus.recordDownload(
+            severity = DiagnosticsSeverity.ERROR,
+            summary = "Download failed: ${entry.title}",
+            title = entry.title,
+            quality = entry.printLabel.takeIf { it.isNotBlank() },
+            detail = "$downloaded of $total bytes",
+            error = reason ?: entry.error,
+        )
         notifications.notify(
             NOTIFICATION_ID,
             buildNotification(entry, DeviceDownloadState.FAILED, downloaded, total),
@@ -589,6 +609,13 @@ class DownloadService : Service() {
     }
 
     private fun notifyCompleted(title: String) {
+        // APP-13: the completed download joins the timeline (INFO — the
+        // Problems tab never shows it, the Timeline does).
+        DiagnosticsBus.recordDownload(
+            severity = DiagnosticsSeverity.INFO,
+            summary = "Download complete: $title",
+            title = title,
+        )
         notifications.notify(COMPLETE_NOTIFICATION_ID, completedNotification(title))
     }
 

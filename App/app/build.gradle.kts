@@ -697,3 +697,113 @@ dependencies {
     // profile is generated and then thrown away.
     baselineProfile(project(":baselineprofile"))
 }
+
+// APP-13 (review B-2): the debug-only guard. Fails the build if any class
+// in src/main references the debug-only diagnostics implementation — the
+// interface + NoOp + bus are the only diagnostics surface main may know.
+// The forbidden list is class/package names, so main KDoc must not name
+// them either (the guard cannot tell a comment from a reference, and a
+// name in main is a name a future edit can import). String literals ARE
+// stripped before matching: the single sanctioned reflective install
+// (RaddStreamApplication, DEBUG-gated, failure-safe) names the debug
+// class inside a string, which is not a code dependency — a real
+// dependency is an import or a type usage, both outside strings, and
+// those still fail the check. The stripping is a hand-rolled linear
+// scanner, NOT a regex: the previous Regex("\"(?:[^\"\\\\]|\\\\.)*\"")
+// blew the stack (StackOverflowError, CI round 4) — Java's regex
+// matcher recurses per character, and a stray quote (a '"' char literal,
+// a quote in a comment) makes it consume a huge span. Runs in Android
+// CI (added to the single Gradle invocation in ci.yml) and is mirrored
+// by DiagnosticsReleaseGuardTest as a unit test.
+tasks.register("checkDebugOnly") {
+    group = "verification"
+    description = "Fails if any src/main file references debug-only diagnostics code."
+    doLast {
+        val forbidden = listOf(
+            "diagnostics.debug",
+            "DebugDiagnostics",
+            "DiagnosticsRedactor",
+            "DiagnosticsScreen",
+            "DiagnosticsViewModel",
+            "DiagnosticsExport",
+            "DiagnosticsFilters",
+            "DiagnosticsSessionInfo",
+        )
+        fun stripStringLiterals(text: String): String {
+            val out = StringBuilder(text.length)
+            var i = 0
+            while (i < text.length) {
+                when {
+                    text.startsWith("\"\"\"", i) -> {
+                        out.append("\"\"\"")
+                        i += 3
+                        while (i < text.length && !text.startsWith("\"\"\"", i)) {
+                            out.append(' ')
+                            i++
+                        }
+                        if (text.startsWith("\"\"\"", i)) {
+                            out.append("\"\"\"")
+                            i += 3
+                        }
+                    }
+                    text[i] == '"' -> {
+                        out.append('"')
+                        i++
+                        while (i < text.length && text[i] != '"' && text[i] != '\n') {
+                            if (text[i] == '\\' && i + 1 < text.length) {
+                                out.append("  ")
+                                i += 2
+                            } else {
+                                out.append(' ')
+                                i++
+                            }
+                        }
+                        if (i < text.length && text[i] == '"') {
+                            out.append('"')
+                            i++
+                        }
+                    }
+                    text[i] == '\'' -> {
+                        // Char literal ('x', '\n', '\\', '"') — copy it
+                        // whole so a '"' inside it cannot open a string.
+                        // A lone ' (don't, possessives) is not a literal:
+                        // the shape check fails and it is copied as an
+                        // ordinary char.
+                        val simple = i + 2 < text.length &&
+                            text[i + 1] != '\'' && text[i + 1] != '\\' &&
+                            text[i + 1] != '\n' && text[i + 2] == '\''
+                        val escaped = i + 3 < text.length &&
+                            text[i + 1] == '\\' && text[i + 3] == '\''
+                        if (simple || escaped) {
+                            val end = if (escaped) i + 4 else i + 3
+                            out.append(text.substring(i, end))
+                            i = end
+                        } else {
+                            out.append(text[i])
+                            i++
+                        }
+                    }
+                    else -> {
+                        out.append(text[i])
+                        i++
+                    }
+                }
+            }
+            return out.toString()
+        }
+        val offenders = file("src/main").walkTopDown()
+            .filter { it.isFile && it.extension == "kt" }
+            .filter { file ->
+                val code = stripStringLiterals(file.readText())
+                forbidden.any { code.contains(it) }
+            }
+            .map { it.relativeTo(projectDir).path }
+            .toList()
+        if (offenders.isNotEmpty()) {
+            throw org.gradle.api.GradleException(
+                "checkDebugOnly FAILED: src/main must not reference debug-only diagnostics code: " +
+                    offenders.joinToString(", "),
+            )
+        }
+    }
+}

@@ -25,5 +25,22 @@
         <meta-data
             android:name="firebase_sessions_enabled"
             android:value="false" />
+        <!--
+          APP-13 (review N-4): the debug-only FileProvider for the
+          diagnostics export. It serves ONLY the cache dir (where the
+          Markdown/JSONL exports are written) and is not exported, so the
+          share intent grants read access to exactly one file at a time
+          (`FLAG_GRANT_READ_URI_PERMISSION`). It lives in `src/debug`, so
+          no release build contains it.
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.diagnostics"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/diagnostics_paths" />
+        </provider>
     </application>
 </manifest>

@@ -103,6 +103,8 @@ import com.raddstream.app.data.downloads.SmartDownloadsRunner
 import com.raddstream.app.data.local.TitleSyncPrefs
 import com.raddstream.app.data.local.TitleSyncPrefsDao
 import com.raddstream.app.data.local.WatchHistoryDao
+import com.raddstream.app.diagnostics.DiagnosticsBus
+import com.raddstream.app.diagnostics.DiagnosticsSeverity
 import com.raddstream.app.network.ApiProvider
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.network.models.parseCastNames
@@ -773,8 +775,26 @@ class PlayerViewModel @Inject constructor(
                 _ui.update { it.copy(decoderMode = mode) }
             }
         }
+        // APP-13: each NEW failover record joins the diagnostics timeline
+        // as a WARNING (label + reason + action). The log clears on a new
+        // bundle, so a shrink resets the watermark instead of replaying
+        // the whole log as new.
+        var seenFailoverCount = 0
         viewModelScope.launch {
-            store.failoverLog.collect { log -> _ui.update { it.copy(failoverLog = log) } }
+            store.failoverLog.collect { log ->
+                if (log.size < seenFailoverCount) seenFailoverCount = 0
+                val fresh = log.drop(seenFailoverCount)
+                seenFailoverCount = log.size
+                for (record in fresh) {
+                    DiagnosticsBus.recordPlayback(
+                        severity = DiagnosticsSeverity.WARNING,
+                        summary = "Failover: ${record.label}",
+                        detail = "${record.reason} — ${record.action}",
+                        error = record.reason,
+                    )
+                }
+                _ui.update { it.copy(failoverLog = log) }
+            }
         }
         viewModelScope.launch {
             store.settledBanner.collect { banner -> _ui.update { it.copy(settledBanner = banner) } }

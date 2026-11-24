@@ -85,6 +85,13 @@ sealed class Screen(val route: String) {
      * field-test harness. Same DEBUG-only reachability as [ResolveTest].
      */
     object PressTest : Screen("press_test")
+    /**
+     * The debug-only diagnostics screen (APP-13): live event timeline,
+     * problems view, device + session info, export/share. Same DEBUG-only
+     * reachability as [ResolveTest] — the route exists in every build, but
+     * no NavGraph entry and no Settings row exist unless DEBUG.
+     */
+    object Diagnostics : Screen("diagnostics")
     object Help : Screen("help")
     object Languages : Screen("languages")
     object WatchHistory : Screen("watch_history")

@@ -185,6 +185,10 @@ fun SettingsScreen(
     onOpenResolveTest: () -> Unit = {},
     /** Debug-only harness entry for the press test; same DEBUG-only reachability. */
     onOpenPressTest: () -> Unit = {},
+    /** Debug-only diagnostics screen entry (APP-13); same DEBUG-only reachability. */
+    onOpenDiagnostics: () -> Unit = {},
+    /** True only when the diagnostics implementation is enabled (review B-2). */
+    showDiagnostics: Boolean = false,
     /**
      * Settings review (Nov 2026, D2): Help's Contact row lands here with
      * the contact card already in view — the viewer asked for the contact
@@ -314,6 +318,18 @@ fun SettingsScreen(
 
                     ) {
                         Text(stringResource(R.string.press_test_open))
+                    }
+                    // APP-13 (review B-2): the button renders only when the
+                    // diagnostics implementation is enabled — in release the
+                    // bus is the NoOp and this row never appears.
+                    if (showDiagnostics) {
+                        OutlinedButton(
+                            onClick = onOpenDiagnostics,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+
+                        ) {
+                            Text(stringResource(R.string.diagnostics_open))
+                        }
                     }
                 }
             }

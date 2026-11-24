@@ -32,6 +32,8 @@ import com.raddstream.app.data.PlaybackBeacons
 import com.raddstream.app.data.Telemetry
 import com.raddstream.app.data.cache.ConnectivityProbe
 import com.raddstream.app.data.cache.MediaDownloadCache
+import com.raddstream.app.diagnostics.DiagnosticsBus
+import com.raddstream.app.diagnostics.DiagnosticsSeverity
 import com.raddstream.app.player.audio.DelayAudioProcessor
 import com.raddstream.app.player.audio.EnhancementAudioProcessor
 import kotlinx.coroutines.CoroutineScope
@@ -147,6 +149,14 @@ class PlaybackService : MediaSessionService() {
     private var pendingResumeMs: Long? = null
     private var lastKnownPositionMs: Long = 0
     private var titleHint: String = Brand.name
+
+    /**
+     * APP-13: when the current playback attempt started, for the failed-play
+     * timing on the error event. 0 means "no attempt started yet" (an error
+     * before any load leaves the duration off the event, not wrong).
+     */
+    @Volatile
+    private var lastAttemptStartedMs: Long = 0L
 
     /**
      * Session 159 (S5): whether the load now in the player is the loopback
@@ -836,6 +846,21 @@ class PlaybackService : MediaSessionService() {
         // caller passes false). An expired link counts nothing, because the
         // early return above already left before any play was attempted.
         if (countAsAttempt) Telemetry.recordPlaybackAttempt()
+        // APP-13: the attempt joins the diagnostics timeline with the
+        // rendition that was actually chosen (quality + rank + release) —
+        // this is the client-visible resolver decision. A failover hop
+        // counts as a new attempt, so the hop sequence is visible too.
+        if (countAsAttempt) {
+            lastAttemptStartedMs = System.currentTimeMillis()
+            DiagnosticsBus.recordPlayback(
+                severity = DiagnosticsSeverity.INFO,
+                summary = "Playback started: ${rendition.displayLabel()}",
+                title = titleHint,
+                quality = rendition.displayLabel(),
+                detail = "rank ${rendition.rank} · release ${rendition.releaseId}" +
+                    if (isLocalCopy) " · local copy" else "",
+            )
+        }
         // Gap A3: the bundle's subtitle tracks ride the rendition, so a
         // failover hop rebuilds with the same tracks — they are not
         // ViewModel state, which a hop would lose.
@@ -1389,6 +1414,22 @@ class PlaybackService : MediaSessionService() {
             } else {
                 Telemetry.recordPlaybackError()
             }
+            // APP-13: the failed play joins the diagnostics timeline with
+            // its timing (press-to-error via lastAttemptStartedMs) and the
+            // same log-safe summary the Log.d below prints. Recorded before
+            // the early returns below, for the same reason the counters are:
+            // an error with no bundle left is still an error the viewer saw.
+            val attemptDurationMs = lastAttemptStartedMs.takeIf { it > 0L }?.let {
+                System.currentTimeMillis() - it
+            }
+            DiagnosticsBus.recordPlayback(
+                severity = DiagnosticsSeverity.ERROR,
+                summary = "Playback failed: ${summarize(error)}",
+                title = titleHint,
+                quality = store.activeRendition()?.displayLabel(),
+                error = summarize(error),
+                durationMs = attemptDurationMs,
+            )
             val bundle = store.bundle.value ?: return
             lastKnownPositionMs = maxOf(lastKnownPositionMs, errorGetMs())
             // MX #9 — an error on the receiver is not a local failover:
