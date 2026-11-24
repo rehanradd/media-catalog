@@ -340,7 +340,7 @@ class PaparazziPreviewTest {
      * Settings review (Gemini 5.5/10, 2026-11-16): the real ChipRow from
      * SettingsScreen — the 44dp visible pill (12dp label padding) and the
      * strengthened selected state (1.5dp jade border + 16% jade tint fill,
-     * unselected softened to #333333 / #B3B3B3). The golden is the only
+     * unselected softened to #6E6E6E / #B3B3B3). The golden is the only
      * place the pill height is observable: semantics merge the label into
      * the chip node, so a unit test sees the 48dp touch target, not the
      * 44dp pill.

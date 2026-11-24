@@ -400,6 +400,14 @@ fun SettingsScreen(
                 ChipRow(ImageQuality.entries.toList().map { it.label }, ImageQuality.entries.indexOf(state.prefs.imageQuality)) { idx ->
                     viewModel.setImageQuality(ImageQuality.entries.toList()[idx])
                 }
+                // UI audit (Nov 2026, Settings #2): the row never said what
+                // "Battery saver" does. It caps posters at 240px
+                // (UserPreferences.posterMaxWidthPx) against 640px High /
+                // 400px Medium — smaller posters, less data and battery.
+                Text(
+                    "Battery saver loads smaller posters to save data and battery.",
+                    style = settingsHelperStyle,
+                )
 
                 Spacer(Modifier.height(10.dp))
                 // Review fix: the title above this toggle repeated its own
@@ -563,8 +571,14 @@ fun SettingsScreen(
                 ChipRow(qualityLabels, qualityBands.indexOf(state.prefs.defaultQuality).coerceAtLeast(0)) { idx ->
                     viewModel.setDefaultQuality(qualityBands[idx])
                 }
+                // UI audit (Nov 2026, Settings #3): "Auto lets the player
+                // pick" never said what Auto starts at on Wi-Fi. Player-side
+                // confirmation (PlayerPolicyBridge.configure, Start-low):
+                // Auto arms on the cheapest rung and climbs on measured
+                // throughput — so Auto starts low. A fixed choice keeps its
+                // band exactly.
                 Text(
-                    "The quality a new title starts on. Auto lets the player pick; a fixed choice starts there and stays.",
+                    "The quality a new title starts on. Auto starts low and steps up as your connection allows; a fixed choice starts there and stays.",
                     style = settingsHelperStyle,
                 )
 
@@ -659,11 +673,10 @@ fun SettingsScreen(
                     // use. The runner counts only episodes still on the
                     // device, and an episode whose size the server never
                     // stated counts as nothing, never as a guess.
-                    Text(
-                        "Downloads For You may use",
-                        style = settingsHelperStyle,
-                    )
-                    Spacer(Modifier.height(6.dp))
+                    // UI audit (Nov 2026, Settings #4): the budget label was
+                    // a grey 12sp caption while every other ChipRow title
+                    // uses PreferenceRowTitle — the chips looked untitled.
+                    PreferenceRowTitle("Downloads For You may use")
                     ChipRow(
                         options = DOWNLOADS_FOR_YOU_CAP_OPTIONS_GB.map { "$it GB" },
                         selectedIndex = DOWNLOADS_FOR_YOU_CAP_OPTIONS_GB
@@ -1274,7 +1287,7 @@ fun SettingsScreen(
  * read as sections, with air above each heading, instead of the heading
  * sitting on the card above it.
  *
- * Review fix: sentence case, 13sp Medium — the old all-caps labelMedium
+ * Review fix: sentence case, 12sp Medium — the old all-caps labelMedium
  * read as a second, louder voice than the card titles it introduces.
  */
 @Composable
@@ -1582,7 +1595,7 @@ internal fun AccountLabelField(
 
 @Composable
 private fun PreferenceRowTitle(text: String) {
-    // Review fix: in-card row titles are group headers too — 13sp Medium,
+    // Review fix: in-card row titles are group headers too — 12sp Medium,
     // the same rung as the card titles, below the 16sp control labels.
     Text(text, style = settingsGroupTitleStyle, color = MaterialTheme.colorScheme.onSurface)
 }
@@ -1629,7 +1642,11 @@ internal fun SwitchRow(checked: Boolean, onCheckedChange: (Boolean) -> Unit, lab
         // (an 8% primary rounded fill when on) — a nested container
         // inside the card. Rows sit flat on the card surface now; the
         // Switch itself carries the state. The label is a control label:
-        // 16sp Medium, white.
+        // 16sp Medium, onSurface.
+        //
+        // UI audit (Nov 2026, Settings #5): the label was hardcoded
+        // Color.White — fine on today's dark-only theme, white-on-light
+        // if the theme ever goes light. The onSurface role owns it now.
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 48.dp)
@@ -1640,7 +1657,7 @@ internal fun SwitchRow(checked: Boolean, onCheckedChange: (Boolean) -> Unit, lab
         Text(
             label,
             style = MaterialTheme.typography.titleMedium,
-            color = Color.White,
+            color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.weight(1f).clearAndSetSemantics { },
         )
         Switch(
@@ -1710,9 +1727,11 @@ internal fun ChipRow(options: List<String>, selectedIndex: Int, onSelect: (Int) 
     // unselected chips carried bright 1dp outlines, so the unselected
     // state outweighed the selected one. Selected now gets a crisp
     // 1.5dp jade border + 16% jade tint fill with a white label;
-    // unselected softens to #333333 / #B3B3B3. This override is
-    // Settings-only: the shared token (and its pinned preview) is
-    // untouched, so no other screen's chips move.
+    // unselected softens to #6E6E6E / #B3B3B3. UI audit (Nov 2026,
+    // Settings #1) raised the border #333333 → #6E6E6E: the old border was
+    // 1.38:1 vs the card, under the M3 3:1 component bar. The token is
+    // Settings-only in practice (its one use is this border), so raising
+    // it moves no other screen's chips.
     // Internal so the review test can pin the height and the selection.
     FlowRow(
         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
