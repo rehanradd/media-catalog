@@ -63,13 +63,16 @@ class PlayerHudLiveRegionTest {
         }
 
         val node = compose.onNodeWithContentDescription("Volume 80%").fetchSemanticsNode()
+        // getOrElse, not getOrNull: this Compose version's
+        // SemanticsConfiguration has no getOrNull (compile error in
+        // record runs 2–3), and LiveRegionMode has no None to default
+        // to (compile error in run 4) — absence is expressed by the
+        // property not being in the config at all, so assert presence
+        // first, then the value.
+        assertTrue(node.config.contains(SemanticsProperties.LiveRegion))
         assertEquals(
             LiveRegionMode.Polite,
-            // getOrElse, not getOrNull: this Compose version's
-            // SemanticsConfiguration has no getOrNull (compile error in
-            // record runs 2–3). Absent reads as None, which fails the
-            // assert exactly like a missing live region should.
-            node.config.getOrElse(SemanticsProperties.LiveRegion) { LiveRegionMode.None },
+            node.config[SemanticsProperties.LiveRegion],
         )
     }
 
@@ -82,9 +85,10 @@ class PlayerHudLiveRegionTest {
         }
 
         val node = compose.onNodeWithContentDescription("Buffering…").fetchSemanticsNode()
+        assertTrue(node.config.contains(SemanticsProperties.LiveRegion))
         assertEquals(
             LiveRegionMode.Polite,
-            node.config.getOrElse(SemanticsProperties.LiveRegion) { LiveRegionMode.None },
+            node.config[SemanticsProperties.LiveRegion],
         )
     }
 
