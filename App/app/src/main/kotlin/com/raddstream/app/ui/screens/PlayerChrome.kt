@@ -1069,11 +1069,15 @@ internal fun ZoomResetChip(
     onReset: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // stringResource is a @Composable call — it cannot run inside the
+    // semantics block below (not a @Composable context), so the
+    // description is read here, in the composable body.
+    val resetDescription = stringResource(R.string.player_zoom_reset)
     Surface(
         color = Color.Black.copy(alpha = 0.55f),
         shape = RoundedCornerShape(16.dp),
         modifier = modifier
-            .semantics { contentDescription = stringResource(R.string.player_zoom_reset) }
+            .semantics { contentDescription = resetDescription }
             .clickableNoRipple(onClick = onReset),
     ) {
         Text(
