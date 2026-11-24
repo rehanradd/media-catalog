@@ -71,6 +71,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -600,6 +601,13 @@ fun DetailScreen(
                 },
                 onReport = { showReportDialog = true },
                 onOpenLanguages = onOpenLanguages,
+                // APP-02 (Phase 4): the quality selector — one chip per
+                // playable band; Play and Download act on the pick.
+                qualityOptions = state.qualityOptions,
+                lockedQualityBands = state.lockedQualityBands,
+                selectedBand = state.selectedBand,
+                onSelectQualityBand = viewModel::selectQualityBand,
+                onOpenQualitySheet = viewModel::openQualityBrowseSheet,
                 contentPadding = detailPadding,
             )
         }
@@ -616,9 +624,12 @@ fun DetailScreen(
         )
     }
 
-    // 2-button detail (Nov 2026): the quality sheet — the only place
-    // quality is ever chosen. One component, two modes; the sheet closes
-    // the moment a row is tapped, and the action starts at once.
+    // 2-button detail (Nov 2026): the quality sheet. One component,
+    // three modes: DOWNLOAD still opens one from this page (choosing a
+    // file to save needs a choice), BROWSE only picks a band, and PLAY
+    // is no longer opened here — the first tap plays at once (APP-01,
+    // Phase 4). The sheet closes the moment a row is tapped, and the
+    // action starts at once — except BROWSE, which only selects.
     state.qualitySheet?.let { sheet ->
         DetailQualitySheet(
             sheet = sheet,
@@ -975,6 +986,21 @@ internal fun DetailContent(
     /** Open the Languages screen — the audio line's tap target. */
     onOpenLanguages: () -> Unit = {},
     contentPadding: PaddingValues,
+    /**
+     * APP-02 (Phase 4): the quality selector — one chip per playable
+     * band, in ladder order. Empty hides the selector entirely, so the
+     * four detail goldens that pass nothing keep rendering exactly as
+     * before.
+     */
+    qualityOptions: List<QualityOption> = emptyList(),
+    /** APP-02: the bands among [qualityOptions] this viewer may not take — greyed with a lock, never hidden. */
+    lockedQualityBands: Set<String> = emptySet(),
+    /** APP-02: the picked band, or null / "auto" for Auto. */
+    selectedBand: String? = null,
+    /** APP-02: a chip tapped — pick the band, start nothing. */
+    onSelectQualityBand: (String) -> Unit = {},
+    /** APP-02: the "Video:" row tapped — open the browse sheet. */
+    onOpenQualitySheet: () -> Unit = {},
 ) {
     val allPrints = (workPrints + seasons.flatMap { it.episodes.flatMap { e -> e.prints } } + seasons.flatMap { it.packedPrints })
     // The dead end's way out: the similar rail is the last item on the
@@ -1048,18 +1074,21 @@ internal fun DetailContent(
             )
         }
 
-        // Audit Detail #1 (Nov 2026): the Video row — the visible
-        // quality control, mirroring the Audio row further down. It
-        // sits between the actions and the synopsis, where the choice
-        // is made, not buried under the page.
-        videoQualityText?.let { qualityText ->
-            item(contentType = "video-quality") {
-                DetailVideoRow(
-                    qualityText = qualityText,
-                    onClick = onOpenQualitySheet,
-                    modifier = pageSides,
-                )
-            }
+        // APP-02 (Phase 4): the quality selector sits directly under
+        // the actions — one chip per playable band, and Play / Download
+        // act on the picked one. The pre-play sheet is gone: quality is
+        // chosen here (or in the browse sheet the "Video:" row opens),
+        // never before play. The hero's included pill already states
+        // the tier.
+        item {
+            DetailQualitySelector(
+                modifier = pageSides,
+                qualityOptions = qualityOptions,
+                lockedBands = lockedQualityBands,
+                selectedBand = selectedBand,
+                onSelectQualityBand = onSelectQualityBand,
+                onOpenQualitySheet = onOpenQualitySheet,
+            )
         }
 
         // Audit Detail #3 (Nov 2026): the cam warning as a card,
@@ -1632,15 +1661,14 @@ private fun DetailCastButton() {
 
 /**
  * 2-button detail (Nov 2026): exactly two buttons — Play (filled,
- * first) and Download (outlined, directly below). The label is plain
- * Play / Resume, the hint under a button says why it is greyed or
- * what it will do, and both are at least 48dp. The quality choice
- * lives in the Video row below, chosen in its browse sheet, never in
- * the buttons. A dead end greys Play, says why in plain words, and
- * offers [Try again] — the viewer is never left at a wall with no way
- * out. The name stays `PrimaryActions` and both buttons keep
- * `heightIn(min = 48.dp)`: SkeletonParityTest reads the source for
- * both.
+ * first) and Download (outlined, directly below). The label names the
+ * quality, the hint under a button says why it is greyed or what it
+ * will do, and both are at least 48dp. The quality choice lives in
+ * the selector above, never here — both buttons act on the picked
+ * band. A dead end greys Play, says why in plain words, and offers
+ * [Try again] — the viewer is never left at a wall with no way out.
+ * The name stays `PrimaryActions` and both buttons keep
+ * `heightIn(min = 48.dp)`: SkeletonParityTest reads the source for both.
  */
 @Composable
 private fun PrimaryActions(
@@ -1756,37 +1784,95 @@ private fun PrimaryActions(
 }
 
 /**
- * Audit Detail #1 (Nov 2026): the Video row — the visible quality
- * control, mirroring the Audio row further down the page. One line,
- * 48dp, chevron: "Video: 720p" for a pick, "Video: Auto · up to
- * 1080p" for Auto. Tapping opens the quality sheet in browse mode
- * (pick, don't play).
+ * APP-02 (Phase 4): the visible quality control — a "Video:" row naming
+ * the current pick, and one chip per playable band. A chip tap picks the
+ * band (Play and Download act on it from now on); a locked chip still
+ * answers the tap, greyed with a lock, and the ViewModel answers with
+ * the upsell instead of changing the pick. Hidden entirely when the
+ * title has no playable qualities. The row and the chips are at least
+ * 48dp, like every other tap target on this page.
  */
 @Composable
-private fun DetailVideoRow(
-    qualityText: String,
-    onClick: () -> Unit,
+internal fun DetailQualitySelector(
     modifier: Modifier = Modifier,
+    qualityOptions: List<QualityOption>,
+    lockedBands: Set<String>,
+    selectedBand: String?,
+    onSelectQualityBand: (String) -> Unit,
+    onOpenQualitySheet: () -> Unit,
 ) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .heightIn(min = 48.dp)
-            .clickable(onClick = onClick, role = Role.Button),
-        verticalAlignment = Alignment.CenterVertically,
+    // A chip must never offer a copy that cannot play — the publisher
+    // filters the same way, and the row re-checks, so a stale list can
+    // never paint a dead band or a provider page.
+    val chips = qualityOptions.filter { it.playsHere && !it.isProviderPage && it.streamId.isNotBlank() }
+    if (chips.isEmpty()) return
+    val isAuto = selectedBand == null || selectedBand == LadderForScope.AUTO
+    val selection = if (isAuto) {
+        stringResource(R.string.detail_quality_auto)
+    } else {
+        bandDisplayName(selectedBand)
+    }
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text(
-            text = stringResource(R.string.detail_video_quality, qualityText),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.weight(1f),
-        )
-        Icon(
-            Icons.Default.ChevronRight,
-            contentDescription = null,
-            modifier = Modifier.size(20.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .clickable(onClick = onOpenQualitySheet, role = Role.Button),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "${stringResource(R.string.detail_video_quality)}: $selection",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            Icon(
+                Icons.Default.ChevronRight,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        ScrollingChipRow(
+            contentPadding = PaddingValues(0.dp),
+            fadeHeight = 48.dp,
+        ) {
+            items(chips, key = { it.band }) { option ->
+                val locked = option.band in lockedBands
+                val selected = !isAuto && option.band == selectedBand
+                FilterChip(
+                    selected = selected,
+                    onClick = { onSelectQualityBand(option.band) },
+                    label = { Text(text = bandDisplayName(option.band)) },
+                    modifier = Modifier.heightIn(min = 48.dp),
+                    leadingIcon = if (locked) {
+                        {
+                            Icon(
+                                Icons.Default.Lock,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+                    } else {
+                        null
+                    },
+                    colors = if (locked) {
+                        FilterChipDefaults.filterChipColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                            labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            // This Compose version names the unselected icon colour
+                            // `iconColor`, not `leadingIconColor` (fails compile — CI 45325377385).
+                            iconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        raddFilterChipColors()
+                    },
+                )
+            }
+        }
     }
 }
 
@@ -1849,10 +1935,11 @@ private fun CamWarningCard(
  * names, URLs, codec and HLS/m3u8 words never appear. A series
  * Download sheet shows its two rows at the top instead of quality
  * rows; a batch sheet shows the bands every ticked episode shares.
- * The sheet closes the moment a row is tapped — the row IS the
- * confirmation — and the action starts at once. (Named
- * DetailQualitySheet because the player's own in-player sheet already
- * owns the name QualitySheet in this package.)
+ * APP-02 (Phase 4): BROWSE mode only picks a band — a row tap selects
+ * it and closes the sheet, nothing starts. The sheet closes the moment
+ * a row is tapped — the row IS the confirmation — and the action starts
+ * at once. (Named DetailQualitySheet because the player's own in-player
+ * sheet already owns the name QualitySheet in this package.)
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

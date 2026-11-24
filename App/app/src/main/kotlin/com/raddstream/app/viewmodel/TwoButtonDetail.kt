@@ -10,12 +10,13 @@ import com.raddstream.app.player.qualityCostPerHour
 /**
  * 2-button detail page (Nov 2026): the pure decision layer behind the
  * Play / Download redesign. The detail page shows exactly two buttons —
- * ▶ Play and ⬇ Download — and every quality choice lives in one
- * [QualitySheetState] (one component, two modes). Nothing here touches
- * the network or a repository: the ViewModel computes the ladder, these
- * functions turn it into rows, labels and decisions, and the screen
- * paints them. Pure so TwoButtonDetailTest pins every branch without a
- * ViewModel.
+ * ▶ Play and ⬇ Download — and every quality choice lives in the
+ * selector chips and one [QualitySheetState] (one component, three modes:
+ * PLAY, DOWNLOAD, and BROWSE, which only picks a band and starts
+ * nothing). Nothing here touches the network or a repository: the
+ * ViewModel computes the ladder, these functions turn it into rows,
+ * labels and decisions, and the screen paints them. Pure so
+ * TwoButtonDetailTest pins every branch without a ViewModel.
  *
  * Rules the rows must never break (report §6.5, §8):
  * - never show a host name, site name, URL, codec, source tag, rank
@@ -292,6 +293,28 @@ fun downloadLabelFor(
 }
 
 /**
+ * APP-02 (Phase 4, review RISK-a): the band the DOWNLOAD sheet
+ * recommends — the viewer's own pick when it names an unlocked,
+ * playable chip on this ladder, else [recommendedBandFor]'s answer.
+ * The pick is validated against the chips, never trusted blind: a
+ * locked or stale band falls back to the ladder's own recommendation,
+ * so the sheet never recommends a copy the viewer cannot save.
+ */
+fun downloadRecommendedBand(
+    ladder: LadderForScope,
+    selectedBand: String?,
+    premiumAccess: Boolean,
+    freeQualityCap: String,
+): String? {
+    val resolved = resolveSelectedBand(
+        qualityChipsFor(ladder, premiumAccess, freeQualityCap),
+        selectedBand,
+    )
+    return if (resolved != LadderForScope.AUTO) resolved
+    else recommendedBandFor(ladder, QualitySheetMode.DOWNLOAD, premiumAccess, freeQualityCap)
+}
+
+/**
  * The ladder for one episode's scope, gated for this viewer. This is
  * the P1 fix (report §2, P1): the detail screen builds its ladder as
  * the whole work's scope, which is EMPTY for a multi-episode series —
@@ -309,6 +332,74 @@ fun ladderForEpisodeScope(
     premiumAccess,
     freeQualityCap,
 )
+
+// ── APP-01 + APP-02 (Phase 4): one-click play + visible quality control ──
+
+/**
+ * APP-01: the rung the first tap plays — Auto's rung when it plays here,
+ * else the first playable rung in ladder order, else null. Never a
+ * provider page, never a blank handle. The gate is never re-decided here:
+ * the ladder is already gate-adjusted, and Auto's pointer already points
+ * at the best rung this viewer may take.
+ */
+fun firstTapOption(ladder: LadderForScope): QualityOption? {
+    val auto = ladder.autoOption
+    if (auto != null && auto.playsHere && !auto.isProviderPage && auto.streamId.isNotBlank()) {
+        return auto
+    }
+    return ladder.options.firstOrNull { it.playsHere && !it.isProviderPage && it.streamId.isNotBlank() }
+}
+
+/**
+ * APP-02: the rung an explicit band pick means on this ladder — the
+ * picked rung when it plays here, else null. Auto falls through to
+ * [firstTapOption]; a stale pick (the scope changed) or a pick that
+ * cannot play here never strands the tap.
+ */
+fun selectedRungFor(ladder: LadderForScope, band: String?): QualityOption? {
+    val option = ladder.optionFor(band) ?: return null
+    return option.takeIf { it.playsHere && !it.isProviderPage && it.streamId.isNotBlank() }
+}
+
+/** One chip of the detail quality selector: a playable band, and whether this viewer may take it. */
+data class QualityChip(
+    val band: String,
+    val option: QualityOption,
+    val isLocked: Boolean,
+)
+
+/**
+ * APP-02: the selector's chips, best first (ladder order) — one per
+ * playable band. Locked bands stay visible, marked locked (never
+ * hidden, same rule as the sheet); dead bands (nothing playable) and
+ * provider pages are omitted — a chip must never offer a copy that
+ * cannot play.
+ */
+fun qualityChipsFor(
+    ladder: LadderForScope,
+    premiumAccess: Boolean,
+    freeQualityCap: String,
+): List<QualityChip> = ladder.options
+    .filter { it.playsHere && !it.isProviderPage && it.streamId.isNotBlank() }
+    .map { option ->
+        QualityChip(
+            band = option.band,
+            option = option,
+            isLocked = !VipQualityGate.allowsBand(option.band, premiumAccess, freeQualityCap) ||
+                (!premiumAccess && VipQualityGate.isPremiumLabel(option.title, freeQualityCap)),
+        )
+    }
+
+/**
+ * APP-02: the selection the chips honour — the picked band when it names
+ * a chip this viewer may take, else [LadderForScope.AUTO]. A stale band
+ * (the scope changed under it) or a band that has become locked resolves
+ * to Auto, never to nothing.
+ */
+fun resolveSelectedBand(chips: List<QualityChip>, band: String?): String {
+    if (band == null || band == LadderForScope.AUTO) return LadderForScope.AUTO
+    return if (chips.any { it.band == band && !it.isLocked }) band else LadderForScope.AUTO
+}
 
 /**
  * The next episode to watch: the first playable, unwatched episode in

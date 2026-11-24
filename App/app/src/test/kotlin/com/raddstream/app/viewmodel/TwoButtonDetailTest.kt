@@ -181,6 +181,19 @@ class TwoButtonDetailTest {
         assertNull(recommendedBandFor(LadderForScope.EMPTY, QualitySheetMode.DOWNLOAD, premiumAccess = false, freeQualityCap = "720p"))
     }
 
+    @Test
+    fun downloadRecommendedBandPrefersThePickedBand() {
+        // 480p beats the ladder's own 720p recommendation when picked.
+        assertEquals("480p", downloadRecommendedBand(ladder(), "480p", premiumAccess = false, freeQualityCap = "720p"))
+        // A locked pick (1080p over the 720p free cap) falls back.
+        assertEquals("720p", downloadRecommendedBand(ladder(), "1080p", premiumAccess = false, freeQualityCap = "720p"))
+        // A stale pick and Auto both fall back to the ladder's answer.
+        assertEquals("720p", downloadRecommendedBand(ladder(), "4K", premiumAccess = false, freeQualityCap = "720p"))
+        assertEquals("720p", downloadRecommendedBand(ladder(), LadderForScope.AUTO, premiumAccess = false, freeQualityCap = "720p"))
+        assertEquals("720p", downloadRecommendedBand(ladder(), null, premiumAccess = false, freeQualityCap = "720p"))
+        assertNull(downloadRecommendedBand(LadderForScope.EMPTY, "480p", premiumAccess = false, freeQualityCap = "720p"))
+    }
+
     // ── P1: the per-episode ladder ──
 
     private fun episodeGroup(season: String, episode: String, band: String) = OptionGroup(
@@ -486,5 +499,148 @@ class TwoButtonDetailTest {
             "✓ Downloaded",
             downloadLabelFor(band = "1080p", sizeLine = "1.0 GB", season = null, episode = null, downloaded = true),
         )
+    }
+
+    // ── APP-01 (Phase 4): the first tap plays at once ──
+
+    @Test
+    fun firstTapOptionPicksAutosRungWhenItPlays() {
+        assertEquals("720p", firstTapOption(ladder())?.band)
+    }
+
+    @Test
+    fun firstTapOptionFallsBackToFirstPlayableWhenAutoIsDead() {
+        val deadAuto = LadderForScope(
+            options = listOf(
+                option("1080p", "1080p Full HD"),
+                option("720p", "720p HD", playsHere = false),
+                option("480p", "480p"),
+            ),
+            autoBand = "720p",
+            downloadOnlyBands = emptyList(),
+        )
+        // Auto's rung cannot play, so the first playable rung in ladder
+        // order wins — the tap never opens a sheet to ask.
+        assertEquals("1080p", firstTapOption(deadAuto)?.band)
+    }
+
+    @Test
+    fun firstTapOptionFallsBackWhenAutoIsAbsent() {
+        val noAuto = ladder(autoBand = null)
+        // No auto pointer: the ladder's first playable rung (1080p here —
+        // the ladder is already gate-adjusted in production, so a locked
+        // rung can never reach this function through Play).
+        assertEquals("1080p", firstTapOption(noAuto)?.band)
+    }
+
+    @Test
+    fun firstTapOptionIsNullWhenNothingCanPlay() {
+        val dead = LadderForScope(
+            options = listOf(
+                option("1080p", "1080p Full HD", playsHere = false),
+                option("720p", "720p HD", playsHere = false),
+            ),
+            autoBand = "720p",
+            downloadOnlyBands = emptyList(),
+        )
+        assertNull(firstTapOption(dead))
+        assertNull(firstTapOption(LadderForScope.EMPTY))
+    }
+
+    @Test
+    fun firstTapOptionNeverReturnsAProviderPageOrABlankHandle() {
+        val pagesOnly = LadderForScope(
+            options = listOf(
+                option("1080p", "1080p Full HD", isProviderPage = true),
+                option("720p", "720p HD", streamId = ""),
+            ),
+            autoBand = "1080p",
+            downloadOnlyBands = emptyList(),
+        )
+        assertNull(firstTapOption(pagesOnly))
+        // A provider page ahead of a real file is skipped, not played.
+        val mixed = LadderForScope(
+            options = listOf(
+                option("1080p", "1080p Full HD", isProviderPage = true),
+                option("720p", "720p HD"),
+            ),
+            autoBand = "1080p",
+            downloadOnlyBands = emptyList(),
+        )
+        assertEquals("720p", firstTapOption(mixed)?.band)
+    }
+
+    @Test
+    fun selectedRungForReturnsThePickedRungWhenItPlays() {
+        assertEquals("720p", selectedRungFor(ladder(), "720p")?.band)
+        // Auto resolves to Auto's rung when it plays.
+        assertEquals("720p", selectedRungFor(ladder(), "auto")?.band)
+        assertEquals("720p", selectedRungFor(ladder(), null)?.band)
+        // Unknown, dead, or provider picks never strand the tap — the
+        // caller falls through to firstTapOption.
+        assertNull(selectedRungFor(ladder(), "weird"))
+        val deadPick = LadderForScope(
+            options = listOf(option("720p", "720p HD", playsHere = false)),
+            autoBand = "720p",
+            downloadOnlyBands = emptyList(),
+        )
+        assertNull(selectedRungFor(deadPick, "720p"))
+        val pagePick = LadderForScope(
+            options = listOf(option("720p", "720p HD", isProviderPage = true)),
+            autoBand = "720p",
+            downloadOnlyBands = emptyList(),
+        )
+        assertNull(selectedRungFor(pagePick, "720p"))
+    }
+
+    // ── APP-02 (Phase 4): the selector's chips ──
+
+    @Test
+    fun qualityChipsKeepLadderOrderAndMarkLockedNeverHidden() {
+        val chips = qualityChipsFor(ladder(), premiumAccess = false, freeQualityCap = "720p")
+        assertEquals(listOf("1080p", "720p", "480p"), chips.map { it.band })
+        // The locked band stays visible, marked locked — never hidden.
+        assertTrue(chips.first { it.band == "1080p" }.isLocked)
+        assertFalse(chips.first { it.band == "720p" }.isLocked)
+        assertFalse(chips.first { it.band == "480p" }.isLocked)
+        // A VIP viewer locks nothing.
+        val vip = qualityChipsFor(ladder(), premiumAccess = true, freeQualityCap = "720p")
+        assertFalse(vip.any { it.isLocked })
+    }
+
+    @Test
+    fun qualityChipsOmitDeadBandsAndProviderPages() {
+        val withDead = ladder().copy(
+            options = ladder().options + listOf(
+                option("sd", "SD", streamId = ""),
+                option("480p", "480p", streamId = "h-dead", playsHere = false),
+            ),
+        )
+        // The 480p rung is duplicated here (one live, one dead): the live
+        // one stays, the dead one is omitted — a chip must never offer a
+        // copy that cannot play.
+        val chips = qualityChipsFor(withDead, premiumAccess = false, freeQualityCap = "720p")
+        assertEquals(listOf("1080p", "720p", "480p"), chips.map { it.band })
+        assertEquals(1, chips.count { it.band == "480p" })
+        val withPage = ladder().copy(
+            options = ladder().options + option("2160p", "4K Ultra HD", isProviderPage = true),
+        )
+        assertEquals(
+            listOf("1080p", "720p", "480p"),
+            qualityChipsFor(withPage, premiumAccess = false, freeQualityCap = "720p").map { it.band },
+        )
+        assertTrue(qualityChipsFor(LadderForScope.EMPTY, premiumAccess = false, freeQualityCap = "720p").isEmpty())
+    }
+
+    @Test
+    fun resolveSelectedBandKeepsAPlayablePickAndFallsBackToAuto() {
+        val chips = qualityChipsFor(ladder(), premiumAccess = false, freeQualityCap = "720p")
+        assertEquals("720p", resolveSelectedBand(chips, "720p"))
+        // A locked pick, an unknown pick, and no pick all resolve to Auto.
+        assertEquals("auto", resolveSelectedBand(chips, "1080p"))
+        assertEquals("auto", resolveSelectedBand(chips, "weird"))
+        assertEquals("auto", resolveSelectedBand(chips, null))
+        assertEquals("auto", resolveSelectedBand(chips, "auto"))
+        assertEquals("auto", resolveSelectedBand(emptyList(), "720p"))
     }
 }

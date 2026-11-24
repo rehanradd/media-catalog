@@ -2,6 +2,7 @@ package com.raddstream.app.viewmodel
 
 import android.content.Context
 import android.os.StatFs
+import android.os.SystemClock
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -151,6 +152,18 @@ data class DetailUiState(
      * [DetailViewModel.ladderForEpisode] (2-button detail, P1 fix). */
     /** null / [LadderForScope.AUTO] = let the ladder's own pointer choose the rung. */
     val selectedBand: String? = LadderForScope.AUTO,
+    /**
+     * APP-02 (Phase 4): the selector's chips, as playable options in
+     * ladder order — one per verified-active band (locked bands included;
+     * dead bands and provider pages omitted). Empty until the ladder
+     * lands, and empty when the title has no playable qualities — then
+     * the selector hides itself. Published by
+     * [DetailViewModel.publishPrimaryActions] from the same scope Play
+     * uses, so the chips and the tap can never disagree.
+     */
+    val qualityOptions: List<QualityOption> = emptyList(),
+    /** APP-02: the bands among [qualityOptions] this viewer may not take — greyed with a lock, never hidden. */
+    val lockedQualityBands: Set<String> = emptySet(),
     /** The ledger's answer, mirrored so the quality gate and its upsell read one fact. */
     val vip: Boolean = false,
     /** True when this title has 4K/1080p sources that the current viewer cannot play. */
@@ -212,8 +225,11 @@ data class DetailUiState(
     val includedPill: String? = null,
     /**
      * 2-button detail (Nov 2026): the open quality sheet, or null when
-     * closed. The sheet is the only place quality is ever chosen — the
-     * two buttons never ask twice.
+     * closed. DOWNLOAD still opens one (choosing a file to save needs a
+     * choice); APP-02 (Phase 4) added the selector chips above the
+     * buttons and a BROWSE sheet that only picks a band, so the PLAY
+     * sheet is no longer opened from this page. The two buttons never
+     * ask twice.
      */
     val qualitySheet: QualitySheetState? = null,
     /**
@@ -891,9 +907,12 @@ class DetailViewModel @Inject constructor(
     // ------------------------------------------------------------------
     // 2-button detail (Nov 2026)
     //
-    // The detail page has exactly two buttons — Play and Download — and
-    // the quality sheet is the only place quality is ever chosen. The
-    // helpers these entry points share live in TwoButtonDetail.kt.
+    // The detail page has exactly two buttons — Play and Download.
+    // Quality is chosen on the page itself now (APP-02, Phase 4: the
+    // selector chips above the buttons, or the browse sheet they open) —
+    // the pre-play sheet is gone, so the first tap plays at once
+    // (APP-01). The helpers these entry points share live in
+    // TwoButtonDetail.kt.
     // ------------------------------------------------------------------
 
     /**
@@ -936,6 +955,12 @@ class DetailViewModel @Inject constructor(
         val layout = state.layout
         val resume = state.resume.takeIf { state.resumePlayable }
         val bestPrint = layout?.let { bestPlayablePrintOf(it, premiumAccess, freeQualityCap) }
+        // APP-02: the selector's chips, from the same scope Play uses —
+        // and the selection re-validated against them, so a stale or
+        // newly-locked band falls back to Auto instead of labelling a
+        // button with a quality the tap cannot play.
+        val chips = qualityChipsFor(selectorLadder(), premiumAccess, freeQualityCap)
+        val resolvedBand = resolveSelectedBand(chips, state.selectedBand)
         val allPrints = layout?.let {
             it.workPrints +
                 it.seasons.flatMap { season -> season.episodes.flatMap { e -> e.prints } + season.packedPrints }
@@ -962,7 +987,14 @@ class DetailViewModel @Inject constructor(
                     playHint = state.deadEndReason ?: "No working link right now. Try again later."
                 } else {
                     val (season, episode) = next
-                    playLabel = "Play S$season E$episode"
+                    val episodeLadder = ladderForEpisode(season, episode)
+                    // APP-02: the picked band names the episode's Play
+                    // button, else the ladder's own Auto pointer — same
+                    // precedence as the tap itself (explicit tap > Auto).
+                    val band = selectedRungFor(episodeLadder, resolvedBand)?.band
+                        ?: episodeLadder.let { it.effectiveAutoBand ?: it.autoBand }
+                        ?: episodePlayPrint(layout, season, episode)?.resolution?.wire
+                    playLabel = if (band != null) "Play S$season E$episode · $band" else "Play S$season E$episode"
                 }
             }
             state.ladder.options.any { isHlsOption(it) && it.playsHere && it.streamId.isNotBlank() } -> {
@@ -972,7 +1004,14 @@ class DetailViewModel @Inject constructor(
                 playHint = "Plays instantly, quality changes while playing."
             }
             else -> {
-                playLabel = "Play"
+                // APP-02: the picked band names the Play button, else the
+                // ladder's own Auto pointer — same precedence as the tap
+                // itself. (The HLS branch above still reads "Play · Auto":
+                // that tap plays the bundle, not the picked rung.)
+                val band = selectedRungFor(state.ladder, resolvedBand)?.band
+                    ?: state.ladder.let { it.effectiveAutoBand ?: it.autoBand }
+                    ?: bestPrint?.resolution?.wire
+                playLabel = if (band != null) "Play · $band" else "Play"
             }
         }
         if (providerOnly) {
@@ -993,24 +1032,18 @@ class DetailViewModel @Inject constructor(
         val downloadedUri = downloadedUriForTitle()
         val videoLadder = videoScopeLadder(state)
         val videoQualityText = videoQualityTextFor(videoLadder, state.selectedBand)
+        // APP-02: the Download button names the picked band — and its
+        // size when the server named one, never invented (audit Detail
+        // #2: the blind download). Auto keeps the bare "Download".
         val downloadLabel = if (downloadedUri != null) {
             "✓ Downloaded"
+        } else if (resolvedBand != LadderForScope.AUTO) {
+            val picked = chips.firstOrNull { it.band == resolvedBand }
+            val size = picked?.option?.sizeBytes?.takeIf { it > 0 }
+                ?.let { " · ${QualityOption.formatBytes(it)}" }.orEmpty()
+            "Download · $resolvedBand$size"
         } else {
-            val scope = if (layout?.isSeriesLike == true) {
-                nextUnwatchedEpisode(layout, state.episodeProgress)
-            } else {
-                null
-            }
-            val picked = state.selectedBand?.takeIf { it != LadderForScope.AUTO }
-                ?.let { band ->
-                    videoLadder.options.firstOrNull {
-                        it.band == band && it.playsHere && it.streamId.isNotBlank() && !it.isProviderPage
-                    }
-                }
-            val band = picked?.band
-                ?: recommendedBandFor(videoLadder, QualitySheetMode.DOWNLOAD, premiumAccess, freeQualityCap)
-            val size = (picked ?: videoLadder.options.firstOrNull { it.band == band })?.sizeLine
-            downloadLabelFor(band, size, scope?.first, scope?.second, downloaded = false)
+            "Download"
         }
         val downloadEnabled = when {
             state.kidsMode -> false
@@ -1044,6 +1077,12 @@ class DetailViewModel @Inject constructor(
                 downloadEnabled = downloadEnabled,
                 downloadHint = downloadHint,
                 downloadedUri = downloadedUri,
+                // APP-02: the selector's chips and the re-validated
+                // selection — published beside the labels, from the same
+                // inputs, so the chips and the buttons can never disagree.
+                qualityOptions = chips.map { chip -> chip.option },
+                lockedQualityBands = chips.filter { chip -> chip.isLocked }.map { chip -> chip.band }.toSet(),
+                selectedBand = resolvedBand,
             )
         }
     }
@@ -1077,14 +1116,21 @@ class DetailViewModel @Inject constructor(
     /**
      * The Play button's one entry point. The decision tree (§6.2):
      * resume first, then the next unwatched episode for a series, then
-     * the ladder for a movie — HLS plays at once on Auto, one direct
-     * file plays at once, two or more direct files open the sheet.
-     * Nothing playable leaves the button greyed; this function is only
-     * reached while it is enabled.
+     * the ladder for a movie — HLS plays at once on Auto, and any direct
+     * file plays at once now (APP-01, Phase 4): the picked rung when the
+     * viewer chose one, else the ladder's first-tap rung. The pre-play
+     * sheet is gone from this path. Nothing playable leaves the button
+     * greyed; this function is only reached while it is enabled.
      */
     fun playPrimary() {
         if (_uiState.value.playStarting) return
         val state = _uiState.value
+        // Review RISK-g: resume outranks the band pick on purpose —
+        // continue-watching resumes the copy in progress, it does not
+        // start a fresh play. The pick steers fresh plays only. The
+        // label names the requested band; Data Saver may still cap the
+        // actual start rung player-side, where the quality pill shows
+        // the real band (PlayerViewModel.armQualityChoices).
         if (state.resume != null && state.resumePlayable) {
             // Audit Detail #1: an explicit Video-row pick plays the
             // resume episode at that quality — the position belongs to
@@ -1141,13 +1187,22 @@ class DetailViewModel @Inject constructor(
                 playBest()
                 return
             }
-            if (playable.size == 1) {
+            // APP-01: the first tap plays at once — the rung the viewer
+            // picked, else the ladder's own first-tap rung. playLadder
+            // steps a locked rung down and refuses a blank handle, so no
+            // new gate logic is needed here.
+            // Invariant (review RISK-c): firstTapOption uses the same
+            // playsHere / non-provider / non-blank-handle predicate as
+            // `playable` above, so when `playable` is non-empty `first`
+            // is non-null. If the predicates ever diverge, the null
+            // case falls through to the provider / playBest fallback
+            // below instead of playing nothing.
+            val first = selectedRungFor(ladder, state.selectedBand) ?: firstTapOption(ladder)
+            if (first != null) {
                 _uiState.update { it.copy(playStarting = true) }
-                playLadder(playable.first())
+                playLadder(first)
                 return
             }
-            openSheet(QualitySheetMode.PLAY, ladder, null, null)
-            return
         }
         // Nothing on the ladder plays here: a provider page still opens,
         // a ladder-less title falls back to its best print, and a title
@@ -1162,32 +1217,36 @@ class DetailViewModel @Inject constructor(
     }
 
     /**
-     * Play one episode: its best print, 1 tap, when it has one copy or
-     * an HLS stream — or the sheet when it has two or more direct
-     * files. Audit Detail #1: an explicit Video-row pick plays the
-     * episode at that quality at once, the same as on the whole work.
-     * A series episode with no per-episode ladder at all still
-     * plays (the player picks the picture); the in-player switch is
-     * armed from the episode ladder inside [playV2Bundle] when one
-     * exists, and stays unarmed when it does not — that gap is a known
-     * limitation, recorded in the Phase 1 checkpoint.
+     * Play one episode: its best print, 1 tap, when it has no ladder or
+     * an HLS stream — or its first-tap rung through the ladder path when
+     * it has two or more direct files (APP-01, Phase 4): the picked rung,
+     * else the ladder's first-tap rung, so the in-player switch is armed
+     * for the episode actually playing. A series episode with no
+     * per-episode ladder at all still plays (the player picks the
+     * picture); the in-player switch is armed from the episode ladder
+     * inside [playV2Bundle] when one exists, and stays unarmed when it
+     * does not — that gap is a known limitation, recorded in the Phase 1
+     * checkpoint.
      */
     private fun playEpisodeDecision(season: Int, episode: Int) {
         val ladder = ladderForEpisode(season, episode)
         val playable = ladder.options.filter { it.playsHere && !it.isProviderPage && it.streamId.isNotBlank() }
-        val picked = _uiState.value.selectedBand?.takeIf { it != LadderForScope.AUTO }
-            ?.let { band -> playable.firstOrNull { it.band == band } }
-        if (picked != null) {
-            _uiState.update { it.copy(playStarting = true) }
-            playLadder(picked, ladder = ladder, season = season, episode = episode)
-            return
-        }
-        if (playable.isEmpty() || playable.any { isHlsOption(it) } || playable.size == 1) {
+        if (playable.isEmpty() || playable.any { isHlsOption(it) }) {
             _uiState.update { it.copy(playStarting = true) }
             playEpisode(season, episode)
             return
         }
-        openSheet(QualitySheetMode.PLAY, ladder, season, episode)
+        // Same invariant as playPrimary (review RISK-c): `first` is
+        // non-null whenever `playable` is non-empty; the null case falls
+        // through to playEpisode below.
+        val first = selectedRungFor(ladder, _uiState.value.selectedBand) ?: firstTapOption(ladder)
+        if (first != null) {
+            _uiState.update { it.copy(playStarting = true) }
+            playLadder(first, ladder = ladder, season = season, episode = episode)
+            return
+        }
+        _uiState.update { it.copy(playStarting = true) }
+        playEpisode(season, episode)
     }
 
     /** Open the quality sheet in one mode, for one ladder and scope. */
@@ -1203,7 +1262,21 @@ class DetailViewModel @Inject constructor(
                 qualitySheet = QualitySheetState(
                     mode = mode,
                     ladder = ladder,
-                    recommendedBand = recommendedBandFor(ladder, mode, premiumAccess, freeQualityCap, selectedBand),
+                    // Review RISK-a: a DOWNLOAD sheet recommends the
+                    // viewer's own pick when it is a playable, unlocked
+                    // rung on this ladder — the download label already
+                    // names the pick, so the sheet must agree with it.
+                    // BROWSE keeps the ladder's own recommendation.
+                    recommendedBand = if (mode == QualitySheetMode.DOWNLOAD) {
+                        downloadRecommendedBand(
+                            ladder,
+                            _uiState.value.selectedBand,
+                            premiumAccess,
+                            freeQualityCap,
+                        )
+                    } else {
+                        recommendedBandFor(ladder, mode, premiumAccess, freeQualityCap)
+                    },
                     season = season,
                     episode = episode,
                     rows = sheetRowsFor(ladder, mode, premiumAccess, freeQualityCap, selectedBand),
@@ -1245,21 +1318,32 @@ class DetailViewModel @Inject constructor(
      * safety net, not the path. The labels republish, so the Video row,
      * the Download button and the next Play tap all read the new pick.
      */
+    /**
+     * Audit Detail #1 (Nov 2026) + APP-02 (Phase 4): the browse sheet's
+     * pick, and a selector chip tapped. AUTO (or a band this scope no
+     * longer offers) clears the pick; a locked band answers with the
+     * upsell instead of changing the selection — the sheet's own rows
+     * already intercept locked taps, so this is the safety net, not the
+     * path. The pick is validated against the selector's chips, never
+     * trusted blind: a locked or stale band never becomes the selection.
+     * The labels republish, so the Video row, the Download button and
+     * the next Play tap all read the new pick.
+     */
     fun selectQualityBand(band: String) {
-        val ladder = videoScopeLadder()
+        val chips = qualityChipsFor(selectorLadder(), premiumAccess, freeQualityCap)
         _uiState.update { it.copy(qualitySheet = null) }
         if (band == LadderForScope.AUTO) {
             _uiState.update { it.copy(selectedBand = LadderForScope.AUTO) }
             publishPrimaryActions()
             return
         }
-        val option = ladder.options.firstOrNull { it.band == band }
-        if (option == null) {
+        val chip = chips.firstOrNull { it.band == band }
+        if (chip == null) {
             _uiState.update { it.copy(selectedBand = LadderForScope.AUTO) }
             publishPrimaryActions()
             return
         }
-        if (isLocked(option)) {
+        if (chip.isLocked) {
             _uiState.update { it.copy(actionMessage = VipQualityGate.lockedMessage(freeQualityCap)) }
             return
         }
@@ -1288,6 +1372,58 @@ class DetailViewModel @Inject constructor(
     /** The sheet dismissed without choosing: nothing started. */
     fun dismissQualitySheet() {
         _uiState.update { it.copy(qualitySheet = null) }
+    }
+
+    /**
+     * APP-02 (Phase 4): the scope the quality selector (and its browse
+     * sheet) describe — the next unwatched episode's ladder for a series,
+     * the whole work's for a movie. UNGATED on purpose: [VipQualityGate.gate]
+     * removes premium bands, and a locked band must stay visible (greyed,
+     * never hidden) in the selector, so the chips are built from the ladder
+     * before the gate. When the episode ladder is empty, the whole-work
+     * ladder — empty for a multi-episode series by design, never another
+     * episode's links.
+     */
+    private fun selectorLadder(): LadderForScope {
+        val groups = rawDetail?.optionGroups ?: return LadderForScope.EMPTY
+        val layout = _uiState.value.layout
+        if (layout?.isSeriesLike == true) {
+            val next = nextUnwatchedEpisode(layout, _uiState.value.episodeProgress)
+            if (next != null) {
+                val episode = QualityLadder.forNumberedScope(groups, next.first, next.second)
+                if (!episode.isEmpty) return episode
+            }
+        }
+        return QualityLadder.forNumberedScope(groups, null, null)
+    }
+
+    /**
+     * APP-02: a selector chip (or browse-sheet row) tapped. A locked band
+     * answers with the upsell line and changes nothing — the tap never
+     * silently steps down to a free copy the viewer did not choose. Any
+     * other band becomes the selection: Play and Download act on it from
+     * now on. Nothing starts here.
+     */
+
+    /** APP-02: a browse-sheet row tapped — pick the band, close the sheet, start nothing. */
+    fun selectSheetQuality(option: QualityOption) {
+        _uiState.update { it.copy(qualitySheet = null) }
+        selectQualityBand(option.band)
+    }
+
+    /** APP-02: open the browse sheet — the same scope as the chips, for picking only. */
+    fun openQualityBrowseSheet() {
+        val state = _uiState.value
+        val layout = state.layout
+        var season: Int? = null
+        var episode: Int? = null
+        if (layout?.isSeriesLike == true) {
+            nextUnwatchedEpisode(layout, state.episodeProgress)?.let { (s, e) ->
+                season = s
+                episode = e
+            }
+        }
+        openSheet(QualitySheetMode.BROWSE, selectorLadder(), season, episode)
     }
 
     /**
@@ -1355,7 +1491,10 @@ class DetailViewModel @Inject constructor(
             }
             val ladder = ladderForEpisode(next.first, next.second)
             val plan = seasonKeepPlan(season, premiumAccess, freeQualityCap)
-            val band = recommendedBandFor(ladder, QualitySheetMode.DOWNLOAD, premiumAccess, freeQualityCap)
+            // Review RISK-a: the next-episode row saves the viewer's
+            // picked band when it is playable and unlocked here, else
+            // the ladder's own recommendation — same rule as openSheet.
+            val band = downloadRecommendedBand(ladder, _uiState.value.selectedBand, premiumAccess, freeQualityCap)
             val option = band?.let { ladder.optionFor(it) } ?: ladder.autoOption
             val nextRow = option?.let {
                 SeriesDownloadRow(
@@ -1821,6 +1960,11 @@ class DetailViewModel @Inject constructor(
         // any in-flight Play guard and closes the sheet — a stale
         // "Starting…" or a sheet for the old title must never survive
         // the reload.
+        // Review RISK-f: selectedBand is intentionally NOT reset here.
+        // A reload is the same title, so the pick stands; a new title
+        // gets a new ViewModel (hiltViewModel per destination), and
+        // publishPrimaryActions re-validates the band against the new
+        // ladder on every publish anyway.
         _uiState.update { it.copy(playStarting = false, qualitySheet = null) }
         if (postId < 0 && workId < 0) {
             _uiState.update { it.copy(isLoading = false, error = "This title could not be opened.") }
@@ -2635,6 +2779,10 @@ class DetailViewModel @Inject constructor(
         }
     }
 
+    // Review RISK-h: last external provider-page open, uptime millis —
+    // the debounce for the double-open race (see playLadder).
+    private var lastProviderOpenMs: Long = 0
+
     /**
      * Play one rung of the ladder. The rung's runner-ups and the ladder itself are staged
      * for the player first, so a CDN that refuses mid-play costs a silent hop instead of a
@@ -2662,11 +2810,20 @@ class DetailViewModel @Inject constructor(
         // best free picture instead of burning the player's whole start
         // budget on copies that cannot play.
         val effective = if (isLocked(option)) {
-            stepDownRung(ladder, option, premiumAccess, freeQualityCap)
+            // Review RISK-d: the step-down still plays the best free
+            // rung instead of blocking (Salaar, 2026-11-12), but it is
+            // no longer silent — the viewer is told which rung actually
+            // plays, so a premium tap never quietly becomes a lower
+            // picture. Only the no-free-rung case shows the lock line.
+            val stepped = stepDownRung(ladder, option, premiumAccess, freeQualityCap)
                 ?: run {
                     _uiState.update { it.copy(actionMessage = VipQualityGate.lockedMessage(freeQualityCap)) }
                     return
                 }
+            _uiState.update {
+                it.copy(actionMessage = "Selected quality is premium - playing ${bandDisplayName(stepped.band)} instead.")
+            }
+            stepped
         } else {
             option
         }
@@ -2678,8 +2835,16 @@ class DetailViewModel @Inject constructor(
         // A rung that is a page is not staged and not played: nothing starts, so there is no
         // resume point to write and no position for Auto to hop to. Staging it would put an HTML
         // page in the failover list the player walks when a CDN refuses.
+        // Review RISK-h: the provider page opens externally, and this
+        // path clears playStarting (Detail stays usable), so the tap
+        // guard cannot debounce it — the open itself is debounced
+        // instead: a second open within 2 s of the first is the same
+        // tap, not intent.
         if (effective.isProviderPage) {
+            val now = SystemClock.uptimeMillis()
             _uiState.update { it.copy(selectedBand = effective.band, playStarting = false) }
+            if (now - lastProviderOpenMs < 2_000) return
+            lastProviderOpenMs = now
             viewModelScope.launch {
                 _navEvents.emit(DetailNavigationEvent.OpenProviderPage(effective.streamId, title))
             }

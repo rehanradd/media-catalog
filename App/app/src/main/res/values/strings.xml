@@ -141,6 +141,12 @@
     <string name="detail_sheet_choose_play">Choose quality to play</string>
     <string name="detail_sheet_choose_save">Choose quality to save</string>
     <string name="detail_sheet_choose_what_save">Choose what to save</string>
+    <!-- APP-02 (Phase 4): the quality selector's "Video:" row and the
+         browse sheet's title — the row reads "Video: 720p HD" or
+         "Video: Auto", and the sheet only picks a band. -->
+    <string name="detail_video_quality">Video</string>
+    <string name="detail_quality_auto">Auto</string>
+    <string name="detail_sheet_choose_quality">Choose quality</string>
     <string name="detail_sheet_vip_only">VIP only</string>
     <string name="detail_sheet_no_working_link">No working link</string>
     <string name="detail_download_episode">Download an episode</string>

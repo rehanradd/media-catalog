@@ -40,6 +40,7 @@ import com.raddstream.app.player.PlaybackInfo
 import com.raddstream.app.player.PlaybackRendition
 import com.raddstream.app.player.PlayerUiState
 import com.raddstream.app.player.PrintInfo
+import com.raddstream.app.player.QualityOption
 import com.raddstream.app.ui.components.PosterCard
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.screens.DetailContent
@@ -643,6 +644,57 @@ class PaparazziPreviewTest {
         }
     }
 
+    // APP-02 (Phase 4): the quality selector's golden — a movie with
+    // three playable bands, 720p picked, so the "Video: 720p HD" row and
+    // the filled 720p chip are both on the record.
+    private fun fakeQualityOption(band: String, title: String, sizeBytes: Long? = null) = QualityOption(
+        band = band,
+        title = title,
+        streamId = "h-$band",
+        playUrl = "http://example.invalid/play/$band",
+        sizeBytes = sizeBytes,
+        backupHandles = emptyList(),
+        playsHere = true,
+        resumable = true,
+        copies = 1,
+        isProviderPage = false,
+    )
+
+    @Test
+    fun detailMovieQualitySelector() {
+        paparazzi.snapshot {
+            themed {
+                DetailContent(
+                    post = jawanDetail,
+                    seasons = emptyList(),
+                    workPrints = moviePrints,
+                    capabilities = listOf("Hindi audio", "English subtitles"),
+                    isSeries = false,
+                    resume = null,
+                    includedPill = "VIP",
+                    onOpenSeason = {},
+                    playLabel = "Play · 720p",
+                    playEnabled = true,
+                    downloadLabel = "Download · 720p",
+                    downloadEnabled = true,
+                    similarTitles = listOf(salaars, mclintock),
+                    reloadError = null,
+                    onRetryReload = {},
+                    isFavorite = false,
+                    onToggleFavorite = {},
+                    onShare = {},
+                    contentPadding = PaddingValues(0.dp),
+                    qualityOptions = listOf(
+                        fakeQualityOption("1080p", "1080p Full HD", sizeBytes = 1_073_741_824L),
+                        fakeQualityOption("720p", "720p HD", sizeBytes = 800_000_000L),
+                        fakeQualityOption("480p", "480p"),
+                    ),
+                    selectedBand = "720p",
+                )
+            }
+        }
+    }
+
     private val seriesDetail = PostDetail(
         id = 2,
         title = "Money Heist",
@@ -735,6 +787,44 @@ class PaparazziPreviewTest {
                     onToggleFavorite = {},
                     onShare = {},
                     contentPadding = PaddingValues(0.dp),
+                )
+            }
+        }
+    }
+
+    // APP-02 (Phase 4): the selector's series golden — the next
+    // episode's scope (S1:E2), 720p picked, with the 1080p chip locked
+    // for a free viewer (greyed with a lock, never hidden).
+    @Test
+    fun detailSeriesQualitySelector() {
+        paparazzi.snapshot {
+            themed {
+                DetailContent(
+                    post = seriesDetail,
+                    seasons = seriesSeasons,
+                    workPrints = emptyList(),
+                    capabilities = listOf("English audio", "Hindi subtitles"),
+                    isSeries = true,
+                    resume = ResumePoint(season = 1, episode = 2, positionMs = 1_200_000L, durationMs = 3_000_000L),
+                    includedPill = "Free · up to 720p",
+                    onOpenSeason = {},
+                    playLabel = "Resume S1:E2 · 720p",
+                    playEnabled = true,
+                    downloadLabel = "Download · 720p",
+                    downloadEnabled = true,
+                    similarTitles = listOf(jawan, mclintock),
+                    reloadError = null,
+                    onRetryReload = {},
+                    isFavorite = true,
+                    onToggleFavorite = {},
+                    onShare = {},
+                    contentPadding = PaddingValues(0.dp),
+                    qualityOptions = listOf(
+                        fakeQualityOption("1080p", "1080p Full HD"),
+                        fakeQualityOption("720p", "720p HD", sizeBytes = 800_000_000L),
+                    ),
+                    lockedQualityBands = setOf("1080p"),
+                    selectedBand = "720p",
                 )
             }
         }
