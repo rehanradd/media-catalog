@@ -9,6 +9,9 @@ name: 🐍 Backend CI — Stdlib Python Tests
 #   Suites run (verified passing offline on the Oracle VM, python 3.12, before
 #   this workflow was written):
 #     - Fast_Fetch/test_database.py          (catalog/DB + adult filtering)
+#     - Fast_Fetch/test_deployed_commit.py  (INF-08: `.deployed_commit` is
+#                                             one 40-hex SHA resolving to a
+#                                             commit in history)
 #     - Fast_Fetch/test_vidout.py            (VIDOUT extractor tests)
 #     - Fast_Fetch/test_fix1_dispatch.py    (FIX1: vidout+gdrive dispatch)
 #     - Fast_Fetch/test_fix2_dispatch.py    (FIX2: mp4moviez dispatch)
@@ -365,6 +368,13 @@ jobs:
       # still in the tree. Measured: 7 OK at `f3849b8`, FAILED (failures=5) at `b99814e`.
       - name: 🧪 test_trunk_continuity.py
         run: python3 -S Fast_Fetch/test_trunk_continuity.py
+
+      # INF-08 (2026-11-24): `.deployed_commit` held a SHA that exists nowhere
+      # in repo history. This suite pins the marker to one 40-hex SHA that
+      # resolves to a commit; the gate asserts it equals the landed target
+      # with `check_deployed_commit.py --expect <sha>`.
+      - name: 🧪 test_deployed_commit.py
+        run: python3 -S Fast_Fetch/test_deployed_commit.py
 
       - name: 🧪 test_database.py
         run: python3 -S Fast_Fetch/test_database.py
