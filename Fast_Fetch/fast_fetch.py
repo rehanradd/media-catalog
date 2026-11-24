@@ -4966,6 +4966,42 @@ class _HubcdnNoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+#: Minimum seconds between two ``/l.php`` hops of one unwrap (API-11).
+#: hubcdn.io rate-limits bursts from one IP ("Too Many Requests" after
+#: ~25 rapid requests), so the production hop loop never fires faster
+#: than this. Injected hops (tests) are never paced.
+HUBCDN_HOP_MIN_INTERVAL_S = 1.0
+
+
+def _hubcdn_hop_delay(last_mono: float | None, now_mono: float,
+                      interval: float = HUBCDN_HOP_MIN_INTERVAL_S) -> float:
+    """Seconds to wait before the next ``/l.php`` hop, or 0.0.
+
+    Pure arithmetic so the pacing is testable without sleeping: the
+    production loop sleeps the returned value. The first hop of an
+    unwrap never waits.
+    """
+    if last_mono is None:
+        return 0.0
+    return max(0.0, float(interval) - (float(now_mono) - float(last_mono)))
+
+
+def hubcdn_r2_is_permanent(url: str) -> bool:
+    """Whether a banked R2 URL may be treated as permanent (API-11).
+
+    True only for a bucket the classifier's measured-proven set names.
+    Without the classifier module nothing is proven, so the answer is
+    False — the safe direction. The backfill uses this for its persist
+    shape; the dispatch's mirror loop applies the same verdict.
+    """
+    if _hc is None:
+        return False
+    try:
+        return bool(_hc.hubcdn_r2_bucket_is_proven(url))
+    except Exception:  # noqa: BLE001 — a classifier fault is unproven
+        return False
+
+
 def _hubcdn_page(url: str, timeout: int, clearance=None) -> tuple[str, str]:
     """The gateway page's HTML and the cookies it set, as a ``Cookie`` header.
 
@@ -5043,14 +5079,31 @@ def unwrap_hubcdn(cloud_url: str, timeout: int = 8, *, _fetch=None,
                   _hop=None, clearance=None) -> dict:
     """Unwrap a ``hubcdn.io/cloud/<id>`` gateway page to its direct assets.
 
-    Returns ``{ok, r2_url, google_url, title, size_str}`` plus ``error`` on any
-    failure. ``r2_url`` is the public Cloudflare R2 bucket (Category A, tier 1,
-    streamable); ``google_url`` is the Google Cloud CDN front (Category A, tier
-    1, the 10Gbps download). Both are durable byte URLs, so the caller does not
-    need a token window for them. A "Preparing Download" page answers
+    Returns ``{ok, r2_url, google_url, gofile_url, telegram_url,
+    r2_bucket, title, size_str}`` plus ``error`` on any failure.
+    ``r2_url`` is the public Cloudflare R2 bucket copy (Category A, tier 1,
+    streamable); ``google_url`` is the Google Cloud CDN front (Category A,
+    tier 1, the 10Gbps download); ``gofile_url`` is the Gofile mirror
+    page, which still needs the gofile resolver before it can be served;
+    ``telegram_url`` is the Telegram mirror, recorded only — a bot
+    deep-link is never a byte URL. ``r2_bucket`` is the parsed bucket
+    label of ``r2_url`` (None when there is no R2 copy). Neither mirror
+    carries a token window in the URL itself, but permanence is
+    per-bucket for R2 (only a proven bucket is permanent — see
+    :data:`host_classifier.HUBCDN_PROVEN_R2_BUCKETS`) and the Google
+    token rotates, so the caller must not treat any of them as permanent
+    without the bucket verdict. A "Preparing Download" page answers
     ``error == "preparing_download"`` with ``preparing_target`` attached —
     the asset lives on filesdl behind a JS challenge, so it is counted,
     never served.
+
+    ``/l.php`` discipline (API-11): the page prints 8 buttons for 4
+    distinct links, and hubcdn.io rate-limits bursts from one IP. Each
+    distinct href is hopped once, hopping stops as soon as every slot is
+    filled, production hops are kept >=1 s apart
+    (``HUBCDN_HOP_MIN_INTERVAL_S``), and a 429/403 hop stops the loop —
+    the limiter is tripped and more hops only extend the block. Injected
+    hops (tests) are never paced.
 
     ``_fetch`` / ``_hop`` are the two network edges, injectable so the parsing
     and the trust decision are testable offline. Every target is judged by
@@ -5065,8 +5118,9 @@ def unwrap_hubcdn(cloud_url: str, timeout: int = 8, *, _fetch=None,
     gateway reuses the host's stored clearance; the button hop keeps it
     through the merged cookie header :func:`_hubcdn_page` returns.
     """
-    out = {"ok": False, "r2_url": None, "google_url": None, "title": None,
-           "size_str": None}
+    out = {"ok": False, "r2_url": None, "google_url": None,
+           "gofile_url": None, "telegram_url": None, "r2_bucket": None,
+           "title": None, "size_str": None}
     if _hc is None:
         out["error"] = "host_authority_absent"
         return out
@@ -5111,16 +5165,42 @@ def unwrap_hubcdn(cloud_url: str, timeout: int = 8, *, _fetch=None,
     if cookies:
         headers["Cookie"] = cookies
     token = f"fast_{int(time.time())}"
+    # l.php discipline (API-11): the page prints 8 buttons for 4 distinct
+    # links, and hubcdn.io rate-limits bursts from one IP ("Too Many
+    # Requests"). Hop each distinct href once, stop as soon as every slot
+    # is filled, keep >=1 s between production hops, and stop hopping
+    # entirely after a 429/403 — the limiter is tripped and more hops only
+    # extend the block. Injected hops (tests) are never paced.
+    pacing = _hop is None
+    seen_hrefs: set = set()
+    last_hop_mono = None
+    rate_limited = False
     for href, label in buttons:
         if not out["size_str"]:
             size_m = re.search(r"([0-9][0-9.]*\s*(?:GB|MB))", label, re.I)
             if size_m:
                 out["size_str"] = size_m.group(1)
+        resolved = _hc.hubcdn_resolve_href(href)
+        if resolved in seen_hrefs:
+            continue
+        seen_hrefs.add(resolved)
+        if pacing and last_hop_mono is not None:
+            delay = _hubcdn_hop_delay(last_hop_mono, time.monotonic())
+            if delay > 0:
+                time.sleep(delay)
         try:
             code, location = hop(
-                _hc.hubcdn_with_token(_hc.hubcdn_resolve_href(href), token), headers)
+                _hc.hubcdn_with_token(resolved, token), headers)
         except Exception:
             continue
+        finally:
+            if pacing:
+                last_hop_mono = time.monotonic()
+        if code in (429, 403):
+            # The limiter, not the link: stop hopping; what was already
+            # collected still stands.
+            rate_limited = True
+            break
         if code not in (301, 302, 303, 307, 308) or not location:
             continue
         role = _hc.hubcdn_asset_role(location)
@@ -5128,10 +5208,23 @@ def unwrap_hubcdn(cloud_url: str, timeout: int = 8, *, _fetch=None,
             out["r2_url"] = location
         elif role == "download" and not out["google_url"]:
             out["google_url"] = location
+        elif role == "gofile" and not out["gofile_url"]:
+            out["gofile_url"] = location
+        elif role == "telegram" and not out["telegram_url"]:
+            out["telegram_url"] = location
+        if (out["r2_url"] and out["google_url"] and out["gofile_url"]
+                and out["telegram_url"]):
+            break
 
-    out["ok"] = bool(out["r2_url"] or out["google_url"])
+    if out["r2_url"]:
+        try:
+            out["r2_bucket"] = _hc.hubcdn_r2_bucket(out["r2_url"])
+        except Exception:  # noqa: BLE001 — an unparsed bucket is None
+            out["r2_bucket"] = None
+    out["ok"] = bool(out["r2_url"] or out["google_url"] or out["gofile_url"])
     if not out["ok"] and "error" not in out:
-        out["error"] = "no_trusted_asset_in_any_redirect"
+        out["error"] = ("hubcdn_rate_limited" if rate_limited
+                        else "no_trusted_asset_in_any_redirect")
     return out
 
 
@@ -8968,6 +9061,65 @@ def _verdict_from_unwrap(verdict: dict) -> dict:
             "renditions": [], "failure": None}
 
 
+def _hubcdn_pick_mirror(res: dict, *, want: str, _probe=None,
+                        _gofile_unwrap=None):
+    """Try one ``/l.php`` fan-out's mirrors in order; return the first playable.
+
+    Order is R2 -> Google -> Gofile: the bucket copy streams, the Google
+    front downloads, the Gofile page needs its own unwrap (the gofile
+    resolver's ``verify=True`` probe IS the gate evidence for it, exactly
+    as the gofile branch treats it). Each direct candidate goes through
+    the shared Stage-2 gate (``_stage2_probe`` / ``_stage2_accept``) —
+    a 403 on a fresh R2 bucket falls through to Google instead of
+    failing the press. Telegram is never a candidate: a bot deep-link
+    is not a file.
+
+    Returns ``(url, verdict, embed_verdict, is_temporary, r2_bucket)``:
+    ``verdict`` is the Stage-2 verdict for an R2/Google win (None for a
+    Gofile win, where ``embed_verdict`` carries the gofile unwrapper's
+    own verdict instead); ``is_temporary`` is 0 only for an R2 URL on a
+    proven bucket — every other win is temporary. All-None (with
+    ``is_temporary`` 1) when no mirror proved playable. Never raises: a
+    failing probe or unwrap is a skipped mirror, not a crash.
+    """
+    probe = _probe or _stage2_probe
+    r2_url = (res or {}).get("r2_url")
+    google_url = (res or {}).get("google_url")
+    r2_bucket = None
+    if r2_url:
+        try:
+            r2_bucket = _hc.hubcdn_r2_bucket(r2_url) if _hc is not None else None
+        except Exception:  # noqa: BLE001 — an unparsed bucket is None
+            r2_bucket = None
+    candidates = []
+    if r2_url:
+        candidates.append(
+            (r2_url, 0 if hubcdn_r2_is_permanent(r2_url) else 1, r2_bucket))
+    if google_url:
+        candidates.append((google_url, 1, None))
+    for url, temp, bucket in candidates:
+        try:
+            verdict = probe(url)
+        except Exception:  # noqa: BLE001 — a failing probe skips a mirror
+            continue
+        try:
+            accepted = _stage2_accept(verdict, want)
+        except Exception:  # noqa: BLE001 — an unjudgeable verdict refuses
+            accepted = False
+        if accepted:
+            return (url, verdict, None, temp, bucket)
+    gofile_url = (res or {}).get("gofile_url")
+    if gofile_url and _gofile_unwrap is not None:
+        try:
+            verdict = _gofile_unwrap(gofile_url)
+        except Exception:  # noqa: BLE001 — a failing unwrap skips a mirror
+            verdict = None
+        if (isinstance(verdict, dict) and verdict.get("status") == "active"
+                and verdict.get("final_url")):
+            return (verdict["final_url"], None, verdict, 1, None)
+    return (None, None, None, 1, None)
+
+
 def _record_resolve_failure_on(conn, source_id: int, failure_class: str,
                                *, now: float | None = None) -> None:
     """The negative-cache write itself, on the caller's connection.
@@ -9544,6 +9696,14 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
     _hubcloud_path = False
     _hubcloud_candidates = None
     _hubcloud_signed_ttl = None
+    # HubCDN mirror fall-through (API-11): set only by the hubcdn branch
+    # when its mirror loop already Stage-2 gated the winner. The shared
+    # gate below then skips its own probe of that URL; the bucket and
+    # the mirror set ride in the answer for the bank.
+    _hubcdn_verdict = None
+    _hubcdn_verdict_ready = False
+    _hubcdn_r2_bucket = None
+    _hubcdn_mirrors = None
     # The dispatch chain below is a matcher, not a probe: when no branch
     # matches, nothing was contacted and nothing was measured. The failure
     # circuit in resolved_cache may only open on measured evidence, so the
@@ -9803,11 +9963,39 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                 _unwrap_branch_taken = True
                 res = unwrap_hubcdn(hoster_input("hubcdn"), clearance=_clearance)
                 if res.get("ok"):
-                    # The R2 bucket copy is the streamable asset; the Google
-                    # front is its download twin. Both are durable Category A
-                    # bytes, so no token window applies to the refreshed URL.
-                    fresh_url = res.get("r2_url") or res.get("google_url")
-                    fresh_temp = 0
+                    # The fan-out's mirrors are tried in order — R2, then
+                    # Google, then Gofile — each through the Stage-2 gate,
+                    # so a 403 on a fresh R2 bucket falls through to the
+                    # next mirror instead of failing the press. R2 is
+                    # permanent ONLY on a proven bucket; every other win
+                    # is temporary. The mirror set rides in the answer
+                    # for observability; the winner is what gets banked.
+                    _hubcdn_mirrors = {
+                        "r2": res.get("r2_url"),
+                        "google": res.get("google_url"),
+                        "gofile": res.get("gofile_url"),
+                        "telegram": res.get("telegram_url"),
+                    }
+                    (_hubcdn_url, _hubcdn_verdict, _hubcdn_embed,
+                     _hubcdn_temp, _hubcdn_r2_bucket) = _hubcdn_pick_mirror(
+                        res, want=want,
+                        _gofile_unwrap=(
+                            (lambda u: hr.unwrap_gofile(u, verify=True))
+                            if hr else None))
+                    if _hubcdn_url:
+                        fresh_url = _hubcdn_url
+                        fresh_temp = _hubcdn_temp
+                        if _hubcdn_embed is not None:
+                            # Gofile win: the unwrapper's own verified
+                            # probe is the gate evidence (same pattern
+                            # as the gofile branch).
+                            embed_verdict = _hubcdn_embed
+                            _gate_from_verdict = True
+                        elif _hubcdn_verdict is not None:
+                            # R2/Google win: already Stage-2 gated by
+                            # the mirror loop; the shared block below
+                            # must not re-probe the winner.
+                            _hubcdn_verdict_ready = True
             elif (service == "direct_cloud" or "direct-cloud" in source_u.lower()
                   or "direct-cloud" in cached_u.lower()):
                 _unwrap_branch_taken = True
@@ -10700,6 +10888,11 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
             # host requires; re-probing bare would fail a proven link
             # (gofile 302s, streamwish 403s) or prove the same bytes twice.
             fresh_verdict = _verdict_from_unwrap(embed_verdict)
+        elif _hubcdn_verdict_ready and _hubcdn_verdict is not None:
+            # HubCDN mirror fall-through (API-11): the mirror loop
+            # already Stage-2 gated this winner; probing it again would
+            # spend a second request proving the same bytes.
+            fresh_verdict = _hubcdn_verdict
         else:
             fresh_verdict = _stage2_probe(fresh_url)
         if not _stage2_accept(fresh_verdict, want):
@@ -10873,6 +11066,8 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
             "source_name": src["source_name"],
             "mime_type": src.get("mime_type"),
             "file_size_bytes": src.get("file_size_bytes"),
+            "r2_bucket": _hubcdn_r2_bucket,
+            "hubcdn_mirrors": _hubcdn_mirrors,
             **_expiry_fields(src),
         }
 
