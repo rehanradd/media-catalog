@@ -298,16 +298,26 @@ class Service:
     def tuning_consumers(self, actor):
         """Honest labelling per tuning control (OD-04 pattern).
 
-        A read-only grep of the VM Fast_Fetch code on 2026-11-05 found
-        NO consumer for 13 of the 20 controls. Only the ones that ride
-        in remote-config reach the app (VIP prices via monetization,
-        free quality cap, the theme knobs and hero_max via the public
-        config). The rest are stored, not yet applied by the backend —
-        labelled, never pretended."""
+        Re-verified 2026-11-24 against main ef15f2fc: every one of the
+        24 controls now has a consumer, so none is stored-only. The
+        2026-11-05 grep that found "NO consumer for 13 of the 20
+        controls" predates the wiring that landed since: the 11
+        backend knobs are read by Fast_Fetch through
+        panel_feed.tuning_knob / read_tuning_knobs (batch resolver,
+        play route, resolved cache, prefetch pool, play rate limit,
+        catalog sync, domain re-verify), and the other 13 ride the
+        public remote-config / panel feed the app already polls
+        (viewer.py /api/v1/app/remote-config serves theme, tabs and
+        disclaimer via panel_feed, the free cap gates the free
+        listing, and the section caps bound the feed builder).
+        A key with no entry here still answers "stored, not yet
+        applied by the backend" — that is the fail-closed label for
+        a future control, and test_tuning_consumers.py fails if any
+        current key hits it, so a new dead knob breaks the test
+        instead of silently labelling itself honest.
+        """
         self.require_role(actor, write=False)
-        applied = {"vip_monthly_pkr": "remote-config (app reads it)",
-                   "vip_yearly_pkr": "remote-config (app reads it)",
-                   "free_quality_cap": "remote-config (app reads it)",
+        applied = {"free_quality_cap": "remote-config (app reads it)",
                    "theme_mode": "remote-config (app reads it)",
                    "theme_accent": "remote-config (app reads it)",
                    "theme_dynamic_color": "remote-config (app reads it)",
@@ -319,7 +329,18 @@ class Service:
                    "disclaimer_version": "remote-config (app reads it)",
                    "disclaimer_email": "remote-config (app reads it)",
                    "home_sections_max": "panel feed (server applies it)",
-                   "section_cap": "panel feed (server applies it)"}
+                   "section_cap": "panel feed (server applies it)",
+                   "resolver_concurrency": "backend batch resolver (panel_feed.tuning_knob)",
+                   "candidate_cap": "backend play route (panel_feed.tuning_knob)",
+                   "cache_ttl_h": "backend resolved cache (panel_feed.tuning_knob)",
+                   "warmup_count": "backend prefetch pool (panel_feed.tuning_knob)",
+                   "warmup_interval_h": "backend prefetch pool (panel_feed.tuning_knob)",
+                   "rate_limit_play_per_min": "backend play rate limit (panel_feed.tuning_knob)",
+                   "import_cap": "backend catalog sync (panel_feed.tuning_knob)",
+                   "import_concurrency": "backend catalog sync (panel_feed.tuning_knob)",
+                   "prefetch_queue": "backend prefetch pool (panel_feed.tuning_knob)",
+                   "prefetch_concurrency": "backend prefetch pool (panel_feed.tuning_knob)",
+                   "domain_check_interval_min": "backend domain re-verify (panel_feed.tuning_knob)"}
         out = {}
         for name in TUNING_DEFAULTS:
             out[name] = applied.get(name, "stored, not yet applied by the backend")
