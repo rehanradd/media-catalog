@@ -147,6 +147,15 @@
     <string name="detail_download_episode_hint">Tap an episode to save it now. Tick more than one to save them all at the same quality.</string>
     <string name="detail_size_unknown">Size unknown</string>
     <string name="detail_latest_episode">Latest episode</string>
+    <!-- Audit Detail #1/#3/#5/#10 (Nov 2026): the Video row, the cam
+         warning card, the stale-details note, and the dimmed-tiles
+         line — all plain words, no invented numbers. -->
+    <string name="detail_sheet_choose_quality">Choose quality</string>
+    <string name="detail_video_quality">Video: %1$s</string>
+    <string name="detail_cam_warning">Some copies here are cam recordings — low quality.</string>
+    <string name="detail_report_copy">Report copy</string>
+    <string name="detail_showing_saved">Showing saved details.</string>
+    <string name="detail_dimmed_no_copy">Dimmed episodes have no playable copy yet.</string>
     <!-- Detail redesign (Nov 2026): Cast lives on the Detail page now — the
          button's description. Named detail_*, not player_*: the player copy
          test owns the player_* vocabulary and scans PlayerScreen only. -->

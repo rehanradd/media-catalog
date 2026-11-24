@@ -281,7 +281,7 @@ class NestedScrollCrashTest {
                 )
             }
         }
-        compose.onAllNodesWithText("Dune")[0].performScrollTo().assertIsDisplayed()
+        compose.onAllNodesWithText("Dune", useUnmergedTree = true)[0].performScrollTo().assertIsDisplayed()
     }
 
     @Test
@@ -443,7 +443,7 @@ class NestedScrollCrashTest {
                 )
             }
         }
-        compose.onAllNodesWithText("Jawan")[0].assertIsDisplayed()
+        compose.onAllNodesWithText("Jawan", useUnmergedTree = true)[0].assertIsDisplayed()
     }
 
     @Test
@@ -472,7 +472,7 @@ class NestedScrollCrashTest {
                 )
             }
         }
-        compose.onAllNodesWithText("Jawan")[0].assertIsDisplayed()
+        compose.onAllNodesWithText("Jawan", useUnmergedTree = true)[0].assertIsDisplayed()
         // S6: the error row is the grid's last item — with 8 posts it sits
         // below the fold, and a Lazy grid only composes visible items, so
         // the test drags it into view first (a controlled drag, not a

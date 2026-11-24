@@ -315,9 +315,12 @@ fun PosterCard(
             if (posterUrl == null) {
                 ImageFallbackCard(
                     modifier = Modifier.fillMaxSize(),
-                    // F6 (Batch A): the full title, not initials — the tile
-                    // must say which title has no poster.
-                    label = title,
+                    // Audit #9 (Nov 2026): the caption below the poster
+                    // already carries the title — the fallback paints
+                    // the logo + initials only, never the title twice.
+                    // (F6's full title was the duplication the audit
+                    // caught.)
+                    label = channelMonogram(title),
                 )
             } else {
                 CatalogImage(
@@ -326,7 +329,9 @@ fun PosterCard(
                     modifier = Modifier.fillMaxSize(),
                     // A dead poster URL must not look like "no artwork exists" — the
                     // branded fallback says what failed, and keeps the title readable.
-                    fallbackLabel = title,
+                    // Audit #9 (Nov 2026): initials only here too — the caption below
+                    // carries the title.
+                    fallbackLabel = channelMonogram(title),
                     onBitmap = { posterBitmap = it },
                     accentTint = posterAccent,
                 )

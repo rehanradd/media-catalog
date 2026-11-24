@@ -1,6 +1,7 @@
 package com.raddstream.app.ui.screens
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
@@ -109,7 +110,7 @@ class SearchDiscoveryTest {
         var clicked: Post? = null
         setDiscovery(onPostClick = { clicked = it })
 
-        compose.onAllNodesWithText("Dune")[0].performClick()
+        compose.onAllNodesWithText("Dune", useUnmergedTree = true)[0].performClick()
         assertEquals(1, clicked?.id)
     }
 
@@ -158,7 +159,13 @@ class SearchDiscoveryTest {
             // positionInRoot, not boundsInRoot: the latter clips to the
             // visible window, so a below-fold row reports the window's edge
             // instead of its layout position (see the order test above).
-            compose.onNodeWithText(it).fetchSemanticsNode().positionInRoot.y
+            // The tile root, not the caption: the caption sits below the
+            // poster, so its top inherits the grid's 1px column rounding
+            // (poster height follows tile width), while the tile roots are
+            // the row tops exactly. The tile speaks one a11y sentence —
+            // title, year and type — so the root is found by that prefix.
+            compose.onNode(hasContentDescription("$it, 2024 · Movie", substring = true))
+                .fetchSemanticsNode().positionInRoot.y
         }
         assertEquals("First grid row must share a top", tops[0], tops[1])
         assertEquals("First grid row must share a top", tops[0], tops[2])

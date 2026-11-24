@@ -481,15 +481,54 @@ class PaparazziPreviewTest {
                     post = jawanDetail,
                     seasons = emptyList(),
                     workPrints = moviePrints,
-                    capabilities = listOf("Hindi audio", "English subtitles"),
+                    capabilities = listOf("Hindi audio"),
                     isSeries = false,
                     resume = null,
                     includedPill = "VIP",
                     // 2-button detail (Nov 2026): the page shows two
                     // buttons, not rung cards — the golden records them.
-                    playLabel = "Play · 1080p",
+                    // Audit Detail #1/#2/#3/#4 (Nov 2026): Play names no
+                    // quality — the Video row below it does ("Auto · up
+                    // to 1080p"); Download names the band and the
+                    // server's size; the CAM print earns the warning
+                    // card; the audio is the original Hindi, so no
+                    // "(dubbed)".
+                    playLabel = "Play",
                     playEnabled = true,
-                    downloadLabel = "Download",
+                    videoQualityText = "Auto · up to 1080p",
+                    downloadLabel = "Download · 1080p · 1.3 GB",
+                    downloadEnabled = true,
+                    onOpenSeason = {},
+                    similarTitles = listOf(salaars, mclintock),
+                    reloadError = null,
+                    onRetryReload = {},
+                    isFavorite = false,
+                    onToggleFavorite = {},
+                    onShare = {},
+                    contentPadding = PaddingValues(0.dp),
+                )
+            }
+        }
+    }
+
+    @Test
+    fun detailMovieQualityPicked() {
+        // Audit Detail #1/#2 (Nov 2026): a picked band shows in the
+        // Video row and in the Download label, and Play stays plain.
+        paparazzi.snapshot {
+            themed {
+                DetailContent(
+                    post = jawanDetail,
+                    seasons = emptyList(),
+                    workPrints = moviePrints,
+                    capabilities = listOf("Hindi audio"),
+                    isSeries = false,
+                    resume = null,
+                    includedPill = "VIP",
+                    playLabel = "Play",
+                    playEnabled = true,
+                    videoQualityText = "720p",
+                    downloadLabel = "Download · 720p · 1.3 GB",
                     downloadEnabled = true,
                     onOpenSeason = {},
                     similarTitles = listOf(salaars, mclintock),
@@ -512,14 +551,15 @@ class PaparazziPreviewTest {
                     post = jawanDetail,
                     seasons = emptyList(),
                     workPrints = moviePrints,
-                    capabilities = listOf("Hindi audio", "English subtitles"),
+                    capabilities = listOf("Hindi audio"),
                     isSeries = false,
                     resume = null,
                     includedPill = "VIP",
                     onOpenSeason = {},
-                    playLabel = "Play · 1080p",
+                    playLabel = "Play",
                     playEnabled = true,
-                    downloadLabel = "Download",
+                    videoQualityText = "Auto · up to 1080p",
+                    downloadLabel = "Download · 1080p · 1.3 GB",
                     downloadEnabled = true,
                     similarTitles = listOf(salaars, mclintock),
                     reloadError = "Could not refresh this title.",
@@ -602,16 +642,21 @@ class PaparazziPreviewTest {
                     post = seriesDetail,
                     seasons = seriesSeasons,
                     workPrints = emptyList(),
-                    capabilities = listOf("English audio", "Hindi subtitles"),
+                    capabilities = listOf("Hindi audio"),
                     isSeries = true,
                     resume = ResumePoint(season = 1, episode = 2, positionMs = 1_200_000L, durationMs = 3_000_000L),
                     includedPill = "Free · up to 720p",
                     onOpenSeason = {},
                     // 2-button detail (Nov 2026): resume names the
-                    // episode and the quality; the golden records it.
-                    playLabel = "Resume S1:E2 · 720p",
+                    // episode and the time left; the quality lives in
+                    // the Video row below it, never in the button.
+                    // Audit Detail #4: the prints are Hindi audio on
+                    // an English work, so the Audio row reads
+                    // "Hindi (dubbed)".
+                    playLabel = "Resume S1:E2 · 30 min left",
                     playEnabled = true,
-                    downloadLabel = "Download",
+                    videoQualityText = "Auto · up to 720p",
+                    downloadLabel = "Download S1:E2 · 720p · 1.3 GB",
                     downloadEnabled = true,
                     similarTitles = listOf(jawan, mclintock),
                     reloadError = null,

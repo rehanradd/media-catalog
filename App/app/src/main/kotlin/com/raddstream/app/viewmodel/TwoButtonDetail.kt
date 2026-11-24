@@ -54,7 +54,19 @@ fun bestForLine(band: String): String? = when (band.trim().lowercase()) {
 fun isHlsOption(option: QualityOption): Boolean =
     option.streamCategory?.kind == StreamCategory.Kind.INSTANT_STREAM
 
-enum class QualitySheetMode { PLAY, DOWNLOAD }
+enum class QualitySheetMode {
+    PLAY,
+    DOWNLOAD,
+
+    /**
+     * Audit Detail #1 (Nov 2026): pick-only — the Video row opens the
+     * sheet to CHOOSE a quality, not to start anything. Rows tap to
+     * select the band (Auto included) and close; nothing plays, nothing
+     * saves. The rows are the PLAY rows (Auto leads, same locked/dead
+     * rules); the Recommended marker is the current selection.
+     */
+    BROWSE,
+}
 
 enum class SeriesDownloadKind { NEXT_EPISODE, WHOLE_SEASON }
 
@@ -137,20 +149,24 @@ data class QualitySheetRow(
 )
 
 /**
- * The rows of one Quality Sheet, best first. Auto leads in PLAY only;
- * DOWNLOAD has no Auto row — a download is one fixed file. A locked
- * row is shown greyed (never hidden); a dead row is shown greyed and
- * not tappable; a provider-page row opens the provider's page.
+ * The rows of one Quality Sheet, best first. Auto leads in PLAY and
+ * BROWSE; DOWNLOAD has no Auto row — a download is one fixed file. A
+ * locked row is shown greyed (never hidden); a dead row is shown greyed
+ * and not tappable; a provider-page row opens the provider's page.
+ * In BROWSE the Recommended marker is the current selection
+ * ([selectedBand], AUTO when nothing is picked); in PLAY it is Auto,
+ * in DOWNLOAD the recommended band.
  */
 fun sheetRowsFor(
     ladder: LadderForScope,
     mode: QualitySheetMode,
     premiumAccess: Boolean,
     freeQualityCap: String,
+    selectedBand: String? = null,
 ): List<QualitySheetRow> {
-    val recommended = recommendedBandFor(ladder, mode, premiumAccess, freeQualityCap)
+    val recommended = recommendedBandFor(ladder, mode, premiumAccess, freeQualityCap, selectedBand)
     val rows = mutableListOf<QualitySheetRow>()
-    if (mode == QualitySheetMode.PLAY && ladder.autoOption != null) {
+    if ((mode == QualitySheetMode.PLAY || mode == QualitySheetMode.BROWSE) && ladder.autoOption != null) {
         rows += QualitySheetRow(
             band = LadderForScope.AUTO,
             title = "Auto",
@@ -159,7 +175,7 @@ fun sheetRowsFor(
             bestFor = "Best picture your connection can handle. Changes by itself.",
             copiesNote = null,
             isAuto = true,
-            isRecommended = true,
+            isRecommended = recommended == LadderForScope.AUTO,
             isLocked = false,
             isDead = false,
             isHls = false,
@@ -183,7 +199,7 @@ fun sheetRowsFor(
             band = option.band,
             title = bandDisplayName(option.band),
             sizeLine = if (mode == QualitySheetMode.DOWNLOAD && !hls) option.sizeLine else null,
-            dataPerHour = if (mode == QualitySheetMode.PLAY) qualityCostPerHour(option.band) else null,
+            dataPerHour = if (mode == QualitySheetMode.PLAY || mode == QualitySheetMode.BROWSE) qualityCostPerHour(option.band) else null,
             bestFor = bestForLine(option.band),
             copiesNote = if (option.copies > 1) {
                 val extra = option.copies - 1
@@ -192,7 +208,7 @@ fun sheetRowsFor(
                 null
             },
             isAuto = false,
-            isRecommended = mode == QualitySheetMode.DOWNLOAD && option.band == recommended,
+            isRecommended = (mode == QualitySheetMode.DOWNLOAD || mode == QualitySheetMode.BROWSE) && option.band == recommended,
             isLocked = locked,
             isDead = dead,
             isHls = hls,
@@ -207,17 +223,23 @@ fun sheetRowsFor(
 /**
  * The row the sheet opens pre-selected. PLAY: Auto (the ladder's own
  * pointer, or its best playable rung). DOWNLOAD: 720p when a free copy
- * exists at that band, else the best free band that does. Null when the
- * ladder has nothing at all.
+ * exists at that band, else the best free band that does. BROWSE: the
+ * current selection when it still names a rung in this scope, else
+ * Auto. Null when the ladder has nothing at all.
  */
 fun recommendedBandFor(
     ladder: LadderForScope,
     mode: QualitySheetMode,
     premiumAccess: Boolean,
     freeQualityCap: String,
+    selectedBand: String? = null,
 ): String? {
     if (ladder.isEmpty) return null
     if (mode == QualitySheetMode.PLAY) return LadderForScope.AUTO
+    if (mode == QualitySheetMode.BROWSE) {
+        return selectedBand?.takeIf { band -> ladder.options.any { it.band == band } }
+            ?: LadderForScope.AUTO
+    }
     val free = ladder.options.filter { option ->
         VipQualityGate.allowsBand(option.band, premiumAccess, freeQualityCap) &&
             !( !premiumAccess && VipQualityGate.isPremiumLabel(option.title, freeQualityCap) )
@@ -226,6 +248,47 @@ fun recommendedBandFor(
     return pool.firstOrNull { it.band.trim().lowercase() == "720p" }?.band
         ?: pool.firstOrNull { it.playsHere }?.band
         ?: pool.firstOrNull()?.band
+}
+
+/**
+ * Audit Detail #1 (Nov 2026): the Video row's value for one scope's
+ * ladder — the band the viewer picked, or what Auto reaches when
+ * nothing is picked. Null when the scope has nothing playable to
+ * choose from, so the row hides instead of offering a choice that
+ * cannot play. A picked band that no longer plays here falls back to
+ * Auto rather than stranding the row on a dead rung.
+ */
+fun videoQualityTextFor(ladder: LadderForScope, selectedBand: String?): String? {
+    val playable = ladder.options.filter { it.playsHere && it.streamId.isNotBlank() && !it.isProviderPage }
+    if (playable.isEmpty()) return null
+    val picked = selectedBand?.takeIf { it != LadderForScope.AUTO }
+        ?.let { band -> playable.firstOrNull { it.band == band } }
+    if (picked != null) return picked.band
+    val best = ladder.effectiveAutoBand ?: playable.first().band
+    return "Auto · up to $best"
+}
+
+/**
+ * Audit Detail #2 (Nov 2026): the Download button's label — the cost
+ * before the tap, never after. The band is the viewer's pick when one
+ * is set, else the sheet's recommended band; the size is the server's
+ * own size line, omitted when it named none — never invented. A series
+ * names its episode, so the tap's target is unambiguous.
+ */
+fun downloadLabelFor(
+    band: String?,
+    sizeLine: String?,
+    season: Int?,
+    episode: Int?,
+    downloaded: Boolean,
+): String {
+    if (downloaded) return "✓ Downloaded"
+    return buildString {
+        append("Download")
+        if (season != null && episode != null) append(" S$season:E$episode")
+        if (band != null) append(" · $band")
+        if (sizeLine != null) append(" · $sizeLine")
+    }
 }
 
 /**

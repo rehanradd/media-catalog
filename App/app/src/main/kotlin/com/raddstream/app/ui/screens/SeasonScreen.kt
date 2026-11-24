@@ -483,6 +483,14 @@ fun SeasonScreen(
                             }
                         }
                     }
+                    // Audit Detail #10 (Nov 2026): a dimmed tile looks
+                    // like a bug until the screen says why — one line,
+                    // only when some tile has no playable copy.
+                    if (tiles.any { !it.playable }) {
+                        item {
+                            UnplayableTilesNote()
+                        }
+                    }
                     // 2-button detail (Nov 2026): per-episode download —
                     // a button under the tiles opens the episode sheet.
                     if (!state.kidsMode && tiles.isNotEmpty()) {
@@ -554,6 +562,22 @@ fun SeasonScreen(
             }
         }
     }
+}
+
+/**
+ * Audit Detail #10 (Nov 2026): the one line that explains dimmed
+ * episode tiles — they have no playable copy yet, they are not broken
+ * buttons. Extracted so the test can compose it without the full
+ * season screen.
+ */
+@Composable
+internal fun UnplayableTilesNote(modifier: Modifier = Modifier) {
+    Text(
+        text = stringResource(R.string.detail_dimmed_no_copy),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = modifier.fillMaxWidth(),
+    )
 }
 
 /**

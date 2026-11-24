@@ -238,6 +238,14 @@ data class DetailUiState(
     val playEnabled: Boolean = false,
     /** The plain line under Play: why it is greyed, or where it will play. */
     val playHint: String? = null,
+    /**
+     * Audit Detail #1 (Nov 2026): the Video row's value — the picked
+     * band, or what Auto reaches. Null when this title has no playable
+     * qualities to choose from, so the row hides. Computed in
+     * [DetailViewModel.publishPrimaryActions] from the same scope Play
+     * reads, so the row and the tap can never disagree.
+     */
+    val videoQualityText: String? = null,
     val downloadLabel: String = "Download",
     val downloadEnabled: Boolean = false,
     /** The plain line under Download: why it is greyed, or what it will save. */
@@ -902,6 +910,22 @@ class DetailViewModel @Inject constructor(
     }
 
     /**
+     * Audit Detail #1 (Nov 2026): the ladder the Video row chooses
+     * from — the next episode's for a series (the same scope Play
+     * uses), the whole work's otherwise. A series episode with no
+     * ladder falls back to the whole-work ladder, which is EMPTY for a
+     * multi-episode series by design — so the row hides there instead
+     * of offering another episode's qualities.
+     */
+    private fun videoScopeLadder(state: DetailUiState = _uiState.value): LadderForScope {
+        val layout = state.layout ?: return state.ladder
+        if (!layout.isSeriesLike) return state.ladder
+        val next = nextUnwatchedEpisode(layout, state.episodeProgress) ?: return state.ladder
+        val episodeLadder = ladderForEpisode(next.first, next.second)
+        return if (episodeLadder.isEmpty) state.ladder else episodeLadder
+    }
+
+    /**
      * The two buttons, computed from the same state the decision tree
      * reads — labels, enabled state and hints can never disagree with
      * what the tap does. Called whenever the inputs change: detail
@@ -920,12 +944,16 @@ class DetailViewModel @Inject constructor(
         val canPlay = resume != null || bestPrint != null
 
         // --- Play -------------------------------------------------------
+        // Audit Detail #1 (Nov 2026): the button no longer bakes a
+        // quality into its label — the Video row below it carries the
+        // quality now ("Video: 720p" / "Video: Auto · up to 1080p").
+        // Resume keeps its episode + time left: that is resume info,
+        // not a quality claim.
         var playLabel: String
         var playHint: String? = null
         when {
             resume != null -> {
-                val band = layout?.let { resumePrintFor(it, resume)?.resolution?.wire }
-                playLabel = if (band != null) "${resume.label} · $band" else resume.label
+                playLabel = resume.label
             }
             layout?.isSeriesLike == true -> {
                 val next = nextUnwatchedEpisode(layout, state.episodeProgress)
@@ -934,22 +962,17 @@ class DetailViewModel @Inject constructor(
                     playHint = state.deadEndReason ?: "No working link right now. Try again later."
                 } else {
                     val (season, episode) = next
-                    val band = ladderForEpisode(season, episode)
-                        .let { it.effectiveAutoBand ?: it.autoBand }
-                        ?: episodePlayPrint(layout, season, episode)?.resolution?.wire
-                    playLabel = if (band != null) "Play S$season E$episode · $band" else "Play S$season E$episode"
+                    playLabel = "Play S$season E$episode"
                 }
             }
             state.ladder.options.any { isHlsOption(it) && it.playsHere && it.streamId.isNotBlank() } -> {
-                // HLS available: the button names Auto, because that is
-                // what the tap starts — the quality changes in-player.
-                playLabel = "Play · Auto"
+                // HLS available: the tap starts Auto — the quality
+                // changes in-player.
+                playLabel = "Play"
                 playHint = "Plays instantly, quality changes while playing."
             }
             else -> {
-                val band = state.ladder.let { it.effectiveAutoBand ?: it.autoBand }
-                    ?: bestPrint?.resolution?.wire
-                playLabel = if (band != null) "Play · $band" else "Play"
+                playLabel = "Play"
             }
         }
         if (providerOnly) {
@@ -962,8 +985,33 @@ class DetailViewModel @Inject constructor(
         }
 
         // --- Download ---------------------------------------------------
+        // Audit Detail #2 (Nov 2026): the button names its cost before
+        // the tap — the band and the size the server named, never
+        // invented. A series names its episode too. The band is the
+        // viewer's Video-row pick when one is set, else the sheet's
+        // recommended band.
         val downloadedUri = downloadedUriForTitle()
-        val downloadLabel = if (downloadedUri != null) "✓ Downloaded" else "Download"
+        val videoLadder = videoScopeLadder(state)
+        val videoQualityText = videoQualityTextFor(videoLadder, state.selectedBand)
+        val downloadLabel = if (downloadedUri != null) {
+            "✓ Downloaded"
+        } else {
+            val scope = if (layout?.isSeriesLike == true) {
+                nextUnwatchedEpisode(layout, state.episodeProgress)
+            } else {
+                null
+            }
+            val picked = state.selectedBand?.takeIf { it != LadderForScope.AUTO }
+                ?.let { band ->
+                    videoLadder.options.firstOrNull {
+                        it.band == band && it.playsHere && it.streamId.isNotBlank() && !it.isProviderPage
+                    }
+                }
+            val band = picked?.band
+                ?: recommendedBandFor(videoLadder, QualitySheetMode.DOWNLOAD, premiumAccess, freeQualityCap)
+            val size = (picked ?: videoLadder.options.firstOrNull { it.band == band })?.sizeLine
+            downloadLabelFor(band, size, scope?.first, scope?.second, downloaded = false)
+        }
         val downloadEnabled = when {
             state.kidsMode -> false
             layout == null -> false
@@ -991,6 +1039,7 @@ class DetailViewModel @Inject constructor(
                 playLabel = playLabel,
                 playEnabled = playEnabled,
                 playHint = playHint,
+                videoQualityText = videoQualityText,
                 downloadLabel = downloadLabel,
                 downloadEnabled = downloadEnabled,
                 downloadHint = downloadHint,
@@ -1037,8 +1086,25 @@ class DetailViewModel @Inject constructor(
         if (_uiState.value.playStarting) return
         val state = _uiState.value
         if (state.resume != null && state.resumePlayable) {
+            // Audit Detail #1: an explicit Video-row pick plays the
+            // resume episode at that quality — the position belongs to
+            // the episode, not the print, so resuming at a picked band
+            // keeps the same place. No pick (or a pick this episode
+            // cannot play) resumes the print as before.
+            val resumeLadder = state.resume?.let { ladderForEpisode(it.season, it.episode) }
+                ?: LadderForScope.EMPTY
+            val picked = state.selectedBand?.takeIf { it != LadderForScope.AUTO }
+                ?.let { band ->
+                    resumeLadder.options.firstOrNull {
+                        it.band == band && it.playsHere && !it.isProviderPage && it.streamId.isNotBlank()
+                    }
+                }
             _uiState.update { it.copy(playStarting = true) }
-            playResume()
+            if (picked != null) {
+                playLadder(picked, ladder = resumeLadder, season = state.resume?.season, episode = state.resume?.episode)
+            } else {
+                playResume()
+            }
             return
         }
         val layout = state.layout ?: run {
@@ -1056,6 +1122,18 @@ class DetailViewModel @Inject constructor(
         val ladder = state.ladder
         val playable = ladder.options.filter { it.playsHere && !it.isProviderPage && it.streamId.isNotBlank() }
         if (playable.isNotEmpty()) {
+            // Audit Detail #1: an explicit Video-row pick plays at
+            // once — the pick outranks Auto, the same precedence the
+            // player gives an explicit tap. Without a pick, the HLS
+            // branch below still starts Auto, and the sheet still asks
+            // when two or more direct files compete.
+            val picked = state.selectedBand?.takeIf { it != LadderForScope.AUTO }
+                ?.let { band -> playable.firstOrNull { it.band == band } }
+            if (picked != null) {
+                _uiState.update { it.copy(playStarting = true) }
+                playLadder(picked)
+                return
+            }
             if (playable.any { isHlsOption(it) }) {
                 // HLS available: play directly on Auto, 1 tap; the
                 // quality switches in the player, not here.
@@ -1086,7 +1164,9 @@ class DetailViewModel @Inject constructor(
     /**
      * Play one episode: its best print, 1 tap, when it has one copy or
      * an HLS stream — or the sheet when it has two or more direct
-     * files. A series episode with no per-episode ladder at all still
+     * files. Audit Detail #1: an explicit Video-row pick plays the
+     * episode at that quality at once, the same as on the whole work.
+     * A series episode with no per-episode ladder at all still
      * plays (the player picks the picture); the in-player switch is
      * armed from the episode ladder inside [playV2Bundle] when one
      * exists, and stays unarmed when it does not — that gap is a known
@@ -1095,6 +1175,13 @@ class DetailViewModel @Inject constructor(
     private fun playEpisodeDecision(season: Int, episode: Int) {
         val ladder = ladderForEpisode(season, episode)
         val playable = ladder.options.filter { it.playsHere && !it.isProviderPage && it.streamId.isNotBlank() }
+        val picked = _uiState.value.selectedBand?.takeIf { it != LadderForScope.AUTO }
+            ?.let { band -> playable.firstOrNull { it.band == band } }
+        if (picked != null) {
+            _uiState.update { it.copy(playStarting = true) }
+            playLadder(picked, ladder = ladder, season = season, episode = episode)
+            return
+        }
         if (playable.isEmpty() || playable.any { isHlsOption(it) } || playable.size == 1) {
             _uiState.update { it.copy(playStarting = true) }
             playEpisode(season, episode)
@@ -1104,20 +1191,80 @@ class DetailViewModel @Inject constructor(
     }
 
     /** Open the quality sheet in one mode, for one ladder and scope. */
-    private fun openSheet(mode: QualitySheetMode, ladder: LadderForScope, season: Int?, episode: Int?) {
+    private fun openSheet(
+        mode: QualitySheetMode,
+        ladder: LadderForScope,
+        season: Int?,
+        episode: Int?,
+        selectedBand: String? = null,
+    ) {
         _uiState.update {
             it.copy(
                 qualitySheet = QualitySheetState(
                     mode = mode,
                     ladder = ladder,
-                    recommendedBand = recommendedBandFor(ladder, mode, premiumAccess, freeQualityCap),
+                    recommendedBand = recommendedBandFor(ladder, mode, premiumAccess, freeQualityCap, selectedBand),
                     season = season,
                     episode = episode,
-                    rows = sheetRowsFor(ladder, mode, premiumAccess, freeQualityCap),
+                    rows = sheetRowsFor(ladder, mode, premiumAccess, freeQualityCap, selectedBand),
                     title = _uiState.value.post?.let { post -> post.cleanTitle ?: post.title },
                 ),
             )
         }
+    }
+
+    /**
+     * Audit Detail #1 (Nov 2026): the Video row opens the quality
+     * sheet in browse mode — rows pick a band and close, nothing
+     * starts. The scope is the Video row's ladder; the sheet opens
+     * pre-selected on the current pick.
+     */
+    fun openQualityBrowse() {
+        val state = _uiState.value
+        val ladder = videoScopeLadder(state)
+        if (ladder.options.isEmpty()) return
+        val scope = if (state.layout?.isSeriesLike == true) {
+            nextUnwatchedEpisode(state.layout, state.episodeProgress)
+        } else {
+            null
+        }
+        openSheet(
+            QualitySheetMode.BROWSE,
+            ladder,
+            scope?.first,
+            scope?.second,
+            selectedBand = state.selectedBand,
+        )
+    }
+
+    /**
+     * Audit Detail #1 (Nov 2026): the browse sheet's pick. AUTO (or a
+     * band this scope no longer offers) clears the pick; a locked band
+     * answers with the upsell instead of changing the selection — the
+     * sheet's own rows already intercept locked taps, so this is the
+     * safety net, not the path. The labels republish, so the Video row,
+     * the Download button and the next Play tap all read the new pick.
+     */
+    fun selectQualityBand(band: String) {
+        val ladder = videoScopeLadder()
+        _uiState.update { it.copy(qualitySheet = null) }
+        if (band == LadderForScope.AUTO) {
+            _uiState.update { it.copy(selectedBand = LadderForScope.AUTO) }
+            publishPrimaryActions()
+            return
+        }
+        val option = ladder.options.firstOrNull { it.band == band }
+        if (option == null) {
+            _uiState.update { it.copy(selectedBand = LadderForScope.AUTO) }
+            publishPrimaryActions()
+            return
+        }
+        if (isLocked(option)) {
+            _uiState.update { it.copy(actionMessage = VipQualityGate.lockedMessage(freeQualityCap)) }
+            return
+        }
+        _uiState.update { it.copy(selectedBand = band) }
+        publishPrimaryActions()
     }
 
     /** A sheet row tapped in PLAY mode: close the sheet, start the copy. */

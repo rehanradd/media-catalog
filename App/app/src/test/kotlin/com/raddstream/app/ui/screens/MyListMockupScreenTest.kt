@@ -153,9 +153,9 @@ class MyListMockupScreenTest {
         // the title alone now.
         compose.onNodeWithText("Trending titles to start your list")
             .assertDoesNotExist()
-        compose.onNodeWithText("Inception").assertIsDisplayed()
-        compose.onNodeWithText("Dune").assertIsDisplayed()
-        compose.onNodeWithText("McLintock!").assertIsDisplayed()
+        compose.onNodeWithText("Inception", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithText("Dune", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithText("McLintock!", useUnmergedTree = true).assertIsDisplayed()
     }
 
     @Test
@@ -181,9 +181,9 @@ class MyListMockupScreenTest {
         // alone now, like the Trending rail above it.
         compose.onNodeWithText("New titles in the catalog")
             .assertDoesNotExist()
-        compose.onNodeWithText("Inception").assertIsDisplayed()
-        compose.onNodeWithText("Dune").assertIsDisplayed()
-        compose.onNodeWithText("McLintock!").assertIsDisplayed()
+        compose.onNodeWithText("Inception", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithText("Dune", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithText("McLintock!", useUnmergedTree = true).assertIsDisplayed()
     }
 
     // ── My List review fixes (Nov 2026) ──────────────────────────────
@@ -337,7 +337,13 @@ class MyListMockupScreenTest {
     fun hiddenBranchShowsTheTrendingRailWhenLoaded() {
         hiddenContent(popular = listOf(post(1, "Inception"), post(2, "Dune")))
         compose.onNodeWithText("Trending to Start Your List").assertIsDisplayed()
-        compose.onNodeWithText("Inception").assertIsDisplayed()
+        // Audit #9 (Nov 2026): the title is findable only in the tile's
+        // paint-only caption now — and the caption sits below the poster,
+        // below the Robolectric fold the fallback label used to clear, so
+        // the rail is scrolled into view first (as the second-rail test
+        // already does for its own rail).
+        compose.onNodeWithText("Inception", useUnmergedTree = true)
+            .performScrollTo().assertIsDisplayed()
     }
 
     @Test
@@ -350,7 +356,7 @@ class MyListMockupScreenTest {
         )
         compose.onNodeWithText("Trending to Start Your List").assertIsDisplayed()
         compose.onNodeWithText("Recently Added").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Oppenheimer").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Oppenheimer", useUnmergedTree = true).performScrollTo().assertIsDisplayed()
     }
 
     @Test
