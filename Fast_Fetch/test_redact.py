@@ -1034,6 +1034,75 @@ class NeedleSnapshotTests(FixtureMixin):
                 self.assertIsNone(redact._snapshot_text_needle_values(conn))
 
 
+class NeedleLargeDbTests(unittest.TestCase):
+    """SEC-02 (2026-11-24): the needle guard skipped the download_sources
+    scan on any DB with >= 100,000 rows unless an index literally named
+    `idx_sources_service` existed — and no schema ever created one — so
+    ~714 of 718 services never reached the needle set on the live
+    catalog. These tests pin the production-size path: with a service
+    index (under any name) the scan runs and the services land.
+    """
+
+    #: One row over the guard's 100,000-row threshold, so these tests
+    #: exercise the >= 100k path and not the small-DB path.
+    ROWS = 100_001
+    #: A service name that exists nowhere else — not in BASE_NEEDLES, not
+    #: in the registry, not in posts — so only the live scan can find it.
+    PROBE = "zzbigdbprobe"
+
+    def _make_big_ledger(self):
+        """A temp DB with ROWS download_sources rows across 718 distinct
+        services (the live catalog's count), built by init_db() so it
+        carries the schema's own indexes."""
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+        self.db_path = Path(self.temp_dir.name) / "big.db"
+        with patch.object(fast_fetch, "DB_PATH", self.db_path):
+            fast_fetch.init_db()
+        with sqlite3.connect(self.db_path) as conn:
+            rows = [(1, "svc%03d" % (i % 718), "Mirror %d" % i)
+                    for i in range(self.ROWS - 1)]
+            rows.append((1, self.PROBE, "Zzbigdbprobe Mirror"))
+            conn.executemany(
+                "INSERT INTO download_sources (release_id, service, source_name)"
+                " VALUES (?, ?, ?)",
+                rows,
+            )
+            conn.commit()
+        return self.db_path
+
+    def test_production_size_db_with_schema_index_scans_services(self):
+        self._make_big_ledger()
+        needles = redact.site_needles(self.db_path)
+        self.assertIn(self.PROBE, needles)
+        self.assertIn("svc042", needles)
+
+    def test_production_size_db_with_renamed_index_scans_services(self):
+        # The guard matches on index coverage, not on the index name: an
+        # index on service under any other name must also unlock the scan.
+        self._make_big_ledger()
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DROP INDEX IF EXISTS idx_sources_service")
+            conn.execute(
+                "CREATE INDEX idx_renamed_service_cover"
+                " ON download_sources(service)")
+            conn.commit()
+        needles = redact.site_needles(self.db_path)
+        self.assertIn(self.PROBE, needles)
+        self.assertIn("svc042", needles)
+
+    def test_production_size_db_without_any_service_index_still_skips(self):
+        # The performance guard itself is unchanged: with no index covering
+        # service on a >= 100k-row DB, the scan is still skipped — the
+        # index is what closes the gap, not an unconditional full scan.
+        self._make_big_ledger()
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DROP INDEX IF EXISTS idx_sources_service")
+            conn.commit()
+        needles = redact.site_needles(self.db_path)
+        self.assertNotIn(self.PROBE, needles)
+
+
 class TextNeedleSnapshotTests(FixtureMixin):
     """The text-vocabulary snapshot (self-check 2026-11-16): site_text_needles()
     at process start reads ~30 rows from `site_text_needle_values` instead of
