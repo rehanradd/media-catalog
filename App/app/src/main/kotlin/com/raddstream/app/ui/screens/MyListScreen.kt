@@ -335,10 +335,15 @@ internal fun MyListLoadedContent(
             // a full-span footer when the trending load produced titles, so compact
             // or scaled screens never clip either the favorites or the suggestions.
             // The shelf is a *starter* shelf: it shows only while the list is
-            // small (at most one visible favorite), so a two-save list shows
+            // small (at most five visible favorites), so a small list shows
             // it the same way in every session instead of depending on
             // whether this ViewModel was born onto one save or two.
-            if (state.popular.isNotEmpty() && state.favorites.size <= 1) {
+            // UI/UX audit Library #5 (Nov 2026): at one save the shelf
+            // vanished the moment a second title was saved — a 2-save list
+            // lost all suggestions. Five keeps discovery for small lists;
+            // the bound stays fixed, so the session-consistency rule above
+            // still holds.
+            if (state.popular.isNotEmpty() && state.favorites.size <= 5) {
                 item(
                     key = "my_list_starter_shelf",
                     span = { GridItemSpan(maxLineSpan) },
@@ -574,6 +579,15 @@ internal fun PopularRow(
                     // "★ 8.6 · 2024 · Series" line — it truncated to
                     // "S..." on every card. Rating + year only.
                     compactMeta = true,
+                    // UI/UX audit Library #2 (Nov 2026): the caption is
+                    // one line, so "Salaar: Part 1 – Ceasefire" truncated
+                    // mid-word to "Salaar: Part 1 – …" while the in-card
+                    // title already ran to two lines. The search grid
+                    // already passes 2 for the same reason (PosterCard
+                    // titleMaxLines) — the 3-up rail does the same, so
+                    // the caption reads whole and every rail card stays
+                    // the same height as its neighbours.
+                    titleMaxLines = 2,
                     modifier = Modifier.weight(1f),
                 )
             }

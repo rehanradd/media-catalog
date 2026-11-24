@@ -8,9 +8,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.ui.theme.RaddStreamTheme
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -120,6 +123,38 @@ class PosterCardTitleCleanupTest {
             )
         )
         assertTileSays("Show, 2023 · Series")
+    }
+
+    // UI/UX audit Library #1 / Home #9 (Nov 2026): the fallback poster
+    // printed the title twice — in the fallback card and in the caption
+    // below it. The fallback paints the logo + initials only now, so the
+    // full title appears exactly once on the tile (the caption carries
+    // it). channelMonogram("Jawan") is "JA" — the first two letters of a
+    // one-word title — so the tile's fallback node says "JA" and the
+    // caption is the tile's only "Jawan" text node. (An earlier draft of
+    // this test asserted "JW" and failed on both the tile and the card:
+    // "JW" is not the monogram — it was the test's error, not the code's.
+    // The fallback text is findable; the string was wrong.)
+    @Test
+    fun `the fallback paints initials, the caption carries the title`() {
+        showTile(post(title = "Jawan", cleanTitle = "Jawan", year = 2023, contentType = "movie"))
+        compose.onNodeWithText("JA", useUnmergedTree = true).assertExists()
+        val titleNodes = compose.onAllNodesWithText("Jawan", useUnmergedTree = true)
+            .fetchSemanticsNodes()
+        assertEquals("the title is painted twice on the tile", 1, titleNodes.size)
+    }
+
+    // Same audit item, pinned where the fallback is addressable on its
+    // own: the card paints the monogram and never the full title.
+    @Test
+    fun `the fallback card on its own paints the monogram, not the title`() {
+        compose.setContent {
+            RaddStreamTheme(darkTheme = true) {
+                ImageFallbackCard(label = channelMonogram("Jawan"))
+            }
+        }
+        compose.onNodeWithText("JA").assertExists()
+        compose.onNodeWithText("Jawan").assertDoesNotExist()
     }
 
     @Test

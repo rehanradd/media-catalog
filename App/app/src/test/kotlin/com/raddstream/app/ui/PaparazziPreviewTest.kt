@@ -56,6 +56,7 @@ import com.raddstream.app.ui.screens.EdgeHud
 import com.raddstream.app.ui.screens.HomeContent
 import com.raddstream.app.ui.screens.Hud
 import com.raddstream.app.ui.screens.MyListEmptyContent
+import com.raddstream.app.ui.screens.MyListLoadedContent
 import com.raddstream.app.ui.screens.TopBar
 import com.raddstream.app.ui.screens.SearchContent
 import com.raddstream.app.ui.theme.RaddStreamTheme
@@ -63,6 +64,8 @@ import com.raddstream.app.viewmodel.EpisodeGroup
 import com.raddstream.app.viewmodel.HomeSection
 import com.raddstream.app.viewmodel.GenreFilter
 import com.raddstream.app.viewmodel.HomeUiState
+import com.raddstream.app.viewmodel.ListSort
+import com.raddstream.app.viewmodel.MyListUiState
 import com.raddstream.app.viewmodel.IndustryFilter
 import com.raddstream.app.viewmodel.SearchFilters
 import com.raddstream.app.viewmodel.SearchSort
@@ -251,8 +254,13 @@ class PaparazziPreviewTest {
     // My List review (Nov 2026): the empty state — the jade heart in its
     // tinted container, the retitled starter rail, the compact
     // "★ 7.0 · 2023" meta, and the rail pulled up under the message
-    // instead of floating in a void. The first card is saved, so the shot
-    // also pins the filled jade heart against the two outline hearts.
+    // instead of floating in a void.
+    // UI/UX audit Library #6 (Nov 2026): the preview used to pass
+    // isFavorite = { it.id == 1 }, so Jawan's heart rendered filled —
+    // a save the truly-empty state can never have (the real branch only
+    // renders when state.favorites is empty, and isFavorite reads it).
+    // The preview passes false now, so the golden shows the empty state
+    // as the app paints it: three outline hearts.
     @Test
     fun myListEmptyState() {
         paparazzi.snapshot {
@@ -260,7 +268,40 @@ class PaparazziPreviewTest {
                 MyListEmptyContent(
                     popular = listOf(jawan, salaars, mclintock),
                     onPostClick = {},
-                    isFavorite = { it.id == 1 },
+                    isFavorite = { false },
+                    onToggleFavorite = {},
+                )
+            }
+        }
+    }
+
+    // UI/UX audit Library (Nov 2026): the first populated My List render —
+    // no populated golden existed (the audit judged the loaded state from
+    // code only). Two saves, one half-watched ("S2:E5 · 23 min left"), so
+    // the shot pins the count line, the sort chips, the progress bar +
+    // words on the saved tile, and the starter shelf below the grid (it
+    // shows while the list is small — Library #5, at most five saves).
+    // The rail cards carry the two-line captions (Library #2) and the
+    // initials-only fallback (Library #1) like the empty state. The shelf
+    // holds only unsaved titles in this fixture, so every shelf heart is
+    // outline — the filled heart belongs to a saved title, never to a
+    // preview of one (see Library #6 above).
+    @Test
+    fun myListPopulated() {
+        paparazzi.snapshot {
+            themed {
+                MyListLoadedContent(
+                    state = MyListUiState(
+                        favorites = listOf(jawan, salaars),
+                        sort = ListSort.RECENT,
+                        popular = listOf(mclintock),
+                        progressByPostId = mapOf(1 to 0.5f),
+                        progressLabelByPostId = mapOf(1 to "S2:E5 · 23 min left"),
+                    ),
+                    onPostClick = {},
+                    onRemove = {},
+                    onSort = {},
+                    isFavorite = { false },
                     onToggleFavorite = {},
                 )
             }

@@ -1,8 +1,13 @@
 package com.raddstream.app.ui.screens
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -22,6 +27,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.R
 import com.raddstream.app.network.models.Post
+import com.raddstream.app.ui.components.PosterCard
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.ListSort
 import com.raddstream.app.viewmodel.MyListUiState
@@ -187,6 +193,51 @@ class MyListMockupScreenTest {
         compose.onNodeWithText("McLintock!", useUnmergedTree = true).assertIsDisplayed()
     }
 
+    // UI/UX audit Library #2 (Nov 2026): the 3-up rail's caption is one
+    // line, so "Salaar: Part 1 – Ceasefire" truncated mid-word to
+    // "Salaar: Part 1 – …". The rail passes titleMaxLines = 2 now, so its
+    // cards stand one title line taller than the same tiles at one line.
+    // The painted texts are cleared from semantics (one spoken sentence
+    // per tile), so this pins geometry, not words — the PosterCard search
+    // grid test pins its two-line slot the same way. The comparison row
+    // reproduces the rail's geometry exactly (same width, padding and
+    // spacing, compact meta on both sides), so the only height difference
+    // is the title slot.
+    @Test
+    fun popularRowTitlesGetTwoLines() {
+        val railTitles = listOf("Alpha One", "Alpha Two", "Alpha Three")
+        val gridTitles = listOf("Beta One", "Beta Two", "Beta Three")
+        compose.setContent {
+            RaddStreamTheme {
+                Column(Modifier.width(390.dp)) {
+                    PopularRow(
+                        popular = railTitles.mapIndexed { i, title -> post(i + 1, title) },
+                        onPostClick = {},
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        gridTitles.mapIndexed { i, title -> post(i + 11, title) }.forEach { tile ->
+                            PosterCard(
+                                post = tile,
+                                onClick = {},
+                                compactMeta = true,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        fun heightFor(title: String): Float =
+            compose.onNode(hasContentDescription(title, substring = true))
+                .fetchSemanticsNode().boundsInRoot.height
+        val rail = heightFor("Alpha One")
+        val grid = heightFor("Beta One")
+        assertTrue("rail card ($rail px) is not taller than the one-line card ($grid px)", rail > grid)
+    }
+
     // ── My List review fixes (Nov 2026) ──────────────────────────────
 
     private fun loadedState(
@@ -269,14 +320,38 @@ class MyListMockupScreenTest {
     }
 
     @Test
-    fun starterShelfHidesOnceTheListGrows() {
-        // My List review (Nov 2026): the shelf is a *starter* shelf —
-        // a two-save list shows it the same way in every session,
-        // whether the ViewModel was born onto one save or two.
+    fun starterShelfShowsWithTwoSaves() {
+        // UI/UX audit Library #5 (Nov 2026): the shelf used to vanish
+        // the moment a second title was saved (favorites.size <= 1) —
+        // a 2-save list lost all suggestions. The shelf stays while the
+        // list is small (at most five saves).
         loadedContent(
             loadedState(
                 favorites = listOf(post(1, "Inception"), post(2, "Dune")),
                 popular = listOf(post(3, "McLintock!"), post(4, "Gen V")),
+            ),
+        )
+        compose.onNodeWithText("Trending to Start Your List").assertIsDisplayed()
+    }
+
+    @Test
+    fun starterShelfHidesOnceTheListGrows() {
+        // My List review (Nov 2026): the shelf is a *starter* shelf —
+        // a small list shows it the same way in every session, whether
+        // the ViewModel was born onto one save or two. UI/UX audit
+        // Library #5 (Nov 2026): "small" is five saves, not one — the
+        // shelf leaves once the list is established.
+        loadedContent(
+            loadedState(
+                favorites = listOf(
+                    post(1, "Inception"),
+                    post(2, "Dune"),
+                    post(3, "McLintock!"),
+                    post(4, "Gen V"),
+                    post(5, "Oppenheimer"),
+                    post(6, "Jawan"),
+                ),
+                popular = listOf(post(7, "Salaar"), post(8, "Dune 2")),
             ),
         )
         compose.onNodeWithText("Trending to Start Your List").assertDoesNotExist()
