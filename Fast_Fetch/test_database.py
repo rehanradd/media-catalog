@@ -2481,7 +2481,7 @@ class DatabaseSaveTests(unittest.TestCase):
                 "content_type": "video/mp4", "http_status": 206,
                 "size_bytes": 2000000000}
 
-        def unwrap_filepress(self, url, fetch=None, verify=True):
+        def unwrap_filepress(self, url, fetch=None, verify=True, **_kw):
             self.calls.append(("filepress", url, verify))
             return self.verdict or {
                 "status": "active",
