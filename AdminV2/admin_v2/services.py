@@ -127,6 +127,20 @@ PAUSE_TARGETS = {
     "import_global", "prefetch_global", "source", "section", "category",
     "feature", "broadcast", "domain_checks",
 }
+# Feature pause -> live catalog column. The app reads these flags from
+# the catalog row (the remote-config route AND the press/mint quality
+# gate both read the row directly), so a pause must write the row, not
+# just the panel's own fixture fold. "coins" is the panel spelling of
+# coins_enabled. A feature name with no entry here has no live column:
+# pausing it stays snapshot-only, and the serve-time fold still hides
+# it from remote-config.
+FEATURE_PAUSE_COLUMNS = {
+    "downloads": "feature_downloads",
+    "pure_cinema": "feature_pure_cinema",
+    "chromecast": "feature_chromecast",
+    "quality_gate": "feature_quality_gate",
+    "coins": "coins_enabled",
+}
 TUNING_BOUNDS = {
     "resolver_concurrency": (1, 4), "candidate_cap": (3, 20),
     "cache_ttl_h": (1, 24), "warmup_count": (0, 200),
@@ -2563,6 +2577,40 @@ class Service:
             "SELECT * FROM pauses WHERE is_paused=1 AND resumed_at IS NULL ORDER BY id DESC").fetchall()
         return {"items": [_row(r) for r in rows]}
 
+    def _write_feature_pause_live(self, target_id, paused, expected_version):
+        """Write one feature flag to the live catalog row (PNL-11).
+
+        A pause is only real when the app sees it, and the app reads the
+        catalog row — the remote-config route AND the press-time quality
+        gate both read the row directly, so the panel's fixture fold
+        alone never reached them. Pausing writes 0; resuming restores
+        the DRAFT value (a pause never changed the draft, so the draft
+        is what the operator last published). Same catalog-first rule
+        as _do_publish (section 3.1): the live write happens before
+        the pause row / version bump, so a failure leaves the pause
+        unrecorded and the version untouched, and the operator gets
+        the real reason instead of a half-paused state. Unknown feature
+        names and a missing live store are no-ops (today's behaviour).
+        """
+        column = FEATURE_PAUSE_COLUMNS.get(str(target_id))
+        if column is None:
+            return
+        live = self._live_catalog()
+        if live is None:
+            return
+        if paused:
+            value = 0
+        else:
+            value = int(self._config_row().get(column) or 0)
+        try:
+            live.save_remote_config({column: value},
+                                    config_version=expected_version)
+        except ApiError:
+            raise
+        except Exception as exc:
+            raise ApiError("internal",
+                           "The live catalog could not be updated: %s" % exc, 500)
+
     def pause(self, actor, body, ip=""):
         self.require_role(actor, write=True)
         self._validate_body(body, {"target_type", "target_id", "reason"})
@@ -2572,6 +2620,14 @@ class Service:
             raise bad("A pause needs a reason.")
         if self.is_paused(body["target_type"], body["target_id"]):
             raise conflict("That target is already paused.")
+        if body["target_type"] == "feature":
+            # PNL-11: the flag goes to the live catalog first (section
+            # 3.1) — the app reads the row, so a pause that only bumped
+            # the version never reached it. A failure here raises before
+            # the pause row exists, so the version stays untouched.
+            expected_version = self._config_row()["config_version"] + 1
+            self._write_feature_pause_live(body["target_id"], True,
+                                           expected_version)
         with WRITE_LOCK:
             cur = self.admin.execute(
                 "INSERT INTO pauses (target_type, target_id, is_paused, reason, paused_by, paused_at) "
@@ -2594,6 +2650,14 @@ class Service:
             raise not_found()
         if row["resumed_at"]:
             raise conflict("That pause is already resumed.")
+        if row["target_type"] == "feature":
+            # PNL-11: resume restores the draft value to the live row
+            # first (section 3.1) — a failure here raises before the
+            # pause is marked resumed, so the version stays untouched
+            # and a retry works.
+            expected_version = self._config_row()["config_version"] + 1
+            self._write_feature_pause_live(row["target_id"], False,
+                                           expected_version)
         with WRITE_LOCK:
             self.admin.execute(
                 "UPDATE pauses SET resumed_at=?, resumed_by=? WHERE id=?",
