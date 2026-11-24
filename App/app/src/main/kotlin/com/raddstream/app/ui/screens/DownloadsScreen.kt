@@ -714,6 +714,20 @@ internal fun KeptItemRow(
                         )
                     }
                 }
+                KeepState.GATED -> {
+                    // Phase 4 (Downloads #4): gated, not downloading — no
+                    // bar, just the reason, same shape as the QUEUED branch.
+                    // (Fix 2026-11-24: this branch was missing and the
+                    // 'when' failed to compile — GATED is the 8th state.)
+                    Text(statusLine(item), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
+                    bytesSavedLine(item.bytesDownloaded, item.bytesTotal, item.percent)?.let { saved ->
+                        Text(
+                            saved,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
                 KeepState.PAUSED, KeepState.FAILED -> {
                     // Phase 4 (Downloads #2): a stalled row keeps its
                     // progress — a dimmed bar at the saved share.

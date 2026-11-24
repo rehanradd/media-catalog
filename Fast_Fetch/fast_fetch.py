@@ -8702,7 +8702,16 @@ RESOLVE_FAILURE_CLASSES = ("probe_failed", "no_unwrapper", "unwrap_failed")
 #: for them are stale. (Versions 8–12 are the stacked filemoon /
 #: vidmoly / moviehax / kmhd / hubcloud-oneround bumps; this branch was
 #: built on main and rebased onto them, so the number jumps 7 -> 13.)
-RESOLVER_VERSION = 13
+#: 14 — FIX2 mp4moviez dl.php unwrapper (2026-11-23): the stored
+#: dl.php endpoint follows a pure 3-hop redirect chain (301 -> 302
+#: -> 200 video/mp4 on fastxmp4) to a real .mp4. All 53,096 mp4moviez
+#: rows carry final_url = NULL and 10,560 posts have no other source,
+#: so those rows deserve one fresh press now that an unwrapper
+#: exists for them. (FIX2 itself adds no dispatch branch, so this
+#: is the queue-convention bump: one bump per landing, so stale
+#: negative-cache rows get a fresh press.)
+RESOLVER_VERSION = 14
+
 
 def _is_transport_verdict(verdict) -> bool:
     """True when a probe/unwrapper verdict names a transport failure (HTTP 0).
@@ -10467,6 +10476,39 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                     fresh_temp = 1
                     embed_verdict = verdict
                     _gate_from_verdict = True
+            elif (service == "mp4moviez" or "mp4moviez" in source_u.lower()
+                  or "mp4moviez" in cached_u.lower()):
+                # FIX2 (host/API sweep 2026-11-23): the converter stores
+                # the site's own dl.php redirect endpoint and never
+                # follows it, so all 53,096 mp4moviez rows carry
+                # final_url = NULL and 10,560 posts have no other source
+                # at all. The endpoint is a pure redirect chain -- 301
+                # to the live mp4moviez host, 302 to a signed fastxmp4
+                # .mp4 -- proven live from Oracle egress (788-833 ms,
+                # 200 video/mp4, Range 206). The unwrapper follows the
+                # site's redirects and never constructs the fastxmp4 URL
+                # itself: a wrong title still 302s, to a filename that
+                # 404s on fastxmp4. The signed e/st params have unmeasured
+                # expiry, so the row is banked temporary and resolved at
+                # play time. The generic Stage-2 gate below Range-probes
+                # the .mp4 (206, measured) -- the unwrapper's 1-byte GET
+                # is not the gate evidence, so _gate_from_verdict stays
+                # False, as in the mobilejsr branch.
+                _unwrap_branch_taken = True
+                try:
+                    import unwrap_mp4moviez as _um
+                except (ImportError, OSError, SyntaxError):
+                    _um = None
+                if _um is not None:
+                    for _item in _um.unwrap_mp4moviez(
+                            hoster_input("mp4moviez")):
+                        _cand = (_item.get("final_url")
+                                 or _item.get("source_url") or "")
+                        if _cand and not is_bridge_url(_cand):
+                            fresh_url = _cand
+                            fresh_temp = _item.get("is_temporary",
+                                                   fresh_temp)
+                            break
         except urllib.error.HTTPError as exc:
             # The endpoint ANSWERED, with a status we can name — this is evidence
             # about their link, and the circuit may strike on it.
