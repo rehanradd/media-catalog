@@ -1109,7 +1109,24 @@ class PaparazziPreviewTest {
                     state = playerBase(),
                     onBack = {},
                     onLock = {},
-                    onShowSpeedSheet = {},
+                    onToggleDecoderMode = {},
+                )
+            }
+        }
+    }
+
+    // P4 (player fixes): the long title wraps to two lines and the bar
+    // grows to 72dp instead of clipping — the subtitle is year · Auto only.
+    @Test
+    fun playerTopBarTwoLine() {
+        paparazzi.snapshot {
+            themed {
+                TopBar(
+                    state = playerBase().copy(
+                        pendingTitle = "The Lord of the Rings: The Fellowship of the Ring",
+                    ),
+                    onBack = {},
+                    onLock = {},
                     onToggleDecoderMode = {},
                 )
             }
@@ -1132,7 +1149,6 @@ class PaparazziPreviewTest {
                     ),
                     onBack = {},
                     onLock = {},
-                    onShowSpeedSheet = {},
                     onToggleDecoderMode = {},
                 )
             }

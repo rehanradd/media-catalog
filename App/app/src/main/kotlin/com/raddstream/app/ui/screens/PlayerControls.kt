@@ -1,5 +1,7 @@
 package com.raddstream.app.ui.screens
 
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -51,11 +53,13 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.R
 import com.raddstream.app.player.EpisodeCoverage
+import com.raddstream.app.player.chapterAt
 import com.raddstream.app.player.chapterTicks
 import com.raddstream.app.player.PlayerUiState
 import com.raddstream.app.ui.theme.RaddCurrent500
 import com.raddstream.app.ui.theme.RaddInk950
 import com.raddstream.app.ui.theme.PlayerChromeTheme
+import com.raddstream.app.ui.theme.PlayerOnVideo
 import com.raddstream.app.viewmodel.formatTime
 
 
@@ -143,6 +147,10 @@ internal fun PlayerControlButton(
  * the rung at 40% opacity, which reads as a disabled control on a tappable
  * one — a tappable control never dims. A hand-picked rung prints jade, Auto
  * white.
+ *
+ * P3 (player fixes): the pill is a full pill now (expressive chip shape),
+ * on the shared on-video pill fill — the same shape the speed pill wears,
+ * so the two text pills in the row read as one family.
  */
 @Composable
 internal fun QualityPill(
@@ -153,14 +161,14 @@ internal fun QualityPill(
     val context = LocalContext.current
     val label = stringResource(R.string.player_quality_label, state.qualityLabel)
     val singleQualityMessage = stringResource(R.string.player_quality_single)
-    val textColor = if (!state.qualityAuto) RaddCurrent500 else Color.White
+    val textColor = if (!state.qualityAuto) RaddCurrent500 else PlayerOnVideo.text
     Box(
         modifier = Modifier
             .heightIn(min = MinControlTarget)
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(percent = 50))
             // Cinema (Nov 2026): no outline — the rung is plain bold text on a
             // translucent solid fill; the border was the outline this slice removes.
-            .background(Color.Black.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+            .background(PlayerOnVideo.pillFill, RoundedCornerShape(percent = 50))
             .clickable(
                 onClick = {
                     if (state.canSwitchQuality) onShowQualitySheet()
@@ -169,7 +177,7 @@ internal fun QualityPill(
                 role = Role.Button,
             )
             .semantics { contentDescription = label }
-            .padding(horizontal = 10.dp, vertical = 6.dp),
+            .padding(horizontal = 12.dp, vertical = 6.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
@@ -180,6 +188,104 @@ internal fun QualityPill(
             maxLines = 1,
         )
     }
+}
+
+/**
+ * P1 — the speed pill, MOVED from the TopBar: the bottom-row pill is the
+ * single owner and the single control for speed (the TopBar pill is gone).
+ * Same pill shape and press contract as [QualityPill]; jade bold text, so
+ * a changed speed reads at a glance, and the pill only exists in the row
+ * while speed != 1x — at 1x there is nothing to show, and speed is changed
+ * from More. The label speaks the speed ("Speed 1.5×"); the paint prints
+ * it short ("1.5×").
+ */
+@Composable
+internal fun SpeedPill(
+    speed: Float,
+    onShowSpeedSheet: () -> Unit,
+) {
+    val label = stringResource(R.string.player_speed_label, speed)
+    Box(
+        modifier = Modifier
+            .heightIn(min = MinControlTarget)
+            .clip(RoundedCornerShape(percent = 50))
+            .background(PlayerOnVideo.pillFill, RoundedCornerShape(percent = 50))
+            .clickable(
+                onClick = onShowSpeedSheet,
+                role = Role.Button,
+            )
+            .semantics { contentDescription = label }
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = stringResource(R.string.player_speed_short, speed),
+            color = RaddCurrent500,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+        )
+    }
+}
+
+/**
+ * P1 — the context-aware primary row, as a pure rule: 4 permanent primaries
+ * (Play/Pause, Volume, Fullscreen, More — owned by [BottomControls]) plus
+ * exactly the first TWO of these flexible candidates, in priority order:
+ *
+ *  1. Next Episode — a next episode exists;
+ *  2. Cast — a cast target is available (gated by [CAST_PATH_PROVEN]);
+ *  3. Speed pill — speed != 1x;
+ *  4. Audio-track — multiple audio tracks exist;
+ *  5. Subtitles;
+ *  6. QualityPill.
+ *
+ * Subtitles and Quality always apply, so the row always fills to six and
+ * never shows a seventh button. Anything not in the row stays in More.
+ * Pure, so [PlayerFlexibleControlsTest] can prove the six-button guarantee
+ * without a player.
+ */
+internal enum class FlexiblePlayerControl {
+    NEXT_EPISODE,
+    CAST,
+    SPEED,
+    AUDIO,
+    SUBTITLES,
+    QUALITY,
+}
+
+/**
+ * P1 — the cast gate. A cast target being *available* is not a proven cast
+ * *path*: CAST_SPIKE (2026-11-18) proves the SDK wires up and a MediaInfo
+ * builds, and explicitly does NOT prove a real receiver plays a resolved
+ * URL — the receiver fetches the media itself, and our server sends no CORS
+ * headers. Until a real-device cast plays, the button is HIDDEN, never
+ * shown as a dead control; flipping this one flag (after that proof) puts
+ * Cast back in its priority slot, ahead of Speed. The resolver takes
+ * [castAvailable] and this flag separately so the test can pin both halves
+ * of the gate.
+ */
+internal const val CAST_PATH_PROVEN = false
+
+internal fun resolveFlexiblePlayerControls(
+    hasNextEpisode: Boolean,
+    castAvailable: Boolean,
+    speed: Float,
+    hasMultipleAudioTracks: Boolean,
+    // Test seam: the production call passes the default (the flag above),
+    // so the row hides Cast until the spike is proven — and the test can
+    // still prove Cast's priority slot (ahead of Speed) with `true` here.
+    castPathProven: Boolean = CAST_PATH_PROVEN,
+): List<FlexiblePlayerControl> {
+    val candidates = listOfNotNull(
+        FlexiblePlayerControl.NEXT_EPISODE.takeIf { hasNextEpisode },
+        FlexiblePlayerControl.CAST.takeIf { castAvailable && castPathProven },
+        FlexiblePlayerControl.SPEED.takeIf { speed != 1f },
+        FlexiblePlayerControl.AUDIO.takeIf { hasMultipleAudioTracks },
+        FlexiblePlayerControl.SUBTITLES,
+        FlexiblePlayerControl.QUALITY,
+    )
+    return candidates.take(2)
 }
 
 /** Thin MX scrubber: grey track, brighter buffered segment, theme played segment + thumb. */
@@ -205,12 +311,43 @@ internal fun Scrubber(
     // PL-8: the scrubber is a progress bar to a screen reader — its description
     // names the position and the chapter the position is inside, and setProgress
     // lets a switch or voice user seek without ever touching the track.
-    val currentChapter = ticks.lastOrNull { it.offsetMs <= displayPositionMs }?.title
+    // P2 (player fixes): the chapter is numbered, not just titled — "Chapter 3 —
+    // 12:00", the tick's start, so the spoken chapter matches the visible
+    // marker. Before the first tick the viewer is in Chapter 1, starting at 0:00.
+    val (currentChapterNumber, currentChapterStartMs) = chapterAt(ticks, displayPositionMs)
     val seekDescription = stringResource(
         R.string.player_seek,
         displayPositionMs.formatTime(),
         durationMs.formatTime(),
-    ) + (currentChapter?.let { stringResource(R.string.player_seek_chapter, it) } ?: "")
+    ) + if (ticks.isEmpty()) "" else stringResource(
+        R.string.player_seek_chapter,
+        stringResource(
+            R.string.player_chapter_label,
+            currentChapterNumber,
+            currentChapterStartMs.formatTime(),
+        ),
+    )
+    // P5 (player fixes): the scrubber expansion rides the MaterialTheme motion
+    // scheme — the same spatial spring the chrome fades use, read off the
+    // scheme itself, so no duration lives in this file twice.
+    val motion = MaterialTheme.motionScheme
+    val isDragging = draggingTargetMs != null
+    val trackHeight by animateDpAsState(
+        targetValue = if (isDragging) 6.dp else 3.dp,
+        animationSpec = spring(
+            dampingRatio = motion.defaultSpatial.dampingRatio,
+            stiffness = motion.defaultSpatial.stiffness,
+        ),
+        label = "scrubber-track",
+    )
+    val thumbSize by animateDpAsState(
+        targetValue = if (isDragging) 18.dp else 14.dp,
+        animationSpec = spring(
+            dampingRatio = motion.fastSpatial.dampingRatio,
+            stiffness = motion.fastSpatial.stiffness,
+        ),
+        label = "scrubber-thumb",
+    )
     BoxWithConstraints(
         modifier
             .fillMaxWidth()
@@ -222,6 +359,9 @@ internal fun Scrubber(
             .padding(vertical = 12.dp)
             .height(24.dp)
             .semantics(mergeDescendants = true) {
+                // P8 (player fixes): the ProgressBar role is explicit now —
+                // the range info alone left the role to the reader's guess.
+                role = Role.ProgressBar
                 contentDescription = seekDescription
                 if (enabled && durationMs > 0) {
                     progressBarRangeInfo = ProgressBarRangeInfo(
@@ -244,39 +384,46 @@ internal fun Scrubber(
             Modifier
                 .align(Alignment.CenterStart)
                 .fillMaxWidth()
-                // Cinema (Nov 2026): a 3dp track, not 4dp.
-                .height(3.dp)
+                // Cinema (Nov 2026): a 3dp track, not 4dp — 6dp while dragging,
+                // so the bar itself grows under the thumb (P2: expanding scrubber).
+                .height(trackHeight)
                 .background(Color.White.copy(alpha = 0.28f)),
         )
         Box(
             Modifier
                 .align(Alignment.CenterStart)
                 .fillMaxWidth(bufFraction)
-                .height(3.dp)
+                .height(trackHeight)
                 .background(Color.White.copy(alpha = 0.5f)),
         )
         Box(
             Modifier
                 .align(Alignment.CenterStart)
                 .fillMaxWidth(posFraction)
-                .height(3.dp)
+                .height(trackHeight)
                 .background(chrome.played),
         )
-        // One short white mark per chapter, straddling the track. Tapping one seeks —
-        // the track's own tap-to-seek already does that, so a tick needs no gesture
-        // of its own. The thumb passes over them; that is the point of a mark.
+        // P2 (player fixes): the ticks were computed but invisible — 1dp
+        // offsets in white that no render ever showed. They are thin JADE
+        // chapter markers now (3dp wide, 12dp tall, straddling the track),
+        // so the scrubber shows the shape of what is being watched.
+        // AMBER ad-break segments are NOT drawn: no ad-break data exists
+        // anywhere in the player ([MediaSegment] is intro/recap/credits/
+        // preview only, and the wire sends no ad windows) — an ad segment
+        // would have to be invented, and this player never invents one.
+        // The thumbnail preview on scrub already exists ([ScrubToast] shows
+        // the preview player's settled frame above the bar), so this change
+        // is the markers + the expansion, not a second preview path.
         ticks.forEach { tick ->
             Box(
                 Modifier
                     .align(Alignment.CenterStart)
-                    .offset(x = (maxWidth * tick.fraction) - 1.dp)
-                    .width(2.dp)
-                    .height(9.dp)
-                    .background(Color.White.copy(alpha = 0.85f)),
+                    .offset(x = (maxWidth * tick.fraction) - 1.5.dp)
+                    .width(3.dp)
+                    .height(12.dp)
+                    .background(RaddCurrent500),
             )
         }
-        val isDragging = draggingTargetMs != null
-        val thumbSize = if (isDragging) 18.dp else 14.dp
         // Cinema (Nov 2026): the thumb is a solid white dot — the old 2dp
         // white ring separated a jade dot from the jade track, and white on
         // jade reads without it. No outline, like every other glyph now.

@@ -29,7 +29,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -271,9 +270,9 @@ internal fun AutoplayCountdownCard(
             shape = RoundedCornerShape(16.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                // Cinema (Nov 2026): 120 → 116dp — the same seat as the
-                // toasts, above the slimmer bottom bar (104dp).
-                .padding(start = 16.dp, end = 16.dp, bottom = 116.dp),
+                // Cinema (Nov 2026): 120 → 108dp — the same seat as the
+                // toasts, above the slimmer bottom bar (96dp).
+                .padding(start = 16.dp, end = 16.dp, bottom = 108.dp),
         ) {
             Column(Modifier.padding(16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -368,6 +367,11 @@ internal fun AutoplayCountdownCard(
 }
 
 @Composable
+// P7 (player fixes, verify-first): the card already had the S4 bones —
+// error icon, plain-words body — and the one breach was the Retry: an
+// outlined button where the error family puts a filled pill. The pill
+// below is the fix; no title was added because the message IS the body
+// (the ViewModel's own sentence), and no second string would say it better.
 internal fun ConnectionErrorCard(message: String, onRetry: () -> Unit) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
@@ -387,7 +391,20 @@ internal fun ConnectionErrorCard(message: String, onRetry: () -> Unit) {
                 modifier = Modifier.fillMaxWidth(),
             )
             Spacer(Modifier.height(12.dp))
-            OutlinedButton(onClick = onRetry) { Text(stringResource(R.string.player_retry), color = Color.White) }
+Button(
+                onClick = onRetry,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = RaddCurrent500,
+                    contentColor = Color.Black,
+                ),
+                shape = RoundedCornerShape(28.dp),
+                modifier = Modifier.heightIn(min = MinControlTarget),
+            ) {
+                Text(
+                    stringResource(R.string.player_retry),
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
         }
     }
 }
@@ -418,7 +435,20 @@ internal fun OfflineCard(onRetry: () -> Unit) {
                 textAlign = TextAlign.Center,
             )
             Spacer(Modifier.height(12.dp))
-            OutlinedButton(onClick = onRetry) { Text(stringResource(R.string.player_retry), color = Color.White) }
+Button(
+                onClick = onRetry,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = RaddCurrent500,
+                    contentColor = Color.Black,
+                ),
+                shape = RoundedCornerShape(28.dp),
+                modifier = Modifier.heightIn(min = MinControlTarget),
+            ) {
+                Text(
+                    stringResource(R.string.player_retry),
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
         }
     }
 }

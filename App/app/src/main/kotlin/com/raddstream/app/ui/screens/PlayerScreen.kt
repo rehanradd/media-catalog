@@ -103,7 +103,6 @@ import com.raddstream.app.ui.components.rememberReduceMotion
 import com.raddstream.app.ui.theme.RaddCaptionPlateArgb
 import com.raddstream.app.ui.theme.RaddCurrent500
 import com.raddstream.app.ui.theme.PlayerChromeTheme
-import com.raddstream.app.ui.theme.RaddMotion
 import com.raddstream.app.ui.theme.RaddNarrationCheck
 import com.raddstream.app.ui.theme.RaddNarrationPlate
 import com.raddstream.app.ui.theme.RaddPlayerSnackbarPlate
@@ -623,16 +622,24 @@ private fun PlayerScreenContent(
         // Player review D1: the chrome fades, never cuts. The AnimatedVisibility
         // below IS the gate now — a plain `if` would remove the bars in one
         // frame before the exit fade could play. Same fade the double-tap
-        // ripple uses (RaddMotion springs; 30 ms crossfade under reduced
-        // motion). The lock still cuts: locking is a mode change, not an
-        // auto-hide, and the UnlockFab replaces the chrome at once.
+        // ripple uses (MaterialTheme.motionScheme effects springs; 30 ms
+        // crossfade under reduced motion). The lock still cuts: locking is a
+        // mode change, not an auto-hide, and the UnlockFab replaces the chrome
+        // at once.
+        // P5 (player fixes): the chrome fades ride MaterialTheme.motionScheme
+        // now — fastEffects in, defaultEffects out — and Ghost mode's edge
+        // strip fades with them instead of cutting in/out on a plain `if`.
         val chromeVisible = controlsVisible || state.startPhase != StartPhase.NONE
         val reduceMotion = rememberReduceMotion()
-        val chromeEnter = fadeIn(if (reduceMotion) tween(RaddMotion.FadeWhenReduced) else RaddMotion.fastEffects())
-        val chromeExit = fadeOut(if (reduceMotion) tween(RaddMotion.FadeWhenReduced) else RaddMotion.defaultEffects())
+        val chromeEnter = fadeIn(if (reduceMotion) tween(REDUCED_MOTION_FADE_MS) else MaterialTheme.motionScheme.fastEffects)
+        val chromeExit = fadeOut(if (reduceMotion) tween(REDUCED_MOTION_FADE_MS) else MaterialTheme.motionScheme.defaultEffects)
         if (!state.locked) {
             if (state.pureCinema) {
-                if (chromeVisible) {
+                AnimatedVisibility(
+                    visible = chromeVisible,
+                    enter = chromeEnter,
+                    exit = chromeExit,
+                ) {
                     EdgeHud(state = state, onBack = onBackClick, onPlayFromStart = { vm.playFrom(0) }, onTogglePlayPause = { vm.togglePlayPause() }, onToggleViewMode = { vm.toggleViewMode() }, onLock = { vm.setLocked(true) })
                 }
             } else {
@@ -641,7 +648,7 @@ private fun PlayerScreenContent(
                     enter = chromeEnter,
                     exit = chromeExit,
                 ) {
-                    TopBar(state = state, onBack = onBackClick, onLock = { vm.setLocked(true) }, onShowSpeedSheet = { vm.showSpeedSheet() }, onToggleDecoderMode = { vm.toggleDecoderMode() })
+                    TopBar(state = state, onBack = onBackClick, onLock = { vm.setLocked(true) }, onToggleDecoderMode = { vm.toggleDecoderMode() })
                 }
                 AnimatedVisibility(
                     visible = controlsVisible,
@@ -664,6 +671,9 @@ private fun PlayerScreenContent(
                         onShowQualitySheet = { vm.showQualitySheet() },
                         onToggleFullscreen = { vm.toggleFullscreen() },
                         onShowMoreSheet = { vm.showMoreSheet() },
+                        onShowSpeedSheet = { vm.showSpeedSheet() },
+                        onShowAudioSheet = { vm.showTracksSheet() },
+                        onRequestNextEpisode = { vm.requestNextEpisode() },
                         onSeekTo = { vm.seekTo(it) },
                         onSetUserVolume = { vm.setUserVolume(it) },
                         onSetAudioBoostLevel = { vm.setAudioBoostLevel(it) },
@@ -1032,10 +1042,10 @@ private fun PlayerScreenContent(
                         shape = MaterialTheme.shapes.small,
                         modifier = Modifier
                             .padding(horizontal = 24.dp)
-                            // Cinema (Nov 2026): 100 → 112dp — the seat clears
-                            // the slimmer bottom bar (104dp) instead of sitting
+                            // Cinema (Nov 2026): 100 → 104dp — the seat clears
+                            // the slimmer bottom bar (96dp) instead of sitting
                             // 4dp into the scrubber row.
-                            .padding(bottom = 112.dp),
+                            .padding(bottom = 104.dp),
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,

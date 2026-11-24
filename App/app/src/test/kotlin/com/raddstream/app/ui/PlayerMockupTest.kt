@@ -118,6 +118,9 @@ class PlayerMockupTest {
                     onShowQualitySheet = {},
                     onToggleFullscreen = {},
                     onShowMoreSheet = {},
+                    onShowSpeedSheet = {},
+                    onShowAudioSheet = {},
+                    onRequestNextEpisode = {},
                     onSeekTo = {},
                     onSetUserVolume = {},
                     onSetAudioBoostLevel = {},
@@ -141,7 +144,6 @@ class PlayerMockupTest {
                     state = liveBase(),
                     onBack = {},
                     onLock = {},
-                    onShowSpeedSheet = {},
                     onToggleDecoderMode = {},
                 )
             }
@@ -159,7 +161,6 @@ class PlayerMockupTest {
                     state = vodBase(),
                     onBack = {},
                     onLock = {},
-                    onShowSpeedSheet = {},
                     onToggleDecoderMode = {},
                 )
             }
@@ -170,18 +171,33 @@ class PlayerMockupTest {
 
     @Test
     fun `the speed pill opens the speed sheet`() {
-        // Player review D5: the pill that says the speed IS the way to
-        // change it — a 1.5× viewer otherwise opens More, then Speed,
-        // every title.
+        // Player review D5, moved by P1 (player fixes): the pill that says
+        // the speed IS the way to change it lives in the bottom row now —
+        // the TopBar pill is gone, the bottom-row pill is the single owner.
+        // At 1.5x the flexible slots resolve to Speed + Subtitles, so the
+        // pill is in the row for this fixture.
         var opened = false
         compose.setContent {
             RaddStreamTheme {
-                TopBar(
+                BottomControls(
                     state = vodBase().copy(speed = 1.5f),
-                    onBack = {},
-                    onLock = {},
+                    onPlayFromStart = {},
+                    onTogglePlayPause = {},
+                    onToggleMute = {},
+                    onShowSubtitleSheet = {},
+                    onShowQualitySheet = {},
+                    onToggleFullscreen = {},
+                    onShowMoreSheet = {},
                     onShowSpeedSheet = { opened = true },
-                    onToggleDecoderMode = {},
+                    onShowAudioSheet = {},
+                    onRequestNextEpisode = {},
+                    onSeekTo = {},
+                    onSetUserVolume = {},
+                    onSetAudioBoostLevel = {},
+                    onKeepCurrent = {},
+                    onEnterPip = {},
+                    onActivity = {},
+                    onScrubCommit = {},
                 )
             }
         }
@@ -201,7 +217,6 @@ class PlayerMockupTest {
                     state = vodBase(),
                     onBack = {},
                     onLock = {},
-                    onShowSpeedSheet = {},
                     onToggleDecoderMode = { toggled = true },
                 )
             }
@@ -218,7 +233,6 @@ class PlayerMockupTest {
                     state = vodBase().copy(decoderMode = DecoderMode.SOFTWARE),
                     onBack = {},
                     onLock = {},
-                    onShowSpeedSheet = {},
                     onToggleDecoderMode = {},
                 )
             }
@@ -231,14 +245,14 @@ class PlayerMockupTest {
     fun `the top bar carries no source-switch button`() {
         // MX #6 (chrome diet, D1): the print switch left the top bar — its
         // "Switch version" button duplicated the More sheet's Prints row.
-        // The title, the lock, the speed pill and the decoder chip stay.
+        // The title, the lock and the decoder chip stay; the speed pill
+        // moved to the bottom row (P1).
         compose.setContent {
             RaddStreamTheme {
                 TopBar(
                     state = vodBase(),
                     onBack = {},
                     onLock = {},
-                    onShowSpeedSheet = {},
                     onToggleDecoderMode = {},
                 )
             }

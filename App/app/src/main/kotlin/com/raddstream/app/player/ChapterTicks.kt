@@ -37,3 +37,16 @@ fun chapterTicks(episodes: List<EpisodeCoverage>, durationMs: Long): List<Chapte
         )
     }.distinctBy { it.offsetMs }.sortedBy { it.offsetMs }
 }
+
+/**
+ * P2 (player fixes): the chapter the position is inside, as (number, start).
+ * Ticks are the boundaries BETWEEN chapters, so the first tick's passing
+ * means Chapter 2: before the first tick the viewer is in Chapter 1,
+ * starting at 0. The number is what the scrubber's TalkBack label speaks
+ * ("Chapter 3 — 12:00") and the start is the tick the marker sits on.
+ * Pure, so a JVM test can prove the numbering without a player.
+ */
+fun chapterAt(ticks: List<ChapterTick>, positionMs: Long): Pair<Int, Long> {
+    val passed = ticks.indexOfLast { it.offsetMs <= positionMs }
+    return if (passed < 0) 1 to 0L else (passed + 2) to ticks[passed].offsetMs
+}

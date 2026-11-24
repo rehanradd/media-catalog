@@ -115,6 +115,10 @@
     <string name="player_volume_boost">Volume boost</string>
     <string name="player_seek">Seek: %1$s of %2$s</string>
     <string name="player_seek_chapter">, %1$s</string>
+    <!-- P2 (player fixes): the scrubber's TalkBack chapter — "Chapter 3 — 12:00". -->
+    <string name="player_chapter_label">Chapter %1$d — %2$s</string>
+    <!-- P1/P6 (player fixes): the audio button names the track in play. -->
+    <string name="player_audio_label">Audio: %1$s</string>
     <string name="player_up_next_title">%1$s: %2$s</string>
     <string name="player_season_episode">S%1$d:E%2$d</string>
     <string name="player_quality_single">Only one quality is available for this title</string>

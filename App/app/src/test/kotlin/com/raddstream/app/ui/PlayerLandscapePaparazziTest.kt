@@ -90,6 +90,9 @@ class PlayerLandscapePaparazziTest {
                     onShowQualitySheet = {},
                     onToggleFullscreen = {},
                     onShowMoreSheet = {},
+                    onShowSpeedSheet = {},
+                    onShowAudioSheet = {},
+                    onRequestNextEpisode = {},
                     onSeekTo = {},
                     onSetUserVolume = {},
                     onSetAudioBoostLevel = {},
@@ -143,6 +146,21 @@ class PlayerLandscapePaparazziTest {
                 isLive = true,
                 durationMs = 7_200_000L,
                 positionMs = 3_600_000L,
+            ),
+        )
+    }
+
+    // P1 (player fixes): the context-aware row — a next episode exists and
+    // speed is 1.5x, so the flexible slots are Next Episode + the speed pill
+    // (Subtitles + Quality drop to More). The row is still exactly six.
+    @Test
+    fun playerBottomNextEpisodeSpeed() {
+        shotBottom(
+            playerBase().copy(
+                nextEpisodeTitle = "Chapter 2: The Journey",
+                nextEpisodeSeason = 1,
+                nextEpisodeEpisode = 2,
+                speed = 1.5f,
             ),
         )
     }

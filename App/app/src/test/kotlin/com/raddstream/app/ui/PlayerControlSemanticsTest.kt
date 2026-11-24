@@ -686,13 +686,20 @@ class PlayerControlSemanticsTest {
             "the chrome still cuts on a plain conditional",
             chrome.contains("if (chromeVisible && !state.locked)"),
         )
-        // D5: the speed pill opens the speed sheet.
+        // D5, moved by P1 (player fixes): the speed pill left the TopBar —
+        // the bottom-row pill is the single owner and the single control.
+        // The TopBar takes no speed callback and paints no pill; the row does.
         val topBarStart = source.indexOf("internal fun TopBar(")
         val topBarEnd = source.indexOf("\n@Composable\ninternal fun CenterSpinner(", topBarStart)
         assertTrue("TopBar bounds missing", topBarStart >= 0 && topBarEnd > topBarStart)
         val topBar = source.substring(topBarStart, topBarEnd)
-        assertTrue("TopBar must take the speed-sheet callback", topBar.contains("onShowSpeedSheet: () -> Unit"))
-        assertTrue("the speed pill must open the speed sheet", topBar.contains("onClick = onShowSpeedSheet"))
+        assertFalse("the TopBar must not own speed anymore", topBar.contains("onShowSpeedSheet"))
+        assertFalse("the TopBar must not paint a speed pill", topBar.contains("player_speed_short"))
+        val bottomStart = source.indexOf("internal fun BottomControls(")
+        assertTrue("BottomControls bounds missing", bottomStart >= 0)
+        val bottom = source.substring(bottomStart)
+        assertTrue("the row must take the speed-sheet callback", bottom.contains("onShowSpeedSheet: () -> Unit"))
+        assertTrue("the speed pill must open the speed sheet", bottom.contains("SpeedPill("))
     }
 
     @Test

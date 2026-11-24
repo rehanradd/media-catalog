@@ -61,7 +61,6 @@ import com.raddstream.app.ui.theme.RaddCurrent500
 import com.raddstream.app.ui.theme.PlayerChromeTheme
 import com.raddstream.app.ui.theme.RaddHudPillIdle
 import com.raddstream.app.ui.theme.RaddHudToast
-import com.raddstream.app.ui.theme.RaddMotion
 import com.raddstream.app.ui.theme.brandSp
 import com.raddstream.app.ui.theme.paint
 import com.raddstream.app.viewmodel.formatTime
@@ -94,11 +93,14 @@ internal fun DoubleTapRipple(state: PlayerUiState) {
         // springs. The acknowledgement still appears rather than arrives:
         // quick in, slow out, so a double-tap over a dark scene is never
         // a flash.
+        // P5 (player fixes): the fades ride MaterialTheme.motionScheme now —
+        // fastEffects in, defaultEffects out — with the same 30ms crossfade
+        // under reduced motion ([REDUCED_MOTION_FADE_MS]).
         val reduceMotion = rememberReduceMotion()
         AnimatedVisibility(
             visible = state.ripple != null,
-            enter = fadeIn(if (reduceMotion) tween(RaddMotion.FadeWhenReduced) else RaddMotion.fastEffects()),
-            exit = fadeOut(if (reduceMotion) tween(RaddMotion.FadeWhenReduced) else RaddMotion.defaultEffects()),
+            enter = fadeIn(if (reduceMotion) tween(REDUCED_MOTION_FADE_MS) else MaterialTheme.motionScheme.fastEffects),
+            exit = fadeOut(if (reduceMotion) tween(REDUCED_MOTION_FADE_MS) else MaterialTheme.motionScheme.defaultEffects),
         ) {
             Surface(
                 color = chrome.card,
@@ -134,14 +136,20 @@ internal sealed class Hud {
 
 /**
  * Cinema player (Nov 2026): the chrome budget, in one place, so the 95/5 rule is
- * a number, not a feeling. TopBar 56dp + BottomControls 104dp = 160dp of chrome
- * on a 411dp-tall landscape phone — 61% of the picture stays video while the
+ * a number, not a feeling. TopBar 56dp + BottomControls 96dp = 152dp of chrome
+ * on a 411dp-tall landscape phone — 63% of the picture stays video while the
  * chrome is up, 100% once the 3.0s auto-hide fires. The 48dp press target never
  * shrinks; only the visible glyphs do.
  */
 internal object CinemaChrome {
     const val TOP_BAR_MIN_DP = 56
-    const val BOTTOM_BAR_MIN_DP = 104
+    /** P4 (player fixes): the top bar for a two-line title — 2×20sp title + 12sp subtitle + padding. */
+    const val TOP_BAR_TWO_LINE_DP = 72
+    /** P1 (player fixes): 104 → 96dp — scrubber 48 + controls 48, with the 8dp of
+     * bottom padding gone (the bar sits flush to the immersive frame's bottom
+     * edge). The press targets stay 48dp; the bar shrinks by tightening the
+     * gap, never by shrinking a target. */
+    const val BOTTOM_BAR_MIN_DP = 96
     const val HUD_LIFETIME_MS = 800L
     const val MIN_TOUCH_TARGET_DP = 48
 
@@ -256,9 +264,9 @@ internal fun ScrubToast(
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            // Cinema (Nov 2026): the seat clears the slimmer bottom bar (104dp)
+            // Cinema (Nov 2026): the seat clears the slimmer bottom bar (96dp)
             // with the same 12dp of air the old 130dp seat left over the 136dp bar.
-            modifier = Modifier.padding(bottom = 116.dp),
+            modifier = Modifier.padding(bottom = 108.dp),
         ) {
             // The thumbnail: the preview player's live TextureView, shown only
             // once the target has settled (showThumbnail). Until then the frame

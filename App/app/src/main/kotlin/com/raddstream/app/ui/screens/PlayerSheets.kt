@@ -1018,6 +1018,12 @@ private fun SheetTitle(text: String, modifier: Modifier = Modifier, onDismiss: (
                     Icons.Default.Close,
                     stringResource(R.string.player_close),
                     tint = Color.White.copy(alpha = 0.7f),
+                    // P8 (player fixes): the dismiss visual grows slightly
+                    // (24dp → 28dp glyph). The 48dp touch target is already
+                    // enforced by the IconButton itself, so this is a visual
+                    // change only — the 32dp visual was never filed as a
+                    // violation, and it still is not one.
+                    modifier = Modifier.size(28.dp),
                 )
             }
         }

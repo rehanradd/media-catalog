@@ -364,8 +364,25 @@ internal fun GiveUpCard(
                 // recoveries that end the failure (retry the same print, or leave
                 // for the title) stay green and the two alternates read as
                 // secondary white; the dismiss stays the quietest white.
-                TextButton(onClick = onRetry, modifier = Modifier.fillMaxWidth()) {
-                    Text(stringResource(R.string.player_retry), color = RaddCurrent500)
+                // P7 (player fixes, verify-first): the card already had the S4
+                // bones — error icon, per-cause title + diagnosis body,
+                // landscape-safe scrolling action stack — and the one breach
+                // was the Retry: jade text where the error family puts a
+                // filled pill. Retry is the pill now; the alternates stay
+                // quiet text rows, so one action reads as the way out.
+                Button(
+                    onClick = onRetry,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = RaddCurrent500,
+                        contentColor = Color.Black,
+                    ),
+                    shape = RoundedCornerShape(28.dp),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = MinControlTarget),
+                ) {
+                    Text(
+                        stringResource(R.string.player_retry),
+                        fontWeight = FontWeight.SemiBold,
+                    )
                 }
                 onTryAnother?.let {
                     TextButton(onClick = it, modifier = Modifier.fillMaxWidth()) {

@@ -23,10 +23,12 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.LocalMovies
 import androidx.compose.material.icons.filled.Replay10
+import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -68,7 +70,6 @@ import com.raddstream.app.player.AudioBoostUi
 import com.raddstream.app.player.DecoderMode
 import com.raddstream.app.player.GestureSettings
 import com.raddstream.app.player.KeepUiState
-import com.raddstream.app.player.looksLikeQualityLabel
 import com.raddstream.app.player.PlayerStatusWord
 import com.raddstream.app.player.PlayerUiState
 import com.raddstream.app.player.playerStatusWord
@@ -79,8 +80,9 @@ import com.raddstream.app.ui.components.RaddDialogTitle
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.components.RaddChip
 import com.raddstream.app.ui.components.ScrollingChipRow
-import com.raddstream.app.ui.theme.RaddCurrent500
 import com.raddstream.app.ui.theme.PlayerChromeTheme
+import com.raddstream.app.ui.theme.PlayerOnVideo
+import com.raddstream.app.ui.theme.RaddCurrent500
 import com.raddstream.app.ui.theme.brandSp
 import com.raddstream.app.ui.theme.paint
 import com.raddstream.app.viewmodel.PlayerViewModel
@@ -109,7 +111,7 @@ private fun playerChromeRail(): Dp {
 }
 
 @Composable
-internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit, onShowSpeedSheet: () -> Unit, onToggleDecoderMode: () -> Unit) {
+internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit, onToggleDecoderMode: () -> Unit) {
     val print = state.activeRendition
     val rail = playerChromeRail()
     val topGradient = Brush.verticalGradient(
@@ -119,6 +121,11 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
             Color.Transparent,
         )
     )
+    // P4 (player fixes): the bar follows the title — 56dp for a one-line
+    // title, 72dp for a two-line one. The height is a floor; content taller
+    // than the floor grows the box on its own, so a wrapping title is never
+    // clipped by the bar, at 1.3x font or any other size.
+    var titleLines by remember { mutableStateOf(1) }
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -130,7 +137,7 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
             .background(topGradient)
             // Cinema (Nov 2026): 56dp — the 48dp icon row + 6dp of padding.
             // The press targets stay 48dp; only the bar gets shorter.
-            .heightIn(min = CinemaChrome.TOP_BAR_MIN_DP.dp)
+            .heightIn(min = if (titleLines > 1) CinemaChrome.TOP_BAR_TWO_LINE_DP.dp else CinemaChrome.TOP_BAR_MIN_DP.dp)
             .padding(start = rail, end = rail, top = 2.dp, bottom = 4.dp),
     ) {
     Row(
@@ -142,7 +149,7 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
             Icon(
                 painter = painterResource(R.drawable.ic_player_back),
                 contentDescription = stringResource(R.string.player_back),
-                tint = Color.White,
+                tint = PlayerOnVideo.text,
                 // Cinema (Nov 2026): the glyph shrinks to 20dp; the IconButton
                 // press target stays 48dp.
                 modifier = Modifier.size(20.dp),
@@ -152,23 +159,26 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
         Column(Modifier.weight(1f)) {
             Text(
                 state.pendingTitle ?: print?.displayLabel() ?: Brand.name,
-                color = Color.White,
+                color = PlayerOnVideo.text,
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
+                // P4 (player fixes): the full title, up to two lines — static
+                // text, never a marquee. A marquee is a motion affordance, and
+                // under reduced motion it must never run; two-line static text
+                // is the same title on every device. Ellipsis only if it still
+                // overflows at two lines.
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
+                onTextLayout = { titleLines = it.lineCount },
             )
             if (print != null) {
                 val autoTag = state.autoQualityBand?.let { band -> stringResource(R.string.player_tag_auto, band) }
-                // D-37: the subtitle is metadata — year · quality · Auto — never
-                // the title again. The year comes from the staged title metadata;
-                // the quality is the rung label. The "expiring link" tag is gone
-                // (dev-cleanup, Nov 2026, D6): expiry handling stays silent.
-                // Session 121 (P-7): when the quality is unknown the display label
-                // falls back to "Standard quality", not a rung — printing it would
-                // repeat the title's job badly. The Auto tag is still worth showing
-                // on its own, and the line is dropped entirely when there is
-                // nothing to say.
+                // P4 (player fixes): the subtitle is year · Auto — quality
+                // moves OUT of it. Quality is owned by the persistent HUD +
+                // the QualityPill (single-owner rule), so the subtitle never
+                // repeats it. The Auto tag still says out loud that the rung
+                // shown is Auto's current choice, so a quality that moves on
+                // its own is never mistaken for a hand-picked one.
                 // Review fix (16 Nov): a live channel has no subtitle at all — the
                 // single live mark rides the bottom row, and a live picture has
                 // no year or rung to print. The title centres vertically on its own.
@@ -179,12 +189,6 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
                 } else {
                     buildString {
                         state.titleYear?.let { append(it.toString()) }
-                        print.displayLabel().takeIf { looksLikeQualityLabel(it) }?.let {
-                            if (isNotEmpty()) append(" · ")
-                            append(it)
-                        }
-                        // Says out loud that the rung shown is Auto's current choice, so a
-                        // quality that moves on its own is never mistaken for a hand-picked one.
                         autoTag?.let {
                             if (isNotEmpty()) append(" · ")
                             append(it)
@@ -196,7 +200,7 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
                         subtitle,
                         // E-C2: 11sp white at 72% over the 53%-black top bar was
                         // ~3.13:1 over a bright frame. Full white now.
-                        color = Color.White,
+                        color = PlayerOnVideo.text,
                         style = MaterialTheme.typography.labelSmall,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -214,25 +218,9 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
                     .padding(end = 6.dp),
             )
         }
-        if (state.speed != 1f && !state.boosting) {
-            // Player review D5: the pill that says the speed IS the way to
-            // change it — a 1.5× viewer otherwise opens More, then Speed,
-            // every title. The pill opens the same speed sheet the More row
-            // does; the bottom row keeps its six primaries.
-            Text(
-                stringResource(R.string.player_speed_short, state.speed),
-                color = RaddCurrent500,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier
-                    .clickable(
-                        onClick = onShowSpeedSheet,
-                        role = Role.Button,
-                        onClickLabel = stringResource(R.string.player_speed_title),
-                    )
-                    .padding(horizontal = 8.dp, vertical = 12.dp),
-            )
-        }
+        // P1 (player fixes): the speed pill is GONE from this bar — the
+        // bottom-row [SpeedPill] is the single owner and the single control
+        // for speed now. A second pill here would be a second owner.
         // Session 121 (P-35): the keep chip lived here and squeezed the title to a
         // stub ("Ali Baba …") on a narrow phone. It now rides its own row above
         // the scrubber in BottomControls, where it cannot crowd anything.
@@ -245,7 +233,7 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
             Icon(
                 painter = painterResource(R.drawable.ic_player_lock),
                 contentDescription = stringResource(R.string.player_lock),
-                tint = Color.White,
+                tint = PlayerOnVideo.text,
                 // Cinema (Nov 2026): the glyph shrinks to 20dp; the IconButton
                 // press target stays 48dp.
                 modifier = Modifier.size(20.dp),
@@ -331,7 +319,7 @@ internal fun CenterPlayPause(
                 )
             }
             Surface(
-                color = Color.Black.copy(alpha = 0.55f),
+                color = PlayerOnVideo.chipFill,
                 shape = CircleShape,
                 modifier = Modifier
                     // Cinema (Nov 2026): 88 → 72dp — the frosted circle is an
@@ -354,7 +342,7 @@ internal fun CenterPlayPause(
                     Icon(
                         painter = painterResource(R.drawable.ic_player_play),
                         contentDescription = null,
-                        tint = Color.White,
+                        tint = PlayerOnVideo.text,
                         modifier = Modifier.size(32.dp),
                     )
                 }
@@ -378,7 +366,7 @@ private fun CentreSkipButton(
     onClick: () -> Unit,
 ) {
     Surface(
-        color = Color.Black.copy(alpha = 0.55f),
+        color = PlayerOnVideo.chipFill,
         shape = CircleShape,
         modifier = Modifier
             .size(48.dp)
@@ -386,7 +374,7 @@ private fun CentreSkipButton(
             .semantics { contentDescription = label },
     ) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
+            Icon(icon, contentDescription = null, tint = PlayerOnVideo.text, modifier = Modifier.size(24.dp))
         }
     }
 }
@@ -435,7 +423,7 @@ internal fun CenterSpinner(state: PlayerUiState) {
             // carries the buffered percent.
             Box(Modifier.size(88.dp), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(
-                    color = Color.White,
+                    color = PlayerOnVideo.text,
                     strokeWidth = 4.dp,
                     modifier = Modifier.size(56.dp),
                 )
@@ -512,13 +500,13 @@ internal fun EdgeHud(
                 Icon(
                     painter = painterResource(R.drawable.ic_player_back),
                     contentDescription = null,
-                    tint = Color.White,
+                    tint = PlayerOnVideo.text,
                     modifier = Modifier.size(20.dp),
                 )
             }
             Text(
                 text = state.pendingTitle ?: state.activeRendition?.displayLabel() ?: Brand.name,
-                color = Color.White.copy(alpha = 0.85f),
+                color = PlayerOnVideo.mutedText,
                 fontSize = brandSp(12),
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,
@@ -551,7 +539,7 @@ internal fun EdgeHud(
                 Icon(
                     painter = if (state.isPlaying && !state.isBuffering) painterResource(R.drawable.ic_player_pause) else painterResource(R.drawable.ic_player_play),
                     contentDescription = null,
-                    tint = Color.White,
+                    tint = PlayerOnVideo.text,
                     modifier = Modifier.size(20.dp),
                 )
             }
@@ -570,7 +558,7 @@ internal fun EdgeHud(
                 } else {
                     state.positionMs.formatTime()
                 },
-                color = Color.White.copy(alpha = 0.8f),
+                color = PlayerOnVideo.mutedText,
                 fontSize = brandSp(11),
                 modifier = Modifier.padding(end = 8.dp),
             )
@@ -597,7 +585,7 @@ internal fun EdgeHud(
                 Icon(
                     painter = painterResource(R.drawable.ic_player_lock),
                     contentDescription = null,
-                    tint = Color.White,
+                    tint = PlayerOnVideo.text,
                     modifier = Modifier.size(18.dp),
                 )
             }
@@ -615,6 +603,12 @@ internal fun BottomControls(
     onShowQualitySheet: () -> Unit,
     onToggleFullscreen: () -> Unit,
     onShowMoreSheet: () -> Unit,
+    // P1 (player fixes): the flexible slots' owners — the speed sheet, the
+    // audio-tracks sheet and the next-episode hop. They arrive as callbacks
+    // (never a ViewModel call) so the row stays a pure view of the state.
+    onShowSpeedSheet: () -> Unit,
+    onShowAudioSheet: () -> Unit,
+    onRequestNextEpisode: () -> Unit,
     onSeekTo: (Long) -> Unit,
     onSetUserVolume: (Float) -> Unit,
     onSetAudioBoostLevel: (Float) -> Unit,
@@ -651,8 +645,13 @@ internal fun BottomControls(
                 // Cinema (Nov 2026): 136 → 104dp — scrubber 48 + controls 48 +
                 // 8dp of bottom padding. The press targets stay 48dp; only the
                 // bar gets shorter.
+                // P1 (player fixes): 104 → 96dp. The 8dp comes off the bottom
+                // padding alone (8dp → 0dp): the bar sits flush to the
+                // immersive frame's bottom edge, and every press target stays
+                // 48dp — the bar shrinks by tightening the gap, never by
+                // shrinking a target. See [CinemaChrome.BOTTOM_BAR_MIN_DP].
                 .heightIn(min = CinemaChrome.BOTTOM_BAR_MIN_DP.dp)
-                .padding(start = rail, end = rail, bottom = 8.dp),
+                .padding(start = rail, end = rail, bottom = 0.dp),
         ) {
             // SC §3: pause is discovery — the cast strip. Tapping an actor
             // searches them. Only while paused: a strip that appears mid-play
@@ -733,13 +732,13 @@ internal fun BottomControls(
                 ) {
                     Text(
                         text = state.positionMs.formatTime(),
-                        color = Color.White,
+                        color = PlayerOnVideo.text,
                         // Cinema (Nov 2026): the time reads at 11sp, not 12sp.
                         style = MaterialTheme.typography.labelSmall,
                     )
                     if (statusWord != null) {
                         Spacer(Modifier.width(8.dp))
-                        Text(statusWord, color = Color.White.copy(alpha = 0.85f), style = MaterialTheme.typography.labelSmall)
+                        Text(statusWord, color = PlayerOnVideo.mutedText, style = MaterialTheme.typography.labelSmall)
                     }
                     Scrubber(
                         modifier = Modifier
@@ -758,7 +757,7 @@ internal fun BottomControls(
                     )
                     Text(
                         state.durationMs.takeIf { it > 0 }?.formatTime() ?: "--:--",
-                        color = Color.White,
+                        color = PlayerOnVideo.text,
                         // Cinema (Nov 2026): the time reads at 11sp, not 12sp.
                         style = MaterialTheme.typography.labelSmall,
                     )
@@ -780,11 +779,13 @@ internal fun BottomControls(
             ) {
                 val subtitleWord = subtitleStatusLabel(state, stringResource(R.string.player_off))
                 val volumePercent = (state.userVolume * 100).toInt()
-                // Exactly six primaries, frozen left to right (plan §4.2): Play/Pause,
-                // Volume, Subtitles, Quality, Fullscreen, More. Everything else lives
-                // in the More sheet — nothing was deleted, only moved. The row no
-                // longer scrolls: six 48 dp buttons fit every phone, and a hidden
-                // seventh button would be a button that lies.
+                // P1 (player fixes): exactly six primaries, in two clusters —
+                // transport on the left (Play/Pause, Volume), tools on the
+                // right (2 flexible slots, Fullscreen, More). The flexible
+                // slots resolve by priority ([resolveFlexiblePlayerControls]),
+                // so the row is always six and a hidden seventh button would
+                // still be a button that lies. Everything not in the row lives
+                // in the More sheet — nothing was deleted, only moved.
                 Row(
                     modifier = Modifier.testTag("player-controls-left"),
                     verticalAlignment = Alignment.CenterVertically,
@@ -800,7 +801,7 @@ internal fun BottomControls(
                         Icon(
                             painter = if (state.isPlaying) painterResource(R.drawable.ic_player_pause) else painterResource(R.drawable.ic_player_play),
                             contentDescription = null,
-                            tint = Color.White,
+                            tint = PlayerOnVideo.text,
                         )
                     }
                     PlayerControlButton(
@@ -813,13 +814,13 @@ internal fun BottomControls(
                             Icon(
                                 painter = painterResource(R.drawable.ic_player_volume),
                                 contentDescription = null,
-                                tint = Color.White,
+                                tint = PlayerOnVideo.text,
                             )
                         } else {
                             Icon(
                                 painter = painterResource(R.drawable.ic_player_volume_muted),
                                 contentDescription = null,
-                                tint = Color.White,
+                                tint = PlayerOnVideo.text,
                             )
                         }
                     }
@@ -830,23 +831,65 @@ internal fun BottomControls(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    PlayerControlButton(
-                        { onShowSubtitleSheet() },
-                        stringResource(R.string.player_subtitles_label, subtitleWord),
-                        selected = subtitleActive(state),
-                    ) {
-                        Icon(painterResource(R.drawable.ic_player_subtitles), null, tint = if (subtitleActive(state)) RaddCurrent500 else Color.White)
-                    }
-                    // 25c: the Quality primary never vanishes — on a single-rung title
-                    // it stays visible, and tapping it says why instead of
-                    // opening a sheet with one row. Six primaries, always. The
-                    // mockup prints the rung as a text pill ("1080P") instead of
-                    // an icon, so the quality reads without opening the sheet.
-                    QualityPill(
-                        state = state,
-                        onShowQualitySheet = onShowQualitySheet,
-                        onMessage = onMessage,
+                    // P1 (player fixes): the right cluster is 2 flexible slots
+                    // + Fullscreen + More — 4 permanent + 2 flexible = 6,
+                    // always, by construction ([resolveFlexiblePlayerControls]).
+                    // The default title (no next episode, 1x speed, one audio
+                    // track, no cast target) resolves to Subtitles + Quality,
+                    // exactly the row this replaced — so the common case does
+                    // not move, and the row only changes when the context does.
+                    val flexible = resolveFlexiblePlayerControls(
+                        hasNextEpisode = state.nextEpisodeTitle != null || state.endedHasNextEpisode,
+                        castAvailable = state.castAvailable,
+                        speed = state.speed,
+                        hasMultipleAudioTracks = state.canCycleAudio,
                     )
+                    flexible.forEach { slot ->
+                        when (slot) {
+                            FlexiblePlayerControl.NEXT_EPISODE -> PlayerControlButton(
+                                { onRequestNextEpisode() },
+                                stringResource(R.string.player_next_episode),
+                            ) {
+                                Icon(Icons.Default.SkipNext, null, tint = PlayerOnVideo.text)
+                            }
+                            // Cast never renders while CAST_PATH_PROVEN is
+                            // false (the resolver already excludes it) — the
+                            // branch exists so the `when` stays exhaustive
+                            // when the spike is proven and the flag flips.
+                            FlexiblePlayerControl.CAST -> Unit
+                            FlexiblePlayerControl.SPEED -> SpeedPill(
+                                speed = state.speed,
+                                onShowSpeedSheet = onShowSpeedSheet,
+                            )
+                            FlexiblePlayerControl.AUDIO -> {
+                                // P6: the audio button names the track in play
+                                // — the "current state is visible" pattern, the
+                                // same one the speed pill and the subtitles
+                                // label already follow.
+                                val audioLabel = state.audioTracks
+                                    .firstOrNull { it.selected }?.label?.takeIf { it.isNotBlank() }
+                                PlayerControlButton(
+                                    { onShowAudioSheet() },
+                                    audioLabel?.let { stringResource(R.string.player_audio_label, it) }
+                                        ?: stringResource(R.string.player_audio_tracks),
+                                ) {
+                                    Icon(Icons.Default.Audiotrack, null, tint = PlayerOnVideo.text)
+                                }
+                            }
+                            FlexiblePlayerControl.SUBTITLES -> PlayerControlButton(
+                                { onShowSubtitleSheet() },
+                                stringResource(R.string.player_subtitles_label, subtitleWord),
+                                selected = subtitleActive(state),
+                            ) {
+                                Icon(painterResource(R.drawable.ic_player_subtitles), null, tint = if (subtitleActive(state)) RaddCurrent500 else PlayerOnVideo.text)
+                            }
+                            FlexiblePlayerControl.QUALITY -> QualityPill(
+                                state = state,
+                                onShowQualitySheet = onShowQualitySheet,
+                                onMessage = onMessage,
+                            )
+                        }
+                    }
                     PlayerControlButton(
                         { onToggleFullscreen() },
                         if (state.fullscreen) stringResource(R.string.player_exit_fullscreen)
@@ -856,10 +899,10 @@ internal fun BottomControls(
                             Icon(
                                 painter = painterResource(R.drawable.ic_player_fullscreen_exit),
                                 contentDescription = null,
-                                tint = Color.White,
+                                tint = PlayerOnVideo.text,
                             )
                         } else {
-                            Icon(painterResource(R.drawable.ic_player_fullscreen), null, tint = Color.White)
+                            Icon(painterResource(R.drawable.ic_player_fullscreen), null, tint = PlayerOnVideo.text)
                         }
                     }
                     PlayerControlButton(
@@ -869,7 +912,7 @@ internal fun BottomControls(
                         Icon(
                             painter = painterResource(R.drawable.ic_player_more),
                             contentDescription = null,
-                            tint = Color.White,
+                            tint = PlayerOnVideo.text,
                         )
                     }
                 }
@@ -935,7 +978,7 @@ internal fun BottomControls(
                         )
                         Text(
                             AudioBoostUi.honestSummary(requestedBoost, state.userVolume),
-                            color = Color.White.copy(alpha = 0.6f),
+                            color = PlayerOnVideo.faintText,
                             fontSize = brandSp(12),
                         )
                     }

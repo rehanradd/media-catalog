@@ -28,6 +28,15 @@ import com.raddstream.app.viewmodel.PlayerEvent
 import com.raddstream.app.viewmodel.PlayerViewModel
 import kotlin.math.roundToInt
 
+/**
+ * P5 (player fixes): the reduced-motion crossfade. The player fades ride
+ * MaterialTheme.motionScheme; under reduced motion they crossfade in this
+ * many milliseconds instead — the same 30ms the old duplicated token set
+ * carried before the player migrated off it. One constant, owned here, so no player file reaches
+ * back for the duplicated token set.
+ */
+internal const val REDUCED_MOTION_FADE_MS = 30
+
 
 // ── Event routing ──────────────────────────────────────────────────────────────
 

@@ -384,6 +384,29 @@ data class PlayerChromeTheme(
     }
 }
 
+/**
+ * P3 (player fixes) — the on-video chrome roles. WHITE-ON-BLACK over the
+ * video surface STAYS: it is the correct legibility pattern (the scrims
+ * already give full white ~8.5:1 worst-case over a bright frame, see
+ * [RaddHudBar]). These names are the roles, not new paints — every value
+ * below is the paint the chrome already used, so tokenizing changes no
+ * pixel; it stops the next edit from reaching for a raw [Color.White] or
+ * [Color.Black] and painting a state with it. Selected states keep the
+ * jade tint ([RaddCurrent500]); nothing here is a state colour.
+ */
+object PlayerOnVideo {
+    /** Full white: titles, icons, times, the rung — the only text over video. */
+    val text: Color = Color.White
+    /** White at 85%: status words, secondary chrome text. */
+    val mutedText: Color = Color.White.copy(alpha = 0.85f)
+    /** White at 60%: the quietest chrome text (boost summary, captions). */
+    val faintText: Color = Color.White.copy(alpha = 0.6f)
+    /** 55% black: the frosted disc behind the centre transport + skip buttons. */
+    val chipFill: Color = Color.Black.copy(alpha = 0.55f)
+    /** 35% black: the translucent fill behind the text pills (quality, speed). */
+    val pillFill: Color = Color.Black.copy(alpha = 0.35f)
+}
+
 /** 80% black — the caption plate both subtitle paths put behind text. Written twice
  *  on purpose: the Compose overlay takes the literal form, CaptionStyleCompat takes an
  *  ARGB int, and composing one from the other would change which overload the paint
