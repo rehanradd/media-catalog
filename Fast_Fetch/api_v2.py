@@ -38,7 +38,9 @@ import re
 import sqlite3
 import threading
 import time
+import urllib.error
 import urllib.parse
+import urllib.request
 import uuid
 from contextlib import contextmanager
 from email.utils import formatdate
@@ -1452,15 +1454,179 @@ def static_url(row) -> str:
     return str(row["final_url"] or row["url"] or "")
 
 
+#: The User-Agent the static probe sends: the same bare agent the
+#: probe layer (`current_hosts.USER_AGENT`) uses, so a host that
+#: answers the resolver's probes answers this one too. Pinned equal
+#: by `test_api_v2`.
+_STATIC_PROBE_USER_AGENT = "Mozilla/5.0"
+
+#: Seconds one static-URL liveness probe may take (API-05). A stored
+#: URL that never answers must fail fast, not eat the /resolve
+#: caller's budget — the v1 stream route pays the same shape of probe
+#: per cached serve (Stage-2), and this is the v2 static path's
+#: equivalent.
+_STATIC_PROBE_TIMEOUT_SECONDS = 5.0
+
+#: Verdicts `_probe_static_url` returns. "alive": serve it. "dead":
+#: record it in the negative cache and fall through to live resolve.
+#: "unknown": fall through WITHOUT recording — a blocked (403/429),
+#: challenged, or unreachable host is evidence about the network, not
+#: about the link, and the next press may prove it live.
+_STATIC_PROBE_ALIVE = "alive"
+_STATIC_PROBE_DEAD = "dead"
+_STATIC_PROBE_UNKNOWN = "unknown"
+
+
+class _NoFollowRedirect(urllib.request.HTTPRedirectHandler):
+    """A redirect handler that never follows: a 3xx surfaces as an
+    HTTPError carrying its Location, so the probe reads the stored
+    URL's own answer instead of chasing it — and never downloads a
+    body."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _static_probe_exchange(url, *, method, range_bytes=None):
+    """One no-follow exchange against a stored URL.
+
+    Returns ``(status, headers, body)``: headers is a lowercased dict,
+    body at most 2 bytes — a Range GET a host answers with 200 still
+    yields only 2 bytes here, so the probe never downloads a file. A
+    transport failure answers ``(0, {}, b"")``; an HTTP error answers
+    its own status with its headers. Never raises.
+    """
+    req_headers = {"User-Agent": _STATIC_PROBE_USER_AGENT}
+    if range_bytes is not None:
+        req_headers["Range"] = f"bytes={range_bytes[0]}-{range_bytes[1]}"
+    req = urllib.request.Request(url, headers=req_headers, method=method)
+    opener = urllib.request.build_opener(_NoFollowRedirect())
+    try:
+        with opener.open(req, timeout=_STATIC_PROBE_TIMEOUT_SECONDS) as resp:
+            body = resp.read(2)
+            return (int(resp.status),
+                    {str(k).lower(): str(v)
+                     for k, v in resp.headers.items()}, body)
+    except urllib.error.HTTPError as exc:
+        hdrs = {}
+        try:
+            hdrs = {str(k).lower(): str(v)
+                    for k, v in (exc.headers or {}).items()}
+        except Exception:  # noqa: BLE001 — headers are best-effort
+            hdrs = {}
+        try:
+            exc.close()
+        except Exception:  # noqa: BLE001
+            pass
+        return (int(exc.code), hdrs, b"")
+    except Exception:  # noqa: BLE001 — timeout, DNS, reset: transport
+        return (0, {}, b"")
+
+
+def _static_probe_is_page(headers) -> bool:
+    """True when a probe answer's Content-Type names an HTML page.
+
+    A stored URL that answers a page is not playable media — the shape
+    `static_url` already refuses (`resolve_required`): serving it hands
+    the player a page that looks alive while playing nothing.
+    """
+    content_type = str((headers or {}).get("content-type") or "")
+    return content_type.split(";", 1)[0].strip().lower() == "text/html"
+
+
+def _probe_static_url(url) -> str:
+    """One cheap liveness probe of a stored static URL.
+
+    HEAD first, no-follow: 200/206 is alive (unless the Content-Type
+    names a page — a deleted-file landing page answers 200 too), a 3xx
+    with a Location is alive (the stored URL still resolves somewhere;
+    the player follows it), 404/410 is dead. 429/403 and anything else
+    is unknown — back off, do not hammer, do not record: the
+    fall-through to live resolve is the retry, with the resolver's own
+    headers and bridges. A HEAD the host refuses outright (405/501)
+    earns one 1-byte Range GET; that is the whole retry budget (at most
+    two requests, only when the first was method-refused). Never raises.
+    """
+    try:
+        status, headers, _body = _static_probe_exchange(url, method="HEAD")
+    except Exception:  # noqa: BLE001 — the exchange never raises; belt
+        return _STATIC_PROBE_UNKNOWN
+    if status in (200, 206):
+        return (_STATIC_PROBE_DEAD if _static_probe_is_page(headers)
+                else _STATIC_PROBE_ALIVE)
+    if status in (301, 302, 303, 307, 308):
+        return (_STATIC_PROBE_ALIVE if headers.get("location")
+                else _STATIC_PROBE_UNKNOWN)
+    if status in (404, 410):
+        return _STATIC_PROBE_DEAD
+    if status in (405, 501):
+        try:
+            status, headers, _body = _static_probe_exchange(
+                url, method="GET", range_bytes=(0, 0))
+        except Exception:  # noqa: BLE001
+            return _STATIC_PROBE_UNKNOWN
+        if status in (200, 206):
+            return (_STATIC_PROBE_DEAD if _static_probe_is_page(headers)
+                    else _STATIC_PROBE_ALIVE)
+        if status in (301, 302, 303, 307, 308):
+            return (_STATIC_PROBE_ALIVE if headers.get("location")
+                    else _STATIC_PROBE_UNKNOWN)
+        if status in (404, 410):
+            return _STATIC_PROBE_DEAD
+        return _STATIC_PROBE_UNKNOWN
+    return _STATIC_PROBE_UNKNOWN
+
+
+def _ledger_known_dead(conn, source_id: int) -> bool:
+    """True when the bank already proved this ledger row dead.
+
+    The same law `resolved_cache.lookup_cache` applies before serving
+    a banked row — a fresh negative-cache record at the current
+    resolver version — so the static path and the bank agree on what
+    "known dead" means. Fail-open: no record, a stale record, an
+    old-version record, or any read fault all answer False, and the
+    caller probes as before.
+    """
+    try:
+        import resolved_cache
+        return bool(resolved_cache._ledger_recently_failed(
+            conn, int(source_id), now=time.time()))
+    except Exception:  # noqa: BLE001 — a cache fault is "unknown"
+        return False
+
+
 def resolve_target(conn, *, link_id: int, operator: bool):
     """``("not_found", None)`` / ``("failed", details)`` / ``("url", payload)``."""
     row = link_row(conn, link_id, operator=operator)
     if row is None:
         return "not_found", None
     direct = static_url(row)
+    source_id = None
     if direct:
-        return "url", {"url": direct, "refreshed": False, "cached": True}
-    source_id = ledger_source_id(conn, row)
+        # API-05: a stored URL is served only after a liveness probe —
+        # a row labelled `active` whose token has expired (any FSL/Google
+        # row banked weeks ago) used to reach the player unprobed.
+        source_id = ledger_source_id(conn, row)
+        if source_id is None or not _ledger_known_dead(conn, source_id):
+            verdict = _probe_static_url(direct)
+            if verdict == _STATIC_PROBE_ALIVE:
+                return "url", {"url": direct, "refreshed": False, "cached": True}
+            if verdict == _STATIC_PROBE_DEAD and source_id is not None:
+                # Measured evidence: this press proved the stored URL
+                # dead, so the bank records it (the same write the
+                # dead-handle client report makes) and the next press
+                # skips the probe and the serve alike. Best-effort: a
+                # record failure must never break the fall-through below.
+                try:
+                    import fast_fetch
+                    fast_fetch._record_resolve_failure_on(
+                        conn, int(source_id), "probe_failed")
+                except Exception:  # noqa: BLE001
+                    pass
+        # Dead, unknown, or known-dead: fall through to live resolve,
+        # which re-proves the copy (or its siblings) or fails honestly.
+    if source_id is None:
+        source_id = ledger_source_id(conn, row)
     if source_id is None:
         return "failed", {"link_id": int(link_id), "reason": "no_ledger_source"}
     import fast_fetch
