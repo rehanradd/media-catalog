@@ -217,12 +217,9 @@ class LiveBase(unittest.TestCase):
             [(1, 1, "Old Requested Title", "please find it", "open", self.now - 900),
              (2, 2, "New Requested Title", "", "open", self.now - 100),
              (3, 1, "Indexed Title", "see https://example.test/trailer", "indexed", self.now - 800)])
-        conn.executemany(
-            "INSERT INTO coin_ledger (id, account_id, delta, reason, source, created_at) "
-            "VALUES (?,?,?,?,?,?)",
-            [(1, 1, 500, "grant", "server", self.now - 800),
-             (2, 1, -300, "redeem_request", "server", self.now - 700),
-             (3, 2, 100, "grant", "server", self.now - 600)])
+        # The coin_ledger table still exists in the live ledger schema
+        # (dormant rows), but the panel no longer reads it (PNL-03), so
+        # no fixture rows are seeded for it.
         conn.commit()
         conn.close()
         # --- temp registry + status files ---
@@ -755,21 +752,12 @@ class TestDataHealthViews(LiveBase):
     def test_review_queue_count_real(self):
         self.assertEqual(self.live.review_queue_count(), 1)
 
-    def test_coin_summary_real(self):
-        coins = self.live.coin_summary()
-        self.assertTrue(coins["available"])
-        self.assertEqual(coins["rows"], 3)
-        self.assertEqual(coins["granted"], 600)
-        self.assertEqual(coins["spent"], -300)
-        self.assertEqual(coins["by_reason"]["grant"], {"rows": 2, "total": 600})
-        self.assertEqual(coins["by_reason"]["redeem_request"],
-                         {"rows": 1, "total": -300})
-
-    def test_search_users_has_coin_balance(self):
+    def test_search_users_has_no_coin_balance(self):
+        # Coins removed (PNL-03): user rows carry no wallet balance.
         res = self.svc.search_users(self.owner)
         by_id = {u["id"]: u for u in res["items"]}
-        self.assertEqual(by_id[1]["balance"], 200)
-        self.assertEqual(by_id[2]["balance"], 100)
+        self.assertNotIn("balance", by_id[1])
+        self.assertNotIn("balance", by_id[2])
 
     def test_catalog_overview_real(self):
         ov = self.svc.catalog_overview(self.owner)
@@ -793,7 +781,8 @@ class TestDataHealthViews(LiveBase):
         self.assertEqual(d["projection"]["id_map_rows"], 4735950)
         self.assertEqual(d["projection"]["unchecked_links"], 1)
         self.assertEqual(d["adult"], {"posts": 1, "works": 0})
-        self.assertEqual(d["coins"]["rows"], 3)
+        # Coins removed (PNL-03): no coin ledger key at all.
+        self.assertNotIn("coins", d)
         self.assertEqual(len(d["fleet"]), 25)
         # Session 107: drift rides along — the fixture projection is
         # 5 h old with no `posts` key, so it is fresh and the drift is unknown.
@@ -876,7 +865,8 @@ class TestDataHealthViews(LiveBase):
         self.assertIn("Failed links", html)
         self.assertIn("Projection truth", html)
         self.assertIn("Review queue (1 items)", html)
-        self.assertIn("Coin ledger", html)
+        # Coins removed (PNL-03): no coin ledger card on this page.
+        self.assertNotIn("Coin ledger", html)
         self.assertIn("Never ran", html)
 
     def test_data_health_page_shows_drift_alert_when_stale(self):
@@ -1023,7 +1013,7 @@ class TestLiveRoutesAndRecovery(LiveBase):
 class TestLiveRequests(LiveBase):
     """D2.6: the v1 /admin/requests page ported to v2 (Session 78)."""
 
-    def test_list_requests_open_oldest_first_with_hints_and_balances(self):
+    def test_list_requests_open_oldest_first_with_hints(self):
         res = self.svc.list_requests(self.owner)
         self.assertTrue(res["available"])
         self.assertEqual(res["open_count"], 2)
@@ -1032,8 +1022,9 @@ class TestLiveRequests(LiveBase):
         first = res["open"][0]
         self.assertEqual(first["hint"], account_hint(self.key1))
         self.assertEqual(first["profile"], "First Viewer")
-        self.assertEqual(first["balance"], 200)  # 500 grant - 300 request
-        self.assertEqual(res["open"][1]["balance"], 100)
+        # Coins removed (PNL-03): no wallet balance on request rows.
+        self.assertNotIn("balance", first)
+        self.assertNotIn("balance", res["open"][1])
         self.assertEqual(res["open"][1]["profile"], "")
 
     def test_list_requests_scrubs_urls_from_notes(self):
@@ -1115,7 +1106,9 @@ class TestLiveRequests(LiveBase):
         self.assertIn("/admin/api/v2/requests/2/declined", html)
         self.assertIn("/admin/api/v2/requests/trigger", html)
         self.assertIn("First Viewer", html)
-        self.assertIn("200 coins", html)
+        # Coins removed (PNL-03): no balance column on the requests page.
+        self.assertNotIn("200 coins", html)
+        self.assertNotIn("Balance", html)
 
 
 class TestLiveUsage(LiveBase):

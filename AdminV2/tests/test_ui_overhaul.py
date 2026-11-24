@@ -182,14 +182,16 @@ class TestUiOverhaul(unittest.TestCase):
         self.assertIn("Stored only", html)
         self.assertIn("Applies:", html)
 
-    def test_monetization_page_renders_coin_prices_without_tokens(self):
+    def test_monetization_page_renders_without_coin_prices_or_tokens(self):
+        # Coins removed (PNL-03): no coin price table, no coin editors.
         status, _c, payload, _k, _l = self._get("/admin/monetization", cookie=self.cookie)
         self.assertEqual(status, 200)
         html = payload.decode()
-        self.assertIn("Coin prices", html)
-        self.assertIn('name="coin_redeem_day"', html)
-        self.assertIn('value="500"', html)
-        self.assertIn('value="5000"', html)
+        self.assertNotIn("Coin prices", html)
+        self.assertNotIn('name="coin_redeem_day"', html)
+        self.assertNotIn("coin_redeem_", html)
+        self.assertNotIn('name="coins_enabled"', html)
+        self.assertIn('name="vip_monthly_pkr"', html)
         self.assertIn("Save monetization", html)
         # Token inputs exist but are never prefilled.
         self.assertIn('name="shrinkme_api_token" type="password"', html)
@@ -218,9 +220,6 @@ class TestUiOverhaul(unittest.TestCase):
         status, _c, _p, _k, _l = self._post_form(
             "/admin/api/v2/monetization",
             {"vip_monthly_pkr": "250", "vip_yearly_pkr": "1500",
-             "coin_redeem_day": "600", "coin_redeem_weekend": "1200",
-             "coin_redeem_monthly": "5000", "coin_redeem_download": "100",
-             "coin_redeem_request": "300", "coin_redeem_theme": "250",
              "pak_till_id": "", "pak_jazzcash_number": "",
              "pak_easypaisa_number": "", "pak_raast_id": "",
              "monetag_zone_id": "", "adsterra_tag_id": "",
@@ -231,7 +230,29 @@ class TestUiOverhaul(unittest.TestCase):
         self.assertEqual(status, 303)
         mon = self.app.service.get_monetization(self.owner)
         self.assertEqual(mon["vip_monthly_pkr"], 250)
-        self.assertEqual(mon["coin_redeem_day"], 600)
+        # Coins removed (PNL-03): no coin price survives a save.
+        self.assertNotIn("coin_redeem_day", mon)
+
+    def test_monetization_form_rejects_coin_fields(self):
+        # Coins removed (PNL-03): a coin price is an unknown field now.
+        # A form caller gets the 303-with-error redirect, not a 400 —
+        # and nothing is saved.
+        status, _c, _p, _k, location = self._post_form(
+            "/admin/api/v2/monetization",
+            {"vip_monthly_pkr": "250", "coin_redeem_day": "600",
+             "pak_till_id": "", "pak_jazzcash_number": "",
+             "pak_easypaisa_number": "", "pak_raast_id": "",
+             "monetag_zone_id": "", "adsterra_tag_id": "",
+             "shrinkme_api_token": "", "droplink_api_token": "",
+             "maintenance_mode": "0", "feature_downloads": "1",
+             "feature_pure_cinema": "1", "feature_chromecast": "1",
+             "feature_quality_gate": "0", "apk_update_url": ""})
+        self.assertEqual(status, 303)
+        self.assertIn("error=", location or "")
+        self.assertIn("coin_redeem_day", location or "")
+        mon = self.app.service.get_monetization(self.owner)
+        self.assertEqual(mon["vip_monthly_pkr"], 200)
+        self.assertNotIn("coin_redeem_day", mon)
 
     def test_data_health_page_without_live_says_so(self):
         status, _c, payload, _k, _l = self._get("/admin/data-health", cookie=self.cookie)
@@ -246,10 +267,11 @@ class TestUiOverhaul(unittest.TestCase):
                      "/admin/tuning", "/admin/monetization", "/admin/data-health"):
             self.assertIn('href="%s"' % href, html)
 
-    def test_users_page_shows_coins_and_fleet_shows_never_ran(self):
+    def test_users_page_has_no_coins_and_fleet_shows_never_ran(self):
         status, _c, payload, _k, _l = self._get("/admin/users", cookie=self.cookie)
         self.assertEqual(status, 200)
-        self.assertIn("Coins", payload.decode())
+        # Coins removed (PNL-03): no Coins column on the users page.
+        self.assertNotIn("Coins", payload.decode())
         status, _c, payload, _k, _l = self._get("/admin/fleet", cookie=self.cookie)
         self.assertEqual(status, 200)
         self.assertIn("Never ran", payload.decode())

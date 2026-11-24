@@ -24,7 +24,7 @@ single canonical value:
   viewer overlay that replaced it with the `tuning_settings` mirror is
   gone. The column is new on the catalog row — a pre-existing row gains it
   by `_ensure_monetization`'s ALTER, reading back "" until the operator
-  sets it, and the served body resolves "" to the field default "720p".
+  sets it, and the served body resolves "" to the field default "480p".
 
 T-21 pins the agreement across all four sources by building both databases
 fresh in memory and reading the seeded rows — not by parsing source text.
@@ -70,7 +70,7 @@ class CanonicalDefaultsTests(unittest.TestCase):
         self.assertEqual(fields["feature_quality_gate"], 0)  # G-1
         self.assertEqual(fields["coin_redeem_weekend"], 1200)  # G-5
         self.assertEqual(fields["coin_redeem_monthly"], 5000)  # G-5
-        self.assertEqual(fields["free_quality_cap"], "720p")  # G-8
+        self.assertEqual(fields["free_quality_cap"], "480p")  # G-8
 
     def test_fresh_catalog_row_seeds_the_canonical_values(self):
         values = admin_panel._read_monetization(_fresh_catalog_conn())
@@ -136,7 +136,7 @@ class ServedBodyCompletenessTests(unittest.TestCase):
                           "coins": False})
         for value in body["feature_flags"].values():
             self.assertIsInstance(value, bool)
-        self.assertEqual(body["free_quality_cap"], "720p")
+        self.assertEqual(body["free_quality_cap"], "480p")
 
     def test_coins_flag_follows_the_row(self):
         """Coins master switch (2026-11-17): off by default, on when the
@@ -161,11 +161,11 @@ class ServedBodyCompletenessTests(unittest.TestCase):
         conn.execute("UPDATE app_remote_config"
                      " SET free_quality_cap = '1080p' WHERE id = 1")
         self.assertEqual(
-            admin_panel.remote_config(conn)["free_quality_cap"], "720p")
+            admin_panel.remote_config(conn)["free_quality_cap"], "480p")
         conn.execute("UPDATE app_remote_config"
                      " SET free_quality_cap = '' WHERE id = 1")
         self.assertEqual(
-            admin_panel.remote_config(conn)["free_quality_cap"], "720p")
+            admin_panel.remote_config(conn)["free_quality_cap"], "480p")
 
     def test_unavailable_row_still_serves_every_key(self):
         conn = sqlite3.connect(":memory:")
@@ -178,7 +178,7 @@ class ServedBodyCompletenessTests(unittest.TestCase):
                           "coins": False})
         for value in body["feature_flags"].values():
             self.assertIsInstance(value, bool)
-        self.assertEqual(body["free_quality_cap"], "720p")
+        self.assertEqual(body["free_quality_cap"], "480p")
 
 
 if __name__ == "__main__":

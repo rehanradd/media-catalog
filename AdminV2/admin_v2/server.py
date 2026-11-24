@@ -17,7 +17,7 @@ from . import fixture_app, templates
 from .errors import ApiError
 from .security import mask_ip
 from .services import TUNING_BOUNDS, Service
-from .store import COIN_REDEEM_FIELDS, FLEET_SITES
+from .store import FLEET_SITES
 
 STRICT_HOST = "raddstream.duckdns.org"
 
@@ -653,8 +653,7 @@ def _page_users(self, user, sess, query):
              # None means "unknown, not zero": a per-account device count
              # cannot be computed (see LiveStores.search_users), so the
              # cell says so instead of printing an empty cell or a lying 0.
-             u["device_count"] if u["device_count"] is not None else "unknown",
-             "%d coins" % (u.get("balance") or 0)]
+             u["device_count"] if u["device_count"] is not None else "unknown"]
             for u in users]
     body = """<form method="get" action="/admin/users" class="filterbar" aria-label="Search users">
 <div class="field"><label for="users-q">Search users</label>
@@ -669,7 +668,7 @@ def _page_users(self, user, sess, query):
         " selected" if not tier else "",
         " selected" if tier == "free" else "",
         " selected" if tier == "vip" else "")
-    body += templates.table(["Account hint", "Tier", "VIP until", "Devices", "Coins"], rows, "No users yet")
+    body += templates.table(["Account hint", "Tier", "VIP until", "Devices"], rows, "No users yet")
     if res.get("next_after_id"):
         params = {"after_id": res["next_after_id"]}
         if q:
@@ -727,12 +726,6 @@ def _page_money(self, user, sess, query):
             urllib.parse.urlencode(params))
     body += "<div class='card'><h3>VIP prices</h3><p>Monthly: %s. Yearly: %s. New prices affect new purchases only.</p></div>" % (
         templates.fmt_pkr(mon["vip_monthly_pkr"]), templates.fmt_pkr(mon["vip_yearly_pkr"]))
-    body += ("<div class='card'><h3>Coin prices</h3><p>Day pass: %s coins. Weekend: %s. Monthly: %s. "
-             "Download: %s. Movie request: %s. Theme: %s.</p>"
-             "<p><a class=\"btn secondary\" href=\"/admin/monetization\">Edit prices in Monetization</a></p></div>" % (
-                 mon.get("coin_redeem_day"), mon.get("coin_redeem_weekend"),
-                 mon.get("coin_redeem_monthly"), mon.get("coin_redeem_download"),
-                 mon.get("coin_redeem_request"), mon.get("coin_redeem_theme")))
     hid = templates.form_hidden(sess.get("csrf_token"), "/admin/money")
     for p in pays:
         pid = p["id"]
@@ -1223,12 +1216,11 @@ def _page_requests(self, user, sess, query):
             '<button type="submit">Declined</button></form>'
             % (r["id"], hid, r["id"], hid))
         rows.append([r["id"], r["title"], r["notes"] or "—", account,
-                     "%d coins" % r["balance"],
                      templates.fmt_datetime(r["created_at"]),
                      templates.Raw(actions)])
     body = "<h3>Open requests (%d)</h3>" % data["open_count"]
     body += templates.table(
-        ["ID", "Title", "Notes", "Account", "Balance", "Requested", "Close"],
+        ["ID", "Title", "Notes", "Account", "Requested", "Close"],
         rows, "No open requests.")
     recent_rows = [[r["id"], r["title"],
                     templates.Raw(templates.badge(r["status"])),
@@ -1480,11 +1472,13 @@ def _page_tuning(self, user, sess, query):
 
 
 def _page_monetization(self, user, sess, query):
-    """Monetization (audit §Tuning/Money): the 22 controls the API
-    already had — VIP prices, the six coin pass prices, payment rails,
-    ad zones, feature flags — now reachable from the UI. Token inputs
-    are password fields, never prefilled: blank means "keep the stored
-    token" (put_monetization strips empty tokens before saving)."""
+    """Monetization (audit §Tuning/Money): the 16 controls the API
+    already had — VIP prices, payment rails, ad zones, feature flags —
+    now reachable from the UI. Token inputs are password fields, never
+    prefilled: blank means "keep the stored token" (put_monetization
+    strips empty tokens before saving). Coins are gone (removal
+    2026-11-17, PNL-03): no coin price table, no coin editor, no Coins
+    switch — the flag stays 0 in the stored row with no write path."""
     mon = self.service.get_monetization(user)
     error = (query.get("error", [""])[0] if query.get("error") else "")
     hid = templates.form_hidden(sess.get("csrf_token"), "/admin/monetization")
@@ -1509,33 +1503,22 @@ def _page_monetization(self, user, sess, query):
                     " selected" if cur == 0 else "",
                     " selected" if cur == 1 else "")
 
-    coin_rows = "".join(
-        "<tr><td>%s</td><td class=\"num\">%s coins</td></tr>" % (
-            k.replace("coin_redeem_", "").replace("_", " ").title(),
-            templates.esc(mon.get(k)))
-        for k in COIN_REDEEM_FIELDS)
-    body = ('<p>VIP and coin prices, payment rails, ad zones and feature '
+    body = ('<p>VIP prices, payment rails, ad zones and feature '
             'flags. New prices affect new purchases only. Tokens are never '
             'shown here — leave a token blank to keep the stored one.</p>')
-    body += ('<div class="card"><h3>Coin prices now</h3>'
-             '<table><thead><tr><th>Pass</th><th>Price</th></tr></thead>'
-             '<tbody>%s</tbody></table></div>') % coin_rows
     body += ('<form method="post" action="/admin/api/v2/monetization">%s'
              '<div class="card"><h3>VIP prices (PKR)</h3>%s%s</div>'
-             '<div class="card"><h3>Coin prices</h3>%s</div>'
              '<div class="card"><h3>Payment rails (PKR)</h3>%s%s%s%s</div>'
              '<div class="card"><h3>Ad zones</h3>%s%s</div>'
              '<div class="card"><h3>Tokens (blank keeps the stored one)</h3>'
              '<p class="muted">ShrinkMe: %s. Droplink: %s.</p>%s%s</div>'
-             '<div class="card"><h3>Flags</h3>%s%s%s%s%s%s</div>'
+             '<div class="card"><h3>Flags</h3>%s%s%s%s%s</div>'
              '<label for="mon-apk_update_url">APK update URL</label>'
              '<input id="mon-apk_update_url" name="apk_update_url" type="text" value="%s">'
              '<div class="stickybar"><button type="submit">Save monetization</button></div></form>') % (
         hid,
         num_field("vip_monthly_pkr", "VIP monthly", "PKR"),
         num_field("vip_yearly_pkr", "VIP yearly", "PKR"),
-        "".join(num_field(k, k.replace("coin_redeem_", "").replace("_", " ").title() + " pass", "coins")
-                for k in COIN_REDEEM_FIELDS),
         text_field("pak_till_id", "Till ID"),
         text_field("pak_jazzcash_number", "JazzCash number"),
         text_field("pak_easypaisa_number", "EasyPaisa number"),
@@ -1551,7 +1534,6 @@ def _page_monetization(self, user, sess, query):
         flag_field("feature_pure_cinema", "Pure cinema"),
         flag_field("feature_chromecast", "Chromecast"),
         flag_field("feature_quality_gate", "Quality gate"),
-        flag_field("coins_enabled", "Coins"),
         templates.esc(mon.get("apk_update_url") or ""),
     )
     return templates.layout("Monetization", body, active="monetization", error=error)
@@ -1560,7 +1542,7 @@ def _page_monetization(self, user, sess, query):
 def _page_data_health(self, user, sess, query):
     """Data health (audit §Missing views): what the server already
     knows, in one place — negative cache, review queue, projection
-    truth, adult volume, coin ledger, fleet with last-sync ages."""
+    truth, adult volume, fleet with last-sync ages."""
     data = self.service.data_health(user)
     if not data.get("available"):
         body = ("<p>No live catalog or ledger is wired here, so there is "
@@ -1570,7 +1552,6 @@ def _page_data_health(self, user, sess, query):
     proj = data.get("projection") or {}
     drift = data.get("drift") or {}
     adult = data.get("adult") or {}
-    coins = data.get("coins") or {}
     body = ""
     # Projection drift (Session 107): a stale projection is the one
     # operator-visible staleness signal — the v2 catalog silently hides
@@ -1629,21 +1610,6 @@ def _page_data_health(self, user, sess, query):
              "%s flagged works. Flagged rows are hidden from the app and "
              "visible only here, in the operator panel.</p></div>") % (
         templates.esc(adult.get("posts")), templates.esc(adult.get("works")))
-    # Coins.
-    if coins.get("available"):
-        reason_rows = "".join(
-            "<tr><td>%s</td><td class=\"num\">%s</td><td class=\"num\">%s</td></tr>" % (
-                templates.esc(k), templates.esc(v.get("rows")),
-                templates.esc(v.get("total")))
-            for k, v in sorted((coins.get("by_reason") or {}).items()))
-        body += ("<div class='card'><h3>Coin ledger</h3><p>%s rows. Granted: %s. "
-                 "Spent: %s.</p>%s</div>") % (
-            templates.esc(coins.get("rows")), templates.esc(coins.get("granted")),
-            templates.esc(coins.get("spent")),
-            ("<table><thead><tr><th>Reason</th><th>Rows</th><th>Total</th></tr></thead>"
-             "<tbody>%s</tbody></table>" % reason_rows) if reason_rows else "")
-    else:
-        body += ("<div class='card'><h3>Coin ledger</h3><p>No coin ledger yet.</p></div>")
     # Fleet.
     fleet = data.get("fleet") or []
     fl_rows = [[f.get("site_key"), templates.Raw(templates.badge(f.get("status"))),

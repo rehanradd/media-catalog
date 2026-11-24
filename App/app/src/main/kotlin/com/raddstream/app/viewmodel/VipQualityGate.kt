@@ -29,11 +29,11 @@ object VipQualityGate {
 
     /**
      * The sentence for a locked rung under this free cap. The shipped cap is
-     * 720p, so the 480p wording is the only other one — a cap the server
-     * never sends reads as 720p, never as a stricter cap nobody asked for.
+     * 480p, so the 720p wording is the only other one — a cap the server
+     * never sends reads as 480p, the standing launch default.
      */
     fun lockedMessage(freeQualityCap: String): String =
-        if (freeQualityCap == "480p") {
+        if (freeQualityCap != "720p") {
             "720p, 1080p and 4K sources are part of VIP. Upgrade to unlock them."
         } else {
             LOCKED_MESSAGE
@@ -48,7 +48,7 @@ object VipQualityGate {
             (freeQualityCap == "480p" && resolution == Resolution.R720)
 
     /** A canonical rung band (`2160p`, `1080p`) or the shorthand the switch may carry. */
-    fun isPremiumBand(band: String?): Boolean = isPremiumBand(band, "720p")
+    fun isPremiumBand(band: String?): Boolean = isPremiumBand(band, "480p")
 
     /** The same, under the operator's free cap: at 480p, 720p is premium too. */
     fun isPremiumBand(band: String?, freeQualityCap: String): Boolean {
@@ -59,7 +59,7 @@ object VipQualityGate {
     }
 
     /** The fallback when a rung has no canonical band: the server's own words for the picture. */
-    fun isPremiumLabel(label: String?): Boolean = isPremiumLabel(label, "720p")
+    fun isPremiumLabel(label: String?): Boolean = isPremiumLabel(label, "480p")
 
     /** The same, under the operator's free cap: at 480p, a "720" label is premium too. */
     fun isPremiumLabel(label: String?, freeQualityCap: String): Boolean {
@@ -78,14 +78,14 @@ object VipQualityGate {
     fun premiumAccess(gateEnabled: Boolean, isVip: Boolean): Boolean = isVip || !gateEnabled
 
     fun allowsBand(band: String?, isVip: Boolean): Boolean =
-        allowsBand(band, isVip, "720p")
+        allowsBand(band, isVip, "480p")
 
     /** The same, under the operator's free cap: at 480p, 720p is premium too. */
     fun allowsBand(band: String?, isVip: Boolean, freeQualityCap: String): Boolean =
         isVip || !isPremiumBand(band, freeQualityCap)
 
     fun allowsResolution(resolution: Resolution, isVip: Boolean): Boolean =
-        allowsResolution(resolution, isVip, "720p")
+        allowsResolution(resolution, isVip, "480p")
 
     /** The same, under the operator's free cap: at 480p, 720p is premium too. */
     fun allowsResolution(resolution: Resolution, isVip: Boolean, freeQualityCap: String): Boolean =
@@ -97,7 +97,7 @@ object VipQualityGate {
      * empty, which is the honest answer — there is no free picture to offer on this scope.
      */
     fun gate(ladder: LadderForScope, isVip: Boolean): LadderForScope =
-        gate(ladder, isVip, "720p")
+        gate(ladder, isVip, "480p")
 
     /** The same, under the operator's free cap: at 480p, 720p leaves the ladder too. */
     fun gate(ladder: LadderForScope, isVip: Boolean, freeQualityCap: String): LadderForScope {
@@ -120,7 +120,7 @@ object VipQualityGate {
      * left, so the header never advertises "4K" for a page that will not play it.
      */
     fun gate(layout: ReleaseLayout, isVip: Boolean): ReleaseLayout =
-        gate(layout, isVip, "720p")
+        gate(layout, isVip, "480p")
 
     /** The same, under the operator's free cap: at 480p, 720p prints leave the layout too. */
     fun gate(layout: ReleaseLayout, isVip: Boolean, freeQualityCap: String): ReleaseLayout {
@@ -155,7 +155,7 @@ object VipQualityGate {
 
     /** True when the ungated content has at least one 4K/1080p source worth an upsell. */
     fun hasPremiumPrints(layout: ReleaseLayout): Boolean =
-        hasPremiumPrints(layout, "720p")
+        hasPremiumPrints(layout, "480p")
 
     /** The same, under the operator's free cap: at 480p, a 720p source is one too. */
     fun hasPremiumPrints(layout: ReleaseLayout, freeQualityCap: String): Boolean =

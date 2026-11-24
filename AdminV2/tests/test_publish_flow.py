@@ -196,12 +196,14 @@ class TestPublish(PublishFlowBase):
         self._live_service(ddl=OLD_DDL)
         out = self.live.save_remote_config(
             {"apk_update_url": "https://example.test/app.apk",
-             "maintenance_mode": 1, "coins_enabled": 0}, config_version=4)
+             "maintenance_mode": 1}, config_version=4)
         cols = {r[1] for r in self._catalog().execute(
             "PRAGMA table_info(app_remote_config)")}
         self.assertIn("apk_update_url", cols)
-        self.assertIn("coins_enabled", cols)
         self.assertIn("config_version", cols)
+        # Coins removed (PNL-03): a publish never carries coins_enabled,
+        # so an old catalog must NOT gain the column from a save.
+        self.assertNotIn("coins_enabled", cols)
         self.assertEqual(out["apk_update_url"], "https://example.test/app.apk")
         self.assertEqual(out["config_version"], 4)
 

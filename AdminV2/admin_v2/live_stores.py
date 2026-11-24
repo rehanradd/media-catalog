@@ -68,7 +68,7 @@ from datetime import datetime, timezone
 
 from .errors import ApiError, bad, conflict, not_found
 from .security import valid_domain
-from .store import COIN_REDEEM_FIELDS, FLEET_SITES
+from .store import FLEET_SITES
 
 HINT_SALT = "radd-payment-hint:v1:"
 HINT_CHARS = 8
@@ -78,25 +78,27 @@ PLAN_DEFAULT_PKR = {"vip_monthly": 200, "vip_yearly": 1500}
 PAYMENT_METHODS = ("jazzcash", "easypaisa", "raast")
 
 # The 16 real app_remote_config fields the Android app actually reads
-# (viewer.py GET /api/v1/app/remote-config + VipRemoteConfig.kt),
-# plus the six coin pass prices the panel could previously neither
-# show nor edit (admin-panel audit 2026-11-08 §Money).
+# (viewer.py GET /api/v1/app/remote-config + VipRemoteConfig.kt).
+# Coins are gone (removal 2026-11-17, PNL-03): the six coin pass
+# prices and the `coins_enabled` switch are NOT carried here — the
+# live row keeps its stored 0 for the flag and its dormant prices,
+# and no panel write ever touches them again.
 REMOTE_CONFIG_FIELDS = [
     "pak_till_id", "pak_jazzcash_number", "pak_easypaisa_number",
     "pak_raast_id", "vip_monthly_pkr", "vip_yearly_pkr",
     "monetag_zone_id", "adsterra_tag_id", "shrinkme_api_token",
     "droplink_api_token", "maintenance_mode", "apk_update_url",
     "feature_downloads", "feature_pure_cinema", "feature_chromecast",
-    "feature_quality_gate", "coins_enabled",
-] + COIN_REDEEM_FIELDS
+    "feature_quality_gate",
+]
 REMOTE_CONFIG_SECRETS = ("shrinkme_api_token", "droplink_api_token")
 
 # Columns stored as INTEGER (everything else in REMOTE_CONFIG_FIELDS is TEXT).
 _REMOTE_CONFIG_INT_FIELDS = frozenset({
     "vip_monthly_pkr", "vip_yearly_pkr", "maintenance_mode",
     "feature_downloads", "feature_pure_cinema", "feature_chromecast",
-    "feature_quality_gate", "coins_enabled",
-} | set(COIN_REDEEM_FIELDS))
+    "feature_quality_gate",
+})
 ENGINE_SYNC_SITES = frozenset({
     "vegamovies", "rogmovies", "ssrmovies", "7starhd", "katmoviehd",
     "multimovies", "10xflix", "hdhub4u", "filmyzilla",
@@ -979,7 +981,6 @@ class LiveStores:
         try:
             now = time.time()
             rows = list(self._ledger_accounts(conn))
-            balances = self.request_coin_balances([r["id"] for r in rows])
             items = []
             for r in rows:
                 hint = account_hint(r["key_hash"])
@@ -995,7 +996,6 @@ class LiveStores:
                     "tier": "vip" if is_vip else "free",
                     "vip_until": int(r["vip_until"]) if r["vip_until"] else 0,
                     "device_count": None, "devices": "unknown",
-                    "balance": balances.get(r["id"], 0),
                     "created_at": r["created_at"], "last_seen_at": r["last_seen_at"],
                     "revoked": bool(r["revoked_at"]),
                 })
@@ -1271,27 +1271,6 @@ class LiveStores:
                     "profile": (str(r["profile_name"] or "")
                                 if "profile_name" in cols else ""),
                 }
-            return out
-        finally:
-            conn.close()
-
-    def request_coin_balances(self, account_ids):
-        """{account_id: balance} — the derived wallet, SUM(delta)."""
-        ids = sorted({int(a) for a in account_ids})
-        if not ids:
-            return {}
-        conn = self._ro(self.ledger_path, "ledger")
-        try:
-            if not _has_table(conn, "coin_ledger"):
-                return {i: 0 for i in ids}
-            marks = ",".join("?" for _ in ids)
-            out = {i: 0 for i in ids}
-            for r in conn.execute(
-                    "SELECT account_id, COALESCE(SUM(delta), 0) AS bal"
-                    " FROM coin_ledger WHERE account_id IN (%s)"
-                    " GROUP BY account_id" % marks,
-                    tuple(ids)).fetchall():
-                out[int(r["account_id"])] = int(r["bal"])
             return out
         finally:
             conn.close()
@@ -1647,41 +1626,9 @@ class LiveStores:
         finally:
             conn.close()
 
-    def coin_summary(self):
-        """Coin ledger totals by reason (read-only, user-state DB).
-
-        The panel had no coin balance/ledger view at all (audit §Coin
-        system). `granted`/`spent` are sums of positive/negative
-        deltas; `by_reason` maps each LEDGER_REASONS key to its row
-        count and total. A ledger without the table yet is an honest
-        empty answer, not an error.
-        """
-        conn = self._ro(self.ledger_path, "ledger")
-        try:
-            if not _has_table(conn, "coin_ledger"):
-                return {"available": False, "rows": 0, "granted": 0,
-                        "spent": 0, "by_reason": {}}
-            rows = conn.execute(
-                "SELECT COUNT(*) AS n FROM coin_ledger").fetchone()["n"]
-            granted = conn.execute(
-                "SELECT COALESCE(SUM(delta), 0) AS s FROM coin_ledger "
-                "WHERE delta > 0").fetchone()["s"]
-            spent = conn.execute(
-                "SELECT COALESCE(SUM(delta), 0) AS s FROM coin_ledger "
-                "WHERE delta < 0").fetchone()["s"]
-            by_reason = {r["reason"]: {"rows": r["n"], "total": r["s"]}
-                         for r in conn.execute(
-                "SELECT reason, COUNT(*) AS n, COALESCE(SUM(delta), 0) AS s "
-                "FROM coin_ledger GROUP BY reason").fetchall()}
-            return {"available": True, "rows": int(rows),
-                    "granted": int(granted), "spent": int(spent),
-                    "by_reason": by_reason}
-        finally:
-            conn.close()
-
     # -- remote config (real app_remote_config, catalog DB) --------------
     def read_remote_config(self):
-        """The 22 real fields (16 app + 6 coin), id=1. Tokens are never
+        """The 16 real fields, id=1. Tokens are never
         returned here; the caller masks them (see read_remote_config_masked)."""
         conn = self._ro(self.catalog_path, "catalog")
         try:
@@ -1735,11 +1682,8 @@ class LiveStores:
         for k in ("vip_monthly_pkr", "vip_yearly_pkr"):
             if k in fields and not (0 <= int(fields[k]) <= 10_000_000):
                 raise bad("VIP price must be between 0 and 10,000,000.")
-        for k in COIN_REDEEM_FIELDS:
-            if k in fields and not (0 <= int(fields[k]) <= 10_000_000):
-                raise bad("Coin price must be between 0 and 10,000,000.")
         for k in ("maintenance_mode", "feature_downloads", "feature_pure_cinema",
-                  "feature_chromecast", "feature_quality_gate", "coins_enabled"):
+                  "feature_chromecast", "feature_quality_gate"):
             if k in fields and int(fields[k]) not in (0, 1):
                 raise bad("That flag must be 0 or 1.")
         conn = self._rw(self.catalog_path, "catalog")

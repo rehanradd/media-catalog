@@ -359,24 +359,25 @@ def read_free_quality_cap(panel_path=None):
     """The best picture a free viewer may play: "480p" or "720p".
 
     The operator's `free_quality_cap` tuning key. Anything else — a missing
-    key, a typo, an older panel — answers the shipped "720p", never a
-    stricter cap the operator did not ask for.
+    key, a typo, an older panel — answers the shipped "480p", the standing
+    launch default: playback always starts at 480p unless the viewer set
+    their own default.
     """
     conn = _open_panel(panel_path)
     if conn is None:
-        return "720p"
+        return "480p"
     try:
         if not _has_table(conn, "tuning_settings"):
-            return "720p"
+            return "480p"
         try:
             row = conn.execute(
                 "SELECT free_quality_cap FROM tuning_settings WHERE id = 1").fetchone()
         except sqlite3.Error:
-            return "720p"
+            return "480p"
         if row is None:
-            return "720p"
+            return "480p"
         cap = _theme_col(row, "free_quality_cap")
-        return cap if isinstance(cap, str) and cap in ("480p", "720p") else "720p"
+        return cap if isinstance(cap, str) and cap in ("480p", "720p") else "480p"
     finally:
         conn.close()
 

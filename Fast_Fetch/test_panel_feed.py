@@ -330,9 +330,10 @@ class PanelFeedTests(unittest.TestCase):
             "UPDATE tuning_settings SET free_quality_cap='4K' WHERE id=1")
         conn.commit()
         conn.close()
-        # A value the panel itself would refuse is never the app's cap.
+        # A value the panel itself would refuse is never the app's cap:
+        # it reads as the shipped 480p default.
         self.assertEqual(
-            panel_feed.read_free_quality_cap(panel_path=self.panel_path), "720p")
+            panel_feed.read_free_quality_cap(panel_path=self.panel_path), "480p")
 
     def test_min_version_reads_published_snapshot(self):
         self.assertEqual(

@@ -1810,7 +1810,7 @@ MONETIZATION_FIELDS = (
     # created `DEFAULT ''` (see `_column_ddl`), so a row that predates this
     # column reads back `''` and `remote_config` publishes the field default
     # below — the same rule `streak_tz` already relies on.
-    ("free_quality_cap", "Free quality cap (480p/720p)", _TEXT, "720p"),
+    ("free_quality_cap", "Free quality cap (480p/720p)", _TEXT, "480p"),
     # ---- engagement pillars ----------------------------------------------------
     # The four knobs `docs/MONETIZATION_PILLARS_SCHEMA.md` §2 reserves for the
     # operator, so an ad cadence, a coin price, a streak grant and the PKR pass
@@ -2347,12 +2347,13 @@ def _resolve_free_quality_cap(values):
 
     The catalog row is the single source (launch plan Phase 0, G-8). A TEXT
     column reads back "" on a row that predates it, and anything else — a
-    typo, an older value, a missing key — answers the shipped "720p", never
-    a stricter cap the operator did not ask for. Same allowed values as the
-    panel's draft validation (`services.py:1241-1242`).
+    typo, an older value, a missing key — answers the shipped "480p", the
+    standing launch default: playback always starts at 480p unless the
+    viewer set their own default. Same allowed values as the panel's
+    draft validation (`services.py:1241-1242`).
     """
     cap = str(values.get("free_quality_cap") or "").strip()
-    return cap if cap in ("480p", "720p") else "720p"
+    return cap if cap in ("480p", "720p") else "480p"
 
 
 def remote_config(conn):
