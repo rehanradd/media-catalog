@@ -3,7 +3,8 @@
 A media-catalog and source-link service with a REST API and an Android client.
 The backend aggregates public catalog metadata and source links into SQLite;
 the app browses it and plays it. This file is the only reference doc in the
-repo — everything in it was verified against the live system on 2026-11-17.
+repo — its figures are the 2026-11-17 snapshot, verified against the live system then; several counts
+have moved since, so re-measure before quoting a number.
 Agent manual: `AGENTS.md`. Session logs: `Fast_Fetch/CONTINUITY.md`,
 `App/docs/SESSION_HISTORY.md`, `Fast_Fetch/checkpoints/`,
 `docs/checkpoints/`.
@@ -51,7 +52,7 @@ domain changes, update the payload and this section together:
   light every 15 min, medium hourly, heavy Wed 02:00.
 - **Backups:** gate backups go to the private Hugging Face dataset
   `radddao/radd-stream-gate-backups`. All 11 done and verified 2026-11-17.
-  The two newest gate backups stay on disk as rollback nets — never
+  The three newest gate backups stay on disk as rollback nets — never
   delete them.
 
 ## Build, test, push, deploy
@@ -88,7 +89,7 @@ domain changes, update the payload and this section together:
   My List, Downloads, Live TV, Settings). Room v8, Media3 1.3.1. Direct APK
   distribution — no Play Store.
 - **`AdminV2/`** — operator panel (`server.py`, `pairing.py`, `services.py`,
-  `store.py`). Its tests are not in CI.
+  `store.py`). Its tests run in `backend-ci.yml`.
 - **Key routes:** `/api/v1/posts?q=` (search — there is no bare
   `/api/v1/search` route), `/api/v1/app/remote-config`, `/api/v2/play`,
   `/api/v2/works`. Press a stream handle with a plain no-follow GET:
