@@ -793,12 +793,16 @@ class TestPoolHealing(unittest.TestCase):
         """Pin prefetch_worker.py (READ ONLY here — qoder13's file): it must
         resolve under the honest v2 contract and bank under source="pool"
         inside the success branch only. If either pin breaks, the pool has
-        started trusting v1 envelopes."""
+        started trusting v1 envelopes. The resolve also carries
+        background=True (API-04, 2026-11-24): a sweep warm, not a press,
+        so slow unwraps may use their long budget — the v2 contract is
+        unchanged, only the budget flag was added."""
         import re
         with open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                "prefetch_worker.py"), encoding="utf-8") as fh:
             src = fh.read()
-        self.assertIn("resolve_live_source(source_id, v2=True)", src)
+        self.assertIn("resolve_live_source(source_id, v2=True,", src)
+        self.assertIn("background=True", src)
         self.assertIn('source="pool"', src)
         success_at = src.index("if result.get(\"success\"):")
         bank_at = src.index("resolved_cache.record_resolved_cache(")
