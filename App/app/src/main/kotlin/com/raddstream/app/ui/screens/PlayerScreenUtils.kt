@@ -30,10 +30,14 @@ import kotlin.math.roundToInt
 
 /**
  * P5 (player fixes): the reduced-motion crossfade. The player fades ride
- * MaterialTheme.motionScheme; under reduced motion they crossfade in this
- * many milliseconds instead — the same 30ms the old duplicated token set
- * carried before the player migrated off it. One constant, owned here, so no player file reaches
- * back for the duplicated token set.
+ * the M3 Expressive effects springs via RaddMotion; under reduced motion
+ * they crossfade in this many milliseconds instead — the same 30ms the
+ * token set carries ([RaddMotion.FadeWhenReduced]). One constant, owned
+ * here, so the fade duration lives in one place.
+ *
+ * MaterialTheme.motionScheme itself is NOT read: it is internal in the
+ * pinned material3 1.4.0 (Compose BOM 2025.11.01) and only becomes public
+ * in material3 1.5.0 — wiring it is the BOM-bump follow-up, not this branch.
  */
 internal const val REDUCED_MOTION_FADE_MS = 30
 

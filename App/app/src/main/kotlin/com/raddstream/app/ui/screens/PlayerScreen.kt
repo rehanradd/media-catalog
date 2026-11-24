@@ -102,6 +102,7 @@ import com.raddstream.app.ui.components.PinPadDialog
 import com.raddstream.app.ui.components.rememberReduceMotion
 import com.raddstream.app.ui.theme.RaddCaptionPlateArgb
 import com.raddstream.app.ui.theme.RaddCurrent500
+import com.raddstream.app.ui.theme.RaddMotion
 import com.raddstream.app.ui.theme.PlayerChromeTheme
 import com.raddstream.app.ui.theme.RaddNarrationCheck
 import com.raddstream.app.ui.theme.RaddNarrationPlate
@@ -622,17 +623,18 @@ private fun PlayerScreenContent(
         // Player review D1: the chrome fades, never cuts. The AnimatedVisibility
         // below IS the gate now — a plain `if` would remove the bars in one
         // frame before the exit fade could play. Same fade the double-tap
-        // ripple uses (MaterialTheme.motionScheme effects springs; 30 ms
-        // crossfade under reduced motion). The lock still cuts: locking is a
-        // mode change, not an auto-hide, and the UnlockFab replaces the chrome
-        // at once.
-        // P5 (player fixes): the chrome fades ride MaterialTheme.motionScheme
-        // now — fastEffects in, defaultEffects out — and Ghost mode's edge
-        // strip fades with them instead of cutting in/out on a plain `if`.
+        // ripple uses (RaddMotion effects springs; 30 ms crossfade under reduced
+        // motion). The lock still cuts: locking is a mode change, not an
+        // auto-hide, and the UnlockFab replaces the chrome at once.
+        // P5 (player fixes): the chrome fades ride the M3 Expressive effects
+        // springs via RaddMotion — fastEffects in, defaultEffects out — and
+        // Ghost mode's edge strip fades with them instead of cutting in/out
+        // on a plain `if`. (MaterialTheme.motionScheme itself is internal in
+        // the pinned material3 1.4.0; wiring it is the BOM-bump follow-up.)
         val chromeVisible = controlsVisible || state.startPhase != StartPhase.NONE
         val reduceMotion = rememberReduceMotion()
-        val chromeEnter = fadeIn(if (reduceMotion) tween(REDUCED_MOTION_FADE_MS) else MaterialTheme.motionScheme.fastEffects)
-        val chromeExit = fadeOut(if (reduceMotion) tween(REDUCED_MOTION_FADE_MS) else MaterialTheme.motionScheme.defaultEffects)
+        val chromeEnter = fadeIn(if (reduceMotion) tween(REDUCED_MOTION_FADE_MS) else RaddMotion.fastEffects())
+        val chromeExit = fadeOut(if (reduceMotion) tween(REDUCED_MOTION_FADE_MS) else RaddMotion.defaultEffects())
         if (!state.locked) {
             if (state.pureCinema) {
                 AnimatedVisibility(

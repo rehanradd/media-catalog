@@ -1,7 +1,6 @@
 package com.raddstream.app.ui.screens
 
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -58,6 +57,7 @@ import com.raddstream.app.player.chapterTicks
 import com.raddstream.app.player.PlayerUiState
 import com.raddstream.app.ui.theme.RaddCurrent500
 import com.raddstream.app.ui.theme.RaddInk950
+import com.raddstream.app.ui.theme.RaddMotion
 import com.raddstream.app.ui.theme.PlayerChromeTheme
 import com.raddstream.app.ui.theme.PlayerOnVideo
 import com.raddstream.app.viewmodel.formatTime
@@ -327,25 +327,21 @@ internal fun Scrubber(
             currentChapterStartMs.formatTime(),
         ),
     )
-    // P5 (player fixes): the scrubber expansion rides the MaterialTheme motion
-    // scheme — the same spatial spring the chrome fades use, read off the
-    // scheme itself, so no duration lives in this file twice.
-    val motion = MaterialTheme.motionScheme
+    // P5 (player fixes) — BLOCKED on the pinned BOM: MaterialTheme.motionScheme
+    // is internal in material3 1.4.0 (Compose BOM 2025.11.01); the public API
+    // ships in material3 1.5.0, which needs a BOM bump + MaterialExpressiveTheme
+    // — a separate decision, not this branch. The expansion still rides the
+    // same M3 Expressive spatial token values (0.8/380 default, 0.6/800 fast)
+    // via RaddMotion, which carries them directly — same springs, same pixels.
     val isDragging = draggingTargetMs != null
     val trackHeight by animateDpAsState(
         targetValue = if (isDragging) 6.dp else 3.dp,
-        animationSpec = spring(
-            dampingRatio = motion.defaultSpatial.dampingRatio,
-            stiffness = motion.defaultSpatial.stiffness,
-        ),
+        animationSpec = RaddMotion.defaultSpatial(),
         label = "scrubber-track",
     )
     val thumbSize by animateDpAsState(
         targetValue = if (isDragging) 18.dp else 14.dp,
-        animationSpec = spring(
-            dampingRatio = motion.fastSpatial.dampingRatio,
-            stiffness = motion.fastSpatial.stiffness,
-        ),
+        animationSpec = RaddMotion.fastSpatial(),
         label = "scrubber-thumb",
     )
     BoxWithConstraints(
@@ -359,9 +355,11 @@ internal fun Scrubber(
             .padding(vertical = 12.dp)
             .height(24.dp)
             .semantics(mergeDescendants = true) {
-                // P8 (player fixes): the ProgressBar role is explicit now —
-                // the range info alone left the role to the reader's guess.
-                role = Role.ProgressBar
+                // P8 (player fixes): no explicit Role exists for a progress bar
+                // in this Compose version (Role is a value class — Button, Tab,
+                // … — with no ProgressBar entry), so no role is set here; the
+                // progressBarRangeInfo below lets the framework resolve the
+                // role itself, and the description carries position + chapter.
                 contentDescription = seekDescription
                 if (enabled && durationMs > 0) {
                     progressBarRangeInfo = ProgressBarRangeInfo(

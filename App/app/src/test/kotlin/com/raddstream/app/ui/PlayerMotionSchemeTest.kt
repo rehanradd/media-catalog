@@ -6,18 +6,29 @@ import org.junit.Test
 import java.io.File
 
 /**
- * P5 (player fixes) — the grep gate: no player call site references the
- * duplicated [RaddMotion] token set anymore. The player chrome fades, the
- * double-tap ripple, the Ghost edge strip and the scrubber expansion all
- * read MaterialTheme.motionScheme now; the reduced-motion fallback is one
- * constant ([REDUCED_MOTION_FADE_MS]) owned by the player, not a token.
+ * P5 (player fixes) — the grep gate, rewritten after the CI failure on
+ * 095e1c46 (Android run 45467907976): the first version of this gate asserted
+ * the player had migrated OFF [RaddMotion] onto MaterialTheme.motionScheme.
+ * That migration is BLOCKED on the pinned BOM — `MaterialTheme.motionScheme`
+ * is internal in material3 1.4.0 (Compose BOM 2025.11.01) and only becomes
+ * public in material3 1.5.0, which needs a BOM bump plus
+ * MaterialExpressiveTheme: a separate decision, not this branch. Attempting
+ * the read breaks the build (the exact failure that killed 45467907976).
  *
- * Scope is deliberate: [RaddMotion] itself is NOT deleted here, because
- * call sites outside the player (HeroCarousel, NavGraph, HomeScreen,
- * QualityRungCard, RegionSelectionScreen, PressFeedback) still use it —
- * the full S7 migration owns those, and deleting the object before they
- * migrate would break the build. This gate pins the player half of that
- * migration, so a later edit cannot quietly reach back for the old tokens.
+ * So this gate pins the workaround instead: the player chrome fades, the
+ * double-tap ripple, the Ghost edge strip and the scrubber expansion all
+ * ride the same M3 Expressive token values through [RaddMotion], which
+ * carries them directly (fastSpatial 0.6/800, defaultSpatial 0.8/380,
+ * fastEffects 1.0/3800, defaultEffects 1.0/1600) — same springs, same
+ * pixels; only the source differs until the BOM bump. The reduced-motion
+ * fallback stays one constant ([REDUCED_MOTION_FADE_MS]) owned by the
+ * player. When the BOM bump lands, this gate is the file to flip: delete
+ * the `no MaterialTheme.motionScheme` test and restore the migration
+ * assertions.
+ *
+ * The negative assertions run on comment-stripped code: the block itself is
+ * documented in the source comments, so a raw text search would trip on
+ * its own explanation.
  */
 class PlayerMotionSchemeTest {
 
@@ -49,21 +60,38 @@ class PlayerMotionSchemeTest {
         file.readText()
     }
 
+    /** Source with block comments and `//` line comments removed. */
+    private fun strippedCode(): String {
+        val noBlock = source().replace(Regex("/\\*[\\s\\S]*?\\*/"), " ")
+        return noBlock.lines().joinToString("\n") { it.substringBefore("//") }
+    }
+
     @Test
-    fun `no player file references the duplicated motion tokens`() {
-        val code = source()
+    fun `no player file reads the internal motion scheme`() {
+        // MaterialTheme.motionScheme is internal in the pinned material3 1.4.0
+        // — reading it is a compile error (Android run 45467907976). The
+        // BOM bump to material3 1.5.0 is what unblocks it.
+        val code = strippedCode()
         assertFalse(
-            "a player call site still references RaddMotion — migrate it to " +
-                "MaterialTheme.motionScheme",
-            code.contains("RaddMotion"),
+            "a player file reads MaterialTheme.motionScheme, which is internal " +
+                "in the pinned material3 1.4.0 — use the RaddMotion token " +
+                "functions until the BOM bump to 1.5.0",
+            code.contains("MaterialTheme.motionScheme"),
+        )
+        assertFalse(
+            "a player file references MotionScheme directly — same internal-API " +
+                "block as MaterialTheme.motionScheme",
+            code.contains("MotionScheme"),
         )
     }
 
     @Test
-    fun `the player chrome fades read the motion scheme`() {
-        val code = source()
-        assertTrue(code.contains("MaterialTheme.motionScheme.fastEffects"))
-        assertTrue(code.contains("MaterialTheme.motionScheme.defaultEffects"))
+    fun `the player fades and scrubber ride the RaddMotion token springs`() {
+        val code = strippedCode()
+        assertTrue(code.contains("RaddMotion.fastEffects()"))
+        assertTrue(code.contains("RaddMotion.defaultEffects()"))
+        assertTrue(code.contains("RaddMotion.defaultSpatial()"))
+        assertTrue(code.contains("RaddMotion.fastSpatial()"))
         assertTrue(code.contains("REDUCED_MOTION_FADE_MS"))
     }
 

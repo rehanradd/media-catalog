@@ -58,6 +58,7 @@ import com.raddstream.app.player.ScrubThumbnails
 import com.raddstream.app.player.subtitles.SubtitleOffset
 import com.raddstream.app.ui.components.rememberReduceMotion
 import com.raddstream.app.ui.theme.RaddCurrent500
+import com.raddstream.app.ui.theme.RaddMotion
 import com.raddstream.app.ui.theme.PlayerChromeTheme
 import com.raddstream.app.ui.theme.RaddHudPillIdle
 import com.raddstream.app.ui.theme.RaddHudToast
@@ -93,14 +94,15 @@ internal fun DoubleTapRipple(state: PlayerUiState) {
         // springs. The acknowledgement still appears rather than arrives:
         // quick in, slow out, so a double-tap over a dark scene is never
         // a flash.
-        // P5 (player fixes): the fades ride MaterialTheme.motionScheme now —
-        // fastEffects in, defaultEffects out — with the same 30ms crossfade
-        // under reduced motion ([REDUCED_MOTION_FADE_MS]).
+        // P5 (player fixes) — BLOCKED on the pinned BOM: MaterialTheme.motionScheme
+        // is internal in material3 1.4.0, so the fades ride the same M3 Expressive
+        // effects token values via RaddMotion (fastEffects in, defaultEffects out),
+        // with the same 30ms crossfade under reduced motion ([REDUCED_MOTION_FADE_MS]).
         val reduceMotion = rememberReduceMotion()
         AnimatedVisibility(
             visible = state.ripple != null,
-            enter = fadeIn(if (reduceMotion) tween(REDUCED_MOTION_FADE_MS) else MaterialTheme.motionScheme.fastEffects),
-            exit = fadeOut(if (reduceMotion) tween(REDUCED_MOTION_FADE_MS) else MaterialTheme.motionScheme.defaultEffects),
+            enter = fadeIn(if (reduceMotion) tween(REDUCED_MOTION_FADE_MS) else RaddMotion.fastEffects()),
+            exit = fadeOut(if (reduceMotion) tween(REDUCED_MOTION_FADE_MS) else RaddMotion.defaultEffects()),
         ) {
             Surface(
                 color = chrome.card,
