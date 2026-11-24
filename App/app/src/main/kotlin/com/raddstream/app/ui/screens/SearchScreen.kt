@@ -126,6 +126,7 @@ import com.raddstream.app.viewmodel.QualityFilter
 import com.raddstream.app.viewmodel.SearchSort
 import com.raddstream.app.viewmodel.SearchUiState
 import com.raddstream.app.viewmodel.SearchViewModel
+import com.raddstream.app.viewmodel.activeFilterSummary
 import com.raddstream.app.viewmodel.displayLanguageName
 import com.raddstream.app.viewmodel.effectiveTypeChip
 import com.raddstream.app.viewmodel.filterByYearRange
@@ -1065,6 +1066,144 @@ private fun rememberSearchGroups(
     }
 }
 
+/**
+ * APP-07 (Phase 4): the no-results state is a way forward, not a dead end.
+ * A completed search that finds nothing offers, in order: a spelling tip
+ * plus the server's did-you-mean as a real action (painted primary, so it
+ * reads as a tap, not a label — the results list's plain-text did-you-mean
+ * is audit Search #4 and stays as it is); a fresh start ("Search another
+ * title") and, when filters are on, "Clear filters"; and the catalog itself
+ * — the "Trending now" rail the viewer already knows from discovery, or a
+ * "Browse trending" button when the discovery load came back empty (Browse
+ * is a fresh load, so it still works). The message names the active filters
+ * (audit Search #6) instead of "with the current filters".
+ *
+ * Deliberately absent: "Request this title". There is no reachable request
+ * flow to wire it to — the app has no request API method, screen, or
+ * navigation for one, and the server route (`POST .../coins/request-movie`,
+ * `accounts_api.py`) costs 300 coins and answers coins-off with no request
+ * queued, while coins were removed from the app 2026-11-17. A button with
+ * nowhere to go would be a second dead end. Wiring a request action needs
+ * an owner decision first: a coin-free request route server-side plus an
+ * app flow for it (DB-02 baseline note: 0 movie requests recorded).
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun SearchNoResultsContent(
+    state: SearchUiState,
+    onQueryChanged: (String) -> Unit,
+    onResetFilters: () -> Unit,
+    onRunSuggestion: (String) -> Unit,
+    onPostClick: (Post) -> Unit,
+    onSeeAllTrending: () -> Unit = {},
+    modifier: Modifier = Modifier,
+) {
+    val filterNames = activeFilterSummary(state.filters)
+    Column(
+        modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            .testTag(NoResultsTag),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Spacer(Modifier.height(28.dp))
+        Icon(
+            Icons.Default.Search,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(48.dp),
+        )
+        Spacer(Modifier.height(16.dp))
+        Text(
+            text = "No matches",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = when {
+                state.query.isNotBlank() && filterNames.isNotEmpty() ->
+                    "No titles matched \"${state.query}\" with ${filterNames.joinToString(" · ")} filters."
+                state.query.isNotBlank() -> "No titles matched \"${state.query}\"."
+                filterNames.isNotEmpty() ->
+                    "Nothing in the catalog matched ${filterNames.joinToString(" · ")}."
+                else -> "Nothing in the catalog matched these filters."
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (state.query.isNotBlank()) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "Check the spelling, or try fewer words.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        state.didYouMean?.let { suggestion ->
+            Spacer(Modifier.height(8.dp))
+            TextButton(
+                onClick = { onRunSuggestion(suggestion) },
+                modifier = Modifier.heightIn(min = 48.dp).testTag(NoResultsDidYouMeanTag),
+            ) {
+                Text(
+                    text = "Did you mean $suggestion?",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            OutlinedButton(
+                onClick = { onQueryChanged("") },
+                modifier = Modifier.heightIn(min = 48.dp),
+            ) {
+                Text("Search another title")
+            }
+            if (state.hasActiveFilters) {
+                OutlinedButton(
+                    onClick = onResetFilters,
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) {
+                    Text("Clear filters")
+                }
+            }
+        }
+        if (state.visibleTrending.isNotEmpty()) {
+            SectionHeader(
+                title = "Trending now",
+                modifier = Modifier.padding(top = 24.dp),
+                action = { SeeAllButton(onClick = onSeeAllTrending, tag = SeeAllTrendingTag) },
+            )
+            MediaRail(items = state.visibleTrending, key = { it.id }, contentPadding = PaddingValues(start = 0.dp, end = 16.dp)) { post ->
+                PosterCard(post = post, onClick = { onPostClick(post) })
+            }
+        } else {
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = onSeeAllTrending,
+                modifier = Modifier.heightIn(min = 48.dp).testTag(NoResultsBrowseTrendingTag),
+            ) {
+                Text("Browse trending")
+            }
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+/** Test tags for the no-results state (APP-07). */
+internal const val NoResultsTag = "searchNoResults"
+internal const val NoResultsDidYouMeanTag = "searchNoResultsDidYouMean"
+internal const val NoResultsBrowseTrendingTag = "searchNoResultsBrowseTrending"
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun SearchContent(
@@ -1146,25 +1285,13 @@ internal fun SearchContent(
         // Audit #36: "No matches" only after a completed search returns zero
         // rows — never while a search is still in flight (the skeleton owns
         // that window), and never before the first search.
-        groups.isEmpty() && state.hasSearched && !isRefreshing -> EmptyState(
-            title = "No matches",
-            message = when {
-                state.query.isNotBlank() && state.hasActiveFilters ->
-                    "No titles matched \"${state.query}\" with the current filters."
-                state.query.isNotBlank() -> "No titles matched \"${state.query}\"."
-                else -> "Nothing in the catalog matched these filters."
-            },
-            action = {
-                if (state.hasActiveFilters) {
-                    OutlinedButton(onClick = onResetFilters) { Text("Clear filters") }
-                } else {
-                    // An empty result screen with no way out is a dead end: the viewer either
-                    // loosens a filter or starts from a different word. Both are one tap.
-                    OutlinedButton(onClick = { onQueryChanged("") }) {
-                        Text("Search another title")
-                    }
-                }
-            },
+        groups.isEmpty() && state.hasSearched && !isRefreshing -> SearchNoResultsContent(
+            state = state,
+            onQueryChanged = onQueryChanged,
+            onResetFilters = onResetFilters,
+            onRunSuggestion = onRunSuggestion,
+            onPostClick = onPostClick,
+            onSeeAllTrending = onSeeAllTrending,
         )
         state.isFuzzy && state.showExactOnly -> EmptyState(
             // Exact-only on a fuzzy page is the empty state: every row the

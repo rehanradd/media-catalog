@@ -1015,6 +1015,23 @@ class PaparazziPreviewTest {
     }
 
     @Test
+    fun searchNoResultsTrending() {
+        // APP-07 (Phase 4): the no-results state with a spelling
+        // suggestion and a loaded Trending rail — the way forward, not a
+        // dead end. The searchEmpty / searchEmptyFiltered goldens refresh
+        // in the same record run: they shoot this same state without
+        // trending or a suggestion.
+        shotSearch(
+            SearchUiState(
+                query = "avngers",
+                hasSearched = true,
+                didYouMean = "avengers",
+                trending = homePosts,
+            ),
+        )
+    }
+
+    @Test
     fun searchFilterRail() {
         paparazzi.snapshot {
             themed {
