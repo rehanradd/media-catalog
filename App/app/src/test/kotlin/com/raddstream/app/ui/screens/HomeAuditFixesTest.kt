@@ -168,6 +168,11 @@ class HomeAuditFixesTest {
         compose.onNodeWithText("Browse titles").assertExists()
         compose.onNodeWithText("Change server address").assertExists()
         compose.onNodeWithText("Try a different address").assertDoesNotExist()
+        // DIAGNOSTIC (2027 Home fix, 24 Nov): the click below stopped
+        // reaching onBrowseType once the empty-state art changed. Dump the
+        // tree and prove the node carries a click action before clicking.
+        compose.onRoot().printToLog("HOME-EMPTY-TEST")
+        compose.onNodeWithText("Browse titles").assertHasClickAction()
         compose.onNodeWithText("Browse titles").performClick()
         assertTrue(browsed == null)
     }
