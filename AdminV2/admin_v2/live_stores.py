@@ -84,7 +84,8 @@ PAYMENT_METHODS = ("jazzcash", "easypaisa", "raast")
 REMOTE_CONFIG_FIELDS = [
     "pak_till_id", "pak_jazzcash_number", "pak_easypaisa_number",
     "pak_raast_id", "vip_monthly_pkr", "vip_yearly_pkr",
-    "monetag_zone_id", "adsterra_tag_id", "shrinkme_api_token",
+    "monetag_zone_id", "adsterra_tag_id", "ads_enabled", "clean_ads_only",
+    "shrinkme_api_token",
     "droplink_api_token", "maintenance_mode", "apk_update_url",
     "feature_downloads", "feature_pure_cinema", "feature_chromecast",
     "feature_quality_gate", "coins_enabled",
@@ -96,6 +97,7 @@ _REMOTE_CONFIG_INT_FIELDS = frozenset({
     "vip_monthly_pkr", "vip_yearly_pkr", "maintenance_mode",
     "feature_downloads", "feature_pure_cinema", "feature_chromecast",
     "feature_quality_gate", "coins_enabled",
+    "ads_enabled", "clean_ads_only",
 } | set(COIN_REDEEM_FIELDS))
 ENGINE_SYNC_SITES = frozenset({
     "vegamovies", "rogmovies", "ssrmovies", "7starhd", "katmoviehd",
@@ -1739,7 +1741,8 @@ class LiveStores:
             if k in fields and not (0 <= int(fields[k]) <= 10_000_000):
                 raise bad("Coin price must be between 0 and 10,000,000.")
         for k in ("maintenance_mode", "feature_downloads", "feature_pure_cinema",
-                  "feature_chromecast", "feature_quality_gate", "coins_enabled"):
+                  "feature_chromecast", "feature_quality_gate", "coins_enabled",
+                  "ads_enabled", "clean_ads_only"):
             if k in fields and int(fields[k]) not in (0, 1):
                 raise bad("That flag must be 0 or 1.")
         conn = self._rw(self.catalog_path, "catalog")
