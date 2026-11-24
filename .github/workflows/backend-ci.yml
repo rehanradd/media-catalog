@@ -1093,6 +1093,14 @@ jobs:
       # Offline — temp SQLite file, canned bridge mirrors + stub probe.
       - name: 🧪 test_kmhd_dispatch.py
         run: python3 -S Fast_Fetch/test_kmhd_dispatch.py
+      # KMHD bridge JWT (API-07, 2026-11-24): the dandndn token is resolved
+      # per call from operator config (explicit arg, RADD_KMHD_TOKEN env,
+      # DOMAINS["kmhd_token"]) — never a literal in code. The suite pins
+      # that no JWT-shaped literal exists in fast_fetch.py and that an
+      # unconfigured token means the API is never called.
+      # Offline — mocked urlopen, canned bridge replies.
+      - name: 🧪 test_kmhd_token.py
+        run: python3 -S Fast_Fetch/test_kmhd_token.py
       # HubCloud one-round refresh (2026-11-23): one gamerxyt fetch banks
       # every sibling row with its true signed expiry, keep-alive pool,
       # stale-token retry once, no probe_url_ttl HEAD on the HubCloud path.
