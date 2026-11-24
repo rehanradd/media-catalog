@@ -551,8 +551,9 @@ class FailoverSliceTests(HostRankingFixture):
         calls = []
 
         def _recorder(source_id, *, v2=False, want="either",
-                      _failover=True, deadline=None, background=False):
-            calls.append((int(source_id), deadline))
+                      _failover=True, deadline=None, background=False,
+                      allow_pow_solve=False):
+            calls.append((int(source_id), deadline, allow_pow_solve))
             return {"success": False, "id": int(source_id),
                     "error": "no_playable_source",
                     "code": "no_playable_source", "reason": "mocked",
@@ -563,13 +564,16 @@ class FailoverSliceTests(HostRankingFixture):
                 mock.patch.object(fast_fetch, "resolve_live_source",
                                   side_effect=_recorder):
             real(ids["ladder-primary"])
-        self.assertEqual([sid for sid, _d in calls],
+        self.assertEqual([sid for sid, _d, _p in calls],
                          [ids["ladder-sib-0"], ids["ladder-sib-1"],
                           ids["ladder-sib-2"]])
         # Every sibling got a deadline, inside the default first slice.
-        for _sid, deadline in calls:
+        for _sid, deadline, _pow in calls:
             self.assertIsNotNone(deadline)
             self.assertLessEqual(deadline, time.monotonic() + 5.5)
+        # The ladder never opts a request-path call into the PoW solve
+        # (API-06): the mint lives in background workers only.
+        self.assertTrue(all(p is False for _s, _d, p in calls))
 
     def test_ladder_gives_filepress_a_longer_slice(self):
         ids = self._ingest_ladder_work(
@@ -577,8 +581,9 @@ class FailoverSliceTests(HostRankingFixture):
         calls = {}
 
         def _recorder(source_id, *, v2=False, want="either",
-                      _failover=True, deadline=None, background=False):
-            calls[int(source_id)] = deadline
+                      _failover=True, deadline=None, background=False,
+                      allow_pow_solve=False):
+            calls[int(source_id)] = (deadline, allow_pow_solve)
             return {"success": False, "id": int(source_id),
                     "error": "no_playable_source",
                     "code": "no_playable_source", "reason": "mocked",
@@ -589,10 +594,14 @@ class FailoverSliceTests(HostRankingFixture):
                 mock.patch.object(fast_fetch, "resolve_live_source",
                                   side_effect=_recorder):
             real(ids["ladder-primary"])
-        default = calls[ids["ladder-sib-0"]]
-        filepress = calls[ids["ladder-sib-1"]]
+        default, default_pow = calls[ids["ladder-sib-0"]]
+        filepress, filepress_pow = calls[ids["ladder-sib-1"]]
         self.assertIsNotNone(default)
         self.assertIsNotNone(filepress)
+        # The ladder never opts a request-path call into the PoW solve
+        # (API-06): the mint lives in background workers only.
+        self.assertIs(default_pow, False)
+        self.assertIs(filepress_pow, False)
         # The 15 s slice is capped by the ladder's 10 s budget, so
         # filepress gets the whole budget while the default gets 5 s.
         self.assertGreater(filepress - default, 4.0)
