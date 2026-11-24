@@ -135,7 +135,7 @@ def _yield_conn(conn):
 
 def _fake_resolve_factory(calls):
     """A resolver that always succeeds with a direct file, recording calls."""
-    def _resolve(source_id, v2=True):
+    def _resolve(source_id, v2=True, **_kw):
         calls.append((source_id, v2))
         return {"success": True, "id": source_id,
                 "url": "https://pixeldrain.com/api/file/TEST100",
