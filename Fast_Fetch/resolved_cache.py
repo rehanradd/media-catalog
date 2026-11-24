@@ -154,6 +154,7 @@ _DDL_STATEMENTS = (
         source            TEXT NOT NULL DEFAULT 'jit'
                               CHECK (source IN ('pool','jit')),
         ip_bound          INTEGER CHECK (ip_bound IN (0,1)),   -- NULL = untested
+        r2_bucket         TEXT,                       -- HubCDN R2 bucket label (API-11); NULL = not an R2 URL / unrecorded
         fail_count        INTEGER NOT NULL DEFAULT 0
     )
     """,
@@ -192,15 +193,40 @@ def init_resolved_cache(conn: sqlite3.Connection) -> None:
                 raise
 
 
+def _ensure_r2_bucket_column(conn: sqlite3.Connection) -> None:
+    """Add the ``r2_bucket`` column to a pre-existing table (API-11).
+
+    Tables created after this change already carry the column (see the
+    DDL above); a table created by an older build gains it here, on
+    first use, with one cheap PRAGMA read per call and an ALTER only
+    when the column is missing. Never raises for a missing table: the
+    caller ensures the schema first, and a table that is still absent
+    simply has no columns to migrate.
+    """
+    try:
+        cols = {row[1]
+                for row in conn.execute("PRAGMA table_info(resolved_cache)")}
+    except sqlite3.Error:
+        return
+    if "r2_bucket" not in cols:
+        try:
+            conn.execute(
+                "ALTER TABLE resolved_cache ADD COLUMN r2_bucket TEXT")
+        except sqlite3.OperationalError:
+            # Lost a race with another connection adding it first.
+            pass
+
+
 def _ensure_schema(conn: sqlite3.Connection) -> None:
     global _SCHEMA_OK
     if _SCHEMA_OK is None:
         init_resolved_cache(conn)
-        return
-    try:
-        conn.execute("SELECT 1 FROM resolved_cache LIMIT 0")
-    except sqlite3.OperationalError:
-        init_resolved_cache(conn)
+    else:
+        try:
+            conn.execute("SELECT 1 FROM resolved_cache LIMIT 0")
+        except sqlite3.OperationalError:
+            init_resolved_cache(conn)
+    _ensure_r2_bucket_column(conn)
 
 
 def _strip_fragment(url: str) -> str:
@@ -338,8 +364,8 @@ def record_resolved_cache(conn: sqlite3.Connection, link_id: int,
 
     ``data`` is the dict ``resolve_live_source`` returns (``url`` required;
     ``mime_type``, ``file_size_bytes``, ``is_resumable``, ``http_status``,
-    ``expires_at``/``expires_in``, ``is_temporary``, ``service``, ``ip_bound``
-    used where present). Returns the stored row summary, or None when there was
+    ``expires_at``/``expires_in``, ``is_temporary``, ``service``, ``ip_bound``,
+    ``r2_bucket`` used where present). Returns the stored row summary, or None when there was
     nothing to cache (no url). Does NOT commit — the caller's transaction owns
     that, matching ``fast_fetch.get_db`` and ``viewer.get_db`` semantics.
     """
@@ -386,8 +412,8 @@ def record_resolved_cache(conn: sqlite3.Connection, link_id: int,
         """
         INSERT INTO resolved_cache (link_id, url, category, kind, mime_type,
             file_size_bytes, resolved_at, expires_at, reverify_after,
-            is_resumable, http_status, source, ip_bound, fail_count)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,0)
+            is_resumable, http_status, source, ip_bound, r2_bucket, fail_count)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
         ON CONFLICT(link_id) DO UPDATE SET
             url=excluded.url, category=excluded.category, kind=excluded.kind,
             mime_type=excluded.mime_type,
@@ -396,14 +422,16 @@ def record_resolved_cache(conn: sqlite3.Connection, link_id: int,
             reverify_after=excluded.reverify_after,
             is_resumable=excluded.is_resumable,
             http_status=excluded.http_status, source=excluded.source,
-            ip_bound=excluded.ip_bound, fail_count=0
+            ip_bound=excluded.ip_bound, r2_bucket=excluded.r2_bucket,
+            fail_count=0
         """,
         (int(link_id), url, category, kind, data.get("mime_type"),
          data.get("file_size_bytes"), resolved_at, expires_at, reverify_after,
          1 if data.get("is_resumable") else 0, data.get("http_status"),
-         source, ip_bound))
+         source, ip_bound, data.get("r2_bucket")))
     return {"link_id": int(link_id), "url": url, "category": category,
             "kind": kind, "expires_at": expires_at, "source": source,
+            "r2_bucket": data.get("r2_bucket"),
             "reverify_after": reverify_after}
 
 
@@ -794,7 +822,7 @@ def lookup_cache(conn: sqlite3.Connection, link_id: int, want: str = "watch", *,
     now = now if now is not None else time.time()
     sql = ("SELECT link_id, url, category, kind, mime_type, file_size_bytes, "
            "resolved_at, expires_at, reverify_after, is_resumable, http_status, "
-           "source, ip_bound, fail_count FROM resolved_cache "
+           "source, ip_bound, fail_count, r2_bucket FROM resolved_cache "
            "WHERE link_id = ? AND reverify_after > ? AND fail_count < ?")
     params: list = [int(link_id), now, MAX_FAIL_COUNT]
     if want == "download":
@@ -835,4 +863,4 @@ def lookup_cache(conn: sqlite3.Connection, link_id: int, want: str = "watch", *,
 _ROW_COLUMNS = ("link_id", "url", "category", "kind", "mime_type",
                 "file_size_bytes", "resolved_at", "expires_at",
                 "reverify_after", "is_resumable", "http_status", "source",
-                "ip_bound", "fail_count")
+                "ip_bound", "fail_count", "r2_bucket")
