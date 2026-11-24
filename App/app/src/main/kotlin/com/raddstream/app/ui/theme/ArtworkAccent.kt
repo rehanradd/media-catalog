@@ -5,6 +5,8 @@ import android.graphics.drawable.BitmapDrawable
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
+import coil3.BitmapImage
+import coil3.DrawableImage
 import coil3.compose.AsyncImagePainter
 import coil3.compose.rememberAsyncImagePainter
 import kotlin.math.pow
@@ -200,9 +202,14 @@ fun scrimScaleFor(luminance: Float?): Float =
 fun rememberPosterLuminance(posterUrl: String?): Float? {
     // The painter is remembered unconditionally: a null URL still creates
     // one (Coil reports it Empty), so the remember-slot count never
-    // shifts when a poster arrives mid-composition.
+    // shifts when a poster arrives mid-composition. Coil 3 results carry
+    // an Image, not a Drawable: BitmapImage holds the bitmap directly,
+    // DrawableImage may wrap one.
     val painter = rememberAsyncImagePainter(model = posterUrl)
-    val bitmap = if (posterUrl.isNullOrBlank()) null else (painter.state as? AsyncImagePainter.State.Success)
-        ?.result?.drawable?.let { it as? BitmapDrawable }?.bitmap
+    val bitmap = if (posterUrl.isNullOrBlank()) null else when (val image = (painter.state as? AsyncImagePainter.State.Success)?.result?.image) {
+        is BitmapImage -> image.bitmap
+        is DrawableImage -> (image.drawable as? BitmapDrawable)?.bitmap
+        else -> null
+    }
     return remember(bitmap) { posterLuminance(bitmap) }
 }
