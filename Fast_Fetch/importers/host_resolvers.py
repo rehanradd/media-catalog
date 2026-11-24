@@ -293,6 +293,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 import zlib
 
 try:  # package-style import when run as Fast_Fetch/importers/*.py
@@ -3369,54 +3370,97 @@ def unwrap_gofile(url: str, fetch=None, verify: bool = True) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# filepress / filebee — the FileBee download API chain
+# filepress / filebee — the FileBee download API chain + the prepare/download
+# (attempts) chain
 # ---------------------------------------------------------------------------
 #
-# Proven live 2026-11-13 against the FileBee SPA (filepress.lat / filebee.xyz
-# family). The page itself is challenge-gated (403) from datacenter IPs, but
-# the JSON API underneath answers real JSON from the same egress — the
-# challenge applies to the HTML route, not the API route. Two POSTs, no
-# browser, no captcha, no JS:
+# Measured state, 2026-11-24 (Oracle VM egress; probes paced ~1 req/s,
+# 1-byte Range / capped bodies only, no live writes):
 #
-#   POST https://new4.filepress.lat/api/file/downlaod/
-#     {"id": "<fileId>", "method": "indexDownlaod", "captchaValue": null}
-#     -> {"status": true, "statusCode": 200, "data": "<24-hex token>"}
-#   POST https://new4.filepress.lat/api/file/downlaod2/
-#     {"id": "<token>", "method": "indexDownlaod", "captchaValue": null}
-#     -> {"status": true, "statusCode": 200, "data": ["<direct .mkv link>"]}
+#   * Direct Oracle egress: EVERYTHING is Cloudflare-403 — the file page,
+#     /prepare/?f=<id>&m=gpixelFastDownload, and both JSON APIs. The
+#     prepare/download browser flow (file page -> Fast Download -> ~2 min
+#     server-side prep -> /download/?d=<token> -> Google user-content URL,
+#     proven 19:34 23 Nov in the user's residential home browser) cannot
+#     run from this egress at all.
+#   * Tor egress: the file page is still 403, but /prepare/ serves the SPA
+#     shell (200) and the JSON APIs answer. The old downlaod API answers
+#     telegramDownload with a live tgfiles deep link; gpixelDownload
+#     answers 403 Forbidden; indexDownlaod is DEAD (METHOD_HIDDEN, since
+#     23 Nov) and publicDownlaod is dead (METHOD_NOT_FOUND).
+#   * WARP egress (23 Nov): the attempts API answers; the old API answers
+#     the same as Tor. WARP is NOT connected on the VM now, and connecting
+#     it mid-gate is out of scope — the plumbing (warp_proxy,
+#     RADD_WARP_PROXY) already exists and the resolver inherits whatever
+#     egress the process runs on; nothing here selects an egress.
 #
-# (Method name is the API's own spelling, "indexDownlaod" — a probe of 27
-# other spellings found it is the ONLY recognised method; everything else is
-# METHOD_NOT_FOUND.)
+# The current API is the RTK-Query attempts flow (mined from the live bundle
+# assets/index-D7Ty4rhA.js, the same file the /prepare/ shell loads):
 #
-# The minted link is a direct file on aws.flapdoodle.cyou:
-#   https://aws.flapdoodle.cyou/download/<base64>/Filename.mkv
-# The base64 segment decodes to <fileKey>@<timestampMs>@<IPv6>@<signature>.
-# Tokens are stable per file for 10+ minutes. Filenames with spaces or
-# brackets MUST be percent-encoded or HTTP clients reject the URL.
+#   POST {origin}/api/downloads/attempts
+#     {"fileId": "<24-hex>", "method": "cloudR2Downlaod",
+#      "idempotencyKey": "<uuid4>"}
+#     -> {"status": true, "data": {"kind": "CHALLENGE",
+#          "attemptId": "<32-hex>", "state": "CHALLENGE_PENDING",
+#          "challenge": {"profileId", "siteKey", "mode", "action",
+#          "cData"}, "tries": 0}}
+#   GET  {origin}/api/downloads/attempts/{attemptId}   (WITH the fp_dl cookie
+#     the create response sets, else data=null)
+#     -> the attempt view; states CHALLENGE_PENDING -> PREPARING -> READY /
+#        AUTHORIZED -> LINK_ISSUED (terminal: REFUSED / FALLBACK / ABANDONED /
+#        EXPIRED).
+#   POST {origin}/api/downloads/attempts/{attemptId}/link  {}
+#     -> the minted link (a direct file URL, or a /download/?d=<token> URL
+#        that 302s to one). State-gated: while CHALLENGE_PENDING it answers
+#        200 status=False err=ATTEMPT_STATE.
 #
-# Measured limits, 2026-11-13 (must be re-measured before trusting):
-#   - The API base MUST be new4.filepress.lat with a matching Referer.
-#     Re-measured 2026-11-20: new3's API route now serves the site's SPA
-#     shell (200, non-JSON) and new2 does the same — both are dead as API
-#     bases; new4 answers real JSON. A mismatched Referer turns the
-#     answer into INVALID_REQUEST.
-#   - The download origin aws.flapdoodle.cyou answered HTTP 522 on EVERY
-#     /download/* path for ~50 min from BOTH egresses, so no minted link
-#     has yet played. The unwrapper is built and gated so a dead origin can
-#     never be served: verify=True Range-probes the minted link and only an
-#     "active" verdict reaches the player. Re-measured 2026-11-20 via WARP:
-#     the minted link (flapdoodle-space origin) Range-probed 206
-#     video/x-matroska — the chain plays end to end when the API answers.
-#   - The Oracle VM egress is 403-challenged on the API itself
-#     (cf-mitigated: challenge), so this resolver cannot run in production
-#     from the Oracle VM as-is. Via WARP egress the same two POSTs mint and
-#     the minted link plays (206, Matroska, 2026-11-20). WARP-in-production
-#     is an owner decision; until then this resolver stays WARP-only.
+# The challenge is Cloudflare Turnstile (challenges.cloudflare.com). The
+# resolver NEVER attempts it: a CHALLENGE_PENDING attempt returns at once
+# with status "blocked" and a challenge_required note. No token is minted,
+# no challenge endpoint is called, no clearance is forged or replayed.
+# The ~2 min server-side prep is polled ONLY while the attempt says
+# PREPARING (i.e. the challenge already passed on this egress), on a
+# bounded budget the caller sets — the press path gets a short one, the
+# background prefetch pass gets the long one, so a play request never
+# blocks on a prep. A poll that runs out of budget is "unknown" with a
+# transient marker, never a failure record: the job was still warming.
+#
+# The old two-POST chain (downlaod / downlaod2, method indexDownlaod) is
+# kept as the FIRST hop: mirrors on the older build still answer it, and
+# the existing tests pin its behaviour. When it fails softly
+# (METHOD_HIDDEN / http:400 / empty answer — never when it is blocked),
+# the attempts chain runs. A Telegram deep link (tgfiles.space) is NOT
+# playable media: it is reported as telegram-only and never served, and
+# never fed to downlaod2 (which 400s on it).
+#
+# The minted link is a direct file on Google user content (proven 19:34
+# 23 Nov: 200 video/mkv, 1.43 GB) or, on the old chain, aws.flapdoodle.cyou
+# (522-prone). Either way verify=True Range-probes it and only a 206 with
+# real video bytes is "active". Expiry is read off the minted URL itself
+# (Google X-Goog-Date + X-Goog-Expires, R2 presigned, or e/s+e) and is
+# None when the URL carries none — never invented.
 FILEPRESS_API_BASE = "https://new4.filepress.lat"
 FILEPRESS_METHOD = "indexDownlaod"
 FILEPRESS_TIMEOUT = 15
+#: The attempts method behind the prepare surface ("Fast Download" /
+#: gpixelFastDownload in the UI is a label, not an API method — the
+#: gpixelDownload spelling answers 403 Forbidden on the old API).
+FILEPRESS_ATTEMPTS_METHOD = "cloudR2Downlaod"
+#: Default poll budget for one prepare: the ~2 min server-side copy plus
+#: margin. The press path passes a shorter budget (see fast_fetch
+#: FILEPRESS_PRESS_POLL_BUDGET_SECONDS); the background prefetch pass
+#: passes this one.
+FILEPRESS_POLL_BUDGET_SECONDS = 150.0
+#: Seconds between prepare polls — one GET per interval, far inside the
+#: ~1 req/s pacing the host is probed at.
+FILEPRESS_POLL_INTERVAL_SECONDS = 10.0
 _FILEPRESS_ID_RE = re.compile(r"^[0-9a-f]{24}$")
+#: Attempt states that may mint a link.
+_FILEPRESS_ATTEMPT_READY = frozenset(
+    {"READY", "AUTHORIZED", "LINK", "LINK_ISSUED"})
+#: Attempt states that end the job without a link.
+_FILEPRESS_ATTEMPT_TERMINAL = frozenset(
+    {"REFUSED", "FALLBACK", "ABANDONED", "EXPIRED"})
 
 
 def _filepress_extract_id(url: str) -> str:
@@ -3435,15 +3479,22 @@ def _filepress_extract_id(url: str) -> str:
 
 def _filepress_encode_filename(url: str) -> str:
     """Percent-encode the last path segment of a minted link (spaces,
-    brackets and friends break HTTP clients otherwise)."""
+    brackets and friends break HTTP clients otherwise). The query
+    string is left verbatim: a signed URL's `X-Goog-Expires` / signature
+    parameters must reach the host exactly as minted — encoding `?`/`&`
+    would break the signature. Unquote first so an already-encoded
+    segment is not double-encoded."""
     if not url:
         return url
-    head, sep, tail = url.rpartition("/")
+    parts = urllib.parse.urlsplit(url)
+    head, sep, tail = parts.path.rpartition("/")
     if not sep:
         return url
-    # Unquote first so an already-encoded segment is not double-encoded.
-    return head + sep + urllib.parse.quote(
+    encoded_path = head + sep + urllib.parse.quote(
         urllib.parse.unquote(tail), safe=".-_~")
+    return urllib.parse.urlunsplit(
+        (parts.scheme, parts.netloc, encoded_path,
+         parts.query, parts.fragment))
 
 
 def _filepress_api_call(fetch, endpoint: str, payload_id: str):
@@ -3491,23 +3542,272 @@ def _filepress_api_call(fetch, endpoint: str, payload_id: str):
     return True, parsed.get("data")
 
 
-def unwrap_filepress(url, fetch=None, verify=True):
-    """Resolve a filepress/filebee page URL to a direct file link.
+def _filepress_google_expiry(url: str) -> tuple[int | None, int | None]:
+    """(expires_at epoch, seconds-from-now) for a Google signed URL.
 
-    Returns a verdict dict like the other unwrap_* resolvers. The chain is
-    the two-POST FileBee API sequence above; with verify=True the minted
-    link is Range-probed and only a 206 with real video bytes is "active".
-    A dead download origin (522, timeout) is "error"/"unknown" — never
-    "dead" on one probe, and never served.
+    Google signs with `X-Goog-Date` (the generation instant, UTC,
+    `YYYYMMDDTHHMMSSZ`) plus `X-Goog-Expires` (a LIFETIME in seconds) —
+    the same shape as R2 presigned, under Google's names. A URL without
+    both returns (None, None): no expiry is invented.
     """
-    fetch = fetch or http_request
-    result = _new_result(SERVICE_FILEPRESS, url)
-    file_id = _filepress_extract_id(url)
-    if not file_id:
-        result["status"] = "unknown"
-        result["notes"].append("no file id in url")
-        return result
+    query = urllib.parse.parse_qs(urllib.parse.urlsplit(url or "").query)
+    date_raw = (query.get("X-Goog-Date") or [""])[0]
+    lifetime_raw = (query.get("X-Goog-Expires") or [""])[0]
+    if not date_raw or not lifetime_raw.isdigit():
+        return None, None
+    try:
+        issued = datetime.strptime(date_raw, "%Y%m%dT%H%M%SZ").replace(
+            tzinfo=timezone.utc).timestamp()
+    except ValueError:
+        return None, None
+    expires_at = int(issued) + int(lifetime_raw)
+    return expires_at, expires_at - int(time.time())
 
+
+def _filepress_minted_expiry(url: str) -> tuple[int | None, int | None]:
+    """(expires_at, seconds) for a minted file URL, or (None, None).
+
+    Tries the shapes the minted hosts actually sign, in order: Google
+    X-Goog-Date + X-Goog-Expires, R2/S3 presigned, mxdrop-style absolute
+    `e`, pkembed-style `s` + `e`. Nothing parsable is (None, None).
+    """
+    for reader in (_filepress_google_expiry, r2_presigned_expiry,
+                   expiry_from_url, duration_expiry_from_url):
+        try:
+            expires_at, seconds = reader(url)
+        except Exception:
+            continue
+        if expires_at is not None:
+            return expires_at, seconds
+    return None, None
+
+
+def _filepress_parse_envelope(raw) -> tuple[bool | None, object, str]:
+    """(ok, data, note) for one FileBee JSON envelope.
+
+    ok=True  -> data is the envelope's "data" field.
+    ok=False -> data is the raw "data" field, note names the failure
+                (err first: ATTEMPT_STATE / CHALLENGE_REQUIRED /
+                METHOD_HIDDEN are the API's own words).
+    ok=None  -> not JSON at all (note "bad_json").
+    """
+    try:
+        parsed = json.loads(raw.decode("utf-8", "replace"))
+    except Exception:
+        return None, None, "bad_json"
+    if not isinstance(parsed, dict):
+        return None, None, "bad_json"
+    if parsed.get("status") is not True:
+        note = (parsed.get("err") or parsed.get("data")
+                or parsed.get("statusText") or parsed.get("message")
+                or "api_error")
+        return False, parsed.get("data"), str(note)
+    return True, parsed.get("data"), ""
+
+
+def _filepress_attempts_headers(origin: str) -> dict:
+    """The Chrome set the attempts API expects (VidRift lesson: a full
+    browser set, no Brotli — stdlib cannot decode it)."""
+    return {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Referer": origin + "/",
+        "Origin": origin,
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate",
+        "User-Agent": USER_AGENT,
+    }
+
+
+def _filepress_cookie_from(headers, jar: dict) -> dict:
+    """Fold a Set-Cookie fp_dl value into the jar (mutated, returned).
+
+    The attempts API is session-bound: a view GET without the cookie the
+    create set answers data=null. One cookie per header in this module's
+    fetch shape (a dict collapses duplicates); fp_dl is the only session
+    cookie the API sets.
+    """
+    raw = ""
+    if isinstance(headers, dict):
+        raw = headers.get("set-cookie") or ""
+    if not raw:
+        return jar
+    first = str(raw).split(";")[0].strip()
+    if first.startswith("fp_dl="):
+        jar["fp_dl"] = first[len("fp_dl="):]
+    return jar
+
+
+def _filepress_cookie_header(jar: dict) -> dict:
+    if not jar.get("fp_dl"):
+        return {}
+    return {"Cookie": "fp_dl=%s" % jar["fp_dl"]}
+
+
+def _filepress_attempt_create(fetch, file_id: str):
+    """One attempts create POST. Returns (attempt_dict_or_None, note, jar).
+
+    A 403/429 is the Cloudflare gate on this egress, not a dead file; a
+    404/410 is a mirror without the attempts route; anything else
+    non-200 is an HTTP note. Never raises.
+    """
+    body = json.dumps({
+        "fileId": file_id,
+        "method": FILEPRESS_ATTEMPTS_METHOD,
+        "idempotencyKey": str(uuid.uuid4()),
+    }).encode("utf-8")
+    jar: dict = {}
+    try:
+        status, raw, headers, _url = fetch(
+            FILEPRESS_API_BASE + "/api/downloads/attempts",
+            headers=_filepress_attempts_headers(FILEPRESS_API_BASE),
+            timeout=FILEPRESS_TIMEOUT, method="POST", follow=True, data=body)
+    except Exception as exc:  # network-level failure: unknown, not dead
+        return None, "fetch_error:%s" % type(exc).__name__, jar
+    jar = _filepress_cookie_from(headers, jar)
+    if status == 0:
+        return None, "transport", jar
+    if status in (403, 429):
+        return None, "blocked:%d" % status, jar
+    if status in (404, 410):
+        return None, "dead:%d" % status, jar
+    if status != 200:
+        return None, "http:%d" % status, jar
+    ok, data, note = _filepress_parse_envelope(raw)
+    if ok is not True or not isinstance(data, dict):
+        return None, note or "bad_envelope", jar
+    return data, "", jar
+
+
+def _filepress_attempt_view(fetch, attempt_id: str, jar: dict):
+    """One attempt-view GET, with the fp_dl cookie. Returns
+    (view_dict_or_None, note, jar). A view without the cookie answers
+    data=null, which is the session binding proving itself — note
+    "no_session_cookie", not a JSON error."""
+    try:
+        status, raw, headers, _url = fetch(
+            FILEPRESS_API_BASE + "/api/downloads/attempts/" + attempt_id,
+            headers={**_filepress_attempts_headers(FILEPRESS_API_BASE),
+                     **_filepress_cookie_header(jar)},
+            timeout=FILEPRESS_TIMEOUT, method="GET", follow=True)
+    except Exception as exc:
+        return None, "fetch_error:%s" % type(exc).__name__, jar
+    jar = _filepress_cookie_from(headers, jar)
+    if status == 0:
+        return None, "transport", jar
+    if status in (403, 429):
+        return None, "blocked:%d" % status, jar
+    if status in (404, 410):
+        return None, "dead:%d" % status, jar
+    if status != 200:
+        return None, "http:%d" % status, jar
+    ok, data, note = _filepress_parse_envelope(raw)
+    if ok is not True:
+        return None, note or "bad_envelope", jar
+    if data is None:
+        return None, "no_session_cookie", jar
+    if not isinstance(data, dict):
+        return None, "bad_envelope", jar
+    return data, "", jar
+
+
+def _filepress_attempt_link(fetch, attempt_id: str, jar: dict):
+    """One link-mint POST ({}). Returns (data_or_None, note). The server
+    gates this on state: while CHALLENGE_PENDING it answers 200
+    status=False err=ATTEMPT_STATE, which is a note, not a link."""
+    try:
+        status, raw, _headers, _url = fetch(
+            FILEPRESS_API_BASE + "/api/downloads/attempts/"
+            + attempt_id + "/link",
+            headers={**_filepress_attempts_headers(FILEPRESS_API_BASE),
+                     **_filepress_cookie_header(jar)},
+            timeout=FILEPRESS_TIMEOUT, method="POST", follow=True, data=b"{}")
+    except Exception as exc:
+        return None, "fetch_error:%s" % type(exc).__name__
+    if status == 0:
+        return None, "transport"
+    if status in (403, 429):
+        return None, "blocked:%d" % status
+    if status in (404, 410):
+        return None, "dead:%d" % status
+    if status != 200:
+        return None, "http:%d" % status
+    ok, data, note = _filepress_parse_envelope(raw)
+    if ok is not True:
+        return None, note or "bad_envelope"
+    return data, ""
+
+
+def _filepress_extract_minted(data) -> str:
+    """The playable-or-download URL out of a link answer, or "".
+
+    The link answer is a bare URL string on the proven shape; a dict is
+    read defensively (url/link/download_url/downloadUrl/href first, then
+    a bare token under d/token/downloadToken, which names
+    /download/?d=<token>).
+    """
+    if isinstance(data, str):
+        return data.strip()
+    if isinstance(data, dict):
+        for key in ("url", "link", "download_url", "downloadUrl", "href"):
+            value = data.get(key)
+            if isinstance(value, str) and value.strip().startswith("http"):
+                return value.strip()
+        for key in ("d", "token", "downloadToken"):
+            value = data.get(key)
+            if isinstance(value, str) and value.strip():
+                return (FILEPRESS_API_BASE + "/download/?d="
+                        + urllib.parse.quote(value.strip())
+                        + "&m=gpixelFastDownload")
+    return ""
+
+
+def _filepress_is_download_hop(url: str) -> bool:
+    """True when a minted URL is the FileBee /download/?d=<token> hop
+    (the browser flow's last step), not a file. The host + exact path +
+    `d` param all have to match: a flapdoodle file URL also starts with
+    /download/, but on another host and without the token param."""
+    parts = urllib.parse.urlsplit(url or "")
+    host = (parts.hostname or "").lower()
+    if "filepress" not in host and "filebee" not in host:
+        return False
+    if (parts.path or "") != "/download/":
+        return False
+    return "d" in urllib.parse.parse_qs(parts.query)
+
+
+def _filepress_follow_download(fetch, url: str) -> str:
+    """Follow a /download/?d=<token> URL one hop, no-follow: the 302
+    Location is the minted file. Returns the Location, or "" when the
+    hop does not redirect to a file (a 200 here is the SPA shell — a
+    browser step, not a link)."""
+    try:
+        status, _raw, headers, _url = fetch(
+            url, headers={"Referer": FILEPRESS_API_BASE + "/",
+                          "User-Agent": USER_AGENT},
+            timeout=FILEPRESS_TIMEOUT, method="GET", follow=False)
+    except Exception:
+        return ""
+    if status in (301, 302, 303, 307, 308):
+        location = ""
+        if isinstance(headers, dict):
+            location = (headers.get("location") or "").strip()
+        return location
+    return ""
+
+
+def _filepress_legacy_chain(fetch, file_id: str, result: dict, verify: bool):
+    """The old two-POST downlaod/downlaod2 chain (method indexDownlaod).
+
+    Returns a verdict dict, or None when the old API is not usable here
+    and the attempts chain should run. A verdict is returned for: a
+    minted link (whatever the Range probe says — the mint succeeded, so
+    the probe is the evidence), a Telegram-only answer, and a block (the
+    new API answers the same challenge from the same egress, so retrying
+    it spends a request to learn nothing). Soft failures append their
+    note to result["notes"] and return None, so the attempts verdict
+    still names what the old API said.
+    """
     ok, token = _filepress_api_call(fetch, "/api/file/downlaod/", file_id)
     if ok and isinstance(token, str) and token.startswith("http"):
         # The API sometimes answers the first call with a Telegram
@@ -3520,41 +3820,194 @@ def unwrap_filepress(url, fetch=None, verify=True):
         ok, token = _filepress_api_call(fetch, "/api/file/downlaod/",
                                         file_id)
     if not ok:
-        note = "downlaod: %s" % token
         if isinstance(token, str) and token.startswith("blocked:"):
             result["status"] = "blocked"
-        elif isinstance(token, str) and token.startswith("dead:"):
-            result["status"] = "dead"
-        else:
-            result["status"] = "unknown"
-        result["notes"].append(note)
-        return result
+            result["notes"].append("downlaod: %s" % token)
+            return result
+        result["notes"].append("downlaod: %s" % token)
+        return None
     if not isinstance(token, str) or not token:
-        result["status"] = "unknown"
         result["notes"].append("downlaod: empty token")
+        return None
+    if token.startswith("http") and "tgfiles.space" in token:
+        # Telegram-only after the retry: a deep link, not playable media.
+        # Never fed to downlaod2 (400) and never served as a file.
+        result["status"] = "unknown"
+        result["notes"].append(
+            "telegram deep link only (tgfiles.space): not playable media, "
+            "no direct file minted")
         return result
 
     ok, links = _filepress_api_call(fetch, "/api/file/downlaod2/", token)
     if not ok:
-        note = "downlaod2: %s" % links
         if isinstance(links, str) and links.startswith("blocked:"):
             result["status"] = "blocked"
-        elif isinstance(links, str) and links.startswith("dead:"):
-            result["status"] = "dead"
-        else:
-            result["status"] = "unknown"
-        result["notes"].append(note)
-        return result
+            result["notes"].append("downlaod2: %s" % links)
+            return result
+        result["notes"].append("downlaod2: %s" % links)
+        return None
     if not isinstance(links, list) or not links or not links[0]:
-        result["status"] = "unknown"
         result["notes"].append("downlaod2: empty link list")
-        return result
+        return None
 
     direct = _filepress_encode_filename(str(links[0]))
     result["final_url"] = direct
     result["status"] = "active"
     result["notes"].append("minted via FileBee downlaod/downlaod2")
     return _finish_media(result, fetch, verify)
+
+
+def _filepress_attempts_chain(fetch, file_id: str, result: dict,
+                             verify: bool, poll_budget_seconds: float,
+                             poll_interval_seconds: float,
+                             _sleep, _monotonic):
+    """The prepare/download (attempts) chain. Returns the verdict dict.
+
+    Create -> (challenge? stop) -> poll while PREPARING, bounded by the
+    caller's budget -> mint -> follow /download/ when needed -> Range
+    probe. The Turnstile challenge is never attempted: CHALLENGE_PENDING
+    returns at once as "blocked" with a challenge_required note.
+    """
+    attempt, note, jar = _filepress_attempt_create(fetch, file_id)
+    if attempt is None:
+        if isinstance(note, str) and note.startswith("blocked:"):
+            result["status"] = "blocked"
+        else:
+            result["status"] = "unknown"
+        result["notes"].append("attempts: %s" % note)
+        return result
+    attempt_id = str((attempt or {}).get("attemptId") or "")
+    if not attempt_id:
+        result["status"] = "unknown"
+        result["notes"].append("attempts: create answered without an attemptId")
+        return result
+
+    # Poll loop: the create may already be READY (an already-prepared
+    # file), PREPARING (poll), or CHALLENGE_PENDING (stop at once).
+    # The first iteration reads the create's own view — no extra GET.
+    deadline = _monotonic() + max(0.0, float(poll_budget_seconds))
+    view = attempt
+    while True:
+        state = str((view or {}).get("state") or "").strip().upper()
+        if state in _FILEPRESS_ATTEMPT_READY:
+            break
+        if state == "CHALLENGE_PENDING":
+            result["status"] = "blocked"
+            result["notes"].append(
+                "challenge_required: the attempt needs Turnstile "
+                "verification, a browser step stdlib cannot perform; "
+                "no challenge was attempted")
+            return result
+        if state in _FILEPRESS_ATTEMPT_TERMINAL:
+            result["status"] = "unknown"
+            result["notes"].append("attempt %s" % state.lower())
+            return result
+        if state and state != "PREPARING":
+            result["status"] = "unknown"
+            result["notes"].append("attempt state %s" % state)
+            return result
+        # PREPARING (or a stateless create): out of budget means the job
+        # is still warming — transient, never a failure record.
+        if _monotonic() >= deadline:
+            result["status"] = "unknown"
+            result["transient"] = True
+            result["notes"].append(
+                "preparing: server-side copy still warming after "
+                "%.0fs; retry, or wait for the background warm"
+                % float(poll_budget_seconds))
+            return result
+        _sleep(min(float(poll_interval_seconds),
+                   max(0.0, deadline - _monotonic())))
+        view, note, jar = _filepress_attempt_view(fetch, attempt_id, jar)
+        if view is None:
+            if isinstance(note, str) and note.startswith("blocked:"):
+                result["status"] = "blocked"
+            else:
+                result["status"] = "unknown"
+            result["notes"].append("attempt poll: %s" % note)
+            return result
+
+    data, note = _filepress_attempt_link(fetch, attempt_id, jar)
+    if data is None:
+        if isinstance(note, str) and note.startswith("blocked:"):
+            result["status"] = "blocked"
+        else:
+            result["status"] = "unknown"
+        result["notes"].append("attempt link: %s" % note)
+        return result
+    minted = _filepress_extract_minted(data)
+    if not minted:
+        result["status"] = "unknown"
+        result["notes"].append("attempt link: minted answer carries no URL")
+        return result
+    if "tgfiles.space" in minted:
+        result["status"] = "unknown"
+        result["notes"].append(
+            "telegram deep link only (tgfiles.space): not playable media, "
+            "no direct file minted")
+        return result
+    if _filepress_is_download_hop(minted):
+        followed = _filepress_follow_download(fetch, minted)
+        if followed:
+            minted = followed
+        else:
+            result["status"] = "unknown"
+            result["notes"].append(
+                "download hop did not redirect to a file (browser step)")
+            return result
+
+    direct = _filepress_encode_filename(minted)
+    result["final_url"] = direct
+    _expires_at, seconds = _filepress_minted_expiry(direct)
+    if seconds is not None:
+        result["expires_in"] = float(seconds)
+    result["status"] = "active"
+    result["notes"].append("minted via FileBee attempts prepare/download")
+    return _finish_media(result, fetch, verify)
+
+
+def unwrap_filepress(url, fetch=None, verify=True,
+                     poll_budget_seconds=FILEPRESS_POLL_BUDGET_SECONDS,
+                     poll_interval_seconds=FILEPRESS_POLL_INTERVAL_SECONDS,
+                     _sleep=time.sleep, _monotonic=time.monotonic):
+    """Resolve a filepress/filebee page URL to a direct file link.
+
+    Returns a verdict dict like the other unwrap_* resolvers. Two chains,
+    in order: the old downlaod/downlaod2 API (mirrors on the older build
+    still answer it), then the current attempts prepare/download flow
+    (create -> poll while PREPARING -> mint -> follow /download/ when
+    needed). With verify=True the minted link is Range-probed and only a
+    206 with real video bytes is "active". A dead download origin (522,
+    timeout) is "error"/"unknown" — never "dead" on one probe, and never
+    served. A Turnstile challenge is "blocked" with a challenge_required
+    note — never attempted. A prepare that outruns `poll_budget_seconds`
+    is "unknown" with `transient` set, so the caller does not record it
+    as a failure: the job was still warming.
+
+    `fetch` defaults to the keep-alive pool (one reused connection per
+    host, same egress the process runs on). `poll_budget_seconds` bounds
+    the prepare poll: the press path passes a short budget so a play
+    request never blocks on a ~2 min prep, the background prefetch pass
+    passes the long one. `_sleep` / `_monotonic` are injectable for
+    tests; production passes the real clock.
+    """
+    fetch = fetch or keepalive_fetch
+    result = _new_result(SERVICE_FILEPRESS, url)
+    file_id = _filepress_extract_id(url)
+    if not file_id:
+        result["status"] = "unknown"
+        result["notes"].append("no file id in url")
+        return result
+
+    legacy = _filepress_legacy_chain(fetch, file_id, result, verify)
+    if legacy is not None:
+        return legacy
+    # The old API is not usable here (METHOD_HIDDEN / http:400 / empty
+    # answer — its note already rides in result["notes"]): the current
+    # attempts chain decides.
+    return _filepress_attempts_chain(
+        fetch, file_id, result, verify, poll_budget_seconds,
+        poll_interval_seconds, _sleep, _monotonic)
 
 
 # ---------------------------------------------------------------------------
