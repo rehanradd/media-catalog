@@ -1935,6 +1935,13 @@ def _init_db(db_path: Path | None = None) -> None:
         -- health line) and any future resumable-first filter walked all four
         -- million rows. One narrow index; the column is only ever 0/1.
         CREATE INDEX IF NOT EXISTS idx_sources_resumable ON download_sources(is_resumable);
+        -- SEC-02 (2026-11-24): the redaction needle guard only runs its
+        -- DISTINCT service scan on a production-size DB when an index
+        -- covers download_sources.service; no such index existed, so the
+        -- scan was always skipped and ~714 of 718 services never reached
+        -- the needle set. One narrow index; the column holds a short
+        -- service slug.
+        CREATE INDEX IF NOT EXISTS idx_sources_service ON download_sources(service);
         """)
         # Every index on a column a migration can add is created *after* the migration
         # pass below. `CREATE TABLE IF NOT EXISTS` is a no-op on an existing staging
