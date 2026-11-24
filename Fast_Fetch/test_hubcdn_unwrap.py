@@ -185,9 +185,14 @@ class UnwrapTests(unittest.TestCase):
     def unwrap(self, hops, buttons=None, cookies="session=xyz", url=None):
         page = gateway_page(HAPPY_BUTTONS if buttons is None else buttons)
         recorder = HopRecorder(hops)
+        # Pacing is proved in test_retry_caps.py with a fake clock; these
+        # tests prove the unwrap itself, so the pacer is a no-op sleep
+        # and the suite stays instant (the process-wide pacer would
+        # otherwise sleep ~1 s between hops of every test).
         res = fast_fetch.unwrap_hubcdn(
             url or "https://hubcdn.io/cloud/abc123",
-            _fetch=lambda u: (page, cookies), _hop=recorder)
+            _fetch=lambda u: (page, cookies), _hop=recorder,
+            _pacer=fast_fetch.HubcdnPacer(sleep=lambda s: None))
         return res, recorder
 
     def test_happy_page_yields_both_assets(self):

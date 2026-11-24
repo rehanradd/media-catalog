@@ -637,6 +637,15 @@ jobs:
       # Offline, stdlib, temp-DB dispatch + stub probers, no network.
       - name: 🧪 test_bank_defects.py
         run: python3 -S Fast_Fetch/test_bank_defects.py
+      # API-14 (Phase 4, retry/timeout caps, 2026-11-24): a transport
+      # timeout fails fast instead of re-paying the whole timeout (filmu
+      # 2x 12.5 s, mixdrop 51.7 s tail), resets keep the retry budget, a
+      # per-host breaker skips a twice-timed-out host for 120 s, the WARP
+      # tunnel is capped at 5 s, and HubCDN l.php hops are paced to
+      # ~1 req/s with a 60 s backoff on 429/403. Offline, stdlib, mocked
+      # HTTP + fake clock, no network.
+      - name: 🧪 test_retry_caps.py
+        run: python3 -S Fast_Fetch/test_retry_caps.py
 
       # Phase C (GDFlix): the real button-flow resolver — Instant DL
       # (busycdn 302 → fastdl-one ?url= signed Google URL), legacy DIRECT

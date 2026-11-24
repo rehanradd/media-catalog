@@ -42,6 +42,25 @@ ENV_VAR = "RADD_WARP_PROXY"
 DEFAULT_PROXY_URL = "http://127.0.0.1:40000"
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on", "auto"})
 
+#: Cap on any single socket through the WARP tunnel, resolve path (API-14,
+#: 2026-11-24): the latency audit measured ~24 s burned in a gdflix warp
+#: hang (direct 403, tunnel far end silent) before an error came back. The
+#: local CONNECT is milliseconds; a far end that has not answered in 5 s
+#: is not going to, and the resolve path has sibling failover. Direct
+#: (non-WARP) fetches are untouched — this caps only the tunnel.
+WARP_TIMEOUT_SECONDS = 5
+
+
+def capped_timeout(timeout: float) -> float:
+    """``timeout`` capped at the WARP tunnel cap when the proxy is on.
+
+    Resolve-path callers pass their normal timeout through this before a
+    urllib fetch so a hanging tunnel cannot eat the whole retry budget.
+    """
+    if proxy_url() is None:
+        return timeout
+    return min(timeout, WARP_TIMEOUT_SECONDS)
+
 
 def proxy_url() -> str | None:
     """The configured WARP proxy URL, or None when the proxy is off."""
@@ -92,6 +111,10 @@ def make_connection(host: str, port: int, https: bool, timeout: float,
     proxy = proxy_url()
     if proxy:
         phost, pport = proxy_host_port(proxy)
+        # API-14: the tunnel's own socket is capped at WARP_TIMEOUT_SECONDS
+        # — the far-end hang that burned ~24 s on gdflix is a silent
+        # socket, and the caller's larger timeout must not revive it.
+        timeout = min(timeout, WARP_TIMEOUT_SECONDS)
         if https:
             conn = http.client.HTTPSConnection(phost, pport, timeout=timeout,
                                                context=context)

@@ -2233,6 +2233,24 @@ def _init_db(db_path: Path | None = None) -> None:
 
 # ── HTTP Networking ───────────────────────────────────────────────────────────
 
+def _is_timeout(exc: BaseException) -> bool:
+    """True when ``exc`` is a transport timeout, not a reset/refusal.
+
+    Twin of ``host_resolvers._is_timeout`` for the ``http_get`` path:
+    ``socket.timeout`` is ``TimeoutError`` since 3.10, and urllib wraps
+    the socket error in a ``URLError`` whose ``reason`` carries it. A
+    reset / refusal / DNS failure answers False and keeps the retry
+    budget — only silence fails fast (API-14).
+    """
+    if isinstance(exc, TimeoutError):
+        return True
+    reason = getattr(exc, "reason", None)
+    if isinstance(reason, TimeoutError):
+        return True
+    text = str(reason if reason is not None else exc).lower()
+    return "timed out" in text or "timeout" in text
+
+
 def http_get(url: str, timeout: int = 15, max_retries: int = 2, allow_probe: bool = True,
              clearance=None) -> tuple[int, str, str]:
     """
@@ -2334,6 +2352,14 @@ def http_get(url: str, timeout: int = 15, max_retries: int = 2, allow_probe: boo
 
                 return resp.status, final_url, content
         except Exception as e:
+            # API-14: a timeout is the verdict — the host stayed silent
+            # for the whole timeout, so retrying only re-pays it (the
+            # legacy 15 s x 3 attempts = 45 s dead page). Return at once,
+            # with no TLD-probe fallback: a timeout on a known domain is
+            # not a rotation signal. Resets / refusals / DNS failures
+            # below still retry up to max_retries.
+            if _is_timeout(e):
+                return 0, norm_url, f"ERROR: {e}"
             # H4 R8: a challenge on the final attempt invalidates the host's
             # stored clearance at once, so the next resolve re-earns it
             # instead of re-sending a dead cookie. Anything without an HTTP
@@ -4534,6 +4560,10 @@ def _gdflix_redirect_location(url: str, timeout: int = 10,
             headers["User-Agent"] = c_ua
     opener = urllib.request.build_opener(_GDFlixNoRedirect())
     req = urllib.request.Request(url, headers=headers)
+    # API-14: through the WARP tunnel the far end can hang silently
+    # (the audit's ~24 s gdflix wall) — cap the hop at 5 s when the
+    # proxy is on; direct fetches keep the caller's timeout.
+    timeout = warp_proxy.capped_timeout(timeout)
     try:
         opener.open(req, timeout=timeout)
         return None
@@ -4576,8 +4606,13 @@ def unwrap_gdflix(gdflix_url: str, clearance=None) -> tuple[str, str, int]:
     guard refuses it.
     """
     res_id = gdflix_url.rstrip("/").split("/")[-1].split("?")[0]
+    # API-14: the landing fetch rides the WARP tunnel when the proxy is
+    # on, and a silent tunnel far end is capped at 5 s per hop instead
+    # of 10 s (two attempts x 10 s was the audit's ~24 s wall, with the
+    # onload follow-up on top). Direct fetches keep 10 s.
+    landing_timeout = warp_proxy.capped_timeout(10)
     try:
-        code, _final_u, page = http_get(gdflix_url, timeout=10,
+        code, _final_u, page = http_get(gdflix_url, timeout=landing_timeout,
                                         max_retries=RESOLVE_UNWRAP_MAX_RETRIES,
                                         clearance=clearance)
     except Exception:
@@ -4600,7 +4635,8 @@ def unwrap_gdflix(gdflix_url: str, clearance=None) -> tuple[str, str, int]:
                                       html_module.unescape(onload.group(1)))
         try:
             code, _final_u, wrapped = http_get(
-                target, timeout=10, max_retries=RESOLVE_UNWRAP_MAX_RETRIES,
+                target, timeout=landing_timeout,
+                max_retries=RESOLVE_UNWRAP_MAX_RETRIES,
                 clearance=clearance)
         except Exception:
             wrapped = ""
@@ -4675,7 +4711,8 @@ def unwrap_gdflix(gdflix_url: str, clearance=None) -> tuple[str, str, int]:
             bot_url = urllib.parse.urljoin(gdflix_url, bot_url)
         try:
             b_code, _b_final, b_page = http_get(
-                bot_url, timeout=10, max_retries=RESOLVE_UNWRAP_MAX_RETRIES,
+                bot_url, timeout=landing_timeout,
+                max_retries=RESOLVE_UNWRAP_MAX_RETRIES,
                 clearance=clearance)
         except Exception:
             b_code, b_page = 0, ""
@@ -4700,7 +4737,8 @@ def unwrap_gdflix(gdflix_url: str, clearance=None) -> tuple[str, str, int]:
                                 "Content-Type":
                                     "application/x-www-form-urlencoded",
                             })
-                        with urllib.request.urlopen(req, timeout=10) as resp:
+                        with urllib.request.urlopen(
+                                req, timeout=warp_proxy.capped_timeout(10)) as resp:
                             payload = json.loads(resp.read().decode(
                                 "utf-8", errors="ignore"))
                         bot_direct = payload.get("url") if isinstance(
@@ -5130,6 +5168,72 @@ def hubcdn_r2_is_permanent(url: str) -> bool:
         return False
 
 
+#: HubCDN ``l.php`` pacing (API-14, 2026-11-24). The latency audit
+#: found ``/l.php`` answering 403 "Too Many Requests" on every attempt —
+#: the gateway's own rate limiter, tripped by probe traffic from the
+#: shared Oracle egress IP (the morning hunt tripped it at ~25 rapid
+#: requests). The morning benchmark did 4 links in 0.98 s threaded, so
+#: the budget is thin and shared with live presses: a burst of HubCDN
+#: resolves can 403 the live path too. The pacer below is the whole
+#: budget — at most ~1 ``l.php`` hop per second per process, a 60 s
+#: backoff after a 429/403, and no hop at all once both assets are
+#: banked (the R2 link is permanent, so the next press needs no hop).
+HUBCDN_HOP_MIN_INTERVAL_SECONDS = 1.0
+HUBCDN_RATE_LIMIT_BACKOFF_SECONDS = 60.0
+HUBCDN_RATE_LIMIT_STATUSES = frozenset({429, 403})
+
+
+class HubcdnPacer:
+    """The process-wide HubCDN ``l.php`` budget: pace + back off.
+
+    ``wait()`` sleeps until ``min_interval`` has passed since the last
+    hop (the hop is recorded even when it then fails — pacing is about
+    request rate, not success). ``note(status)`` arms a ``backoff``
+    blackout on a 429/403; ``is_limited()`` reports it. ``sleep`` /
+    ``clock`` are injectable so tests prove the pacing without waiting
+    on a wall clock. One pacer per process (``_HUBCDN_PACER``) — the
+    limiter is per egress IP, so per-call state would not protect it.
+    """
+
+    def __init__(self, *, min_interval: float = HUBCDN_HOP_MIN_INTERVAL_SECONDS,
+                 backoff: float = HUBCDN_RATE_LIMIT_BACKOFF_SECONDS,
+                 sleep=time.sleep, clock=time.monotonic):
+        self._min_interval = float(min_interval)
+        self._backoff = float(backoff)
+        self._sleep = sleep
+        self._clock = clock
+        self._last_hop_at: float | None = None
+        self._limited_until = 0.0
+
+    def wait(self) -> None:
+        now = self._clock()
+        if self._last_hop_at is not None:
+            due = self._last_hop_at + self._min_interval - now
+            if due > 0:
+                self._sleep(due)
+                now = self._clock()
+        self._last_hop_at = now
+
+    def note(self, status: int) -> None:
+        if status in HUBCDN_RATE_LIMIT_STATUSES:
+            self._limited_until = self._clock() + self._backoff
+
+    def is_limited(self) -> bool:
+        return self._clock() < self._limited_until
+
+    def reset(self) -> None:
+        self._last_hop_at = None
+        self._limited_until = 0.0
+
+
+_HUBCDN_PACER = HubcdnPacer()
+
+
+def reset_hubcdn_pacing() -> None:
+    """Drop the HubCDN pacing state (tests; process-shutdown hygiene)."""
+    _HUBCDN_PACER.reset()
+
+
 def _hubcdn_page(url: str, timeout: int, clearance=None) -> tuple[str, str]:
     """The gateway page's HTML and the cookies it set, as a ``Cookie`` header.
 
@@ -5204,7 +5308,7 @@ def _hubcdn_hop(url: str, headers: dict, timeout: int) -> tuple:
 
 
 def unwrap_hubcdn(cloud_url: str, timeout: int = 8, *, _fetch=None,
-                  _hop=None, clearance=None) -> dict:
+                  _hop=None, clearance=None, _pacer=None) -> dict:
     """Unwrap a ``hubcdn.io/cloud/<id>`` gateway page to its direct assets.
 
     Returns ``{ok, r2_url, google_url, gofile_url, telegram_url,
@@ -5245,6 +5349,14 @@ def unwrap_hubcdn(cloud_url: str, timeout: int = 8, *, _fetch=None,
     ``clearance`` (H4 R8) is threaded to the gateway fetch, so a protected
     gateway reuses the host's stored clearance; the button hop keeps it
     through the merged cookie header :func:`_hubcdn_page` returns.
+
+    ``_pacer`` (API-14) is the ``l.php`` budget — the process-wide
+    :class:`HubcdnPacer` by default. Hops are paced to ~1 req/s, stop at
+    once on a 429/403 (the gateway's own limiter; a 403 is never retried
+    in a tight loop), and stop as soon as both assets are banked, so a
+    resolve costs 2 hops instead of 8. A hop refused by the limiter
+    answers ``error == "hubcdn_rate_limited"`` with whatever was banked
+    so far.
     """
     out = {"ok": False, "r2_url": None, "google_url": None,
            "gofile_url": None, "telegram_url": None, "r2_bucket": None,
@@ -5293,15 +5405,8 @@ def unwrap_hubcdn(cloud_url: str, timeout: int = 8, *, _fetch=None,
     if cookies:
         headers["Cookie"] = cookies
     token = f"fast_{int(time.time())}"
-    # l.php discipline (API-11): the page prints 8 buttons for 4 distinct
-    # links, and hubcdn.io rate-limits bursts from one IP ("Too Many
-    # Requests"). Hop each distinct href once, stop as soon as every slot
-    # is filled, keep >=1 s between production hops, and stop hopping
-    # entirely after a 429/403 — the limiter is tripped and more hops only
-    # extend the block. Injected hops (tests) are never paced.
-    pacing = _hop is None
+    pacer = _pacer if _pacer is not None else _HUBCDN_PACER
     seen_hrefs: set = set()
-    last_hop_mono = None
     rate_limited = False
     for href, label in buttons:
         if not out["size_str"]:
@@ -5312,21 +5417,30 @@ def unwrap_hubcdn(cloud_url: str, timeout: int = 8, *, _fetch=None,
         if resolved in seen_hrefs:
             continue
         seen_hrefs.add(resolved)
-        if pacing and last_hop_mono is not None:
-            delay = _hubcdn_hop_delay(last_hop_mono, time.monotonic())
-            if delay > 0:
-                time.sleep(delay)
+        # Both assets banked: no more l.php hits. The old loop hopped
+        # every button (8 = 4 links x 2 labels) even after both slots
+        # were full — pure limiter budget burned for nothing.
+        if out["r2_url"] and out["google_url"]:
+            break
+        # Inside a backoff window the gateway already said no: do not
+        # spend another hop proving it again.
+        if pacer.is_limited():
+            if not (out["r2_url"] or out["google_url"]):
+                out["error"] = "hubcdn_rate_limited"
+            rate_limited = True
+            break
+        pacer.wait()
         try:
             code, location = hop(
                 _hc.hubcdn_with_token(resolved, token), headers)
         except Exception:
             continue
-        finally:
-            if pacing:
-                last_hop_mono = time.monotonic()
-        if code in (429, 403):
-            # The limiter, not the link: stop hopping; what was already
-            # collected still stands.
+        pacer.note(code)
+        if code in HUBCDN_RATE_LIMIT_STATUSES:
+            # The gateway's own limiter answered: never retry a 403/429
+            # in a tight loop — stop hopping, keep what is banked so far.
+            if not (out["r2_url"] or out["google_url"]):
+                out["error"] = "hubcdn_rate_limited"
             rate_limited = True
             break
         if code not in (301, 302, 303, 307, 308) or not location:

@@ -381,7 +381,13 @@ USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/126.0.0.0 Safari/537.36"
 )
-DEFAULT_TIMEOUT = 25
+#: Default socket timeout for one resolver fetch (API-14, 2026-11-24:
+#: 25 -> 15). The latency audit's slowest live cold resolve is 5.9 s
+#: (direct_cloud) and every other live host answers inside ~5 s, so 15 s
+#: keeps 2.5x headroom over the slowest live host while a hung host costs
+#: 15 s instead of 25 s per attempt. Aligns with ``fast_fetch.http_get``'s
+#: 15 s default.
+DEFAULT_TIMEOUT = 15
 RANGE_PROBE_BYTES = 512
 # A probe reads a header-sized slice, never a whole file.
 PROBE_READ_BYTES = 200_000
@@ -853,11 +859,96 @@ def _open(request: urllib.request.Request, timeout: float = DEFAULT_TIMEOUT,
 #: once, exactly as before.
 TRANSPORT_RETRIES = 3
 
+#: Retries after a transport TIMEOUT (API-14, 2026-11-24). A timeout is
+#: not a reset: the host stayed silent for the whole timeout, so paying
+#: it again buys the same silence — the latency audit's filmu cold
+#: 15.9 s was 2x 12.5 s timeouts for a dead verdict, and mixdrop's 51.7 s
+#: tail was 4x 12.5 s. A timeout fails fast after ``TIMEOUT_RETRIES``
+#: further attempts (0 = the first timeout is the verdict). Resets,
+#: refusals and DNS failures are NOT timeouts and keep TRANSPORT_RETRIES.
+TIMEOUT_RETRIES = 0
+
+
+def _is_timeout(exc: BaseException) -> bool:
+    """True when ``exc`` is a transport timeout, not a reset/refusal.
+
+    ``socket.timeout`` is ``TimeoutError`` since 3.10; urllib wraps the
+    socket error in a ``URLError`` whose ``reason`` carries it. A
+    ``ConnectionResetError`` / refused connection / DNS failure answers
+    False here and keeps the retry budget — only silence fails fast.
+    (``fast_fetch._is_timeout`` is the twin for the ``http_get`` path.)
+    """
+    if isinstance(exc, TimeoutError):
+        return True
+    reason = getattr(exc, "reason", None)
+    if isinstance(reason, TimeoutError):
+        return True
+    text = str(reason if reason is not None else exc).lower()
+    return "timed out" in text or "timeout" in text
+
+
+#: Consecutive transport timeouts on one host that trip the fail-fast
+#: breaker (API-14, 2026-11-24): after the 2nd consecutive timeout the
+#: host is skipped without a socket call until the cooldown lapses, so a
+#: dead host stops eating a full timeout on every press (filmu's 2nd
+#: press in a row, mixdrop's tail sample). Any HTTP answer — even a 403
+#: — resets the count: an answer is evidence the host is alive, and the
+#: breaker must never outlive the outage it measured.
+HOST_TIMEOUT_CONSECUTIVE = 2
+HOST_TIMEOUT_COOLDOWN_SECONDS = 120.0
+_HOST_TIMEOUTS: dict[str, tuple[int, float]] = {}
+_HOST_TIMEOUTS_LOCK = threading.Lock()
+
+
+def _host_of(url: str) -> str:
+    try:
+        return (urllib.parse.urlsplit(url or "").hostname or "").lower()
+    except Exception:
+        return ""
+
+
+def _host_timeout_blocked(url: str, *, now: float | None = None) -> bool:
+    """True when ``url``'s host tripped the timeout breaker recently."""
+    host = _host_of(url)
+    if not host:
+        return False
+    with _HOST_TIMEOUTS_LOCK:
+        state = _HOST_TIMEOUTS.get(host)
+    if state is None:
+        return False
+    count, last = state
+    moment = time.monotonic() if now is None else now
+    return (count >= HOST_TIMEOUT_CONSECUTIVE
+            and moment - last < HOST_TIMEOUT_COOLDOWN_SECONDS)
+
+
+def _note_host_timeout(url: str, timed_out: bool,
+                       *, now: float | None = None) -> None:
+    """Record one outcome for ``url``'s host: a timeout counts up, any
+    HTTP answer (or success) clears the count at once."""
+    host = _host_of(url)
+    if not host:
+        return
+    moment = time.monotonic() if now is None else now
+    with _HOST_TIMEOUTS_LOCK:
+        if timed_out:
+            count, _last = _HOST_TIMEOUTS.get(host, (0, moment))
+            _HOST_TIMEOUTS[host] = (count + 1, moment)
+        else:
+            _HOST_TIMEOUTS.pop(host, None)
+
+
+def reset_host_timeout_state() -> None:
+    """Drop the timeout-breaker state (tests; process-shutdown hygiene)."""
+    with _HOST_TIMEOUTS_LOCK:
+        _HOST_TIMEOUTS.clear()
+
 
 def http_request(url: str, headers: dict | None = None, timeout: float = DEFAULT_TIMEOUT,
                  method: str = "GET", follow: bool = True,
                  data: bytes | None = None,
-                 transport_retries: int = TRANSPORT_RETRIES):
+                 transport_retries: int = TRANSPORT_RETRIES,
+                 timeout_retries: int = TIMEOUT_RETRIES):
     """
     (status, body, headers, final_url) for one request.
 
@@ -868,26 +959,43 @@ def http_request(url: str, headers: dict | None = None, timeout: float = DEFAULT
     Exception`` branch) is retried up to ``transport_retries`` times with a
     short backoff, because on this edge a reset says nothing about the URL.
     An HTTP answer, including a 429, is never retried.
+    A TIMEOUT is the exception to the retry rule (API-14): the host stayed
+    silent for the whole timeout, so it is retried at most
+    ``timeout_retries`` times (default 0 — the first timeout is the
+    verdict) instead of re-paying the timeout. After
+    ``HOST_TIMEOUT_CONSECUTIVE`` consecutive timeouts the host is skipped
+    without a socket call until ``HOST_TIMEOUT_COOLDOWN_SECONDS`` lapses.
     """
     fields = {"User-Agent": USER_AGENT}
     fields.update(headers or {})
     request = urllib.request.Request(url, headers=fields, method=method,
                                      data=data)
+    if _host_timeout_blocked(url):
+        return (0, "host timeout budget exhausted", {}, url)
     last: tuple = (0, "", {}, url)
+    timeout_attempts = 0
     for attempt in range(max(1, transport_retries + 1)):
         if attempt:
             time.sleep(0.25 + 0.15 * (attempt % 4))
         try:
             with _open(request, timeout=timeout, follow=follow) as response:
+                _note_host_timeout(url, False)
                 return (int(response.status), response.read(PROBE_READ_BYTES),
                         {k.lower(): v for k, v in response.getheaders()},
                         response.geturl())
         except urllib.error.HTTPError as exc:
+            _note_host_timeout(url, False)
             return (int(exc.code), exc.read(PROBE_READ_BYTES),
                     {k.lower(): v for k, v in (exc.headers.items() if exc.headers else [])},
                     url)
         except Exception as exc:                      # DNS, TLS, timeout, refused
             last = (0, str(exc), {}, url)
+            if _is_timeout(exc):
+                _note_host_timeout(url, True)
+                timeout_attempts += 1
+                if timeout_attempts > timeout_retries:
+                    return last
+                continue
     return last
 
 
@@ -919,10 +1027,14 @@ class KeepAliveFetch:
 
     A dead connection (server closed it, reset, broken pipe, bad status
     line) is dropped and the request retried on a fresh connection —
-    the connection was dead, not the server. Any other transport
-    failure (timeout, DNS, TLS) is retried like ``http_request``'s, up
-    to three attempts with a short sleep. An HTTP answer, including a
-    429, is never retried: it is evidence, not a transport failure.
+    the connection was dead, not the server. A timeout is NOT retried
+    (API-14): the host stayed silent for the whole timeout, so a fresh
+    connection would re-pay it. Any other transport failure (DNS, TLS)
+    is retried like ``http_request``'s, up to three attempts with a short
+    sleep. An HTTP answer, including a 429, is never retried: it is
+    evidence, not a transport failure. After two consecutive timeouts
+    on one host the breaker skips the host without a socket call until
+    its cooldown lapses (see ``_host_timeout_blocked``).
     """
 
     def __init__(self, connection_factory=None,
@@ -1003,6 +1115,8 @@ class KeepAliveFetch:
             target += "?" + urllib.parse.quote(parts.query, safe="=&%")
         key = (host, port, parts.scheme == "https")
         current_url = url
+        if _host_timeout_blocked(url):
+            return 0, "host timeout budget exhausted", {}, url
         for _redirect in range(6):
             status, body, resp_headers, error = 0, b"", {}, None
             for attempt in range(3):
@@ -1025,6 +1139,14 @@ class KeepAliveFetch:
                         self._drop_locked(key)
                         error = exc
                         status = 0
+                        if _is_timeout(exc):
+                            # API-14: a timeout is the verdict, not a dead
+                            # connection — the host stayed silent for the
+                            # whole timeout, so no fresh connection re-pays
+                            # it. (A dead pooled connection — reset, bad
+                            # status line, broken pipe — is not a timeout
+                            # and still retries below.)
+                            break
                         continue
                     if len(raw) > PROBE_READ_BYTES:
                         # Over the cap: the unread tail would poison the
@@ -1034,7 +1156,10 @@ class KeepAliveFetch:
                     body = raw
                     break
             if error is not None:
+                if _is_timeout(error):
+                    _note_host_timeout(current_url, True)
                 return 0, str(error), {}, current_url
+            _note_host_timeout(current_url, False)
             location = (resp_headers.get("location") or "").strip()
             if (follow and status in (301, 302, 303, 307, 308)
                     and location):
