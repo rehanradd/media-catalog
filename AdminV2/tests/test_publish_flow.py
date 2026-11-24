@@ -11,6 +11,7 @@ import urllib.parse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from helpers import make_service  # noqa: E402
+from admin_v2 import fixture_app  # noqa: E402
 from admin_v2.live_stores import LiveStores  # noqa: E402
 from admin_v2.server import AdminApp  # noqa: E402
 from admin_v2.services import Service  # noqa: E402
@@ -281,6 +282,116 @@ class TestFormErrors(PublishFlowBase):
         self.assertEqual(status, 400)
         self.assertIsNone(location)
         self.assertIn("Region order", payload.decode())
+
+
+class TestFeaturePause(PublishFlowBase):
+    """PNL-11: a feature pause must reach the live catalog row the app
+    reads — not just the panel's version bump and fixture fold."""
+
+    def _live_row(self):
+        return self._catalog().execute(
+            "SELECT * FROM app_remote_config WHERE id=1").fetchone()
+
+    def _live_columns(self):
+        return {r[1] for r in self._catalog().execute(
+            "PRAGMA table_info(app_remote_config)")}
+
+    def test_pause_feature_writes_live_flag_and_stamps_version(self):
+        self._live_service()
+        before = self.svc._config_row()["config_version"]
+        p = self.svc.pause(self.owner, {"target_type": "feature",
+                                        "target_id": "downloads",
+                                        "reason": "test pause"})
+        self.assertTrue(self.svc.is_paused("feature", "downloads"))
+        row = self._live_row()
+        self.assertEqual(row["feature_downloads"], 0)
+        self.assertEqual(row["config_version"], before + 1)
+        self.assertEqual(self.svc._config_row()["config_version"], before + 1)
+        # The panel fixture still folds the pause too.
+        flags = fixture_app.public_remote_config(self.svc)["feature_flags"]
+        self.assertFalse(flags["downloads"])
+
+    def test_resume_feature_restores_draft_value(self):
+        self._live_service()
+        # Draft says the gate is ON (put_monetization publishes it live).
+        self.svc.put_monetization(self.owner, {"feature_quality_gate": 1})
+        self.assertEqual(self._live_row()["feature_quality_gate"], 1)
+        p = self.svc.pause(self.owner, {"target_type": "feature",
+                                        "target_id": "quality_gate",
+                                        "reason": "test pause"})
+        self.assertEqual(self._live_row()["feature_quality_gate"], 0)
+        before = self.svc._config_row()["config_version"]
+        self.svc.resume_pause(self.owner, p["id"])
+        row = self._live_row()
+        self.assertEqual(row["feature_quality_gate"], 1)
+        self.assertEqual(row["config_version"], before + 1)
+        self.assertFalse(self.svc.is_paused("feature", "quality_gate"))
+        flags = fixture_app.public_remote_config(self.svc)["feature_flags"]
+        self.assertTrue(flags["quality_gate"])
+
+    def test_resume_feature_restores_draft_off(self):
+        """Resume restores the DRAFT value, not a hardcoded 1: turn the
+        draft off while paused, and the live row must come back 0."""
+        self._live_service()
+        p = self.svc.pause(self.owner, {"target_type": "feature",
+                                        "target_id": "downloads",
+                                        "reason": "test pause"})
+        self.assertEqual(self._live_row()["feature_downloads"], 0)
+        self.svc.admin.execute(
+            "UPDATE app_remote_config_v2 SET feature_downloads=0 WHERE id=1")
+        self.svc.admin.commit()
+        self.svc.resume_pause(self.owner, p["id"])
+        self.assertEqual(self._live_row()["feature_downloads"], 0)
+
+    def test_pause_feature_failure_leaves_version_and_row_untouched(self):
+        """Catalog-first: a catalog the panel cannot write must not
+        half-pause — the version stays put, no pause row exists, and
+        the operator gets the real reason, so a retry works."""
+        self._live_service()
+        before = self.svc._config_row()["config_version"]
+        conn = self._catalog()
+        conn.execute("DROP TABLE app_remote_config")
+        conn.commit()
+        conn.close()
+        with self.assertRaises(Exception) as ctx:
+            self.svc.pause(self.owner, {"target_type": "feature",
+                                        "target_id": "downloads",
+                                        "reason": "test pause"})
+        self.assertIn("live catalog", str(ctx.exception))
+        self.assertEqual(self.svc._config_row()["config_version"], before)
+        self.assertFalse(self.svc.is_paused("feature", "downloads"))
+        self.assertEqual(self.svc.list_pauses(self.owner)["items"], [])
+
+    def test_pause_feature_without_live_catalog_still_works(self):
+        svc, owner, _aud = make_service()
+        before = svc._config_row()["config_version"]
+        p = svc.pause(owner, {"target_type": "feature",
+                              "target_id": "downloads", "reason": "test"})
+        self.assertTrue(svc.is_paused("feature", "downloads"))
+        self.assertEqual(svc._config_row()["config_version"], before + 1)
+        svc.resume_pause(owner, p["id"])
+        self.assertFalse(svc.is_paused("feature", "downloads"))
+
+    def test_pause_unknown_feature_name_is_snapshot_only(self):
+        """A feature name with no live column keeps today's behaviour:
+        version + snapshot, no catalog write at all."""
+        self._live_service()
+        before = self.svc._config_row()["config_version"]
+        self.svc.pause(self.owner, {"target_type": "feature",
+                                    "target_id": "recommendations",
+                                    "reason": "test pause"})
+        self.assertEqual(self._live_row()["feature_downloads"], 1)
+        self.assertEqual(self.svc._config_row()["config_version"], before + 1)
+        self.assertNotIn("config_version", self._live_columns())
+
+    def test_pause_non_feature_target_writes_nothing_live(self):
+        self._live_service()
+        p = self.svc.pause(self.owner, {"target_type": "section",
+                                        "target_id": "movie",
+                                        "reason": "test pause"})
+        self.assertEqual(self._live_row()["feature_downloads"], 1)
+        self.assertNotIn("config_version", self._live_columns())
+        self.svc.resume_pause(self.owner, p["id"])
 
 
 if __name__ == "__main__":
