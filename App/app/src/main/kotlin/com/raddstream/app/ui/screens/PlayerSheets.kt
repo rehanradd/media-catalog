@@ -336,8 +336,6 @@ internal fun SleepSheet(state: PlayerUiState, vm: PlayerViewModel) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
 /**
  * P10 (round 2) — the button equivalent of a slider: a − button, the
  * current value, a + button. A tap moves exactly one step, for the
@@ -372,6 +370,8 @@ private fun StepperRow(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
 internal fun SubtitleSettingsSheet(state: PlayerUiState, vm: PlayerViewModel) {
     val ctx = LocalContext.current
     val externalSubtitleFallback = stringResource(R.string.player_external_subtitle)
