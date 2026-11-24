@@ -255,14 +255,20 @@ class MyListMockupScreenTest {
         progressLabelByPostId = progressLabelByPostId,
     )
 
-    private fun loadedContent(state: MyListUiState) {
+    private fun loadedContent(
+        state: MyListUiState,
+        onPostClick: (Post) -> Unit = {},
+        onPlayClick: (Post) -> Unit = {},
+        onRemove: (Int) -> Unit = {},
+    ) {
         compose.setContent {
             RaddStreamTheme {
                 Box(Modifier.width(390.dp).fillMaxSize()) {
                     MyListLoadedContent(
                         state = state,
-                        onPostClick = {},
-                        onRemove = {},
+                        onPostClick = onPostClick,
+                        onPlayClick = onPlayClick,
+                        onRemove = onRemove,
                         onSort = {},
                         isFavorite = { false },
                         onToggleFavorite = {},
@@ -355,6 +361,73 @@ class MyListMockupScreenTest {
             ),
         )
         compose.onNodeWithText("Trending to Start Your List").assertDoesNotExist()
+    }
+
+    // ── APP-06 one-tap play (Phase 4) ─────────────────────────────────
+
+    @Test
+    fun savedTileGrowsAPlayButton() {
+        // APP-06: the saved tile is the strongest resume case — it grows
+        // the same play button Home's rails have, one per saved title.
+        // Two saves hide the starter shelf, so every Play node here is a
+        // saved tile's, not a discovery rail's.
+        loadedContent(
+            loadedState(listOf(post(1, "Inception"), post(2, "Dune"))),
+        )
+        compose.onNodeWithContentDescription("Play Inception").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Play Dune").assertIsDisplayed()
+    }
+
+    @Test
+    fun playButtonTapPlaysThatTitleOnly() {
+        // APP-06: the play button starts its own title and never also
+        // opens it — the tap is play, not a doorway tap.
+        var played by mutableStateOf<Post?>(null)
+        val opened = mutableListOf<Post>()
+        loadedContent(
+            loadedState(listOf(post(1, "Inception"), post(2, "Dune"))),
+            onPostClick = { opened += it },
+            onPlayClick = { played = it },
+        )
+        compose.onNodeWithContentDescription("Play Dune").performClick()
+        assertEquals("Dune", played?.title)
+        assertEquals(2, played?.id)
+        assertTrue("play tap also opened a title: $opened", opened.isEmpty())
+    }
+
+    @Test
+    fun tileTapStillOpensTheTitle() {
+        // APP-06: the tile itself stays a doorway — only the play button
+        // on it starts playback.
+        var played by mutableStateOf<Post?>(null)
+        val opened = mutableListOf<Post>()
+        loadedContent(
+            loadedState(listOf(post(1, "Inception"), post(2, "Dune"))),
+            onPostClick = { opened += it },
+            onPlayClick = { played = it },
+        )
+        compose.onNodeWithContentDescription("Inception, 2024 · Movie").performClick()
+        assertEquals(listOf("Inception"), opened.map { it.title })
+        assertTrue("tile tap also played: $played", played == null)
+    }
+
+    @Test
+    fun removeButtonStillRemovesTheTitle() {
+        // APP-06: the management action is untouched — the × beside the
+        // title still removes its own row and starts no playback.
+        var played by mutableStateOf<Post?>(null)
+        val opened = mutableListOf<Post>()
+        val removed = mutableListOf<Int>()
+        loadedContent(
+            loadedState(listOf(post(1, "Inception"), post(2, "Dune"))),
+            onPostClick = { opened += it },
+            onPlayClick = { played = it },
+            onRemove = { removed += it },
+        )
+        compose.onNodeWithContentDescription("Remove Inception from My List").performClick()
+        assertEquals(listOf(1), removed)
+        assertTrue("remove tap also opened a title: $opened", opened.isEmpty())
+        assertTrue("remove tap also played: $played", played == null)
     }
 
     // ── Hidden list ───────────────────────────────────────────────────

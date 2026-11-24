@@ -72,6 +72,13 @@ fun MyListScreen(
     onOpenWatchHistory: () -> Unit = {},
     /** The empty list's way out: the catalog, not a sentence telling the user to go find it. */
     onBrowseClick: () -> Unit = {},
+    /**
+     * APP-06 (Phase 4): one-tap play for saved tiles — the same instant-play
+     * path Home's rail tiles use (Detail with autoplay, [DetailScreen] fires
+     * playPrimary once on open). The tile tap still opens the title; only
+     * the play button on the tile starts playback.
+     */
+    onPlayClick: (Post) -> Unit = {},
     viewModel: MyListViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -174,6 +181,7 @@ fun MyListScreen(
             else -> MyListLoadedContent(
                 state = state,
                 onPostClick = onPostClick,
+                onPlayClick = onPlayClick,
                 onRemove = { viewModel.remove(it) },
                 onSort = { viewModel.setSort(it) },
                 isFavorite = isFavorite,
@@ -274,6 +282,14 @@ internal fun MyListLoadedContent(
     onSort: (ListSort) -> Unit,
     isFavorite: (Post) -> Boolean,
     onToggleFavorite: (Post) -> Unit,
+    /**
+     * APP-06 (Phase 4): one-tap play for saved tiles. Wired to the grid
+     * tiles only — the starter shelf below stays a doorway, like the
+     * discovery rails in the empty states. Defaults to no-op so existing
+     * callers (and the mockup tests) keep compiling; NavGraph passes the
+     * autoplay navigation.
+     */
+    onPlayClick: (Post) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     // The count names every saved title, hidden ones included — a row
@@ -320,6 +336,14 @@ internal fun MyListLoadedContent(
                     post = post,
                     onClick = { onPostClick(post) },
                     onRemove = { onRemove(post.id) },
+                    // APP-06 (Phase 4): the saved tile is the strongest
+                    // resume case — it grows the same play button Home's
+                    // rails have, opening Detail with autoplay. The tile
+                    // tap still opens the title; the × beside the title
+                    // still removes it. Detail decides what "play" means
+                    // for the title (resume, HLS, quality sheet, or the
+                    // "no working link" line) — the tile never guesses.
+                    onPlayClick = { onPlayClick(post) },
                     // The bar paints only where a real watch row
                     // says the viewer stopped halfway — never a
                     // bar for a title with no position (see

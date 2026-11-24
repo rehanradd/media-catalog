@@ -788,6 +788,13 @@ fun RaddStreamNavGraph(
             composable(Screen.MyList.route) {
                 MyListScreen(
                     onPostClick = { post -> navController.navigateToPost(post) },
+                    // APP-06 (Phase 4): one-tap play — the saved tile's
+                    // play button opens Detail with autoplay, the same
+                    // instant-play path Home's rail tiles use, so the tap
+                    // starts the title instead of landing on the two buttons.
+                    onPlayClick = { post ->
+                        navController.navigateToPost(post, autoplay = true)
+                    },
                     onOpenWatchHistory = { navController.navigate(Screen.WatchHistory.route) },
                     onBrowseClick = { navController.navigate(Screen.Browse.createRoute(null)) },
                 )
