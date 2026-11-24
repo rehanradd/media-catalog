@@ -29,14 +29,25 @@ class PlayerChromeCopyTest {
     }
 
     private val mainSrc: File get() = File(repoRoot, "App/app/src/main")
-    private val playerScreen: File get() = File(
-        mainSrc,
-        "kotlin/com/raddstream/app/ui/screens/PlayerScreen.kt",
+
+    /** The 11 files the PlayerScreen split (APP-10) produced, in split order. */
+    private val playerScreenFiles: List<String> = listOf(
+        "PlayerScreen.kt", "PlayerGestures.kt", "PlayerHud.kt",
+        "PlayerChrome.kt", "PlayerControls.kt", "PlayerCards.kt",
+        "PlayerNotices.kt", "PlayerSubtitles.kt", "PlayerDialogs.kt",
+        "PlayerSheets.kt", "PlayerScreenUtils.kt",
     )
 
     private val source: String by lazy {
-        assertTrue("PlayerScreen.kt is missing at ${playerScreen.path}", playerScreen.isFile)
-        playerScreen.readText()
+        // The drift asserts read the split files concatenated, in split
+        // order, so a call site's neighbours are the same as when the
+        // screen was one file.
+        val screensDir = File(mainSrc, "kotlin/com/raddstream/app/ui/screens")
+        playerScreenFiles.joinToString("\n") { name ->
+            val file = File(screensDir, name)
+            assertTrue("Player split file $name is missing at ${file.path}", file.isFile)
+            file.readText()
+        }
     }
     private val xml: String by lazy { File(mainSrc, "res/values/strings.xml").readText() }
 

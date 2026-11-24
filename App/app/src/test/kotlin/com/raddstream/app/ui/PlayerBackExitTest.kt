@@ -19,13 +19,26 @@ import java.io.File
  */
 class PlayerBackExitTest {
 
-    private val playerScreen: File by lazy {
+    /**
+     * The 11 files the PlayerScreen split (APP-10) produced, in split
+     * order. The drift asserts below read them concatenated, in that
+     * order, so a declaration's neighbours are the same as when the
+     * screen was one file.
+     */
+    private val playerScreenFiles: List<String> = listOf(
+        "PlayerScreen.kt", "PlayerGestures.kt", "PlayerHud.kt",
+        "PlayerChrome.kt", "PlayerControls.kt", "PlayerCards.kt",
+        "PlayerNotices.kt", "PlayerSubtitles.kt", "PlayerDialogs.kt",
+        "PlayerSheets.kt", "PlayerScreenUtils.kt",
+    )
+
+    private val screensDir: File by lazy {
         var dir: File? = File("").absoluteFile
         while (dir != null) {
             if (File(dir, "brand.properties").isFile) {
                 return@lazy File(
                     dir,
-                    "App/app/src/main/kotlin/com/raddstream/app/ui/screens/PlayerScreen.kt",
+                    "App/app/src/main/kotlin/com/raddstream/app/ui/screens",
                 )
             }
             dir = dir.parentFile
@@ -34,8 +47,11 @@ class PlayerBackExitTest {
     }
 
     private val source: String by lazy {
-        assertTrue("PlayerScreen.kt is missing at ${playerScreen.path}", playerScreen.isFile)
-        playerScreen.readText()
+        playerScreenFiles.joinToString("\n") { name ->
+            val file = File(screensDir, name)
+            assertTrue("Player split file $name is missing at ${file.path}", file.isFile)
+            file.readText()
+        }
     }
 
     @Test
@@ -93,7 +109,9 @@ class PlayerBackExitTest {
      * full width, so every one is fully visible and tappable.
      */
     private val giveUpCardBody: String by lazy {
-        val start = source.indexOf("private fun GiveUpCard(")
+        // GiveUpCard widened private -> internal in the APP-10 split
+        // (PlayerNotices.kt), so the marker drops the visibility word.
+        val start = source.indexOf("fun GiveUpCard(")
         assertTrue("PlayerScreen.kt no longer declares GiveUpCard", start >= 0)
         val end = source.indexOf("Subtitle overlay", start)
         assertTrue("PlayerScreen.kt no longer has the subtitle overlay after GiveUpCard", end > start)

@@ -33,21 +33,35 @@ class PlayerHudLiveRegionTest {
     @get:Rule
     val compose = createComposeRule()
 
-    private val playerScreen: File by lazy {
+    /** The 11 files the PlayerScreen split (APP-10) produced, in split order. */
+    private val playerScreenFiles: List<String> = listOf(
+        "PlayerScreen.kt", "PlayerGestures.kt", "PlayerHud.kt",
+        "PlayerChrome.kt", "PlayerControls.kt", "PlayerCards.kt",
+        "PlayerNotices.kt", "PlayerSubtitles.kt", "PlayerDialogs.kt",
+        "PlayerSheets.kt", "PlayerScreenUtils.kt",
+    )
+
+    private val source: String by lazy {
+        // The drift asserts read the split files concatenated, in split
+        // order, so a toast's neighbours are the same as when the screen
+        // was one file.
         var dir: File? = File("").absoluteFile
         while (dir != null) {
             if (File(dir, "brand.properties").isFile) {
-                return@lazy File(
+                val screensDir = File(
                     dir,
-                    "App/app/src/main/kotlin/com/raddstream/app/ui/screens/PlayerScreen.kt",
+                    "App/app/src/main/kotlin/com/raddstream/app/ui/screens",
                 )
+                return@lazy playerScreenFiles.joinToString("\n") { name ->
+                    val file = File(screensDir, name)
+                    assertTrue("Player split file $name is missing at ${file.path}", file.isFile)
+                    file.readText()
+                }
             }
             dir = dir.parentFile
         }
         error("brand.properties not found above ${File("").absolutePath}")
     }
-
-    private val source: String by lazy { playerScreen.readText() }
 
     /** The segment of [source] starting at [marker], up to the next top-level function. */
     private fun bodyAfter(marker: String): String =
@@ -96,7 +110,7 @@ class PlayerHudLiveRegionTest {
     fun `the scrub toast carries a live region`() {
         assertTrue(
             "ScrubToast lost its live region",
-            bodyAfter("private fun ScrubToast(").contains("liveRegion = LiveRegionMode.Polite"),
+            bodyAfter("fun ScrubToast(").contains("liveRegion = LiveRegionMode.Polite"),
         )
     }
 
@@ -104,7 +118,7 @@ class PlayerHudLiveRegionTest {
     fun `the subtitle toast carries a live region`() {
         assertTrue(
             "SubtitleToast lost its live region",
-            bodyAfter("private fun SubtitleToast(").contains("liveRegion = LiveRegionMode.Polite"),
+            bodyAfter("fun SubtitleToast(").contains("liveRegion = LiveRegionMode.Polite"),
         )
     }
 
@@ -112,7 +126,7 @@ class PlayerHudLiveRegionTest {
     fun `the boost badge carries a live region`() {
         assertTrue(
             "BoostBadge lost its live region",
-            bodyAfter("private fun BoostBadge(").contains("liveRegion = LiveRegionMode.Polite"),
+            bodyAfter("fun BoostBadge(").contains("liveRegion = LiveRegionMode.Polite"),
         )
     }
 }

@@ -59,8 +59,24 @@ class PlayerReviewFixesTest {
     private val mainSrc: File get() = File(repoRoot, "App/app/src/main")
     private val drawables: File get() = File(mainSrc, "res/drawable")
 
+    /** The 11 files the PlayerScreen split (APP-10) produced, in split order. */
+    private val playerScreenFiles: List<String> = listOf(
+        "PlayerScreen.kt", "PlayerGestures.kt", "PlayerHud.kt",
+        "PlayerChrome.kt", "PlayerControls.kt", "PlayerCards.kt",
+        "PlayerNotices.kt", "PlayerSubtitles.kt", "PlayerDialogs.kt",
+        "PlayerSheets.kt", "PlayerScreenUtils.kt",
+    )
+
     private val playerScreen: String by lazy {
-        File(mainSrc, "kotlin/com/raddstream/app/ui/screens/PlayerScreen.kt").readText()
+        // The drift asserts read the split files concatenated, in split
+        // order, so a declaration's neighbours are the same as when the
+        // screen was one file.
+        val screensDir = File(mainSrc, "kotlin/com/raddstream/app/ui/screens")
+        playerScreenFiles.joinToString("\n") { name ->
+            val file = File(screensDir, name)
+            assertTrue("Player split file $name is missing at ${file.path}", file.isFile)
+            file.readText()
+        }
     }
 
     private fun drawable(name: String): String {
@@ -124,9 +140,12 @@ class PlayerReviewFixesTest {
 
     @Test
     fun `the quality pill never dims`() {
-        val start = playerScreen.indexOf("private fun QualityPill(")
+        // QualityPill and Scrubber widened private -> internal in the
+        // APP-10 split (PlayerControls.kt), so the markers drop the
+        // visibility word.
+        val start = playerScreen.indexOf("fun QualityPill(")
         assertTrue("QualityPill is gone", start >= 0)
-        val end = playerScreen.indexOf("\nprivate fun Scrubber(", start)
+        val end = playerScreen.indexOf("fun Scrubber(", start)
         assertTrue("cannot find the end of QualityPill", end > start)
         val pill = playerScreen.substring(start, end)
         assertFalse("QualityPill still dims a tappable control", pill.contains("dimmed"))
