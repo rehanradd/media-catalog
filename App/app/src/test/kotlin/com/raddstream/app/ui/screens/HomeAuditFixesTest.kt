@@ -176,11 +176,13 @@ class HomeAuditFixesTest {
 
     @Test
     fun errorStateOffersRetryAndRenamedAddress() {
+        var settingsOpened = false
         compose.setContent {
             RaddStreamTheme {
                 HomeContent(
                     state = HomeUiState(fatal = "Couldn't reach the catalog."),
                     heroAutoplay = false,
+                    onOpenSettingsClick = { settingsOpened = true },
                 )
             }
         }
@@ -189,6 +191,11 @@ class HomeAuditFixesTest {
         compose.onNodeWithText("Try a different address").assertDoesNotExist()
         compose.onNodeWithText("Titles load from this address — if it changed, update it here.")
             .assertExists()
+        // S4(c) (2027 Home fix): the third door — the Settings screen,
+        // where the server address and everything else lives.
+        compose.onNodeWithText("Open Settings").assertExists()
+        compose.onNodeWithText("Open Settings").performClick()
+        assertTrue(settingsOpened)
     }
 
     // ── Audit #3: rail skeletons render in a snapshot's frozen clock ────
@@ -228,8 +235,9 @@ class HomeAuditFixesTest {
                 HomeContent(
                     state = HomeUiState(
                         // No sections: the trial note is the 5th lazy item
-                        // (chips, broadcast, Continue Watching, trial), so
-                        // it is composed in the first Robolectric viewport.
+                        // (chips, Continue Watching, broadcast, trial — the
+                        // broadcasts ride below CW now, H1), so it is
+                        // composed in the first Robolectric viewport.
                         // With a hero + rail above it, the lazy column
                         // never composes it and the node does not exist.
                         sections = emptyList(),

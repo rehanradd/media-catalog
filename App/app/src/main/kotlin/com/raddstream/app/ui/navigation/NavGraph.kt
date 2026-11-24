@@ -106,6 +106,14 @@ private data class BottomNavItem(
     val route: String,
     val icon: ImageVector,
     /**
+     * H3 (2027 Home fix): the FILLED variant, painted when the tab is
+     * selected — icon-fill-on-select, the M3 Expressive pattern (the nav
+     * keeps its 64×32 spring pill AND the icon fills; the video
+     * adjudication). Defaults to the outline icon for callers that pass
+     * only one glyph.
+     */
+    val selectedIcon: ImageVector = icon,
+    /**
      * The address the tab navigates to. Usually the same as [route] — but a
      * destination with an optional argument (Search's `query`) must be
      * navigated to by its plain address, never by the template string:
@@ -165,7 +173,7 @@ internal fun RaddBottomBar(
                 .fillMaxWidth()
                 .then(modifier)
                 .selectableGroup(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Sm),
             verticalAlignment = Alignment.CenterVertically,
             content = content,
         )
@@ -194,13 +202,16 @@ internal fun RowScope.BottomNavTab(
     icon: ImageVector,
     selected: Boolean,
     onClick: () -> Unit,
+    // H3: the filled variant, painted when selected (defaults to the
+    // outline icon so existing callers keep compiling).
+    selectedIcon: ImageVector = icon,
 ) {
     val reduceMotion = rememberReduceMotion()
     // Restyle 2026-11-13: the selected icon settles onto its spring (M3
     // Expressive fast spatial) instead of snapping to 1.12x.
     val iconScale by animateFloatAsState(
         targetValue = if (selected) 1.12f else 1f,
-        animationSpec = if (reduceMotion) snap() else RaddMotion.fastSpatial(),
+        animationSpec = if (reduceMotion) snap() else MaterialTheme.motionScheme.fastSpatialSpec(),
         label = "navIconScale",
     )
     val pillColor by animateColorAsState(
@@ -209,7 +220,7 @@ internal fun RowScope.BottomNavTab(
         } else {
             Color.Transparent
         },
-        animationSpec = if (reduceMotion) snap() else RaddMotion.defaultEffects(),
+        animationSpec = if (reduceMotion) snap() else MaterialTheme.motionScheme.defaultEffectsSpec(),
         label = "navPillColor",
     )
     Box(
@@ -231,16 +242,16 @@ internal fun RowScope.BottomNavTab(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 2.dp),
+                .padding(horizontal = RaddTokens.Space.Micro),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(2.dp),
+            verticalArrangement = Arrangement.spacedBy(RaddTokens.Space.Micro),
         ) {
             Box(
                 modifier = Modifier
                     // Density (Nov 2026): the pill is M3 Expressive's
-                    // 56×32dp visual — cap width at 56dp while allowing
+                    // 64×32dp visual (H3: was 56dp) — cap width at 64dp while allowing
                     // 2dp breathing room on narrow 320dp screens.
-                    .padding(horizontal = 2.dp)
+                    .padding(horizontal = RaddTokens.Space.Micro)
                     .widthIn(max = RaddTokens.Touch.NavIndicatorWidth)
                     .fillMaxWidth()
                     .height(RaddTokens.Touch.NavIndicatorHeight)
@@ -254,7 +265,7 @@ internal fun RowScope.BottomNavTab(
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    icon,
+                    if (selected) selectedIcon else icon,
                     contentDescription = null,
                     tint = if (selected) {
                         MaterialTheme.colorScheme.onPrimaryContainer
@@ -262,7 +273,7 @@ internal fun RowScope.BottomNavTab(
                         MaterialTheme.colorScheme.onSurfaceVariant
                     },
                     modifier = Modifier
-                        .size(24.dp)
+                        .size(24.dp) // token-exempt: icon size, not spacing
                         .graphicsLayer(scaleX = iconScale, scaleY = iconScale),
                 )
             }
@@ -495,11 +506,11 @@ fun RaddStreamNavGraph(
         .filterNot { kidsMode && (it == "my_list" || it == "live_tv") }
         .map { id ->
         when (id) {
-            "live_tv" -> BottomNavItem("Live TV", Screen.LiveTv.route, ImageVector.vectorResource(R.drawable.ic_tab_live_tv))
-            "search" -> BottomNavItem("Search", Screen.Search.route, ImageVector.vectorResource(R.drawable.ic_tab_search), navigateRoute = Screen.Search.PLAIN_ROUTE)
-            "my_list" -> BottomNavItem("My List", Screen.MyList.route, ImageVector.vectorResource(R.drawable.ic_tab_my_list))
-            "settings" -> BottomNavItem("Settings", Screen.Settings.route, ImageVector.vectorResource(R.drawable.ic_tab_settings), navigateRoute = Screen.Settings.PLAIN_ROUTE)
-            else -> BottomNavItem("Home", Screen.Home.route, ImageVector.vectorResource(R.drawable.ic_tab_home))
+            "live_tv" -> BottomNavItem("Live TV", Screen.LiveTv.route, ImageVector.vectorResource(R.drawable.ic_tab_live_tv), selectedIcon = ImageVector.vectorResource(R.drawable.ic_tab_live_tv_filled))
+            "search" -> BottomNavItem("Search", Screen.Search.route, ImageVector.vectorResource(R.drawable.ic_tab_search), selectedIcon = ImageVector.vectorResource(R.drawable.ic_tab_search_filled), navigateRoute = Screen.Search.PLAIN_ROUTE)
+            "my_list" -> BottomNavItem("My List", Screen.MyList.route, ImageVector.vectorResource(R.drawable.ic_tab_my_list), selectedIcon = ImageVector.vectorResource(R.drawable.ic_action_favorite_filled))
+            "settings" -> BottomNavItem("Settings", Screen.Settings.route, ImageVector.vectorResource(R.drawable.ic_tab_settings), selectedIcon = ImageVector.vectorResource(R.drawable.ic_tab_settings_filled), navigateRoute = Screen.Settings.PLAIN_ROUTE)
+            else -> BottomNavItem("Home", Screen.Home.route, ImageVector.vectorResource(R.drawable.ic_tab_home), selectedIcon = ImageVector.vectorResource(R.drawable.ic_tab_home_filled))
         }
     }
 
@@ -516,7 +527,7 @@ fun RaddStreamNavGraph(
                     Box(
                         Modifier
                             .fillMaxWidth()
-                            .height(1.dp)
+                            .height(1.dp) // token-exempt: divider thickness, not spacing
                             .background(Color.White.copy(alpha = 0.08f)),
                     )
                     // Density (Nov 2026): the bar is RaddBottomBar now, not
@@ -536,6 +547,7 @@ fun RaddStreamNavGraph(
                         BottomNavTab(
                             label = item.label,
                             icon = item.icon,
+                            selectedIcon = item.selectedIcon,
                             selected = selected,
                             onClick = {
                                 // Samsung RTL retest (Issue 8): a tab tap
@@ -689,6 +701,8 @@ fun RaddStreamNavGraph(
                         navController.navigate(Screen.Search.createRoute(genre = genre, industry = industry, language = language))
                     },
                     onSetupServerClick = { navController.navigate(Screen.Setup.route) },
+                    // S4(c): the fatal error's "Open Settings" action.
+                    onOpenSettingsClick = { navController.navigate(Screen.Settings.PLAIN_ROUTE) },
                     heroMax = theme.heroMax,
                     heroAutoplay = theme.heroAutoplay && autoplayPreviews,
                     heroIntervalMs = theme.heroIntervalS * 1_000L,

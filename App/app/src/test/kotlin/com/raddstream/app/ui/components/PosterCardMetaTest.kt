@@ -1,5 +1,6 @@
 package com.raddstream.app.ui.components
 
+import androidx.compose.ui.unit.dp
 import com.raddstream.app.network.models.Post
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -81,5 +82,46 @@ class PosterCardMetaTest {
     @Test
     fun `no match percent means the line is exactly as before`() {
         assertEquals("★ 8.6 · 2024 · Series", posterMetaLine(post(), compact = false, matchPercent = null))
+    }
+
+    // ── S2 (2027 Home fix): the width-aware meta line ───────────────────
+
+    @Test
+    fun `wide tile keeps the full meta line`() {
+        assertEquals("★ 8.6 · 2024 · Series", metaLineForWidth(post(), compact = false, width = 200.dp))
+    }
+
+    @Test
+    fun `narrow tile drops the type word first`() {
+        assertEquals("★ 8.6 · 2024", metaLineForWidth(post(), compact = false, width = 139.dp))
+        // The threshold itself keeps the type: below 140dp drops it.
+        assertEquals("★ 8.6 · 2024 · Series", metaLineForWidth(post(), compact = false, width = 140.dp))
+    }
+
+    @Test
+    fun `minimal tile drops the year too but never the rating`() {
+        assertEquals("★ 8.6", metaLineForWidth(post(), compact = false, width = 99.dp))
+        assertEquals("★ 8.6 · 2024", metaLineForWidth(post(), compact = false, width = 100.dp))
+    }
+
+    @Test
+    fun `compact always drops the type whatever the width`() {
+        assertEquals("★ 8.6 · 2024", metaLineForWidth(post(), compact = true, width = 200.dp))
+    }
+
+    @Test
+    fun `match percent never drops even on a minimal tile`() {
+        assertEquals("97% Match · ★ 8.6 · 2024", metaLineForWidth(post(), compact = false, matchPercent = 97, width = 139.dp))
+        assertEquals("97% Match · ★ 8.6", metaLineForWidth(post(), compact = false, matchPercent = 97, width = 99.dp))
+    }
+
+    @Test
+    fun `word-safe trim never leaves a dangling separator`() {
+        // Cut inside "Movie": the boundary falls just after the separator,
+        // so the "·" goes with it — never "★ 7.0 · …".
+        assertEquals("★ 7.0 · 2023…", trimMetaLineToWordBoundary("★ 7.0 · 2023 · Movie", 17))
+        assertEquals("★ 8.6 · 2024…", trimMetaLineToWordBoundary("★ 8.6 · 2024 · Series", 16))
+        // Cut inside the year: the year goes, the rating stays.
+        assertEquals("★ 7.0…", trimMetaLineToWordBoundary("★ 7.0 · 2023", 9))
     }
 }

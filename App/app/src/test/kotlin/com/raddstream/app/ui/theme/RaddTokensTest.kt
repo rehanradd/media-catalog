@@ -19,6 +19,10 @@ class RaddTokensTest {
     @Test
     fun spacingIsTheEightPointGrid() {
         assertEquals(4.dp, RaddTokens.Space.Xs)
+        // S6 (2027 Home fix): the two half-steps — 6dp hero-stack gaps
+        // (D7) and 2dp hairlines — live as tokens too, never as literals.
+        assertEquals(6.dp, RaddTokens.Space.Xxs)
+        assertEquals(2.dp, RaddTokens.Space.Micro)
         assertEquals(8.dp, RaddTokens.Space.Sm)
         assertEquals(12.dp, RaddTokens.Space.Md)
         assertEquals(16.dp, RaddTokens.Space.Lg)
@@ -26,6 +30,9 @@ class RaddTokensTest {
         assertEquals(24.dp, RaddTokens.Space.Xl)
         assertEquals(32.dp, RaddTokens.Space.Xxl)
         assertEquals(48.dp, RaddTokens.Space.Step48)
+        // S6: the shipped rails use a 12dp gap, not the 8dp the token
+        // used to carry — the token now says what ships.
+        assertEquals(12.dp, RaddTokens.Space.RailGap)
     }
 
     @Test
@@ -57,7 +64,9 @@ class RaddTokensTest {
         // above the 48dp floor, pinned by BottomNavTouchTargetTest). Visual
         // size is not touch size; a 32dp-tall pill inside a 64dp tab is a
         // 64dp target.
-        assertEquals(56.dp, RaddTokens.Touch.NavIndicatorWidth)
+        // H3 (2027 Home fix): the pill is 64x32dp now — the brief's 64x32
+        // spring pill (was 56dp). The tab stays 64dp.
+        assertEquals(64.dp, RaddTokens.Touch.NavIndicatorWidth)
         assertEquals(32.dp, RaddTokens.Touch.NavIndicatorHeight)
         assertEquals(64.dp, RaddTokens.Touch.NavTabHeight)
     }
