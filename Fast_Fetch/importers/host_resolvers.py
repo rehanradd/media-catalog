@@ -258,7 +258,7 @@ btn-class anchors and dispatched by id/text):
         ?host=hubcloud&id=<id>&token=<60-char>">
     GET that gamerxyt URL (Referer: drive page, Cookie: xla=s4t)
         200, ~17-20 KB. Buttons, in serve order: FSLv2 (#s3, presigned R2,
-        5 h) -> FSL (#fsl, presigned R2, 8 h) -> PixelServer (#pxl-1,
+        5 h) -> FSL (#fsl, presigned R2, 5 h) -> PixelServer (#pxl-1,
         pixeldrain) -> S3 -> Buzz (GET $link/download, hx-redirect) ->
         Mega -> PDL -> 10Gbps (a page, "Resume Not Supported")
     Range: bytes=0-511 on each candidate in order; the first 206 with real
@@ -1288,7 +1288,8 @@ def r2_presigned_expiry(url: str) -> tuple[int | None, int | None]:
 
     The presigned form carries `X-Amz-Date` (the generation instant, UTC,
     `YYYYMMDDTHHMMSSZ`) and `X-Amz-Expires` (a LIFETIME in seconds, not an
-    epoch — 18000 is FSLv2's five hours, 28800 is FSL's eight). Neither
+    epoch — fresh FSL/FSLv2 mints measured 18000, five hours; the 28800
+    rows belong to a different minting path, DOC-01 2026-11-24). Neither
     `expiry_from_url` (wants an epoch in `e`) nor `duration_expiry_from_url`
     (wants an `s` epoch) reads this shape, and each rejects the other's, so
     the presigned convention gets its own reader rather than a guess. A
@@ -4712,7 +4713,8 @@ def unwrap_hubcloud(url: str, fetch=None, verify: bool = True,
 
     The gamerxyt token is per page load and expires, so the drive page is
     fetched fresh on every call and its URL is never stored; the R2
-    presigned URL dies in 5 h (FSLv2) or 8 h (FSL), so the final URL is a
+    presigned URL dies in 5 h (FSLv2 and FSL — fresh mints measure
+    18000s, DOC-01 2026-11-24), so the final URL is a
     result, never catalog data. A drive page that 404s is dead; a failed
     unwrap is "unknown", never "dead" — FSL/FSLv2 liveness flaps per R2
     account (one file's FSL was 403 NotEntitled while its FSLv2 was 206).

@@ -44,7 +44,8 @@ shapes (Oracle VM probes, 2026-11-23, The Raid 2026 720p-HEVC):
 - each hop GETs /l.php?file=...&token=...&id=... and 302s immediately
   to the real host — no wait, no dl_token (the click dance is browser
   UX only). One pointer fans out to four mirrors: public R2
-  (pub-*.r2.dev, unsigned, permanent), Google direct (token rotates,
+  (pub-*.r2.dev, unsigned, permanent on a proven bucket only — DOC-01
+  2026-11-24: per-bucket, fresh buckets 403), Google direct (token rotates,
   short-lived), Gofile, Telegram.
 - hubcdn.io rate-limits (~25 rapid requests trip "Too Many Requests"),
   so the unwrap paces its requests; the pacing test freezes the clock
@@ -1375,7 +1376,13 @@ class HubcdnRegistryTests(unittest.TestCase):
         self.assertEqual(res["kind"], "file")
         self.assertEqual(res["url"], HC_R2)
         self.assertTrue(res["resumable"])
-        # The R2 win is permanent: no re-resolve timer, unlike HubCloud FSL.
+        # The R2 win is treated as permanent here: no re-resolve timer,
+        # unlike HubCloud FSL (5 h). NOTE 2026-11-24 (DOC-01): measured
+        # truth is per-bucket — only the proven old bucket pub-5703… is
+        # permanent; this fixture uses a synthetic bucket, so the
+        # assertFalse below encodes the pre-per-bucket rule. The bucket
+        # check is an owed API-lane follow-up (API-11 fixed
+        # resolved_cache/backfill, not this flag) — not changed here.
         self.assertFalse(res["temporary"])
         self.assertEqual(res["mirrors"], {"r2": HC_R2, "google": HC_GOOGLE,
                                           "gofile": HC_GOFILE,

@@ -63,7 +63,7 @@ A fill warms, per title, the START rung the player presses first (480p
 when the title has one, else the auto rung) plus the AUTO rung when it
 differs — at most two links per title, one per band, so a top-200 fill
 cannot quietly become a top-2000 resolve. Hubcloud-family links resolve
-LAST (their FSL/FSLv2 URLs live ~5–8 h, the shortest banked lives). The
+LAST (their FSL/FSLv2 URLs live ~5 h, the shortest banked lives). The
 pick is the trending/recency order with operator pins (`--pins`, post
 ids, at most 20) first. Overlap guard: the fill, the top-up and the
 ordinary sweeps share one flock (`/tmp/radd-prefetch.lock`); a run that
@@ -182,8 +182,9 @@ FILL_START_BAND = "480p"
 #: constant is what the live 21:00 run actually warms.
 FILL_TOPUP_LIMIT = 100
 #: Services whose unwrap can mint the short-lived hubcloud-family URLs
-#: (FSL ~8 h, FSLv2 ~5 h — the shortest banked lives in the catalog). The
-#: fill resolves these LAST so their clock starts as late as possible.
+#: (FSL ~5 h, FSLv2 ~5 h — the shortest banked lives in the catalog;
+#: corrected 2026-11-24 DOC-01: fresh mints measure 18000s, not 28800s).
+#: The fill resolves these LAST so their clock starts as late as possible.
 #: The variant (FSL vs FSLv2) is only known AFTER the unwrap — the stored
 #: service label cannot distinguish them — so the whole family goes last.
 #: Same set the resolver itself dispatches on (fast_fetch.py, the hubcloud
@@ -690,7 +691,7 @@ def prefetch_once(*, limit: int, min_fresh: float, load_ceiling: float,
                     continue
                 todo.append((source_id, post["title"]))
         # A fill resolves hubcloud-family links last: their FSL/FSLv2 URLs
-        # live ~5–8 h, the shortest banked lives, so their clock must start
+        # live ~5 h, the shortest banked lives, so their clock must start
         # as late as possible. Stable sort keeps pick order inside each group.
         if mode == "fill" and todo:
             family = _hubcloud_family_ids(conn, [sid for sid, _ in todo])
