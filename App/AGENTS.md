@@ -24,8 +24,8 @@ The user has no powerful PC and cannot run Android Studio; the **entire build pi
 ### 1a. Correction: builds DO happen on this VM, one at a time
 
 The rule above is stale in both directions since 2026-10-29: GitHub Actions is **enabled and
-running** (API-measured then: six root workflows exist now — `backend-ci.yml`, `ci.yml`,
-`emulator-screenshots.yml`, `paparazzi.yml`, `raddrelay-ci.yml`, `release.yml`; the "three
+running** (API-measured then: eight root workflows exist now — `backend-ci.yml`, `ci.yml`, `emulator-check.yml`,
+`emulator-downloads.yml`, `emulator-screenshots.yml`, `paparazzi.yml`, `raddrelay-ci.yml`, `release.yml`; the "three
 workflows, 42 runs, `backend-ci.yml` green at `64c0b1b`" figures are an Oct-29 snapshot, do not
 quote them as current). The gating-lane note at the bottom of this file wins over this section:
 owner order 2026-11-01 is **every APK build happens on GitHub Actions — no agent on this VM runs
@@ -48,7 +48,7 @@ On this host:
   edit freely, build rarely — each build is minutes of this VM's entire CPU.
 
 > The six arm64-excluded Robolectric test classes — why excluded here, what the hosted runner proved —
-> moved to `../docs/SPEC_APP_ROBOLECTRIC_ARM64.md`. The
+> are in git history (SPEC layer retired 2026-11-17, `09083d43`). The
 > exclusion stays: no number printed on this host includes those two suites. (The classes are
 > `PosterCardProvenanceTest`, `ScreenSnapshotTest`, `AppDatabaseMigrationTest`,
 > `AheadFetcherFinalizeTest`, `CacheSweepWorkerTest`, `CrashReportingTest` —
@@ -58,8 +58,7 @@ On this host:
 
 ## 2. Build System Architecture
 
-The CI pipeline diagram moved to
-`../docs/SPEC_APP_BUILD_ARCHITECTURE.md`. What stays law is §1a (one build at
+The CI pipeline diagram was retired with the SPEC layer (2026-11-17, `09083d43`). What stays law is §1a (one build at
 a time, through this host's queue) and §13.
 
 ---
@@ -88,23 +87,22 @@ a time, through this host's queue) and §13.
 
 ## 4. Current Source Folder Structure
 
-The tree inventory moved to `../docs/SPEC_APP_SOURCE_LAYOUT.md`.
+The tree inventory was retired with the SPEC layer (2026-11-17, `09083d43`).
 `find App/app/src -name '*.kt' | wc -l` is the only honest count of what exists.
 
 ---
 
 ## 6. Screens Reference
 
-The per-screen inventory moved to `../docs/SPEC_APP_SCREENS.md`; the
-wireframes stay in `design/SCREENS.md`, and
-`app/src/main/kotlin/com/raddstream/app/ui/` is the source of truth over both.
+The per-screen inventory and the `design/SCREENS.md` wireframes were retired with the SPEC layer
+(2026-11-17, `09083d43`). `app/src/main/kotlin/com/raddstream/app/ui/` is the source of truth.
 
 ---
 
 ## 7. Design System Quick Reference
 
-The token dump moved to `../docs/SPEC_APP_DESIGN_QUICKREF.md`.
-`design/DESIGN_SYSTEM.md` is the spec — read it, not a summary.
+The token dump and `design/DESIGN_SYSTEM.md` were retired with the SPEC layer (2026-11-17,
+`09083d43`). The code is the spec now.
 
 ---
 
@@ -128,8 +126,7 @@ verification, not implementation; device verification has since happened (Sauce 
 ## 10. Signing Configuration
 
 The sample `signingConfigs` block, the one-time keystore generation, and the retired failure history
-rotated out 2026-11-05 to `../docs/SPEC_APP_SIGNING_RUNBOOK.md`
-under this file's byte ceiling. The law stays here:
+were retired with the SPEC layer (2026-11-17, `09083d43`). The law stays here:
 
 - Release signing reads `KEYSTORE_BASE64`, `KEY_STORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`, is
   applied **only when** the first two are non-empty, and writes the keystore under `app/build/` —
@@ -192,7 +189,7 @@ never persist the token in the repository.
     enforced:** latest debug APKs are ~23.3 MB (`app-debug-256`, 23,374,190 B,
     `App/docs/SESSION_HISTORY.md`). Do not quote 15 MB as a met budget until the size is back
     under it or the rule is re-decided by the owner.
-9. **Minimum SDK 21** — guard anything below API 21 with Build.VERSION_CODES
+9. **Minimum SDK 23** — guard anything below API 23 with Build.VERSION_CODES
 10. **Session logs go in `App/docs/SESSION_HISTORY.md`, never in this file** — this file is
     instructions-only and is auto-loaded into every agent's context. (An older line here said
     to update this AGENTS.md with the session log; that line is retired by the root rule.)

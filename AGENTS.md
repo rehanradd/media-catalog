@@ -1,7 +1,7 @@
 # 🤖 AGENTS.md — Root Project Guide for All AI Agents
 
 > **READ THIS ENTIRE FILE FIRST** before touching anything.
-> This is the single top-level source of truth for the `radd-stream` monorepo.
+> This is the single top-level source of truth for the `media-catalog` monorepo.
 > Every AI agent (Antigravity, Replit Agent, Copilot, Cursor, Claude, GPT, Gemini — all of you) must follow this.
 > For current state, also read `docs/SESSION_CHECKPOINT.md`.
 
@@ -114,7 +114,7 @@ Describe the code's behavior accurately to users and tools. Do not disguise its 
   route, or a flagged link through stream or download on either port, is P0.
   The *evidence* behind this law — the live-host proof rows, `backfill_adult_key.py`'s apply procedure,
   the wide-vs-ledger flag measures and the four contested tokens — moved to
-  `docs/SPEC_ADULT_FLAG_EVIDENCE.md`. The law is above; the receipts are there.
+  git history (SPEC layer retired 2026-11-17, `09083d43`). The law is above; the receipts are there.
 
 ---
 
@@ -130,7 +130,7 @@ Describe the code's behavior accurately to users and tools. Do not disguise its 
 | `KEY_PASSWORD` | ✅ **CONFIGURED and exercised** | Key password |
 
 **Measured 2026-10-29 17:55 — this retires the claim that the four keystore variables are "GitHub
-Repo Secrets".** `GET /repos/rehanradd/radd-stream/actions/secrets` returns
+Repo Secrets".** `GET /repos/rehanradd/media-catalog/actions/secrets` returns
 `{"total_count": 0, "secrets": []}`, from a lane whose repo `permissions` are
 `{admin: true, push: true}`, so it is a real answer and not a permission artifact. Proof by
 execution: `workflow_dispatch` on `🚀 Release — Sign & Publish APK + AAB` (workflow `398476978`,
@@ -152,10 +152,9 @@ release run `41323174024` (`push` on tag `v1.0.4`, `completed success`, 2026-11-
 tags exist (`v1.0.0`…`v1.1.5`, re-measured 2026-11-17), runs 1–7 of that workflow's eight are `failure`. So "nothing has ever
 been signed" and "`GET /releases` is `[]`" were true when measured and are false now; the base64
 padding failure was fixed by owner-side secret re-entry, **not** by a build-script edit, and the
-re-entry procedure is `docs/SPEC_APP_SIGNING_RUNBOOK.md`. The
+re-entry procedure is that owner-side re-entry. The
 retired measurement chain (every run id, the strict-decoder diagnosis, the keystore re-encode
-figures) is preserved verbatim in
-`docs/SPEC_AGENTS_MEASURED_NOTES.md`. **Moving or re-cutting a
+figures) is preserved verbatim in git history. **Moving or re-cutting a
 tag is an owner action: no agent may create, move or delete a tag.**
 
 **Backend agents**: use `GITHUB_TOKEN` for GitHub operations and `ORACLE_SSH_KEY` only when connecting to Oracle. Read `README.md` first.
@@ -179,7 +178,7 @@ Verify only whether the two configured variable names are present; never read or
 - Stage only reviewed paths (`git add <paths>`), inspect the staged names/diff, and keep secrets, databases, APKs, build outputs, and uploaded chat files out of commits. Never use `git add -A` or force-push. Per owner authorization, agents may push verified, tested milestones directly to `main` so automated CI triggers and autonomous progress is seamless.
 - Treat `.replit` as local-only sensitive configuration: do not inspect its values or stage, commit, or push it. It is tracked in git, not ignored (`git ls-files` lists it). The user chose to leave historical copies intact; do not rewrite history unless they explicitly change that decision.
 - Use Git over HTTPS with the temporary askpass procedure in `README.md`. Never put credentials in URLs, command arguments, files, or logs.
-- Do **not** recreate or restore `push.py`, `github_push.py`, `emergency_push.py`, `push_github.py`, or `safe_push.sh`. They were GitHub Contents API uploaders that could write broad file sets directly to `main`; `safe_push.sh` additionally staged every path it found (`git add -u` plus all untracked files), committed without a test gate, and pushed through the `origin` remote whose URL still carries the owner's unrevoked token **(measured 2026-10-30: that clause is now stale as a description of this box — `remote.origin.url` is a clean `https://github.com/rehanradd/radd-stream.git` with no userinfo, and neither `/opt/radd-stream/.git/config` nor `/home/ubuntu/.gitconfig` matches a token pattern. The token itself is still live: it reads `/user` as the owner's own login. So the credential is unrevoked while being un-stored here — revoke it, and keep using the askpass flow rather than relying on the remote's URL to be clean).** All five were reduced to no-op warning stubs and have now been deleted from the tree — their history stays in Git, their danger stays retired. A local commit remains recoverable if a normal push fails—record the failure and next step in the checkpoint rather than claiming it synced.
+- Do **not** recreate or restore `push.py`, `github_push.py`, `emergency_push.py`, `push_github.py`, or `safe_push.sh`. They were GitHub Contents API uploaders that could write broad file sets directly to `main`; `safe_push.sh` additionally staged every path it found (`git add -u` plus all untracked files), committed without a test gate, and pushed through the `origin` remote whose URL still carries the owner's unrevoked token **(measured 2026-10-30: that clause is now stale as a description of this box — `remote.origin.url` is a clean `https://github.com/rehanradd/media-catalog.git` with no userinfo, and neither `/opt/radd-stream/.git/config` nor `/home/ubuntu/.gitconfig` matches a token pattern. The token itself is still live: it reads `/user` as the owner's own login. So the credential is unrevoked while being un-stored here — revoke it, and keep using the askpass flow rather than relying on the remote's URL to be clean).** All five were reduced to no-op warning stubs and have now been deleted from the tree — their history stays in Git, their danger stays retired. A local commit remains recoverable if a normal push fails—record the failure and next step in the checkpoint rather than claiming it synced.
 - Oracle deployment is separate from a GitHub branch push. Only deploy through a verified, tested release path after CI passes; do not copy untested or WIP code to the live host.
 
 ---
@@ -188,8 +187,7 @@ Verify only whether the two configured variable names are present; never read or
 
 **This host has ONE vCPU** (`nproc` = 1) and the agent lanes are the load, not production. The 01:30
 measurement behind that sentence (load 10.2, 167.7 % of the machine attributed to five `qodercli` lanes
-while `radd-stream` used 0.4 % of a core) moved to `docs/SPEC_AGENTS_MEASURED_NOTES.md`.
-Full per-route costs are in `docs/CAPACITY_MEASURED.md`.
+while `radd-stream` used 0.4 % of a core) moved to git history.
 
 CPU saturation only adds latency. **Memory saturation is what kills this host** — it already has
 one recorded OOM-kill of `radd-stream` (19:14:31, auto-restarted onto an uncommitted tree). So the
@@ -240,15 +238,13 @@ Every agent — no matter how short the session — MUST do this before ending:
    `python3 -S` matches — the missing one is `test_admin_panel.py`; 2026-11-17 at
    `1d236f07`: 108 `🧪` steps, 91 `python3 -S` invocations). The list itself is a snapshot
    that grows; the workflow file is the only source of truth, so read it instead of quoting a number
-   from this file. The historical per-run module lists and test counts moved to
-   `docs/SPEC_AGENTS_MEASURED_NOTES.md`.
-2. **Quote a test count from the log that executed it, or from `git show <sha>:Fast_Fetch/<module> | grep -cE '^\s+def test_'` — never from prose here** (this line read 76, then 124, then 133, then 237 in a week — `docs/SPEC_AGENTS_MEASURED_NOTES.md`). Method's example, verified at `ee5100f` and `11c1008`: `test_database.py` **237** (`def test_` count at `1d236f07`; the old `Ran 133 tests` figure is stale), `test_vidout.py` **6**. Naming those two is a quick gate, not item 1.
+   from this file. The historical per-run module lists and test counts are in git history.
+2. **Quote a test count from the log that executed it, or from `git show <sha>:Fast_Fetch/<module> | grep -cE '^\s+def test_'` — never from prose here** (this line read 76, then 124, then 133, then 237 in a week — see git history). Method's example, verified at `ee5100f` and `11c1008`: `test_database.py` **237** (`def test_` count at `1d236f07`; the old `Ran 133 tests` figure is stale), `test_vidout.py` **6**. Naming those two is a quick gate, not item 1.
 3. Append a session log to `Fast_Fetch/CONTINUITY.md`
 4. Push with Git over HTTPS using the temporary askpass helper in `README.md`; do not use the legacy per-file API push scripts
 
 **Run the gate in a worktree at the tip, never in `/opt/radd-stream`** — the live tree is a diverged
-older draft and a "green" from it is a weaker claim than CI's. The measurement that proved it is in
-`docs/SPEC_AGENTS_MEASURED_NOTES.md`.
+older draft and a "green" from it is a weaker claim than CI's. The measurement that proved it is in git history.
 
 ### For App Sessions:
 1. Ensure Gradle builds pass locally OR wait for GitHub Actions green check
@@ -273,8 +269,8 @@ END — Built, Files changed, Tests end, Branch-SHA, GitHub push (success/failed
 | Backend: ingestion, SQLite catalog, resolver, REST API | ✅ **Deployed and running on this host** — `systemctl is-active radd-stream` → `active`, `fast_fetch.py serve --host 127.0.0.1:8080` behind Nginx | Complete |
 | Android App: server setup, metadata catalog, search | ✅ Implemented; device verification pending | Phase 1 |
 | Android App: details and playback | ✅ Implemented (Media3 playback, favorites, keeps, VIP screen); device verification pending | Phase 2 |
-| GitHub Actions | ✅ **Enabled and running** — `/actions/permissions` → `{"enabled": true, "allowed_actions": "all"}`; all six repo-root workflows are `state=active` (`backend-ci.yml`, `ci.yml`, `raddrelay-ci.yml`, `release.yml`, `emulator-screenshots.yml`, `paparazzi.yml`), and the never-discovered duplicates under `App/.github/workflows` have been deleted (a PR gate exists: `ci.yml:57`, `backend-ci.yml:113`, `raddrelay-ci.yml:37` all carry `pull_request`). The retired "disabled at the account level" claim and the full CI-health measurement history (per-sha run verdicts on both trunk refs, the Android `unfed-not-red` misdiagnosis, the Robolectric #9166 trap) are in `docs/SPEC_AGENTS_MEASURED_NOTES.md`. | Gate is live |
-| Release signing | ✅ **Signed and published** — `GET /releases` is one release, `v1.0.4`, carrying `radd-stream-1.0.4.apk` + `.aab` + `-SHA256SUMS.txt`, published by run `41323174024` (`completed success`); eleven tags exist (through `v1.1.5`) and runs 1–7 of that workflow's eight are `failure`. Trunk-only bytes = the CI debug APK. Receipts: `docs/SPEC_AGENTS_MEASURED_NOTES.md`; re-entry procedure: `docs/SPEC_APP_SIGNING_RUNBOOK.md`. | Owner (tagging) |
+| GitHub Actions | ✅ **Enabled and running** — `/actions/permissions` → `{"enabled": true, "allowed_actions": "all"}`; all eight repo-root workflows are `state=active` (`backend-ci.yml`, `ci.yml`, `emulator-check.yml`, `emulator-downloads.yml`, `emulator-screenshots.yml`, `paparazzi.yml`, `raddrelay-ci.yml`, `release.yml`), and the never-discovered duplicates under `App/.github/workflows` have been deleted (a PR gate exists: `ci.yml:57`, `backend-ci.yml:113`, `raddrelay-ci.yml:37` all carry `pull_request`). The retired "disabled at the account level" claim and the full CI-health measurement history (per-sha run verdicts on both trunk refs, the Android `unfed-not-red` misdiagnosis, the Robolectric #9166 trap) are in git history. | Gate is live |
+| Release signing | ✅ **Signed and published** — `GET /releases` is one release, `v1.0.4`, carrying `radd-stream-1.0.4.apk` + `.aab` + `-SHA256SUMS.txt`, published by run `41323174024` (`completed success`); eleven tags exist (through `v1.1.5`) and runs 1–7 of that workflow's eight are `failure`. Trunk-only bytes = the CI debug APK. Receipts: git history; re-entry procedure: owner-side secret re-entry. | Owner (tagging) |
 
 The current Oracle host is documented in
 `README.md`. The backend is **already deployed there and is the
@@ -301,6 +297,8 @@ workflow's own trigger block before predicting whether CI will run** — a `tota
 evidence about the filter, never about the account. (A `paths-ignore` variant of this file was
 quoted once tonight and could not be reproduced against the tree or the object store; treat it as
 never having existed, which is precisely why the method above is the law and not a quoted shape.)
+
+(Update 2026-11-24: the push filter has since grown `AdminV2/**` — re-measure it with `grep -A6 '^on:' .github/workflows/backend-ci.yml` before quoting the shape.)
 
 ---
 
@@ -343,10 +341,10 @@ python Fast_Fetch/fast_fetch.py search "Inception"
 #
 # ⛔ NO AGENT CREATES OR PUSHES A TAG. It is the owner's call, and it is not theoretical: the tag
 # `v1.0.4` published signed `radd-stream-1.0.4.apk` + `.aab` (run `41323174024`, `completed success`);
-# the seven release runs before it failed. Per-run receipts: docs/SPEC_AGENTS_MEASURED_NOTES.md.
+# the seven release runs before it failed. Per-run receipts: git history.
 
-# Download APK: github.com/rehanradd/radd-stream/releases (signed `v1.0.4`)
-#               github.com/rehanradd/radd-stream/actions (debug APK from the current trunk run)
+# Download APK: github.com/rehanradd/media-catalog/releases (signed `v1.0.4`)
+#               github.com/rehanradd/media-catalog/actions (debug APK from the current trunk run)
 ```
 
 ---
@@ -355,9 +353,9 @@ python Fast_Fetch/fast_fetch.py search "Inception"
 
 | Resource | URL |
 |---|---|
-| GitHub Repo | https://github.com/rehanradd/radd-stream |
-| GitHub Actions | https://github.com/rehanradd/radd-stream/actions |
-| GitHub Releases | https://github.com/rehanradd/radd-stream/releases |
+| GitHub Repo | https://github.com/rehanradd/media-catalog |
+| GitHub Actions | https://github.com/rehanradd/media-catalog/actions |
+| GitHub Releases | https://github.com/rehanradd/media-catalog/releases |
 | Oracle HTTP host (measured 2026-10-29) | `http://92.4.95.252/` — plain HTTP, and `location /` proxies **code-server** (the web IDE), not the app |
 | Backend REST API (publicly reachable) | `http://92.4.95.252/api/v1/posts` — nginx allow-lists only `/api/v1/posts`, `/api/v1/stream`, `/api/v1/stats`, `/api/v1/download`, `/api/v1/search/by-media`, `/api/v1/app/remote-config`, `/api/v1/art`, `/api/v2/account*`, and `/download/`; `^~ /api/` 403s everything else, including all v2 catalog routes and `/api/data` |
 | Operator panel — **AdminV2, live** | AdminV2 `run.py`, port `18080`, outside systemd, from `/home/ubuntu/admin-v2-workspace-20261105` (six env vars). Retired 2026-10-29 `viewer.py` `127.0.0.1:8081` reading (`/admin` 401 without token, `/` 200 without): for that retired dashboard — Do not describe the dashboard as token-gated; describe it as loopback-only, which is what is true. |
