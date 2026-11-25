@@ -704,7 +704,6 @@ internal const val CategoryTabYearTag = "searchCategoryTabYear"
  * at once (the ViewModel re-runs the search), and the selected chip is the
  * live filter value — tapping the selected chip again clears it back to All.
  */
-@Composable
 /**
  * Round 6 (motion): the quick chip — an M3 FilterChip that scales to 0.96
  * while pressed, on the expressive effects spring, and springs back on
@@ -741,6 +740,7 @@ private fun QuickFilterChip(
     )
 }
 
+@Composable
 internal fun CategoryTabs(
     state: SearchUiState,
     onSelectGenre: (GenreFilter) -> Unit,
