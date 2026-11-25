@@ -7,7 +7,7 @@ name: 🔨 CI — Android Build & Test
 #
 # WHAT IT NEEDS
 #   Nothing secret. JDK 21 (AGP 9.1.1 requires 17+; Paparazzi alpha04+ needs
-#   21), Android SDK platforms 35 + 36 + 37 + build-tools 35.0.0 + 36.0.0
+#   21), Android SDK platforms 35 + 36 + 37.0 + build-tools 35.0.0 + 36.0.0
 #   (compileSdk=37 in App/app/build.gradle.kts; the baselineprofile module
 #   compiles at 37 too since the BOM bump).
 #
@@ -23,7 +23,7 @@ name: 🔨 CI — Android Build & Test
 #         touches the Kotlin. An explicit step either works fast or fails loud.
 #       - GitHub-hosted ubuntu-24.04 images ship an SDK, but which
 #         platforms/build-tools are preinstalled drifts with image updates;
-#         pinning the packages we need (android-35, android-36, android-37, 35.0.0, 36.0.0) is deterministic.
+#         pinning the packages we need (android-35, android-36, android-37.0, 35.0.0, 36.0.0) is deterministic.
 #   * Gradle is invoked ONCE per job with `--continue` so the fleet sees
 #     ALL of that job's task results in one log, not just the first failure.
 #     Task names are the AGP-generated per-variant tasks
@@ -104,10 +104,20 @@ jobs:
             gradle-${{ runner.os }}-java21-
             gradle-${{ runner.os }}-
 
-      - name: 📱 Install Android SDK (platform-tools, android-35, android-36, android-37, build-tools 35.0.0, build-tools 36.0.0)
+      - name: ✅ Accept Android SDK licenses (incl. API 37 preview)
+        # setup-android's own license step cannot accept the API 37 preview
+        # license non-interactively (its sdkmanager --licenses prompts and
+        # stdin is closed in CI). Pre-accept with the preinstalled
+        # cmdline-tools, which writes $ANDROID_HOME/licenses/ for the
+        # installer to honor. `|| true`: a hiccup here must not fail the
+        # job — the install step fails loudly if a license is still missing.
+        run: |
+          SDKMAN="${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools/latest/bin/sdkmanager"
+          if [ -x "$SDKMAN" ]; then yes | "$SDKMAN" --licenses > /dev/null 2>&1 || true; fi
+      - name: 📱 Install Android SDK (platform-tools, android-35, android-36, android-37.0, build-tools 35.0.0, build-tools 36.0.0)
         uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd  # v4.0.4
         with:
-          packages: "platform-tools platforms;android-35 platforms;android-36 platforms;android-37 build-tools;35.0.0 build-tools;36.0.0"
+          packages: "platform-tools platforms;android-35 platforms;android-36 platforms;android-37.0 build-tools;35.0.0 build-tools;36.0.0"
 
       - name: 🔧 Make gradlew executable
         run: chmod +x App/gradlew
@@ -250,10 +260,20 @@ jobs:
             gradle-${{ runner.os }}-java21-
             gradle-${{ runner.os }}-
 
-      - name: 📱 Install Android SDK (platform-tools, android-35, android-36, android-37, build-tools 35.0.0, build-tools 36.0.0)
+      - name: ✅ Accept Android SDK licenses (incl. API 37 preview)
+        # setup-android's own license step cannot accept the API 37 preview
+        # license non-interactively (its sdkmanager --licenses prompts and
+        # stdin is closed in CI). Pre-accept with the preinstalled
+        # cmdline-tools, which writes $ANDROID_HOME/licenses/ for the
+        # installer to honor. `|| true`: a hiccup here must not fail the
+        # job — the install step fails loudly if a license is still missing.
+        run: |
+          SDKMAN="${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools/latest/bin/sdkmanager"
+          if [ -x "$SDKMAN" ]; then yes | "$SDKMAN" --licenses > /dev/null 2>&1 || true; fi
+      - name: 📱 Install Android SDK (platform-tools, android-35, android-36, android-37.0, build-tools 35.0.0, build-tools 36.0.0)
         uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd  # v4.0.4
         with:
-          packages: "platform-tools platforms;android-35 platforms;android-36 platforms;android-37 build-tools;35.0.0 build-tools;36.0.0"
+          packages: "platform-tools platforms;android-35 platforms;android-36 platforms;android-37.0 build-tools;35.0.0 build-tools;36.0.0"
 
       - name: 🔧 Make gradlew executable
         run: chmod +x App/gradlew

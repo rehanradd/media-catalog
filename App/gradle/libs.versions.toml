@@ -3,6 +3,10 @@
 # Coil 3.4.0 / Compose BOM 2026.11.01 (M3 1.5.0 stable, MotionScheme
 # public) / compileSdk 37 (targetSdk stays 35). AGP 9.1.1 is the patch
 # that supports API 37 (Google: API 37 needs AGP 9.1.1 minimum).
+# Attempt 2: the platform package is platforms;android-37.0 — from API 37
+# the name carries a minor version, and the short name finds nothing
+# (CI 45576877997). The workflows also pre-accept the API 37 preview
+# license before installing the SDK.
 # Media3 1.11.1 raised minSdk to 23
 # (since 1.9.0 — verified against the 1.11.1 AAR manifests), so the app's
 # minSdk moved 21 → 23 with it: Android 5.0/5.1 are dropped, and the app
