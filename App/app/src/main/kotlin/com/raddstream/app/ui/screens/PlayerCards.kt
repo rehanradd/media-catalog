@@ -17,13 +17,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Replay10
-import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -39,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontWeight
@@ -92,7 +86,7 @@ internal fun EndedButtons(
                     Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(Icons.Default.Replay10, null, tint = Color.White)
+                    Icon(painter = painterResource(R.drawable.ic_player_replay_10), contentDescription = null, tint = Color.White)
                     Spacer(Modifier.width(8.dp))
                     Text(stringResource(R.string.player_play_again), color = Color.White, fontSize = brandSp(14))
                 }
@@ -152,7 +146,7 @@ internal fun EndedButtons(
                         Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Icon(Icons.Default.SkipNext, null, tint = Color.White)
+                        Icon(painter = painterResource(R.drawable.ic_player_skip_next), contentDescription = null, tint = Color.White)
                         Spacer(Modifier.width(8.dp))
                         Text(stringResource(R.string.player_next_episode), color = Color.White, fontSize = brandSp(14))
                     }
@@ -322,7 +316,7 @@ internal fun AutoplayCountdownCard(
                         modifier = Modifier.size(32.dp).align(Alignment.Top),
                     ) {
                         Icon(
-                            Icons.Default.Close,
+                            painterResource(R.drawable.ic_action_close),
                             stringResource(R.string.player_close),
                             tint = Color.White.copy(alpha = 0.7f),
                         )
@@ -351,7 +345,7 @@ internal fun AutoplayCountdownCard(
                             shape = RoundedCornerShape(28.dp),
                             modifier = Modifier.weight(1f).heightIn(min = MinControlTarget),
                         ) {
-                            Icon(Icons.Default.PlayArrow, null, tint = Color.Black, modifier = Modifier.size(18.dp))
+                            Icon(painter = painterResource(R.drawable.ic_player_play), contentDescription = null, tint = Color.Black, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(4.dp))
                             Text(
                                 stringResource(R.string.player_autoplay_play_now),
@@ -381,7 +375,7 @@ internal fun ConnectionErrorCard(message: String, onRetry: () -> Unit) {
             Modifier.padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Icon(Icons.Default.Warning, null, tint = RaddCoral400, modifier = Modifier.size(40.dp))
+            Icon(painter = painterResource(R.drawable.ic_action_warning), contentDescription = null, tint = RaddCoral400, modifier = Modifier.size(40.dp))
             Spacer(Modifier.height(10.dp))
             // D-47: the two failure states share one language — the give-up
             // card's body is left-aligned, so this message is too. The icon
@@ -496,7 +490,7 @@ internal fun OfflineCard(onRetry: () -> Unit) {
             Modifier.padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Icon(Icons.Default.WifiOff, null, tint = RaddCoral400, modifier = Modifier.size(40.dp))
+            Icon(painter = painterResource(R.drawable.ic_action_wifi_off), contentDescription = null, tint = RaddCoral400, modifier = Modifier.size(40.dp))
             Spacer(Modifier.height(10.dp))
             Text(
                 stringResource(R.string.player_offline_title),

@@ -17,13 +17,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.BrightnessMedium
-import androidx.compose.material.icons.filled.FastForward
-import androidx.compose.material.icons.filled.Forward10
-import androidx.compose.material.icons.filled.Replay10
-import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -38,6 +31,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
@@ -114,7 +108,7 @@ internal fun DoubleTapRipple(state: PlayerUiState) {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Icon(
-                        if (forward) Icons.Default.Forward10 else Icons.Default.Replay10,
+                        painter = if (forward) painterResource(R.drawable.ic_player_forward_10) else painterResource(R.drawable.ic_player_replay_10),
                         contentDescription = null,
                         tint = Color.White,
                         modifier = Modifier.size(26.dp),
@@ -215,9 +209,9 @@ internal fun EdgeFeedbackLine(hud: Hud) {
         is Hud.Subtitle -> "" // unreachable: the spec is null above; the when must stay exhaustive
     }
     val icon = when (spec.kind) {
-        EdgeKind.BRIGHTNESS -> Icons.Default.BrightnessMedium
-        EdgeKind.VOLUME -> Icons.Default.VolumeUp
-        EdgeKind.BOOST -> Icons.Default.FastForward
+        EdgeKind.BRIGHTNESS -> painterResource(R.drawable.ic_player_brightness_medium)
+        EdgeKind.VOLUME -> painterResource(R.drawable.ic_player_volume_up)
+        EdgeKind.BOOST -> painterResource(R.drawable.ic_player_fast_forward)
     }
     val trackColor = if (spec.kind == EdgeKind.BOOST) RaddCurrent500 else Color.White
     Box(
@@ -236,7 +230,7 @@ internal fun EdgeFeedbackLine(hud: Hud) {
         ) {
             // The spoken label stays as the content description so the string is
             // still used and a screen reader can name the indicator.
-            Icon(icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(16.dp))
+            Icon(painter = icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(16.dp))
             Spacer(Modifier.height(6.dp))
             Box(
                 Modifier
@@ -364,7 +358,7 @@ internal fun BoostBadge() {
                 .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite },
         ) {
             Row(Modifier.padding(horizontal = 8.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.FastForward, null, tint = Color.Black, modifier = Modifier.size(14.dp))
+                Icon(painter = painterResource(R.drawable.ic_player_fast_forward), contentDescription = null, tint = Color.Black, modifier = Modifier.size(14.dp))
                 Spacer(Modifier.width(4.dp))
                 Text(stringResource(R.string.player_boost_badge), color = Color.Black, fontSize = brandSp(12), fontWeight = FontWeight.Bold)
             }
@@ -396,7 +390,7 @@ internal fun SkipSegmentButton(segment: MediaSegment, onSkip: () -> Unit) {
                     .padding(horizontal = 12.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(Icons.Default.FastForward, null, tint = Color.Black, modifier = Modifier.size(14.dp))
+                Icon(painter = painterResource(R.drawable.ic_player_fast_forward), contentDescription = null, tint = Color.Black, modifier = Modifier.size(14.dp))
                 Spacer(Modifier.width(8.dp))
                 Text(
                     stringResource(
@@ -437,7 +431,7 @@ internal fun NextEpisodePill(bottomPadding: Dp, onClick: () -> Unit) {
                     .padding(horizontal = 12.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(Icons.Default.SkipNext, null, tint = Color.White, modifier = Modifier.size(14.dp))
+                Icon(painter = painterResource(R.drawable.ic_player_skip_next), contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
                 Spacer(Modifier.width(8.dp))
                 Text(stringResource(R.string.player_next_episode), color = Color.White, fontSize = brandSp(12), fontWeight = FontWeight.Bold)
             }

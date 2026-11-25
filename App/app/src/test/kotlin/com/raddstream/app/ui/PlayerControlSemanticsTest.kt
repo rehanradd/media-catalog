@@ -117,7 +117,7 @@ class PlayerControlSemanticsTest {
         assertTrue("the up-next card must sit at the bottom", upNext.contains("Alignment.BottomCenter"))
         assertTrue("the ring must read the countdown total", upNext.contains("AUTOPLAY_COUNTDOWN_SECONDS"))
         assertTrue("the headline needs the season and episode", upNext.contains("player_season_episode"))
-        assertTrue("the card needs its X", upNext.contains("Icons.Default.Close"))
+        assertTrue("the card needs its X", upNext.contains("ic_action_close"))
         assertTrue("the card needs the Play now pill", upNext.contains("player_autoplay_play_now"))
         assertFalse("the old countdown sentence is back", upNext.contains("player_autoplay_countdown"))
         assertFalse("the old centred layout is back", upNext.contains("CenterHorizontally"))
@@ -127,7 +127,7 @@ class PlayerControlSemanticsTest {
         assertTrue("the resume prompt must be a centred card", resume.contains("Alignment.Center"))
         assertTrue("the resume prompt needs its Resume pill", resume.contains("R.string.player_resume)"))
         assertTrue("the resume prompt needs Start over", resume.contains("player_start_over"))
-        assertFalse("the resume chip's X is back", resume.contains("Icons.Default.Close"))
+        assertFalse("the resume chip's X is back", resume.contains("ic_action_close"))
         assertFalse("the resume chip is back at the bottom", resume.contains("Alignment.BottomCenter"))
         assertTrue("the resume title needs its question mark", stringsSource.contains("Resume from %1\$s?"))
         // Finding: a jade spinner ring, a bold headline, the "Trying the
@@ -167,7 +167,7 @@ class PlayerControlSemanticsTest {
         assertFalse("the old plain rendition rows are back", switch.contains("SheetRow(label = rowText"))
         val title = functionBody("fun SheetTitle(")
         assertTrue("sheet titles must take an X", title.contains("onDismiss"))
-        assertTrue("the X must be drawn", title.contains("Icons.Default.Close"))
+        assertTrue("the X must be drawn", title.contains("ic_action_close"))
         // Strings: the two dropped notes are gone from the file, and the
         // trimmed titles read as the mockups do.
         assertFalse("the prints note string is back", stringsSource.contains("player_prints_note"))

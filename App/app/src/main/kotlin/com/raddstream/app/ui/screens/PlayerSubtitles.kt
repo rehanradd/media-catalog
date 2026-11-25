@@ -10,8 +10,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -24,6 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.AnnotatedString
@@ -263,7 +262,7 @@ internal fun SubtitleColourSwatch(colour: SubtitleColor, selected: Boolean, onSe
             ) {
                 if (selected) {
                     Icon(
-                        imageVector = Icons.Default.Check,
+                        painter = painterResource(R.drawable.ic_action_check),
                         contentDescription = null,
                         tint = if (paint.luminance() > 0.5f) Color.Black else Color.White,
                         modifier = Modifier.size(12.dp),

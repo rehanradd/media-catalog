@@ -14,8 +14,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Download
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -36,6 +34,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -114,7 +113,7 @@ internal fun KeepChip(state: PlayerUiState, onKeepCurrent: () -> Unit) {
                     strokeWidth = 2.dp,
                 )
             } else {
-                Icon(Icons.Default.Download, null, tint = stateTint, modifier = Modifier.size(14.dp))
+                Icon(painter = painterResource(R.drawable.ic_action_download), contentDescription = null, tint = stateTint, modifier = Modifier.size(14.dp))
             }
             Spacer(Modifier.width(4.dp))
             Text(

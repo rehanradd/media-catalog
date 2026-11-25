@@ -20,11 +20,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -48,6 +43,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontWeight
@@ -217,7 +213,7 @@ private fun QualityRow(title: String, detail: String?, selected: Boolean, onClic
             Text(detail, color = Color.White.copy(alpha = 0.5f), fontSize = brandSp(12))
         }
         Spacer(Modifier.weight(1f))
-        if (selected) Icon(Icons.Default.Check, null, tint = RaddCurrent500, modifier = Modifier.size(18.dp))
+        if (selected) Icon(painter = painterResource(R.drawable.ic_action_check), contentDescription = null, tint = RaddCurrent500, modifier = Modifier.size(18.dp))
     }
 }
 
@@ -273,7 +269,7 @@ internal fun SwitchSourceRow(title: String, sizeText: String?, playing: Boolean,
             }
         }
         Spacer(Modifier.weight(1f))
-        if (playing) Icon(Icons.Default.Check, null, tint = RaddCurrent500, modifier = Modifier.size(18.dp))
+        if (playing) Icon(painter = painterResource(R.drawable.ic_action_check), contentDescription = null, tint = RaddCurrent500, modifier = Modifier.size(18.dp))
     }
 }
 
@@ -355,7 +351,7 @@ private fun StepperRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IconButton(onClick = onDown) {
-            Icon(Icons.Default.Remove, contentDescription = downDescription, tint = Color.White)
+            Icon(painter = painterResource(R.drawable.ic_action_remove), contentDescription = downDescription, tint = Color.White)
         }
         Text(
             valueLabel,
@@ -365,7 +361,7 @@ private fun StepperRow(
             modifier = Modifier.weight(1f),
         )
         IconButton(onClick = onUp) {
-            Icon(Icons.Default.Add, contentDescription = upDescription, tint = Color.White)
+            Icon(painter = painterResource(R.drawable.ic_action_add), contentDescription = upDescription, tint = Color.White)
         }
     }
 }
@@ -519,7 +515,7 @@ internal fun SubtitleSettingsSheet(state: PlayerUiState, vm: PlayerViewModel) {
                         vm.setSubtitleSettings(state.subtitle.copy(bold = it))
                     },
                     thumbContent = if (state.subtitle.bold) {
-                        { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(SwitchDefaults.IconSize)) }
+                        { Icon(painter = painterResource(R.drawable.ic_action_check), contentDescription = null, modifier = Modifier.size(SwitchDefaults.IconSize)) }
                     } else null,
                 )
             }
@@ -532,7 +528,7 @@ internal fun SubtitleSettingsSheet(state: PlayerUiState, vm: PlayerViewModel) {
                         vm.setSubtitleSettings(state.subtitle.copy(textBackground = it))
                     },
                     thumbContent = if (state.subtitle.textBackground) {
-                        { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(SwitchDefaults.IconSize)) }
+                        { Icon(painter = painterResource(R.drawable.ic_action_check), contentDescription = null, modifier = Modifier.size(SwitchDefaults.IconSize)) }
                     } else null,
                 )
             }
@@ -591,7 +587,7 @@ internal fun SubtitleSettingsSheet(state: PlayerUiState, vm: PlayerViewModel) {
                         vm.setSubtitleSettings(state.subtitle.copy(useEmbeddedStyles = it))
                     },
                     thumbContent = if (state.subtitle.useEmbeddedStyles) {
-                        { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(SwitchDefaults.IconSize)) }
+                        { Icon(painter = painterResource(R.drawable.ic_action_check), contentDescription = null, modifier = Modifier.size(SwitchDefaults.IconSize)) }
                     } else null,
                 )
             }
@@ -1070,7 +1066,7 @@ private fun SheetTitle(text: String, modifier: Modifier = Modifier, onDismiss: (
         if (onDismiss != null) {
             IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
                 Icon(
-                    Icons.Default.Close,
+                    painterResource(R.drawable.ic_action_close),
                     stringResource(R.string.player_close),
                     tint = Color.White.copy(alpha = 0.7f),
                     // P8 (player fixes): the dismiss visual grows slightly
@@ -1123,7 +1119,7 @@ internal fun EqSheet(state: PlayerUiState, vm: PlayerViewModel) {
                         vm.setEqEnabled(it)
                     },
                     thumbContent = if (state.eqState.enabled) {
-                        { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(SwitchDefaults.IconSize)) }
+                        { Icon(painter = painterResource(R.drawable.ic_action_check), contentDescription = null, modifier = Modifier.size(SwitchDefaults.IconSize)) }
                     } else null,
                 )
             }
@@ -1218,7 +1214,7 @@ private fun SheetRow(label: String, selected: Boolean = false, enabled: Boolean 
             )
         },
         leadingContent = if (selected) {
-            { Icon(Icons.Default.Check, null, tint = RaddCurrent500) }
+            { Icon(painter = painterResource(R.drawable.ic_action_check), contentDescription = null, tint = RaddCurrent500) }
         } else {
             null
         },

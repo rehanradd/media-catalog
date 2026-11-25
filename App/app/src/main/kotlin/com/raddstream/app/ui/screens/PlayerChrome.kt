@@ -1,7 +1,15 @@
 package com.raddstream.app.ui.screens
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,13 +31,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Audiotrack
-import androidx.compose.material.icons.filled.Bedtime
-import androidx.compose.material.icons.filled.Forward10
-import androidx.compose.material.icons.filled.LocalMovies
-import androidx.compose.material.icons.filled.Replay10
-import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -51,7 +52,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -82,11 +83,15 @@ import com.raddstream.app.ui.components.RaddDialogTitle
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.components.RaddChip
 import com.raddstream.app.ui.components.ScrollingChipRow
+import com.raddstream.app.ui.components.rememberReduceMotion
 import com.raddstream.app.ui.theme.PlayerChromeTheme
 import com.raddstream.app.ui.theme.PlayerOnVideo
+import com.raddstream.app.ui.theme.PressHaptics
 import com.raddstream.app.ui.theme.RaddCurrent500
+import com.raddstream.app.ui.theme.RaddMotion
 import com.raddstream.app.ui.theme.brandSp
 import com.raddstream.app.ui.theme.paint
+import com.raddstream.app.ui.theme.pressScale
 import com.raddstream.app.viewmodel.PlayerViewModel
 import com.raddstream.app.viewmodel.formatTime
 
@@ -162,20 +167,44 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
         }
         Spacer(Modifier.width(6.dp))
         Column(Modifier.weight(1f)) {
-            Text(
-                state.pendingTitle ?: print?.displayLabel() ?: Brand.name,
-                color = PlayerOnVideo.text,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                // P4 (player fixes): the full title, up to two lines — static
-                // text, never a marquee. A marquee is a motion affordance, and
-                // under reduced motion it must never run; two-line static text
-                // is the same title on every device. Ellipsis only if it still
-                // overflows at two lines.
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                onTextLayout = { titleLines = it.lineCount },
-            )
+            // Round 3 (P4 award lift): the title crossfades + slides 200ms
+            // when it changes (next episode, print switch) — the bar never
+            // cuts from one title to the next. Under reduced motion the
+            // swap is a 30ms crossfade with no slide, same as the chrome
+            // fade. Only the title animates; the subtitle is static text
+            // under it, so the bar height never jumps mid-fade.
+            val titleText = state.pendingTitle ?: print?.displayLabel() ?: Brand.name
+            val reduceMotion = rememberReduceMotion()
+            AnimatedContent(
+                targetState = titleText,
+                transitionSpec = {
+                    if (reduceMotion) {
+                        fadeIn(tween(REDUCED_MOTION_FADE_MS)) togetherWith
+                            fadeOut(tween(REDUCED_MOTION_FADE_MS))
+                    } else {
+                        (fadeIn(tween(200, easing = RaddMotion.EmphasizedDecelerate)) +
+                            slideInVertically(tween(200, easing = RaddMotion.EmphasizedDecelerate)) { it / 4 }) togetherWith
+                            (fadeOut(tween(200, easing = RaddMotion.EmphasizedAccelerate)) +
+                                slideOutVertically(tween(200, easing = RaddMotion.EmphasizedAccelerate)) { -it / 4 })
+                    }
+                },
+                label = "player-title",
+            ) { title ->
+                Text(
+                    title,
+                    color = PlayerOnVideo.text,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    // P4 (player fixes): the full title, up to two lines — static
+                    // text, never a marquee. A marquee is a motion affordance, and
+                    // under reduced motion it must never run; two-line static text
+                    // is the same title on every device. Ellipsis only if it still
+                    // overflows at two lines.
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    onTextLayout = { titleLines = it.lineCount },
+                )
+            }
             if (print != null) {
                 val autoTag = if (state.autoQualityBand != null) stringResource(R.string.player_tag_auto_plain) else null
                 // P4 (player fixes): the subtitle is year · Auto — quality
@@ -217,8 +246,8 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
         }
         if (state.sleep.mode == SleepMode.COUNTDOWN) {
             Icon(
-                Icons.Default.Bedtime,
-                stringResource(R.string.player_sleep_remaining, state.sleep.remainingMs.formatTime()),
+                painter = painterResource(R.drawable.ic_player_bedtime),
+                contentDescription = stringResource(R.string.player_sleep_remaining, state.sleep.remainingMs.formatTime()),
                 tint = RaddCurrent500,
                 modifier = Modifier
                     .size(16.dp)
@@ -313,6 +342,10 @@ internal fun CenterPlayPause(
     if (state.isPlaying) return
     val label = stringResource(R.string.player_play)
     var lastCentreToggleNs by remember { mutableLongStateOf(0L) }
+    // Round 3: press spring + haptic tick on the centre transport
+    // (PressFeedback) — the paused-state play button is a primary control,
+    // and until now it pressed with no scale and no tick.
+    val playSource = remember { MutableInteractionSource() }
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -320,7 +353,7 @@ internal fun CenterPlayPause(
         ) {
             if (!state.isLive) {
                 CentreSkipButton(
-                    icon = Icons.Default.Replay10,
+                    icon = painterResource(R.drawable.ic_player_replay_10),
                     label = stringResource(R.string.player_rewind_10),
                     onClick = { onSeekBy(-10_000L) },
                 )
@@ -333,6 +366,7 @@ internal fun CenterPlayPause(
                     // affordance, not a poster; the 72dp press target still
                     // clears the 48dp floor.
                     .size(72.dp)
+                    .pressScale(playSource)
                     .clickable(
                         onClick = {
                             val now = System.nanoTime()
@@ -342,9 +376,11 @@ internal fun CenterPlayPause(
                             }
                         },
                         role = Role.Button,
+                        interactionSource = playSource,
                     )
                     .semantics { contentDescription = label },
             ) {
+                PressHaptics(playSource)
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Icon(
                         painter = painterResource(R.drawable.ic_player_play),
@@ -356,7 +392,7 @@ internal fun CenterPlayPause(
             }
             if (!state.isLive) {
                 CentreSkipButton(
-                    icon = Icons.Default.Forward10,
+                    icon = painterResource(R.drawable.ic_player_forward_10),
                     label = stringResource(R.string.player_forward_10),
                     onClick = { onSeekBy(10_000L) },
                 )
@@ -368,20 +404,25 @@ internal fun CenterPlayPause(
 /** One ±10s flank of the centre transport: a 48dp frosted circle, same chrome. */
 @Composable
 private fun CentreSkipButton(
-    icon: ImageVector,
+    icon: Painter,
     label: String,
     onClick: () -> Unit,
 ) {
+    // Round 3: the flanks get the same press spring + haptic tick as the
+    // centre button (PressFeedback) — a ±10s skip is a primary control.
+    val interactionSource = remember { MutableInteractionSource() }
     Surface(
         color = PlayerOnVideo.chipFill,
         shape = CircleShape,
         modifier = Modifier
             .size(48.dp)
-            .clickable(onClick = onClick, role = Role.Button)
+            .pressScale(interactionSource)
+            .clickable(onClick = onClick, role = Role.Button, interactionSource = interactionSource)
             .semantics { contentDescription = label },
     ) {
+        PressHaptics(interactionSource)
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Icon(icon, contentDescription = null, tint = PlayerOnVideo.text, modifier = Modifier.size(24.dp))
+            Icon(painter = icon, contentDescription = null, tint = PlayerOnVideo.text, modifier = Modifier.size(24.dp))
         }
     }
 }
@@ -582,8 +623,8 @@ internal fun EdgeHud(
         ) {
             ControlTarget(label = stringResource(R.string.player_leave_cinema), onClick = onToggleViewMode) {
                 Icon(
-                    Icons.Default.LocalMovies,
-                    null,
+                    painter = painterResource(R.drawable.ic_player_local_movies),
+                    contentDescription = null,
                     tint = RaddCurrent500,
                     modifier = Modifier.size(20.dp),
                 )
@@ -900,7 +941,7 @@ internal fun BottomControls(
                                 { onRequestNextEpisode() },
                                 stringResource(R.string.player_next_episode),
                             ) {
-                                Icon(Icons.Default.SkipNext, null, tint = PlayerOnVideo.text)
+                                Icon(painter = painterResource(R.drawable.ic_player_skip_next), contentDescription = null, tint = PlayerOnVideo.text)
                             }
                             // Cast never renders while CAST_PATH_PROVEN is
                             // false (the resolver already excludes it) — the
@@ -923,7 +964,7 @@ internal fun BottomControls(
                                     audioLabel?.let { stringResource(R.string.player_audio_label, it) }
                                         ?: stringResource(R.string.player_audio_tracks),
                                 ) {
-                                    Icon(Icons.Default.Audiotrack, null, tint = PlayerOnVideo.text)
+                                    Icon(painter = painterResource(R.drawable.ic_player_audiotrack), contentDescription = null, tint = PlayerOnVideo.text)
                                 }
                             }
                             FlexiblePlayerControl.SUBTITLES -> PlayerControlButton(

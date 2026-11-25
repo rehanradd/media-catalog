@@ -1,5 +1,6 @@
 package com.raddstream.app.data
 
+import android.app.Application
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import com.raddstream.app.data.local.AdCadenceDao
@@ -28,6 +29,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 /**
  * The deadman switch is wired into the remote-config watcher's failure path —
@@ -41,8 +43,24 @@ import org.robolectric.RobolectricTestRunner
  * No test here touches the real gateway: the recording discovery points the
  * recovery at an unroutable loopback address, which fails fast with a refused
  * connection.
+ *
+ * Plain Application on purpose (no RaddStreamApplication): the manifest's
+ * application starts the REAL remote-config watcher in onCreate, and its
+ * first tick polls the live server for real. When that poll fails, the real
+ * deadman switch fetches the real gateway — whose published primary is
+ * https://radd-stream.ccwu.cc — probes it working, and persists it into the
+ * same DataStore these fixtures assert on. The gateway fetch takes seconds,
+ * so the write lands after the fixture's save and inside the test's wait
+ * window: the foreign-server test then reads ccwu.cc instead of the saved
+ * foreign address. It passed on two identical-code tips and failed on the
+ * third — a race, not a watcher bug (the guard held: lastRecoveryAttemptMs
+ * stayed 0). A plain Application keeps the real watcher out of the process,
+ * so the fixture's save is the only write. Brand still resolves: every
+ * Brand getter falls back to its BuildConfig constant, generated from the
+ * same brand.properties as the runtime brand.json.
  */
 @RunWith(RobolectricTestRunner::class)
+@Config(application = Application::class)
 class RemoteConfigWatcherDiscoveryTest {
 
     private class FakeDao : AdCadenceDao {
