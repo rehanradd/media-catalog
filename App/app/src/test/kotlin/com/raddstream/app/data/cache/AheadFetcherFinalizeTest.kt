@@ -405,9 +405,9 @@ class AheadFetcherFinalizeTest {
     )
 
     @Test
-    fun `the first-seed window is eight mebibytes while the player window stays forty`() {
+    fun `the first-seed window is eight mebibytes while the player window is the whole file`() {
         assertEquals(8L * 1024 * 1024, AheadFetcher.FIRST_SEED_AHEAD_BYTES)
-        assertEquals(40L * 1024 * 1024, AheadFetcher.DEFAULT_AHEAD_BYTES)
+        assertEquals(2L * 1024 * 1024 * 1024, AheadFetcher.DEFAULT_AHEAD_BYTES)
     }
 
     @Test
@@ -430,7 +430,10 @@ class AheadFetcherFinalizeTest {
     }
 
     @Test
-    fun `a normal preview still fills the full forty mebibyte window`() {
+    fun `a normal preview fills the whole file when it fits the window`() {
+        // Player resilience (2026-11-25): the ahead window is the whole remaining file
+        // (2 GiB), so a 100 MiB file completes in one pass instead of stopping at 40 MiB.
+        // The file — not the window — is what stops the pass now.
         val total = 100L * 1024 * 1024
         val fx = Fixture(chunkBytes = 1024 * 1024, maxBytesPerPass = 256L * 1024 * 1024)
         val task = fx.taskDao.seed(bigPreviewTask(total))
@@ -439,11 +442,11 @@ class AheadFetcherFinalizeTest {
             firstSeedFetcher(fx, total).run(task, FetchMode.AUTO_PREVIEW_AHEAD) { 0L }
         }
 
-        assertEquals(FetchOutcome.WINDOW_FILLED, outcome)
+        assertEquals(FetchOutcome.COMPLETED, outcome)
         val after = fx.taskDao.rows[1L]!!
         assertEquals("the player's ahead window is untouched by the first-seed cap",
-            AheadFetcher.DEFAULT_AHEAD_BYTES, after.downloadedBytes)
-        assertEquals(AheadFetcher.DEFAULT_AHEAD_BYTES, after.verifiedPrefixBytes)
+            total, after.downloadedBytes)
+        assertEquals(total, after.verifiedPrefixBytes)
     }
 
     // ── Robo re-test (2026-11-14): follow once, fetch direct ──────────
@@ -532,9 +535,9 @@ class AheadFetcherFinalizeTest {
     @Test
     fun `a preview pass presses the redirector once and fetches the rest direct`() {
         // Before the fix every 1 MiB chunk re-pressed our redirector, so one
-        // 40 MiB preview pass spent ~40 of the 30/min play budget and the
+        // preview pass spent ~100 of the 30/min play budget and the
         // real Play press 429'd. The first chunk follows the 302 and learns
-        // the file host; the other 39 chunks go there direct.
+        // the file host; the other 99 chunks go there direct.
         val total = 100L * 1024 * 1024
         val fx = Fixture(chunkBytes = 1024 * 1024, maxBytesPerPass = 256L * 1024 * 1024)
         val task = fx.taskDao.seed(
@@ -546,14 +549,14 @@ class AheadFetcherFinalizeTest {
             redirectingFetcher(fx, total, counts).run(task, FetchMode.AUTO_PREVIEW_AHEAD) { 0L }
         }
 
-        assertEquals(FetchOutcome.WINDOW_FILLED, outcome)
+        assertEquals(FetchOutcome.COMPLETED, outcome)
         val after = fx.taskDao.rows[1L]!!
-        assertEquals("the full forty mebibyte window still fills",
-            AheadFetcher.DEFAULT_AHEAD_BYTES, after.downloadedBytes)
+        assertEquals("the whole file fills in one pass now that the window is the file",
+            total, after.downloadedBytes)
         assertEquals("one press learns the target; the rest must not re-press it",
             1, counts.redirector)
-        assertEquals("the other thirty-nine chunks go direct to the file host",
-            39, counts.cdn)
+        assertEquals("the other ninety-nine chunks go direct to the file host",
+            99, counts.cdn)
         assertEquals("the row keeps our redirector address — the direct url is never stored",
             "https://redirector.test/api/v1/stream?id=abc", after.currentUrl)
         val part = fx.tempFile.readBytes()

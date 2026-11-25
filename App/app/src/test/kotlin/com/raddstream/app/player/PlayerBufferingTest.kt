@@ -366,6 +366,23 @@ class PlayerBufferingTest {
         true
     }
 
+    @Test
+    fun `player resilience holds two minutes of media and recovers on a two second threshold`() {
+        // 2026-11-25: the RAM buffer is the shock absorber for a stall, and the disk-ahead
+        // preview is what carries a dropped connection — so the holding target is generous
+        // (30 s min / 120 s max) while the instant-start promise (500 ms) does not move.
+        // A future change that silently shrinks these back must fail here, not on a phone.
+        assertEquals(30_000, PlayerBuffering.MIN_BUFFER_MS)
+        assertEquals(120_000, PlayerBuffering.MAX_BUFFER_MS)
+        assertEquals(500, PlayerBuffering.BUFFER_FOR_PLAYBACK_MS)
+        assertEquals(2_000, PlayerBuffering.BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS)
+        assertTrue(
+            "the stall-hop threshold sits above the stuck card, so the card shows first",
+            PlayerBuffering.MID_PLAY_STALL_HOP_MS > PlayerBuffering.STUCK_AFTER_MS,
+        )
+        assertEquals(10_000, PlayerBuffering.MID_PLAY_STALL_HOP_MS)
+    }
+
     private fun mainSources(): List<File> =
         File("src/main/kotlin").walkTopDown()
             .filter { it.isFile && it.extension == "kt" }

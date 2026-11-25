@@ -336,7 +336,20 @@ class AheadFetcher(
     private fun urlDigest(url: String): String = url.hashCode().toString(16)
 
     companion object {
-        const val DEFAULT_AHEAD_BYTES = 40L * 1024 * 1024       // ~40 MiB ahead of the playhead
+        /**
+         * Player resilience (2026-11-25): the ahead window is the whole remaining file, up to
+         * the 2 GiB workspace ceiling — a 40 MiB window is ~1 min at 1080p/5 Mbps and ~3.5 min
+         * at 480p/1.5 Mbps, which is a hiccup's worth of cover, not a dropped connection's.
+         * The window is bytes ahead of the playhead, capped at the file size by [run]; each
+         * pass still fetches at most [DEFAULT_MAX_BYTES_PER_PASS] and the 3 s scheduler tick
+         * plus the playhead pump re-drive it, so a 1.4 GB title fills to EOF within ~30 s of
+         * starting. The bounds that make a whole-file window safe, unchanged: every write is
+         * gated by [StorageGate] (2 GiB hard ceiling, 500 MiB floor), the eviction planner
+         * drops the oldest unprotected previews first and never a user keep, and previews
+         * TTL-age out in 3–6 h. The cost the user order accepts: abandoning a title
+         * mid-play leaves the fetched remainder on disk until the TTL sweep takes it.
+         */
+        const val DEFAULT_AHEAD_BYTES = 2L * 1024 * 1024 * 1024 // 2 GiB ahead of the playhead
         /**
          * Pre-resolve better (2026-11-13): a detail-open first seed's window.
          * 8 MiB — the container header plus roughly the first half-minute of

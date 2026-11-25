@@ -937,7 +937,7 @@ class OfflineCacheWiringTest {
         // Play starts: the playhead moves, and the next pass takes the full window.
         w.coordinator.onPlayheadAdvanced(KeepIdentity.sourceKeyFor("HDL-20"), 0L)
         awaitPasses(w.ahead, 2)
-        assertEquals("the cap is spent after the first fill — Play extends to 40 MiB",
+        assertEquals("the cap is spent after the first fill — Play extends to the whole file",
             listOf(FetchMode.AUTO_PREVIEW_FIRST_SEED, FetchMode.AUTO_PREVIEW_AHEAD),
             w.ahead.seenModes)
     }
