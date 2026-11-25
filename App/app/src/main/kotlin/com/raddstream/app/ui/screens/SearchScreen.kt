@@ -9,13 +9,19 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.SharedTransitionLayout
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.rememberSharedContentState
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,6 +44,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -78,6 +85,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
@@ -426,22 +434,30 @@ fun SearchScreen(
                         // right edge — the row needs the same end padding the rail gets.
                         contentPadding = PaddingValues(start = 0.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
                     ) {
-                        items(state.visibleSuggestions, key = { it.id }) { suggestion ->
-                            RaddChip(
-                                colors = raddFilterChipColors(),
-                                selected = false,
-                                onClick = { viewModel.runSuggestion(suggestion.title) },
-                                label = {
-                                    Text(
-                                        // M3 (home review, Nov 2026): the year
-                                        // comes from the guarded yearLabel, so
-                                        // an impossible year never prints here.
-                                        suggestion.yearLabel?.let {
-                                            "${suggestion.title} ($it)"
-                                        } ?: suggestion.title,
-                                    )
-                                },
-                            )
+                        itemsIndexed(state.visibleSuggestions, key = { _, it -> it.id }) { index, suggestion ->
+                            // Round 6 (motion): the suggestion chips stagger
+                            // in on focus, on the expressive spatial spec —
+                            // they animate in when the field gains focus and
+                            // the suggestions populate. Under inspection mode
+                            // (Paparazzi) they render settled, so goldens
+                            // are unchanged; reduce-motion renders directly.
+                            SearchStaggeredFade(delayMillis = searchEntranceDelayMs(index)) {
+                                RaddChip(
+                                    colors = raddFilterChipColors(),
+                                    selected = false,
+                                    onClick = { viewModel.runSuggestion(suggestion.title) },
+                                    label = {
+                                        Text(
+                                            // M3 (home review, Nov 2026): the year
+                                            // comes from the guarded yearLabel, so
+                                            // an impossible year never prints here.
+                                            suggestion.yearLabel?.let {
+                                                "${suggestion.title} ($it)"
+                                            } ?: suggestion.title,
+                                        )
+                                    },
+                                )
+                            }
                         }
                     }
                 }
@@ -638,6 +654,13 @@ internal fun searchEntranceDelayMs(index: Int): Int = (index * 40).coerceIn(0, 3
 internal fun SearchStaggeredFade(
     delayMillis: Int,
     modifier: Modifier = Modifier,
+    // Round 6 (motion): the stagger re-runs on every new query, not just on
+    // entry. The key identifies the search whose results are on screen — the
+    // first result's id. It changes when a new query lands with different
+    // results (every row re-staggers), and stays put on appends and while
+    // typing (settled rows are never re-animated by a keystroke or a page).
+    // Null keeps the old entry-only behaviour (a single entrance).
+    staggerKey: Any? = null,
     content: @Composable () -> Unit,
 ) {
     if (rememberReduceMotion()) {
@@ -650,8 +673,8 @@ internal fun SearchStaggeredFade(
     // Paparazzi does not set inspection mode itself — the snapshot test
     // provides it (shotSearch wraps in LocalInspectionMode provides true).
     val inInspectionMode = LocalInspectionMode.current
-    var visible by remember { mutableStateOf(inInspectionMode) }
-    LaunchedEffect(Unit) {
+    var visible by remember(staggerKey) { mutableStateOf(inInspectionMode) }
+    LaunchedEffect(staggerKey) {
         if (inInspectionMode) return@LaunchedEffect
         if (delayMillis > 0) delay(delayMillis.toLong())
         visible = true
@@ -682,6 +705,42 @@ internal const val CategoryTabYearTag = "searchCategoryTabYear"
  * live filter value — tapping the selected chip again clears it back to All.
  */
 @Composable
+/**
+ * Round 6 (motion): the quick chip — an M3 FilterChip that scales to 0.96
+ * while pressed, on the expressive effects spring, and springs back on
+ * release. The press comes from the chip's own interactionSource, so a
+ * scroll swipe never triggers it. Reduce-motion holds the scale at 1 (the
+ * haptic tick still confirms the press). Scope: the quick chips only — the
+ * RaddChip-based chips (filter rail, suggestions) get press scale from the
+ * Home branch's RaddChip change, which the mega-merge takes once.
+ */
+@Composable
+private fun QuickFilterChip(
+    selected: Boolean,
+    onClick: () -> Unit,
+    label: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val reduceMotion = rememberReduceMotion()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed && !reduceMotion) 0.96f else 1f,
+        animationSpec = RaddMotion.defaultEffects(),
+        label = "quickChipPressScale",
+    )
+    FilterChip(
+        colors = raddFilterChipColors(),
+        selected = selected,
+        onClick = onClick,
+        label = label,
+        interactionSource = interactionSource,
+        modifier = modifier
+            .heightIn(min = 48.dp)
+            .graphicsLayer { scaleX = scale; scaleY = scale },
+    )
+}
+
 internal fun CategoryTabs(
     state: SearchUiState,
     onSelectGenre: (GenreFilter) -> Unit,
@@ -717,67 +776,85 @@ internal fun CategoryTabs(
         // RowEndFade replaces the hard clip. Start stays 0 because the
         // outer column already pads 16dp (same as the filter rail); end is
         // 16dp so the last chip never rests flush against the edge.
-        ScrollingChipRow(
-            contentPadding = PaddingValues(start = 0.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
-            fadeTestTag = QuickChipsFadeTag,
-        ) {
-            when (selectedTab) {
-                SearchCategoryTab.GENRE -> {
-                    listOf(
-                        GenreFilter.ACTION, GenreFilter.COMEDY, GenreFilter.DRAMA,
-                        GenreFilter.HORROR, GenreFilter.THRILLER,
-                    ).forEach { genre ->
-                        item {
-                            FilterChip(
-                                colors = raddFilterChipColors(),
-                                selected = state.filters.genre == genre,
-                                onClick = {
-                                    onSelectGenre(if (state.filters.genre == genre) GenreFilter.ALL else genre)
-                                },
-                                label = { Text(genre.label) },
-                                modifier = Modifier.heightIn(min = 48.dp),
-                            )
+        // Round 6 (motion): switching tabs animates the rail — the chip row
+        // cross-fades and rises on the expressive specs instead of swapping
+        // instantly. AnimatedContent wraps the whole row; each tab's chips
+        // stay individual Lazy items inside their own ScrollingChipRow.
+        // Under inspection mode (Paparazzi) the target state shows settled,
+        // so goldens are unchanged; reduce-motion cross-fades with no rise.
+        val reduceMotion = rememberReduceMotion()
+        AnimatedContent(
+            targetState = selectedTab,
+            transitionSpec = {
+                if (reduceMotion) {
+                    fadeIn(tween(RaddMotion.FadeWhenReduced)) togetherWith
+                        fadeOut(tween(RaddMotion.FadeWhenReduced))
+                } else {
+                    (fadeIn(animationSpec = RaddMotion.defaultEffects()) +
+                        slideInVertically(
+                            animationSpec = RaddMotion.defaultSpatial(),
+                        ) { it / 4 }) togetherWith
+                        fadeOut(animationSpec = RaddMotion.defaultEffects())
+                }
+            },
+            label = "categoryTabChips",
+        ) { tab ->
+            ScrollingChipRow(
+                contentPadding = PaddingValues(start = 0.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
+                fadeTestTag = QuickChipsFadeTag,
+            ) {
+                when (tab) {
+                    SearchCategoryTab.GENRE -> {
+                        listOf(
+                            GenreFilter.ACTION, GenreFilter.COMEDY, GenreFilter.DRAMA,
+                            GenreFilter.HORROR, GenreFilter.THRILLER,
+                        ).forEach { genre ->
+                            item {
+                                QuickFilterChip(
+                                    selected = state.filters.genre == genre,
+                                    onClick = {
+                                        onSelectGenre(if (state.filters.genre == genre) GenreFilter.ALL else genre)
+                                    },
+                                    label = { Text(genre.label) },
+                                )
+                            }
                         }
                     }
-                }
-                SearchCategoryTab.LANGUAGE -> {
-                    listOf(
-                        LanguageFilter.HINDI, LanguageFilter.URDU, LanguageFilter.TAMIL,
-                        LanguageFilter.TELUGU, LanguageFilter.PUNJABI, LanguageFilter.ENGLISH,
-                    ).forEach { language ->
-                        item {
-                            FilterChip(
-                                colors = raddFilterChipColors(),
-                                selected = state.filters.language == language,
-                                onClick = {
-                                    onSelectLanguage(if (state.filters.language == language) LanguageFilter.ALL else language)
-                                },
-                                label = { Text(displayLanguageName(language.label)) },
-                                modifier = Modifier.heightIn(min = 48.dp),
-                            )
+                    SearchCategoryTab.LANGUAGE -> {
+                        listOf(
+                            LanguageFilter.HINDI, LanguageFilter.URDU, LanguageFilter.TAMIL,
+                            LanguageFilter.TELUGU, LanguageFilter.PUNJABI, LanguageFilter.ENGLISH,
+                        ).forEach { language ->
+                            item {
+                                QuickFilterChip(
+                                    selected = state.filters.language == language,
+                                    onClick = {
+                                        onSelectLanguage(if (state.filters.language == language) LanguageFilter.ALL else language)
+                                    },
+                                    label = { Text(displayLanguageName(language.label)) },
+                                )
+                            }
                         }
                     }
-                }
-                SearchCategoryTab.YEAR -> {
-                    listOf(
-                        "2025" to (2025 to 2025),
-                        "2024" to (2024 to 2024),
-                        "2023" to (2023 to 2023),
-                        "2020s" to (2020 to 2029),
-                    ).forEach { (label, range) ->
-                        val selected = state.filters.yearFrom == range.first &&
-                            state.filters.yearTo == range.second
-                        item {
-                            FilterChip(
-                                colors = raddFilterChipColors(),
-                                selected = selected,
-                                onClick = {
-                                    if (selected) onSetYearRange(null, null)
-                                    else onSetYearRange(range.first, range.second)
-                                },
-                                label = { Text(label) },
-                                modifier = Modifier.heightIn(min = 48.dp),
-                            )
+                    SearchCategoryTab.YEAR -> {
+                        listOf(
+                            "2025" to (2025 to 2025),
+                            "2024" to (2024 to 2024),
+                            "2023" to (2023 to 2023),
+                            "2020s" to (2020 to 2029),
+                        ).forEach { (label, range) ->
+                            val selected = state.filters.yearFrom == range.first &&
+                                state.filters.yearTo == range.second
+                            item {
+                                QuickFilterChip(
+                                    selected = selected,
+                                    onClick = {
+                                        if (selected) onSetYearRange(null, null)
+                                        else onSetYearRange(range.first, range.second)
+                                    },
+                                    label = { Text(label) },
+                                )
+                            }
                         }
                     }
                 }
@@ -1675,6 +1752,11 @@ internal fun SearchContent(
     val appendEndReached =
         (appendState as? LoadState.NotLoading)?.endOfPaginationReached == true
     val hasMore = !appendEndReached
+    // Round 6 (motion): the stagger key — the first result's id. It changes
+    // when a new query lands with different results (re-staggering every
+    // row) and stays put on appends and while typing (settled rows stay
+    // settled). See SearchStaggeredFade.
+    val staggerKey = groups.firstOrNull()?.items?.firstOrNull()?.id
     when {
         !state.hasSearchIntent -> {
             SearchDiscoveryContent(
@@ -1735,190 +1817,230 @@ internal fun SearchContent(
                 OutlinedButton(onClick = onShowCloseMatches) { Text("Show close matches") }
             },
         )
-        else -> LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxSize().testTag(SearchResultsListTag),
-        ) {
-            // SE-1 (round 2): the category tabs sit above the results — a
-            // tab strip (Genre / Language / Year) with quick chips under it,
-            // so the viewer scopes the list without opening the sheet.
-            item {
-                CategoryTabs(
-                    state = state,
-                    onSelectGenre = onSelectGenre,
-                    onSelectLanguage = onSelectLanguage,
-                    onSetYearRange = onSetYearRange,
-                    modifier = Modifier.padding(top = 4.dp, bottom = 4.dp),
-                )
-            }
-            // Feel-instant S3a: the previous results stay on screen while a
-            // fresh search runs — and this one skeleton row on top is the
-            // signal that they are refreshing, so the stale count below it
-            // is never mistaken for the new answer.
-            if (isRefreshing) {
-                item {
-                    SkeletonBox(
-                        Modifier.fillMaxWidth(0.55f).height(20.dp).padding(vertical = 8.dp)
-                            .testTag("searchRefreshingRow"),
-                        shape = RoundedCornerShape(8.dp),
-                    )
-                }
-            }
-            item {
-                // P1-S3: one filter entry point — the top bar's Tune icon (and
-                // the "Filtered" pill) opens the sheet. The header keeps only
-                // the count; a second "Sort" door to the same sheet is gone.
-                // SE-5 (round 2): the summary line is a polite live region —
-                // a TalkBack viewer hears "Showing 34 of 52 results" when the
-                // page lands, without the focus being stolen.
-                Text(
-                    text = resultsSummary(loadedCount, state.serverTotal, hasMore, state.totalCapped),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
-                        .semantics { liveRegion = LiveRegionMode.Polite },
-                )
-            }
+        else -> {
+            // Round 6 (motion): the results list rides a SharedTransitionLayout
+            // so the poster carries sharedElement(key = "poster-<workId>") to
+            // the Detail hero. The infra branch owns the NavHost-level layout;
+            // this local scope makes the Search side compile and is removed
+            // at mega-merge time, once the NavHost scope lands — poster and
+            // hero must share ONE scope for the transition to run. Until then
+            // the shared element is wired but the transition does not run.
+            SharedTransitionLayout(modifier = Modifier.fillMaxSize()) {
+                val sharedTransitionScope = this
+                // The AnimatedVisibility provides the AnimatedVisibilityScope
+                // the sharedElement modifier requires. It is always visible,
+                // so it never animates — it only supplies the scope.
+                AnimatedVisibility(visible = true) {
+                    val animatedVisibilityScope = this
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize().testTag(SearchResultsListTag),
+                    ) {
+                        // SE-1 (round 2): the category tabs sit above the results — a
+                        // tab strip (Genre / Language / Year) with quick chips under it,
+                        // so the viewer scopes the list without opening the sheet.
+                        item {
+                            CategoryTabs(
+                                state = state,
+                                onSelectGenre = onSelectGenre,
+                                onSelectLanguage = onSelectLanguage,
+                                onSetYearRange = onSetYearRange,
+                                modifier = Modifier.padding(top = 4.dp, bottom = 4.dp),
+                            )
+                        }
+                        // Feel-instant S3a: the previous results stay on screen while a
+                        // fresh search runs — and this one skeleton row on top is the
+                        // signal that they are refreshing, so the stale count below it
+                        // is never mistaken for the new answer.
+                        if (isRefreshing) {
+                            item {
+                                SkeletonBox(
+                                    Modifier.fillMaxWidth(0.55f).height(20.dp).padding(vertical = 8.dp)
+                                        .testTag("searchRefreshingRow"),
+                                    shape = RoundedCornerShape(8.dp),
+                                )
+                            }
+                        }
+                        item {
+                            // P1-S3: one filter entry point — the top bar's Tune icon (and
+                            // the "Filtered" pill) opens the sheet. The header keeps only
+                            // the count; a second "Sort" door to the same sheet is gone.
+                            // SE-5 (round 2): the summary line is a polite live region —
+                            // a TalkBack viewer hears "Showing 34 of 52 results" when the
+                            // page lands, without the focus being stolen.
+                            Text(
+                                text = resultsSummary(loadedCount, state.serverTotal, hasMore, state.totalCapped),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+                                    .semantics { liveRegion = LiveRegionMode.Polite },
+                            )
+                        }
 
-            // Audit #37: the server's "did you mean" spelling, one tap to
-            // search for it — shown only when it differs from the query.
-            // Audit Search #4 (Nov 2026): it used to be a fillMaxWidth
-            // TextButton, so it centred itself in the column and read as
-            // a plain-text label, not an action. It is a chip now — the
-            // outlined pill says "tap me" — left-aligned with the rest of
-            // the stack, and the fuzzy line below is the one statement of
-            // what happened, so the mismatch is stated once, not twice.
-            state.didYouMean?.let { suggestion ->
-                item {
-                    RaddChip(
-                        style = RaddChipStyle.Navigation,
-                        selected = false,
-                        onClick = { onRunSuggestion(suggestion) },
-                        label = { Text("Did you mean $suggestion?") },
-                        modifier = Modifier.padding(bottom = 8.dp).testTag(DidYouMeanTag),
-                    )
-                }
-            }
+                        // Audit #37: the server's "did you mean" spelling, one tap to
+                        // search for it — shown only when it differs from the query.
+                        // Audit Search #4 (Nov 2026): it used to be a fillMaxWidth
+                        // TextButton, so it centred itself in the column and read as
+                        // a plain-text label, not an action. It is a chip now — the
+                        // outlined pill says "tap me" — left-aligned with the rest of
+                        // the stack, and the fuzzy line below is the one statement of
+                        // what happened, so the mismatch is stated once, not twice.
+                        state.didYouMean?.let { suggestion ->
+                            item {
+                                RaddChip(
+                                    style = RaddChipStyle.Navigation,
+                                    selected = false,
+                                    onClick = { onRunSuggestion(suggestion) },
+                                    label = { Text("Did you mean $suggestion?") },
+                                    modifier = Modifier.padding(bottom = 8.dp).testTag(DidYouMeanTag),
+                                )
+                            }
+                        }
 
-            // The server found nothing exact and answered one edit away
-            // instead. Name the query, so the viewer knows why "Avengers"
-            // is what came back for "Avngers" — and offer the exact-only
-            // view, which is the empty state above.
-            // SE-6 (round 2): the exact-only action is a real button now —
-            // an OutlinedButton, not a bare TextButton — so the choice reads
-            // as an action, not a caption.
-            if (state.isFuzzy) {
-                item {
-                    Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
-                        Text(
-                            text = "No exact match for \"${state.query}\" — showing the closest titles.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        OutlinedButton(
-                            onClick = onShowExactOnly,
-                            modifier = Modifier.heightIn(min = 48.dp),
-                        ) { Text("Show exact matches only") }
-                    }
-                }
-            }
+                        // The server found nothing exact and answered one edit away
+                        // instead. Name the query, so the viewer knows why "Avengers"
+                        // is what came back for "Avngers" — and offer the exact-only
+                        // view, which is the empty state above.
+                        // SE-6 (round 2): the exact-only action is a real button now —
+                        // an OutlinedButton, not a bare TextButton — so the choice reads
+                        // as an action, not a caption.
+                        if (state.isFuzzy) {
+                            item {
+                                Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                                    Text(
+                                        text = "No exact match for \"${state.query}\" — showing the closest titles.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    Spacer(Modifier.height(8.dp))
+                                    OutlinedButton(
+                                        onClick = onShowExactOnly,
+                                        modifier = Modifier.heightIn(min = 48.dp),
+                                    ) { Text("Show exact matches only") }
+                                }
+                            }
+                        }
 
-            groups.forEachIndexed { groupIndex, group ->
-                item {
-                    // A4-F4: the header names the section, nothing more — the
-                    // summary line above is the one count on this screen. The
-                    // old "N titles" subtitle counted a third population
-                    // (loaded works in this section) and read as a competing
-                    // total next to "Showing 34 of 52 results".
-                    SectionHeader(
-                        title = group.label,
-                        modifier = Modifier.padding(horizontal = 0.dp),
-                    )
-                }
-                // P1-S1: results are a scannable vertical grid, two posters
-                // wide — rails are for Home. Scanning 20 results no longer
-                // means swiping every rail sideways.
-                // Session 158 (S5): a row is keyed by what it holds, not
-                // where it sits — a re-emitted list (the same search
-                // landing twice, a second identical submit) rebuilds the
-                // groups, and an index key lets the rows shift under a
-                // press in flight. A content key keeps the row — and the
-                // press on it — alive across the re-emission.
-                // Motion (round 2): the rows stagger in — each pair fades
-                // and rises 24dp behind the one above it, on the emphasized
-                // spring, capped at 300ms so a long list never waits on the
-                // animation. The delay is pure over the row's position, so
-                // it is stable across recompositions.
-                group.items.chunked(2).forEachIndexed { pairIndex, pair ->
-                    item(key = "${group.typeKey}-${pair.joinToString(separator = ",") { it.id.toString() }}") {
-                        SearchStaggeredFade(
-                            delayMillis = searchEntranceDelayMs(groupIndex * 10 + pairIndex),
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            ) {
-                                pair.forEach { post ->
-                                    // Screen audit #7 (Nov 2026): result tiles
-                                    // get two title lines and no bare-type meta
-                                    // — a long title reads whole under the
-                                    // "Series" header instead of truncating to
-                                    // "One Piece ·…", and the "Series" line
-                                    // under it no longer restates the header.
-                                    // The discovery rails above keep the
-                                    // one-line tile and the full meta line.
-                                    PosterCard(
-                                        post = post,
-                                        onClick = { onPostClick(post) },
-                                        modifier = Modifier.weight(1f),
-                                        titleMaxLines = 2,
-                                        suppressBareTypeMeta = true,
+                        groups.forEachIndexed { groupIndex, group ->
+                            item {
+                                // A4-F4: the header names the section, nothing more — the
+                                // summary line above is the one count on this screen. The
+                                // old "N titles" subtitle counted a third population
+                                // (loaded works in this section) and read as a competing
+                                // total next to "Showing 34 of 52 results".
+                                SectionHeader(
+                                    title = group.label,
+                                    modifier = Modifier.padding(horizontal = 0.dp),
+                                )
+                            }
+                            // P1-S1: results are a scannable vertical grid, two posters
+                            // wide — rails are for Home. Scanning 20 results no longer
+                            // means swiping every rail sideways.
+                            // Session 158 (S5): a row is keyed by what it holds, not
+                            // where it sits — a re-emitted list (the same search
+                            // landing twice, a second identical submit) rebuilds the
+                            // groups, and an index key lets the rows shift under a
+                            // press in flight. A content key keeps the row — and the
+                            // press on it — alive across the re-emission.
+                            // Motion (round 2): the rows stagger in — each pair fades
+                            // and rises 24dp behind the one above it, on the emphasized
+                            // spring, capped at 300ms so a long list never waits on the
+                            // animation. The delay is pure over the row's position, so
+                            // it is stable across recompositions.
+                            group.items.chunked(2).forEachIndexed { pairIndex, pair ->
+                                item(key = "${group.typeKey}-${pair.joinToString(separator = ",") { it.id.toString() }}") {
+                                    SearchStaggeredFade(
+                                        delayMillis = searchEntranceDelayMs(groupIndex * 10 + pairIndex),
+                                        // Round 6 (motion): re-staggers on every
+                                        // new query — see the staggerKey above.
+                                        staggerKey = staggerKey,
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                        ) {
+                                            pair.forEach { post ->
+                                                // Screen audit #7 (Nov 2026): result tiles
+                                                // get two title lines and no bare-type meta
+                                                // — a long title reads whole under the
+                                                // "Series" header instead of truncating to
+                                                // "One Piece ·…", and the "Series" line
+                                                // under it no longer restates the header.
+                                                // The discovery rails above keep the
+                                                // one-line tile and the full meta line.
+                                                // Round 6 (motion): the poster carries the
+                                                // shared element to the Detail hero — key
+                                                // "poster-<workId>", one key per work,
+                                                // shared by source and destination. The
+                                                // state is remembered here (a composable
+                                                // call, so it sits outside the with);
+                                                // the with() only builds the modifier, so
+                                                // no composable ever sits inside it. The
+                                                // scope is the local one above until the
+                                                // infra hoists it to the NavHost at
+                                                // mega-merge time.
+                                                val sharedContentState =
+                                                    rememberSharedContentState(key = "poster-${post.id}")
+                                                val posterModifier = with(sharedTransitionScope) {
+                                                    Modifier.weight(1f).sharedElement(
+                                                        state = sharedContentState,
+                                                        animatedVisibilityScope = animatedVisibilityScope,
+                                                    )
+                                                }
+                                                PosterCard(
+                                                    post = post,
+                                                    onClick = { onPostClick(post) },
+                                                    modifier = posterModifier,
+                                                    titleMaxLines = 2,
+                                                    suppressBareTypeMeta = true,
+                                                )
+                                            }
+                                            if (pair.size == 1) Spacer(Modifier.weight(1f))
+                                        }
+                                    }
+                                    Spacer(Modifier.height(12.dp))
+                                }
+                            }
+                        }
+
+                        // Feel-instant S6: the next page arrives as the viewer scrolls,
+                        // and while it is out the tail of the list is skeleton rows —
+                        // the S5 geometry-matched cells, two rows of two, so the grid
+                        // never jumps when the page lands. A failed page used to be
+                        // invisible: the retry path was reachable only when every group
+                        // was empty, so a search that died on page 3 looked like a
+                        // catalog that simply had three pages. The retry is inline now.
+                        when (appendState) {
+                            is LoadState.Loading -> {
+                                repeat(SEARCH_APPEND_SKELETON_ROWS) { row ->
+                                    item(key = "search-append-skeleton-$row") {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                        ) {
+                                            PosterCellSkeleton(
+                                                Modifier.weight(1f).testTag("searchAppendSkeleton"),
+                                            )
+                                            PosterCellSkeleton(
+                                                Modifier.weight(1f).testTag("searchAppendSkeleton"),
+                                            )
+                                        }
+                                        Spacer(Modifier.height(12.dp))
+                                    }
+                                }
+                            }
+                            is LoadState.Error -> {
+                                item {
+                                    InlineLoadFailure(
+                                        message = friendlyNetworkError(appendState.error, "Could not load more."),
+                                        onRetry = { pagingItems.retry() },
                                     )
                                 }
-                                if (pair.size == 1) Spacer(Modifier.weight(1f))
                             }
-                        }
-                        Spacer(Modifier.height(12.dp))
-                    }
-                }
-            }
-
-            // Feel-instant S6: the next page arrives as the viewer scrolls,
-            // and while it is out the tail of the list is skeleton rows —
-            // the S5 geometry-matched cells, two rows of two, so the grid
-            // never jumps when the page lands. A failed page used to be
-            // invisible: the retry path was reachable only when every group
-            // was empty, so a search that died on page 3 looked like a
-            // catalog that simply had three pages. The retry is inline now.
-            when (appendState) {
-                is LoadState.Loading -> {
-                    repeat(SEARCH_APPEND_SKELETON_ROWS) { row ->
-                        item(key = "search-append-skeleton-$row") {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            ) {
-                                PosterCellSkeleton(
-                                    Modifier.weight(1f).testTag("searchAppendSkeleton"),
-                                )
-                                PosterCellSkeleton(
-                                    Modifier.weight(1f).testTag("searchAppendSkeleton"),
-                                )
-                            }
-                            Spacer(Modifier.height(12.dp))
+                            else -> {}
                         }
                     }
                 }
-                is LoadState.Error -> {
-                    item {
-                        InlineLoadFailure(
-                            message = friendlyNetworkError(appendState.error, "Could not load more."),
-                            onRetry = { pagingItems.retry() },
-                        )
-                    }
-                }
-                else -> {}
             }
         }
     }
