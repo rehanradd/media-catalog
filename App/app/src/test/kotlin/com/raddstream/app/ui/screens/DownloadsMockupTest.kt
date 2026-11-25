@@ -125,7 +125,7 @@ class DownloadsMockupTest {
         }
         // Real percent + real bytes + real speed + ETA, from the engine's own numbers.
         // Phase 4 (Downloads #1): the device row carries its bytes, like the keep row.
-        compose.onNodeWithText("45% · 450 MB / 1.0 GB · 12.0 MB/s · about 1 min left").assertIsDisplayed()
+        compose.onNodeWithText("45% · 450 MB / 1.0 GB · 12.0 MB/s · 1 min left").assertIsDisplayed()
         compose.onNode(hasContentDescription("Pause Echoes of Silence")).assertIsDisplayed()
         compose.onNode(hasContentDescription("Cancel Echoes of Silence")).assertIsDisplayed()
         compose.onNode(hasContentDescription("Play Echoes of Silence")).assertDoesNotExist()
@@ -409,7 +409,7 @@ class DownloadsMockupTest {
                 )
             }
         }
-        compose.onNodeWithText("45% · 450 MB / 1.0 GB · 12.0 MB/s · about 45 sec left").assertIsDisplayed()
+        compose.onNodeWithText("45% · 450 MB / 1.0 GB · 12.0 MB/s · 45 sec left").assertIsDisplayed()
     }
 
     @Test
@@ -705,7 +705,7 @@ class DownloadsMockupTest {
             bytesPerSec = 12_000_000L,
             etaSeconds = 60L,
         )
-        assertEquals("45% · 450 MB / 1.0 GB · 12.0 MB/s · about 1 min left", deviceProgressLine(moving))
+        assertEquals("45% · 450 MB / 1.0 GB · 12.0 MB/s · 1 min left", deviceProgressLine(moving))
         val calculating = deviceFile(
             id = "d8",
             title = "Echoes of Silence",
@@ -763,7 +763,7 @@ class DownloadsMockupTest {
         compose.onNodeWithText("Example title").assertIsDisplayed()
         // D11: the sample row shows a download that is MOVING — the old
         // "calculating…" was the stale copy this round replaces.
-        compose.onNodeWithText("45% · 540 MB / 1.2 GB · 12.0 MB/s · about 1 min left").assertIsDisplayed()
+        compose.onNodeWithText("45% · 540 MB / 1.2 GB · 12.0 MB/s · 1 min left").assertIsDisplayed()
     }
 
     @Test
@@ -777,7 +777,7 @@ class DownloadsMockupTest {
             bytesTotal = 1_000_000_000L,
             bytesPerSec = 12_000_000L,
         )
-        assertEquals("45% · 450 MB / 1.0 GB · 12.0 MB/s · about 45 sec left", keepProgressLine(moving))
+        assertEquals("45% · 450 MB / 1.0 GB · 12.0 MB/s · 45 sec left", keepProgressLine(moving))
         val calculating = keep(
             id = "8",
             title = "Echoes of Silence",
