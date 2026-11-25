@@ -12,6 +12,7 @@ name: 🐍 Backend CI — Stdlib Python Tests
 #     - Fast_Fetch/test_vidout.py            (VIDOUT extractor tests)
 #     - Fast_Fetch/test_fix1_dispatch.py    (FIX1: vidout+gdrive dispatch)
 #     - Fast_Fetch/test_fix2_dispatch.py    (FIX2: mp4moviez dispatch)
+#     - Fast_Fetch/test_expiry_bank.py       (API-03: resolve-time expiry banking)
 #     - Fast_Fetch/test_catalog_v2.py        (v2 catalog projection)
 #     - Fast_Fetch/test_release_descriptor.py(release descriptor parsing)
 #     - Fast_Fetch/test_link_health.py       (link health prober; binds a
@@ -1134,6 +1135,15 @@ jobs:
       # Offline - loopback server mimicking the measured chain.
       - name: 🧪 test_unwrap_mp4moviez.py
         run: python3 -S Fast_Fetch/importers/test_unwrap_mp4moviez.py
+      # API-03 (Phase 4, 2026-11-24): bank expiry at resolve time for
+      # every signed host — parsed off the fresh URL (R2 SigV4, s+e,
+      # absolute e/exp) or the measured window for a token-bound origin
+      # with no parsable expiry (Google usercontent, 900 s) — in
+      # resolve_live_source and the HubCloud sibling bank, so the
+      # already-existing past-expiry serve guard fires. Offline —
+      # temp SQLite, stubbed unwrappers + gate probe.
+      - name: 🧪 test_expiry_bank.py
+        run: python3 -S Fast_Fetch/test_expiry_bank.py
       # XprimeHub (Session 104): the 19th site, 18+ adult catalog — scrape only.
       # The flag is the feature: every row is_18_plus = 1 by site authority, and the
       # registry entry records scrape-only / never publish. Offline — temp SQLite files.
