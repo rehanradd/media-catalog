@@ -139,12 +139,113 @@ class TestXprimeHubSitemap(unittest.TestCase):
             self.assertIn("midnight-web-series", rows[0][0])
 
 
+REST_PAGE_1 = json.dumps([
+    {"id": 9002, "date": "2026-11-23T01:58:45",
+     "slug": "midnight-web-series-s01-2026-hindi-720p-download",
+     "link": "https://xprimehub.pics/midnight-web-series-s01-2026-hindi-720p-download/"},
+    {"id": 9001, "date": "2026-11-22T10:00:00",
+     "slug": "stuck-analphoria-2026-english-adult-short-film-720p-download",
+     "link": "https://xprimehub.pics/stuck-analphoria-2026-english-adult-short-film-720p-download/"},
+])
+# Poisoned cross-page variant: page 1's body served for page 2.
+REST_PAGE_1_AGAIN = REST_PAGE_1
+REST_PAGE_2 = json.dumps([
+    {"id": 9000, "date": "2026-11-21T09:00:00",
+     "slug": "neon-nights-2026-hindi-720p-download",
+     "link": "https://xprimehub.pics/neon-nights-2026-hindi-720p-download/"},
+    {"id": 8999, "date": "2026-11-21T08:00:00",
+     "slug": "velvet-dreams-2026-hindi-720p-download",
+     "link": "https://xprimehub.pics/velvet-dreams-2026-hindi-720p-download/"},
+])
+REST_PAGE_3 = json.dumps([
+    {"id": 8998, "date": "2026-11-20T09:00:00",
+     "slug": "crimson-hour-2026-hindi-720p-download",
+     "link": "https://xprimehub.pics/crimson-hour-2026-hindi-720p-download/"},
+    {"id": 8997, "date": "2026-11-20T09:00:00", "slug": "adult",
+     "link": "https://xprimehub.pics/category/adult/"},
+])
+REST_HDRS = {"x-wp-total": "5", "x-wp-totalpages": "3"}
+
+
+def _rest_resp(text):
+    return (200, "https://xprimehub.pics/wp-json/wp/v2/posts", text, REST_HDRS)
+
+
+class TestXprimeHubRest(unittest.TestCase):
+    def test_sync_pages_rest_and_rejects_poisoned_variant(self):
+        client = MagicMock()
+        client.base_url = "https://xprimehub.pics"
+        client.get_with_headers.side_effect = [
+            _rest_resp(REST_PAGE_1),        # probe: page 1
+            _rest_resp(REST_PAGE_1_AGAIN),  # page 2, attempt 1: poisoned (page-1 body)
+            _rest_resp(REST_PAGE_2),        # page 2, attempt 2: clean
+            _rest_resp(REST_PAGE_3),        # page 3 (last): 1 post + 1 category link
+        ]
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "xprimehub.db"
+            n = import_xprimehub.sync_wp_rest_to_db(client, db_path, per_page=2)
+            self.assertEqual(n, 5)  # the /category/ link is excluded
+            with sqlite3.connect(str(db_path)) as conn:
+                rows = conn.execute(
+                    "SELECT loc, lastmod, slug, site FROM sitemap_cache"
+                    " WHERE site = 'xprimehub' ORDER BY loc"
+                ).fetchall()
+            self.assertEqual(len(rows), 5)
+            by_slug = {r[2]: r for r in rows}
+            midnight = by_slug["midnight-web-series-s01-2026-hindi-720p-download"]
+            self.assertEqual(midnight[1], "2026-11-23T01:58:45")  # WP date -> lastmod
+            self.assertTrue(all(r[3] == "xprimehub" for r in rows))
+            urls = [c.args[0] for c in client.get_with_headers.call_args_list]
+            self.assertEqual(len(urls), 4)  # the poisoned page cost one retry
+            self.assertTrue(all("wp-json/wp/v2/posts" in u for u in urls))
+            self.assertIn("per_page=2", urls[0])
+            self.assertIn("page=2", urls[1])
+
+    def test_unverifiable_page_is_skipped_not_truncating(self):
+        client = MagicMock()
+        client.base_url = "https://xprimehub.pics"
+        client.get_with_headers.side_effect = [
+            _rest_resp(REST_PAGE_1),        # probe: page 1
+            _rest_resp(REST_PAGE_1_AGAIN),  # page 2, attempt 1: poisoned
+            _rest_resp(REST_PAGE_1_AGAIN),  # page 2, attempt 2: poisoned again
+            _rest_resp(REST_PAGE_3),        # page 3: clean (ids below the floor)
+        ]
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "xprimehub.db"
+            n = import_xprimehub.sync_wp_rest_to_db(client, db_path, per_page=2,
+                                                    max_page_retries=2)
+            self.assertEqual(n, 3)  # pages 1 + 3; page 2 skipped, not truncating
+            with sqlite3.connect(str(db_path)) as conn:
+                locs = [r[0] for r in conn.execute(
+                    "SELECT loc FROM sitemap_cache WHERE site = 'xprimehub'")]
+            self.assertTrue(any("crimson-hour-2026-hindi-720p-download" in loc for loc in locs))
+            self.assertEqual(len(locs), 3)
+
+    def test_rest_non_200_stops_with_zero(self):
+        client = MagicMock()
+        client.base_url = "https://xprimehub.pics"
+        client.get_with_headers.return_value = (403, "https://xprimehub.pics/wp-json/wp/v2/posts", "", {})
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "xprimehub.db"
+            self.assertEqual(import_xprimehub.sync_wp_rest_to_db(client, db_path), 0)
+
+    def test_rest_non_json_stops_with_zero(self):
+        client = MagicMock()
+        client.base_url = "https://xprimehub.pics"
+        client.get_with_headers.return_value = (200, "https://xprimehub.pics/wp-json/wp/v2/posts", "not json", {})
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "xprimehub.db"
+            self.assertEqual(import_xprimehub.sync_wp_rest_to_db(client, db_path), 0)
+
+
 class TestXprimeHubRegistry(unittest.TestCase):
     def test_registry_entry_is_adult_scrape_only(self):
         reg_path = Path(__file__).parent / "domain_registry.json"
         reg = json.loads(reg_path.read_text())
         entry = reg["sites"]["xprimehub"]
         self.assertEqual(entry["active_base_url"], "https://xprimehub.pics")
+        self.assertEqual(entry["api_type"], "wp_rest_api")
+        self.assertIn("/wp-json/wp/v2/posts", entry.get("api_endpoint", ""))
         self.assertIn("18+", entry.get("notes", ""))
         self.assertIn("never publish", entry.get("notes", ""))
 

@@ -16,6 +16,13 @@ without the adult-flag hiding proof in the Session 104 checkpoint.
 Key Features:
   1. Dedicated staging SQLite database: xprimehub.db (isolated from production fast_fetch.db).
   2. Full sitemap sync across the post-sitemap1..5 sub-sitemaps.
+  2a. WP REST seed (``/wp-json/wp/v2/posts``, X-WP-Total 7,296 proven
+      live 2026-11-23) into the same sitemap_cache queue the scraper
+      reads. The site's edge cache serves random stale page bodies for
+      the REST route, so the seed validates every page (full count +
+      strictly-decreasing post ids) and skips pages it cannot verify —
+      in practice only the newest ~200 posts (pages 1-2) are reachable
+      this way; the sitemap seed is the full enumeration.
   3. Nexdrive bridge extraction (one per post, "Download Now") with mirror
      resolution (fastdl / vcloud / vegadrive / filepress via fast_fetch unwrappers,
      everything else stored as-is with the domain as the service).
@@ -25,6 +32,7 @@ Key Features:
 
 Usage:
     python Fast_Fetch/import_xprimehub.py --sync-sitemap              # Ingest all sitemap URLs
+    python Fast_Fetch/import_xprimehub.py --sync-rest                 # Seed queue from WP REST posts
     python Fast_Fetch/import_xprimehub.py --limit 10                  # Scrape 10 pending titles
     python Fast_Fetch/import_xprimehub.py --workers 5 --delay 0.3    # Full background run
     python Fast_Fetch/import_xprimehub.py --status                    # Show current database counts
@@ -103,7 +111,14 @@ class XprimeHubClient:
                 time.sleep(self._next_request_at - now)
             self._next_request_at = time.monotonic() + self.request_interval
 
-    def get_text(self, url: str, referer: str | None = None, timeout: int = 15) -> tuple[int, str, str]:
+    def _fetch(self, url: str, referer: str | None = None, timeout: int = 15) -> tuple[int, str, str, dict]:
+        """One GET with retries. Returns (status, final_url, text, headers).
+
+        Headers are lower-cased. A transport failure after all retries is
+        (0, url, "", {}). ``get_text`` is the headers-free view of this;
+        ``get_with_headers`` is the full view (the WP REST sync needs
+        ``X-WP-Total`` to page reliably).
+        """
         headers = {
             "User-Agent": fast_fetch.USER_AGENT,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.9,*/*;q=0.8",
@@ -119,19 +134,31 @@ class XprimeHubClient:
             self._wait()
             try:
                 with urllib.request.urlopen(req, timeout=timeout, context=self.ssl_ctx) as resp:
-                    code = resp.status
-                    final_url = resp.geturl()
                     text = resp.read().decode("utf-8", errors="replace")
-                    return code, final_url, text
+                    hdrs = {k.lower(): v for k, v in resp.headers.items()}
+                    return resp.status, resp.geturl(), text, hdrs
             except urllib.error.HTTPError as e:
                 if attempt == self.retries - 1:
-                    return e.code, url, ""
+                    try:
+                        hdrs = {k.lower(): v for k, v in e.headers.items()} if e.headers else {}
+                    except Exception:
+                        hdrs = {}
+                    return e.code, url, "", hdrs
                 time.sleep(1.0)
             except Exception:
                 if attempt == self.retries - 1:
-                    return 0, url, ""
+                    return 0, url, "", {}
                 time.sleep(1.0)
-        return 0, url, ""
+        return 0, url, "", {}
+
+    def get_text(self, url: str, referer: str | None = None, timeout: int = 15) -> tuple[int, str, str]:
+        status, final_url, text, _hdrs = self._fetch(url, referer=referer, timeout=timeout)
+        return status, final_url, text
+
+    def get_with_headers(self, url: str, referer: str | None = None, timeout: int = 15) -> tuple[int, str, str, dict]:
+        """Like get_text but also returns the lower-cased response headers."""
+        return self._fetch(url, referer=referer, timeout=timeout)
+
 
 
 def sync_sitemap_to_db(client: XprimeHubClient, db_path: Path) -> int:
@@ -190,6 +217,157 @@ def sync_sitemap_to_db(client: XprimeHubClient, db_path: Path) -> int:
 
     print(f"[✓] Successfully populated {len(records):,} URLs into sitemap_cache in {db_path.name}\n", flush=True)
     return len(records)
+
+
+def _is_post_link(link: str, base_url: str) -> bool:
+    """A WP REST ``link`` worth queueing: on this host, not a taxonomy/page URL."""
+    if not link or not link.startswith(base_url):
+        return False
+    return not any(k in link for k in ["/category/", "/tag/", "/page/"])
+
+
+def sync_wp_rest_to_db(client: XprimeHubClient, db_path: Path, per_page: int = 100,
+                       max_page_retries: int = 8) -> int:
+    """Seeds sitemap_cache from the open WP REST posts route (proven live
+    2026-11-23: X-WP-Total 7296, no auth).
+
+    POISONED EDGE CACHE (measured 2026-11-23, Oracle VM egress): the same
+    ``/wp-json/wp/v2/posts?per_page=100&page=N`` URL answers at random with
+    one of several cached bodies — the per_page=1 body (1 item), the
+    per_page=2 body (2 items), page 1's 100-item body, or page 2's 100-item
+    body — all HTTP 200, all ``cf-cache-status: HIT``, for ANY page number.
+    A cache-buster query param does NOT help and neither do no-cache request
+    headers: the cache key ignores the query string. So this sync NEVER
+    trusts a page at face value. It reads ``X-WP-Total`` (7296 in every
+    variant), derives the page count, and accepts a page only when it
+    returns its full expected item count AND every queued post id is
+    strictly below every id accepted so far (WP lists newest-first, so a
+    later page's ids must all be older). A page that never fills in after
+    ``max_page_retries`` is logged and skipped — the sync continues instead
+    of truncating the catalog at a poisoned page, and the sitemap seed
+    still covers the skipped URLs. In practice the edge cache only ever
+    serves the page-1 and page-2 bodies, so a REST seed covers at most the
+    newest ~200 posts (measured live 2026-11-23: pages 3-73 all skipped);
+    the sitemap seed is the full enumeration. Queueing is identical to
+    ``sync_sitemap_to_db`` (same columns, same site tag) so the existing
+    page scraper picks the queue up unchanged. The WP post date lands in
+    ``lastmod``; the WP post id has no column in this schema and is not
+    stored.
+    """
+    fast_fetch.DB_PATH = db_path
+    fast_fetch.init_db()
+
+    def _fetch_page(page: int):
+        url = (f"{client.base_url}/wp-json/wp/v2/posts"
+               f"?per_page={per_page}&page={page}&_fields=id,date,slug,link")
+        status, _, text, headers = client.get_with_headers(url)
+        if status != 200 or not text:
+            return None, None, status
+        try:
+            items = json.loads(text)
+        except json.JSONDecodeError:
+            return None, None, status
+        if not isinstance(items, list):
+            return None, None, status
+        total = None
+        try:
+            total = int((headers or {}).get("x-wp-total") or 0) or None
+        except (TypeError, ValueError):
+            total = None
+        return items, total, status
+
+    probe_items, total, status = _fetch_page(1)
+    if probe_items is None:
+        print(f"[!] WP REST page 1 -> {status}; nothing seeded.", flush=True)
+        return 0
+    if total is None:
+        # No total header (offline/mock client): fall back to paging until a
+        # short or empty page, the pre-2026-11-23 behaviour.
+        total_pages = None
+    else:
+        total_pages = max(1, -(-total // per_page))
+
+    queued: list[tuple] = []
+    failed_pages: list[int] = []
+    floor_id: int | None = None  # smallest post id accepted so far
+    page = 1
+    pending_first = probe_items  # page 1 already fetched once
+    while True:
+        if total_pages is not None and page > total_pages:
+            break
+        if total_pages is None:
+            want = per_page
+        elif page < total_pages:
+            want = per_page
+        else:
+            want = max(0, total - per_page * (total_pages - 1))
+        accepted = None
+        for _ in range(max_page_retries):
+            if pending_first is not None:
+                items_p = pending_first
+                pending_first = None
+            else:
+                items_p, _, _ = _fetch_page(page)
+            if items_p is None:
+                continue
+            kept = [it for it in items_p if isinstance(it, dict)
+                    and _is_post_link((it.get("link") or "").strip(), client.base_url)]
+            if total_pages is None and len(kept) < per_page:
+                accepted = kept  # fallback mode: a short page IS the last page
+                break
+            if len(kept) < want:
+                continue  # poisoned short variant — retry
+            ids = [it.get("id") for it in kept if isinstance(it.get("id"), int)]
+            if ids and floor_id is not None and max(ids) >= floor_id:
+                continue  # poisoned cross-page variant — retry
+            accepted = kept
+            break
+        if accepted is None:
+            failed_pages.append(page)
+            print(f"[!] WP REST page {page}: no clean copy after"
+                  f" {max_page_retries} tries; skipped.", flush=True)
+            if total_pages is None:
+                break
+            page += 1
+            continue
+        ids = [it.get("id") for it in accepted if isinstance(it.get("id"), int)]
+        if ids:
+            floor_id = min(ids) if floor_id is None else min(floor_id, min(ids))
+        for item in accepted:
+            link = (item.get("link") or "").strip()
+            queued.append((link, (item.get("date") or None),
+                           (item.get("slug") or link.rstrip("/").split("/")[-1]),
+                           0, "xprimehub"))
+        print(f"    [REST] page {page}: {len(accepted)} posts,"
+              f" {len(queued)} queued so far.", flush=True)
+        if total_pages is None and len(accepted) < per_page:
+            break
+        page += 1
+
+    unique = list(dict.fromkeys(queued))
+    with fast_fetch._DB_WRITE_LOCK:
+        with fast_fetch.get_db() as conn:
+            for start in range(0, len(unique), 2000):
+                chunk = unique[start:start + 2000]
+                conn.executemany(
+                    """
+                    INSERT INTO sitemap_cache (loc, lastmod, slug, scraped, site)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(loc) DO UPDATE SET
+                        lastmod = COALESCE(excluded.lastmod, sitemap_cache.lastmod),
+                        slug = excluded.slug,
+                        site = excluded.site;
+                    """,
+                    chunk,
+                )
+
+    print(f"[✓] WP REST seeded {len(unique):,} post URLs into sitemap_cache"
+          f" in {db_path.name}", flush=True)
+    if failed_pages:
+        print(f"[!] WP REST pages skipped (poisoned cache, no clean copy):"
+              f" {failed_pages}", flush=True)
+    print(flush=True)
+    return len(unique)
 
 
 def is_valid_download_link(href: str) -> bool:
@@ -584,6 +762,7 @@ def parse_args():
     parser.add_argument("--base-url", default=None, help="Base origin URL (default: registry live domain)")
     parser.add_argument("--db-path", default=str(DEFAULT_DB_PATH), help="Target SQLite staging database")
     parser.add_argument("--sync-sitemap", action="store_true", help="Download and sync sitemap XML to database")
+    parser.add_argument("--sync-rest", action="store_true", help="Seed sitemap_cache from the WP REST posts route")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of titles to scrape")
     parser.add_argument("--workers", type=int, default=5, help="Worker threads (default: 5)")
     parser.add_argument("--delay", type=float, default=0.3, help="Delay between requests per worker (s)")
@@ -613,6 +792,17 @@ def main():
                 print(f"[!] XprimeHub: sync found 0 posts and the cached domain is dead; chain found {new_base}; retrying once", flush=True)
                 client = XprimeHubClient(new_base, request_interval=args.delay)
                 sync_sitemap_to_db(client, db_path)
+        return
+
+    if args.sync_rest:
+        count = sync_wp_rest_to_db(client, db_path)
+        if count == 0:
+            # Empty sync: retry once on the chain's verdict, and only then.
+            new_base = resolve_if_dead(SITE_NAME)
+            if new_base:
+                print(f"[!] XprimeHub: REST sync found 0 posts and the cached domain is dead; chain found {new_base}; retrying once", flush=True)
+                client = XprimeHubClient(new_base, request_interval=args.delay)
+                sync_wp_rest_to_db(client, db_path)
         return
 
     run_xprimehub_scraper(
