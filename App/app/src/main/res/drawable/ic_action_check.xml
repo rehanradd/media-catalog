@@ -2,8 +2,14 @@
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="24"
-    android:viewportHeight="24">
+    android:viewportHeight="24"
+>
+    <!-- S8 (round 2, Nov 2026): the house check glyph — Feather "check", as strokes. Same stroke style as the tab icons. Replaces Icons.Default.Check on SeasonScreen's watched tiles and download rows, and marks watched episodes on Detail's episode row. -->
     <path
-        android:fillColor="#FF000000"
-        android:pathData="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+        android:fillColor="@android:color/transparent"
+        android:pathData="M20 6L9 17l-5-5"
+        android:strokeWidth="2"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"/>
 </vector>

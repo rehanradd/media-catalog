@@ -720,6 +720,14 @@ internal fun trimMetaLineToWordBoundary(text: String, cutIndex: Int): String {
  * 2024 · ★ 8.6 · Series" — and alone when nothing else paints ("97%
  * Match", never "97% Match · " with a dangling separator). Null means no
  * match to paint: the line is exactly as before.
+ *
+ * S2 (round 2, Nov 2026): the brief's year · duration · quality
+ * convention is adopted on the Detail hero meta ([detailMetaParts]),
+ * NOT here. [Post] carries no duration and no quality — a card cannot
+ * paint either without inventing it, and a meta line must never read an
+ * invented value. If the server projection ever carries duration and
+ * quality per post, this line can gain them (backend follow-up, not
+ * this round); until then rating · year · type stands.
  */
 internal fun posterMetaLine(post: Post, compact: Boolean, matchPercent: Int? = null): String {
     val match = matchPercent?.let { "$it% Match" }

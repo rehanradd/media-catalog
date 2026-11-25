@@ -440,11 +440,17 @@ tasks.withType<Test>().configureEach {
                 includeTestsMatching("com.raddstream.app.ui.PaparazziPreviewTest")
                 includeTestsMatching("com.raddstream.app.ui.PlayerLandscapePaparazziTest")
                 includeTestsMatching("com.raddstream.app.ui.navigation.BottomNavLargeFontPaparazziTest")
+                // Round 2 (Detail, Nov 2026): the 1.3x detail shots are
+                // Paparazzi-rule classes too — without the include the
+                // record/verify runs never execute them, and without the
+                // exclude below the plain run dies at Bridge.init.
+                includeTestsMatching("com.raddstream.app.ui.screens.DetailLargeFontPaparazziTest")
             } else {
                 excludeTestsMatching("com.raddstream.app.ui.PaparazziPreviewTest")
                 excludeTestsMatching("com.raddstream.app.ui.PlayerLandscapePaparazziTest")
                 excludeTestsMatching("com.raddstream.app.ui.DownloadsPaparazziTest")
                 excludeTestsMatching("com.raddstream.app.ui.navigation.BottomNavLargeFontPaparazziTest")
+                excludeTestsMatching("com.raddstream.app.ui.screens.DetailLargeFontPaparazziTest")
             }
         }
     }

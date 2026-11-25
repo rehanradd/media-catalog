@@ -27,11 +27,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -59,6 +54,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -69,6 +65,7 @@ import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.raddstream.app.R
 import com.raddstream.app.player.QualityOption
+import com.raddstream.app.ui.components.ShimmerBox
 import com.raddstream.app.ui.layout.CardGeometry
 import com.raddstream.app.viewmodel.BatchEpisodeTarget
 import com.raddstream.app.viewmodel.DetailNavigationEvent
@@ -267,24 +264,36 @@ fun SeasonScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = onBackClick) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(painterResource(R.drawable.ic_player_back), contentDescription = "Back")
                     }
                 },
             )
         },
     ) { paddingValues ->
         when {
-            state.isLoading -> Box(
+            state.isLoading -> LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(paddingValues),
-                contentAlignment = Alignment.Center,
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text(
-                    text = "Loading season…",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                // DT-3 (round 2): the loading state mirrors the real
+                // layout — two button bars + tile rows — never a bare
+                // spinner or a "Loading season…" line. A shimmer that
+                // looks like the page is what the home rails already do.
+                item { ShimmerBox(modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(24.dp)) }
+                item { ShimmerBox(modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(24.dp)) }
+                items(4) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        repeat(6) {
+                            ShimmerBox(
+                                modifier = Modifier.weight(1f).aspectRatio(CardGeometry.SEASON_TILE_ASPECT),
+                                shape = RoundedCornerShape(12.dp),
+                            )
+                        }
+                    }
+                }
             }
             // MX #7 — Kids Lock: the filtered layout never carries a refused
             // season, and a defensive miss reads the same as a refused one —
@@ -365,12 +374,12 @@ fun SeasonScreen(
                                     .heightIn(min = 48.dp),
                             ) {
                                 Icon(
-                                    Icons.Default.PlayArrow,
+                                    painterResource(R.drawable.ic_player_play),
                                     contentDescription = null,
                                     modifier = Modifier.size(18.dp),
                                 )
                                 Spacer(Modifier.size(8.dp))
-                                Text(if (state.playStarting) stringResource(R.string.detail_starting) else viewModel.seasonPlayLabel(season.number))
+                                Text(if (state.playStarting) state.playStage ?: stringResource(R.string.detail_starting) else viewModel.seasonPlayLabel(season.number))
                             }
                             if (!state.kidsMode) {
                                 OutlinedButton(
@@ -381,7 +390,7 @@ fun SeasonScreen(
                                         .heightIn(min = 48.dp),
                                 ) {
                                     Icon(
-                                        Icons.Default.Download,
+                                        painterResource(R.drawable.ic_action_download),
                                         contentDescription = null,
                                         modifier = Modifier.size(18.dp),
                                     )
@@ -457,6 +466,19 @@ fun SeasonScreen(
                             )
                         }
                     }
+                    // DT-3 (round 2): the tile legend — the same marks
+                    // the detail page's episode row explains, so a
+                    // viewer who arrives here from the row already
+                    // knows what the jade tile and the tick mean.
+                    if (tiles.isNotEmpty()) {
+                        item {
+                            Text(
+                                text = stringResource(R.string.detail_episode_legend),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                     items(pageTiles.chunked(6), key = { row -> "tile-row-${row.first().number}" }) { row ->
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             row.forEach { tile ->
@@ -503,7 +525,7 @@ fun SeasonScreen(
                                     .heightIn(min = 48.dp),
                             ) {
                                 Icon(
-                                    Icons.Default.Download,
+                                    painterResource(R.drawable.ic_action_download),
                                     contentDescription = null,
                                     modifier = Modifier.size(18.dp),
                                 )
@@ -626,7 +648,7 @@ internal fun EpisodeTile(
         )
         if (tile.watched && !tile.isNext) {
             Icon(
-                Icons.Default.Check,
+                painterResource(R.drawable.ic_action_check),
                 contentDescription = null,
                 modifier = Modifier
                     .align(Alignment.TopEnd)
@@ -710,7 +732,7 @@ internal fun EpisodeDownloadSheet(
                     }
                     if (row.downloaded) {
                         Icon(
-                            Icons.Default.Check,
+                            painterResource(R.drawable.ic_action_check),
                             contentDescription = "Saved",
                             modifier = Modifier
                                 .padding(end = 16.dp)
@@ -777,7 +799,7 @@ internal fun SeasonPackRow(
                 modifier = Modifier.heightIn(min = 48.dp),
             ) {
                 Icon(
-                    Icons.Default.PlayArrow,
+                    painterResource(R.drawable.ic_player_play),
                     contentDescription = null,
                     modifier = Modifier.size(18.dp),
                 )
@@ -790,7 +812,7 @@ internal fun SeasonPackRow(
                 modifier = Modifier.heightIn(min = 48.dp),
             ) {
                 Icon(
-                    Icons.Default.Download,
+                    painterResource(R.drawable.ic_action_download),
                     contentDescription = null,
                     modifier = Modifier.size(18.dp),
                 )

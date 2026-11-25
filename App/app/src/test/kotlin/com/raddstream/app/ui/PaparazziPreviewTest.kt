@@ -44,6 +44,7 @@ import com.raddstream.app.player.QualityOption
 import com.raddstream.app.ui.components.PosterCard
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.screens.DetailContent
+import com.raddstream.app.ui.screens.EpisodeRowSection
 import com.raddstream.app.ui.screens.EpisodeTile
 import com.raddstream.app.ui.screens.SeasonPackRow
 import com.raddstream.app.ui.screens.SeasonTile
@@ -66,6 +67,7 @@ import com.raddstream.app.ui.screens.ZoomResetChip
 import com.raddstream.app.ui.screens.SearchContent
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.EpisodeGroup
+import com.raddstream.app.viewmodel.EpisodeProgress
 import com.raddstream.app.viewmodel.HomeFilter
 import com.raddstream.app.viewmodel.HomeMood
 import com.raddstream.app.viewmodel.HomeSection
@@ -887,6 +889,79 @@ class PaparazziPreviewTest {
                     ),
                     lockedQualityBands = setOf("1080p"),
                     selectedBand = "720p",
+                )
+            }
+        }
+    }
+
+    // DT-3 (round 2, Nov 2026): the episode row's golden. The row lives
+    // below the fold of the full detail page (the LazyColumn only
+    // composes the viewport), so it is shot on its own, like the season
+    // tiles below: E1 watched (tick), E2 next (jade "Next" mark), a
+    // per-episode download icon on each card, and the legend line above
+    // the row. The fixture has two seasons, so the S1/S2 chips above
+    // the row are part of the shot too.
+    @Test
+    fun detailEpisodeRow() {
+        paparazzi.snapshot {
+            themed {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    EpisodeRowSection(
+                        seasons = seriesSeasons,
+                        selectedSeason = 1,
+                        episodeProgress = mapOf(
+                            (1 to 1) to EpisodeProgress(fraction = 1f, watched = true, remainingLabel = null),
+                        ),
+                        nextEpisode = 1 to 2,
+                        onSelectSeason = {},
+                        onPlayEpisode = { _, _ -> },
+                        onDownloadEpisode = { _, _ -> },
+                    )
+                }
+            }
+        }
+    }
+
+    // DT-1 (round 2, Nov 2026): the Play button mid-resolve, in situ —
+    // the determinate arc at 0.55 with the stage label ("Finding the
+    // best copy…") on the movie page. A full-page shot, not a direct
+    // PrimaryActions shot: PrimaryActions stays private (SkeletonParityTest
+    // reads it by that signature), and the button sits above the fold,
+    // so the page shot proves the arc renders where viewers see it.
+    @Test
+    fun detailMovieResolving() {
+        paparazzi.snapshot {
+            themed {
+                DetailContent(
+                    post = jawanDetail,
+                    seasons = emptyList(),
+                    workPrints = moviePrints,
+                    capabilities = listOf("Hindi audio"),
+                    isSeries = false,
+                    resume = null,
+                    includedPill = "VIP",
+                    playLabel = "Play",
+                    playEnabled = true,
+                    // DT-1: the resolve is mid-flight — the button
+                    // paints the determinate arc + stage label, not a
+                    // bare "Starting…" swap.
+                    playStarting = true,
+                    playProgress = 0.55f,
+                    playStage = "Finding the best copy…",
+                    videoQualityText = "Auto · up to 1080p",
+                    downloadLabel = "Download · 1080p · 1.3 GB",
+                    downloadEnabled = true,
+                    onOpenSeason = {},
+                    similarTitles = listOf(salaars, mclintock),
+                    reloadError = null,
+                    onRetryReload = {},
+                    isFavorite = false,
+                    onToggleFavorite = {},
+                    onShare = {},
+                    contentPadding = PaddingValues(0.dp),
                 )
             }
         }

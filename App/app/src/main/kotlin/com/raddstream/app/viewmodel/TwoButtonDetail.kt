@@ -455,3 +455,64 @@ fun freeSpaceVerdictFor(freeBytes: Long, sizeBytes: Long?): FreeSpaceVerdict {
 /** "Not enough space. This needs 1.2 GB, you have 800 MB free." — plain words, real numbers. */
 fun notEnoughSpaceMessage(neededBytes: Long, freeBytes: Long): String =
     "Not enough space. This needs ${QualityOption.formatBytes(neededBytes)}, you have ${QualityOption.formatBytes(freeBytes)} free."
+
+// ── DT-1 (round 2): determinate progress on the Play button ──
+
+/**
+ * DT-1 (Nov 2026, round 2): the Play button is the progress surface —
+ * a determinate arc inside the jade pill tied to the resolve's real
+ * pipeline stages, so the button itself shows how far the tap has got
+ * instead of swapping its label to "Starting…". The fractions are
+ * STAGE fractions, not a timer: a stage's fraction is only published
+ * after that stage actually completed, so the arc can never run ahead
+ * of the work or fake progress the resolver cannot report. The one
+ * slow stage is the server bundle call; the local staging before it
+ * and the player handoff after it are near-instant, so the arc moves
+ * 0.20 → 0.55 → 0.85 and clears on navigation. Pure, so the mapping
+ * pins here without a ViewModel.
+ */
+enum class PlayResolveStage {
+    /** Tap accepted; local staging (failover / ladder / sync scope) done. */
+    PREPARING,
+    /** The server bundle call is in flight — the slow stage. */
+    FINDING_COPY,
+    /** Bundle received and staged; the player handoff is next. */
+    STARTING_PLAYBACK,
+}
+
+/** The determinate fraction a stage publishes — strictly increasing, never 0 or 1. */
+fun playResolveProgress(stage: PlayResolveStage): Float = when (stage) {
+    PlayResolveStage.PREPARING -> 0.20f
+    PlayResolveStage.FINDING_COPY -> 0.55f
+    PlayResolveStage.STARTING_PLAYBACK -> 0.85f
+}
+
+/** The stage's plain-words label, painted on the Play button while it resolves. */
+fun playResolveStageLabel(stage: PlayResolveStage): String = when (stage) {
+    PlayResolveStage.PREPARING -> "Preparing…"
+    PlayResolveStage.FINDING_COPY -> "Finding the best copy…"
+    PlayResolveStage.STARTING_PLAYBACK -> "Starting playback…"
+}
+
+// ── DT-3 (round 2): the episode row's current season ──
+
+/**
+ * DT-3 (Nov 2026, round 2): which season the Detail page's episode
+ * row shows — the season of the next episode to watch, else the resume
+ * season, else the first season on the page. A season the layout does
+ * not carry is never returned. Pure, so the default pins here.
+ */
+fun defaultEpisodeRowSeason(
+    layout: ReleaseLayout?,
+    progress: Map<Pair<Int, Int>, EpisodeProgress>,
+    resume: ResumePoint?,
+): Int? {
+    if (layout == null) return null
+    val numbers = layout.seasons.map { it.number }
+    if (numbers.isEmpty()) return null
+    val next = nextUnwatchedEpisode(layout, progress)?.first
+    if (next != null && next in numbers) return next
+    val resumed = resume?.season?.takeIf { it in numbers }
+    if (resumed != null) return resumed
+    return numbers.first()
+}

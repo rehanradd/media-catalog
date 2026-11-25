@@ -51,9 +51,12 @@ object RaddTokens {
 
     /** Radii — one radius language (benchmark §14). */
     object Radius {
-        /** Posters: 16 (2027 brief 16–20dp cards; was 8dp M3 small — the
-         *  re-rate capped Cards at 79 on the unresolved 10dp/12dp radius,
-         *  so the poster corner is the card radius now). */
+        /**
+         * Posters: 16 (brief's 16-20dp card radius, round 2 - was 8dp.
+         * The 10dp/12dp the plan called unresolved was the token (8dp)
+         * against the Material medium shape (12dp); the brief decides
+         * it: 16dp, the same radius as [Card].)
+         */
         val Poster: Dp = 16.dp
         /** Thumbnails: 6-8. */
         val Thumb: Dp = 8.dp
