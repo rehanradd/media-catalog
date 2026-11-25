@@ -697,10 +697,15 @@ class TestLiveDashboardAnalyticsPolish(LiveBase):
         self.assertTrue(csv.startswith("day,catalog_works,projection_age_h"))
         self.assertIn("2026-11-05,3,", csv)
 
-    def test_tuning_consumers_labelled_honest(self):
+    def test_tuning_consumers_all_wired(self):
         consumers = self.svc.tuning_consumers(self.owner)
-        self.assertEqual(consumers["resolver_concurrency"],
-                         "stored, not yet applied by the backend")
+        # PNL-07: no tuning control is stored-only any more — the
+        # backend knobs name their panel_feed reader, the app knobs
+        # ride remote-config / the panel feed.
+        self.assertIn("panel_feed.tuning_knob",
+                      consumers["resolver_concurrency"])
+        self.assertNotIn("stored, not yet applied by the backend",
+                         consumers.values())
         self.assertIn("remote-config", consumers["free_quality_cap"])
         self.assertIn("remote-config", consumers["theme_mode"])
         self.assertIn("remote-config", consumers["hero_max"])
