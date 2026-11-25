@@ -11,6 +11,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.text.KeyboardOptions
@@ -202,6 +203,14 @@ internal val settingsHelperStyle = TextStyle(
     lineHeight = brandSp(16),
     color = RaddSettingsHelper,
 )
+
+/**
+ * ST2 (round 2): the entrance stagger between groups — each group fades +
+ * slides in [SettingsGroupStaggerMs] after the previous one. Named, not an
+ * inline literal, so the round-3 test can pin the value directly.
+ * Internal for the same reason as the type styles above.
+ */
+internal const val SettingsGroupStaggerMs = 70L
 
 /**
  * ST5: the search match — a card matches when the query is blank (everything
@@ -580,46 +589,6 @@ internal fun SettingsContent(
                 ),
                 modifier = Modifier.fillMaxWidth(),
             )
-
-            // ── Resolve test (debug-only harness, plan §8) ─────────────
-            // A manual field-test screen, never a production feature: it
-            // mints direct links from the baked sample list and records the
-            // measurements. The row exists only in DEBUG builds.
-            if (BuildConfig.DEBUG) {
-                SettingsCard(title = stringResource(R.string.resolve_test_title)) {
-                    Text(
-                        stringResource(R.string.resolve_test_intro),
-                        style = settingsHelperStyle,
-                    )
-                    OutlinedButton(
-                        onClick = onOpenResolveTest,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-
-                    ) {
-                        Text(stringResource(R.string.resolve_test_open))
-                    }
-                    OutlinedButton(
-                        onClick = onOpenPressTest,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-
-                    ) {
-                        Text(stringResource(R.string.press_test_open))
-                    }
-                    // APP-13 (review B-2): the button renders only when the
-                    // diagnostics implementation is enabled — in release the
-                    // bus is the NoOp and this row never appears.
-                    if (showDiagnostics) {
-                        OutlinedButton(
-                            onClick = onOpenDiagnostics,
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-
-                        ) {
-                            Text(stringResource(R.string.diagnostics_open))
-                        }
-                    }
-                }
-            }
-
 
             SettingsGroup(index = 0, visible = showAccountGroup) {
                 SettingsGroupHeader(
@@ -1656,6 +1625,47 @@ internal fun SettingsContent(
                 }
             }
 
+            // ── Resolve test (debug-only harness, plan §8) ─────────────
+            // A manual field-test screen, never a production feature: it
+            // mints direct links from the baked sample list and records the
+            // measurements. The row exists only in DEBUG builds.
+            // ST1 (round 3): the harness sits BELOW the user-facing groups
+            // now — debug-only content was the screen's first impression.
+            if (BuildConfig.DEBUG) {
+                SettingsCard(title = stringResource(R.string.resolve_test_title)) {
+                    Text(
+                        stringResource(R.string.resolve_test_intro),
+                        style = settingsHelperStyle,
+                    )
+                    OutlinedButton(
+                        onClick = onOpenResolveTest,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+
+                    ) {
+                        Text(stringResource(R.string.resolve_test_open))
+                    }
+                    OutlinedButton(
+                        onClick = onOpenPressTest,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+
+                    ) {
+                        Text(stringResource(R.string.press_test_open))
+                    }
+                    // APP-13 (review B-2): the button renders only when the
+                    // diagnostics implementation is enabled — in release the
+                    // bus is the NoOp and this row never appears.
+                    if (showDiagnostics) {
+                        OutlinedButton(
+                            onClick = onOpenDiagnostics,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+
+                        ) {
+                            Text(stringResource(R.string.diagnostics_open))
+                        }
+                    }
+                }
+            }
+
             // ST5: a query that matches nothing says so, with a way back —
             // a dead end with no exit is worse than no search at all.
             if (searchQuery.isNotBlank() && !anyCardVisible) {
@@ -1752,7 +1762,6 @@ private fun SettingsGroupHeader(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(top = 16.dp)
             .semantics { heading() },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -1781,10 +1790,20 @@ private fun SettingsGroupHeader(
  * The entrance is Home's rail pattern: in inspection mode the group
  * renders immediately, because Paparazzi never advances its frozen clock
  * — in a golden every group would otherwise stay invisible. On a phone
- * each group fades + slides in 70ms after the previous one; under reduced
- * motion there is no stagger and no slide, only an instant fade.
+ * each group fades + slides in [SettingsGroupStaggerMs] after the previous
+ * one; under reduced motion there is no stagger and no slide, only an
+ * instant fade.
  * The [visible] flag is the search filter — typing a query animates the
  * groups out and back with the same spring.
+ *
+ * ST1 (round 3): the mega-card — the whole group (pastel header + its
+ * cards) sits on ONE elevated surface (surfaceContainerHigh, 1dp
+ * outlineVariant border, 16dp radius, 16dp inset), so the five groups
+ * read as five distinct cards with clear separation, not a flat list of
+ * tonal panels. The inner cards keep their per-group fills — on the
+ * raised mega-card they read as inset tonal panels. The 8dp grid holds
+ * (16dp gaps, 16dp insets, 16dp radius); the header's own top padding
+ * is gone because the mega-card's inset provides it now.
  */
 @Composable
 private fun SettingsGroup(
@@ -1798,7 +1817,7 @@ private fun SettingsGroup(
     var entered by remember { mutableStateOf(inInspectionMode || reduceMotion) }
     LaunchedEffect(Unit) {
         if (inInspectionMode || reduceMotion) return@LaunchedEffect
-        delay(index * 70L)
+        delay(index * SettingsGroupStaggerMs)
         entered = true
     }
     AnimatedVisibility(
@@ -1826,7 +1845,16 @@ private fun SettingsGroup(
         modifier = modifier,
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(RaddTokens.Radius.Card))
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                .border(
+                    width = 1.dp,
+                    color = MaterialTheme.colorScheme.outlineVariant,
+                    shape = RoundedCornerShape(RaddTokens.Radius.Card),
+                )
+                .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             content()
