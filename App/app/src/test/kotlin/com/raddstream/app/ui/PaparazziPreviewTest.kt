@@ -1161,20 +1161,27 @@ class PaparazziPreviewTest {
         val pagingDataFlow = MutableStateFlow(pagingData)
         paparazzi.snapshot {
             themed {
-                val pagingItems = pagingDataFlow.collectAsLazyPagingItems()
-                SearchContent(
-                    state = state,
-                    pagingItems = pagingItems,
-                    groups = groups,
-                    onRunQuery = {},
-                    onRemoveRecent = {},
-                    onResetFilters = {},
-                    onQueryChanged = {},
-                    onShowCloseMatches = {},
-                    onShowExactOnly = {},
-                    onRunSuggestion = {},
-                    onPostClick = {},
-                )
+                // Round 2 (Search): the result rows stagger in on the phone
+                // (SearchStaggeredFade) — under inspection mode they start
+                // visible, so the golden shows what the phone shows after
+                // the entrance, not the pre-entrance empty list. Same
+                // provision as the Home goldens (see HomeScreen's rail).
+                CompositionLocalProvider(LocalInspectionMode provides true) {
+                    val pagingItems = pagingDataFlow.collectAsLazyPagingItems()
+                    SearchContent(
+                        state = state,
+                        pagingItems = pagingItems,
+                        groups = groups,
+                        onRunQuery = {},
+                        onRemoveRecent = {},
+                        onResetFilters = {},
+                        onQueryChanged = {},
+                        onShowCloseMatches = {},
+                        onShowExactOnly = {},
+                        onRunSuggestion = {},
+                        onPostClick = {},
+                    )
+                }
             }
         }
     }
@@ -1273,6 +1280,23 @@ class PaparazziPreviewTest {
                     genre = GenreFilter.ACTION,
                     industry = IndustryFilter.BOLLYWOOD,
                 ),
+            ),
+        )
+    }
+
+    @Test
+    fun searchNoResultsTrending() {
+        // APP-07 (Phase 4): the no-results state with a spelling
+        // suggestion and a loaded Trending rail — the way forward, not a
+        // dead end. The searchEmpty / searchEmptyFiltered goldens refresh
+        // in the same record run: they shoot this same state without
+        // trending or a suggestion.
+        shotSearch(
+            SearchUiState(
+                query = "avngers",
+                hasSearched = true,
+                didYouMean = "avengers",
+                trending = homePosts,
             ),
         )
     }

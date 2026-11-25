@@ -439,6 +439,7 @@ tasks.withType<Test>().configureEach {
             if (paparazziRun) {
                 includeTestsMatching("com.raddstream.app.ui.PaparazziPreviewTest")
                 includeTestsMatching("com.raddstream.app.ui.PlayerLandscapePaparazziTest")
+                includeTestsMatching("com.raddstream.app.ui.SearchLargeFontPaparazziTest")
                 includeTestsMatching("com.raddstream.app.ui.navigation.BottomNavLargeFontPaparazziTest")
                 // Round 2 (Detail, Nov 2026): the 1.3x detail shots are
                 // Paparazzi-rule classes too - without the include the
@@ -461,6 +462,7 @@ tasks.withType<Test>().configureEach {
             } else {
                 excludeTestsMatching("com.raddstream.app.ui.PaparazziPreviewTest")
                 excludeTestsMatching("com.raddstream.app.ui.PlayerLandscapePaparazziTest")
+                excludeTestsMatching("com.raddstream.app.ui.SearchLargeFontPaparazziTest")
                 excludeTestsMatching("com.raddstream.app.ui.DownloadsPaparazziTest")
                 excludeTestsMatching("com.raddstream.app.ui.DownloadsPaparazziLargeFontTest")
                 excludeTestsMatching("com.raddstream.app.ui.navigation.BottomNavLargeFontPaparazziTest")

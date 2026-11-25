@@ -177,6 +177,85 @@ data class SearchFilters(
 data class TypeGroup(val label: String, val typeKey: String?, val items: List<Post>)
 
 /**
+ * SE-2 (round 2): how many filter combinations the viewer may keep. The
+ * screen disables "Save this filter" at this cap, and [SearchViewModel.saveCurrentFilters]
+ * drops the oldest when a new save would exceed it. The repository stores
+ * only what it is given, so this is the single cap — nothing else enforces one.
+ */
+const val MaxSavedFilters = 8
+
+/** The field separator inside one encoded saved filter (U+001E, record separator). */
+private const val SAVED_FILTER_FIELD_SEPARATOR = "\u001E"
+
+/**
+ * SE-2 (round 2): one kept filter combination — the filters plus the sort,
+ * so applying it restores the whole search, not just the facets. Stored as
+ * one string (see [encoded]): nine fields in fixed order, joined by
+ * U+001E; the repository joins whole filters with U+001F. Enum values
+ * travel by NAME, not wire value — a server rename must never silently
+ * change what a saved filter means — and an unknown name decodes to null
+ * (the entry is dropped, never guessed at).
+ */
+data class SavedSearchFilter(
+    val filters: SearchFilters,
+    val sort: SearchSort = SearchSort.DEFAULT,
+) {
+    /** The chip's label: the active facets, years and sort, in sheet order. */
+    val label: String
+        get() = buildList {
+            addAll(activeFilterSummary(filters))
+            if (sort != SearchSort.DEFAULT) add(sort.label)
+        }.joinToString(" · ").ifEmpty { "All titles" }
+
+    /** The stored form: nine fields, fixed order, U+001E-separated. */
+    val encoded: String
+        get() = listOf(
+            filters.type ?: "",
+            filters.industry.name,
+            filters.genre.name,
+            filters.quality.name,
+            filters.language.name,
+            filters.yearFrom?.toString() ?: "",
+            filters.yearTo?.toString() ?: "",
+            if (filters.includedOnly) "1" else "0",
+            sort.name,
+        ).joinToString(SAVED_FILTER_FIELD_SEPARATOR)
+
+    companion object {
+        fun from(filters: SearchFilters, sort: SearchSort) = SavedSearchFilter(filters, sort)
+    }
+}
+
+/**
+ * SE-2: decode one stored saved filter, or null when the string is not a
+ * filter this build recognises — a corrupt or future-version entry is
+ * dropped, never applied as a guess. Pure, so a test can pin the
+ * round-trip without a ViewModel (see SavedSearchFilterTest).
+ */
+internal fun decodeSavedSearchFilter(encoded: String): SavedSearchFilter? {
+    val parts = encoded.split(SAVED_FILTER_FIELD_SEPARATOR)
+    if (parts.size != 9) return null
+    val industry = runCatching { IndustryFilter.valueOf(parts[1]) }.getOrNull() ?: return null
+    val genre = runCatching { GenreFilter.valueOf(parts[2]) }.getOrNull() ?: return null
+    val quality = runCatching { QualityFilter.valueOf(parts[3]) }.getOrNull() ?: return null
+    val language = runCatching { LanguageFilter.valueOf(parts[4]) }.getOrNull() ?: return null
+    val sort = runCatching { SearchSort.valueOf(parts[8]) }.getOrNull() ?: return null
+    return SavedSearchFilter(
+        filters = SearchFilters(
+            type = parts[0].ifEmpty { null },
+            industry = industry,
+            genre = genre,
+            quality = quality,
+            language = language,
+            yearFrom = parts[5].toIntOrNull(),
+            yearTo = parts[6].toIntOrNull(),
+            includedOnly = parts[7] == "1",
+        ),
+        sort = sort,
+    )
+}
+
+/**
  * How many results to claim, in words the viewer can trust.
  *
  * [loaded] is what this device has paged in and passed the client-side filters;
@@ -210,6 +289,7 @@ internal fun activeFilterSummary(filters: SearchFilters): List<String> = buildLi
     if (filters.quality != QualityFilter.ALL) add(filters.quality.label)
     if (filters.language != LanguageFilter.ALL) add(filters.language.label)
     val year = when {
+        filters.yearFrom != null && filters.yearFrom == filters.yearTo -> "${filters.yearFrom}"
         filters.yearFrom != null && filters.yearTo != null -> "${filters.yearFrom}–${filters.yearTo}"
         filters.yearFrom != null -> "From ${filters.yearFrom}"
         filters.yearTo != null -> "To ${filters.yearTo}"
@@ -341,6 +421,12 @@ data class SearchUiState(
      * state — not a second server call.
      */
     val showExactOnly: Boolean = false,
+    /**
+     * SE-2 (round 2): the filter combinations this install kept, oldest
+     * first, capped at [MaxSavedFilters]. The screen renders them as the
+     * saved-filter row above the rail; an empty list hides the row.
+     */
+    val savedFilters: List<SavedSearchFilter> = emptyList(),
     /**
      * MX #7 — Kids Lock: when on, the screen reads through the `visible*`
      * getters below instead of the raw lists. The raw lists stay whole
@@ -543,6 +629,15 @@ class SearchViewModel @Inject constructor(
                 _uiState.update { it.copy(recents = stored) }
             }
         }
+        // SE-2 (round 2): the kept filter combinations, same pattern as
+        // recents — hydrate from the persisted encoded list and keep
+        // following it. An entry that no longer decodes is dropped here,
+        // never applied as a guess.
+        viewModelScope.launch {
+            settingsRepository.savedSearchFilters.collect { encoded ->
+                _uiState.update { it.copy(savedFilters = encoded.mapNotNull(::decodeSavedSearchFilter)) }
+            }
+        }
         // MX #7 — Kids Lock: one flag from DataStore. Flipping it only
         // flips the flag — the raw lists stay whole underneath, so the
         // screen re-reads through the `visible*` getters with no re-fetch,
@@ -727,6 +822,42 @@ class SearchViewModel @Inject constructor(
             )
         }
         scheduleSearch()
+    }
+
+    /**
+     * SE-2 (round 2): keep the current combination as a one-tap row above
+     * the results. No-op while nothing is active (there is nothing to
+     * keep) and when this exact combination is already saved. At the cap
+     * the oldest goes, so the newest save always lands. The store's flow
+     * echoes the list back; the init collect decodes it into state.
+     */
+    fun saveCurrentFilters() {
+        val current = _uiState.value
+        if (!current.hasActiveFilters) return
+        val saved = SavedSearchFilter.from(current.filters, current.sort)
+        val existing = current.savedFilters
+        if (existing.any { it.encoded == saved.encoded }) return
+        val next = (existing + saved).takeLast(MaxSavedFilters)
+        _uiState.update { it.copy(savedFilters = next) }
+        viewModelScope.launch { settingsRepository.saveSavedSearchFilters(next.map { it.encoded }) }
+    }
+
+    /**
+     * SE-2: re-apply a kept combination — the filters, the sort, and a
+     * fresh search for them. The query is untouched: a saved filter scopes
+     * the search, it does not restate it.
+     */
+    fun applySavedFilter(saved: SavedSearchFilter) {
+        _uiState.update { it.copy(filters = saved.filters, sort = saved.sort) }
+        scheduleSearch()
+    }
+
+    /** SE-2: one saved filter's × — drop it and persist the shorter list. */
+    fun removeSavedFilter(saved: SavedSearchFilter) {
+        val next = _uiState.value.savedFilters.filterNot { it == saved }
+        if (next == _uiState.value.savedFilters) return
+        _uiState.update { it.copy(savedFilters = next) }
+        viewModelScope.launch { settingsRepository.saveSavedSearchFilters(next.map { it.encoded }) }
     }
 
     /**

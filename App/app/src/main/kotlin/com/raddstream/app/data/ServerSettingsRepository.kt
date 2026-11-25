@@ -229,6 +229,32 @@ class ServerSettingsRepository @Inject constructor(
     }
 
     /**
+     * SE-2 (round 2): the filter combinations this install kept, oldest
+     * first. Persisted because a saved filter that empties on every restart
+     * is not a kept filter. Stored as one separator-joined string of
+     * encoded filters (see SavedSearchFilter in the search ViewModel):
+     * one encoded filter per entry, joined by U+001F — the same separator
+     * the recents use, and safe here because an encoded filter never
+     * contains it (its field separator is U+001E). The ViewModel owns the
+     * cap ([MaxSavedFilters]) and the encode/decode; this store keeps
+     * exactly what it is given, and an empty list clears the key.
+     */
+    val savedSearchFilters: Flow<List<String>> = dataStore.data.map { preferences ->
+        preferences[SAVED_SEARCH_FILTERS_KEY]
+            ?.split(SAVED_SEARCH_FILTERS_SEPARATOR)
+            ?.filter { it.isNotEmpty() }
+            ?: emptyList()
+    }
+
+    suspend fun saveSavedSearchFilters(encoded: List<String>) {
+        val cleaned = encoded.filter { it.isNotEmpty() }.distinct()
+        dataStore.edit { preferences ->
+            if (cleaned.isEmpty()) preferences.remove(SAVED_SEARCH_FILTERS_KEY)
+            else preferences[SAVED_SEARCH_FILTERS_KEY] = cleaned.joinToString(SAVED_SEARCH_FILTERS_SEPARATOR)
+        }
+    }
+
+    /**
      * The sync account's key, or null when this install is signed out — which is the
      * default and stays the default until the viewer presses the button.
      *
@@ -1269,6 +1295,7 @@ class ServerSettingsRepository @Inject constructor(
         private val DEFAULT_QUALITY_KEY = stringPreferencesKey("player_default_quality")
         private val ACCOUNT_LABEL_KEY = stringPreferencesKey("account_label")
         private val SEARCH_RECENTS_KEY = stringPreferencesKey("search_recents")
+        private val SAVED_SEARCH_FILTERS_KEY = stringPreferencesKey("saved_search_filters")
         private val IMAGE_QUALITY_KEY = stringPreferencesKey("image_quality")
         private val MOBILE_DATA_KEY = booleanPreferencesKey("mobile_data_allowed")
         private val DATA_SAVER_KEY = booleanPreferencesKey("data_saver")
@@ -1354,6 +1381,14 @@ internal const val SEARCH_RECENTS_MAX = 20
  * list always round-trips to exactly the queries that produced it.
  */
 private const val SEARCH_RECENTS_SEPARATOR = "\u001F"
+
+/**
+ * SE-2 (round 2): the separator between whole encoded saved filters in the
+ * stored string. U+001F, the same separator the recents use — an encoded
+ * filter never contains it (its fields are U+001E-separated), so a stored
+ * list always round-trips to exactly the filters that produced it.
+ */
+private const val SAVED_SEARCH_FILTERS_SEPARATOR = "\u001F"
 
 /** Trim, drop blanks, strip the separator, dedupe (newest wins), and cap the list. */
 internal fun normalizeSearchRecents(values: List<String>): List<String> =
