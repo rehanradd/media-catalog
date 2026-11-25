@@ -2,6 +2,9 @@ package com.raddstream.app.ui.screens
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -83,7 +86,7 @@ import com.raddstream.app.viewmodel.MyListUiState
 import com.raddstream.app.viewmodel.MyListViewModel
 import com.raddstream.app.viewmodel.filterMyList
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalSharedTransitionApi::class)
 @Composable
 fun MyListScreen(
     onPostClick: (Post) -> Unit,
@@ -98,6 +101,15 @@ fun MyListScreen(
      */
     onPlayClick: (Post) -> Unit = {},
     viewModel: MyListViewModel = hiltViewModel(),
+    /**
+     * Round 6 motion infra: the shared-transition scopes the NavHost
+     * passes in. Null outside navigation (Paparazzi previews, tests) —
+     * sharedElement() calls no-op and the screen renders exactly as
+     * before. Screen branches thread these into their poster/hero
+     * sharedElement() calls; this branch only carries them.
+     */
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
 ) {
     val state by viewModel.uiState.collectAsState()
     val popularSettled by viewModel.popularSettled.collectAsState()

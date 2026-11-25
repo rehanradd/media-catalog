@@ -4,6 +4,8 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -390,6 +392,7 @@ private fun NavHostController.navigateToPost(post: Post, autoplay: Boolean = fal
     }
 }
 
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun RaddStreamNavGraph(
     navController: NavHostController = rememberNavController(),
@@ -584,6 +587,14 @@ fun RaddStreamNavGraph(
         // on the motion tokens (250–320 ms); reduced-motion users get a pure
         // 30 ms alpha crossfade, never movement.
         val reduceMotion = rememberReduceMotion()
+        // Round 6 motion infra: the shared-transition scope lives here —
+        // every poster→hero sharedElement() in the graph animates inside
+        // this layout. The scope is captured once and handed to the four
+        // destinations that use shared elements (Home, Search, My List,
+        // Detail); the settled render is unchanged, so no golden moves.
+        // The NavHost body keeps its indentation — only this wrap is new.
+        SharedTransitionLayout {
+            val sharedTransitionScope = this
         NavHost(
             navController = navController,
             startDestination = startDestination,
@@ -710,6 +721,10 @@ fun RaddStreamNavGraph(
                     // dialog below; the mode itself rides the ViewModels.
                     kidsMode = kidsMode,
                     onExitKidsMode = { exitPinRequested = true },
+                    // Round 6 motion infra: the shared-transition scopes —
+                    // Home's posters animate into Detail's hero on this key.
+                    sharedTransitionScope = sharedTransitionScope,
+                    animatedVisibilityScope = this,
                 )
             }
 
@@ -776,6 +791,10 @@ fun RaddStreamNavGraph(
                     onBrowse = { type -> navController.navigate(Screen.Browse.createRoute(type)) },
                     // Audit Search #3: the error state offers "Open Settings".
                     onOpenSettings = { navController.navigate(Screen.Settings.route) },
+                    // Round 6 motion infra: the shared-transition scopes —
+                    // Search's posters animate into Detail's hero on this key.
+                    sharedTransitionScope = sharedTransitionScope,
+                    animatedVisibilityScope = this,
                     onPlayDirectUrl = { url, title ->
                         // The address is staged, never routed: the player
                         // opens the opaque key and reads the address from
@@ -795,6 +814,10 @@ fun RaddStreamNavGraph(
             composable(Screen.MyList.route) {
                 MyListScreen(
                     onPostClick = { post -> navController.navigateToPost(post) },
+                    // Round 6 motion infra: the shared-transition scopes —
+                    // My List's posters animate into Detail's hero on this key.
+                    sharedTransitionScope = sharedTransitionScope,
+                    animatedVisibilityScope = this,
                     // APP-06 (Phase 4): one-tap play — the saved tile's
                     // play button opens Detail with autoplay, the same
                     // instant-play path Home's rail tiles use, so the tap
@@ -1049,6 +1072,10 @@ fun RaddStreamNavGraph(
                     },
                     onPostClick = { similar -> navController.navigateToPost(similar) },
                     onOpenLanguages = { navController.navigate(Screen.Languages.route) },
+                    // Round 6 motion infra: the shared-transition scopes —
+                    // the hero carries the same poster key as its source.
+                    sharedTransitionScope = sharedTransitionScope,
+                    animatedVisibilityScope = this,
                 )
             }
 
@@ -1245,6 +1272,7 @@ fun RaddStreamNavGraph(
                     },
                 )
             }
+        }
         }
 
         // MX #7 — Kids Lock: the exit PIN, raised by the Home banner. It
