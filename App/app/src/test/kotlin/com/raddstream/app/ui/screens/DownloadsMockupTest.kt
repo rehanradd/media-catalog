@@ -130,9 +130,12 @@ class DownloadsMockupTest {
         compose.onNode(hasContentDescription("Cancel Echoes of Silence")).assertIsDisplayed()
         compose.onNode(hasContentDescription("Play Echoes of Silence")).assertDoesNotExist()
         // D21: the quality is a badge now — "1080p" never truncates — and
-        // the rest of the label shares one short line with the size.
+        // the size is its own node, so it never truncates either (the
+        // joined "High bitrate · 1.0 GB" string cut the size to "·…" on
+        // rows with action buttons; the remainder flexes instead).
         compose.onNodeWithText("1080p").assertIsDisplayed()
-        compose.onNodeWithText("High bitrate · 1.0 GB").assertIsDisplayed()
+        compose.onNodeWithText("High bitrate").assertIsDisplayed()
+        compose.onNodeWithText("1.0 GB").assertIsDisplayed()
     }
 
     @Test
@@ -330,7 +333,8 @@ class DownloadsMockupTest {
         compose.onNode(hasContentDescription("Pause Severance")).assertDoesNotExist()
         // D15: a finished row says so in words, with the jade check beside it.
         compose.onNodeWithText("Downloaded ✓ — plays here or in any video player").assertIsDisplayed()
-        compose.onNodeWithText("High bitrate · 1.3 GB").assertIsDisplayed()
+        compose.onNodeWithText("High bitrate").assertIsDisplayed()
+        compose.onNodeWithText("1.3 GB").assertIsDisplayed()
     }
 
     @Test

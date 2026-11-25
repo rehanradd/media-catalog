@@ -1389,14 +1389,27 @@ private fun DownloadMetaLine(
         modifier = Modifier.semantics { contentDescription = printLabelDescription },
     ) {
         badge?.let { QualityBadge(it) }
-        val meta = listOfNotNull(rest, sizeText).joinToString(" · ")
-        if (meta.isNotEmpty()) {
+        // The remainder flexes (weight) so the size is never the part the
+        // ellipsis eats: joining them into one string truncated the size
+        // to "·…" on rows with action buttons (Paparazzi, 07cae2c3). The
+        // size is a separate node that always paints in full — it is the
+        // only place the total shows on a gated or ready row.
+        if (rest != null) {
             Text(
-                meta,
+                rest,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        sizeText?.let {
+            Text(
+                it,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
             )
         }
     }
