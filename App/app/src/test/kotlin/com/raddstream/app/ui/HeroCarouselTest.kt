@@ -43,18 +43,18 @@ class HeroCarouselTest {
         imdbRating = imdbRating,
     )
 
-    // Home review (Nov 2026): one meta line — "Season 1–2 · Reality ·
-    // 2026" — under the title, not four separate pills. The seasons are
+    // Home review (Nov 2026): one meta line — "2026 · Season 1–2 ·
+    // Reality" — under the title, not four separate pills. The seasons are
     // normalised to a range, the genre reads capitalised, and the parts
     // join with " · " — never a raw list like "[1, 2] | reality | 2026".
     @Test
     fun metaLineJoinsSeasonsGenreAndYear() {
-        assertEquals("Season 1–2 · Reality · 2026", heroMetaLine(post(seasons = "S1-S2", genres = "Reality", year = 2026)))
+        assertEquals("2026 · Season 1–2 · Reality", heroMetaLine(post(seasons = "S1-S2", genres = "Reality", year = 2026)))
     }
 
     @Test
     fun metaLineSkipsMissingParts() {
-        assertEquals("Action · 2023", heroMetaLine(post(genres = "Action", year = 2023)))
+        assertEquals("2023 · Action", heroMetaLine(post(genres = "Action", year = 2023)))
         assertEquals("2024", heroMetaLine(post(year = 2024)))
         assertEquals("Season 1–3", heroMetaLine(post(seasons = "S01–S03", year = 0)))
     }
@@ -72,34 +72,35 @@ class HeroCarouselTest {
 
     @Test
     fun metaLineTakesTheFirstGenreOnly() {
-        assertEquals("Action · 2023", heroMetaLine(post(genres = "Action, Thriller", year = 2023)))
+        assertEquals("2023 · Action", heroMetaLine(post(genres = "Action, Thriller", year = 2023)))
     }
 
     // E2 Ratings (Nov 2026): the hero is the one big surface that never
-    // painted a rating. It leads the meta line, rating-first like the rail
-    // meta line, and only when the catalog really has one — a missing,
+    // painted a rating. The year leads the meta line (S2 round 2), the
+    // rating rides after it like the rail meta line, and only when the
+    // catalog really has one — a missing,
     // zero or unparseable value leaves the slot out, never a 0.0.
     @Test
-    fun metaLineLeadsWithTheRatingWhenTheCatalogHasOne() {
+    fun metaLineLeadsWithTheYearAndCarriesTheRating() {
         assertEquals(
-            "★ 8.6 · Season 1–2 · Reality · 2026",
+            "2026 · ★ 8.6 · Season 1–2 · Reality",
             heroMetaLine(post(seasons = "S1-S2", genres = "Reality", year = 2026, imdbRating = "8.6")),
         )
-        assertEquals("★ 7.0 · Action · 2023", heroMetaLine(post(genres = "Action", year = 2023, imdbRating = "7")))
+        assertEquals("2023 · ★ 7.0 · Action", heroMetaLine(post(genres = "Action", year = 2023, imdbRating = "7")))
     }
 
     @Test
     fun metaLineSkipsAnAbsentOrDishonestRating() {
-        assertEquals("Action · 2023", heroMetaLine(post(genres = "Action", year = 2023, imdbRating = null)))
-        assertEquals("Action · 2023", heroMetaLine(post(genres = "Action", year = 2023, imdbRating = "")))
-        assertEquals("Action · 2023", heroMetaLine(post(genres = "Action", year = 2023, imdbRating = "0")))
-        assertEquals("Action · 2023", heroMetaLine(post(genres = "Action", year = 2023, imdbRating = "abc")))
-        assertEquals("Action · 2023", heroMetaLine(post(genres = "Action", year = 2023, imdbRating = "101")))
+        assertEquals("2023 · Action", heroMetaLine(post(genres = "Action", year = 2023, imdbRating = null)))
+        assertEquals("2023 · Action", heroMetaLine(post(genres = "Action", year = 2023, imdbRating = "")))
+        assertEquals("2023 · Action", heroMetaLine(post(genres = "Action", year = 2023, imdbRating = "0")))
+        assertEquals("2023 · Action", heroMetaLine(post(genres = "Action", year = 2023, imdbRating = "abc")))
+        assertEquals("2023 · Action", heroMetaLine(post(genres = "Action", year = 2023, imdbRating = "101")))
     }
 
     @Test
     fun metaLineDividesTheOldHundredScale() {
-        assertEquals("★ 8.6 · 2023", heroMetaLine(post(year = 2023, imdbRating = "86")))
+        assertEquals("2023 · ★ 8.6", heroMetaLine(post(year = 2023, imdbRating = "86")))
     }
 
     @Test
