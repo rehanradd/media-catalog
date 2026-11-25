@@ -124,6 +124,58 @@ internal fun homeFilterMatches(section: HomeSection, filter: HomeFilter): Boolea
     }
 }
 
+/**
+ * H9 (2027 Home fix, round 2): mood filters — "Something short", "Feel
+ * good", "Mind-bending", "Dark & gritty". A discovery prompt, not a
+ * category: the moods filter the rails below the mood row (which sits
+ * after the Top 10 chart), where the sticky category row under the hero
+ * is the navigation. Null means no mood — every rail shows.
+ */
+enum class HomeMood(val label: String) {
+    Short("Something short"),
+    FeelGood("Feel good"),
+    MindBending("Mind-bending"),
+    DarkGritty("Dark & gritty"),
+    ;
+}
+
+/**
+ * Whether this post matches the mood. Pure, so the chip filter is
+ * testable. The predicates are honest heuristics over fields the list
+ * row actually carries — genres, animation flag, content type — never a
+ * claim about data the row does not have:
+ *
+ * - Short: a film is one sitting; a series is a commitment. No duration
+ *   field exists on the list wire ([Post] carries none — duration lives
+ *   only on Detail's `PostDetail.runtimeMinutes`), so "short" is the
+ *   type, not a runtime claim, and the tiles paint no duration.
+ * - Feel good: Comedy / Family / Romance / Animation — or any animated
+ *   title (animation reads as feel-good even when the genre list does
+ *   not say so).
+ * - Mind-bending: Sci-Fi / Thriller / Mystery.
+ * - Dark & gritty: Crime / Horror / Thriller. (Thriller matches both
+ *   moods — a title can be mind-bending AND dark; the filter narrows,
+ *   it does not sort into one box.)
+ *
+ * Genre matching is case-insensitive on the post's [Post.genreList]
+ * (already placeholder-filtered), with the "Sci-Fi" / "Science Fiction"
+ * spellings unified.
+ */
+internal fun moodMatchesPost(post: Post, mood: HomeMood?): Boolean {
+    if (mood == null) return true
+    return when (mood) {
+        HomeMood.Short -> post.contentType == "movie"
+        HomeMood.FeelGood -> post.isAnimated == true ||
+            post.genreList.any { it.lowercase() in FeelGoodGenres }
+        HomeMood.MindBending -> post.genreList.any { it.lowercase() in MindBendingGenres }
+        HomeMood.DarkGritty -> post.genreList.any { it.lowercase() in DarkGrittyGenres }
+    }
+}
+
+private val FeelGoodGenres = setOf("comedy", "family", "romance", "animation", "musical")
+private val MindBendingGenres = setOf("sci-fi", "science fiction", "scifi", "thriller", "mystery", "psychological")
+private val DarkGrittyGenres = setOf("crime", "horror", "thriller")
+
 data class HomeSection(
     val key: String,
     val title: String,

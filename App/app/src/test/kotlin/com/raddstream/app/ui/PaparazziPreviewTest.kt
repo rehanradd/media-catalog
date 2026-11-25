@@ -56,6 +56,7 @@ import com.raddstream.app.ui.screens.ChipRow
 import com.raddstream.app.ui.screens.EdgeFeedbackLine
 import com.raddstream.app.ui.screens.EdgeHud
 import com.raddstream.app.ui.screens.HomeContent
+import com.raddstream.app.ui.screens.HomeMoodRow
 import com.raddstream.app.ui.screens.Hud
 import com.raddstream.app.ui.screens.MyListEmptyContent
 import com.raddstream.app.ui.screens.MyListLoadedContent
@@ -63,6 +64,8 @@ import com.raddstream.app.ui.screens.TopBar
 import com.raddstream.app.ui.screens.SearchContent
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.EpisodeGroup
+import com.raddstream.app.viewmodel.HomeFilter
+import com.raddstream.app.viewmodel.HomeMood
 import com.raddstream.app.viewmodel.HomeSection
 import com.raddstream.app.viewmodel.GenreFilter
 import com.raddstream.app.viewmodel.HomeUiState
@@ -435,6 +438,31 @@ class PaparazziPreviewTest {
                 // renders its entrance as already over when it is set.
                 CompositionLocalProvider(LocalInspectionMode provides true) {
                     HomeContent(state = loadedHome, heroAutoplay = false)
+                }
+            }
+        }
+    }
+
+    /**
+     * H9 (2027 Home fix, round 2): the mood row as a standalone golden —
+     * the homeLoaded viewport (461×1000) shows the hero, chips, CW and
+     * rail 1, so the mood row below rail 1 never reaches the golden.
+     * "Feel good" is selected here so the golden pins the selected state
+     * (jade tint + bold label) next to the unselected moods.
+     */
+    @Test
+    fun homeMoodRow() {
+        paparazzi.snapshot {
+            themed {
+                // Audit #3: see homeLoaded — the mood row's entrance is a
+                // real-time animation, so inspection mode renders it as
+                // already over.
+                CompositionLocalProvider(LocalInspectionMode provides true) {
+                    HomeMoodRow(
+                        selected = HomeMood.FeelGood,
+                        onSelect = {},
+                        filter = HomeFilter.All,
+                    )
                 }
             }
         }

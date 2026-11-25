@@ -125,11 +125,13 @@ import com.raddstream.app.ui.theme.RaddTokens
 import com.raddstream.app.update.InAppUpdate
 import kotlinx.coroutines.delay
 import com.raddstream.app.viewmodel.HomeFilter
+import com.raddstream.app.viewmodel.HomeMood
 import com.raddstream.app.viewmodel.HomeSection
 import com.raddstream.app.viewmodel.HomeUiState
 import com.raddstream.app.viewmodel.ResumeTile
 import com.raddstream.app.viewmodel.HomeViewModel
 import com.raddstream.app.viewmodel.homeFilterMatches
+import com.raddstream.app.viewmodel.moodMatchesPost
 import com.raddstream.app.viewmodel.homeSyncLine
 import com.raddstream.app.viewmodel.selectHeroSection
 import com.raddstream.app.viewmodel.visibleHomeRows
@@ -401,6 +403,10 @@ internal fun HomeContent(
     // The filter chips are UI-local state: they filter the rails already on
     // screen, so no ViewModel round-trip and no reload on a tap.
     var filter by remember { mutableStateOf(HomeFilter.All) }
+    // H9: the mood filter — UI-local like `filter`, for the same reason:
+    // it narrows the rails below the mood row, so no ViewModel round-trip
+    // and no reload on a tap. Null means no mood.
+    var mood by remember { mutableStateOf<HomeMood?>(null) }
     // Home fix (Nov 2026): the feed is a LazyColumn now — the old scrolling
     // Column composed every rail at once, so first paint waited on the whole
     // catalog and a low-end phone held all of it in memory. The lazy list
@@ -457,6 +463,15 @@ internal fun HomeContent(
             seenWorks = next
             section.copy(items = kept)
         }
+
+    // H9: the mood narrows only the rails BELOW the mood row — the Top 10
+    // chart (rail 1) is a ranking, not a catalogue, so it never filters.
+    // The mood row sits between rail 1 and the rest (see below). A rail
+    // the mood empties drops out — unless it is loading or carries an
+    // error, which stay exactly as they do for the category filter.
+    val moodRows = renderedRows.drop(1).map { section ->
+        section.copy(items = section.items.filter { moodMatchesPost(it, mood) })
+    }.filter { it.items.isNotEmpty() || it.loading || it.error != null }
 
     // Hero (Nov 2026): warm the hero art the moment the hero items are
     // known, so first paint has art, not placeholders. The helper is a
@@ -753,6 +768,25 @@ internal fun HomeContent(
                     )
                 }
             }
+            // H9 (2027 Home fix, round 2): the mood row — "Something short",
+            // "Feel good", "Mind-bending", "Dark & gritty" — sits directly
+            // above the genre rails, after the Top 10 chart (rail 1 above).
+            // A filter belongs next to the content it filters; the sticky
+            // category row under the hero is the navigation, this row is a
+            // discovery prompt. It filters only the rails below it
+            // (moodRows); the Top 10 chart never filters. Tapping the
+            // active mood clears it. Hidden when there is only the chart
+            // and no genre rail below it — a filter with nothing to filter
+            // is chrome, not discovery.
+            if (renderedRows.size > 1) {
+                item(key = "mood") {
+                    HomeMoodRow(
+                        selected = mood,
+                        onSelect = { chosen -> mood = if (chosen == mood) null else chosen },
+                        filter = filter,
+                    )
+                }
+            }
             // Gap A6: the first-run card — one-shot, after first browse,
             // only when CW + favorites are empty (see showPickThree). The
             // visit latch clears when the card leaves composition: the
@@ -805,10 +839,13 @@ internal fun HomeContent(
             }
 
             // The remaining rails (rail 2 onward) — the first rail was
-            // emitted above, so Pick 3 sits between rail 1 and rail 2.
+            // emitted above, so the mood row and Pick 3 sit between rail 1
+            // and rail 2. H9: these are the mood-filtered rails (moodRows)
+            // — the category filter already narrowed them above, the mood
+            // narrows them here, and a rail the mood empties is gone.
             // The stagger index continues from 1, so the entrance
             // animation does not restart at the first rail.
-            renderedRows.drop(1).forEachIndexed { dropIndex, section ->
+            moodRows.forEachIndexed { dropIndex, section ->
                 val index = dropIndex + 1
                 item(key = "rail:${section.key}") {
                     HomeRailSection(
@@ -834,6 +871,29 @@ internal fun HomeContent(
                         // the pool it draws from. Every other rail passes null
                         // and keeps its header exactly as it was.
                         onPlaySomething = if (section.forYou) onPlaySomething else null,
+                    )
+                }
+            }
+            // H9: a mood that matches nothing in the rails below is not a
+            // broken catalog — say so, and offer the way back. This never
+            // fires while a rail is still loading: an empty mood on a
+            // half-loaded feed would blame the mood for the network. It
+            // also never fires when the category filter already hid every
+            // rail — that has its own message below.
+            if (mood != null && renderedRows.isNotEmpty() && moodRows.isEmpty() &&
+                state.visibleSections.none { it.loading } && state.fatal == null
+            ) {
+                item(key = "emptyMood") {
+                    EmptyState(
+                        // H5: the empty-mood result announces itself.
+                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                        title = "Nothing feels like that right now.",
+                        message = "Try another mood, or show everything.",
+                        action = {
+                            OutlinedButton(onClick = { mood = null }) {
+                                Text("Clear mood")
+                            }
+                        },
                     )
                 }
             }
@@ -942,6 +1002,8 @@ internal fun HomeContent(
 /** The header's tap targets for the header test. */
 internal const val HomeLogoTag = "homeLogo"
 internal const val HomeFilterRowTag = "homeFilterRow"
+/** H9: the mood row, so tests can find it without the labels. */
+internal const val HomeMoodRowTag = "homeMoodRow"
 /** The feed itself, so tests can scroll it deterministically by index. */
 internal const val HomeFeedTag = "homeFeed"
 
@@ -1021,6 +1083,70 @@ internal fun HomeFilterRow(
                 },
                 modifier = Modifier.testTag("filterChip_${filter.name}"),
             )
+        }
+    }
+}
+
+/**
+ * H9 (2027 Home fix, round 2): the mood row — "Something short", "Feel
+ * good", "Mind-bending", "Dark & gritty" — a discovery prompt, not a
+ * navigation. Rides [ScrollingChipRow] + [RaddChip] like the category
+ * row, so the fade and the 48dp touch floor are the shared component.
+ * Tapping the active mood clears it (that toggle lives in [HomeContent],
+ * where the state sits).
+ *
+ * Award lift: the row animates in with the S7 spring when the category
+ * changes — a fresh `filter` value recreates the entrance state, so the
+ * row settles in instead of appearing pasted on. In inspection mode it
+ * renders immediately, so the golden shows what the phone shows after
+ * the entrance. Reduced-motion users get a plain fade, never the rise —
+ * the same guard [HomeRailSection] uses.
+ */
+@Composable
+internal fun HomeMoodRow(
+    selected: HomeMood?,
+    onSelect: (HomeMood) -> Unit,
+    /** The category filter, so the row re-enters when the category changes. */
+    filter: HomeFilter,
+    modifier: Modifier = Modifier,
+) {
+    val inInspectionMode = LocalInspectionMode.current
+    val reduceMotion = rememberReduceMotion()
+    var visible by remember(filter) { mutableStateOf(inInspectionMode) }
+    LaunchedEffect(filter) {
+        if (inInspectionMode) return@LaunchedEffect
+        visible = true
+    }
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(
+            animationSpec = if (reduceMotion) snap() else RaddMotion.defaultEffects(),
+        ) + if (reduceMotion) {
+            EnterTransition.None
+        } else {
+            slideInVertically(
+                initialOffsetY = { it / 4 },
+                animationSpec = RaddMotion.defaultSpatial(),
+            )
+        },
+    ) {
+        ScrollingChipRow(
+            modifier = modifier,
+            rowTestTag = HomeMoodRowTag,
+        ) {
+            items(HomeMood.entries) { mood ->
+                RaddChip(
+                    selected = mood == selected,
+                    onClick = { onSelect(mood) },
+                    label = {
+                        Text(
+                            mood.label,
+                            fontWeight = if (mood == selected) FontWeight.Bold else FontWeight.Normal,
+                        )
+                    },
+                    modifier = Modifier.testTag("moodChip_${mood.name}"),
+                )
+            }
         }
     }
 }
