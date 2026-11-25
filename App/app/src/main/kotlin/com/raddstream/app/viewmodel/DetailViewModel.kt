@@ -1287,38 +1287,6 @@ class DetailViewModel @Inject constructor(
     }
 
     /**
-     * Audit Detail #1 (Nov 2026): the Video row opens the quality
-     * sheet in browse mode — rows pick a band and close, nothing
-     * starts. The scope is the Video row's ladder; the sheet opens
-     * pre-selected on the current pick.
-     */
-    fun openQualityBrowse() {
-        val state = _uiState.value
-        val ladder = videoScopeLadder(state)
-        if (ladder.options.isEmpty()) return
-        val scope = if (state.layout?.isSeriesLike == true) {
-            nextUnwatchedEpisode(state.layout, state.episodeProgress)
-        } else {
-            null
-        }
-        openSheet(
-            QualitySheetMode.BROWSE,
-            ladder,
-            scope?.first,
-            scope?.second,
-            selectedBand = state.selectedBand,
-        )
-    }
-
-    /**
-     * Audit Detail #1 (Nov 2026): the browse sheet's pick. AUTO (or a
-     * band this scope no longer offers) clears the pick; a locked band
-     * answers with the upsell instead of changing the selection — the
-     * sheet's own rows already intercept locked taps, so this is the
-     * safety net, not the path. The labels republish, so the Video row,
-     * the Download button and the next Play tap all read the new pick.
-     */
-    /**
      * Audit Detail #1 (Nov 2026) + APP-02 (Phase 4): the browse sheet's
      * pick, and a selector chip tapped. AUTO (or a band this scope no
      * longer offers) clears the pick; a locked band answers with the

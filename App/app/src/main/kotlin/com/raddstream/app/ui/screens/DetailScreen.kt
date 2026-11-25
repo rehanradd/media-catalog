@@ -573,7 +573,6 @@ fun DetailScreen(
                 downloadHint = state.downloadHint,
                 onTryAgain = viewModel::tryAgainPlay,
                 videoQualityText = state.videoQualityText,
-                onOpenQualitySheet = viewModel::openQualityBrowse,
                 // Detail redesign (Nov 2026): a season row opens its
                 // sub-page — the episode list no longer lives here.
                 onOpenSeason = onOpenSeason,
@@ -944,7 +943,6 @@ internal fun DetailContent(
      * opens the quality sheet in browse mode (pick, don't play).
      */
     videoQualityText: String? = null,
-    onOpenQualitySheet: () -> Unit = {},
     /**
      * Detail redesign (Nov 2026): a season row opens that season's
      * sub-page, where the episodes live as plain numbered tiles. The
