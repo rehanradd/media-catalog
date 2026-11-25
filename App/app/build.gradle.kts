@@ -441,16 +441,22 @@ tasks.withType<Test>().configureEach {
                 includeTestsMatching("com.raddstream.app.ui.PlayerLandscapePaparazziTest")
                 includeTestsMatching("com.raddstream.app.ui.navigation.BottomNavLargeFontPaparazziTest")
                 // Round 2 (Detail, Nov 2026): the 1.3x detail shots are
-                // Paparazzi-rule classes too — without the include the
+                // Paparazzi-rule classes too - without the include the
                 // record/verify runs never execute them, and without the
                 // exclude below the plain run dies at Bridge.init.
                 includeTestsMatching("com.raddstream.app.ui.screens.DetailLargeFontPaparazziTest")
+                // Settings round 2: the 1.3x large-font shot is a Paparazzi-rule
+                // class too - same APP-09 fixup-6 pattern. Without this line the
+                // record run succeeds vacuously (no golden in the artifact) and
+                // the plain run fails it with paparazzi#1979 Bridge.init.
+                includeTestsMatching("com.raddstream.app.ui.screens.SettingsLargeFontPaparazziTest")
             } else {
                 excludeTestsMatching("com.raddstream.app.ui.PaparazziPreviewTest")
                 excludeTestsMatching("com.raddstream.app.ui.PlayerLandscapePaparazziTest")
                 excludeTestsMatching("com.raddstream.app.ui.DownloadsPaparazziTest")
                 excludeTestsMatching("com.raddstream.app.ui.navigation.BottomNavLargeFontPaparazziTest")
                 excludeTestsMatching("com.raddstream.app.ui.screens.DetailLargeFontPaparazziTest")
+                excludeTestsMatching("com.raddstream.app.ui.screens.SettingsLargeFontPaparazziTest")
             }
         }
     }

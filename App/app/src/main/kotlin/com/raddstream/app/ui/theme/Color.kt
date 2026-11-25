@@ -226,12 +226,14 @@ val RaddSettingsHelper   = Color(0xFFA3ABA8)
 /**
  * Unselected chip border. UI audit (Nov 2026, Settings #1): #333333 was
  * 1.38:1 vs the settings card — below the M3 3:1 component bar, so the
- * unselected pills dissolved into the background. #6E6E6E clears it on
- * both containers the chips sit on: 3.41:1 vs the card #1A1A1A and 4.12:1
- * vs black (the Paparazzi canvas). Still clearly below the selected
+ * unselected pills dissolved into the background. #6E6E6E cleared it on
+ * the old flat card (3.41:1 vs #1A1A1A, 4.12:1 vs black) but measured
+ * 2.94:1 on the round-2 primaryContainer fill. #787878 clears 3:1 on
+ * every round-2 group fill (3.39:1 on primaryContainer, 3.94:1 vs the
+ * card #1A1A1A, 4.75:1 vs black). Still clearly below the selected
  * state's jade border + tint, so the selection keeps its emphasis.
  */
-val RaddChipBorderSoft   = Color(0xFF6E6E6E)
+val RaddChipBorderSoft   = Color(0xFF787878)
 /** Unselected chip label. 8.3:1 vs #1A1A1A. */
 val RaddChipLabelSoft    = Color(0xFFB3B3B3)
 

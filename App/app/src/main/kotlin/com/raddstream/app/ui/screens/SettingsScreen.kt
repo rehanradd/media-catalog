@@ -1,5 +1,15 @@
 package com.raddstream.app.ui.screens
 
+import androidx.annotation.DrawableRes
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -20,6 +30,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Analytics
@@ -49,6 +60,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -61,6 +73,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -72,24 +87,31 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -106,8 +128,11 @@ import com.raddstream.app.player.AudioBoostUi
 import com.raddstream.app.share.LanShareStatus
 import com.raddstream.app.ui.components.PinPadDialog
 import com.raddstream.app.ui.components.RaddDialogTitle
+import com.raddstream.app.ui.components.rememberReduceMotion
 import com.raddstream.app.ui.theme.RaddChipBorderSoft
 import com.raddstream.app.ui.theme.RaddChipLabelSoft
+import com.raddstream.app.ui.theme.RaddCoral400
+import com.raddstream.app.ui.theme.RaddMotion
 import com.raddstream.app.ui.theme.RaddSettingsCard
 import com.raddstream.app.ui.theme.RaddSettingsHelper
 import com.raddstream.app.ui.theme.RaddTextFamily
@@ -120,9 +145,11 @@ import com.raddstream.app.viewmodel.KeepTtl
 import com.raddstream.app.viewmodel.KidsLockViewModel
 import com.raddstream.app.viewmodel.KidsPinOutcome
 import com.raddstream.app.viewmodel.MembershipCardCopy
+import com.raddstream.app.viewmodel.SettingsUiState
 import com.raddstream.app.viewmodel.SettingsViewModel
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 
 /** The subtitle chips, in the order the row shows them. Readable by the region test, which
  * pins that a card can only ever seed a word this row can actually display.
@@ -142,21 +169,33 @@ internal val subtitleOptions = listOf("Off", "English", "Hindi", "Urdu", "Tamil"
 internal const val DisabledButtonContentAlpha = 0.65f
 
 /**
- * Settings review (Gemini 5.5/10, 2026-11-16): the screen's two text roles.
- * Group headers — section headings, card titles, in-card row titles — are
- * 12sp Medium; helpers are 12sp Regular in #A3ABA8 at 16sp line-height
- * (the M3 bodySmall/labelSmall 12/16 pair). Both go through brandSp so
+ * Settings review (Gemini 5.5/10, 2026-11-16): the screen's text roles.
+ * Round 2 (ST4) splits the old single 12sp Medium rung in two: group
+ * titles — the section headings — are 16sp SemiBold (M3 titleMedium
+ * 16/24); sub-section and in-card row titles — card titles,
+ * [PreferenceRowTitle] — are 14sp Medium (M3 titleSmall 14/20).
+ * Helpers stay 12sp Regular in #A3ABA8 at 16sp line-height (the M3
+ * bodySmall/labelSmall 12/16 pair). All three go through brandSp so
  * typography.scale still reaches them. A4-F7: 13sp/18sp → 12sp/16sp —
  * 13 and 18 are off the M3 scale (Type.kt).
+ * Internal so the round-2 test can pin the scale directly.
  */
-private val settingsGroupTitleStyle = TextStyle(
+internal val settingsGroupTitleStyle = TextStyle(
     fontFamily = RaddTextFamily,
-    fontWeight = FontWeight.Medium,
-    fontSize = brandSp(12),
-    lineHeight = brandSp(16),
+    fontWeight = FontWeight.SemiBold,
+    fontSize = brandSp(16),
+    lineHeight = brandSp(24),
 )
 
-private val settingsHelperStyle = TextStyle(
+/** In-card row titles and card titles — 14sp Medium, M3 titleSmall 14/20. */
+internal val settingsRowTitleStyle = TextStyle(
+    fontFamily = RaddTextFamily,
+    fontWeight = FontWeight.Medium,
+    fontSize = brandSp(14),
+    lineHeight = brandSp(20),
+)
+
+internal val settingsHelperStyle = TextStyle(
     fontFamily = RaddTextFamily,
     fontWeight = FontWeight.Normal,
     fontSize = brandSp(12),
@@ -164,6 +203,77 @@ private val settingsHelperStyle = TextStyle(
     color = RaddSettingsHelper,
 )
 
+/**
+ * ST5: the search match — a card matches when the query is blank (everything
+ * shows) or when every word of the query appears in the card's title or
+ * keywords, case-insensitively. One function so the group headers and the
+ * cards read the same answer, and the no-results state trusts it too.
+ */
+internal fun settingsQueryMatches(query: String, title: String, vararg keywords: String): Boolean {
+    val q = query.trim().lowercase()
+    if (q.isEmpty()) return true
+    val haystack = (listOf(title) + keywords).joinToString(" ").lowercase()
+    return q.split(" ").all { it.isNotEmpty() && it in haystack }
+}
+
+/**
+ * Settings round 2 (2027): every action the settings rows take, as one
+ * holder — ~50 callbacks is unreadable as individual parameters, and a
+ * holder lets [SettingsContent] render from plain state with no ViewModel.
+ * Every field defaults to a no-op so a test can build only the actions it
+ * drives. The wrapper binds each field to the same ViewModel method the
+ * screen called inline — the split changes no behaviour.
+ */
+internal data class SettingsActions(
+    val onSetImageQuality: (ImageQuality) -> Unit = {},
+    val onSetDownloadOnMobileData: (Boolean) -> Unit = {},
+    val onSetDataSaver: (Boolean) -> Unit = {},
+    val onSetKeepTtl: (KeepTtl) -> Unit = {},
+    val onSetAudioBoost: (Float) -> Unit = {},
+    val onSetDynamicColor: (Boolean) -> Unit = {},
+    val onSetAutoplayNext: (Boolean) -> Unit = {},
+    val onSetAutoplayPreviews: (Boolean) -> Unit = {},
+    val onSetAutoPip: (Boolean) -> Unit = {},
+    val onSetDefaultQuality: (String) -> Unit = {},
+    val onSetSubtitleSize: (Int) -> Unit = {},
+    val onSetWifiOnlyDownloads: (Boolean) -> Unit = {},
+    val onSetAutoDeleteWatched: (Boolean) -> Unit = {},
+    val onSetSmartDownloadsEnabled: (Boolean) -> Unit = {},
+    val onSetDownloadsForYouCapGb: (Int) -> Unit = {},
+    val onSetLanShareEnabled: (Boolean) -> Unit = {},
+    val onSetAnalyticsConsent: (Boolean) -> Unit = {},
+    val onOpenContactForm: () -> Unit = {},
+    val onCloseContactForm: () -> Unit = {},
+    val onOpenDisclaimer: () -> Unit = {},
+    val onCloseDisclaimer: () -> Unit = {},
+    val onRevealServerField: () -> Unit = {},
+    val onHideServerField: () -> Unit = {},
+    val onServerUrlChanged: (String) -> Unit = {},
+    val onTestAndSaveServer: () -> Unit = {},
+    val onOpenLinkForm: () -> Unit = {},
+    val onCloseLinkForm: () -> Unit = {},
+    val onQuickSignIn: () -> Unit = {},
+    val onCreateAccount: () -> Unit = {},
+    val onSignOut: () -> Unit = {},
+    val onQuickInputChanged: (String) -> Unit = {},
+    val onAccountLabelChanged: (String) -> Unit = {},
+    val onSaveAccountLabel: () -> Unit = {},
+    val onLinkNameChanged: (String) -> Unit = {},
+    val onLinkPhoneChanged: (String) -> Unit = {},
+    val onLinkPinChanged: (String) -> Unit = {},
+    val onLinkProfile: () -> Unit = {},
+    val onHideRevealedKey: () -> Unit = {},
+    val onClearStatus: () -> Unit = {},
+    val onRetryLoad: () -> Unit = {},
+)
+
+/**
+ * Settings round 2 (2027): the screen is split — [SettingsScreen] binds the ViewModels and
+ * [SettingsContent] renders from plain state, so Paparazzi can shoot the whole screen from
+ * a fake [SettingsUiState] and Robolectric can drive the search / error branches without
+ * Hilt. The split changes no behaviour: every callback the content takes is the same
+ * ViewModel method the screen called inline.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
@@ -200,7 +310,114 @@ fun SettingsScreen(
     kidsLockViewModel: KidsLockViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    // ST5: the search query lives in the wrapper so tests can drive SettingsContent
+    // with a fixed query; the content itself never owns it.
+    var searchQuery by remember { mutableStateOf("") }
 
+    // D2: the account code is shown once — leaving Settings hides it, so
+    // a code is never left on screen after the viewer walks away. The
+    // effect runs on dispose, which is also what retires a trial-minted
+    // code's one-shot (see hideRevealedKey).
+    DisposableEffect(Unit) {
+        onDispose { viewModel.hideRevealedKey() }
+    }
+    SettingsContent(
+        state = state,
+        features = features,
+        actions = SettingsActions(
+            onSetImageQuality = viewModel::setImageQuality,
+            onSetDownloadOnMobileData = viewModel::setDownloadOnMobileData,
+            onSetDataSaver = viewModel::setDataSaver,
+            onSetKeepTtl = viewModel::setKeepTtl,
+            onSetAudioBoost = viewModel::setAudioBoost,
+            onSetDynamicColor = viewModel::setDynamicColor,
+            onSetAutoplayNext = viewModel::setAutoplayNext,
+            onSetAutoplayPreviews = viewModel::setAutoplayPreviews,
+            onSetAutoPip = viewModel::setAutoPip,
+            onSetDefaultQuality = viewModel::setDefaultQuality,
+            onSetSubtitleSize = viewModel::setSubtitleSize,
+            onSetWifiOnlyDownloads = viewModel::setWifiOnlyDownloads,
+            onSetAutoDeleteWatched = viewModel::setAutoDeleteWatched,
+            onSetSmartDownloadsEnabled = viewModel::setSmartDownloadsEnabled,
+            onSetDownloadsForYouCapGb = viewModel::setDownloadsForYouCapGb,
+            onSetLanShareEnabled = viewModel::setLanShareEnabled,
+            onSetAnalyticsConsent = viewModel::setAnalyticsConsent,
+            onOpenContactForm = viewModel::openContactForm,
+            onCloseContactForm = viewModel::closeContactForm,
+            onOpenDisclaimer = viewModel::openDisclaimer,
+            onCloseDisclaimer = viewModel::closeDisclaimer,
+            onRevealServerField = viewModel::revealServerField,
+            onHideServerField = viewModel::hideServerField,
+            onServerUrlChanged = viewModel::onServerUrlChanged,
+            onTestAndSaveServer = viewModel::testAndSaveServer,
+            onOpenLinkForm = viewModel::openLinkForm,
+            onCloseLinkForm = viewModel::closeLinkForm,
+            onQuickSignIn = viewModel::quickSignIn,
+            onCreateAccount = viewModel::createAccount,
+            onSignOut = viewModel::signOut,
+            onQuickInputChanged = viewModel::onQuickInputChanged,
+            onAccountLabelChanged = viewModel::onAccountLabelChanged,
+            onSaveAccountLabel = viewModel::saveAccountLabel,
+            onLinkNameChanged = viewModel::onLinkNameChanged,
+            onLinkPhoneChanged = viewModel::onLinkPhoneChanged,
+            onLinkPinChanged = viewModel::onLinkPinChanged,
+            onLinkProfile = viewModel::linkProfile,
+            onHideRevealedKey = viewModel::hideRevealedKey,
+            onClearStatus = viewModel::clearStatus,
+            onRetryLoad = viewModel::retryLoadPrefs,
+        ),
+        searchQuery = searchQuery,
+        onSearchQueryChange = { searchQuery = it },
+        kidsLockCard = { KidsLockCard(viewModel = kidsLockViewModel) },
+        profileLinkDialog = {
+            ProfileLinkDialog(account = state.account, viewModel = viewModel, serverUrl = state.serverUrl)
+        },
+        onOpenDownloads = onOpenDownloads,
+        onOpenVipUpgrade = onOpenVipUpgrade,
+        onOpenRegionChoice = onOpenRegionChoice,
+        onOpenDashboard = onOpenDashboard,
+        onOpenProfile = onOpenProfile,
+        onOpenHelp = onOpenHelp,
+        onOpenLanguages = onOpenLanguages,
+        onOpenWatchHistory = onOpenWatchHistory,
+        onOpenResolveTest = onOpenResolveTest,
+        onOpenPressTest = onOpenPressTest,
+        onOpenDiagnostics = onOpenDiagnostics,
+        showDiagnostics = showDiagnostics,
+        scrollToContact = scrollToContact,
+    )
+}
+
+/**
+ * The screen itself, from plain state — no ViewModel, no Hilt. Every action the rows
+ * take arrives as [SettingsActions]; the Kids Lock card and the profile-link dialog
+ * arrive as slots (both need a real ViewModel in the app, and a fake one in tests).
+ * The search query is owned by the caller so tests can fix it.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun SettingsContent(
+    state: SettingsUiState,
+    features: RemoteFeatures,
+    actions: SettingsActions,
+    searchQuery: String,
+    onSearchQueryChange: (String) -> Unit,
+    kidsLockCard: @Composable () -> Unit,
+    profileLinkDialog: @Composable () -> Unit,
+    onOpenDownloads: () -> Unit,
+    onOpenVipUpgrade: () -> Unit,
+    onOpenRegionChoice: () -> Unit,
+    onOpenDashboard: () -> Unit,
+    onOpenProfile: () -> Unit,
+    onOpenHelp: () -> Unit,
+    onOpenLanguages: () -> Unit,
+    onOpenWatchHistory: () -> Unit,
+    onOpenResolveTest: () -> Unit,
+    onOpenPressTest: () -> Unit,
+    onOpenDiagnostics: () -> Unit,
+    showDiagnostics: Boolean,
+    scrollToContact: Boolean,
+) {
     // Audit #51: the server switcher lives behind Advanced — closed until
     // the viewer asks for it, so a casual tap can never disconnect the app.
     var showAdvanced by remember { mutableStateOf(false) }
@@ -224,13 +441,6 @@ fun SettingsScreen(
     // the Scaffold can drive it.
     val scrollState = rememberScrollState()
 
-    // D2: the account code is shown once — leaving Settings hides it, so
-    // a code is never left on screen after the viewer walks away. The
-    // effect runs on dispose, which is also what retires a trial-minted
-    // code's one-shot (see hideRevealedKey).
-    DisposableEffect(Unit) {
-        onDispose { viewModel.hideRevealedKey() }
-    }
     // A status line this screen used to print inside the About card as a button that did
     // nothing. It is a transient answer to an action, so it lives where every other screen
     // in this app puts one: a snack bar, shown once, then cleared back through the ViewModel
@@ -239,7 +449,7 @@ fun SettingsScreen(
     LaunchedEffect(state.statusMessage) {
         val message = state.statusMessage ?: return@LaunchedEffect
         snackbarHostState.showSnackbar(message)
-        viewModel.clearStatus()
+        actions.onClearStatus()
     }
     // D2: the deep link from Help's Contact row. The bounds are known
     // only after layout, so the scroll waits for them — and it runs once
@@ -258,6 +468,36 @@ fun SettingsScreen(
         scrollState.scrollTo(target)
         deepLinkScrolled = true
     }
+    // ST2: the entrance stagger reads the system reduce-motion setting once —
+    // under reduced motion the groups appear with no movement at all.
+    val reduceMotion = rememberReduceMotion()
+    // ST5: the search field clears focus on the Search IME action.
+    val focusManager = LocalFocusManager.current
+    // ST5: which cards the query keeps — one val per card, so the group headers and
+    // the cards read the same answer and a group hides when every card in it does.
+    // The debug card is DEBUG-only and never filtered.
+    val showContentPreference = settingsQueryMatches(searchQuery, "content preference", "region", "watch", "change")
+    val showLanguages = settingsQueryMatches(searchQuery, "languages", "audio", "subtitles")
+    val showPlaybackDisplay = settingsQueryMatches(searchQuery, "playback display", "image quality", "battery saver", "mobile data", "data saver", "downloads kept", "audio level", "dynamic colour", "wallpaper")
+    val showPlayer = settingsQueryMatches(searchQuery, "player", "autoplay", "next episode", "previews", "picture-in-picture", "default quality", "subtitle size")
+    val showKidsLock = settingsQueryMatches(searchQuery, "kids lock", "family", "pin", "child", "mode")
+    val showWatchHistory = settingsQueryMatches(searchQuery, "watch history", "watched")
+    val showOffline = settingsQueryMatches(searchQuery, "offline", "downloads", "wi-fi", "wifi", "delete watched", "smart downloads", "budget", "open downloads")
+    val showShare = settingsQueryMatches(searchQuery, "share", "network", "lan", "devices")
+    val showVip = settingsQueryMatches(searchQuery, "vip", "membership", "upgrade", "prices")
+    val showAccount = settingsQueryMatches(searchQuery, "account", "sign in", "create account", "sign out", "sync", "code", "label", "phone", "pin", "dashboard", "profile", "guest")
+    val showHelp = settingsQueryMatches(searchQuery, "help", "read")
+    val showContact = settingsQueryMatches(searchQuery, "contact", "email", "write", "report", "problem", "payment", "takedown")
+    val showDisclaimer = settingsQueryMatches(searchQuery, "disclaimer", "read", "legal")
+    val showAnalytics = settingsQueryMatches(searchQuery, "anonymous", "usage totals", "analytics", "share", "plays", "crashes")
+    val showAbout = settingsQueryMatches(searchQuery, "about", "version", "build", "made for watching")
+    val showAdvancedCard = settingsQueryMatches(searchQuery, "advanced", "catalog", "server", "address", "connected", "change", "save")
+    val showPlaybackGroup = showContentPreference || showLanguages || showPlaybackDisplay || showPlayer || showKidsLock || showWatchHistory
+    val showDownloadsGroup = showOffline || showShare
+    val showAboutGroup = showHelp || showContact || showDisclaimer || showAnalytics || showAbout || showAdvancedCard
+    val showAccountGroup = showVip || showAccount
+    val showAppearanceGroup = settingsQueryMatches(searchQuery, "appearance", "theme", "dynamic colour", "wallpaper", "dark", "jade")
+    val anyCardVisible = showPlaybackGroup || showDownloadsGroup || showAboutGroup || showAccountGroup || showAppearanceGroup
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -280,21 +520,67 @@ fun SettingsScreen(
             )
         },
     ) { contentPadding ->
-        // Settings review (Nov 2026, D3): the top fade is gone. It was
-        // drawn on the scrolling column itself, so it scrolled away with
-        // the content it was meant to veil — at rest it put a veil over
-        // the top of the first heading, and while scrolling it did
-        // nothing at all. The column's 24dp top air is what keeps the
-        // sections off the app bar now.
-        Column(
+        // ST6: the error overlay lives in this Box, over the dimmed column — the J1
+        // pattern: the settings stay visible behind the scrim, never a blank screen,
+        // and the scrim eats taps so nothing behind the card can be tapped by mistake.
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(contentPadding)
-                .verticalScroll(scrollState)
-                .padding(start = 16.dp, end = 16.dp, top = 24.dp, bottom = 16.dp)
-                .onGloballyPositioned { columnTopInWindow = it.boundsInWindow().top },
-            verticalArrangement = Arrangement.spacedBy(18.dp),
+                .padding(contentPadding),
         ) {
+            // Settings review (Nov 2026, D3): the top fade is gone. It was
+            // drawn on the scrolling column itself, so it scrolled away with
+            // the content it was meant to veil — at rest it put a veil over
+            // the top of the first heading, and while scrolling it did
+            // nothing at all. The column's 24dp top air is what keeps the
+            // sections off the app bar now.
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(scrollState)
+                    .padding(start = 16.dp, end = 16.dp, top = 24.dp, bottom = 34.dp)
+                    .onGloballyPositioned { columnTopInWindow = it.boundsInWindow().top }
+                    .alpha(if (state.loadError != null) 0.38f else 1f),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+            // ST5: the search field — a pill with a search icon and a clear
+            // button. It filters the ~15 cards below by title + keywords;
+            // empty groups hide, and a query that matches nothing gets a
+            // no-results state with a Clear search. The placeholder is the
+            // TalkBack label — a TextField announces its placeholder as its name.
+            TextField(
+                value = searchQuery,
+                onValueChange = onSearchQueryChange,
+                placeholder = { Text("Search settings") },
+                leadingIcon = {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_action_search),
+                        contentDescription = null,
+                    )
+                },
+                trailingIcon = if (searchQuery.isNotEmpty()) {
+                    {
+                        IconButton(onClick = { onSearchQueryChange("") }) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_action_close),
+                                contentDescription = "Clear search",
+                            )
+                        }
+                    }
+                } else null,
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus() }),
+                shape = RoundedCornerShape(24.dp),
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                ),
+                modifier = Modifier.fillMaxWidth(),
+            )
+
             // ── Resolve test (debug-only harness, plan §8) ─────────────
             // A manual field-test screen, never a production feature: it
             // mints direct links from the baked sample list and records the
@@ -334,924 +620,221 @@ fun SettingsScreen(
                 }
             }
 
-            SettingsSectionHeading("Watching")
-            // The region row lives in its own card under Watching, not
-            // buried in Playback & Display: it is the one row the viewer needs
-            // after every region change, and it must be findable without
-            // scrolling past a dozen cards (Session 114).
-            // F5b (Batch A): the old title "Watching region" named a setting the
-            // card does not hold — the card picks the viewer's content
-            // preference (which region's catalog defaults apply), not a region
-            // to watch. The title now says what the card is.
-            // Mockup: the card carries its globe icon at the top-right, and
-            // the change link reads as a jade link with an arrow.
-            SettingsCard(title = "Content preference", icon = Icons.Default.Public) {
-                val region = RegionChoices.byId(state.userRegion)
-                Text(
-                    region.title,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                Text(
-                    region.preferenceLine(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                TextButton(
-                    onClick = onOpenRegionChoice,
-                    modifier = Modifier.heightIn(min = 48.dp),
-                ) {
-                    // Settings review (Nov 2026, D11): a real chevron, not
-                    // the "→" text glyph — every other affordance on the
-                    // screen is a Material icon.
-                    Text("Change what you watch")
-                    Icon(
-                        Icons.Default.ChevronRight,
-                        contentDescription = null,
-                    )
-                }
-            }
 
-            // ── Languages ──────────────────────────────────────────────
-            // The ONE place that shows the languages in force. The Region
-            // card picks them, the player sheet changes them mid-title, and
-            // the Languages screen changes them here — all three write the
-            // same keys, and this card shows the effective values, so a
-            // viewer never has to guess which one won.
-            // Mockup: the card carries its translate icon at the top-right.
-            SettingsCard(title = "Languages", icon = Icons.Default.Translate) {
-                // F5a (Batch A): same effective values as the Languages
-                // screen's top line, so the two can never disagree. The
-                // provenance ("your choice" / "<Region> default") is still
-                // computed with the values, but it is not painted: a viewer
-                // reads a language, not where it came from.
-                Text(
-                    "Audio: ${state.prefs.audioLanguage} · " +
-                        "Subtitles: ${state.prefs.subtitleLang}.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+            SettingsGroup(index = 0, visible = showAccountGroup) {
+                SettingsGroupHeader(
+                    text = "Account",
+                    iconRes = R.drawable.ic_action_user,
+                    iconTint = MaterialTheme.colorScheme.primary,
                 )
-
-                Spacer(Modifier.height(10.dp))
-                OutlinedButton(
-                    onClick = onOpenLanguages,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-
-                ) {
-                    Text("Open Languages screen")
-                }
-                // Audit #49: the old helper was broken English ("the player
-                // sheet write"). The Languages screen is the one place these
-                // change (audit #50) — the chips that duplicated it are gone.
-                Text(
-                    "Audio, subtitles and subtitle size, in one place. Changes here apply everywhere, including the player.",
-                    style = settingsHelperStyle,
-                )
-            }
-
-            // Mockup: the card carries its sliders icon at the top-right.
-            SettingsCard(title = "Playback & display", icon = Icons.Default.Tune) {
-                Spacer(Modifier.height(10.dp))
-                PreferenceRowTitle("Image quality")
-                ChipRow(ImageQuality.entries.toList().map { it.label }, ImageQuality.entries.indexOf(state.prefs.imageQuality)) { idx ->
-                    viewModel.setImageQuality(ImageQuality.entries.toList()[idx])
-                }
-                // UI audit (Nov 2026, Settings #2): the row never said what
-                // "Battery saver" does. It caps posters at 240px
-                // (UserPreferences.posterMaxWidthPx) against 640px High /
-                // 400px Medium — smaller posters, less data and battery.
-                Text(
-                    "Battery saver loads smaller posters to save data and battery.",
-                    style = settingsHelperStyle,
-                )
-
-                Spacer(Modifier.height(10.dp))
-                // Review fix: the title above this toggle repeated its own
-                // label ("Poster loading on mobile data" over "Load poster
-                // images over mobile data") — the toggle stands alone now,
-                // with a one-line helper in plain words.
-                SwitchRow(
-                    checked = state.prefs.downloadOnMobileData,
-                    onCheckedChange = viewModel::setDownloadOnMobileData,
-                    label = "Load poster images over mobile data",
-                )
-                // A keep is gated by the Wi-Fi-only switch in the Offline card above,
-                // not by this one — this switch only ever governed the thumbnails.
-                Text(
-                    "Only poster thumbnails use mobile data. Downloads follow the Wi-Fi-only switch.",
-                    style = settingsHelperStyle,
-                )
-
-                Spacer(Modifier.height(10.dp))
-                // Review fix: same shape as the poster toggle — the "Data
-                // saver" title repeated the switch label, and the helper
-                // exposed server jargon ("the server is asked for its
-                // data-saving copy"). One line, plain words.
-                SwitchRow(
-                    checked = state.prefs.dataSaver,
-                    onCheckedChange = viewModel::setDataSaver,
-                    label = "Save mobile data while watching",
-                )
-                Text(
-                    "On mobile data, titles start at 480p. You can still switch up in the player.",
-                    style = settingsHelperStyle,
-                )
-
-                Spacer(Modifier.height(10.dp))
-                PreferenceRowTitle("How long downloads are kept")
-                ChipRow(KeepTtl.entries.map { it.label }, KeepTtl.entries.indexOf(state.prefs.keepTtl)) { idx ->
-                    viewModel.setKeepTtl(KeepTtl.entries.toList()[idx])
-                }
-                // The retention is temp/cache-scoped (verified against
-                // TtlPolicy: the sweep only ever ages AUTO_PREVIEW bytes,
-                // and a file the viewer explicitly kept is never
-                // auto-deleted) — so the label says what it is, plainly.
-                Text(
-                    "Only files the app fetched on its own. Downloads you kept are never removed.",
-                    style = settingsHelperStyle,
-                )
-
-                Spacer(Modifier.height(10.dp))
-                // Mockup: the title and its percent share one row, the slider
-                // runs full-width below them. The percent stays neutral (M8):
-                // a readout is not a primary action, so it does not take jade.
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        PreferenceRowTitle("Audio level")
-                        Text(
-                            audioLevelPercent(state.prefs.audioBoost),
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                    }
-                    // Review fix: what the slider adjusts, in one line — the
-                    // app's own playback volume, riding on the device volume.
+                if (showAccount) {
+                    // ST1: the group says it first — no account is needed here.
                     Text(
-                        "In-app playback volume, relative to your device volume.",
-                        style = settingsHelperStyle,
-                    )
-                    // Review fix: the thumb at 100% used to sit ~16dp from
-                    // the screen edge, inside the back-gesture zone. The
-                    // track is inset 12dp inside the 16dp card padding —
-                    // 28dp from the viewport edge — and the touch area is
-                    // 48dp tall.
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Slider(
-                            value = state.prefs.audioBoost.coerceIn(0f, AudioBoostUi.MAX_OFFERED_LEVEL),
-                            onValueChange = viewModel::setAudioBoost,
-                            valueRange = 0f..AudioBoostUi.MAX_OFFERED_LEVEL,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp),
-                        )
-                    }
-                }
-                // Still worth saying: the boost rides on the viewer's own
-                // system volume, so the caption states what is applied, not
-                // what was asked — and the applied total is the requested
-                // level, the part above the player's ceiling coming from the
-                // enhancement processor.
-                Text(
-                    AudioBoostUi.honestSummary(state.prefs.audioBoost, 1f),
-                    style = settingsHelperStyle,
-                )
-
-                // Wallpaper colour is a brand decision, not a user one: this brand file
-                // locks the palette (features.dynamic_color=false), and a switch that is
-                // overruled by the build it ships in is worse than no switch. It appears
-                // the moment a re-skin permits it.
-                if (Brand.dynamicColorAllowed) {
-                    Spacer(Modifier.height(10.dp))
-                    SwitchRow(
-                        checked = state.prefs.dynamicColor,
-                        onCheckedChange = viewModel::setDynamicColor,
-                        label = "Dynamic colour from wallpaper",
-                    )
-                }
-                Text(
-                    "Saved on this device.",
-                    style = settingsHelperStyle,
-                )
-            }
-
-            // ── Player defaults ──────────────────────────────────────
-            // The switches the player itself obeys (plan §5 step 10, P36): autoplay-next
-            // gates the auto-advance, autoplay-previews gates the Home hero, default
-            // quality is the rung a new title starts on when Play was Auto, and subtitle
-            // size is the same number the player sheet's slider writes.
-            SettingsCard(title = "Player", icon = Icons.Default.PlayArrow) {
-                SwitchRow(
-                    checked = state.prefs.autoplayNext,
-                    onCheckedChange = viewModel::setAutoplayNext,
-                    label = "Play the next episode automatically",
-                )
-                Text(
-                    "When this is off, an episode ends on the Next Episode button instead of moving on by itself.",
-                    style = settingsHelperStyle,
-                )
-                SwitchRow(
-                    checked = state.prefs.autoplayPreviews,
-                    onCheckedChange = viewModel::setAutoplayPreviews,
-                    label = "Auto-play previews on Home",
-                )
-                Text(
-                    "When this is off, the Home hero stays on the first poster until you swipe it.",
-                    style = settingsHelperStyle,
-                )
-                // PL-10: opt-in auto-enter picture-in-picture. Off by default: a
-                // window the viewer did not open is a window they did not ask for.
-                SwitchRow(
-                    checked = state.prefs.autoPip,
-                    onCheckedChange = viewModel::setAutoPip,
-                    label = "Auto picture-in-picture",
-                )
-                Text(
-                    "When this is on, leaving the player while a title is playing keeps it playing in a small window.",
-                    style = settingsHelperStyle,
-                )
-
-                Spacer(Modifier.height(10.dp))
-                PreferenceRowTitle("Default quality")
-                val qualityBands = listOf("auto", "480p", "720p", "1080p", "2160p")
-                val qualityLabels = listOf("Auto", "480p", "720p", "1080p", "4K")
-                ChipRow(qualityLabels, qualityBands.indexOf(state.prefs.defaultQuality).coerceAtLeast(0)) { idx ->
-                    viewModel.setDefaultQuality(qualityBands[idx])
-                }
-                // UI audit (Nov 2026, Settings #3): "Auto lets the player
-                // pick" never said what Auto starts at on Wi-Fi. Player-side
-                // confirmation (PlayerPolicyBridge.configure, Start-low):
-                // Auto arms on the cheapest rung and climbs on measured
-                // throughput — so Auto starts low. A fixed choice keeps its
-                // band exactly.
-                Text(
-                    "The quality a new title starts on. Auto starts low and steps up as your connection allows; a fixed choice starts there and stays.",
-                    style = settingsHelperStyle,
-                )
-
-                Spacer(Modifier.height(10.dp))
-                PreferenceRowTitle("Subtitle size")
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Text(
-                        "${state.prefs.subtitleSizePercent}%",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                    // Parent fixup (Nov 2026): the same edge hazard the
-                    // Audio slider had — the thumb at 100% sat ~16dp from
-                    // the screen edge, inside the back-gesture zone. Same
-                    // fix: the track is inset 12dp inside the 16dp card
-                    // padding (28dp from the viewport edge) and the touch
-                    // area is 48dp tall. The % label keeps its place at the
-                    // row's start; only the slider moves.
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(48.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Slider(
-                            value = state.prefs.subtitleSizePercent.toFloat(),
-                            onValueChange = { viewModel.setSubtitleSize(it.toInt()) },
-                            valueRange = 50f..200f,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp),
-                        )
-                    }
-                }
-                Text(
-                    "The same size the player sheet offers while watching; it applies from the next playback.",
-                    style = settingsHelperStyle,
-                )
-            }
-
-            // MX #7 — Kids Lock: the parent PIN + mode. Its card owns the
-            // whole flow (setup, enter, exit, change, remove); the pad is
-            // PinPadDialog, the decisions are KidsLockViewModel's.
-            SettingsSectionHeading("Family")
-            KidsLockCard(viewModel = kidsLockViewModel)
-
-            SettingsSectionHeading("Downloads")
-            // ── Downloads entry ────────────────────────────────────────
-            if (features.downloads) {
-                SettingsCard(title = "Offline", icon = Icons.Default.Download) {
-                    Text(
-                        "Manage downloaded titles, view storage use and expiry.",
-                        style = settingsHelperStyle,
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    SwitchRow(
-                        checked = state.prefs.wifiOnlyDownloads,
-                        onCheckedChange = viewModel::setWifiOnlyDownloads,
-                        label = "Download only on Wi-Fi",
-                    )
-                    Text(
-                        "Downloads happen only when this phone is on Wi-Fi. Turn it off to download on mobile data too.",
-                        style = settingsHelperStyle,
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    SwitchRow(
-                        checked = state.prefs.autoDeleteWatched,
-                        onCheckedChange = viewModel::setAutoDeleteWatched,
-                        label = "Delete watched downloads",
-                    )
-                    Text(
-                        "A finished download deletes itself to free space. A finished series episode deletes its own download too — only the episode you just watched, never the rest of the season.",
-                        style = settingsHelperStyle,
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    SwitchRow(
-                        checked = state.prefs.smartDownloadsEnabled,
-                        onCheckedChange = viewModel::setSmartDownloadsEnabled,
-                        label = "Smart Downloads",
-                    )
-                    Text(
-                        "When on, the next episode of a series you're watching downloads itself on Wi-Fi, so it's ready offline. Only one episode per series at a time, and only while this phone has free space.",
-                        style = settingsHelperStyle,
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    // REA #5 (Netflix, Nov 2026): the Downloads For You
-                    // budget — how much space the automatic downloads may
-                    // use. The runner counts only episodes still on the
-                    // device, and an episode whose size the server never
-                    // stated counts as nothing, never as a guess.
-                    // UI audit (Nov 2026, Settings #4): the budget label was
-                    // a grey 12sp caption while every other ChipRow title
-                    // uses PreferenceRowTitle — the chips looked untitled.
-                    PreferenceRowTitle("Downloads For You may use")
-                    ChipRow(
-                        options = DOWNLOADS_FOR_YOU_CAP_OPTIONS_GB.map { "$it GB" },
-                        selectedIndex = DOWNLOADS_FOR_YOU_CAP_OPTIONS_GB
-                            .indexOf(state.prefs.downloadsForYouCapGb)
-                            .takeIf { it >= 0 } ?: 1,
-                        onSelect = { idx ->
-                            viewModel.setDownloadsForYouCapGb(DOWNLOADS_FOR_YOU_CAP_OPTIONS_GB[idx])
+                        if (state.account.signedIn) {
+                            "Signed in — your saved list and history also sync to your account."
+                        } else {
+                            "No account needed — everything works without one."
                         },
-                    )
-                    Text(
-                        "When the budget is full, the next episode waits — delete a downloaded episode or raise the limit.",
-                        style = settingsHelperStyle,
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    OutlinedButton(onClick = onOpenDownloads, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                    ) {
-                        Text("Open Downloads")
-                    }
-                }
-            }
-
-            // ── Share kept files on the local network ──────────────────
-            // Gone, not disabled, when the operator switched sharing off: the row would otherwise
-            // read "on" while LanShareRunner has already closed the socket it promises to open.
-            if (features.sharing) {
-                // D10: the card carries its icon at the top-right, like
-                // every other card — it had none.
-                SettingsCard(title = "Share on your network", icon = Icons.Default.Share) {
-                    SwitchRow(
-                        checked = state.lanShareEnabled,
-                        onCheckedChange = viewModel::setLanShareEnabled,
-                        label = "Let devices on this network play downloaded files",
-                    )
-                    Text(
-                        lanShareStatusLine(state.lanShareStatus),
-                        style = settingsHelperStyle,
-                    )
-                    Text(
-                        "Only devices on your Wi-Fi can see them.",
                         style = settingsHelperStyle,
                     )
                 }
-            }
-
-            SettingsSectionHeading("Account")
-            // ── VIP membership ─────────────────────────────────────────
-            // Free launch: the whole card (prices, payment instructions,
-            // upgrade button) hides while the quality gate is OFF — every
-            // viewer is premium then, and there is nothing to sell.
-            if (state.paywallVisible) {
-                SettingsCard(title = "VIP membership", icon = Icons.Default.Star) {
-                // The plan summary: what this install actually has (VIP with its
-                // date, a payment waiting, the free VIP days, or free) plus the
-                // operator's published prices when the server sent any. The
-                // summary lives in [MembershipCardCopy] so a test can pin it:
-                // a trial in progress must never read as "Free plan" here while
-                // the Account card says the free days are running (Session 114).
-                Text(
-                    MembershipCardCopy.summary(
-                        planIsVip = state.planIsVip,
-                        planVipUntilMillis = state.planVipUntilMillis,
-                        planPaymentPending = state.planPaymentPending,
-                        trialDays = state.account.trialDays,
-                    ),
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                )
-                if (state.planMonthlyPkr > 0 || state.planYearlyPkr > 0) {
-                    Text(
-                        buildString {
-                            if (state.planMonthlyPkr > 0) {
-                                append("Rs ${"%,d".format(state.planMonthlyPkr)} a month")
-                            }
-                            if (state.planYearlyPkr > 0) {
-                                if (isNotEmpty()) append(" · ")
-                                append("Rs ${"%,d".format(state.planYearlyPkr)} a year")
-                            }
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Text(
-                    "Support the catalog with a monthly or yearly membership. Pay through " +
-                        "JazzCash, EasyPaisa or Raast, then submit the transaction ID from " +
-                        "your confirmation.",
-                    style = settingsHelperStyle,
-                )
-                Button(onClick = onOpenVipUpgrade, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                ) {
-                    Text(if (state.planIsVip) "View membership" else "Upgrade to VIP")
-                }
-                }
-            }
-
-            // ── The optional sync account ──────────────────────────────
-            SettingsCard(title = "Account", icon = Icons.Default.Person) {
-                val account = state.account
-                Text(
-                    if (account.signedIn) {
-                        "Signed in on this device. Your saved list, watch history and resume points " +
-                            "are saved to your account as well as on this device."
-                    } else {
-                        "Guest mode. Everything in this app works without an account: your saved " +
-                            "list, watch history and resume points stay on this device. Sign in only " +
-                            "if you want them on another device."
-                    },
-                    style = settingsHelperStyle,
-                )
-
-                // Free launch: the Dashboard / Profile doors hide while the
-                // quality gate is OFF — the account screens they open are
-                // hidden while every viewer is premium. The VIP Membership
-                // card above is gated on the same flag. (The Coins door
-                // lived here until coins were removed 2026-11-17.)
-                AccountNavRow(
-                    paywallVisible = state.paywallVisible,
-                    onOpenDashboard = onOpenDashboard,
-                    onOpenProfile = onOpenProfile,
-                )
-
-                // ── the free days this install was granted ───────────────────────
-                account.trialSecondsLeft?.let { secondsLeft ->
-                    val daysLeft = account.trialDays ?: 0
-                    Text(
-                        if (daysLeft > 0) AccountCardCopy.trialActive(daysLeft) else AccountCardCopy.TRIAL_ENDED,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontWeight = FontWeight.Medium,
-                    )
-                    if (daysLeft > 0) {
+                if (showVip) {
+                    // ── VIP membership ─────────────────────────────────────────
+                    // Free launch: the whole card (prices, payment instructions,
+                    // upgrade button) hides while the quality gate is OFF — every
+                    // viewer is premium then, and there is nothing to sell.
+                    if (state.paywallVisible) {
+                        SettingsCard(title = "VIP membership", fill = MaterialTheme.colorScheme.surfaceContainerLow) {
+                        // The plan summary: what this install actually has (VIP with its
+                        // date, a payment waiting, the free VIP days, or free) plus the
+                        // operator's published prices when the server sent any. The
+                        // summary lives in [MembershipCardCopy] so a test can pin it:
+                        // a trial in progress must never read as "Free plan" here while
+                        // the Account card says the free days are running (Session 114).
                         Text(
-                            AccountCardCopy.TRIAL_HONESTY,
-                            style = settingsHelperStyle,
-                        )
-                    }
-                }
-
-                account.revealedKey?.let { key ->
-                    OutlinedTextField(
-                        value = key,
-                        onValueChange = {},
-                        readOnly = true,
-                        label = { Text("Your account code") },
-                        textStyle = MaterialTheme.typography.bodySmall,
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        trailingIcon = {
-                            val clipboard = LocalClipboardManager.current
-                            // D2: copying is the end of the reveal — the
-                            // code hides the moment it is copied, so it is
-                            // never left on screen after the viewer has it.
-                            TextButton(onClick = {
-                                clipboard.setText(AnnotatedString(key))
-                                viewModel.hideRevealedKey()
-                            },
-                                modifier = Modifier.heightIn(min = 48.dp),
-                            ) {
-                                Text("Copy")
-                            }
-                        },
-                    )
-                    // Honest, and it must stay honest: the warning names the transport the
-                    // catalog in use actually speaks — plain HTTP in the clear, or TLS for
-                    // the shipped default — instead of implying a protection the transport
-                    // does not provide.
-                    Text(
-                        SettingsViewModel.revealWarning(state.serverUrl),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                    TextButton(
-                        onClick = viewModel::hideRevealedKey,
-                        modifier = Modifier.heightIn(min = 48.dp),
-                    ) {
-                        Text("Done showing this code")
-                    }
-                }
-
-                // UI-fix P1-T1: progressive disclosure. A guest sees "Sign in"
-                // and "Create account" only — the key field, the label and the
-                // long warnings wait behind the Sign in tap. A signed-in viewer
-                // sees Sync / Sign out, and the key hint, label and phone+PIN
-                // link wait behind "Account details".
-                if (!account.signedIn) {
-                    if (!showSignInForm) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            Button(
-                                onClick = { showSignInForm = true },
-                                enabled = !account.isBusy,
-                                modifier = Modifier.weight(1f).heightIn(min = 48.dp),
-
-                            ) {
-                                Text("Sign in")
-                            }
-                            OutlinedButton(
-                                onClick = viewModel::createAccount,
-                                enabled = !account.isBusy,
-                                modifier = Modifier.weight(1f).heightIn(min = 48.dp),
-
-                            ) {
-                                Text("Create account")
-                            }
-                        }
-                    } else {
-                        OutlinedTextField(
-                            value = account.quickInput,
-                            onValueChange = viewModel::onQuickInputChanged,
-                            label = { Text("Account code") },
-                            placeholder = { Text("The 16-character account code from your other device") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        // The sentence this card used to print — "anyone who knows it can derive the
-                        // same key" — described a feature that is now deleted, so it is replaced by
-                        // the two facts that are true of what is left: a number cannot open an
-                        // account, and the code is the whole account.
-                        Text(
-                            "Enter the account code this app showed once, when it created the account. A mobile " +
-                                "number is not a code and this app cannot turn one into a code: knowing " +
-                                "someone's number gets them nowhere. An account is only as strong as " +
-                                "its code, so keep the code somewhere safe, and sign out on any device " +
-                                "that is not yours.",
-                            style = settingsHelperStyle,
-                        )
-                        AccountLabelField(
-                            value = account.labelInput,
-                            onValueChange = viewModel::onAccountLabelChanged,
-                            onSave = null,
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            Button(
-                                onClick = viewModel::quickSignIn,
-                                enabled = !account.isBusy && account.quickInput.isNotBlank(),
-                                // Robo run 5: the disabled text on this button read
-                                // 2.98:1 — see DisabledButtonContentAlpha.
-                                colors = ButtonDefaults.buttonColors(
-                                    disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(
-                                        alpha = DisabledButtonContentAlpha,
-                                    ),
-                                ),
-                                modifier = Modifier.weight(1f).heightIn(min = 48.dp),
-
-                            ) {
-                                BusyLabel(account.isBusy, "Sign in")
-                            }
-                            OutlinedButton(
-                                onClick = viewModel::createAccount,
-                                enabled = !account.isBusy,
-                                modifier = Modifier.weight(1f).heightIn(min = 48.dp),
-
-                            ) {
-                                Text("Create account")
-                            }
-                        }
-                        TextButton(
-                            onClick = { showSignInForm = false },
-                            modifier = Modifier.heightIn(min = 48.dp),
-                        ) {
-                            Text("Cancel") 
-                        }
-                    }
-                } else {
-                    // A5: no "Sync now" — syncing happens on its own, on
-                    // sign-in and when this card opens, so the button was
-                    // a tap the viewer should never have had to find.
-                    Button(
-                        onClick = viewModel::signOut,
-                        enabled = !account.isBusy,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-
-                    ) {
-                        Text("Sign out")
-                    }
-                    TextButton(onClick = { showAccountDetails = !showAccountDetails },
-                        modifier = Modifier.heightIn(min = 48.dp),
-                    ) {
-                        Text(if (showAccountDetails) "Hide account details" else "Account details")
-                    }
-                    if (showAccountDetails) {
-                        if (account.revealedKey == null && account.keyHint.isNotEmpty()) {
-                            Text(
-                                "Account code on this device: ${account.keyHint}. The full code was shown once, when it " +
-                                    "was created, and is not stored anywhere it can be shown again.",
-                                style = settingsHelperStyle,
-                            )
-                        }
-                        AccountLabelField(
-                            value = if (account.labelInput.isEmpty()) account.accountLabel else account.labelInput,
-                            onValueChange = viewModel::onAccountLabelChanged,
-                            onSave = viewModel::saveAccountLabel,
-                        )
-                        // ── the phone + PIN profile link ─────────────────────────
-                        //
-                        // Offered only to a device that holds a key: the route writes onto the account the
-                        // bearer names, so with no credential there is nothing to link and the honest thing
-                        // is to hide the form rather than let it fail.
-                        Spacer(Modifier.height(10.dp))
-                        Text(
-                            AccountCardCopy.LINK_TITLE,
+                            MembershipCardCopy.summary(
+                                planIsVip = state.planIsVip,
+                                planVipUntilMillis = state.planVipUntilMillis,
+                                planPaymentPending = state.planPaymentPending,
+                                trialDays = state.account.trialDays,
+                            ),
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Medium,
                         )
-                        Text(
-                            AccountCardCopy.LINK_BONUS,
-                            style = settingsHelperStyle,
-                        )
-                        Text(
-                            AccountCardCopy.LINK_PIN_MEANING,
-                            style = settingsHelperStyle,
-                        )
-                        OutlinedButton(
-                            onClick = viewModel::openLinkForm,
-                            enabled = !account.isLinking,
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-
-                        ) {
-                            Text(if (account.showLinkForm) "Close" else AccountCardCopy.LINK_BUTTON)
+                        if (state.planMonthlyPkr > 0 || state.planYearlyPkr > 0) {
+                            Text(
+                                buildString {
+                                    if (state.planMonthlyPkr > 0) {
+                                        append("Rs ${"%,d".format(state.planMonthlyPkr)} a month")
+                                    }
+                                    if (state.planYearlyPkr > 0) {
+                                        if (isNotEmpty()) append(" · ")
+                                        append("Rs ${"%,d".format(state.planYearlyPkr)} a year")
+                                    }
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
-                        if (account.showLinkForm) {
-                            ProfileLinkDialog(account = account, viewModel = viewModel, serverUrl = state.serverUrl)
+                        Text(
+                            "Support the catalog with a monthly or yearly membership. Pay through " +
+                                "JazzCash, EasyPaisa or Raast, then submit the transaction ID from " +
+                                "your confirmation.",
+                            style = settingsHelperStyle,
+                        )
+                        Button(onClick = onOpenVipUpgrade, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                        ) {
+                            Text(if (state.planIsVip) "View membership" else "Upgrade to VIP")
+                        }
                         }
                     }
                 }
+                if (showAccount) {
+                    // ── The optional sync account ──────────────────────────────
+                    SettingsCard(title = "Account", fill = MaterialTheme.colorScheme.surfaceContainerLow) {
+                        val account = state.account
+                        Text(
+                            if (account.signedIn) {
+                                "Signed in on this device. Your saved list, watch history and resume points " +
+                                    "are saved to your account as well as on this device."
+                            } else {
+                                "Guest mode. Everything in this app works without an account: your saved " +
+                                    "list, watch history and resume points stay on this device. Sign in only " +
+                                    "if you want them on another device."
+                            },
+                            style = settingsHelperStyle,
+                        )
 
-                account.message?.let { msg ->
-                    Text(
-                        msg,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (account.messageIsError) {
-                            MaterialTheme.colorScheme.error
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                    )
-                }
-            }
+                        // Free launch: the Dashboard / Profile doors hide while the
+                        // quality gate is OFF — the account screens they open are
+                        // hidden while every viewer is premium. The VIP Membership
+                        // card above is gated on the same flag. (The Coins door
+                        // lived here until coins were removed 2026-11-17.)
+                        AccountNavRow(
+                            paywallVisible = state.paywallVisible,
+                            onOpenDashboard = onOpenDashboard,
+                            onOpenProfile = onOpenProfile,
+                        )
 
-            // ── Watch history ────────────────────────────────────────────────
-            // The history is this device's own record; Settings is where a viewer
-            // looks for a list that is not a catalog rail.
-            SettingsCard(title = "Watch history", icon = Icons.Default.History) {
-                Text(
-                    "Everything you watched on this phone, newest first — including titles you finished.",
-                    style = settingsHelperStyle,
-                )
-                OutlinedButton(
-                    onClick = onOpenWatchHistory,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                        // ── the free days this install was granted ───────────────────────
+                        account.trialSecondsLeft?.let { secondsLeft ->
+                            val daysLeft = account.trialDays ?: 0
+                            Text(
+                                if (daysLeft > 0) AccountCardCopy.trialActive(daysLeft) else AccountCardCopy.TRIAL_ENDED,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = FontWeight.Medium,
+                            )
+                            if (daysLeft > 0) {
+                                Text(
+                                    AccountCardCopy.TRIAL_HONESTY,
+                                    style = settingsHelperStyle,
+                                )
+                            }
+                        }
 
-                ) {
-                    Text("Open watch history")
-                }
-            }
-
-            SettingsSectionHeading("About")
-            // ── Help ───────────────────────────────────────────────────────
-            // Read help first, write to us second: most questions are answered on
-            // the Help screen, and the Contact form is for a person's own problem.
-            SettingsCard(title = "Help", icon = Icons.Default.Help) {
-                Text(
-                    // Settings review (Nov 2026, D1): the helper names VIP
-                    // only while the gate is ON — during the free launch the
-                    // VIP card is hidden everywhere else, so naming it here
-                    // would sell a door that is not on this screen.
-                    if (state.paywallVisible) "How to watch, download, and use VIP."
-                    else "How to watch and download.",
-                    style = settingsHelperStyle,
-                )
-                OutlinedButton(
-                    onClick = onOpenHelp,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-
-                ) {
-                    Text("Read help")
-                }
-            }
-
-            // ── Contact us ───────────────────────────────────────────────────
-            // D2: the deep-link target from Help's Contact row — the card
-            // reports its window position so the screen can scroll to it.
-            SettingsCard(
-                title = "Contact us",
-                icon = Icons.Default.Email,
-                modifier = Modifier.onGloballyPositioned {
-                    contactCardTopInWindow = it.boundsInWindow().top
-                },
-            ) {
-                Text(
-                    "Report a problem, ask about a payment, or ask for a title to be taken down. No account needed.",
-                    style = settingsHelperStyle,
-                )
-                OutlinedButton(
-                    onClick = viewModel::openContactForm,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-
-                ) {
-                    Text("Write to us")
-                }
-                state.contact.message?.let { msg ->
-                    Text(
-                        msg,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (state.contact.messageIsError) {
-                            MaterialTheme.colorScheme.error
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                    )
-                }
-                if (state.contact.showForm) {
-                    ContactDialog(
-                        email = state.disclaimer.effective().email,
-                        onDismiss = viewModel::closeContactForm,
-                    )
-                }
-            }
-
-            // ── Disclaimer ───────────────────────────────────────────────────
-            // The card shows the effective disclaimer: the panel's text when
-            // the operator wrote one, else the shipped default — so there is
-            // always one to read, and "No disclaimer published yet" can no
-            // longer happen.
-            // Settings review (Nov 2026, D10): each of the three Info
-            // cards gets an icon that says what it is — the disclaimer is
-            // a document, the totals are analytics, About keeps the "i".
-            SettingsCard(title = "Disclaimer", icon = Icons.Default.Description) {
-                val disclaimer = state.disclaimer.effective()
-                // B8: no version in the painted line — acceptance is
-                // already tracked per version, so the number says nothing
-                // a viewer can act on.
-                Text(
-                    "What this app is, and what it is not.",
-                    style = settingsHelperStyle,
-                )
-                OutlinedButton(
-                    onClick = viewModel::openDisclaimer,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-
-                ) {
-                    Text("Read the disclaimer")
-                }
-                if (state.showDisclaimer) {
-                    DisclaimerDialog(
-                        disclaimer = disclaimer,
-                        confirmLabel = "Close",
-                        onConfirm = viewModel::closeDisclaimer,
-                        onDismissRequest = viewModel::closeDisclaimer,
-                    )
-                }
-            }
-
-            // ── Anonymous usage totals (Tracking A) ──────────────────────
-            // Totals only: how many plays, how often playback fails, how
-            // often the app crashes. No name, number, location, title, or
-            // search — and the switch is the same answer the first-run
-            // dialog asked, changeable here at any time.
-            SettingsCard(title = "Anonymous usage totals", icon = Icons.Default.Analytics) {
-                Text(
-                    "Share anonymous totals with ${Brand.name}: plays, " +
-                        "playback failures, and crashes. Nothing that can " +
-                        "identify you or what you watch is ever sent.",
-                    style = settingsHelperStyle,
-                )
-                SwitchRow(
-                    checked = state.analyticsConsent == true,
-                    onCheckedChange = viewModel::setAnalyticsConsent,
-                    label = "Share anonymous totals",
-                )
-            }
-
-            // ── About / Disclaimer (accurate, no misleading claims) ─────
-            SettingsCard(
-                title = Brand.copy("settings_about_heading", "About ${Brand.name}"),
-                icon = Icons.Default.Info,
-            ) {
-                Text(
-                    Brand.copy(
-                        "settings_about_body",
-                        "${Brand.shortName} finds movies and shows from public catalogs and plays them in one place.",
-                    ),
-                    style = settingsHelperStyle,
-                )
-                // B5: the painted line is the version name only. The build
-                // number and theme name sit behind a tap on the line —
-                // support asks for them, a viewer never does.
-                Text(
-                    aboutVersionLine(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.clickable(
-                        role = Role.Button,
-                        onClickLabel = if (showBuildDetails) "Hide build details" else "Show build details",
-                    ) { showBuildDetails = !showBuildDetails },
-                )
-                if (showBuildDetails) {
-                    Text(
-                        aboutBuildDetailsLine(),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-
-            // ── Advanced ───────────────────────────────────────────────
-            // Audit #51: the catalog switcher lives behind Advanced, so a
-            // casual tap can never disconnect the app from its catalog.
-            SettingsSectionHeading("Advanced")
-            TextButton(
-                onClick = { showAdvanced = !showAdvanced },
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-
-            ) {
-                Text(if (showAdvanced) "Hide advanced settings" else "Show advanced settings")
-            }
-            if (showAdvanced) {
-                            // ── Your catalog ──────────────────────────────────────
-                            SettingsCard(title = "Your catalog", icon = Icons.Default.Storage) {
-                                // The address is never printed here: a saved catalog reads as
-                                // "Connected", and the field opens only when the viewer asks
-                                // to change it. The save still tests the address before it
-                                // keeps it, and the test's message never includes the address
-                                // either.
-                                if (!state.showServerField) {
-                                    Text(
-                                        text = if (state.serverUrl.isNotBlank()) "Connected to your catalog." else "No catalog connected yet.",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                    Spacer(Modifier.height(10.dp))
-                                    OutlinedButton(onClick = viewModel::revealServerField, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                        account.revealedKey?.let { key ->
+                            OutlinedTextField(
+                                value = key,
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("Your account code") },
+                                textStyle = MaterialTheme.typography.bodySmall,
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                                trailingIcon = {
+                                    val clipboard = LocalClipboardManager.current
+                                    // D2: copying is the end of the reveal — the
+                                    // code hides the moment it is copied, so it is
+                                    // never left on screen after the viewer has it.
+                                    TextButton(onClick = {
+                                        clipboard.setText(AnnotatedString(key))
+                                        actions.onHideRevealedKey()
+                                    },
+                                        modifier = Modifier.heightIn(min = 48.dp),
                                     ) {
-                                        Text("Change")
+                                        Text("Copy")
                                     }
-                                } else {
-                                    OutlinedTextField(
-                                        value = state.serverUrl,
-                                        onValueChange = viewModel::onServerUrlChanged,
-                                        label = { Text("Catalog address") },
-                                        placeholder = { Text("https://catalog.example.com") },
-                                        singleLine = true,
-                                        modifier = Modifier.fillMaxWidth(),
-                                    )
-                                    state.testMessage?.let { msg ->
-                                        Text(
-                                            text = msg,
-                                            color = if (state.testIsError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            style = MaterialTheme.typography.bodySmall,
-                                        )
-                                    }
+                                },
+                            )
+                            // Honest, and it must stay honest: the warning names the transport the
+                            // catalog in use actually speaks — plain HTTP in the clear, or TLS for
+                            // the shipped default — instead of implying a protection the transport
+                            // does not provide.
+                            Text(
+                                SettingsViewModel.revealWarning(state.serverUrl),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                            TextButton(
+                                onClick = actions.onHideRevealedKey,
+                                modifier = Modifier.heightIn(min = 48.dp),
+                            ) {
+                                Text("Done showing this code")
+                            }
+                        }
+
+                        // UI-fix P1-T1: progressive disclosure. A guest sees "Sign in"
+                        // and "Create account" only — the key field, the label and the
+                        // long warnings wait behind the Sign in tap. A signed-in viewer
+                        // sees Sync / Sign out, and the key hint, label and phone+PIN
+                        // link wait behind "Account details".
+                        if (!account.signedIn) {
+                            if (!showSignInForm) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                ) {
                                     Button(
-                                        onClick = viewModel::testAndSaveServer,
-                                        enabled = !state.isTesting && state.serverUrl.isNotBlank(),
+                                        onClick = { showSignInForm = true },
+                                        enabled = !account.isBusy,
+                                        modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+
+                                    ) {
+                                        Text("Sign in")
+                                    }
+                                    OutlinedButton(
+                                        onClick = actions.onCreateAccount,
+                                        enabled = !account.isBusy,
+                                        modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+
+                                    ) {
+                                        Text("Create account")
+                                    }
+                                }
+                            } else {
+                                OutlinedTextField(
+                                    value = account.quickInput,
+                                    onValueChange = actions.onQuickInputChanged,
+                                    label = { Text("Account code") },
+                                    placeholder = { Text("The 16-character account code from your other device") },
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                // The sentence this card used to print — "anyone who knows it can derive the
+                                // same key" — described a feature that is now deleted, so it is replaced by
+                                // the two facts that are true of what is left: a number cannot open an
+                                // account, and the code is the whole account.
+                                Text(
+                                    "Enter the account code this app showed once, when it created the account. A mobile " +
+                                        "number is not a code and this app cannot turn one into a code: knowing " +
+                                        "someone's number gets them nowhere. An account is only as strong as " +
+                                        "its code, so keep the code somewhere safe, and sign out on any device " +
+                                        "that is not yours.",
+                                    style = settingsHelperStyle,
+                                )
+                                AccountLabelField(
+                                    value = account.labelInput,
+                                    onValueChange = actions.onAccountLabelChanged,
+                                    onSave = null,
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                ) {
+                                    Button(
+                                        onClick = actions.onQuickSignIn,
+                                        enabled = !account.isBusy && account.quickInput.isNotBlank(),
                                         // Robo run 5: the disabled text on this button read
                                         // 2.98:1 — see DisabledButtonContentAlpha.
                                         colors = ButtonDefaults.buttonColors(
@@ -1259,89 +842,1028 @@ fun SettingsScreen(
                                                 alpha = DisabledButtonContentAlpha,
                                             ),
                                         ),
-                                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                                        modifier = Modifier.weight(1f).heightIn(min = 48.dp),
 
                                     ) {
-                                        if (state.isTesting) {
-                                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
-                                        } else {
-                                            Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
-                                            Spacer(Modifier.width(8.dp))
-                                            Text("Save")
-                                        }
+                                        BusyLabel(account.isBusy, "Sign in")
                                     }
-                                    // Settings review (Nov 2026, D6): the
-                                    // field is a door that closes — Cancel
-                                    // returns to the calm summary line, and
-                                    // a successful Save closes it too
-                                    // (see hideServerField).
-                                    TextButton(
-                                        onClick = viewModel::hideServerField,
-                                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                                    OutlinedButton(
+                                        onClick = actions.onCreateAccount,
+                                        enabled = !account.isBusy,
+                                        modifier = Modifier.weight(1f).heightIn(min = 48.dp),
 
                                     ) {
-                                        Text("Cancel")
+                                        Text("Create account")
                                     }
                                 }
-
-                                // No counts here: works/releases/links are the operator's numbers,
-                                // not something a viewer needs to see on their own Settings screen.
-                                // The save above still tests the address for its own message.
+                                TextButton(
+                                    onClick = { showSignInForm = false },
+                                    modifier = Modifier.heightIn(min = 48.dp),
+                                ) {
+                                    Text("Cancel") 
+                                }
                             }
+                        } else {
+                            // A5: no "Sync now" — syncing happens on its own, on
+                            // sign-in and when this card opens, so the button was
+                            // a tap the viewer should never have had to find.
+                            Button(
+                                onClick = actions.onSignOut,
+                                enabled = !account.isBusy,
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
 
+                            ) {
+                                Text("Sign out")
+                            }
+                            TextButton(onClick = { showAccountDetails = !showAccountDetails },
+                                modifier = Modifier.heightIn(min = 48.dp),
+                            ) {
+                                Text(if (showAccountDetails) "Hide account details" else "Account details")
+                            }
+                            if (showAccountDetails) {
+                                if (account.revealedKey == null && account.keyHint.isNotEmpty()) {
+                                    Text(
+                                        "Account code on this device: ${account.keyHint}. The full code was shown once, when it " +
+                                            "was created, and is not stored anywhere it can be shown again.",
+                                        style = settingsHelperStyle,
+                                    )
+                                }
+                                AccountLabelField(
+                                    value = if (account.labelInput.isEmpty()) account.accountLabel else account.labelInput,
+                                    onValueChange = actions.onAccountLabelChanged,
+                                    onSave = actions.onSaveAccountLabel,
+                                )
+                                // ── the phone + PIN profile link ─────────────────────────
+                                //
+                                // Offered only to a device that holds a key: the route writes onto the account the
+                                // bearer names, so with no credential there is nothing to link and the honest thing
+                                // is to hide the form rather than let it fail.
+                                Spacer(Modifier.height(12.dp))
+                                Text(
+                                    AccountCardCopy.LINK_TITLE,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium,
+                                )
+                                Text(
+                                    AccountCardCopy.LINK_BONUS,
+                                    style = settingsHelperStyle,
+                                )
+                                Text(
+                                    AccountCardCopy.LINK_PIN_MEANING,
+                                    style = settingsHelperStyle,
+                                )
+                                OutlinedButton(
+                                    onClick = actions.onOpenLinkForm,
+                                    enabled = !account.isLinking,
+                                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+
+                                ) {
+                                    Text(if (account.showLinkForm) "Close" else AccountCardCopy.LINK_BUTTON)
+                                }
+                                if (account.showLinkForm) {
+                                    profileLinkDialog()
+                                }
+                            }
+                        }
+
+                        account.message?.let { msg ->
+                            Text(
+                                msg,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (account.messageIsError) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+
+            SettingsGroup(index = 1, visible = showPlaybackGroup) {
+                SettingsGroupHeader(
+                    text = "Playback",
+                    iconRes = R.drawable.ic_action_sliders,
+                    iconTint = MaterialTheme.colorScheme.primary,
+                )
+                if (showContentPreference) {
+                    // The region row lives in its own card under Watching, not
+                    // buried in Playback & Display: it is the one row the viewer needs
+                    // after every region change, and it must be findable without
+                    // scrolling past a dozen cards (Session 114).
+                    // F5b (Batch A): the old title "Watching region" named a setting the
+                    // card does not hold — the card picks the viewer's content
+                    // preference (which region's catalog defaults apply), not a region
+                    // to watch. The title now says what the card is.
+                    // Mockup: the card carries its globe icon at the top-right, and
+                    // the change link reads as a jade link with an arrow.
+                    SettingsCard(title = "Content preference", fill = MaterialTheme.colorScheme.primaryContainer) {
+                        val region = RegionChoices.byId(state.userRegion)
+                        Text(
+                            region.title,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            region.preferenceLine(),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        TextButton(
+                            onClick = onOpenRegionChoice,
+                            modifier = Modifier.heightIn(min = 48.dp),
+                        ) {
+                            // Settings review (Nov 2026, D11): a real chevron, not
+                            // the "→" text glyph — every other affordance on the
+                            // screen is a Material icon.
+                            Text("Change what you watch")
+                            Icon(
+                                painter = painterResource(R.drawable.ic_action_chevron_right),
+                                contentDescription = null,
+                            )
+                        }
+                    }
+                }
+                if (showLanguages) {
+                    // ── Languages ──────────────────────────────────────────────
+                    // The ONE place that shows the languages in force. The Region
+                    // card picks them, the player sheet changes them mid-title, and
+                    // the Languages screen changes them here — all three write the
+                    // same keys, and this card shows the effective values, so a
+                    // viewer never has to guess which one won.
+                    // Mockup: the card carries its translate icon at the top-right.
+                    SettingsCard(title = "Languages", fill = MaterialTheme.colorScheme.primaryContainer) {
+                        // F5a (Batch A): same effective values as the Languages
+                        // screen's top line, so the two can never disagree. The
+                        // provenance ("your choice" / "<Region> default") is still
+                        // computed with the values, but it is not painted: a viewer
+                        // reads a language, not where it came from.
+                        Text(
+                            "Audio: ${state.prefs.audioLanguage} · " +
+                                "Subtitles: ${state.prefs.subtitleLang}.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+
+                        Spacer(Modifier.height(12.dp))
+                        OutlinedButton(
+                            onClick = onOpenLanguages,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+
+                        ) {
+                            Text("Open Languages screen")
+                        }
+                        // Audit #49: the old helper was broken English ("the player
+                        // sheet write"). The Languages screen is the one place these
+                        // change (audit #50) — the chips that duplicated it are gone.
+                        Text(
+                            "Audio, subtitles and subtitle size, in one place. Changes here apply everywhere, including the player.",
+                            style = settingsHelperStyle,
+                        )
+                    }
+
+                    // Mockup: the card carries its sliders icon at the top-right.
+                }
+                if (showPlaybackDisplay) {
+                    SettingsCard(title = "Playback & display", fill = MaterialTheme.colorScheme.primaryContainer) {
+                        Spacer(Modifier.height(12.dp))
+                        PreferenceRowTitle("Image quality")
+                        ChipRow(ImageQuality.entries.toList().map { it.label }, ImageQuality.entries.indexOf(state.prefs.imageQuality)) { idx ->
+                            actions.onSetImageQuality(ImageQuality.entries.toList()[idx])
+                        }
+                        // UI audit (Nov 2026, Settings #2): the row never said what
+                        // "Battery saver" does. It caps posters at 240px
+                        // (UserPreferences.posterMaxWidthPx) against 640px High /
+                        // 400px Medium — smaller posters, less data and battery.
+                        Text(
+                            "Battery saver loads smaller posters to save data and battery.",
+                            style = settingsHelperStyle,
+                        )
+
+                        Spacer(Modifier.height(12.dp))
+                        // Review fix: the title above this toggle repeated its own
+                        // label ("Poster loading on mobile data" over "Load poster
+                        // images over mobile data") — the toggle stands alone now,
+                        // with a one-line helper in plain words.
+                        SwitchRow(
+                            checked = state.prefs.downloadOnMobileData,
+                            onCheckedChange = actions.onSetDownloadOnMobileData,
+                            label = "Load poster images over mobile data",
+                        )
+                        // A keep is gated by the Wi-Fi-only switch in the Offline card above,
+                        // not by this one — this switch only ever governed the thumbnails.
+                        Text(
+                            "Only poster thumbnails use mobile data. Downloads follow the Wi-Fi-only switch.",
+                            style = settingsHelperStyle,
+                        )
+
+                        Spacer(Modifier.height(12.dp))
+                        // Review fix: same shape as the poster toggle — the "Data
+                        // saver" title repeated the switch label, and the helper
+                        // exposed server jargon ("the server is asked for its
+                        // data-saving copy"). One line, plain words.
+                        SwitchRow(
+                            checked = state.prefs.dataSaver,
+                            onCheckedChange = actions.onSetDataSaver,
+                            label = "Save mobile data while watching",
+                        )
+                        Text(
+                            "On mobile data, titles start at 480p. You can still switch up in the player.",
+                            style = settingsHelperStyle,
+                        )
+
+                        Spacer(Modifier.height(12.dp))
+                        PreferenceRowTitle("How long downloads are kept")
+                        ChipRow(KeepTtl.entries.map { it.label }, KeepTtl.entries.indexOf(state.prefs.keepTtl)) { idx ->
+                            actions.onSetKeepTtl(KeepTtl.entries.toList()[idx])
+                        }
+                        // The retention is temp/cache-scoped (verified against
+                        // TtlPolicy: the sweep only ever ages AUTO_PREVIEW bytes,
+                        // and a file the viewer explicitly kept is never
+                        // auto-deleted) — so the label says what it is, plainly.
+                        Text(
+                            "Only files the app fetched on its own. Downloads you kept are never removed.",
+                            style = settingsHelperStyle,
+                        )
+
+                        Spacer(Modifier.height(12.dp))
+                        // Mockup: the title and its percent share one row, the slider
+                        // runs full-width below them. The percent stays neutral (M8):
+                        // a readout is not a primary action, so it does not take jade.
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                PreferenceRowTitle("Audio level")
+                                Text(
+                                    audioLevelPercent(state.prefs.audioBoost),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                            }
+                            // Review fix: what the slider adjusts, in one line — the
+                            // app's own playback volume, riding on the device volume.
+                            Text(
+                                "In-app playback volume, relative to your device volume.",
+                                style = settingsHelperStyle,
+                            )
+                            // Review fix: the thumb at 100% used to sit ~16dp from
+                            // the screen edge, inside the back-gesture zone. The
+                            // track is inset 12dp inside the 16dp card padding —
+                            // 28dp from the viewport edge — and the touch area is
+                            // 48dp tall.
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Slider(
+                                    value = state.prefs.audioBoost.coerceIn(0f, AudioBoostUi.MAX_OFFERED_LEVEL),
+                                    onValueChange = actions.onSetAudioBoost,
+                                    valueRange = 0f..AudioBoostUi.MAX_OFFERED_LEVEL,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp),
+                                )
+                            }
+                        }
+                        // Still worth saying: the boost rides on the viewer's own
+                        // system volume, so the caption states what is applied, not
+                        // what was asked — and the applied total is the requested
+                        // level, the part above the player's ceiling coming from the
+                        // enhancement processor.
+                        Text(
+                            AudioBoostUi.honestSummary(state.prefs.audioBoost, 1f),
+                            style = settingsHelperStyle,
+                        )
+
+                        Text(
+                            "Saved on this device.",
+                            style = settingsHelperStyle,
+                        )
+                    }
+                }
+                if (showPlayer) {
+                    // ── Player defaults ──────────────────────────────────────
+                    // The switches the player itself obeys (plan §5 step 10, P36): autoplay-next
+                    // gates the auto-advance, autoplay-previews gates the Home hero, default
+                    // quality is the rung a new title starts on when Play was Auto, and subtitle
+                    // size is the same number the player sheet's slider writes.
+                    SettingsCard(title = "Player", fill = MaterialTheme.colorScheme.primaryContainer) {
+                        SwitchRow(
+                            checked = state.prefs.autoplayNext,
+                            onCheckedChange = actions.onSetAutoplayNext,
+                            label = "Play the next episode automatically",
+                        )
+                        Text(
+                            "When this is off, an episode ends on the Next Episode button instead of moving on by itself.",
+                            style = settingsHelperStyle,
+                        )
+                        SwitchRow(
+                            checked = state.prefs.autoplayPreviews,
+                            onCheckedChange = actions.onSetAutoplayPreviews,
+                            label = "Auto-play previews on Home",
+                        )
+                        Text(
+                            "When this is off, the Home hero stays on the first poster until you swipe it.",
+                            style = settingsHelperStyle,
+                        )
+                        // PL-10: opt-in auto-enter picture-in-picture. Off by default: a
+                        // window the viewer did not open is a window they did not ask for.
+                        SwitchRow(
+                            checked = state.prefs.autoPip,
+                            onCheckedChange = actions.onSetAutoPip,
+                            label = "Auto picture-in-picture",
+                        )
+                        Text(
+                            "When this is on, leaving the player while a title is playing keeps it playing in a small window.",
+                            style = settingsHelperStyle,
+                        )
+
+                        Spacer(Modifier.height(12.dp))
+                        PreferenceRowTitle("Default quality")
+                        val qualityBands = listOf("auto", "480p", "720p", "1080p", "2160p")
+                        val qualityLabels = listOf("Auto", "480p", "720p", "1080p", "4K")
+                        ChipRow(qualityLabels, qualityBands.indexOf(state.prefs.defaultQuality).coerceAtLeast(0)) { idx ->
+                            actions.onSetDefaultQuality(qualityBands[idx])
+                        }
+                        // UI audit (Nov 2026, Settings #3): "Auto lets the player
+                        // pick" never said what Auto starts at on Wi-Fi. Player-side
+                        // confirmation (PlayerPolicyBridge.configure, Start-low):
+                        // Auto arms on the cheapest rung and climbs on measured
+                        // throughput — so Auto starts low. A fixed choice keeps its
+                        // band exactly.
+                        Text(
+                            "The quality a new title starts on. Auto starts low and steps up as your connection allows; a fixed choice starts there and stays.",
+                            style = settingsHelperStyle,
+                        )
+
+                        Spacer(Modifier.height(12.dp))
+                        PreferenceRowTitle("Subtitle size")
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Text(
+                                "${state.prefs.subtitleSizePercent}%",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            // Parent fixup (Nov 2026): the same edge hazard the
+                            // Audio slider had — the thumb at 100% sat ~16dp from
+                            // the screen edge, inside the back-gesture zone. Same
+                            // fix: the track is inset 12dp inside the 16dp card
+                            // padding (28dp from the viewport edge) and the touch
+                            // area is 48dp tall. The % label keeps its place at the
+                            // row's start; only the slider moves.
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(48.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Slider(
+                                    value = state.prefs.subtitleSizePercent.toFloat(),
+                                    onValueChange = { actions.onSetSubtitleSize(it.toInt()) },
+                                    valueRange = 50f..200f,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp),
+                                )
+                            }
+                        }
+                        Text(
+                            "The same size the player sheet offers while watching; it applies from the next playback.",
+                            style = settingsHelperStyle,
+                        )
+                    }
+
+                    // MX #7 — Kids Lock: the parent PIN + mode. Its card owns the
+                    // whole flow (setup, enter, exit, change, remove); the pad is
+                    // PinPadDialog, the decisions are KidsLockViewModel's.
+                }
+                if (showKidsLock) {
+                    kidsLockCard()
+                }
+                if (showWatchHistory) {
+                    // ── Watch history ────────────────────────────────────────────────
+                    // The history is this device's own record; Settings is where a viewer
+                    // looks for a list that is not a catalog rail.
+                    SettingsCard(title = "Watch history", fill = MaterialTheme.colorScheme.primaryContainer) {
+                        Text(
+                            "Everything you watched on this phone, newest first — including titles you finished.",
+                            style = settingsHelperStyle,
+                        )
+                        OutlinedButton(
+                            onClick = onOpenWatchHistory,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+
+                        ) {
+                            Text("Open watch history")
+                        }
+                    }
+                }
+            }
+
+            SettingsGroup(index = 2, visible = showDownloadsGroup) {
+                SettingsGroupHeader(
+                    text = "Downloads",
+                    iconRes = R.drawable.ic_action_download,
+                    iconTint = MaterialTheme.colorScheme.tertiary,
+                )
+                if (showOffline) {
+                    // ── Downloads entry ────────────────────────────────────────
+                    if (features.downloads) {
+                        SettingsCard(title = "Offline", fill = MaterialTheme.colorScheme.tertiaryContainer) {
+                            Text(
+                                "Manage downloaded titles, view storage use and expiry.",
+                                style = settingsHelperStyle,
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            SwitchRow(
+                                checked = state.prefs.wifiOnlyDownloads,
+                                onCheckedChange = actions.onSetWifiOnlyDownloads,
+                                label = "Download only on Wi-Fi",
+                            )
+                            Text(
+                                "Downloads happen only when this phone is on Wi-Fi. Turn it off to download on mobile data too.",
+                                style = settingsHelperStyle,
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            SwitchRow(
+                                checked = state.prefs.autoDeleteWatched,
+                                onCheckedChange = actions.onSetAutoDeleteWatched,
+                                label = "Delete watched downloads",
+                            )
+                            Text(
+                                "A finished download deletes itself to free space. A finished series episode deletes its own download too — only the episode you just watched, never the rest of the season.",
+                                style = settingsHelperStyle,
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            SwitchRow(
+                                checked = state.prefs.smartDownloadsEnabled,
+                                onCheckedChange = actions.onSetSmartDownloadsEnabled,
+                                label = "Smart Downloads",
+                            )
+                            Text(
+                                "When on, the next episode of a series you're watching downloads itself on Wi-Fi, so it's ready offline. Only one episode per series at a time, and only while this phone has free space.",
+                                style = settingsHelperStyle,
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            // REA #5 (Netflix, Nov 2026): the Downloads For You
+                            // budget — how much space the automatic downloads may
+                            // use. The runner counts only episodes still on the
+                            // device, and an episode whose size the server never
+                            // stated counts as nothing, never as a guess.
+                            // UI audit (Nov 2026, Settings #4): the budget label was
+                            // a grey 12sp caption while every other ChipRow title
+                            // uses PreferenceRowTitle — the chips looked untitled.
+                            PreferenceRowTitle("Downloads For You may use")
+                            ChipRow(
+                                options = DOWNLOADS_FOR_YOU_CAP_OPTIONS_GB.map { "$it GB" },
+                                selectedIndex = DOWNLOADS_FOR_YOU_CAP_OPTIONS_GB
+                                    .indexOf(state.prefs.downloadsForYouCapGb)
+                                    .takeIf { it >= 0 } ?: 1,
+                                onSelect = { idx ->
+                                    actions.onSetDownloadsForYouCapGb(DOWNLOADS_FOR_YOU_CAP_OPTIONS_GB[idx])
+                                },
+                            )
+                            Text(
+                                "When the budget is full, the next episode waits — delete a downloaded episode or raise the limit.",
+                                style = settingsHelperStyle,
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            OutlinedButton(onClick = onOpenDownloads, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                            ) {
+                                Text("Open Downloads")
+                            }
+                        }
+                    }
+                }
+                if (showShare) {
+                    // ── Share kept files on the local network ──────────────────
+                    // Gone, not disabled, when the operator switched sharing off: the row would otherwise
+                    // read "on" while LanShareRunner has already closed the socket it promises to open.
+                    if (features.sharing) {
+                        // D10: the card carries its icon at the top-right, like
+                        // every other card — it had none.
+                        SettingsCard(title = "Share on your network", fill = MaterialTheme.colorScheme.tertiaryContainer) {
+                            SwitchRow(
+                                checked = state.lanShareEnabled,
+                                onCheckedChange = actions.onSetLanShareEnabled,
+                                label = "Let devices on this network play downloaded files",
+                            )
+                            Text(
+                                lanShareStatusLine(state.lanShareStatus),
+                                style = settingsHelperStyle,
+                            )
+                            Text(
+                                "Only devices on your Wi-Fi can see them.",
+                                style = settingsHelperStyle,
+                            )
+                        }
+                    }
+                }
+            }
+
+            SettingsGroup(index = 3, visible = showAppearanceGroup) {
+                SettingsGroupHeader(
+                    text = "Appearance",
+                    iconRes = R.drawable.ic_action_sun,
+                    iconTint = RaddCoral400,
+                )
+                // Appearance — the one place the app's look is decided.
+                SettingsCard(title = "Appearance", fill = MaterialTheme.colorScheme.surfaceContainer) {
+                    // Wallpaper colour is a brand decision, not a user one: this brand file
+                    // locks the palette (features.dynamic_color=false), and a switch that is
+                    // overruled by the build it ships in is worse than no switch. It appears
+                    // the moment a re-skin permits it.
+                    if (Brand.dynamicColorAllowed) {
+                        SwitchRow(
+                            checked = state.prefs.dynamicColor,
+                            onCheckedChange = actions.onSetDynamicColor,
+                            label = "Dynamic colour from wallpaper",
+                        )
+                    } else {
+                        // ST1: no switch to show — the brand locks the palette, so the
+                        // card says so instead of offering a control that does nothing.
+                        Text(
+                            "Jade is the app's colour — your wallpaper doesn't change it.",
+                            style = settingsHelperStyle,
+                        )
+                    }
+                }
+            }
+
+            SettingsGroup(index = 4, visible = showAboutGroup) {
+                SettingsGroupHeader(
+                    text = "About",
+                    iconRes = R.drawable.ic_action_info,
+                    iconTint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (showHelp) {
+                    // ── Help ───────────────────────────────────────────────────────
+                    // Read help first, write to us second: most questions are answered on
+                    // the Help screen, and the Contact form is for a person's own problem.
+                    SettingsCard(title = "Help", fill = MaterialTheme.colorScheme.surfaceContainerLow) {
+                        Text(
+                            // Settings review (Nov 2026, D1): the helper names VIP
+                            // only while the gate is ON — during the free launch the
+                            // VIP card is hidden everywhere else, so naming it here
+                            // would sell a door that is not on this screen.
+                            if (state.paywallVisible) "How to watch, download, and use VIP."
+                            else "How to watch and download.",
+                            style = settingsHelperStyle,
+                        )
+                        OutlinedButton(
+                            onClick = onOpenHelp,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+
+                        ) {
+                            Text("Read help")
+                        }
+                    }
+                }
+                if (showContact) {
+                    // ── Contact us ───────────────────────────────────────────────────
+                    // D2: the deep-link target from Help's Contact row — the card
+                    // reports its window position so the screen can scroll to it.
+                    SettingsCard(
+                        title = "Contact us",
+                        modifier = Modifier.onGloballyPositioned {
+                            contactCardTopInWindow = it.boundsInWindow().top
+                        },
+                        fill = MaterialTheme.colorScheme.surfaceContainerLow,
+                    ) {
+                        Text(
+                            "Report a problem, ask about a payment, or ask for a title to be taken down. No account needed.",
+                            style = settingsHelperStyle,
+                        )
+                        OutlinedButton(
+                            onClick = actions.onOpenContactForm,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+
+                        ) {
+                            Text("Write to us")
+                        }
+                        state.contact.message?.let { msg ->
+                            Text(
+                                msg,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (state.contact.messageIsError) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                            )
+                        }
+                        if (state.contact.showForm) {
+                            ContactDialog(
+                                email = state.disclaimer.effective().email,
+                                onDismiss = actions.onCloseContactForm,
+                            )
+                        }
+                    }
+                }
+                if (showDisclaimer) {
+                    // ── Disclaimer ───────────────────────────────────────────────────
+                    // The card shows the effective disclaimer: the panel's text when
+                    // the operator wrote one, else the shipped default — so there is
+                    // always one to read, and "No disclaimer published yet" can no
+                    // longer happen.
+                    // Settings review (Nov 2026, D10): each of the three Info
+                    // cards gets an icon that says what it is — the disclaimer is
+                    // a document, the totals are analytics, About keeps the "i".
+                    SettingsCard(title = "Disclaimer", fill = MaterialTheme.colorScheme.surfaceContainerLow) {
+                        val disclaimer = state.disclaimer.effective()
+                        // B8: no version in the painted line — acceptance is
+                        // already tracked per version, so the number says nothing
+                        // a viewer can act on.
+                        Text(
+                            "What this app is, and what it is not.",
+                            style = settingsHelperStyle,
+                        )
+                        OutlinedButton(
+                            onClick = actions.onOpenDisclaimer,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+
+                        ) {
+                            Text("Read the disclaimer")
+                        }
+                        if (state.showDisclaimer) {
+                            DisclaimerDialog(
+                                disclaimer = disclaimer,
+                                confirmLabel = "Close",
+                                onConfirm = actions.onCloseDisclaimer,
+                                onDismissRequest = actions.onCloseDisclaimer,
+                            )
+                        }
+                    }
+                }
+                if (showAnalytics) {
+                    // ── Anonymous usage totals (Tracking A) ──────────────────────
+                    // Totals only: how many plays, how often playback fails, how
+                    // often the app crashes. No name, number, location, title, or
+                    // search — and the switch is the same answer the first-run
+                    // dialog asked, changeable here at any time.
+                    SettingsCard(title = "Anonymous usage totals", fill = MaterialTheme.colorScheme.surfaceContainerLow) {
+                        Text(
+                            "Share anonymous totals with ${Brand.name}: plays, " +
+                                "playback failures, and crashes. Nothing that can " +
+                                "identify you or what you watch is ever sent.",
+                            style = settingsHelperStyle,
+                        )
+                        SwitchRow(
+                            checked = state.analyticsConsent == true,
+                            onCheckedChange = actions.onSetAnalyticsConsent,
+                            label = "Share anonymous totals",
+                        )
+                    }
+                }
+                if (showAbout) {
+                    // ── About / Disclaimer (accurate, no misleading claims) ─────
+                    SettingsCard(
+                        title = Brand.copy("settings_about_heading", "About ${Brand.name}"),
+                        fill = MaterialTheme.colorScheme.surfaceContainerLow,
+                    ) {
+                        Text(
+                            Brand.copy(
+                                "settings_about_body",
+                                "${Brand.shortName} finds movies and shows from public catalogs and plays them in one place.",
+                            ),
+                            style = settingsHelperStyle,
+                        )
+                        // B5: the painted line is the version name only. The build
+                        // number and theme name sit behind a tap on the line —
+                        // support asks for them, a viewer never does.
+                        Text(
+                            aboutVersionLine(),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.clickable(
+                                role = Role.Button,
+                                onClickLabel = if (showBuildDetails) "Hide build details" else "Show build details",
+                            ) { showBuildDetails = !showBuildDetails },
+                        )
+                        // ST5: the brief's line, under the version — the screen's
+                        // sign-off, not a setting.
+                        Text(
+                            "Made for watching.",
+                            style = settingsHelperStyle,
+                        )
+                        if (showBuildDetails) {
+                            Text(
+                                aboutBuildDetailsLine(),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+                if (showAdvancedCard) {
+                    // ── Advanced ───────────────────────────────────────────────
+                    // Audit #51: the catalog switcher lives behind Advanced, so a
+                    // casual tap can never disconnect the app from its catalog.
+                    TextButton(
+                        onClick = { showAdvanced = !showAdvanced },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+
+                    ) {
+                        Text(if (showAdvanced) "Hide advanced settings" else "Show advanced settings")
+                    }
+                    if (showAdvanced) {
+                                    // ── Your catalog ──────────────────────────────────────
+                                    SettingsCard(title = "Your catalog", fill = MaterialTheme.colorScheme.surfaceContainerLow) {
+                                        // The address is never printed here: a saved catalog reads as
+                                        // "Connected", and the field opens only when the viewer asks
+                                        // to change it. The save still tests the address before it
+                                        // keeps it, and the test's message never includes the address
+                                        // either.
+                                        if (!state.showServerField) {
+                                            Text(
+                                                text = if (state.serverUrl.isNotBlank()) "Connected to your catalog." else "No catalog connected yet.",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                            Spacer(Modifier.height(12.dp))
+                                            OutlinedButton(onClick = actions.onRevealServerField, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                                            ) {
+                                                Text("Change")
+                                            }
+                                        } else {
+                                            OutlinedTextField(
+                                                value = state.serverUrl,
+                                                onValueChange = actions.onServerUrlChanged,
+                                                label = { Text("Catalog address") },
+                                                placeholder = { Text("https://catalog.example.com") },
+                                                singleLine = true,
+                                                modifier = Modifier.fillMaxWidth(),
+                                            )
+                                            state.testMessage?.let { msg ->
+                                                Text(
+                                                    text = msg,
+                                                    color = if (state.testIsError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                )
+                                            }
+                                            Button(
+                                                onClick = actions.onTestAndSaveServer,
+                                                enabled = !state.isTesting && state.serverUrl.isNotBlank(),
+                                                // Robo run 5: the disabled text on this button read
+                                                // 2.98:1 — see DisabledButtonContentAlpha.
+                                                colors = ButtonDefaults.buttonColors(
+                                                    disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(
+                                                        alpha = DisabledButtonContentAlpha,
+                                                    ),
+                                                ),
+                                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+
+                                            ) {
+                                                if (state.isTesting) {
+                                                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                                                } else {
+                                                    Icon(painter = painterResource(R.drawable.ic_action_check), contentDescription = null, modifier = Modifier.size(18.dp))
+                                                    Spacer(Modifier.width(8.dp))
+                                                    Text("Save")
+                                                }
+                                            }
+                                            // Settings review (Nov 2026, D6): the
+                                            // field is a door that closes — Cancel
+                                            // returns to the calm summary line, and
+                                            // a successful Save closes it too
+                                            // (see hideServerField).
+                                            TextButton(
+                                                onClick = actions.onHideServerField,
+                                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+
+                                            ) {
+                                                Text("Cancel")
+                                            }
+                                        }
+
+                                        // No counts here: works/releases/links are the operator's numbers,
+                                        // not something a viewer needs to see on their own Settings screen.
+                                        // The save above still tests the address for its own message.
+                                    }
+
+                    }
+                }
+            }
+
+            // ST5: a query that matches nothing says so, with a way back —
+            // a dead end with no exit is worse than no search at all.
+            if (searchQuery.isNotBlank() && !anyCardVisible) {
+                SettingsCard(title = "No results") {
+                    Text(
+                        "Nothing in Settings matches \"$searchQuery\".",
+                        style = settingsHelperStyle,
+                    )
+                    TextButton(
+                        onClick = { onSearchQueryChange("") },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                    ) {
+                        Text("Clear search")
+                    }
+                }
+            }
+        }
+            // ST6: the load-error overlay — the J1 pattern. The settings stay
+            // visible behind the scrim (the column above is dimmed to 0.38),
+            // the scrim eats taps, and the card names the failure + offers Retry.
+            // The veil is invisible to TalkBack (clearAndSetSemantics) and the
+            // card is its SIBLING, not its child — clearAndSetSemantics on a
+            // parent hides the whole subtree, card included, so the card would
+            // never be announced (and no test could find its text).
+            if (state.loadError != null) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    // The veil only: full-screen scrim, eats taps, hidden
+                    // from TalkBack. A sibling of the card, so the card's
+                    // semantics survive.
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.45f))
+                            .clickable(interactionSource = null, indication = null) { }
+                            .clearAndSetSemantics { },
+                    ) { }
+                    Surface(
+                        shape = RoundedCornerShape(RaddTokens.Radius.Card),
+                        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 24.dp),
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(20.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_action_cloud_off),
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(28.dp),
+                            )
+                            Text(
+                                "Couldn't load your settings",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Text(
+                                state.loadError,
+                                style = settingsHelperStyle,
+                            )
+                            Button(
+                                onClick = actions.onRetryLoad,
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                            ) {
+                                Text("Retry")
+                            }
+                        }
+                    }
+                }
             }
         }
     }
 }
 
 /**
- * Audit #50: Settings is four sections, not a junk drawer of ~15 cards.
- * One heading per section — Watching, Downloads, Account, About — plus
- * Advanced for the server switcher.
- *
- * F15 (Batch B): the heading's top padding is 16dp, not 8dp — the sections
- * read as sections, with air above each heading, instead of the heading
- * sitting on the card above it.
- *
- * Review fix: sentence case, 12sp Medium — the old all-caps labelMedium
- * read as a second, louder voice than the card titles it introduces.
+ * ST1 (round 2): one header per group — a circular pastel icon + the 16sp
+ * SemiBold group title. The icon replaces the per-card top-right Material
+ * icons (Audit #50's four sections become five groups, §0.8 order): the
+ * section's identity lives here, once, not on every card. The header sits
+ * on the screen background; the cards below it carry the group's tonal fill.
  */
 @Composable
-private fun SettingsSectionHeading(text: String) {
-    Text(
-        text,
-        style = settingsGroupTitleStyle,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(top = 16.dp),
-    )
+private fun SettingsGroupHeader(
+    text: String,
+    @DrawableRes iconRes: Int,
+    iconTint: Color,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(top = 16.dp)
+            .semantics { heading() },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(iconTint.copy(alpha = 0.12f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                painter = painterResource(iconRes),
+                contentDescription = null,
+                tint = iconTint,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+        Text(text, style = settingsGroupTitleStyle, color = MaterialTheme.colorScheme.onSurface)
+    }
+}
+
+/**
+ * ST1/ST2 (round 2): one group — its staggered entrance + its
+ * AnimatedVisibility live here, so the body reads as five group calls.
+ * The entrance is Home's rail pattern: in inspection mode the group
+ * renders immediately, because Paparazzi never advances its frozen clock
+ * — in a golden every group would otherwise stay invisible. On a phone
+ * each group fades + slides in 70ms after the previous one; under reduced
+ * motion there is no stagger and no slide, only an instant fade.
+ * The [visible] flag is the search filter — typing a query animates the
+ * groups out and back with the same spring.
+ */
+@Composable
+private fun SettingsGroup(
+    index: Int,
+    visible: Boolean,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val inInspectionMode = LocalInspectionMode.current
+    val reduceMotion = rememberReduceMotion()
+    var entered by remember { mutableStateOf(inInspectionMode || reduceMotion) }
+    LaunchedEffect(Unit) {
+        if (inInspectionMode || reduceMotion) return@LaunchedEffect
+        delay(index * 70L)
+        entered = true
+    }
+    AnimatedVisibility(
+        visible = visible && entered,
+        enter = fadeIn(
+            animationSpec = if (reduceMotion) snap() else RaddMotion.defaultEffects(),
+        ) + if (reduceMotion) {
+            EnterTransition.None
+        } else {
+            slideInVertically(
+                initialOffsetY = { it / 4 },
+                animationSpec = RaddMotion.defaultSpatial(),
+            )
+        },
+        exit = fadeOut(
+            animationSpec = if (reduceMotion) snap() else RaddMotion.defaultEffects(),
+        ) + if (reduceMotion) {
+            ExitTransition.None
+        } else {
+            slideOutVertically(
+                targetOffsetY = { it / 4 },
+                animationSpec = RaddMotion.defaultSpatial(),
+            )
+        },
+        modifier = modifier,
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            content()
+        }
+    }
 }
 
 @Composable
 private fun SettingsCard(
     title: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
     modifier: Modifier = Modifier,
+    // ST1 (round 2): the group's tonal fill — the cards in one group share
+    // one tone, so the group reads as a group. Defaults to the old flat
+    // #1A1A1A for cards that belong to no group (the debug harness).
+    fill: Color = RaddSettingsCard,
     content: @Composable () -> Unit,
 ) {
     Column(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(RaddTokens.Radius.Card))
-            // Review fix: flat #1A1A1A grouped section card, no nested inner
-            // boxes — the old surface fill sat one more tint inside the
-            // #121212 canvas. The title stays the group header (13sp
-            // Medium); no second header layer is added on top of it.
-            .background(RaddSettingsCard)
+            // ST1: the fill is the group's tone now, not a single flat
+            // #1A1A1A — one tone per group, measured for chip borders
+            // (3.19–3.62:1) and helper text (6.4–7.9:1) on every fill.
+            .background(fill)
+            // ST2: the card grows smoothly when a door inside it opens
+            // (sign-in form, account details, build details, contact
+            // form, server field) — the size change is a spring, not a jump.
+            .animateContentSize(animationSpec = RaddMotion.defaultSpatial())
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        // Mockup: the title sits left, the card's icon at the top-right —
-        // the icon is a label for the card, not a bullet before its title.
+        // ST2 (round 2): the title stands alone — the card's icon is gone;
+        // the section's identity lives in the group header's pastel icon.
+        // The title is the sub-section title (14sp Medium, ST4).
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(title, style = settingsGroupTitleStyle, color = MaterialTheme.colorScheme.onBackground, modifier = Modifier.weight(1f))
-            if (icon != null) {
-                Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+            Text(title, style = settingsRowTitleStyle, color = MaterialTheme.colorScheme.onBackground, modifier = Modifier.weight(1f))
         }
         content()
     }
@@ -1379,7 +1901,7 @@ private fun KidsLockCard(viewModel: KidsLockViewModel) {
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
-    SettingsCard(title = "Kids Lock", icon = Icons.Default.Lock) {
+    SettingsCard(title = "Kids Lock", fill = MaterialTheme.colorScheme.primaryContainer) {
         Text(
             when {
                 modeActive -> "Kids Mode is ON — only family-friendly titles show, and Settings, Downloads and purchases stay locked behind your PIN."
@@ -1392,7 +1914,7 @@ private fun KidsLockCard(viewModel: KidsLockViewModel) {
             "If you forget your PIN, the only reset is clearing the app's data — write it down.",
             style = settingsHelperStyle,
         )
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(12.dp))
         if (!pinSet) {
             OutlinedButton(
                 onClick = { step = KidsLockStep.SETUP_FIRST; error = null },
@@ -1611,9 +2133,9 @@ internal fun AccountLabelField(
 
 @Composable
 private fun PreferenceRowTitle(text: String) {
-    // Review fix: in-card row titles are group headers too — 12sp Medium,
-    // the same rung as the card titles, below the 16sp control labels.
-    Text(text, style = settingsGroupTitleStyle, color = MaterialTheme.colorScheme.onSurface)
+    // ST4 (round 2): in-card row titles are 14sp Medium — one rung below
+    // the 16sp SemiBold group titles, one above the 12sp helpers.
+    Text(text, style = settingsRowTitleStyle, color = MaterialTheme.colorScheme.onSurface)
 }
 
 /**
@@ -1661,7 +2183,7 @@ internal fun SwitchRow(checked: Boolean, onCheckedChange: (Boolean) -> Unit, lab
         // 16sp Medium, onSurface.
         //
         // UI audit (Nov 2026, Settings #5): the label was hardcoded
-        // Color.White — fine on today's dark-only theme, white-on-light
+        // onPrimaryContainer — the selected chip's label in the token's own role,
         // if the theme ever goes light. The onSurface role owns it now.
         modifier = Modifier
             .fillMaxWidth()
@@ -1682,10 +2204,22 @@ internal fun SwitchRow(checked: Boolean, onCheckedChange: (Boolean) -> Unit, lab
                 haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 onCheckedChange(next)
             },
-            // Mockup: a plain switch — no check mark in the thumb. The state
-            // is still the track colour + the thumb position, and the Switch
-            // itself still carries the label as its spoken name.
-            modifier = Modifier.semantics { contentDescription = label },
+            // ST2 (round 2): the M3 Expressive thumb — a check in the thumb
+            // when on, and the whole switch scaled 1.12× ("big soft thumbs").
+            // The old mockup kept the thumb plain; the check is the state,
+            // readable without the track colour alone.
+            thumbContent = if (checked) {
+                {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_action_check),
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            } else null,
+            modifier = Modifier
+                .semantics { contentDescription = label }
+                .scale(1.12f),
         )
     }
 }
@@ -1743,11 +2277,12 @@ internal fun ChipRow(options: List<String>, selectedIndex: Int, onSelect: (Int) 
     // unselected chips carried bright 1dp outlines, so the unselected
     // state outweighed the selected one. Selected now gets a crisp
     // 1.5dp jade border + 16% jade tint fill with a white label;
-    // unselected softens to #6E6E6E / #B3B3B3. UI audit (Nov 2026,
-    // Settings #1) raised the border #333333 → #6E6E6E: the old border was
-    // 1.38:1 vs the card, under the M3 3:1 component bar. The token is
-    // Settings-only in practice (its one use is this border), so raising
-    // it moves no other screen's chips.
+    // unselected softens to #787878 / #B3B3B3. UI audit (Nov 2026,
+    // Settings #1) raised the border #333333 → #6E6E6E → #787878: the
+    // #333333 border was 1.38:1 vs the card, and #6E6E6E measured 2.94:1
+    // on the round-2 primaryContainer fill — both under the M3 3:1 bar.
+    // The token is Settings-only in practice (its one use is this border),
+    // so raising it moves no other screen's chips.
     // Internal so the review test can pin the height and the selection.
     FlowRow(
         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
@@ -1760,7 +2295,7 @@ internal fun ChipRow(options: List<String>, selectedIndex: Int, onSelect: (Int) 
                     containerColor = Color.Transparent,
                     labelColor = RaddChipLabelSoft,
                     selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
-                    selectedLabelColor = Color.White,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
                 ),
                 border = FilterChipDefaults.filterChipBorder(
                     enabled = true,
@@ -1946,7 +2481,7 @@ internal fun ContactDialog(
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Email,
+                        painter = painterResource(R.drawable.ic_action_mail),
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(32.dp),
@@ -1989,7 +2524,7 @@ internal fun ContactDialog(
                         modifier = Modifier.weight(1f),
                     )
                     Icon(
-                        imageVector = Icons.Default.ContentCopy,
+                        painter = painterResource(R.drawable.ic_action_copy),
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(20.dp),
