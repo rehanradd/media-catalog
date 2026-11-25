@@ -102,13 +102,24 @@ class RenditionFailoverStartTest {
      * S5 log shows the player pressing dead handles ~1/sec until the
      * server's per-minute bucket 429'd the session; a 404 means "no
      * playable source for that handle", and re-pressing the same address
-     * can only re-pay the resolve. The dead handle hops to a backup /
-     * the next rank at once, whenever it fails.
+     * can only re-pay the resolve.
+     *
+     * Player resilience (2026-11-25): the hop is still the answer for a
+     * genuinely dead handle — but a handle that played and then 403/404/410s
+     * is an expiry until proven otherwise, so it gets ONE silent re-resolve
+     * first (a fresh 302 for the same handle from our own redirector, not a
+     * re-press of the dead host address). The second failure hops / advances /
+     * hands off exactly as S5 pinned: the re-resolve never retries, and it
+     * never loops — one per rendition.
      */
     @Test
-    fun `a dead handle after the first frame hops to the backup instead of retrying the same rendition`() {
+    fun `a dead handle after the first frame re-resolves once, then hops to the backup`() {
         val subject = machine(rung(1, "h-a", backups = listOf("b-a1")), rung(2, "h-b"))
         assertEquals(0, subject.selectInitial())
+
+        val reResolve = subject.onFailure("Response code: 404", beforeFirstFrame = false, isDeadHandle = true)
+        reResolve as FailoverDecision.ReResolveSame
+        assertEquals(0, reResolve.index)
 
         val hop = subject.onFailure("Response code: 404", beforeFirstFrame = false, isDeadHandle = true)
         hop as FailoverDecision.AdvanceBackup
@@ -116,9 +127,13 @@ class RenditionFailoverStartTest {
     }
 
     @Test
-    fun `a dead handle after the first frame with no backup advances to the next rank`() {
+    fun `a dead handle after the first frame with no backup re-resolves once, then advances to the next rank`() {
         val subject = machine(rung(1, "h-a"), rung(2, "h-b"))
         assertEquals(0, subject.selectInitial())
+
+        val reResolve = subject.onFailure("Response code: 410", beforeFirstFrame = false, isDeadHandle = true)
+        reResolve as FailoverDecision.ReResolveSame
+        assertEquals(0, reResolve.index)
 
         val advance = subject.onFailure("Response code: 410", beforeFirstFrame = false, isDeadHandle = true)
         advance as FailoverDecision.Advance
@@ -126,9 +141,13 @@ class RenditionFailoverStartTest {
     }
 
     @Test
-    fun `a dead handle on the last rank hands off, never retries`() {
+    fun `a dead handle on the last rank re-resolves once, then hands off, never retries`() {
         val subject = machine(rung(1, "h-a"))
         assertEquals(0, subject.selectInitial())
+
+        val reResolve = subject.onFailure("Response code: 403", beforeFirstFrame = false, isDeadHandle = true)
+        reResolve as FailoverDecision.ReResolveSame
+        assertEquals(0, reResolve.index)
 
         val decision = subject.onFailure("Response code: 403", beforeFirstFrame = false, isDeadHandle = true)
         decision as FailoverDecision.Handoff

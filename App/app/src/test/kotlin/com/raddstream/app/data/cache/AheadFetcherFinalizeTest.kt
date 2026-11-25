@@ -559,7 +559,11 @@ class AheadFetcherFinalizeTest {
             99, counts.cdn)
         assertEquals("the row keeps our redirector address — the direct url is never stored",
             "https://redirector.test/api/v1/stream?id=abc", after.currentUrl)
-        val part = fx.tempFile.readBytes()
+        // The pass completed the file, so finalize renamed the .part away: the bytes live
+        // in the committed file now (the same contract the full-download test pins).
+        assertTrue(fx.committedFile.exists())
+        assertFalse(fx.tempFile.exists())
+        val part = fx.committedFile.readBytes()
         for (offset in listOf(0, 1024, 20 * 1024 * 1024, 40 * 1024 * 1024 - 1024)) {
             assertEquals("byte at $offset must be the file's own byte",
                 (offset % 251).toByte(), part[offset])
