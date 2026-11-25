@@ -54,6 +54,7 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 import fast_fetch  # noqa: E402
+import wp_rest  # noqa: E402
 
 DATA_DIR = Path("/home/ubuntu/radd-stream-data")
 PAGE_TIMEOUT = 30
@@ -677,6 +678,171 @@ def parse_page(html: str, page_url: str, site: str) -> dict | None:
     }
 
 
+_HAZ_CODEC_RE = re.compile(r"^(x264|x265|hevc|av1|vp9)", re.I)
+_HAZ_EPISODE_SPLIT_RE = re.compile(r"<!--\s*Episode\s*(\d+)[^>]*-->", re.I)
+_HAZ_DL_HREF_RE = re.compile(
+    r"https://002\.hindianimeszone\.com/download1\.php\?code=[^\"'\s]+", re.I)
+_HAZ_LANGUAGE_ABBREV = {
+    "jap": "Japanese", "eng": "English", "hin": "Hindi", "tam": "Tamil",
+    "tel": "Telugu", "mal": "Malayalam", "kan": "Kannada", "kor": "Korean",
+    "chi": "Chinese", "fre": "French", "ger": "German", "spa": "Spanish",
+    "rus": "Russian",
+}
+_HAZ_LANGUAGE_DROP = ("fan", "dubbed", "dub", "fandub", "subbed", "sub",
+                      "org", "original")
+
+
+def _normalize_haz_language(token: str) -> str | None:
+    """One Language: token -> a language name.
+
+    This site writes "Hindi Fan Dubbed" and "Jap Org" where a language
+    name belongs; the qualifiers are dropped and abbreviations expanded.
+    """
+    words = [w for w in re.split(r"[\s\-]+", (token or "").strip()) if w]
+    words = [w for w in words if w.lower() not in _HAZ_LANGUAGE_DROP]
+    if not words:
+        return None
+    name = " ".join(words)
+    if name.lower() in _HAZ_LANGUAGE_ABBREV:
+        return _HAZ_LANGUAGE_ABBREV[name.lower()]
+    return name.title()
+
+
+def _haz_quality_codec(q: str) -> tuple[str | None, str | None]:
+    """'480p+x264' -> ('480p', 'x264'); '1080p+HQ' -> ('1080p', None)."""
+    parts = urllib.parse.unquote_plus(q or "").strip().split()
+    if not parts:
+        return None, None
+    quality = parts[0].lower()
+    if not QUALITY_RE.search(quality):
+        return None, None
+    codec = None
+    if len(parts) > 1:
+        m = _HAZ_CODEC_RE.match(parts[1])
+        codec = m.group(1).lower() if m else None
+    return quality, codec
+
+
+def _haz_episode_releases(content: str, season: int | None) -> list[dict]:
+    """One release per (episode, quality) from the download1.php links.
+
+    The Quality: line ("480p 720p 1080p") is a list, never a release
+    quality — the real quality/codec come from each link's q param.
+    The Watch Online link is the series page, not an episode source,
+    and the How-to-Download tail carries no gateway link at all.
+    """
+    releases: list[dict] = []
+    chunks = _HAZ_EPISODE_SPLIT_RE.split(content or "")
+    pairs = list(zip(chunks[1::2], chunks[2::2]))
+    if not pairs:
+        # No episode blocks (movie-style post?): every gateway link is
+        # its own release with no episode number.
+        pairs = [(None, content or "")]
+    for ep_text, block in pairs:
+        episode = int(ep_text) if ep_text else None
+        for href in _HAZ_DL_HREF_RE.findall(html_mod.unescape(block)):
+            qs = urllib.parse.parse_qs(urllib.parse.urlsplit(href).query)
+            code = (qs.get("code") or [None])[0]
+            q = (qs.get("q") or [None])[0]
+            quality, codec = _haz_quality_codec(q or "")
+            if not quality or not code:
+                continue
+            qual_label = f"{quality} {codec}" if codec else quality
+            label = (f"Episode {episode} [{qual_label}]" if episode
+                     else f"Download [{qual_label}]")
+            releases.append({
+                "label": label,
+                "quality": quality,
+                "resolution": quality,
+                "size_bytes": None,
+                "codec": codec,
+                "season": season,
+                "episode": episode,
+                "sources": [{
+                    "source_name": "002.hindianimeszone.com",
+                    "service": "002.hindianimeszone.com",
+                    "resource_id": code,
+                    "source_url": href,
+                    "final_url": None,
+                    "playback_type": "download",
+                    "is_temporary": 0,
+                    "status": "unverified",
+                }],
+            })
+    return releases
+
+
+def parse_rest_post(post: dict, site: str) -> dict | None:
+    """Maps one WP REST post dict onto the staging post shape.
+
+    No per-post page fetch: title from title.rendered, metadata from the
+    content info box (Genre/Language/Synopsis) and the filtered WP
+    categories, poster from the validated featured media, releases from
+    the per-episode download1.php gateway links (one per quality x codec).
+    The site carries no IMDb rating, cast or director, so those stay NULL;
+    the post date is a publish date, never a release year.
+    """
+    cfg = SITES.get(site, {})
+    raw_title = (post.get("title") or {}).get("rendered") or ""
+    post_url = post.get("link") or ""
+    title = _clean_title(raw_title, site)
+    slug = _slug_of(post_url) or (post.get("slug") or "")
+    if not title:
+        return None
+    year = _year_of(title, slug)
+    searchable = f"{title} {slug}"
+    season = _int_or_none(SEASON_RE, searchable)
+    is_series = bool(SERIES_RE.search(searchable)) or bool(season)
+    clean_title = re.sub(r"\s+", " ", YEAR_RE.sub("", title)).strip(" -–|")
+    canonical_key = fast_fetch.generate_canonical_key(clean_title, year)
+    if not canonical_key or canonical_key == "unknown":
+        return None
+    labels = wp_rest.post_labels(post)
+    genres = wp_rest.genres_from_post(post)
+    poster = wp_rest.poster_from_post(post)
+    synopsis = wp_rest.synopsis_from_post(post)
+    if synopsis:
+        # The story value runs into the first episode block ("Episode 1
+        # Multi Audio") before the Watch Online stop; cut that tail.
+        synopsis = re.sub(r"\s+Episode\s+\d+.*$", "", synopsis,
+                          flags=re.S).strip() or None
+    langs: list[str] = []
+    # labels["languages"] is one string in wp_rest (moviesdrive reads it
+    # as such); split it here on the same separators _split_list uses.
+    for token in re.split(r"[,/|+]|\s+and\s+", labels.get("languages") or ""):
+        name = _normalize_haz_language(token)
+        if name and name not in langs:
+            langs.append(name)
+    languages = ", ".join(langs) if langs else "Unknown"
+    content = (post.get("content") or {}).get("rendered") or ""
+    releases = _haz_episode_releases(content, season if is_series else None)
+    if not releases:
+        return None
+    return {
+        "url": post_url,
+        "slug": slug,
+        "title": title,
+        "clean_title": clean_title,
+        "year": year,
+        "content_type": "series" if is_series else "movie",
+        "season_number": season if is_series else None,
+        "seasons": json.dumps([{"season": season, "episodes": []}])
+        if is_series and season else None,
+        "poster_url": poster or None,
+        "genres": ", ".join(genres) if genres else None,
+        "synopsis": synopsis or None,
+        "languages": languages,
+        "industry": "Unknown",
+        "country": "Unknown",
+        "is_18_plus": 1 if _is_adult(title, slug, synopsis) else 0,
+        "is_animated": 1 if cfg.get("always_animated") or
+        any(w in searchable.lower() for w in ANIMATED_WORDS) else 0,
+        "source_site": site,
+        "canonical_key": canonical_key,
+        "releases": releases,
+    }
+
+
 def export_staging(db_path: Path | str, site: str, posts: list[dict]) -> dict:
     out = {"posts_written": 0, "releases_written": 0, "sources_written": 0,
            "skipped": 0}
@@ -731,12 +897,13 @@ def export_staging(db_path: Path | str, site: str, posts: list[dict]) -> dict:
                     """
                     INSERT INTO releases (
                         post_canonical_key, label, quality, resolution, size_bytes,
-                        season_number, episode_number, audio_languages, bridge_url,
-                        origin_url
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+                        codec, season_number, episode_number, audio_languages,
+                        bridge_url, origin_url
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
                     """,
                     (post["canonical_key"], rel.get("label"), rel.get("quality"),
-                     rel.get("resolution"), rel.get("size_bytes"), rel.get("season"),
+                     rel.get("resolution"), rel.get("size_bytes"),
+                     rel.get("codec"), rel.get("season"),
                      rel.get("episode"), post.get("languages"), post["url"]),
                 )
                 out["releases_written"] += 1
@@ -789,7 +956,10 @@ def sync_catalog(site: str, db_path: Path | str, config: dict | None = None,
     exclude = re.compile(cfg["exclude"], re.I)
     pending = list(cfg["sitemaps"])
     seen: set[str] = set()
-    locs: list[tuple[str, str | None]] = []
+    # [loc, lastmod, raw_json]: the REST seed backfills raw_json so crawl
+    # can parse without a per-post page fetch.
+    locs: list[list] = []
+    by_loc: dict[str, list] = {}
     depth = 0
     while pending and depth < 3:
         nxt = []
@@ -810,20 +980,25 @@ def sync_catalog(site: str, db_path: Path | str, config: dict | None = None,
                 if exclude.search(loc):
                     continue
                 seen.add(loc)
-                locs.append((loc, lastmod))
+                entry = [loc, lastmod, None]
+                locs.append(entry)
+                by_loc[loc] = entry
         pending = nxt
         depth += 1
-    rest_seeded = _seed_rest(cfg, exclude, seen, locs, site, verbose)
+    rest_seeded = _seed_rest(cfg, exclude, seen, by_loc, locs, site, verbose)
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path, timeout=60)
     try:
         ensure_schema(conn)
         known = {r[0] for r in conn.execute("SELECT loc FROM sitemap_cache")}
-        fresh = [(loc, lm) for loc, lm in locs if loc not in known]
+        fresh = [(loc, lm) for loc, lm, _ in locs if loc not in known]
         conn.executemany(
-            "INSERT INTO sitemap_cache (loc, lastmod, slug, scraped) VALUES (?, ?, ?, 0)",
-            [(loc, lm, _slug_of(loc)) for loc, lm in fresh])
+            "INSERT INTO sitemap_cache (loc, lastmod, slug, scraped, raw_json)"
+            " VALUES (?, ?, ?, 0, ?)"
+            " ON CONFLICT(loc) DO UPDATE SET"
+            " raw_json = COALESCE(excluded.raw_json, sitemap_cache.raw_json)",
+            [(loc, lm, _slug_of(loc), raw) for loc, lm, raw in locs])
         conn.commit()
     finally:
         conn.close()
@@ -834,15 +1009,20 @@ def sync_catalog(site: str, db_path: Path | str, config: dict | None = None,
 
 
 def _seed_rest(cfg: dict, exclude: re.Pattern, seen: set[str],
-               locs: list[tuple[str, str | None]], site: str,
+               by_loc: dict[str, list], locs: list[list], site: str,
                verbose: bool) -> int:
-    """Seeds the queue from the open WP REST route when no post sitemap exists."""
+    """Seeds the queue from the open WP REST route when no post sitemap exists.
+
+    Fetches the full post (with _embedded) and stores it as raw_json, so
+    crawl can parse without a per-post page fetch. A loc already queued
+    from a sitemap gets its raw_json backfilled, not a second row.
+    """
     rest = cfg.get("rest")
     if not rest:
         return 0
     cats = cfg.get("rest_categories")
     extra = f"&categories={cats}" if cats else ""
-    url = f"{rest}?per_page=100&page=1&_fields=link{extra}"
+    url = f"{rest}?per_page=100&page=1&_embed=1{extra}"
     status, _final, text, headers = _http_get_full(url)
     if status != 200:
         if verbose:
@@ -857,7 +1037,7 @@ def _seed_rest(cfg: dict, exclude: re.Pattern, seen: set[str],
         if page > 1:
             time.sleep(0.3)
             status, _final, text, _headers = _http_get_full(
-                f"{rest}?per_page=100&page={page}&_fields=link{extra}")
+                f"{rest}?per_page=100&page={page}&_embed=1{extra}")
             if status != 200:
                 if verbose:
                     print(f"[!] [{site}] REST page {page} -> {status}", flush=True)
@@ -868,10 +1048,16 @@ def _seed_rest(cfg: dict, exclude: re.Pattern, seen: set[str],
             break
         for item in items if isinstance(items, list) else []:
             loc = (item or {}).get("link")
-            if not loc or loc in seen or exclude.search(loc):
+            if not loc or exclude.search(loc):
+                continue
+            raw = json.dumps(item)
+            if loc in by_loc:
+                by_loc[loc][2] = raw
                 continue
             seen.add(loc)
-            locs.append((loc, None))
+            entry = [loc, None, raw]
+            locs.append(entry)
+            by_loc[loc] = entry
             added += 1
     return added
 
@@ -912,7 +1098,7 @@ def crawl(site: str, db_path: Path | str, limit: int | None = None,
     try:
         ensure_schema(conn)
         rows = conn.execute(
-            "SELECT loc FROM sitemap_cache WHERE scraped IN (0, 2)"
+            "SELECT loc, raw_json FROM sitemap_cache WHERE scraped IN (0, 2)"
             " OR (scraped = -1 AND error_count < ?) ORDER BY rowid",
             (MAX_SCRAPE_ATTEMPTS,)).fetchall()
     finally:
@@ -924,11 +1110,28 @@ def crawl(site: str, db_path: Path | str, limit: int | None = None,
               "declined_by_reason": {}}
     if verbose:
         print(f"[*] [{site}] {len(rows)} pages pending", flush=True)
-    for (loc,) in rows:
+    for loc, raw_json in rows:
         if STOP_REQUESTED:
             break
         if _RATE_LIMITED.is_set():
             totals["paused_rate_limit"] += 1
+            continue
+        post = None
+        if raw_json:
+            # WP REST post stored at sync: parse it, no page fetch.
+            try:
+                post = parse_rest_post(json.loads(raw_json), site)
+            except (json.JSONDecodeError, TypeError, AttributeError):
+                post = None
+        if post is not None:
+            written = export_staging(db_path, site, [post])
+            totals["posts"] += written["posts_written"]
+            totals["releases"] += written["releases_written"]
+            totals["sources"] += written["sources_written"]
+            totals["pages"] += 1
+            if verbose and totals["pages"] % 20 == 0:
+                print(f"    ... {totals['pages']} pages, {totals['posts']} posts,"
+                      f" {totals['sources']} sources", flush=True)
             continue
         time.sleep(delay)
         status, final, body = http_get(loc)

@@ -53,6 +53,7 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 import fast_fetch
+import wp_rest
 from config import staging_db_path
 from domain_resolver import get_active_base_url, resolve_if_dead
 
@@ -297,6 +298,21 @@ def clean_rareanimes_title(raw_title: str) -> tuple[str, int | None, int | None,
     return clean, year, season, canonical_key
 
 
+def _split_info_languages(value: str | None) -> list[str]:
+    """Split an info-block ``Language:`` value into language names."""
+    if not value:
+        return []
+    langs: list[str] = []
+    for piece in re.split(r"[,+&/\-–]", value):
+        piece = piece.strip()
+        # Drop dub/sub qualifiers ("Hindi Dubbed" -> "Hindi").
+        piece = re.sub(r"\s+(?:dubbed|dub|subbed|sub)\s*$", "", piece,
+                       flags=re.I).strip()
+        if piece and piece not in langs:
+            langs.append(piece)
+    return langs
+
+
 def parse_rareanimes_content(content_html: str) -> tuple[dict, list[dict]]:
     """
     Extracts post info block (Full Name, Season, Release Year, Genre, Synopsis)
@@ -317,6 +333,11 @@ def parse_rareanimes_content(content_html: str) -> tuple[dict, list[dict]]:
         if m:
             info[key] = re.sub(r"<[^>]+>", "", m.group(1)).strip()
 
+    # Live Synopsis lines nest the text in a wrapper span, so the
+    # capture keeps the ": " separator (": Takemichi...") — drop it.
+    if info.get("synopsis"):
+        info["synopsis"] = info["synopsis"].lstrip(":").strip() or None
+
     releases = []
     seen_urls = set()
 
@@ -333,8 +354,10 @@ def parse_rareanimes_content(content_html: str) -> tuple[dict, list[dict]]:
             # Find language lines within this episode block
             p_lines = re.findall(r"<p>(.*?)</p>", block_html, re.IGNORECASE | re.DOTALL)
             for pl in p_lines:
-                # Detect language
-                lang = "Hindi"
+                # Detect language; fall back to the info block's
+                # Language: instead of a hardcoded guess.
+                lang = _split_info_languages(info.get("language"))
+                lang = lang[0] if lang else "Hindi"
                 lang_m = re.search(r"<span[^>]*>\s*([A-Za-z\s]+?)\s*</span>\s*–", pl, re.IGNORECASE)
                 if lang_m:
                     lang = lang_m.group(1).strip()
@@ -354,8 +377,8 @@ def parse_rareanimes_content(content_html: str) -> tuple[dict, list[dict]]:
                         "episode_number": ep_num,
                         "season_number": int(info["season"]) if "season" in info else 1,
                         "audio_languages": json.dumps([lang]),
-                        "quality": "720p",
-                        "resolution": "720p",
+                        "quality": None,
+                        "resolution": None,
                         "mirrors": mirrors,
                     })
 
@@ -376,14 +399,17 @@ def parse_rareanimes_content(content_html: str) -> tuple[dict, list[dict]]:
                 mirrors.append((clean_txt, u))
 
             if mirrors:
-                # Check quality in heading
+                # Check quality in heading; None when the block states
+                # none (was a fabricated "720p").
                 q_m = re.search(r"\b(2160p|4k|1080p|720p|480p)\b", h_text, re.IGNORECASE)
-                quality = q_m.group(1).lower() if q_m else "720p"
+                quality = q_m.group(1).lower() if q_m else None
                 releases.append({
                     "label": h_text if h_text else "Full Movie [HD]",
                     "episode_number": None,
                     "season_number": None,
-                    "audio_languages": json.dumps(["Hindi"]),
+                    "audio_languages": json.dumps(
+                        _split_info_languages(info.get("language"))
+                        or ["Hindi"]),
                     "quality": quality,
                     "resolution": quality,
                     "mirrors": mirrors,
@@ -404,9 +430,11 @@ def parse_rareanimes_content(content_html: str) -> tuple[dict, list[dict]]:
                 "label": "Download Release",
                 "episode_number": None,
                 "season_number": None,
-                "audio_languages": json.dumps(["Hindi"]),
-                "quality": "720p",
-                "resolution": "720p",
+                "audio_languages": json.dumps(
+                    _split_info_languages(info.get("language"))
+                    or ["Hindi"]),
+                "quality": None,
+                "resolution": None,
                 "mirrors": mirrors,
             })
 
@@ -434,23 +462,30 @@ def extract_post_data_rareanimes(
         content_html = raw_post_json.get("content", {}).get("rendered", "")
         post_url = raw_post_json.get("link", post_url)
 
-        # Extract poster from _embedded
-        embedded = raw_post_json.get("_embedded", {})
-        media_list = embedded.get("wp:featuredmedia", [])
-        if media_list and isinstance(media_list, list):
-            poster_url = media_list[0].get("source_url")
-
-        # Extract categories
-        for tg in embedded.get("wp:term", []):
-            if isinstance(tg, list):
-                for t in tg:
-                    if t.get("name"):
-                        categories.append(t["name"])
+        # Poster: the validated featured media first (the shared
+        # helper rejects the site-index trap).
+        poster_url = wp_rest.poster_from_post(raw_post_json)
     elif page_html:
         t_m = re.search(r"<h1[^>]*>(.*?)</h1>", page_html, re.IGNORECASE | re.DOTALL)
         raw_title = t_m.group(1) if t_m else ""
         content_m = re.search(r'<div[^>]+class=["\'][^"\']*entry-content[^"\']*["\'][^>]*>(.*?)</div>', page_html, re.IGNORECASE | re.DOTALL)
         content_html = content_m.group(1) if content_m else page_html
+
+    # Genres (see above for why the excerpt is never consulted).
+    rest_post = raw_post_json or {"content": {"rendered": content_html}}
+    content_labels = wp_rest.parse_labelled_text(
+        wp_rest.content_text(rest_post))
+    genres_list = content_labels.get("genres")
+    if not genres_list:
+        cats = []
+        if raw_post_json:
+            for tg in raw_post_json.get("_embedded", {}).get("wp:term", []):
+                if isinstance(tg, list):
+                    for t in tg:
+                        if t.get("name"):
+                            cats.append(t["name"])
+        genres_list = wp_rest.genres_from_categories(cats)
+    genres = json.dumps(genres_list) if genres_list else None
 
     clean_title, year, season, canonical_key = clean_rareanimes_title(raw_title)
 
@@ -458,19 +493,29 @@ def extract_post_data_rareanimes(
     if not parsed_releases:
         return None
 
-    # Refine title and metadata from info block if available
-    if info.get("full_name"):
-        clean_title = info["full_name"]
-    if info.get("year"):
+    # Refine title and metadata from info block if available — but
+    # only when the block agrees with the WP title (see above).
+    block_name = (info.get("full_name") or "").strip()
+    title_text = html.unescape(raw_title)
+    block_trusted = (not block_name or block_name.casefold() in title_text.casefold()
+                     or title_text.casefold() in block_name.casefold())
+    if block_trusted and block_name:
+        clean_title = block_name
+    if block_trusted and info.get("year"):
         try:
             year = int(info["year"])
         except ValueError:
             pass
-    if info.get("season"):
+    if block_trusted and info.get("season"):
         try:
             season = int(info["season"])
         except ValueError:
             pass
+
+    # Releases inherit the trusted season: the parse stamped the
+    # block's season on Pattern A releases before the guard ran.
+    for _rel in parsed_releases:
+        _rel["season_number"] = season
 
     # Media type detection
     is_series = bool(season or any(r.get("episode_number") for r in parsed_releases) or "episodes" in raw_title.lower())
@@ -499,7 +544,7 @@ def extract_post_data_rareanimes(
                         "source_url": u,
                         "final_url": direct_pd,
                         "is_temporary": 0,
-                        "quality": r.get("quality", "720p"),
+                        "quality": r.get("quality"),
                     })
 
             # 2. HubCloud Drive
@@ -518,7 +563,7 @@ def extract_post_data_rareanimes(
                             "source_url": u,
                             "final_url": src.get("final_url", u),
                             "is_temporary": src.get("is_temporary", 0),
-                            "quality": r.get("quality", "720p"),
+                            "quality": r.get("quality"),
                         })
                 else:
                     sources.append({
@@ -528,7 +573,7 @@ def extract_post_data_rareanimes(
                         "source_url": u,
                         "final_url": u,
                         "is_temporary": 0,
-                        "quality": r.get("quality", "720p"),
+                        "quality": r.get("quality"),
                     })
 
             # 3. Mega.nz mirror
@@ -541,7 +586,7 @@ def extract_post_data_rareanimes(
                     "source_url": u,
                     "final_url": u,
                     "is_temporary": 0,
-                    "quality": r.get("quality", "720p"),
+                    "quality": r.get("quality"),
                 })
 
             # 4. Razorshell / MultiQuality
@@ -554,7 +599,7 @@ def extract_post_data_rareanimes(
                     "source_url": u,
                     "final_url": u,
                     "is_temporary": 0,
-                    "quality": r.get("quality", "720p"),
+                    "quality": r.get("quality"),
                 })
 
         if sources:
@@ -566,7 +611,7 @@ def extract_post_data_rareanimes(
                 "season_number": r.get("season_number"),
                 "episode_number": r.get("episode_number"),
                 "audio_languages": r.get("audio_languages"),
-                "codec": "x264",
+                "codec": None,
                 "bridge_url": bridge_url or "",
                 "sources": sources,
             })
@@ -582,7 +627,7 @@ def extract_post_data_rareanimes(
         "media_type": media_type,
         "imdb_id": None,
         "poster_url": poster_url,
-        "genres": json.dumps(categories) if categories else None,
+        "genres": genres,
         "synopsis": info.get("synopsis"),
         "site": "rareanimes",
         "post_url": post_url,
@@ -653,13 +698,13 @@ def save_post_to_staging_db(db_path: Path, post_data: dict) -> bool:
                 (
                     post_id,
                     r.get("label"),
-                    r.get("quality", "720p"),
-                    r.get("resolution", "720p"),
+                    r.get("quality"),
+                    r.get("resolution"),
                     r.get("size_bytes"),
                     r.get("season_number"),
                     r.get("episode_number"),
                     r.get("audio_languages"),
-                    r.get("codec", "x264"),
+                    r.get("codec"),
                     r.get("bridge_url", ""),
                 ),
             )

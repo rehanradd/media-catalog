@@ -517,9 +517,14 @@ class SyncAndCrawlTests(unittest.TestCase):
 
     def test_rest_seed_pages_until_x_wp_totalpages(self):
         payloads = {
-            1: ('[{"link":"https://x.site/one-2024/"},{"link":"https://x.site/category/a/"}]',
+            1: ('[{"id":1,"link":"https://x.site/one-2024/","slug":"one-2024",'
+                '"title":{"rendered":"One (2024)"},"content":{"rendered":"<p>x</p>"},'
+                '"excerpt":{"rendered":""},"_embedded":{}},'
+                '{"link":"https://x.site/category/a/"}]',
                 {"x-wp-totalpages": "2"}),
-            2: ('[{"link":"https://x.site/two-2024/"}]', {}),
+            2: ('[{"id":2,"link":"https://x.site/two-2024/","slug":"two-2024",'
+                '"title":{"rendered":"Two"},"content":{"rendered":"<p>y</p>"},'
+                '"excerpt":{"rendered":""},"_embedded":{}}]', {}),
         }
 
         def fake_full(url, **_kw):
@@ -540,6 +545,13 @@ class SyncAndCrawlTests(unittest.TestCase):
                 self.assertEqual(
                     conn.execute("SELECT loc FROM sitemap_cache ORDER BY loc").fetchall(),
                     [("https://x.site/one-2024/",), ("https://x.site/two-2024/",)])
+                # The full post is stored, so crawl needs no page fetch.
+                raws = conn.execute(
+                    "SELECT raw_json FROM sitemap_cache ORDER BY loc").fetchall()
+                self.assertEqual(len(raws), 2)
+                import json as _json
+                self.assertEqual(_json.loads(raws[0][0])["id"], 1)
+                self.assertEqual(_json.loads(raws[1][0])["id"], 2)
             finally:
                 conn.close()
 
@@ -615,6 +627,270 @@ class SyncAndCrawlTests(unittest.TestCase):
             try:
                 self.assertEqual(conn.execute(
                     "SELECT scraped FROM sitemap_cache").fetchone()[0], -1)
+            finally:
+                conn.close()
+
+
+# Live-shape hindianimeszone REST post (id 12610, fetched 23 Nov 2026
+# from https://hindianimeszone.com/wp-json/wp/v2/posts?per_page=2&_embed=1).
+# Content trimmed to the info box + 2 episode blocks + the How-to tail;
+# the live post carries 7 episode blocks of 24 total.
+BLUE_BOX_CONTENT = """
+<link rel="stylesheet" href="https://hindianimeszone.com/1.css">
+<div class="episode">
+<div style="font-family: Arial, sans-serif;">
+<br>
+  <b><span style="color: magenta;">Genre:</span></b> <b>Romance, Sports, Comedy, Drama, School, Slice of Life</b><br>
+  <b><span style="color: blue;">Language:</span></b> <b>Hindi, Tamil, Telugu, English, Japanese</b><br>
+  <b><span style="color: blue;">Subtitle:</span></b> <b>English</b><br>
+    <b><span style="color: darkviolet;">Episodes:</span></b> <b>24</b><br>
+  <b><span style="color: magenta;">Quality:</span></b> <b>480p 720p 1080p</b><br><br>
+  <b><span style="color: magenta;">Synopsis:</span></b><br>
+  <b>Taiki Inomata continues balancing his badminton dreams with his growing feelings for Chinatsu Kano. As competitions and school life become more intense, their relationship faces new emotions, challenges, and romantic complications.</b>
+</div><b>
+<hr class="divider">
+<!-- Episode 1 (Code: twPj6VGX0hWeLAFSVv) -->
+<div class="episode">
+  <span class="episode-title">Episode 1</span><br>
+  <span class="language">Multi Audio</span>
+  <div class="btn-group">
+    <a class="watch-online" href="https://myanimes.in/series/blue-box/" rel="noopener">Watch Online</a>
+    <a class="download-480p" href="https://002.hindianimeszone.com/download1.php?code=tsD7YgT56c6CvY5Ek60czx2K&amp;q=480p+x264">480p x264</a>
+    <a class="download-720p" href="https://002.hindianimeszone.com/download1.php?code=m9hOka3KyXKZJzMXgn&amp;q=720p+x264">720p x264</a>
+    <a class="download-720p" href="https://002.hindianimeszone.com/download1.php?code=MkyaCuOPb2fhqMKCOG01rryHD&amp;q=720p+x265">720p x265</a>
+    <a class="download-1080p" href="https://002.hindianimeszone.com/download1.php?code=qSj0dNPae8pl6eo9&amp;q=1080p+x265">1080p x265</a>
+    <a class="download-1080p" href="https://002.hindianimeszone.com/download1.php?code=twPj6VGX0hWeLAFSVv&amp;q=1080p+HQ">1080p HQ</a>
+  </div>
+</div>
+<hr class="divider">
+<!-- Episode 2 (Code: 0cUBppxbbcjYxnh) -->
+<div class="episode">
+  <span class="episode-title">Episode 2</span><br>
+  <span class="language">Multi Audio</span>
+  <div class="btn-group">
+    <a class="watch-online" href="https://myanimes.in/series/blue-box/" rel="noopener">Watch Online</a>
+    <a class="download-480p" href="https://002.hindianimeszone.com/download1.php?code=q0eTfwFnTU9C9Yjj3OokC&amp;q=480p+x264">480p x264</a>
+    <a class="download-720p" href="https://002.hindianimeszone.com/download1.php?code=LGw3aeXCR2Q726bO&amp;q=720p+x264">720p x264</a>
+    <a class="download-720p" href="https://002.hindianimeszone.com/download1.php?code=orWOd7hAvJmo8lILW3w&amp;q=720p+x265">720p x265</a>
+    <a class="download-1080p" href="https://002.hindianimeszone.com/download1.php?code=0cUBppxbbcjYxnh&amp;q=1080p+x265">1080p x265</a>
+    <a class="download-1080p" href="https://002.hindianimeszone.com/download1.php?code=0cUBppxbbcjYxnh&amp;q=1080p+HQ">1080p HQ</a>
+  </div>
+</div>
+<hr class="divider">
+<div style="text-align: center; font-weight: bold;">
+   <span class="episode-title">How to Download</span><br>
+   <a class="btn-download" href="https://hindianimeszone.com/how-to-download/">Guide Video</a> </div>
+"""
+
+BLUE_BOX_POST = {
+    "id": 12610,
+    "title": {"rendered": "Blue Box Season 2 [Hindi-Tamil-Telugu-Eng-Jap] Multi Audio 480p, 720p &amp; 1080p HD WEB-DL | 10bit HEVC ESub"},
+    "link": "https://hindianimeszone.com/blue-box-season-2-hindi-tamil-telugu-eng-jap-multi-audio-480p-720p-1080p-hd-web-dl-10bit-hevc-esub/",
+    "slug": "blue-box-season-2-hindi-tamil-telugu-eng-jap-multi-audio-480p-720p-1080p-hd-web-dl-10bit-hevc-esub",
+    "content": {"rendered": BLUE_BOX_CONTENT},
+    "excerpt": {"rendered": "<p>Genre: Romance, Sports, Comedy, Drama, School, Slice of Life Language: Hindi, Tamil, Telugu, English, Japanese Subtitle: English Episodes: 24 Quality: 480p 720p 1080p Synopsis: Taiki Inomata continues balancing his badminton dreams with his growing feelings for Chinatsu Kano. As competitions and school life become more intense, their relationship faces new emotions, challenges, and romantic complications. [&hellip;]</p>"},
+    "_embedded": {
+        "wp:featuredmedia": [
+            {"id": 12612,
+             "source_url": "https://i.ibb.co/3mQFqtN0/web-optimized-1791101733-webp.webp",
+             "media_type": "image", "mime_type": "image/jpeg"}
+        ],
+        "wp:term": [[
+            {"name": "Anime"}, {"name": "Comedy"}, {"name": "Drama"},
+            {"name": "English"}, {"name": "Hindi"}, {"name": "Japanese"},
+            {"name": "Ongoing"}, {"name": "Romance"}, {"name": "School"},
+            {"name": "Series"}, {"name": "Slice of Life"}, {"name": "Sports"},
+            {"name": "Tamil"}, {"name": "Telugu"},
+        ]]
+    }
+}
+
+# Second live post shape (id 12856): the Language: line reads
+# "Hindi Fan Dubbed + Jap Org" and Quality: is empty.
+WITCH_CONTENT = """
+<div class="episode">
+<div style="font-family: Arial, sans-serif;">
+<br>
+  <b><span style="color: magenta;">Genre:</span></b> <b>Fantasy, Romance, Comedy</b><br>
+  <b><span style="color: blue;">Language:</span></b> <b>Hindi Fan Dubbed + Jap Org</b><br>
+  <b><span style="color: blue;">Subtitle:</span></b> <b>English</b><br>
+    <b><span style="color: darkviolet;">Episodes:</span></b> <b>12</b><br>
+  <b><span style="color: magenta;">Quality:</span></b> <b></b><br><br>
+  <b><span style="color: magenta;">Synopsis:</span></b><br>
+  <b>\u201cMake me a love potion.\u201d And with that single sentence, the Good Witch of the Lake\u2019s secret crush ends in heartbreak.</b>
+</div><b>
+<hr class="divider">
+<!-- Episode 1 (Code: WitchEp1Code) -->
+<div class="episode">
+  <span class="episode-title">Episode 1</span><br>
+  <span class="language">Multi Audio</span>
+  <div class="btn-group">
+    <a class="watch-online" href="https://myanimes.in/series/witch-love-potion/" rel="noopener">Watch Online</a>
+    <a class="download-480p" href="https://002.hindianimeszone.com/download1.php?code=Witch480a&amp;q=480p+x264">480p x264</a>
+    <a class="download-720p" href="https://002.hindianimeszone.com/download1.php?code=Witch720a&amp;q=720p+x264">720p x264</a>
+    <a class="download-720p" href="https://002.hindianimeszone.com/download1.php?code=Witch720b&amp;q=720p+x265">720p x265</a>
+    <a class="download-1080p" href="https://002.hindianimeszone.com/download1.php?code=Witch1080a&amp;q=1080p+x265">1080p x265</a>
+    <a class="download-1080p" href="https://002.hindianimeszone.com/download1.php?code=Witch1080b&amp;q=1080p+HQ">1080p HQ</a>
+  </div>
+</div>
+"""
+
+WITCH_POST = {
+    "id": 12856,
+    "title": {"rendered": "Hello, I am a Witch and my Crush Wants me to Make a Love Potion! Season 1 [Hindi Fan-Dub | 480p, 720p &amp; 1080p HD WEB-DL]"},
+    "link": "https://hindianimeszone.com/hello-i-am-a-witch-season-1/",
+    "slug": "hello-i-am-a-witch-season-1",
+    "content": {"rendered": WITCH_CONTENT},
+    "excerpt": {"rendered": "<p>Genre: Fantasy, Romance, Comedy Language: Hindi Fan Dubbed + Jap Org Subtitle: English Episodes: 12 Quality: Synopsis: \u201cMake me a love potion.\u201d</p>"},
+    "_embedded": {
+        "wp:featuredmedia": [
+            {"id": 12860,
+             "source_url": "https://i.ibb.co/example/witch-poster.webp",
+             "media_type": "image", "mime_type": "image/jpeg"}
+        ],
+        "wp:term": [[{"name": "Anime"}, {"name": "Fantasy"},
+                     {"name": "Romance"}, {"name": "Comedy"}]]
+    }
+}
+
+# Same shape with NO Genre: line — genres must fall back to the filtered
+# WP categories (Anime/Ongoing/Series/language buckets dropped).
+NO_LABEL_CONTENT = """
+<div class="episode">
+<div style="font-family: Arial, sans-serif;">
+<br>
+  <b><span style="color: blue;">Language:</span></b> <b>Hindi</b><br>
+    <b><span style="color: darkviolet;">Episodes:</span></b> <b>3</b><br>
+  <b><span style="color: magenta;">Synopsis:</span></b><br>
+  <b>A test show.</b>
+</div><b>
+<hr class="divider">
+<!-- Episode 1 (Code: NoLabelEp1) -->
+<div class="episode">
+  <span class="episode-title">Episode 1</span><br>
+  <span class="language">Hindi</span>
+  <div class="btn-group">
+    <a class="download-480p" href="https://002.hindianimeszone.com/download1.php?code=NoLabel480&amp;q=480p+x264">480p x264</a>
+  </div>
+</div>
+"""
+
+NO_LABEL_POST = {
+    "id": 99901,
+    "title": {"rendered": "Test Show Season 1 [Hindi] Multi Audio 480p HD WEB-DL"},
+    "link": "https://hindianimeszone.com/test-show-season-1/",
+    "slug": "test-show-season-1",
+    "content": {"rendered": NO_LABEL_CONTENT},
+    "excerpt": {"rendered": "<p>A test show.</p>"},
+    "_embedded": {
+        "wp:featuredmedia": [],
+        "wp:term": [[
+            {"name": "Anime"}, {"name": "Comedy"}, {"name": "Drama"},
+            {"name": "English"}, {"name": "Ongoing"}, {"name": "Romance"},
+            {"name": "Series"},
+        ]]
+    }
+}
+
+
+class ParseRestPostTests(unittest.TestCase):
+    def test_blue_box_full_metadata(self):
+        post = wp.parse_rest_post(BLUE_BOX_POST, "hindianimeszone")
+        self.assertIsNotNone(post)
+        self.assertEqual(post["title"], "Blue Box Season 2")
+        # Family convention (parse_page): the season marker stays in
+        # clean_title, so the canonical key agrees across both paths.
+        self.assertEqual(post["clean_title"], "Blue Box Season 2")
+        self.assertIsNone(post["year"])
+        self.assertEqual(post["content_type"], "series")
+        self.assertEqual(post["season_number"], 2)
+        self.assertEqual(post["poster_url"],
+                         "https://i.ibb.co/3mQFqtN0/web-optimized-1791101733-webp.webp")
+        self.assertEqual(post["genres"],
+                         "Romance, Sports, Comedy, Drama, School, Slice of Life")
+        self.assertEqual(post["languages"],
+                         "Hindi, Tamil, Telugu, English, Japanese")
+        self.assertEqual(post["synopsis"],
+                         "Taiki Inomata continues balancing his badminton dreams "
+                         "with his growing feelings for Chinatsu Kano. As competitions "
+                         "and school life become more intense, their relationship faces "
+                         "new emotions, challenges, and romantic complications.")
+        self.assertEqual(post["is_animated"], 1)
+        self.assertEqual(post["is_18_plus"], 0)
+
+    def test_blue_box_releases_are_per_episode_per_quality(self):
+        post = wp.parse_rest_post(BLUE_BOX_POST, "hindianimeszone")
+        self.assertEqual(len(post["releases"]), 10, "2 episodes x 5 qualities")
+        ep1 = [r for r in post["releases"] if r["episode"] == 1]
+        self.assertEqual([r["quality"] for r in ep1],
+                         ["480p", "720p", "720p", "1080p", "1080p"])
+        self.assertEqual([r["codec"] for r in ep1],
+                         ["x264", "x264", "x265", "x265", None])
+        self.assertEqual([r["label"] for r in ep1],
+                         ["Episode 1 [480p x264]", "Episode 1 [720p x264]",
+                          "Episode 1 [720p x265]", "Episode 1 [1080p x265]",
+                          "Episode 1 [1080p]"])
+        self.assertTrue(all(r["season"] == 2 for r in post["releases"]))
+        urls = [s["source_url"] for r in post["releases"] for s in r["sources"]]
+        self.assertIn("https://002.hindianimeszone.com/download1.php"
+                      "?code=tsD7YgT56c6CvY5Ek60czx2K&q=480p+x264", urls)
+        self.assertFalse(any("myanimes.in" in u for u in urls),
+                         "Watch Online is the series page, not an episode source")
+        self.assertFalse(any("how-to-download" in u for u in urls))
+
+    def test_witch_language_normalization(self):
+        post = wp.parse_rest_post(WITCH_POST, "hindianimeszone")
+        self.assertIsNotNone(post)
+        self.assertEqual(post["languages"], "Hindi, Japanese")
+        self.assertEqual(post["genres"], "Fantasy, Romance, Comedy")
+        self.assertEqual(len(post["releases"]), 5)
+        self.assertTrue(post["synopsis"].startswith("\u201cMake me a love potion.\u201d"))
+
+    def test_genres_fall_back_to_filtered_categories(self):
+        post = wp.parse_rest_post(NO_LABEL_POST, "hindianimeszone")
+        self.assertIsNotNone(post)
+        self.assertEqual(post["genres"], "Comedy, Drama, Romance")
+        self.assertEqual(len(post["releases"]), 1)
+        self.assertIsNone(post["poster_url"])
+
+    def test_quality_codec_parsing(self):
+        self.assertEqual(wp._haz_quality_codec("480p+x264"), ("480p", "x264"))
+        self.assertEqual(wp._haz_quality_codec("1080p+HQ"), ("1080p", None))
+        self.assertEqual(wp._haz_quality_codec("720p"), ("720p", None))
+        self.assertEqual(wp._haz_quality_codec("bogus"), (None, None))
+
+    def test_crawl_uses_stored_raw_json_without_any_fetch(self):
+        import json as _json
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "haz.db"
+            conn = sqlite3.connect(db)
+            try:
+                wp.ensure_schema(conn)
+                conn.execute(
+                    "INSERT INTO sitemap_cache (loc, scraped, raw_json)"
+                    " VALUES (?, 0, ?)",
+                    (BLUE_BOX_POST["link"], _json.dumps(BLUE_BOX_POST)))
+                conn.commit()
+            finally:
+                conn.close()
+            with mock.patch.object(
+                    wp, "http_get",
+                    side_effect=AssertionError("must not fetch the page")):
+                totals = wp.crawl("hindianimeszone", db, limit=1, delay=0,
+                                  verbose=False)
+            self.assertEqual(totals["posts"], 1)
+            self.assertEqual(totals["releases"], 10)
+            self.assertEqual(totals["sources"], 10)
+            conn = sqlite3.connect(db)
+            try:
+                row = conn.execute(
+                    "SELECT title, genres FROM posts").fetchone()
+                self.assertEqual(row[0], "Blue Box Season 2")
+                self.assertIn("Romance", row[1])
+                codecs = conn.execute(
+                    "SELECT DISTINCT codec FROM releases").fetchall()
+                self.assertEqual({c[0] for c in codecs},
+                                 {"x264", "x265", None})
             finally:
                 conn.close()
 

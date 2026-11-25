@@ -159,10 +159,244 @@ class TestPostDataExtraction(unittest.TestCase):
         self.assertTrue(pd_sources[0]["final_url"].startswith("https://pixeldrain.com/api/file/"))
         self.assertEqual(pd_sources[0]["is_temporary"], 0)
 
-        # Verify categories
+        # Genres come from the content Genre: label ("Animation and
+        # Drama" -> two genres), not the raw WP categories — "Animes"
+        # and "Hindi Dub" are junk buckets, never genres.
         genres = json.loads(data["genres"])
-        self.assertIn("Animes", genres)
-        self.assertIn("Hindi Dub", genres)
+        self.assertEqual(set(genres), {"Animation", "Drama"})
+        self.assertNotIn("Animes", genres)
+        self.assertNotIn("Hindi Dub", genres)
+
+        # No fabricated quality/codec: the episode blocks state no
+        # quality, so releases bank None; audio comes from the info
+        # block's Language: (Hindi, Tamil, Telugu).
+        for rel in data["releases"]:
+            self.assertIsNone(rel["quality"])
+            self.assertIsNone(rel["codec"])
+        self.assertEqual(
+            json.loads(data["releases"][0]["audio_languages"]), ["Hindi"])
+
+
+# Live-shape REST posts, fetched 23 Nov 2026 from
+# https://www.rareanimes.foo/wp-json/wp/v2/posts?per_page=2&_embed=1
+# (post 28899 Tokyo Revengers, post 80052 Eminence in Shadow).
+# The Tokyo post's excerpt AND info block belong to another show — the
+# site pastes the wrong block in. The excerpt is Eminence text on a
+# Tokyo post; the block names Eminence with Tokyo's plot attached.
+TOKYO_REVENGERS_CONTENT = """
+<p>📰 Full Name: <span style="color: #339966;">The Eminence in Shadow</span></p>
+<p>🍂Season: <span style="color: #339966;">02</span></p>
+<p>🎞Episodes: <span style="color: #339966;">13</span></p>
+<p>🕓Release Year: <span style="color: #339966;">2021</span></p>
+<p>🎭 Genre: <span style="color: #339966;">Animation, Action &amp; Adventure, Crime, and Drama</span></p>
+<p>🔊Language: <span style="color: #339966;">Hindi</span></p>
+<p>🎬Quality: <span style="color: #339966;">(480p, 720p, 1080p)</span></p>
+<p><span style="color: #ff0000;">Synopsis</span><span style="color: #333399;">: <span style="color: #339966;">Takemichi Hanagaki is a freelancer who decides to go back in time to save his girlfriend.</span></span></p>
+<hr />
+<p>Episode 01 &#8211; Reborn</p>
+<p><span style="color: #99cc00;">Hindi</span> – [<a href="https://pixeldrain.com/u/TokyoEp01">DLBeta</a>]</p>
+"""
+
+TOKYO_RAW_POST_JSON = {
+    "id": 28899,
+    "title": {"rendered": "Tokyo Revengers Season 2 Hindi Dubbed Episodes Download HD"},
+    "link": "https://www.rareanimes.foo/tokyo-revengers-season-2-hindi-dubbed-episodes-download-hd/",
+    "slug": "tokyo-revengers-season-2-hindi-dubbed-episodes-download-hd",
+    "content": {"rendered": TOKYO_REVENGERS_CONTENT},
+    "excerpt": {"rendered": "<p>Shadowbrokers are those who go unnoticed, pretending to be unremarkable people.</p>"},
+    "_embedded": {
+        "wp:featuredmedia": [
+            {"id": 28901,
+             "source_url": "https://www.rareanimes.foo/wp-content/uploads/2023/01/Tokyo-Revengers-Episodes-in-Hindi-Subbed-Download-1080p-FHD.jpg",
+             "media_type": "image", "mime_type": "image/jpeg"}
+        ],
+        "wp:term": [
+            [{"name": "Animes"}, {"name": "COMPLETED"}, {"name": "Hindi Anime"},
+             {"name": "Hindi Dub"}, {"name": "Hindi Sub"}]
+        ]
+    }
+}
+
+EMINENCE_CONTENT = """
+<p>📰 Full Name: <span style="color: #339966;">The Eminence in Shadow</span></p>
+<p>🍂Season: <span style="color: #339966;">02</span></p>
+<p>🎞Episodes: <span style="color: #339966;">12</span></p>
+<p>🕓Release Year: <span style="color: #339966;">2023</span></p>
+<p>🎭 Genre: <span style="color: #339966;">Animation, Comedy, Sci-Fi &amp; Fantasy, and Action &amp; Adventure</span></p>
+<p>🔊Language: <span style="color: #339966;">Hindi</span></p>
+<p>🎬Quality: <span style="color: #339966;">(480p, 720p, 1080p)</span></p>
+<p><span style="color: #ff0000;">Synopsis</span><span style="color: #333399;">: <span style="color: #339966;">Shadowbrokers are those who go unnoticed, pretending to be unremarkable people.</span></span></p>
+<hr />
+<p>Episode 01 &#8211; The Outlaw</p>
+<p><span style="color: #99cc00;">Hindi</span> – [<a href="https://pixeldrain.com/u/EminenceEp01">DLBeta</a>]</p>
+"""
+
+EMINENCE_RAW_POST_JSON = {
+    "id": 80052,
+    "title": {"rendered": "The Eminence in Shadow Season 2 Hindi Dubbed Episodes Download HD"},
+    "link": "https://www.rareanimes.foo/the-eminence-in-shadow-season-2-hindi-dubbed-episodes-download-hd/",
+    "slug": "the-eminence-in-shadow-season-2-hindi-dubbed-episodes-download-hd",
+    "content": {"rendered": EMINENCE_CONTENT},
+    "excerpt": {"rendered": "<p>Shadowbrokers are those who go unnoticed, pretending to be unremarkable people.</p>"},
+    "_embedded": {
+        "wp:featuredmedia": [
+            {"id": 80058,
+             "source_url": "https://www.rareanimes.foo/wp-content/uploads/2023/01/Eminence-in-Shadow-Season-2-Hindi-Dubbed.jpg",
+             "media_type": "image", "mime_type": "image/jpeg"}
+        ],
+        "wp:term": [
+            [{"name": "Animes"}, {"name": "Hindi Anime"}, {"name": "Hindi Dub"}]
+        ]
+    }
+}
+
+# A post whose info block names a DIFFERENT show with a different
+# season — the block's season must never reach the releases.
+WRONG_BLOCK_CONTENT = """
+<p>📰 Full Name: <span style="color: #339966;">Other Show</span></p>
+<p>🍂Season: <span style="color: #339966;">09</span></p>
+<p>🎞Episodes: <span style="color: #339966;">5</span></p>
+<p>🕓Release Year: <span style="color: #339966;">2020</span></p>
+<p>🎭 Genre: <span style="color: #339966;">Drama</span></p>
+<p>🔊Language: <span style="color: #339966;">Hindi</span></p>
+<p><span style="color: #ff0000;">Synopsis</span> <span style="color: #339966;">Some plot.</span></p>
+<hr />
+<p>Episode 01 &#8211; First</p>
+<p><span style="color: #99cc00;">Hindi</span> – [<a href="https://pixeldrain.com/u/WrongBlock01">DLBeta</a>]</p>
+"""
+
+WRONG_BLOCK_POST_JSON = {
+    "id": 99901,
+    "title": {"rendered": "Show X Season 1 Hindi Dubbed Episodes Download HD"},
+    "link": "https://www.rareanimes.foo/show-x-season-1-hindi-dubbed-episodes-download-hd/",
+    "slug": "show-x-season-1-hindi-dubbed-episodes-download-hd",
+    "content": {"rendered": WRONG_BLOCK_CONTENT},
+    "excerpt": {"rendered": "<p>Some plot.</p>"},
+    "_embedded": {
+        "wp:featuredmedia": [
+            {"id": 99902,
+             "source_url": "https://www.rareanimes.foo/wp-content/uploads/2023/01/show-x.jpg",
+             "media_type": "image", "mime_type": "image/jpeg"}
+        ],
+        "wp:term": [[{"name": "Animes"}]]
+    }
+}
+
+MULTI_LANG_CONTENT = """
+<p>📰 Full Name: <span style="color: #339966;">Multi Lang Show</span></p>
+<p>🔊Language: <span style="color: #339966;">Hindi, Tamil</span></p>
+<p><span style="color: #ff0000;">Synopsis</span> <span style="color: #339966;">A show in two languages.</span></p>
+<hr />
+<p><a href="https://pixeldrain.com/u/MultiLang1">Download</a></p>
+"""
+
+MULTI_LANG_POST_JSON = {
+    "id": 99903,
+    "title": {"rendered": "Multi Lang Show Hindi Dubbed Episodes Download HD"},
+    "link": "https://www.rareanimes.foo/multi-lang-show-hindi-dubbed-episodes-download-hd/",
+    "slug": "multi-lang-show-hindi-dubbed-episodes-download-hd",
+    "content": {"rendered": MULTI_LANG_CONTENT},
+    "excerpt": {"rendered": "<p>A show in two languages.</p>"},
+    "_embedded": {"wp:featuredmedia": [], "wp:term": [[{"name": "Animes"}]]}
+}
+
+
+class TestRareanimesRestExtract(unittest.TestCase):
+    """Live-shape REST posts: wrong-title excerpt, trust guard, poster."""
+
+    def test_tokyo_revengers_wrong_title_block(self):
+        data = import_rareanimes.extract_post_data_rareanimes(
+            post_url="https://www.rareanimes.foo/tokyo-revengers-season-2-hindi-dubbed-episodes-download-hd/",
+            raw_post_json=TOKYO_RAW_POST_JSON,
+            resolve_direct=False,
+        )
+        self.assertIsNotNone(data)
+        # The info block names another show — the WP title is the
+        # authority, so the block's name/year are distrusted.
+        self.assertEqual(data["title"], "Tokyo Revengers")
+        self.assertIsNone(data["year"])
+        # The excerpt is the other show's text — it must never leak in.
+        self.assertTrue(data["synopsis"].startswith("Takemichi Hanagaki"))
+        self.assertNotIn("Shadowbrokers", data["synopsis"])
+        self.assertEqual(json.loads(data["genres"]),
+                         ["Animation", "Action & Adventure", "Crime", "Drama"])
+        self.assertEqual(data["poster_url"],
+                         "https://www.rareanimes.foo/wp-content/uploads/2023/01/Tokyo-Revengers-Episodes-in-Hindi-Subbed-Download-1080p-FHD.jpg")
+        self.assertEqual(len(data["releases"]), 1)
+        rel = data["releases"][0]
+        self.assertEqual(rel["episode_number"], 1)
+        self.assertEqual(rel["season_number"], 2)
+        self.assertIsNone(rel["quality"])
+        self.assertIsNone(rel["codec"])
+        self.assertEqual(json.loads(rel["audio_languages"]), ["Hindi"])
+
+    def test_eminence_in_shadow_trusted_block(self):
+        data = import_rareanimes.extract_post_data_rareanimes(
+            post_url="https://www.rareanimes.foo/the-eminence-in-shadow-season-2-hindi-dubbed-episodes-download-hd/",
+            raw_post_json=EMINENCE_RAW_POST_JSON,
+            resolve_direct=False,
+        )
+        self.assertIsNotNone(data)
+        self.assertEqual(data["title"], "The Eminence in Shadow")
+        self.assertEqual(data["year"], 2023)
+        self.assertTrue(data["synopsis"].startswith("Shadowbrokers"))
+        self.assertEqual(json.loads(data["genres"]),
+                         ["Animation", "Comedy", "Sci-Fi & Fantasy",
+                          "Action & Adventure"])
+        self.assertEqual(len(data["releases"]), 1)
+        self.assertEqual(data["releases"][0]["season_number"], 2)
+
+    def test_distrusted_block_season_not_banked(self):
+        data = import_rareanimes.extract_post_data_rareanimes(
+            post_url="https://www.rareanimes.foo/show-x-season-1-hindi-dubbed-episodes-download-hd/",
+            raw_post_json=WRONG_BLOCK_POST_JSON,
+            resolve_direct=False,
+        )
+        self.assertIsNotNone(data)
+        self.assertEqual(data["title"], "Show X")
+        self.assertIsNone(data["year"])
+        # The block says season 09; the title says season 1 — the
+        # title wins on the release too.
+        self.assertEqual(data["releases"][0]["season_number"], 1)
+
+    def test_poster_validation_rejects_non_image_featured_media(self):
+        post = dict(MULTI_LANG_POST_JSON)
+        post["title"] = {"rendered": "Poster Test Show Hindi Dubbed Episodes Download HD"}
+        post["content"] = {"rendered": MULTI_LANG_CONTENT.replace(
+            "Multi Lang Show", "Poster Test Show") + (
+                '<p><img src="https://www.rareanimes.foo/wp-content/uploads/2023/01/real-poster.jpg" /></p>')}
+        post["_embedded"] = {"wp:featuredmedia": [
+            {"id": 1, "media_type": "video", "mime_type": "video/mp4",
+             "source_url": "https://www.rareanimes.foo/wp-content/uploads/2023/01/index-clip.mp4"}],
+            "wp:term": [[{"name": "Animes"}]]}
+        data = import_rareanimes.extract_post_data_rareanimes(
+            post_url="https://www.rareanimes.foo/poster-test-show/",
+            raw_post_json=post, resolve_direct=False)
+        self.assertIsNotNone(data)
+        # The video "featured media" is rejected; the content image wins.
+        self.assertEqual(data["poster_url"],
+                         "https://www.rareanimes.foo/wp-content/uploads/2023/01/real-poster.jpg")
+
+        post2 = dict(MULTI_LANG_POST_JSON)
+        post2["_embedded"] = {"wp:featuredmedia": [], "wp:term": []}
+        data2 = import_rareanimes.extract_post_data_rareanimes(
+            post_url="https://www.rareanimes.foo/multi-lang-show/",
+            raw_post_json=post2, resolve_direct=False)
+        self.assertIsNotNone(data2)
+        self.assertIsNone(data2["poster_url"])
+
+    def test_multi_language_info_block(self):
+        data = import_rareanimes.extract_post_data_rareanimes(
+            post_url="https://www.rareanimes.foo/multi-lang-show-hindi-dubbed-episodes-download-hd/",
+            raw_post_json=MULTI_LANG_POST_JSON,
+            resolve_direct=False,
+        )
+        self.assertIsNotNone(data)
+        self.assertEqual(len(data["releases"]), 1)
+        rel = data["releases"][0]
+        self.assertEqual(json.loads(rel["audio_languages"]), ["Hindi", "Tamil"])
+        self.assertIsNone(rel["quality"])
+        self.assertIsNone(rel["codec"])
 
 
 class TestStagingDatabase(unittest.TestCase):
