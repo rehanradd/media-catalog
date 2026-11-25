@@ -6,6 +6,7 @@ import com.raddstream.app.data.local.WatchHistoryEntity
 import com.raddstream.app.ui.screens.deviceAttemptLine
 import com.raddstream.app.ui.screens.keepActionLabel
 import com.raddstream.app.ui.screens.keepAttemptLine
+import com.raddstream.app.ui.screens.metaRestForFontScale
 import com.raddstream.app.ui.screens.qualityBadgeParts
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
@@ -229,6 +230,20 @@ class DownloadsRulesTest {
         assertEquals(null to null, qualityBadgeParts(null))
         assertEquals(null to null, qualityBadgeParts(""))
         assertEquals(null to null, qualityBadgeParts("   "))
+    }
+
+    @Test
+    fun `meta remainder shortens at large font scale, full at 1x`() {
+        // Round 5: "High bitrate" fits the remainder column at 1.0x but
+        // cut to "Hig…" at 1.3x — above 1.0x the painted line drops
+        // " bitrate" (the badge already carries the resolution); the
+        // spoken line keeps the full label. Anything else paints unchanged.
+        assertEquals("High bitrate", metaRestForFontScale("High bitrate", 1.0f))
+        assertEquals("High", metaRestForFontScale("High bitrate", 1.3f))
+        assertEquals("Standard", metaRestForFontScale("Standard bitrate", 1.3f))
+        assertEquals("HDR", metaRestForFontScale("HDR", 1.3f))
+        assertEquals("Rank #1", metaRestForFontScale("Rank #1", 1.3f))
+        assertEquals("High bitrate", metaRestForFontScale("High bitrate", 0.85f))
     }
 
     @Test
