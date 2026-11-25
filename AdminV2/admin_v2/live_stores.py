@@ -81,6 +81,16 @@ PAYMENT_METHODS = ("jazzcash", "easypaisa", "raast")
 # (viewer.py GET /api/v1/app/remote-config + VipRemoteConfig.kt),
 # plus the six coin pass prices the panel could previously neither
 # show nor edit (admin-panel audit 2026-11-08 §Money).
+#
+# PNL-01 redesign §0A N1 (canonical field→route map): this is the
+# v2-writable live-row set — exactly store.MONETIZATION_FIELDS, and
+# every draft field on the live-row route must be in BOTH lists. The
+# one N1 addition is free_quality_cap: editable in the draft and
+# served from the live row, yet no writer could ever put it there
+# (save_remote_config rejected it as unknown). 24 fields: the 23
+# above + the cap. The monetization publish and rollback carry
+# exactly this set; the generic publish carries the draft's live-row
+# subset (maintenance_mode, apk_update_url, free_quality_cap).
 REMOTE_CONFIG_FIELDS = [
     "pak_till_id", "pak_jazzcash_number", "pak_easypaisa_number",
     "pak_raast_id", "vip_monthly_pkr", "vip_yearly_pkr",
@@ -88,15 +98,73 @@ REMOTE_CONFIG_FIELDS = [
     "droplink_api_token", "maintenance_mode", "apk_update_url",
     "feature_downloads", "feature_pure_cinema", "feature_chromecast",
     "feature_quality_gate", "coins_enabled",
+    "free_quality_cap",
 ] + COIN_REDEEM_FIELDS
+
+# N1 decision for the APK trio + the link-shorteners flag (second
+# opinion §4.1: writer or removal from the served body). The trio
+# STAYS served: the app reads apk_update_version_code / size_bytes /
+# sha256 for its update check (VipRemoteConfig.kt), so removal would
+# break it — and the writer already exists: the v1 /admin card has
+# text rows for all three, and _save_monetization writes them to the
+# live row. feature_link_shorteners is a retired flag (default 0),
+# likewise v1-edited. None of the four is a v2 draft field: they are
+# deliberately NOT in REMOTE_CONFIG_FIELDS, so no v2 writer can touch
+# them — the map test pins that.
+RELEASE_OWNED_LIVE_FIELDS = [
+    "apk_update_sha256", "apk_update_size_bytes",
+    "apk_update_version_code", "feature_link_shorteners",
+]
+
+# The other 15 live-row fields (admin_panel.MONETIZATION_FIELDS minus
+# the sets above): ad cadence, coin/streak/pass prices. They stay
+# v1-only BY EXPLICIT DECISION (PNL-01 redesign §4): no v2 UI, no v2
+# writer, no silent claim — they are edited in v1 /admin, which stamps
+# the same version allocator (admin_panel._save_monetization).
+V1_ONLY_LIVE_FIELDS = [
+    "ad_preroll_min_gap_minutes", "ad_native_card_every_posters",
+    "ad_app_open_min_gap_minutes", "coin_per_rewarded_ad",
+    "rewarded_daily_cap", "coin_share", "coin_finish_watch",
+    "pass_day_pkr", "pass_weekend_pkr", "pass_monthly_vip_pkr",
+    "streak_day1_coins", "streak_day3_coins", "streak_day7_pass_hours",
+    "streak_day_boundary_hour", "streak_tz",
+]
+
+# Every field on the live app_remote_config row (24 v2-writable + 4
+# release-owned + 15 v1-only = 43). The startup migration adds all of
+# them (the v1 read path SELECTs all 43); the coverage test pins the
+# 43 against admin_panel.MONETIZATION_FIELDS.
+ALL_LIVE_REMOTE_CONFIG_FIELDS = (REMOTE_CONFIG_FIELDS
+                                 + RELEASE_OWNED_LIVE_FIELDS
+                                 + V1_ONLY_LIVE_FIELDS)
+
+# Draft-only fields: served from the published snapshot via panel_feed,
+# never from the live row (force-update block, brand, region order).
+V2_ONLY_SNAPSHOT_FIELDS = [
+    "min_version_code", "latest_version_code", "latest_version_name",
+    "force_update", "force_update_message", "maintenance_message",
+    "brand_primary", "brand_accent", "region_order",
+]
 REMOTE_CONFIG_SECRETS = ("shrinkme_api_token", "droplink_api_token")
 
-# Columns stored as INTEGER (everything else in REMOTE_CONFIG_FIELDS is TEXT).
+# Columns stored as INTEGER (everything else in the live-row field
+# sets is TEXT). Covers all 43 live-row fields: the startup migration
+# adds every live-row column, and the only TEXT v1-only field is
+# streak_tz.
 _REMOTE_CONFIG_INT_FIELDS = frozenset({
     "vip_monthly_pkr", "vip_yearly_pkr", "maintenance_mode",
     "feature_downloads", "feature_pure_cinema", "feature_chromecast",
     "feature_quality_gate", "coins_enabled",
+    "apk_update_size_bytes", "apk_update_version_code",
+    "feature_link_shorteners",
+    "ad_preroll_min_gap_minutes", "ad_native_card_every_posters",
+    "ad_app_open_min_gap_minutes", "coin_per_rewarded_ad",
+    "rewarded_daily_cap", "coin_share", "coin_finish_watch",
+    "pass_day_pkr", "pass_weekend_pkr", "pass_monthly_vip_pkr",
+    "streak_day1_coins", "streak_day3_coins", "streak_day7_pass_hours",
+    "streak_day_boundary_hour",
 } | set(COIN_REDEEM_FIELDS))
+
 ENGINE_SYNC_SITES = frozenset({
     "vegamovies", "rogmovies", "ssrmovies", "7starhd", "katmoviehd",
     "multimovies", "10xflix", "hdhub4u", "filmyzilla",
@@ -174,6 +242,49 @@ def _has_table(conn, name):
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
         (name,)).fetchone()
     return row is not None
+
+
+def ensure_live_remote_config_columns(catalog_path):
+    """Startup migration for the live app_remote_config row (PNL-01 D7).
+
+    Adds every column in ALL_LIVE_REMOTE_CONFIG_FIELDS (all 43 live-row
+    fields — the 24 v2-writable plus the 4 release-owned plus the 15
+    v1-only) plus config_version
+    that the catalog predates, idempotently. The v1-only columns must
+    be here too: the v1 read path (`admin_panel.remote_config`) SELECTs
+    all 43, so a catalog that only ever saw the v2 migration would
+    answer settings_unavailable on every poll. Runs at panel startup —
+    Service construction calls it when a live catalog is wired — never
+    in the request path, so a publish never takes an exclusive schema
+    lock mid-request. A missing file or a missing table is a no-op (a
+    catalog that does not exist yet has nothing to migrate); anything
+    else propagates, so a half-migrated catalog fails loudly at boot
+    instead of mid-publish. Returns the list of columns added."""
+    if not catalog_path or not os.path.exists(catalog_path):
+        return []
+    conn = sqlite3.connect(catalog_path, timeout=10.0,
+                           check_same_thread=False)
+    try:
+        if not _has_table(conn, "app_remote_config"):
+            return []
+        cols = {r[1] for r in conn.execute(
+            "PRAGMA table_info(app_remote_config)")}
+        added = []
+        for key in sorted(set(ALL_LIVE_REMOTE_CONFIG_FIELDS) | {"config_version"}):
+            if key in cols:
+                continue
+            coltype = ("INTEGER NOT NULL DEFAULT 0"
+                       if key in _REMOTE_CONFIG_INT_FIELDS
+                       or key == "config_version"
+                       else "TEXT NOT NULL DEFAULT ''")
+            conn.execute("ALTER TABLE app_remote_config ADD COLUMN %s %s"
+                         % (key, coltype))
+            added.append(key)
+        if added:
+            conn.commit()
+        return added
+    finally:
+        conn.close()
 
 
 def _to_int(value):
@@ -1681,7 +1792,7 @@ class LiveStores:
 
     # -- remote config (real app_remote_config, catalog DB) --------------
     def read_remote_config(self):
-        """The 22 real fields (16 app + 6 coin), id=1. Tokens are never
+        """The 24 real fields (18 app + 6 coin), id=1. Tokens are never
         returned here; the caller masks them (see read_remote_config_masked)."""
         conn = self._ro(self.catalog_path, "catalog")
         try:
@@ -1721,7 +1832,15 @@ class LiveStores:
         in the same UPDATE, so a flag change is never live without a
         version the panel (and the app) can see. It is a separate
         argument, never a member of `fields`: callers must not be able
-        to stamp an arbitrary version by posting it."""
+        to stamp an arbitrary version by posting it.
+
+        PNL-01 redesign (D7): schema changes happen at startup, never
+        in the request path. This method no longer ALTERs the live
+        schema: a known field whose column is missing raises
+        `schema_drift` ("restart the panel to migrate") instead of
+        taking an exclusive schema lock mid-publish. Run
+        `ensure_live_remote_config_columns` at panel startup (Service
+        construction does it when a live catalog is wired)."""
         unknown = sorted(set(fields) - set(REMOTE_CONFIG_FIELDS))
         if unknown:
             raise bad("Unknown field: %s" % ",".join(unknown))
@@ -1742,30 +1861,24 @@ class LiveStores:
                   "feature_chromecast", "feature_quality_gate", "coins_enabled"):
             if k in fields and int(fields[k]) not in (0, 1):
                 raise bad("That flag must be 0 or 1.")
+        if "free_quality_cap" in fields and fields["free_quality_cap"] not in ("480p", "720p"):
+            raise bad("Free quality cap is 480p or 720p only in this version.")
         conn = self._rw(self.catalog_path, "catalog")
         try:
-            # New columns are additive: a catalog created before a field
-            # existed gains it here, the same way v1 `_ensure_monetization`
-            # adds missing columns at read time. Before this, only
-            # coins_enabled was ensured, so the first save carrying
-            # apk_update_url on an old catalog 500'd on `no such column:
-            # apk_update_url` — after the panel draft had already
-            # committed, so the operator saw "Something went wrong" for
-            # a save that half-succeeded. Every column being written is
-            # ensured now, not just the newest one.
+            # D7: no ALTER here. A missing column for a known field is
+            # schema drift, not something to fix mid-request.
             cols = {r[1] for r in
                     conn.execute("PRAGMA table_info(app_remote_config)")}
             ensure = set(fields)
             if config_version is not None:
                 ensure.add("config_version")
-            for key in sorted(ensure):
-                if key not in cols:
-                    coltype = ("INTEGER NOT NULL DEFAULT 0"
-                               if key in _REMOTE_CONFIG_INT_FIELDS
-                               or key == "config_version"
-                               else "TEXT NOT NULL DEFAULT ''")
-                    conn.execute("ALTER TABLE app_remote_config ADD COLUMN %s %s"
-                                 % (key, coltype))
+            missing = sorted(ensure - cols)
+            if missing:
+                raise ApiError(
+                    "schema_drift",
+                    "The live catalog is missing column(s) %s — restart "
+                    "the panel to migrate, then retry." % ", ".join(missing),
+                    500)
             write = dict(fields)
             if config_version is not None:
                 write["config_version"] = config_version

@@ -709,8 +709,12 @@ class Monetization(Fixture):
         self.conn.rollback()              # end this connection's stale snapshot
         columns = {row[1] for row in self.conn.execute(
             "PRAGMA table_info(app_remote_config)")}
+        # PNL-01 F6: config_version is a column of the same row (the
+        # version stamp both writers allocate from) but NOT a field
+        # spec entry — the v1 card must not render it as editable.
         self.assertEqual(columns,
-                         {"id", "updated_at"} | set(admin_panel._FIELD_BY_KEY))
+                         {"id", "updated_at", "config_version"}
+                         | set(admin_panel._FIELD_BY_KEY))
         self.assertEqual(self.conn.execute(
             "SELECT COUNT(*) FROM app_remote_config").fetchone()[0], 1)
 
@@ -875,7 +879,11 @@ class Monetization(Fixture):
         """A deployment whose row was created before this session must not lose
         its payment settings — and must not 500 because the new columns are
         absent. `CREATE TABLE IF NOT EXISTS` does not migrate, so this asserts
-        the ALTER path and that the old value survives it."""
+        the ALTER path and that the old value survives it.
+
+        PNL-01 D7/F7: the ALTER path runs at startup
+        (`ensure_monetization_schema`), never on the read path — the
+        migration below is that startup step, made explicit."""
         self.conn.execute("DROP TABLE IF EXISTS app_remote_config")
         self.conn.execute(
             "CREATE TABLE app_remote_config ("
@@ -886,6 +894,8 @@ class Monetization(Fixture):
             "INSERT INTO app_remote_config(id, pak_till_id) VALUES(1, '777')")
         self.conn.commit()
 
+        admin_panel.ensure_monetization_schema(self.conn)
+        self.conn.commit()
         data = self.public()
         self.assertEqual(data["payments"]["jazzcash"]["till_id"], "777")
         self.assertTrue(data["feature_flags"]["downloads"])
@@ -1047,8 +1057,9 @@ class Monetization(Fixture):
 
     def test_an_older_settings_row_gains_the_engagement_columns(self):
         """The 17-column row a running deployment already holds must pick up the
-        knobs on the next read, with their defaults, without losing what the
-        operator saved."""
+        knobs on the next startup migration, with their defaults, without
+        losing what the operator saved. PNL-01 D7/F7: reads never migrate —
+        the migration below is the startup step, made explicit."""
         self.conn.execute("DROP TABLE IF EXISTS app_remote_config")
         keep = ("pak_till_id", "pak_jazzcash_number", "pak_easypaisa_number",
                 "pak_raast_id", "vip_monthly_pkr", "vip_yearly_pkr", "monetag_zone_id",
@@ -1064,6 +1075,8 @@ class Monetization(Fixture):
                           " VALUES(1, '425')")
         self.conn.commit()
 
+        admin_panel.ensure_monetization_schema(self.conn)
+        self.conn.commit()
         data = self.public()
         self.assertEqual(data["engagement"], engagement.remote_view())
         columns = {row[1] for row in self.conn.execute(
@@ -1285,13 +1298,16 @@ class Fleet(Fixture):
     def test_the_public_remote_config_carries_config_version(self):
         """The version the v2 panel stamps onto the served row on every
         catalog write, so a phone can tell which publish it is serving.
-        0 on a row that predates stamping; the stamped value after."""
+        0 on a row that predates stamping; the stamped value after.
+
+        PNL-01 D7: the table is created by the startup migration
+        (`ensure_monetization_schema`), which also creates the
+        config_version column defaulting to 0 — reads never migrate."""
         with admin_panel._session(self.db_path) as conn:
+            admin_panel.ensure_monetization_schema(conn)
             public = admin_panel.remote_config(conn)
         self.assertEqual(public["config_version"], 0)
         with admin_panel._session(self.db_path) as conn:
-            conn.execute("ALTER TABLE app_remote_config ADD COLUMN "
-                         "config_version INTEGER NOT NULL DEFAULT 0")
             conn.execute("UPDATE app_remote_config SET config_version=7 WHERE id=1")
             conn.commit()
             stamped = admin_panel.remote_config(conn)

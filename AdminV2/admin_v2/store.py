@@ -43,13 +43,18 @@ COIN_REDEEM_DEFAULTS = {
 
 # The docs inventory names 16 monetization fields; the design says 17.
 # The 17th column is the row id itself. No field is invented here.
+# PNL-01 redesign §0A N1 adds the 18th: free_quality_cap — the
+# silent-loss field (draft-editable, served from the live row, no
+# writer until now). It joins here so the monetization publish and
+# rollback carry it, and live_stores.REMOTE_CONFIG_FIELDS with it:
+# the canonical map requires a live-row draft field to be in BOTH.
 MONETIZATION_FIELDS = [
     "pak_till_id", "pak_jazzcash_number", "pak_easypaisa_number",
     "pak_raast_id", "vip_monthly_pkr", "vip_yearly_pkr",
     "monetag_zone_id", "adsterra_tag_id", "shrinkme_api_token",
     "droplink_api_token", "maintenance_mode", "apk_update_url",
     "feature_downloads", "feature_pure_cinema", "feature_chromecast",
-    "feature_quality_gate", "coins_enabled",
+    "feature_quality_gate", "coins_enabled", "free_quality_cap",
 ] + COIN_REDEEM_FIELDS
 
 # Canonical tuning defaults (launch plan Phase 0, G-7): one value per knob,
@@ -77,6 +82,12 @@ TUNING_DEFAULTS = {
 # Columns stored as TEXT (everything else in TUNING_DEFAULTS is INTEGER).
 TUNING_TEXT_COLUMNS = frozenset({"free_quality_cap", "theme_mode", "theme_accent", "tabs", "disclaimer_text", "disclaimer_email"})
 
+# NOTE (PNL-01, 2026-11-24): app_remote_config_v2.config_version
+# defaults to 0 — "nothing published yet". The unified publish
+# allocates from the live row (first publish = v1); a default of 1
+# collided with it (two v1 history rows, first publish not advancing
+# the panel version). Existing databases keep their stored version:
+# migration 1 only runs on a fresh database.
 MIGRATIONS = [
     (1, """
     CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY);
@@ -103,7 +114,7 @@ MIGRATIONS = [
       id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL,
       code_hash TEXT NOT NULL, used_at INTEGER, created_at INTEGER);
     CREATE TABLE IF NOT EXISTS app_remote_config_v2 (
-      id INTEGER PRIMARY KEY CHECK (id = 1), config_version INTEGER NOT NULL DEFAULT 1,
+      id INTEGER PRIMARY KEY CHECK (id = 1), config_version INTEGER NOT NULL DEFAULT 0,
       pak_till_id TEXT DEFAULT '', pak_jazzcash_number TEXT DEFAULT '',
       pak_easypaisa_number TEXT DEFAULT '', pak_raast_id TEXT DEFAULT '',
       vip_monthly_pkr INTEGER NOT NULL DEFAULT 200,

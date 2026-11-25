@@ -38,7 +38,8 @@ What this module pins:
 - D-6: the v1 `/admin` flag toggles are read-only. A v1 save carrying a flag
   key is refused and writes nothing; non-flag keys still save.
 - Panel-only mode (no live catalog wired): the publish still versions,
-  snapshots and audits the staged draft.
+  snapshots and audits the staged draft — the fixture branch (§0A N3:
+  no live store configured, response labelled "not_configured").
 
 Harness: a real `Service` on temp dirs with a real `LiveStores` over a temp
 catalog built by the repo's own `admin_panel._ensure_monetization` DDL — the
@@ -107,6 +108,8 @@ def _fresh_service(live=True):
         conn.close()
         live_stores = LiveStores(catalog_path=catalog_path)
     admin_dir = os.path.join(tmp, "admin")
+    # PNL-01 §0A N3: panel-only mode is the fixture branch — no live
+    # store configured, so publish works panel-only, labelled.
     svc = Service(admin_dir, live=live_stores)
     owner_id = svc.create_owner("owner", "correct horse battery staple")
     owner = {"id": owner_id, "username": "owner", "role": "owner"}
@@ -182,16 +185,29 @@ class Phase1Publish(unittest.TestCase):
     def test_snapshot_failure_reports_published_but_not_snapshotted(self):
         """T-19 (c): step 2 fails → the catalog is already published, the
         version is not bumped, no snapshot and no audit row exist yet, the
-        publish reports the state — and the next publish repairs it."""
+        publish reports the state — and the next publish repairs it.
+
+        PNL-01 §0A: the panel commit is atomic (UPDATE + INSERT in one
+        transaction, rolled back on failure), so the panel stays at v1
+        while the live row is at v1+1. The repair allocates
+        max(live, panel)+1 = v1+2 — the failed version stays a gap in
+        history, and that is honest: history rows are never edited, and
+        the newest snapshot still matches the live row."""
         first = self.svc.put_monetization(
             self.owner, {"feature_quality_gate": 1})
         v1 = first["config_version"]
 
-        with mock.patch.object(
-                self.svc, "_record_versioned_snapshot",
-                side_effect=RuntimeError("simulated snapshot failure")):
+        self.svc.admin.execute(
+            "CREATE TRIGGER fail_hist BEFORE INSERT ON "
+            "app_remote_config_history BEGIN "
+            "SELECT RAISE(ABORT, 'simulated snapshot failure'); END")
+        self.svc.admin.commit()
+        try:
             result = self.svc.put_monetization(
                 self.owner, {"feature_quality_gate": 0})
+        finally:
+            self.svc.admin.execute("DROP TRIGGER fail_hist")
+            self.svc.admin.commit()
         self.assertEqual(result["publish_status"],
                          "published_but_not_snapshotted")
         # Step 1 already happened: the catalog carries the new value.
@@ -204,53 +220,52 @@ class Phase1Publish(unittest.TestCase):
             self.svc.get_monetization(self.owner)["publish_status"],
             "published_but_not_snapshotted")
 
-        # The next publish repairs it: re-snapshot + re-audit, one bump.
+        # The next publish repairs it: re-snapshot + re-audit, one bump
+        # from the live version.
         repair = self.svc.publish_monetization(
             self.owner, {"confirm": True})
         self.assertEqual(repair["publish_status"], "ok")
-        self.assertEqual(repair["config_version"], v1 + 1)
+        self.assertEqual(repair["config_version"], v1 + 2)
         snap = json.loads(_history(self.svc)[0]["snapshot_json"])
-        self.assertEqual(snap["config"]["config_version"], v1 + 1)
+        self.assertEqual(snap["config"]["config_version"], v1 + 2)
         self.assertEqual(snap["config"]["feature_quality_gate"], 0)
         self.assertEqual(
             _live_row(self.catalog_path)["feature_quality_gate"], 0)
         rows = _audits(self.svc, "monetization.save")
         self.assertEqual(len(rows), 2)
         self.assertEqual(json.loads(rows[1]["after_json"])["config_version"],
-                         v1 + 1)
+                         v1 + 2)
         self.assertEqual(
             self.svc.get_monetization(self.owner)["publish_status"], "ok")
 
     def test_partial_snapshot_failure_leaves_a_version_gap_the_repair_closes(self):
-        """T-19 (c), second shape: the version bump lands but the snapshot
-        insert fails. The repair bumps again and snapshots — history has a
-        gap at the failed version, and that is honest: history rows are
-        never edited, and the newest snapshot still matches the live row."""
+        """T-19 (c), second shape: the panel commit fails after the live
+        write. PNL-01 §0A: the panel commit is atomic (UPDATE + INSERT in
+        one transaction, rolled back on failure), so the version bump
+        does NOT land — the panel stays at v1 while the live row is at
+        v1+1. The repair publishes at v1+2; history has a gap at the
+        failed version, and that is honest: history rows are never
+        edited, and the newest snapshot still matches the live row."""
         first = self.svc.put_monetization(
             self.owner, {"feature_quality_gate": 1})
         v1 = first["config_version"]
 
-        def _bump_then_fail(published_by):
-            from admin_v2.services import WRITE_LOCK, NOW
-            row = self.svc._config_row()
-            new_version = row["config_version"] + 1
-            with WRITE_LOCK:
-                self.svc.admin.execute(
-                    "UPDATE app_remote_config_v2 SET config_version=?, "
-                    "updated_by=?, updated_at=? WHERE id=1",
-                    (new_version, published_by, NOW()))
-                self.svc.admin.commit()
-            raise RuntimeError("simulated snapshot insert failure")
-
-        with mock.patch.object(
-                self.svc, "_record_versioned_snapshot",
-                side_effect=_bump_then_fail):
+        self.svc.admin.execute(
+            "CREATE TRIGGER fail_hist BEFORE INSERT ON "
+            "app_remote_config_history BEGIN "
+            "SELECT RAISE(ABORT, 'simulated snapshot insert failure'); END")
+        self.svc.admin.commit()
+        try:
             result = self.svc.put_monetization(
                 self.owner, {"feature_quality_gate": 0})
+        finally:
+            self.svc.admin.execute("DROP TRIGGER fail_hist")
+            self.svc.admin.commit()
         self.assertEqual(result["publish_status"],
                          "published_but_not_snapshotted")
-        # The bump landed without a snapshot: version v1+1, no history row.
-        self.assertEqual(self.svc._config_row()["config_version"], v1 + 1)
+        # The bump did not land (rolled back with the failed commit):
+        # the panel is still v1 and no history row exists for v1+1.
+        self.assertEqual(self.svc._config_row()["config_version"], v1)
         versions = [r["config_version"] for r in _history(self.svc)]
         self.assertNotIn(v1 + 1, versions)
 

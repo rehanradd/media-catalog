@@ -639,7 +639,10 @@ def quality_gate_block_reason(source_id, headers, query_params):
     """
     try:
         with get_db() as conn:
-            admin_panel._ensure_monetization(conn)
+            # PNL-01 D7/F7: reads never migrate — the startup
+            # migration (ensure_monetization_schema, called once by
+            # start_server) owns the column. A missing column raises
+            # below and fails open to the free tier, as designed.
             cfg = conn.execute(
                 "SELECT feature_quality_gate FROM app_remote_config "
                 "WHERE id = 1").fetchone()
@@ -9223,6 +9226,15 @@ def start_server(port: int = 8080, host: str = "127.0.0.1",
                  operator_port: int | None = None):
     import threading
     _ensure_schema()
+    # PNL-01 D7: the live catalog's monetization row is migrated once,
+    # here, before any request is served — reads never ALTER (F7).
+    # A missing/unreadable catalog answers settings_unavailable at the
+    # edge instead of being fixed mid-request.
+    try:
+        with get_db() as conn:
+            admin_panel.ensure_monetization_schema(conn)
+    except Exception as exc:  # noqa: BLE001 — startup must not die on a read-only/missing catalog
+        print(f"[i] monetization schema not ensured: {exc}")
     server = make_server(host, port, operator=False)
     display_host = "127.0.0.1" if host == "0.0.0.0" else host
     url = f"http://{display_host}:{port}"

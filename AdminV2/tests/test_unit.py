@@ -326,6 +326,9 @@ class TestMigrationsV4V5(unittest.TestCase):
         self.assertEqual(
             conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table' "
                          "AND name='scheduled_publishes'").fetchone()[0], 1)
+        # PNL-01 (narrowed §0A): migration 6 was dropped with the
+        # publish-intent journal; the cap needs no migration (already a
+        # draft column) — the migration chain still ends at 5.
         self.assertEqual(
             [r[0] for r in conn.execute(
                 "SELECT version FROM schema_version ORDER BY version")],
@@ -355,6 +358,8 @@ class TestMigrationsV4V5(unittest.TestCase):
         conn = self._live_like_db()
         migrate(conn)
         migrate(conn)  # a re-run adds nothing twice
+        # PNL-01 §0A: the v6 journal migration is dropped — the chain
+        # ends at 5.
         self.assertEqual(
             [r[0] for r in conn.execute(
                 "SELECT version FROM schema_version ORDER BY version")],

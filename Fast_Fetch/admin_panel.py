@@ -1945,6 +1945,12 @@ def _monetization_ddl():
     column names come from `MONETIZATION_FIELDS`, defaults through `int()`."""
     columns = [_column_ddl(key, kind, default)
                for key, _label, kind, default in MONETIZATION_FIELDS]
+    # config_version is NOT a MONETIZATION_FIELDS entry (the v1 card
+    # must not render it as an editable setting), but it is a column of
+    # the same row: the version the served row carries, stamped by the
+    # v2 panel on every catalog write and by _save_monetization on
+    # every v1 write (PNL-01 F6 — one allocator, both writers).
+    columns.append("config_version INTEGER NOT NULL DEFAULT 0")
     return (f"CREATE TABLE IF NOT EXISTS {MONETIZATION_TABLE} ("
             f"id INTEGER PRIMARY KEY CHECK (id = {MONETIZATION_ID}), "
             + ", ".join(columns)
@@ -1953,14 +1959,22 @@ def _monetization_ddl():
 
 def _ensure_monetization(conn):
     """Make the table and its single row exist, and add any columns a deployment
-    predates. Run on the read path as well as the write path: an operator who has
+    predates. Run at startup and on the write path: an operator who has
     never saved anything should see a card showing the defaults, which is the
     truth, not an empty state.
+
+    PNL-01 D7/F7: this no longer runs on the read path of every
+    remote-config poll (`remote_config`, `shortener_targets` read the row
+    as-is and answer `settings_unavailable` when it cannot be read).
+    Migrations happen at startup (`ensure_monetization_schema`, called
+    once by `viewer.start_server`) and on the write path here.
 
     `CREATE TABLE IF NOT EXISTS` will not add a column to a table that already
     exists, so the remote controls would silently be absent in a database created
     before this session. The per-column `ALTER TABLE ... ADD COLUMN` keeps the
-    upgrade in place; every name and default still comes from the field spec."""
+    upgrade in place; every name and default still comes from the field spec.
+    `config_version` is ensured alongside them (PNL-01 F6): the version
+    stamp the v1 write path allocates from."""
     conn.execute(_monetization_ddl())
     existing = {row[1] for row in conn.execute(
         f"PRAGMA table_info({MONETIZATION_TABLE})")}
@@ -1968,8 +1982,20 @@ def _ensure_monetization(conn):
         if key not in existing:
             conn.execute(f"ALTER TABLE {MONETIZATION_TABLE}"
                          f" ADD COLUMN {_column_ddl(key, kind, default)}")
+    if "config_version" not in existing:
+        conn.execute(f"ALTER TABLE {MONETIZATION_TABLE}"
+                     f" ADD COLUMN config_version INTEGER NOT NULL DEFAULT 0")
     conn.execute(f"INSERT OR IGNORE INTO {MONETIZATION_TABLE}(id) VALUES(?)",
                  (MONETIZATION_ID,))
+
+
+def ensure_monetization_schema(conn):
+    """Public alias for the startup migration (PNL-01 D7).
+
+    `viewer.start_server` calls this once at boot so the live catalog
+    carries every column the writers stamp — including `config_version`
+    — before any request is served. Reads never migrate."""
+    return _ensure_monetization(conn)
 
 
 def _read_monetization(conn):
@@ -2239,12 +2265,33 @@ def _save_monetization(conn, payload):
         return None, rejected + [f"unknown setting: {name}" for name in unknown]
     try:
         _ensure_monetization(conn)
+        # PNL-01 F6: v1 writes route through the same version allocator
+        # as the v2 panel. The live row's version is read fresh and +1
+        # is stamped in the SAME UPDATE as the edited fields, so a v1
+        # edit is never live unversioned. SQLite's write lock
+        # serializes cross-process writers on the same DB file; the
+        # next v2 publish allocates from this version, and get_live
+        # shows the v1 edit in changed_keys until then. A v1 edit has
+        # no panel history row; the next v2 publish allocates
+        # max(live, panel)+1 over it — never silent, never a
+        # duplicate version. No explicit COMMIT here: the
+        # route's _session commit is the only durable moment (see the
+        # module docstring above).
+        try:
+            _cv = conn.execute(
+                "SELECT config_version FROM app_remote_config WHERE id=1"
+            ).fetchone()
+            new_version = int(_cv[0] or 0) + 1 if _cv else 1
+        except sqlite3.Error:
+            new_version = 1
         assignments = ", ".join(f"{key} = :{key}" for key in clean)
         params = dict(clean)
         params["id"] = MONETIZATION_ID
         params["updated_at"] = int(time.time())
+        params["config_version"] = new_version
         conn.execute(
             f"UPDATE {MONETIZATION_TABLE} SET {assignments},"
+            f" config_version = :config_version,"
             f" updated_at = :updated_at WHERE id = :id", params)
         values = _read_monetization(conn)
     except sqlite3.Error:
@@ -2252,6 +2299,7 @@ def _save_monetization(conn, payload):
     if values is None:
         return None, [SETTINGS_UNAVAILABLE]
     return {"available": True, "saved": sorted(clean),
+            "config_version": new_version,
             "updated_at": values["updated_at"],
             "fields": _monetization_view(values)}, None
 
@@ -2396,15 +2444,17 @@ def remote_config(conn):
     """
     unavailable = False
     try:
-        _ensure_monetization(conn)
+        # PNL-01 D7/F7: reads never migrate. A missing table/column is
+        # answered settings_unavailable (below), not fixed mid-request;
+        # the startup migration (ensure_monetization_schema) owns it.
         values = _read_monetization(conn)
     except sqlite3.Error:
         values = None
         unavailable = True
     if values is None:
-        # Either the read raised, or the row `_ensure_monetization` only just
-        # inserted is not there. Both mean "unknown", and the two are not worth
-        # separating: a client can only be told one thing.
+        # Either the read raised, or the row is not there. Both mean
+        # "unknown", and the two are not worth separating: a client can
+        # only be told one thing.
         unavailable = True
         values = {key: default for key, _l, _k, default in MONETIZATION_FIELDS}
         values["updated_at"] = 0
@@ -2519,7 +2569,7 @@ def shortener_targets(conn):
     native downloads stay direct. Read-only and idempotent, like
     :func:`remote_config`."""
     try:
-        _ensure_monetization(conn)
+        # PNL-01 D7/F7: reads never migrate (see remote_config).
         values = _read_monetization(conn)
     except sqlite3.Error:
         return []

@@ -858,16 +858,36 @@ def _page_live(self, user, sess, query):
             templates.fmt_datetime(lv["published_at"]),
             templates.esc(lv.get("published_by_name") or "system"),
             templates.esc(lv["sections"]))
+    # PNL-01 §0A N2/F6: the live row ahead of the panel means something
+    # wrote it outside a panel publish (a v1 /admin edit, or a crashed
+    # publish). Surfaced, never silently adopted — the next publish
+    # allocates from the live version.
+    drift = live.get("live_drift")
+    if drift:
+        body += ('<div class="card"><h3>Live catalog is ahead of the panel</h3>'
+                 '<p>%s</p></div>') % templates.esc(drift["alert"])
     changed = live["changed_keys"]
     if changed:
-        body += ('<div class="card"><h3>Waiting to go out</h3>'
-                 '<p>Draft version %s · %s enabled section(s) · these settings differ from live: %s.</p>'
-                 '<form method="post" action="/admin/api/v2/remote-config/publish">%s'
-                 '<label class="check"><input type="checkbox" name="confirm" required> <span>Confirm publish</span></label>'
-                 '<div class="stickybar"><button type="submit">Publish now</button></div></form></div>') % (
-            templates.esc(live["draft"]["config_version"]),
-            templates.esc(live["draft"]["sections"]),
-            templates.esc(", ".join(changed)), hid)
+        blocked = live.get("publish_blocked")
+        if blocked:
+            # §0A honesty: the button is disabled with the reason
+            # Publish would refuse with — the server still enforces.
+            body += ('<div class="card"><h3>Waiting to go out</h3>'
+                     '<p>Draft version %s · %s enabled section(s) · these settings differ from live: %s.</p>'
+                     '<p>Publish is blocked: %s</p></div>') % (
+                templates.esc(live["draft"]["config_version"]),
+                templates.esc(live["draft"]["sections"]),
+                templates.esc(", ".join(changed)),
+                templates.esc(blocked))
+        else:
+            body += ('<div class="card"><h3>Waiting to go out</h3>'
+                     '<p>Draft version %s · %s enabled section(s) · these settings differ from live: %s.</p>'
+                     '<form method="post" action="/admin/api/v2/remote-config/publish">%s'
+                     '<label class="check"><input type="checkbox" name="confirm" required> <span>Confirm publish</span></label>'
+                     '<div class="stickybar"><button type="submit">Publish now</button></div></form></div>') % (
+                templates.esc(live["draft"]["config_version"]),
+                templates.esc(live["draft"]["sections"]),
+                templates.esc(", ".join(changed)), hid)
     else:
         body += ('<div class="card"><h3>Waiting to go out</h3>'
                  '<p>Draft version %s matches live — nothing to publish.</p></div>') % (
