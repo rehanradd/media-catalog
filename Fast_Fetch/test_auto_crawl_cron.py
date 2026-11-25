@@ -11,6 +11,15 @@ What is pinned here (audit W6, 2026-11-20):
 - there is no Hugging Face backup step any more (the full 61-DB backup it
   called refuses to start on this disk; the daily slim timer owns the
   off-VM copy), and the script never invokes it.
+
+What is pinned here (freshness, 2026-11-23):
+- the cycle has THREE steps — sync, crawl, merge. The crawl step is the
+  missing bridge: the sync only fills sitemap_cache and the merge only
+  folds staging DBs, so without a crawl step a firing timer merges 0 new
+  posts. Every sitemap site gets one bounded crawl per cycle, newest-first;
+- a step that fails with "database is locked" is retried ONCE (the
+  fast-probe sweep can hold the live DB write lock for minutes); any other
+  failure fails at once, and a second lock failure fails the cycle.
 """
 
 from __future__ import annotations
@@ -33,10 +42,34 @@ SITES = [
     "filmyzilla", "9xmovies", "world4ufree", "mp4moviez", "humtv",
 ]
 
+#: The sitemap sites the crawl step drains, in the script's default order.
+CRAWL_SITES = [
+    "vegamovies", "rogmovies", "ssrmovies", "7starhd", "katmoviehd",
+    "multimovies", "10xflix", "hdhub4u", "filmyzilla",
+]
+
 SYNC_OK = (
     "[i] Fetching post sitemap for BOLLYSHARES: https://bollyshares.xyz/post-sitemap.xml\n"
     "[✓] [FILMYZILLA] Cached 5002 posts in database.\n"
     "\n[✓] Global sync complete! Total 38018 posts cached across configured sites.\n"
+)
+
+SYNC_LOCKED = (
+    "Traceback (most recent call last):\n"
+    '  File "/opt/radd-stream/Fast_Fetch/fast_fetch.py", line 10184, in <module>\n'
+    "sqlite3.OperationalError: database is locked\n"
+)
+
+CRAWL_OK = (
+    "[i] Crawling latest 25 posts from sitemap (VEGAMOVIES)...\n"
+    "🎉 Crawl Complete! Indexed 3/25 posts\n"
+    "🔁 Still queued: 28,375 | 🛑 Parked after 3 attempts: 0\n"
+)
+
+CRAWL_LOCKED = (
+    "Traceback (most recent call last):\n"
+    '  File "/opt/radd-stream/Fast_Fetch/fast_fetch.py", line 10184, in <module>\n'
+    "sqlite3.OperationalError: database is locked\n"
 )
 
 MERGE_ALL_UNCHANGED = "".join(
@@ -55,8 +88,29 @@ STUB = """#!/bin/sh
 echo "$@" >> "$STUB_INVOCATIONS"
 case "$1" in
   *fast_fetch.py)
-    printf '%s' "$STUB_SYNC_OUTPUT"
-    exit "${STUB_SYNC_EXIT:-0}"
+    case "$2" in
+      sync)
+        if [ -n "${STUB_SYNC_FAIL_ONCE:-}" ] && [ ! -f "$STUB_SYNC_MARKER" ]; then
+          touch "$STUB_SYNC_MARKER"
+          printf '%s' "$STUB_SYNC_LOCKED_OUTPUT"
+          exit 1
+        fi
+        printf '%s' "$STUB_SYNC_OUTPUT"
+        exit "${STUB_SYNC_EXIT:-0}"
+        ;;
+      crawl)
+        if [ -n "${STUB_CRAWL_FAIL_ONCE:-}" ] && [ ! -f "$STUB_CRAWL_MARKER" ]; then
+          touch "$STUB_CRAWL_MARKER"
+          printf '%s' "$STUB_CRAWL_LOCKED_OUTPUT"
+          exit 1
+        fi
+        printf '%s' "$STUB_CRAWL_OUTPUT"
+        exit "${STUB_CRAWL_EXIT:-0}"
+        ;;
+      *)
+        exit 99
+        ;;
+    esac
     ;;
   *merge_fleet.py)
     printf '%s' "$STUB_MERGE_OUTPUT"
@@ -90,11 +144,18 @@ class AutoCrawlCronTests(unittest.TestCase):
             "AUTOCRAWL_DATA_DIR": str(self.dir),
             "AUTOCRAWL_PYTHON_BIN": str(self.stub),
             "AUTOCRAWL_SKIP_CRAWLER_CHECK": "1",
+            "AUTOCRAWL_LOCK_RETRY_SLEEP": "0",
             "STUB_INVOCATIONS": str(self.invocations),
             "STUB_SYNC_OUTPUT": SYNC_OK,
+            "STUB_SYNC_LOCKED_OUTPUT": SYNC_LOCKED,
+            "STUB_CRAWL_OUTPUT": CRAWL_OK,
+            "STUB_CRAWL_LOCKED_OUTPUT": CRAWL_LOCKED,
             "STUB_MERGE_OUTPUT": MERGE_ALL_UNCHANGED,
             "STUB_SYNC_EXIT": "0",
+            "STUB_CRAWL_EXIT": "0",
             "STUB_MERGE_EXIT": "0",
+            "STUB_SYNC_MARKER": str(self.dir / "sync-failed-once"),
+            "STUB_CRAWL_MARKER": str(self.dir / "crawl-failed-once"),
         })
 
     def tearDown(self):
@@ -115,34 +176,66 @@ class AutoCrawlCronTests(unittest.TestCase):
     def invoked(self):
         return self.invocations.read_text()
 
-    def test_success_both_steps_reports_success_with_counts(self):
+    def test_success_all_three_steps_reports_success_with_counts(self):
         res = self.run_cycle()
         self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
         log = self.log()
         self.assertIn("AUTONOMOUS PIPELINE CYCLE COMPLETED SUCCESSFULLY", log)
         self.assertIn("Step 1 done: sitemap sync ran — Total 38018 posts cached.", log)
         self.assertIn(
-            "Step 2 done: fleet merged in 49.8s — 0 site(s) merged, "
+            "Step 2 done: crawled 27 new post(s) across 9 site(s).", log,
+        )
+        self.assertIn(
+            "Step 3 done: fleet merged in 49.8s — 0 site(s) merged, "
             "20 unchanged (skipped), 0 missing, 0 errored.",
             log,
         )
-        self.assertIn("fast_fetch.py sync --site all", self.invoked())
-        self.assertIn("merge_fleet.py", self.invoked())
+        invoked = self.invoked()
+        self.assertIn("fast_fetch.py sync --site all", invoked)
+        for site in CRAWL_SITES:
+            self.assertIn(
+                "fast_fetch.py crawl --site %s --limit 25" % site, invoked,
+            )
+        self.assertIn("merge_fleet.py", invoked)
 
     def test_success_with_one_merged_site_counts_it(self):
         res = self.run_cycle({"STUB_MERGE_OUTPUT": MERGE_ONE_MERGED})
         self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
         self.assertIn(
-            "Step 2 done: fleet merged in 52.3s — 1 site(s) merged, "
+            "Step 3 done: fleet merged in 52.3s — 1 site(s) merged, "
             "19 unchanged (skipped), 0 missing, 0 errored.",
             self.log(),
         )
 
-    def test_sync_failure_fails_cycle_and_skips_merge(self):
+    def test_crawl_sites_and_limit_overrides_are_honoured(self):
+        res = self.run_cycle({
+            "AUTOCRAWL_CRAWL_SITES": "vegamovies rogmovies",
+            "AUTOCRAWL_CRAWL_LIMIT": "5",
+        })
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        invoked = self.invoked()
+        self.assertIn("fast_fetch.py crawl --site vegamovies --limit 5", invoked)
+        self.assertIn("fast_fetch.py crawl --site rogmovies --limit 5", invoked)
+        self.assertNotIn("crawl --site ssrmovies", invoked)
+        self.assertIn(
+            "Step 2 done: crawled 6 new post(s) across 2 site(s).", self.log(),
+        )
+
+    def test_sync_failure_fails_cycle_and_skips_crawl_and_merge(self):
         res = self.run_cycle({"STUB_SYNC_EXIT": "1"})
         self.assertNotEqual(res.returncode, 0)
         log = self.log()
         self.assertIn("Step 1 FAILED", log)
+        self.assertNotIn("COMPLETED SUCCESSFULLY", log)
+        invoked = self.invoked()
+        self.assertNotIn("crawl", invoked)
+        self.assertNotIn("merge_fleet.py", invoked)
+
+    def test_crawl_failure_fails_cycle_and_skips_merge(self):
+        res = self.run_cycle({"STUB_CRAWL_EXIT": "1"})
+        self.assertNotEqual(res.returncode, 0)
+        log = self.log()
+        self.assertIn("Step 2 FAILED", log)
         self.assertNotIn("COMPLETED SUCCESSFULLY", log)
         self.assertNotIn("merge_fleet.py", self.invoked())
 
@@ -150,7 +243,7 @@ class AutoCrawlCronTests(unittest.TestCase):
         res = self.run_cycle({"STUB_MERGE_EXIT": "1"})
         self.assertNotEqual(res.returncode, 0)
         log = self.log()
-        self.assertIn("Step 2 FAILED", log)
+        self.assertIn("Step 3 FAILED", log)
         self.assertNotIn("COMPLETED SUCCESSFULLY", log)
 
     def test_sync_success_without_summary_fails_cycle(self):
@@ -162,12 +255,65 @@ class AutoCrawlCronTests(unittest.TestCase):
         self.assertIn("produced no sync summary", log)
         self.assertNotIn("COMPLETED SUCCESSFULLY", log)
 
+    def test_crawl_success_without_summary_fails_cycle(self):
+        # Exit 0 but no "Crawl Complete! Indexed" line: same distinction as
+        # the sync step, per site.
+        res = self.run_cycle({"STUB_CRAWL_OUTPUT": "[i] nothing printed\n"})
+        self.assertNotEqual(res.returncode, 0)
+        log = self.log()
+        self.assertIn("produced no crawl summary for vegamovies", log)
+        self.assertNotIn("COMPLETED SUCCESSFULLY", log)
+        self.assertNotIn("merge_fleet.py", self.invoked())
+
     def test_merge_success_without_done_line_fails_cycle(self):
         res = self.run_cycle({"STUB_MERGE_OUTPUT": "[=] x unchanged\n"})
         self.assertNotEqual(res.returncode, 0)
         log = self.log()
         self.assertIn("produced no merge summary", log)
         self.assertNotIn("COMPLETED SUCCESSFULLY", log)
+
+    def test_sync_locked_once_retries_and_succeeds(self):
+        res = self.run_cycle({"STUB_SYNC_FAIL_ONCE": "1"})
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertIn("COMPLETED SUCCESSFULLY", self.log())
+        self.assertIn("locked database — retrying once", self.log())
+        self.assertEqual(
+            self.invoked().count("fast_fetch.py sync --site all"), 2,
+        )
+
+    def test_sync_locked_twice_fails_cycle(self):
+        res = self.run_cycle({
+            "STUB_SYNC_OUTPUT": SYNC_LOCKED,
+            "STUB_SYNC_EXIT": "1",
+        })
+        self.assertNotEqual(res.returncode, 0)
+        log = self.log()
+        self.assertIn("Step 1 FAILED", log)
+        self.assertNotIn("COMPLETED SUCCESSFULLY", log)
+        self.assertEqual(
+            self.invoked().count("fast_fetch.py sync --site all"), 2,
+        )
+        self.assertNotIn("merge_fleet.py", self.invoked())
+
+    def test_crawl_locked_once_retries_and_succeeds(self):
+        res = self.run_cycle({"STUB_CRAWL_FAIL_ONCE": "1"})
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertIn("COMPLETED SUCCESSFULLY", self.log())
+        self.assertIn("locked database — retrying once", self.log())
+        self.assertEqual(
+            self.invoked().count("fast_fetch.py crawl --site vegamovies"), 2,
+        )
+
+    def test_crawl_locked_twice_fails_cycle(self):
+        res = self.run_cycle({
+            "STUB_CRAWL_OUTPUT": CRAWL_LOCKED,
+            "STUB_CRAWL_EXIT": "1",
+        })
+        self.assertNotEqual(res.returncode, 0)
+        log = self.log()
+        self.assertIn("Step 2 FAILED", log)
+        self.assertNotIn("COMPLETED SUCCESSFULLY", log)
+        self.assertNotIn("merge_fleet.py", self.invoked())
 
     def test_no_backup_step_is_ever_invoked(self):
         res = self.run_cycle()

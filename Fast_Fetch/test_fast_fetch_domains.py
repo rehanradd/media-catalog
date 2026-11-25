@@ -568,9 +568,9 @@ class TestSyncSitemapsReportsEmptyFeeds(unittest.TestCase):
     must end with a "[!] Sync problems" summary line naming the dead
     feeds. The two feed-shape fixes are pinned too: the 7starhd regex
     must follow the host that was actually fetched (it hardcoded
-    `7starhd.rich` after the move to .surgery), and katmoviehd must fall
-    back to harvesting homepage post links when the page carries no
-    slug:"..." embeds (the current domain's shape).
+    `7starhd.rich` after the move to .surgery), and katmoviehd reads the
+    WordPress REST feed (the old homepage slug regex cached 0 posts;
+    the site is WordPress now).
 
     Offline: http_get is stubbed, the DB is a temp file, no network, no
     production DB. The stubbed HTML is built on the host the sync
@@ -634,36 +634,36 @@ class TestSyncSitemapsReportsEmptyFeeds(unittest.TestCase):
         self.assertIn("[!] [7STARHD] feed returned 0 records", out)
         self.assertIn("[!] Sync problems (1)", out)
 
-    def test_katmoviehd_homepage_fallback_harvests_links(self):
-        def homepage(url):
-            host = urllib.parse.urlparse(url).netloc
-            return (200, (
-                # No slug:"..." embeds: the current domain's shape.
-                f'<a href="https://{host}/black-box-2026-hindi/">post 1</a>'
-                f'<a href="https://{host}/the-social-reckoning-2026-hindi">post 2</a>'
-                f'<a href="https://{host}/category/bollywood/">cat</a>'
-                f'<a href="https://{host}/about/">about</a>'))
-        total, out = self._run("katmoviehd", {"https://": homepage})
+    def test_katmoviehd_wp_feed_caches_posts(self):
+        # Rebase reconcile 2026-11-25: katmoviehd reads the WP REST feed
+        # now (freshness branch); the homepage slug/fallback harvest it
+        # replaced is gone, so the stub answers the wp-json URL.
+        posts = json.dumps([
+            {"link": "https://katmoviehd.mom/black-box-2026-hindi/",
+             "date": "2026-09-05T19:51:37", "slug": "black-box-2026-hindi"},
+            {"link": "https://katmoviehd.mom/the-social-reckoning-2026-hindi/",
+             "date": "2026-09-05T19:04:42",
+             "slug": "the-social-reckoning-2026-hindi"},
+        ])
+        total, out = self._run("katmoviehd", {"wp-json": (200, posts)})
         self.assertEqual(total, 2)
         locs = sorted(self._cached_locs("katmoviehd"))
         self.assertIn("black-box-2026-hindi", locs[0])
         self.assertIn("the-social-reckoning-2026-hindi", locs[1])
         self.assertIn("[✓] [KATMOVIEHD]", out)
         self.assertNotIn("[!] [KATMOVIEHD]", out)
+        self.assertNotIn("Sync problems", out)
 
-    def test_katmoviehd_slug_embeds_still_work(self):
-        total, out = self._run(
-            "katmoviehd",
-            {"https://": (200, 'slug:"clashing-through-the-snow-2026-hindi"')})
-        self.assertEqual(total, 1)
-        self.assertIn("clashing-through-the-snow-2026-hindi",
-                      self._cached_locs("katmoviehd")[0])
-
-    def test_katmoviehd_empty_reports_loudly(self):
-        total, out = self._run(
-            "katmoviehd", {"https://": (200, "<html></html>")})
+    def test_katmoviehd_empty_wp_feed_reports_loudly(self):
+        total, out = self._run("katmoviehd", {"wp-json": (200, "[]")})
         self.assertEqual(total, 0)
         self.assertIn("[!] [KATMOVIEHD] feed returned 0 records", out)
+        self.assertIn("[!] Sync problems (1)", out)
+
+    def test_katmoviehd_http_error_reports_loudly(self):
+        total, out = self._run("katmoviehd", {"wp-json": (404, "")})
+        self.assertEqual(total, 0)
+        self.assertIn("[!] [KATMOVIEHD] feed HTTP 404", out)
         self.assertIn("[!] Sync problems (1)", out)
 
     def test_10xflix_http_error_reports_loudly(self):
@@ -690,6 +690,91 @@ class TestSyncSitemapsReportsEmptyFeeds(unittest.TestCase):
         self.assertEqual(total, 0)
         self.assertIn("[!] [BOLLYSHARES] feed HTTP 404", out)
         self.assertIn("[!] Sync problems (1)", out)
+
+
+class TestKatmoviehdWpSync(unittest.TestCase):
+    """KatMovieHD sync reads the WordPress REST feed (freshness 2026-11-23).
+
+    The site is WordPress now; the old SvelteKit `slug:"..."` homepage regex
+    cached 0 posts every cycle because a WP homepage carries no such
+    markers (live proof: `fast_fetch.py sync --site katmoviehd` printed
+    "Total 0 posts cached" and sitemap_cache held 0 katmoviehd rows). The
+    sync fetches /wp-json/wp/v2/posts newest-first, up to 3 pages of 100.
+    """
+
+    KM_BASE = "https://katmoviehd.mom"
+
+    WP_PAGE_1 = [
+        {"link": "https://katmoviehd.mom/sinners-2025-hindi/",
+         "date": "2026-09-05T19:51:37", "slug": "sinners-2025-hindi"},
+        {"link": "https://katmoviehd.mom/thir13en-ghosts-2001-hindi/",
+         "date": "2026-09-05T19:04:42", "slug": "thir13en-ghosts-2001-hindi"},
+    ]
+
+    def _cache_db(self):
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute(
+            "CREATE TABLE sitemap_cache ("
+            "loc TEXT PRIMARY KEY, lastmod TEXT, slug TEXT, "
+            "scraped INTEGER DEFAULT 0, site TEXT)")
+        conn.commit()
+        return conn
+
+    def _run_sync(self, http_get, conn):
+        @contextlib.contextmanager
+        def fake_get_db(*a, **k):
+            yield conn
+
+        with mock.patch.object(ff, "init_db", lambda *a, **k: None), \
+             mock.patch.object(ff, "refresh_domains", lambda *a, **k: None), \
+             mock.patch.object(ff, "_import_paused", lambda: False), \
+             mock.patch.object(ff, "get_db", fake_get_db), \
+             mock.patch.object(ff, "http_get", http_get), \
+             mock.patch.dict(ff.DOMAINS, {"katmoviehd": self.KM_BASE}):
+            return ff.sync_sitemaps(site="katmoviehd", verbose=False)
+
+    def test_wp_feed_caches_newest_posts(self):
+        calls = []
+
+        def http_get(url, *a, **k):
+            calls.append(url)
+            if "page=1" in url:
+                return (200, {}, json.dumps(self.WP_PAGE_1))
+            return (200, {}, "[]")
+
+        conn = self._cache_db()
+        self.addCleanup(conn.close)
+        total = self._run_sync(http_get, conn)
+        self.assertEqual(total, 2)
+        rows = conn.execute(
+            "SELECT loc, lastmod, slug, scraped, site FROM sitemap_cache "
+            "ORDER BY lastmod DESC").fetchall()
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["loc"], "https://katmoviehd.mom/sinners-2025-hindi/")
+        self.assertEqual(rows[0]["lastmod"], "2026-09-05T19:51:37")
+        self.assertEqual(rows[0]["site"], "katmoviehd")
+        self.assertEqual(rows[0]["scraped"], 0)
+        # The sync fetches the WP API, never the bare homepage (the dead
+        # SvelteKit path fetched the homepage and regexed it for slugs).
+        self.assertTrue(all("wp-json/wp/v2/posts" in u for u in calls))
+        self.assertTrue(all(u != self.KM_BASE and u != self.KM_BASE + "/"
+                            for u in calls))
+
+    def test_non_200_page_stops_the_walk_without_raising(self):
+        def http_get(url, *a, **k):
+            return (404, {}, "")
+
+        conn = self._cache_db()
+        self.addCleanup(conn.close)
+        total = self._run_sync(http_get, conn)
+        self.assertEqual(total, 0)
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM sitemap_cache").fetchone()[0], 0)
+
+    def test_sveltekit_slug_regex_is_gone(self):
+        src = (HERE / "fast_fetch.py").read_text(encoding="utf-8")
+        self.assertNotIn("slug:\"", src)
 
 
 if __name__ == "__main__":

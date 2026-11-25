@@ -1,13 +1,17 @@
 [Unit]
-Description=Run one fleet crawler every day (gap A20)
+Description=Run one fleet crawler four times a day (gap A20)
 
 [Timer]
-# Once a day at 03:30 PKT — a quiet hour, clear of the prefetch sweeps
-# (00:30, 06:30, 12:30, 18:30) and the gate-backup window, so no two heavy
-# jobs share a slot. One site per run means the 21 runnable crawlers rotate
-# over ~3 weeks; a site that fails is retried the next day, because the
+# Four times a day at 03:30, 09:30, 15:30 and 21:30 PKT — quiet hours,
+# clear of the prefetch sweeps (00:30, 06:30, 12:30, 18:30), the autocrawl
+# cycles (02:00, 08:00, 14:00, 20:00 + link-sweep :30), the backup-hf run
+# (03:40), the domain probe (10:30) and the themoviebox sync (05:00).
+# One site per run means the 21 runnable crawlers rotate over ~5 days, not
+# ~3 weeks: at one run a day (2026-11-11..23) a site was synced only every
+# 3 weeks, which is exactly the 3–4-week staleness the freshness audit
+# found. A site that fails is retried at the next firing, because the
 # worker picks the stalest site and a failed run does not update last_sync_at.
-OnCalendar=*-*-* 03:30:00
+OnCalendar=*-*-* 03,09,15,21:30:00
 RandomizedDelaySec=600
 Persistent=true
 

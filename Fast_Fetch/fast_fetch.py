@@ -2556,57 +2556,68 @@ def sync_sitemaps(site: str = "all", max_sub_sitemaps: int | None = None, includ
             if verbose:
                 print(f"[!] Error fetching 7StarHD feed: {e}")
 
-    # 4. KatMovieHD SvelteKit Feed
+    # 4. KatMovieHD WordPress REST Feed (2026-11-23: the site is WordPress
+    # now — the old SvelteKit homepage-slug regex cached 0 posts every cycle
+    # because a WP homepage carries no such markers. wp-json
+    # is live on the registry domain: 9,428 posts, newest 2026-09-05.
+    # Newest-first, up to 3 pages of 100; a short page ends the walk.
+    # Only the newest pages matter for freshness — older posts already
+    # sit in staging/live.
+    # Rebase reconcile 2026-11-25: main had meanwhile added a homepage
+    # slug/fallback harvest for the same dead feed; the WP REST feed
+    # supersedes it (verified live, registry verified_by wp-json), so the
+    # regex fallback is dropped and the section now reports loudly via
+    # _report_feed like the other feeds when it yields 0 records.
     if site in ("katmoviehd", "all"):
+        km_base = DOMAINS.get("katmoviehd", "https://katmoviehd.mom").rstrip("/")
         if verbose:
-            print(f"\n[i] Fetching catalog feed for KATMOVIEHD: {DOMAINS.get('katmoviehd')}")
+            print(f"\n[i] Fetching post feed for KATMOVIEHD: {km_base}/wp-json/wp/v2/posts")
         try:
-            km_url = DOMAINS.get("katmoviehd", "https://katmoviehd.fans")
-            c, _, km_html = http_get(km_url)
-            if c == 200:
-                slugs = list(dict.fromkeys(re.findall(r'slug:"([^"]+)"', km_html)))
-                km_records = []
-                for sl in slugs:
-                    full_loc = f"{km_url.rstrip('/')}/{sl}"
-                    km_records.append((full_loc, "", sl, "katmoviehd"))
-                if not km_records:
-                    # 2026-11-23: the current domain serves a plain homepage
-                    # with no slug:"..." embeds (the old frontend's shape),
-                    # so the parse finds nothing even though the homepage
-                    # lists real posts. Harvest same-host post links
-                    # directly, mirroring the hdhub4u fallback below.
-                    km_host = urllib.parse.urlparse(km_url).netloc
-                    km_pattern = (
-                        r"""href=["'](https?://"""
-                        + re.escape(km_host)
-                        + r"""/[a-zA-Z0-9\-_]+/?)["']"""
+            km_records = []
+            km_code = 0
+            for km_page in range(1, 4):
+                km_api = (
+                    f"{km_base}/wp-json/wp/v2/posts"
+                    f"?per_page=100&page={km_page}"
+                    f"&_fields=link,date,slug"
+                )
+                c, _, km_body = http_get(km_api)
+                km_code = c
+                if c != 200:
+                    break
+                km_posts = json.loads(km_body)
+                if not isinstance(km_posts, list) or not km_posts:
+                    break
+                for p in km_posts:
+                    p_link = (p.get("link") or "").strip()
+                    if not p_link:
+                        continue
+                    p_slug = p.get("slug") or p_link.rstrip("/").split("/")[-1]
+                    km_records.append((p_link, p.get("date", ""), p_slug, "katmoviehd"))
+                if len(km_posts) < 100:
+                    break
+            if km_records:
+                with get_db() as conn:
+                    conn.executemany(
+                        """
+                        INSERT INTO sitemap_cache (loc, lastmod, slug, scraped, site)
+                        VALUES (?, ?, ?, 0, ?)
+                        ON CONFLICT(loc) DO UPDATE SET
+                            lastmod = excluded.lastmod,
+                            slug = excluded.slug,
+                            site = excluded.site
+                        """,
+                        km_records,
                     )
-                    for l in set(re.findall(km_pattern, km_html)):
-                        if not any(x in l for x in ['/category/', '/tag/', '/page/', '/genre/', '/about/', '/app/']):
-                            slug = l.rstrip("/").split("/")[-1]
-                            if slug:
-                                loc = l if l.endswith("/") else l + "/"
-                                km_records.append((loc, "", slug, "katmoviehd"))
-                if km_records:
-                    with get_db() as conn:
-                        conn.executemany(
-                            """
-                            INSERT INTO sitemap_cache (loc, lastmod, slug, scraped, site)
-                            VALUES (?, ?, ?, 0, ?)
-                            ON CONFLICT(loc) DO UPDATE SET
-                                lastmod = excluded.lastmod,
-                                slug = excluded.slug,
-                                site = excluded.site
-                            """,
-                            km_records,
-                        )
-                        total_added_global += len(km_records)
-                    if verbose:
-                        print(f"[✓] [KATMOVIEHD] Cached {len(km_records)} posts in database.")
-                else:
-                    _report_feed("KATMOVIEHD", c, km_url, 0)
+                    total_added_global += len(km_records)
+                if verbose:
+                    print(f"[✓] [KATMOVIEHD] Cached {len(km_records)} posts in database.")
             else:
-                _report_feed("KATMOVIEHD", c, km_url, 0)
+                _report_feed("KATMOVIEHD", km_code, km_base, 0)
+        except Exception as e:
+            sync_problems.append(f"[!] [KATMOVIEHD] feed error: {e}")
+            if verbose:
+                print(f"[!] Error fetching KatMovieHD feed: {e}")
         except Exception as e:
             sync_problems.append(f"[!] [KATMOVIEHD] feed error: {e}")
             if verbose:
