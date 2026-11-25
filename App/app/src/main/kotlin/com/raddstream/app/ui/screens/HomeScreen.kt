@@ -519,10 +519,58 @@ internal fun HomeContent(
             state = listState,
             modifier = Modifier.fillMaxSize().testTag(HomeFeedTag),
         ) {
-        // Mockup (Nov 2026): the filter chips ride at the top of the feed —
-        // ALL / MOVIES / SERIES / ANIME / KPOP — and filter the rails in
-        // place. They scroll away with the feed; the header above them stays.
-        item(key = "filter") {
+        // H1 (2027 Home fix, round 2): the hero is first content — the
+        // plan's §0.2 order is hero → sticky chips → Continue Watching →
+        // My List → Top 10 → mood chips → rails → promos. The hero used
+        // to sit below Continue Watching (third, after the chips and CW),
+        // so a returning viewer never saw discovery first. The hero
+        // renders only when it has items, or while it holds its footprint
+        // for loading — on a fatal screen it renders nothing, so the
+        // fatal branch below is unaffected.
+        // The carousel is 240/280dp (home fix, Nov 2026) — down from
+        // 320/400dp — so the first rail peeks over the fold.
+        if (heroMax > 0) {
+            if (heroItems.isNotEmpty()) {
+                item(key = "hero") {
+                    HeroCarousel(
+                        posts = heroItems,
+                        onPostClick = onPostClick,
+                        onWatchNow = { post -> onWatchNowClick(post) },
+                        isFavorite = { post ->
+                            post.id in state.favoriteIds ||
+                                (post.workRef != null && post.workRef in state.favoriteWorkRefs)
+                        },
+                        onToggleFavorite = { post -> onToggleFavorite(post) },
+                        autoplay = heroAutoplay,
+                        intervalMs = heroIntervalMs,
+                    )
+                }
+                // Screenshot-fix D7 (2026-11-16): 6dp, not 12dp — the
+                // gap between the dots and the next row was the second
+                // dead gap in the hero stack.
+                item(key = "heroSpacer") {
+                    Spacer(Modifier.height(RaddTokens.Space.Xxs))
+                }
+            } else if (state.visibleSections.any { it.loading }) {
+                item(key = "heroSkeleton") {
+                    // Hold the hero's footprint while the first rail lands, so the page
+                    // never flashes a bare background and then jumps when it fills in.
+                    HeroSkeleton()
+                }
+                // D7: same 6dp as the loaded hero — the skeleton must
+                // hold the same footprint, not a taller one.
+                item(key = "heroSkeletonSpacer") {
+                    Spacer(Modifier.height(RaddTokens.Space.Xxs))
+                }
+            }
+        }
+        // H3 (2027 Home fix, round 2): the filter chips are sticky now —
+        // they sit directly under the hero and stay pinned under the
+        // header while the feed scrolls, so the navigation is always in
+        // reach (plan §0.2: "sticky category chips"). They used to scroll
+        // away with the feed. ALL / MOVIES / SERIES / ANIME / KPOP filter
+        // the rails in place; tapping the active chip restores ALL.
+        stickyHeader(key = "filter") {
             HomeFilterRow(
                 selected = filter,
                 onSelect = { chosen -> filter = if (chosen == filter) HomeFilter.All else chosen },
@@ -594,18 +642,21 @@ internal fun HomeContent(
                     Spacer(Modifier.height(RaddTokens.Space.Sm))
                 }
             }
-            // D (home fix, Nov 2026): Continue Watching sits ABOVE the hero
-            // for returning users — the highest-intent row on Home, and it
-            // used to sit below a 320-400dp hero, below the fold on first
-            // paint. With rows they are the real rows; without rows it is
-            // the "Start watching" placeholder — but only once the catalog
-            // has landed (anyVisible) AND this device has watch history to
-            // resume (hasWatchHistory). A4-F2: on a first run the list is
-            // empty because nothing was ever watched, and the line read as
-            // an error on a populated Home (Robo matrix-12l8h97dvq326) —
-            // Pick 3 onboards a new viewer instead. A viewer who finished
-            // everything (or removed every row) still gets the line: for
-            // them "no active shows" is true, not a bug.
+            // D (home fix, Nov 2026; reflowed 2027 round 2): Continue
+            // Watching sits BELOW the hero now — the plan's §0.2 order
+            // (hero first for discovery, CW second for resume). It used
+            // to sit above the hero, so a returning viewer never saw
+            // discovery first. It is still the highest-intent row after
+            // the hero: with rows they are the real rows; without rows it
+            // is the "Start watching" placeholder — but only once the
+            // catalog has landed (anyVisible) AND this device has watch
+            // history to resume (hasWatchHistory). A4-F2: on a first run
+            // the list is empty because nothing was ever watched, and the
+            // line read as an error on a populated Home (Robo
+            // matrix-12l8h97dvq326) — Pick 3 onboards a new viewer
+            // instead. A viewer who finished everything (or removed every
+            // row) still gets the line: for them "no active shows" is
+            // true, not a bug.
             if (state.visibleContinueWatching.isNotEmpty()) {
                 item(key = "continueWatching") {
                     Column {
@@ -664,44 +715,9 @@ internal fun HomeContent(
                 }
             }
 
-            // The hero, below Continue Watching now (see D above). The
-            // carousel is 240/280dp (home fix, Nov 2026) — down from
-            // 320/400dp — so the first rail peeks over the fold.
-            if (heroMax > 0) {
-                if (heroItems.isNotEmpty()) {
-                    item(key = "hero") {
-                        HeroCarousel(
-                            posts = heroItems,
-                            onPostClick = onPostClick,
-                            onWatchNow = { post -> onWatchNowClick(post) },
-                            isFavorite = { post ->
-                                post.id in state.favoriteIds ||
-                                    (post.workRef != null && post.workRef in state.favoriteWorkRefs)
-                            },
-                            onToggleFavorite = { post -> onToggleFavorite(post) },
-                            autoplay = heroAutoplay,
-                            intervalMs = heroIntervalMs,
-                        )
-                    }
-                    // Screenshot-fix D7 (2026-11-16): 6dp, not 12dp — the
-                    // gap between the dots and the next row was the second
-                    // dead gap in the hero stack.
-                    item(key = "heroSpacer") {
-                        Spacer(Modifier.height(RaddTokens.Space.Xxs))
-                    }
-                } else if (state.visibleSections.any { it.loading }) {
-                    item(key = "heroSkeleton") {
-                        // Hold the hero's footprint while the first rail lands, so the page
-                        // never flashes a bare background and then jumps when it fills in.
-                        HeroSkeleton()
-                    }
-                    // D7: same 6dp as the loaded hero — the skeleton must
-                    // hold the same footprint, not a taller one.
-                    item(key = "heroSkeletonSpacer") {
-                        Spacer(Modifier.height(RaddTokens.Space.Xxs))
-                    }
-                }
-            }
+            // H1 (2027 Home fix, round 2): the hero lives at the top of
+            // the feed now (above the sticky chips) — it moved out of
+            // this branch, so nothing renders here in its place.
             // E (home fix, Nov 2026): Pick 3 rides BELOW the first rail
             // now — it used to ride below the hero, so a new viewer met
             // the card before any rail. The first rail is first content;
@@ -1730,10 +1746,10 @@ private fun HomeRailSection(
                         // play button opens Detail with autoplay.
                         onPlayClick = { onPlayClick(post) },
                         rank = if (isRanked && itemIndex < 10) itemIndex + 1 else null,
-                        // Audit #8: the full "★ 7.0 · 2023 · Movie" line
+                        // Audit #8: the full "2023 · ★ 7.0 · Movie" line
                         // truncates the type word mid-word ("Mo…") on a
                         // 132dp rail card — the compact line drops it, so
-                        // rating · year fits. The type stays in the tile's
+                        // year · rating fits. The type stays in the tile's
                         // spoken sentence and on Detail. Two title lines
                         // for the same reason: one line truncates long
                         // titles mid-word, and the slot stays uniform
