@@ -68,11 +68,13 @@ import com.raddstream.app.ui.theme.rememberArtworkAccent
  * on low-RAM phones (Compose performance guidance). Review redesign (Nov 2026):
  * frameless — the M11 artwork-accent rim and the dark footer box are gone (both
  * reviewers read the rim as a selected/promoted outline), so the poster paints
- * edge-to-edge at 10dp corners and the title + meta sit below it on the page
- * background; the NEW pill is a small dark chip, top-left, never covering faces
- * or logos. No quality badge: the list wire carries no quality field (it
- * lives on Detail's RankedPrint), and inventing one would break the honesty
- * rule; that badge waits on a server `best_quality` field.
+ * edge-to-edge at 16dp corners (SE-4, round 2: the brief's 16–20dp card
+ * radius, via the `RaddTokens.Radius.Card` token) and the title + meta sit
+ * below it on the page background; the NEW pill is a small dark chip,
+ * top-left, never covering faces or logos. No quality badge: the list wire
+ * carries no quality field (it lives on Detail's RankedPrint), and inventing
+ * one would break the honesty rule; that badge waits on a server
+ * `best_quality` field.
  *
  * Accessibility: the tile leads with one merged sentence — title, year and type, the rating out
  * of ten, and the progress line when the app has one — so the facts arrive in an order that
@@ -287,14 +289,18 @@ fun PosterCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(CardGeometry.POSTER_ASPECT)
-                .clip(RaddTokens.Shape.Poster)
+                // SE-4 (round 2): the card radius is the brief's 16dp
+                // (`RaddTokens.Radius.Card`), not the 8dp poster token —
+                // the tile is the card, and the 16–20dp radius is what
+                // lifts Cards off the 10/12dp cap the re-rate measured.
+                .clip(RaddTokens.Shape.Card)
                 .background(MaterialTheme.colorScheme.surfaceVariant)
                 .then(
                     if (isFocused) {
                         Modifier.border(
                             width = 2.dp, // token-exempt: focus-border width, not spacing
                             color = MaterialTheme.colorScheme.primary,
-                            shape = RaddTokens.Shape.Poster,
+                            shape = RaddTokens.Shape.Card,
                         )
                     } else Modifier
                 ),
@@ -439,7 +445,9 @@ fun PosterCard(
                     modifier = Modifier
                         .align(newAlignment)
                         .padding(RaddTokens.Space.Xxs)
-                        .clip(RaddTokens.Shape.Poster)
+                        // SE-4 (round 2): the pill wears the card radius too —
+                        // one radius language on the tile, not two.
+                        .clip(RaddTokens.Shape.Card)
                         .background(RaddArtScrim)
                         .padding(horizontal = RaddTokens.Space.Sm, vertical = RaddTokens.Space.Micro)
                         .clearAndSetSemantics { },
@@ -701,6 +709,17 @@ internal fun trimMetaLineToWordBoundary(text: String, cutIndex: Int): String {
  * The type stays in the tile's spoken sentence
  * and on Detail; only the painted rail line loses it. An absent rating or
  * year simply leaves its slot out — never an invented value.
+ *
+ * S2 META (round 2, decided-then-blocked, 25 Nov 2026): the brief's
+ * year•duration•quality line was DECIDED for this meta line and then
+ * verified unbuildable from the list wire — the list [Post] carries no
+ * `runtime_minutes` (only [PostDetail] does, from the work row the server
+ * matched) and no quality field at all (quality is per-print, on Detail's
+ * RankedPrint). Painting a duration or a quality here would invent data,
+ * so the line stays rating•year•type until the server sends
+ * `runtime_minutes` on the list projection and a per-post best-quality
+ * field — a backend change, not an app one. Do not re-attempt this in an
+ * app branch.
  *
  * REA #2 (Netflix, Nov 2026): [matchPercent] paints first — "97% Match ·
  * ★ 8.6 · 2024 · Series" — and alone when nothing else paints ("97%
