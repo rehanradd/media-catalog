@@ -10,6 +10,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import com.google.android.play.core.install.model.ActivityResult as PlayCoreActivityResult
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.fadeIn
@@ -164,6 +167,7 @@ internal fun heroItemsExcludingContinueWatching(
         .take(heroMax)
 }
 
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun HomeScreen(
     onSearchClick: () -> Unit,
@@ -213,6 +217,15 @@ fun HomeScreen(
     /** MX #7: the banner's Exit — the graph raises the PIN dialog. */
     onExitKidsMode: () -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel(),
+    /**
+     * Round 6 motion infra: the shared-transition scopes the NavHost
+     * passes in. Null outside navigation (Paparazzi previews, tests) —
+     * sharedElement() calls no-op and the screen renders exactly as
+     * before. Screen branches thread these into their poster/hero
+     * sharedElement() calls; this branch only carries them.
+     */
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
 ) {
     val state by viewModel.uiState.collectAsState()
     val context = LocalContext.current

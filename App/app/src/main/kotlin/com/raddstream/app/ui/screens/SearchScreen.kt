@@ -9,6 +9,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -210,7 +213,7 @@ internal fun browseTypeForSeeAll(type: String?): String? = when (type) {
     else -> null
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalSharedTransitionApi::class)
 @Composable
 // Session 121 (P-30): Search is a bottom-nav tab root — there is nowhere to go back
 // to from it, so the top bar carries no back arrow and takes no callback. (The Home
@@ -231,6 +234,15 @@ fun SearchScreen(
     /** A language filter to apply at once — a language chip on Home lands here with the language filled in. */
     initialLanguage: String? = null,
     viewModel: SearchViewModel = hiltViewModel(),
+    /**
+     * Round 6 motion infra: the shared-transition scopes the NavHost
+     * passes in. Null outside navigation (Paparazzi previews, tests) —
+     * sharedElement() calls no-op and the screen renders exactly as
+     * before. Screen branches thread these into their poster/hero
+     * sharedElement() calls; this branch only carries them.
+     */
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
 ) {
     val state by viewModel.uiState.collectAsState()
     // Feel-instant S6: the results list is a Pager — the screen collects
