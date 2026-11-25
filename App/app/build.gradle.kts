@@ -314,6 +314,43 @@ android {
         }
     }
 
+    // App-speed (Nov 2026): release-only per-ABI APK splits. The APK went
+    // 34 MB -> 92.5 MB when the NextLib FFmpeg decoder landed (commit
+    // 1a88db0a, 23 Nov): lib/ went 5.7 MB -> 55 MB, and the APK bundles all
+    // four ABIs with no splits, while a real phone uses only its own
+    // (~13 MB of native libs on arm64). Splitting the release build gives
+    // each phone only its own ABI's .so files — the saving comes from the
+    // split, never from removing the decoder (AC-3/E-AC-3/DTS sound stays).
+    //
+    // Release-only, by a Gradle property: a release build passes
+    // `-PabiSplits=true`; a debug build never sets it, so the debug APK
+    // stays one universal file and the Testsy/device flow plus the single
+    // download link keep working unchanged. The property (not the task
+    // list) is the gate because it is configuration-cache safe — reading
+    // `gradle.startParameter.taskNames` is not.
+    //
+    // `isUniversalApk = false`: a release build produces exactly four
+    // APKs (`app-<abi>-release.apk`) and no universal. The publish step
+    // serves the arm64-v8a one as the download link — see
+    // App/docs/apk-splits-publish.md — and the universal debug APK stays
+    // available alongside it.
+    //
+    // Version codes stay identical across the four ABIs on purpose:
+    // distribution is direct download, not Play multi-APK, so no store
+    // needs distinct codes — and the in-app update check compares one
+    // panel-published versionCode. A wrong-ABI APK cannot install on a
+    // phone anyway (INSTALL_FAILED_NO_MATCHING_ABIS), so identical codes
+    // cannot put the wrong native libs on a device. If distribution ever
+    // moves to Play, add a per-ABI versionCodeOverride here first.
+    splits {
+        abi {
+            isEnable = providers.gradleProperty("abiSplits").orNull?.toBoolean() == true
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
+            isUniversalApk = false
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
