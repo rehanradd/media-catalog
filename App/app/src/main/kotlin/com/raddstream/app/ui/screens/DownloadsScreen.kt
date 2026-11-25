@@ -43,6 +43,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -1316,6 +1317,24 @@ internal fun qualityBadgeParts(printLabel: String?): Pair<String?, String?> {
     return firstToken to rest.ifBlank { null }
 }
 
+/**
+ * Round 5 (Downloads): the meta-line remainder at large font scale.
+ * "High bitrate" fits the remainder column at 1.0x (11sp) but at 1.3x
+ * the font is 1.3x larger while the badge + size take more room too, so
+ * it cut to "Hig…" (Paparazzi downloadsDownloadingDeviceRowLargeFont).
+ * The painted line drops the word " bitrate" above 1.0x — the badge
+ * already carries the resolution ("1080p") and the tier ("High") is what
+ * the remainder adds; the spoken sentence (the row's contentDescription,
+ * built from the full label) still says "High bitrate", so TalkBack loses
+ * nothing. A remainder that does not end in " bitrate" paints unchanged
+ * — the ellipsis is the fallback, as before. Pure string work, like
+ * qualityBadgeParts.
+ * (Not a 2-line fix: the Library title 2-line attempt was proven not to
+ * work and reverted — the meta line stays one line.)
+ */
+internal fun metaRestForFontScale(rest: String, fontScale: Float): String =
+    if (fontScale > 1.0f) rest.removeSuffix(" bitrate") else rest
+
 /** D12: a failed keep names its attempt — "Attempt 2 of 6" (the engine caps retries at 6). Null when the count was never recorded. */
 internal fun keepAttemptLine(attempt: Int): String? =
     if (attempt > 0) "Attempt $attempt of ${RetryPolicy.MAX_ATTEMPTS}" else null
@@ -1398,7 +1417,11 @@ private fun DownloadMetaLine(
         // only place the total shows on a gated or ready row.
         if (rest != null) {
             Text(
-                rest,
+                // Round 5: metaRestForFontScale shortens the remainder
+                // above 1.0x ("High bitrate" → "High") — at 1.3x it cut
+                // to "Hig…" even at 11sp; the spoken line keeps the full
+                // label via the row's contentDescription.
+                metaRestForFontScale(rest, LocalDensity.current.fontScale),
                 // labelSmall (11sp) — the remainder is descriptive text, and
                 // at bodySmall it needed ~80px against ~71px available, so
                 // it cut to "High bit…". 11sp is the meta line's original
