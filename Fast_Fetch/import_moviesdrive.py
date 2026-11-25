@@ -34,6 +34,24 @@ page (service hubcloud/gdflix, playback_type "download", final_url the
 anchor as-is — the resolver unwraps HubCloud/GDFlix at play time; neither
 host is re-proven here, the archive page is the evidence the link exists).
 
+FIELD POPULATION (2026-11-23, scraper-improvement item 7): the WP post
+carries far more than the title — the importer used to parse ONLY the title
+HTML, so poster was ~11%, synopsis ~11%, cast ~9% (audit 2026-11-23). The
+post's content.rendered carries a "Series Info" block (IMDb rating,
+director/creator, stars, country, language, released year, storyline), a
+TMDB poster image + catimages screenshots, an IMDb link, and — via
+_wp:term (fetched with _embed=1) — categories. extract_post_data_moviesdrive
+now parses all of them: poster/backdrop/synopsis/genres from the full
+content, rating/director/cast/country/language/year from Series Info,
+imdb_id from the content's IMDb link, and the no-column extras (production
+house, producer, writer, original language, format) into raw_meta. Two
+fields the source genuinely does NOT carry: duration (the block's
+"Episode Size" is a file size, not a runtime) and release_date (the WP
+post `date` is the publish date, not the work's release date) — both stay
+NULL rather than fabricated. Release `size` is likewise absent for series
+packs: the archive title carries no size and the body lists per-episode
+sizes, so a pack release keeps size empty.
+
 DIRECT-HUBCLOUD SHAPE (newer posts, ~6,500 pending 2026-11-13): the post
 content carries hubcloud.ist/drive/search-recover.php links directly, one
 per quality (movies) or per quality x {single-episode, zip} (series), with
@@ -189,7 +207,7 @@ def lookup_post_by_slug(client: MoviesDriveClient, slug: str) -> tuple[dict | No
     all saved Jailer 2). Never trust found[0] here.
     """
     status, _, body = client._get(
-        f"{client.base_url}/wp-json/wp/v2/posts?slug={urllib.parse.quote(slug)}",
+        f"{client.base_url}/wp-json/wp/v2/posts?slug={urllib.parse.quote(slug)}&_embed=1",
         "application/json, */*;q=0.8",
     )
     if status != 200 or not body:
@@ -288,7 +306,7 @@ NOISE_RES = (
     re.compile(r"mdrive\.lol", re.I),
 )
 LANG_WORDS = ("hindi", "english", "tamil", "telugu", "malayalam", "kannada",
-              "punjabi", "bengali", "marathi", "gujarati", "urdu")
+              "punjabi", "bengali", "marathi", "gujarati", "urdu", "korean")
 
 
 def extract_archive_links(post_content_html: str) -> list[str]:
@@ -497,6 +515,203 @@ def languages_from_title(title: str) -> str:
     return " + ".join(found)
 
 
+# --- "Series Info" block parser (field population, 2026-11-23) --------------
+# The WP post body carries a plain-text info block after a "Series Info:"
+# marker, e.g. (measured live 2026-11-23, new4.moviesdrive.cyou):
+#   Series Info: 💫 IMDb Rating:- 3.6/10 🌈 Series Name: Bigg Boss Season: 20
+#   🔊 Language: {Hindi DD2.0} 📅 Released Year: 2026 👮Director/Creator:
+#   ⭐Stars: Salman Khan, Atul Kapoor, Vijay Vikram Singh 💿 Episode Size:
+#   – Each Episode 🎬Quality: 480p || 720p || 1080p – WEB-DL 📁 Format: MKV
+#   ♦ Storyline- Bigg Boss is a reality show ... 🖼️ SCREENSHOTS – ...
+# A movie post says "Movie Name:" instead of "Series Name:"; some posts
+# also carry "🌍 Country:", "🗣 Original Language:", "Production House:",
+# "Producer:", "Writer:". Labels are matched longest-first so "Original
+# Language" wins over "Language" at the same position and
+# "Director/Creator" wins over "Director".
+
+_MD_INFO_LABELS = (
+    "Original Language",
+    "Director/Creator",
+    "Production House",
+    "IMDb Rating",
+    "Released Year",
+    "Series Name",
+    "Movie Name",
+    "Episode Size",
+    "Storyline",
+    "Producer",
+    "Country",
+    "Season",
+    "Language",
+    "Director",
+    "Writer",
+    "Stars",
+    "Quality",
+    "Format",
+)
+_MD_LABEL_RE = re.compile(
+    "(" + "|".join(re.escape(label) for label in _MD_INFO_LABELS) + r")\s*[:-]\s*",
+    re.I,
+)
+# Genre vocabulary for WP categories: only these category names are real
+# genres; the rest ("Dual Audio", "Hindi Dubbed", "Hotstar", "K Drama",
+# "Television") are site navigation, not genres.
+_MD_GENRES = {
+    "action", "adventure", "animation", "biography", "comedy", "crime",
+    "documentary", "drama", "family", "fantasy", "history", "horror",
+    "mystery", "romance", "sci-fi", "sport", "thriller", "war",
+}
+_MD_STRIP_EDGE = " \t\n\r♦💫🌈🌍🗣🔊📅👮⭐💿🎬📁😇❤️⏬🖼️{}:–—-"
+_MD_STORYLINE_END = ("SCREENSHOTS", "Thank You For Visiting", "Watch Online")
+_MD_IMDB_RE = re.compile(r"imdb\.com/title/(tt\d+)", re.I)
+
+
+def _md_info_text(content_html: str) -> str:
+    """Plain text of the post body, starting at the Series Info block."""
+    text = re.sub(r"\s+", " ", html.unescape(
+        re.sub(r"<[^>]+>", " ", content_html or ""))).strip()
+    marker = re.search(r"Series Info\s*:", text, re.I)
+    return text[marker.start():] if marker else text
+
+
+def _md_languages(value: str) -> str:
+    """'Hindi + Korean' from a Language value like '{Hindi DD2.0}'.
+
+    Only recognised language words survive (audio tags like DD2.0 and
+    braces are dropped); "" when the value names no known language.
+    """
+    found = [w.title() for w in LANG_WORDS if re.search(rf"\b{w}\b", value, re.I)]
+    return " + ".join(found)
+
+
+def parse_moviesdrive_series_info(content_html: str) -> dict:
+    """The Series Info block as post fields. Missing labels stay None.
+
+    Returns imdb_rating ("3.6", never "0.0" — a zero rating is the site's
+    placeholder, not a rating), director, cast_names (comma-joined),
+    country, language ("Hindi + Korean"), original_language, release_year,
+    synopsis (the Storyline text, cut at the SCREENSHOTS marker), and
+    raw_meta (JSON string of the no-column extras, or None).
+    """
+    text = _md_info_text(content_html)
+    matches = list(_MD_LABEL_RE.finditer(text))
+    values: dict[str, str] = {}
+    for i, m in enumerate(matches):
+        label = m.group(1)
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        value = text[m.end():end].strip(_MD_STRIP_EDGE)
+        # The Storyline runs to the screenshots, not to the end of the
+        # post body (the page repeats the plot in nested divs after it).
+        if label.lower() == "storyline":
+            for marker in _MD_STORYLINE_END:
+                cut = value.find(marker)
+                if cut != -1:
+                    value = value[:cut].strip(_MD_STRIP_EDGE)
+                    break
+            value = value[:2000].strip(_MD_STRIP_EDGE)
+        key = label.lower().replace("/", "_").replace(" ", "_")
+        # A repeated label keeps its first value (the SEO blurb can echo
+        # a label before the block; the block itself lists each once).
+        values.setdefault(key, value)
+
+    rating = None
+    raw_rating = values.get("imdb_rating", "")
+    rm = re.search(r"([0-9]+(?:\.[0-9]+)?)\s*/\s*10", raw_rating)
+    if rm:
+        try:
+            parsed = float(rm.group(1))
+            if parsed > 0:
+                rating = str(parsed)
+        except ValueError:
+            rating = None
+    elif re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", raw_rating):
+        try:
+            parsed = float(raw_rating)
+            if parsed > 0:
+                rating = str(parsed)
+        except ValueError:
+            rating = None
+
+    year = None
+    raw_year = values.get("released_year", "")
+    ym = re.search(r"\b(19\d{2}|20\d{2})\b", raw_year)
+    if ym:
+        year = int(ym.group(1))
+
+    stars = values.get("stars", "")
+    cast = ", ".join(
+        part.strip() for part in stars.split(",") if part.strip()
+    ) or None
+    director = values.get("director_creator") or values.get("director") or None
+    country = values.get("country") or None
+    language = _md_languages(values.get("language", "")) or None
+    original_language = values.get("original_language") or None
+    synopsis = values.get("storyline") or None
+
+    extras = {}
+    for key in ("production_house", "producer", "writer", "format"):
+        if values.get(key):
+            extras[key] = values[key]
+    if original_language:
+        extras["original_language"] = original_language
+    raw_meta = json.dumps(extras) if extras else None
+
+    return {
+        "imdb_rating": rating,
+        "director": director,
+        "cast_names": cast,
+        "country": country,
+        "language": language,
+        "original_language": original_language,
+        "release_year": year,
+        "synopsis": synopsis,
+        "raw_meta": raw_meta,
+    }
+
+
+def extract_moviesdrive_categories(post: dict) -> list[str]:
+    """Real genres from the WP _embedded terms (categories only).
+
+    The slug lookup fetches _embed=1, so _embedded['wp:term'] carries the
+    post's categories; only names in the genre vocabulary survive.
+    """
+    genres: list[str] = []
+    for term_group in (post.get("_embedded") or {}).get("wp:term", []):
+        for term in term_group or []:
+            if (term or {}).get("taxonomy") != "category":
+                continue
+            name = str(term.get("name") or "").strip()
+            if name.lower() in _MD_GENRES and name.title() not in genres:
+                genres.append(name.title())
+    return genres
+
+
+def extract_moviesdrive_backdrops(content_html: str, poster_url: str | None) -> list[str]:
+    """Backdrop candidates from the post body: TMDB + catimages stills.
+
+    The first TMDB image is the poster (excluded); the rest are backdrop
+    stills, as are the catimages.org screenshots the site embeds.
+    """
+    out: list[str] = []
+    for src in re.findall(r'<img[^>]+src=["\']([^"\']+)["\']', content_html or "", re.I):
+        src = src.strip()
+        if not src or src == poster_url or src in out:
+            continue
+        host = urllib.parse.urlparse(src).netloc.lower()
+        if "tmdb.org" in host or "catimages.org" in host:
+            out.append(src)
+        if len(out) >= 8:
+            break
+    return out
+
+
+def extract_moviesdrive_imdb_id(content_html: str) -> str | None:
+    """The tt-id of the IMDb link in the post body, or None."""
+    m = _MD_IMDB_RE.search(content_html or "")
+    return m.group(1) if m else None
+
+
+
 def extract_post_data_moviesdrive(
     post: dict,
     archive_pages: dict[str, str],
@@ -513,16 +728,6 @@ def extract_post_data_moviesdrive(
     if not link or not raw_title:
         return None
 
-    # Reuse the shared title parser on the WP title (year, content type,
-    # clean title, seasons); the source_site is then asserted to this site.
-    meta = fast_fetch.parse_post_metadata(
-        link, f"<title>{html.escape(raw_title)}</title>"
-    )
-    clean_title = meta["clean_title"]
-    year = meta["year"]
-    content_type = meta["content_type"]
-    seasons = meta["seasons"]
-
     content_html = ((post.get("content") or {}).get("rendered") or "")
     archive_links = extract_archive_links(content_html)
     direct_links = extract_direct_hubcloud_links(content_html)
@@ -530,6 +735,43 @@ def extract_post_data_moviesdrive(
         return None
 
     languages = languages_from_title(raw_title)
+    # Field population (2026-11-23): the shared title parser runs on the
+    # FULL post body, not just the title — that is where the TMDB poster,
+    # the IMDb block and the Storyline live. The Series Info block then
+    # overrides with the site's own structured values (rating with the
+    # ":-" separator the shared regex cannot read, director, stars,
+    # country, language, released year).
+    meta = fast_fetch.parse_post_metadata(
+        link, f"<title>{html.escape(raw_title)}</title>{content_html}"
+    )
+    info = parse_moviesdrive_series_info(content_html)
+    clean_title = meta["clean_title"]
+    year = meta["year"] or info["release_year"]
+    content_type = meta["content_type"]
+    seasons = meta["seasons"]
+    poster_url = meta.get("poster_url")
+
+    meta_backdrops = []
+    try:
+        meta_backdrops = json.loads(meta.get("backdrop_urls") or "[]")
+        if not isinstance(meta_backdrops, list):
+            meta_backdrops = []
+    except (json.JSONDecodeError, TypeError):
+        meta_backdrops = []
+    backdrops = list(dict.fromkeys(
+        meta_backdrops + extract_moviesdrive_backdrops(content_html, poster_url)
+    ))[:8]
+    meta_genres = []
+    try:
+        meta_genres = json.loads(meta.get("genres") or "[]")
+        if not isinstance(meta_genres, list):
+            meta_genres = []
+    except (json.JSONDecodeError, TypeError):
+        meta_genres = []
+    genres = list(dict.fromkeys(
+        [str(g) for g in meta_genres] + extract_moviesdrive_categories(post)
+    ))
+
     releases = []
     for arch_url in archive_links:
         arch_html = archive_pages.get(arch_url)
@@ -586,11 +828,21 @@ def extract_post_data_moviesdrive(
         "year": year,
         "content_type": content_type,
         "seasons": seasons,
-        "poster_url": meta.get("poster_url"),
-        "backdrop_urls": meta.get("backdrop_urls"),
-        "synopsis": meta.get("synopsis"),
-        "genres": meta.get("genres"),
-        "language": languages or meta.get("language"),
+        "poster_url": poster_url,
+        "backdrop_urls": json.dumps(backdrops) if backdrops else meta.get("backdrop_urls"),
+        "synopsis": info["synopsis"] or meta.get("synopsis"),
+        "genres": json.dumps(genres) if genres else meta.get("genres"),
+        "imdb_rating": info["imdb_rating"] or meta.get("imdb_rating"),
+        "cast_names": info["cast_names"],
+        "director": info["director"],
+        "country": info["country"] or meta.get("country"),
+        "imdb_id": extract_moviesdrive_imdb_id(content_html),
+        # Duration / release_date: the source carries neither (see module
+        # docstring) — leave them NULL rather than fabricate them.
+        "duration": None,
+        "release_date": None,
+        "raw_meta": info["raw_meta"],
+        "language": info["language"] or languages or meta.get("language"),
         "source_site": SITE_NAME,
         "is_18_plus": meta.get("is_18_plus", 0),
         "canonical_key": fast_fetch.generate_canonical_key(clean_title, year),
