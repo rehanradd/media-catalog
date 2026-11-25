@@ -1,0 +1,132 @@
+# Emulator screenshots (macOS) — ONE authorized attempt (2026-11-25, user order)
+# Copy of emulator-screenshots.yml (Linux) moved to a macOS runner.
+# Why: the local emulator is dead (no /dev/kvm, no vmx/svm, no SDK) and the
+# Linux GitHub-runner route failed 13 times, including one false-green where
+# screenshots showed only the launcher + an ANR dialog. The untried route is
+# macOS: macos-14 is Apple Silicon (arm64), so the emulator runs ARM system
+# images natively via Hypervisor.framework — no KVM, no HAXM, no software
+# emulation starving system_server the way the Linux route did.
+#
+# APP-VISIBILITY GUARD — already present, nothing to add: emu-drive.sh
+# (since 2026-11-17, branch muse/emulator-anr-guard-20261117) FAILS the run
+# unless the app is actually focused — wait_for_app_focus polls
+# `dumpsys window` (mCurrentFocus, last non-null line; mFocusedApp
+# fallback) and screenshot() refuses to capture unless
+# com.raddstream.app(.debug) is focused, and fails if a frame is
+# byte-identical to the previous one. A launcher-only run is a FAIL,
+# never a green. This workflow keeps the same drive script verbatim.
+#
+# macOS-only deltas vs the Linux copy:
+#   * runs-on: macos-14 (Apple Silicon). arch: arm64 (not x86_64).
+#   * The apt-get "system libraries" step is gone (no apt on macOS).
+#   * GNU tools: emu-drive.sh uses `md5sum` and `timeout`, which do not
+#     exist on macOS. `brew install coreutils` + the gnubin dir on
+#     $GITHUB_PATH provides both (`md5sum`, `timeout`) for every later
+#     step, including the emulator-runner's script line.
+#   * Everything else mirrors the Linux workflow: same JDK, same Gradle
+#     cache, same setup-android v4.0.4, same google-services.json restore,
+#     same debug build, same drive script, same artifacts.
+#
+# Cost: $0. No card, no signup, no third party. Runs on workflow_dispatch
+# only, so it never fires on pushes. If this run fails to boot or freezes,
+# the emulator route is PARKED for good and the screenshot phase goes to
+# real devices via the mobile testers only.
+
+name: Emulator screenshots (macOS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_level:
+        description: "Android API level for the emulator"
+        required: false
+        default: "34"
+      screenrecord_seconds:
+        description: "Video length in seconds (max ~150)"
+        required: false
+        default: "60"
+
+permissions:
+  contents: read
+
+jobs:
+  screenshots:
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Set up JDK 17 (temurin)
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad  # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install GNU coreutils (md5sum + timeout for emu-drive.sh)
+        # emu-drive.sh calls `md5sum` (frozen-frame check) and `timeout`
+        # (bounded uiautomator dumps) — neither exists on macOS.
+        # coreutils' gnubin dir provides both under their GNU names;
+        # $GITHUB_PATH makes them visible to every later step.
+        run: |
+          brew install coreutils
+          echo "$(brew --prefix coreutils)/libexec/gnubin" >> "$GITHUB_PATH"
+          md5sum --version | head -n 1
+          timeout --version | head -n 1
+
+      - name: Restore Gradle caches
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-java17-${{ hashFiles('App/gradle/wrapper/gradle-wrapper.properties', 'App/gradle/libs.versions.toml', 'App/**/*.gradle.kts', 'App/**/*.gradle', 'App/settings.gradle.kts') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-java17-
+            gradle-${{ runner.os }}-
+
+      - name: Install Android SDK (platform-tools, android-35, build-tools 35.0.0)
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd  # v4.0.4
+        with:
+          packages: "platform-tools platforms;android-35 build-tools;35.0.0"
+
+      - name: Restore google-services.json (CI secret, never committed)
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -z "$GOOGLE_SERVICES_JSON" ]; then echo "GOOGLE_SERVICES_JSON secret is empty" >&2; exit 1; fi
+          echo "$GOOGLE_SERVICES_JSON" | base64 -d > App/app/google-services.json
+
+      - name: Build debug APK
+        working-directory: App
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug --no-daemon --stacktrace --console=plain
+
+      - name: Boot emulator, drive app, capture screenshots + video
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ inputs.api_level }}
+          target: google_apis
+          arch: arm64
+          profile: pixel_7
+          cores: 2
+          emulator-boot-timeout: 900
+          disable-animations: true
+          # Same as the Linux copy: the AVD's default resolver (10.0.2.3)
+          # failed on earlier runs — point the emulator at public DNS.
+          # -no-window is REQUIRED on the headless runner.
+          emulator-options: -dns-server 8.8.8.8,8.8.4.4 -no-window
+          # ONE line on purpose: the action runs `script:` line by line in
+          # fresh shells — the drive logic lives in
+          # .github/scripts/emu-drive.sh so its variables/functions persist.
+          script: bash .github/scripts/emu-drive.sh "${{ inputs.screenrecord_seconds }}"
+
+      - name: Upload screenshots + video
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: emulator-shots-macos-${{ github.run_number }}
+          path: emu-shots/
+          if-no-files-found: warn
+          retention-days: 14
