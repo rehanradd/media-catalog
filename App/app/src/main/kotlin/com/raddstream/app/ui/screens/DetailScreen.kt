@@ -18,8 +18,6 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.rememberSharedContentState
-import androidx.compose.animation.sharedElement
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
@@ -156,6 +154,7 @@ import com.raddstream.app.player.LadderForScope
 import com.raddstream.app.player.QualityOption
 import com.raddstream.app.ui.navigation.DeepLinks
 import com.raddstream.app.ui.theme.PressHaptics
+import com.raddstream.app.ui.theme.RaddMotion
 import com.raddstream.app.ui.theme.RaddTokens
 import com.raddstream.app.ui.theme.pressScale
 import com.raddstream.app.ui.theme.rememberArtworkAccent
@@ -1414,9 +1413,12 @@ internal fun DetailContent(
  * the destination half of the "poster-<workId>" transition. It is
  * [Modifier] (a no-op) whenever the key or either scope is missing,
  * so the hero renders exactly as before until the infra's
- * SharedTransitionLayout hands the screen its scopes. The
- * rememberSharedContentState call lives inside the guard, so no
- * shared-content state is created while the transition is dormant.
+ * SharedTransitionLayout hands the screen its scopes. Both
+ * rememberSharedContentState and sharedElement are members of the
+ * SharedTransitionScope (not top-level imports) — the state is
+ * created on the scope, and sharedElement takes it as
+ * sharedContentState. The remember call lives inside the guard, so
+ * no shared-content state is created while the transition is dormant.
  */
 @Composable
 private fun heroSharedElementModifier(
@@ -1427,10 +1429,9 @@ private fun heroSharedElementModifier(
     if (key == null || sharedTransitionScope == null || animatedVisibilityScope == null) {
         return Modifier
     }
-    val state = rememberSharedContentState(key = key)
     return with(sharedTransitionScope) {
         Modifier.sharedElement(
-            state = state,
+            sharedContentState = rememberSharedContentState(key = key),
             animatedVisibilityScope = animatedVisibilityScope,
         )
     }
@@ -2037,20 +2038,23 @@ internal fun DetailQualitySelector(
     // it fades + rises in when quality options arrive, and out when
     // they empty, instead of popping. While empty the content is not
     // composed at all, so the "empty hides the selector" contract
-    // (DetailQualitySelectorTest) holds exactly as before.
+    // (DetailQualitySelectorTest) holds exactly as before. The specs
+    // come from RaddMotion (same M3 Expressive token values);
+    // MaterialTheme.motionScheme exposes no such callables in
+    // material3 1.5.0 (CI 45641979193).
     AnimatedVisibility(
         visible = chips.isNotEmpty(),
         enter = fadeIn(
-            animationSpec = MaterialTheme.motionScheme.defaultEffects(),
+            animationSpec = RaddMotion.defaultEffects(),
         ) + slideInVertically(
             initialOffsetY = { it / 4 },
-            animationSpec = MaterialTheme.motionScheme.defaultSpatial(),
+            animationSpec = RaddMotion.defaultSpatial(),
         ),
         exit = fadeOut(
-            animationSpec = MaterialTheme.motionScheme.defaultEffects(),
+            animationSpec = RaddMotion.defaultEffects(),
         ) + slideOutVertically(
             targetOffsetY = { it / 4 },
-            animationSpec = MaterialTheme.motionScheme.defaultSpatial(),
+            animationSpec = RaddMotion.defaultSpatial(),
         ),
     ) {
         Column(
@@ -2799,20 +2803,23 @@ private fun DetailEntrance(
         delay(index * 60L)
         visible = true
     }
-    // Round-6 motion: the stagger rides the M3 Expressive tokens
-    // from MaterialTheme.motionScheme — the same spring values the
-    // old RaddMotion aliases carried, now read from the scheme
-    // itself, so no per-screen spring lives here.
+    // Round-6 motion: the stagger rides the M3 Expressive tokens.
+    // MaterialTheme.motionScheme does NOT expose defaultEffects() /
+    // defaultSpatial() as callables in material3 1.5.0 (CI
+    // 45641979193), so the specs come from RaddMotion, which carries
+    // the same token values (0.8/380 spatial, 1.0/1600 effects) for
+    // call sites outside a MaterialTheme scope — same springs, same
+    // pixels, no double source (Theme.kt, S7).
     AnimatedVisibility(
         visible = visible,
         enter = fadeIn(
-            animationSpec = if (reduceMotion) snap() else MaterialTheme.motionScheme.defaultEffects(),
+            animationSpec = if (reduceMotion) snap() else RaddMotion.defaultEffects(),
         ) + if (reduceMotion) {
             EnterTransition.None
         } else {
             slideInVertically(
                 initialOffsetY = { it / 4 },
-                animationSpec = MaterialTheme.motionScheme.defaultSpatial(),
+                animationSpec = RaddMotion.defaultSpatial(),
             )
         },
         modifier = modifier,
@@ -2849,12 +2856,12 @@ private fun DetailScrollEntrance(
     }
     val alpha by animateFloatAsState(
         targetValue = if (visible || reduceMotion) 1f else 0f,
-        animationSpec = if (reduceMotion) snap() else MaterialTheme.motionScheme.defaultEffects(),
+        animationSpec = if (reduceMotion) snap() else RaddMotion.defaultEffects(),
         label = "detailScrollEntranceAlpha",
     )
     val offsetY by animateFloatAsState(
         targetValue = if (visible || reduceMotion) 0f else 24f,
-        animationSpec = if (reduceMotion) snap() else MaterialTheme.motionScheme.defaultSpatial(),
+        animationSpec = if (reduceMotion) snap() else RaddMotion.defaultSpatial(),
         label = "detailScrollEntranceOffsetY",
     )
     Box(
@@ -2938,10 +2945,10 @@ internal fun EpisodeRowSection(
         AnimatedContent(
             targetState = selectedSeason,
             transitionSpec = {
-                (fadeIn(animationSpec = MaterialTheme.motionScheme.defaultEffects()) +
-                    slideInVertically(animationSpec = MaterialTheme.motionScheme.defaultSpatial()) { it / 4 }) togetherWith
-                    (fadeOut(animationSpec = MaterialTheme.motionScheme.defaultEffects()) +
-                        slideOutVertically(animationSpec = MaterialTheme.motionScheme.defaultSpatial()) { it / 4 })
+                (fadeIn(animationSpec = RaddMotion.defaultEffects()) +
+                    slideInVertically(animationSpec = RaddMotion.defaultSpatial()) { it / 4 }) togetherWith
+                    (fadeOut(animationSpec = RaddMotion.defaultEffects()) +
+                        slideOutVertically(animationSpec = RaddMotion.defaultSpatial()) { it / 4 })
             },
             label = "episodeRowSeason",
         ) { targetSeasonNumber ->
