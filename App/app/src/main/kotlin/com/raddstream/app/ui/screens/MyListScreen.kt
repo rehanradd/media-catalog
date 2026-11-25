@@ -53,6 +53,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.testTag
@@ -246,6 +247,7 @@ fun MyListScreen(
                 isFavorite = isFavorite,
                 onToggleFavorite = onToggleFavoriteWithTick,
                 onRetryRails = { viewModel.retryRails() },
+                onBrowseClick = onBrowseClick,
                 modifier = Modifier.fillMaxSize(),
             )
             }
@@ -370,6 +372,12 @@ internal fun MyListLoadedContent(
     onFilter: (MyListFilter) -> Unit = {},
     /** L4 (round 2): the inline rails-retry tap. Defaults to no-op. */
     onRetryRails: () -> Unit = {},
+    /**
+     * Round 3: the filtered-empty state's way out — the same Browse
+     * button the full empty state has. Defaults to no-op so existing
+     * callers (and the mockup tests) keep compiling.
+     */
+    onBrowseClick: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     // L3 (round 2): the staggered entrance runs once, when the grid first
@@ -488,6 +496,13 @@ internal fun MyListLoadedContent(
                             // instead of painting a silent grey bar.
                             progressFraction = state.progressByPostId[post.id],
                             progressLabel = state.progressLabelByPostId[post.id],
+                            // Round 3: at large font scale a one-line title
+                            // degrades to a single word ("Salaar:…") — the
+                            // grid tiles take a second title line, so the
+                            // full title reads; the slot grows with it, so
+                            // cards stay uniform with each other. At 1.0x
+                            // and 1.15x the one-line slot is unchanged.
+                            titleMaxLines = if (LocalDensity.current.fontScale > 1.15f) 2 else 1,
                         )
                     }
                 }
@@ -500,21 +515,35 @@ internal fun MyListLoadedContent(
                         key = "my_list_filter_empty",
                         span = { GridItemSpan(maxLineSpan) },
                     ) {
-                        Text(
-                            text = stringResource(
-                                when (filter) {
-                                    MyListFilter.MOVIES -> R.string.mylist_filter_empty_movies
-                                    MyListFilter.SERIES -> R.string.mylist_filter_empty_series
-                                    MyListFilter.DOWNLOADS -> R.string.mylist_filter_empty_downloads
-                                    MyListFilter.ALL -> R.string.mylist_filter_empty_movies
-                                },
-                            ),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = RaddTokens.Space.Step48),
-                        )
+                        // Round 3: the filtered-empty state was a bare line
+                        // over a void — it gets the same way out the full
+                        // empty state has (the Browse button), not the
+                        // starter rail: under a filter the rail would show
+                        // titles the filter just hid (L1).
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                text = stringResource(
+                                    when (filter) {
+                                        MyListFilter.MOVIES -> R.string.mylist_filter_empty_movies
+                                        MyListFilter.SERIES -> R.string.mylist_filter_empty_series
+                                        MyListFilter.DOWNLOADS -> R.string.mylist_filter_empty_downloads
+                                        MyListFilter.ALL -> R.string.mylist_filter_empty_movies
+                                    },
+                                ),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = RaddTokens.Space.Step48),
+                            )
+                            OutlinedButton(
+                                onClick = onBrowseClick,
+                                modifier = Modifier
+                                    .testTag(MyListBrowseButtonTag)
+                                    .heightIn(min = 48.dp)
+                                    .padding(top = RaddTokens.Space.Sm),
+                            ) { Text("Browse the catalog") }
+                        }
                     }
                 }
             // F12 & Small #9: place the starter shelf inside the scrolling grid as

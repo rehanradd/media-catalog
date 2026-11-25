@@ -129,4 +129,22 @@ class PosterCardMetaTest {
         // Cut inside the rating: the rating number goes, the year stays.
         assertEquals("2024 · ★…", trimMetaLineToWordBoundary("2024 · ★ 8.6 · Series", 10))
     }
+
+    // ── Round 3 (Library): the painted progress line at large font ────
+
+    @Test
+    fun `progress label keeps left at default font scale`() {
+        assertEquals("S2:E5 · 23 min left", progressLabelForFontScale("S2:E5 · 23 min left", 1.0f))
+    }
+
+    @Test
+    fun `progress label drops left at large font scale`() {
+        assertEquals("S2:E5 · 23 min", progressLabelForFontScale("S2:E5 · 23 min left", 1.3f))
+        assertEquals("23 min", progressLabelForFontScale("23 min left", 1.15f))
+    }
+
+    @Test
+    fun `progress label without left is unchanged at large font scale`() {
+        assertEquals("S2:E5 · 23 min", progressLabelForFontScale("S2:E5 · 23 min", 1.3f))
+    }
 }
