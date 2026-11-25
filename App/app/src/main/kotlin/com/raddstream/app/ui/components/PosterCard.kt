@@ -3,7 +3,6 @@ package com.raddstream.app.ui.components
 import android.graphics.Bitmap
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.SharedTransitionScope
-import androidx.compose.animation.rememberSharedContentState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
@@ -894,7 +893,7 @@ private fun posterSharedElementModifier(
     if (sharedTransitionScope == null || animatedVisibilityScope == null) return Modifier
     return with(sharedTransitionScope) {
         Modifier.sharedElement(
-            state = rememberSharedContentState(key = posterSharedElementKey(post)),
+            sharedContentState = rememberSharedContentState(key = posterSharedElementKey(post)),
             animatedVisibilityScope = animatedVisibilityScope,
         )
     }
