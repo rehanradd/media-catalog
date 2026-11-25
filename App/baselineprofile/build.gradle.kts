@@ -20,7 +20,8 @@
 plugins {
     id("com.android.test")
     alias(libs.plugins.androidx.baselineprofile)
-    alias(libs.plugins.kotlin.android)
+    // AGP 9.0 built-in Kotlin (BOM bump 2026-11-25): org.jetbrains.kotlin.android
+    // removed — AGP compiles Kotlin itself now; applying it is a fatal error.
 }
 
 android {
@@ -51,9 +52,10 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
+    // AGP 9.0 built-in Kotlin: `kotlinOptions` is gone — the Kotlin jvmTarget
+    // now defaults to compileOptions.targetCompatibility (17) above, so the
+    // old JVM-target mismatch guard (CI 44428960230) is satisfied by
+    // compileOptions alone.
 
     // Point to the app module, the module the profile is generated for.
     targetProjectPath = ":app"

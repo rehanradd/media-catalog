@@ -7,10 +7,15 @@ import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
+    // AGP 9.0 built-in Kotlin (BOM bump 2026-11-25): org.jetbrains.kotlin.android
+    // removed — AGP compiles Kotlin itself now; applying it is a fatal error
+    // (Android CI 45577676841: 'no longer required for Kotlin support since AGP 9.0').
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.hilt)
-    alias(libs.plugins.kotlin.kapt)
+    // AGP 9.0 built-in Kotlin: org.jetbrains.kotlin.kapt is incompatible —
+    // replaced by com.android.legacy-kapt (same version as AGP, the documented
+    // stopgap); the kapt(...) dependency lines below are unchanged.
+    alias(libs.plugins.legacy.kapt)
     // Order matters: google-services after the Android plugin (it reads the
     // application id), crashlytics after google-services (it reads the
     // Firebase config the google-services plugin generates from
@@ -361,9 +366,8 @@ android {
         isCoreLibraryDesugaringEnabled = true
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
+    // AGP 9.0 built-in Kotlin: `kotlinOptions` is gone — the Kotlin jvmTarget
+    // now defaults to compileOptions.targetCompatibility (17) above.
 
     buildFeatures {
         compose     = true
