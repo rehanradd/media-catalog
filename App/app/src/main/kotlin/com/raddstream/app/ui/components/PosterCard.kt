@@ -1,6 +1,9 @@
 package com.raddstream.app.ui.components
 
 import android.graphics.Bitmap
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.animation.rememberSharedContentState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
@@ -173,6 +176,19 @@ fun PosterCard(
      * sentence — only the painted line is suppressed.
      */
     suppressBareTypeMeta: Boolean = false,
+    /**
+     * Round 6 (§4): the shared-element scopes for the poster→Detail hero
+     * transition. The infra branch owns the SharedTransitionLayout around
+     * the NavHost; until it lands these are null and the poster paints
+     * exactly as before (the transition simply does not run). When the
+     * infra wraps the NavHost, the caller passes the scopes and the
+     * poster image carries sharedElement(key = "poster-<workId>") — one
+     * key per work, shared with the Detail hero (§9). The workId is the
+     * same ID the Detail route carries: a v2 work's [Post.workId],
+     * otherwise the v1 [Post.id].
+     */
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
 ) {
     // Rail-title cleanup (Nov 2026): the tile paints the same clean title
     // Detail and the hero paint ([UserWords.detailTitle] — the server's
@@ -267,6 +283,17 @@ fun PosterCard(
     // pill and the hero use, so focus reads as selection everywhere.
     var isFocused by remember { mutableStateOf(false) }
 
+    // Round 6 (§4): the shared-element poster side. The identity
+    // Modifier until the infra wires the scopes — the poster then paints
+    // exactly as before. When the scopes arrive the image Box below
+    // carries sharedElement(key = "poster-<workId>"), one key per work,
+    // shared with the Detail hero.
+    val posterSharedElementModifier = posterSharedElementModifier(
+        sharedTransitionScope = sharedTransitionScope,
+        animatedVisibilityScope = animatedVisibilityScope,
+        post = post,
+    )
+
     // Review redesign (Nov 2026): frameless — no Card, no rim, no glow.
     // The poster paints edge-to-edge and the text sits below it on the
     // page background, so the tile reads as artwork, not as a boxed card.
@@ -323,7 +350,11 @@ fun PosterCard(
                             shape = RaddTokens.Shape.Card,
                         )
                     } else Modifier
-                ),
+                )
+                // Round 6 (§4): the shared-element poster side — the
+                // image Box is the shared element, so the poster flies
+                // to the Detail hero on the same key.
+                .then(posterSharedElementModifier),
             contentAlignment = Alignment.BottomStart,
         ) {
             val posterUrl = post.posterUrl?.takeIf { it.isNotBlank() }
@@ -830,6 +861,42 @@ internal fun posterMetaLine(post: Post, compact: Boolean, matchPercent: Int? = n
             UserWords.displayRating(post.imdbRating)?.let { "★ $it" },
             post.typeLabel,
         ).joinToString(" · ")
+    }
+}
+
+/**
+ * Round 6 (§4/§9): the shared-element key for a poster's hero transition
+ * to Detail — one key per work, shared by the source (this card) and the
+ * destination (the Detail hero). It is the same ID the Detail route
+ * carries: a v2 work's [Post.workId], otherwise the v1 [Post.id]. The
+ * infra branch owns the SharedTransitionLayout; this branch only writes
+ * the poster side to this key, so the transition activates when the
+ * infra wires the scopes.
+ */
+internal fun posterSharedElementKey(post: Post): String = "poster-${post.workId ?: post.id}"
+
+/**
+ * Round 6 (§4): the shared-element modifier for a poster image. A
+ * separate @Composable so [rememberSharedContentState] is called
+ * unconditionally within it (never inside a conditional branch in the
+ * caller's body). Returns the identity [Modifier] when either scope is
+ * null — the poster then paints exactly as before and the transition
+ * simply does not run. The scopes are stable for the lifetime of a
+ * composition (fixed by the NavHost structure), so the remember call is
+ * stable too.
+ */
+@Composable
+private fun posterSharedElementModifier(
+    sharedTransitionScope: SharedTransitionScope?,
+    animatedVisibilityScope: AnimatedVisibilityScope?,
+    post: Post,
+): Modifier {
+    if (sharedTransitionScope == null || animatedVisibilityScope == null) return Modifier
+    return with(sharedTransitionScope) {
+        Modifier.sharedElement(
+            state = rememberSharedContentState(key = posterSharedElementKey(post)),
+            animatedVisibilityScope = animatedVisibilityScope,
+        )
     }
 }
 

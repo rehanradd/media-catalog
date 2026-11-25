@@ -2,10 +2,13 @@ package com.raddstream.app.ui.screens
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -35,6 +38,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -48,10 +52,12 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -75,13 +81,14 @@ import com.raddstream.app.ui.components.PosterGridSkeleton
 import com.raddstream.app.ui.components.PosterRailSkeleton
 import com.raddstream.app.ui.components.RaddChip
 import com.raddstream.app.ui.components.ScrollingChipRow
-import com.raddstream.app.ui.theme.RaddMotion
 import com.raddstream.app.ui.theme.RaddTokens
 import com.raddstream.app.viewmodel.ListSort
 import com.raddstream.app.viewmodel.MyListFilter
 import com.raddstream.app.viewmodel.MyListUiState
 import com.raddstream.app.viewmodel.MyListViewModel
 import com.raddstream.app.viewmodel.filterMyList
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -98,6 +105,16 @@ fun MyListScreen(
      */
     onPlayClick: (Post) -> Unit = {},
     viewModel: MyListViewModel = hiltViewModel(),
+    /**
+     * Round 6 (§4): the shared-element scopes for the poster→Detail hero
+     * transition. The infra branch owns the SharedTransitionLayout around
+     * the NavHost; until it lands these are null and the screen paints
+     * exactly as before. When the infra wraps the NavHost, NavGraph passes
+     * the scopes and every PosterCard on this screen carries
+     * sharedElement(key = "poster-<workId>").
+     */
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
 ) {
     val state by viewModel.uiState.collectAsState()
     val popularSettled by viewModel.popularSettled.collectAsState()
@@ -197,11 +214,36 @@ fun MyListScreen(
         // revalidates the saved rows and reloads the rails; the list
         // itself is local Room data, so the refresh is a re-check, not a
         // re-fetch of the list.
+        // Round 6 (§4): the pull-to-refresh spring — the list follows the
+        // pull with the expressive spatial spring (visible overshoot +
+        // settle) instead of staying rigid while the indicator spins. The
+        // translation tracks the pull distance through the spring; on
+        // release it springs back to rest (the spring overshoots
+        // slightly, damping < 1) while the indicator spins. During
+        // refresh the content is back at rest. In Paparazzi there is no
+        // pull and no refresh, so the translation is 0 and the golden is
+        // the settled list.
+        val pullState = rememberPullToRefreshState()
+        val pullDistancePx = with(LocalDensity.current) { 96.dp.toPx() }
+        val pullTranslation by animateFloatAsState(
+            targetValue = if (state.isRefreshing) 0f else pullState.distanceFraction * pullDistancePx,
+            animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec(),
+            label = "myListPullTranslation",
+        )
         PullToRefreshBox(
             isRefreshing = state.isRefreshing,
             onRefresh = { viewModel.refresh() },
+            state = pullState,
             modifier = Modifier.fillMaxSize().padding(contentPadding),
         ) {
+            // The spring translation lives on this Box, not on the
+            // PullToRefreshBox — the indicator stays pinned at the top
+            // while the list below it follows the pull.
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { translationY = pullTranslation },
+            ) {
             when {
             state.isLoading -> Column(Modifier.fillMaxSize()) {
                 // The sort chips row sits above the grid when the list lands
@@ -222,6 +264,8 @@ fun MyListScreen(
                 railsLoadFailed = state.railsLoadFailed,
                 onRetryRails = { viewModel.retryRails() },
                 downloadedPostIds = state.downloadedPostIds,
+                sharedTransitionScope = sharedTransitionScope,
+                animatedVisibilityScope = animatedVisibilityScope,
                 modifier = Modifier.fillMaxSize(),
             )
             state.favorites.isEmpty() -> MyListEmptyContent(
@@ -235,6 +279,8 @@ fun MyListScreen(
                 railsLoadFailed = state.railsLoadFailed,
                 onRetryRails = { viewModel.retryRails() },
                 downloadedPostIds = state.downloadedPostIds,
+                sharedTransitionScope = sharedTransitionScope,
+                animatedVisibilityScope = animatedVisibilityScope,
                 modifier = Modifier.fillMaxSize(),
             )
             else -> MyListLoadedContent(
@@ -248,9 +294,12 @@ fun MyListScreen(
                 onToggleFavorite = onToggleFavoriteWithTick,
                 onRetryRails = { viewModel.retryRails() },
                 onBrowseClick = onBrowseClick,
+                sharedTransitionScope = sharedTransitionScope,
+                animatedVisibilityScope = animatedVisibilityScope,
                 modifier = Modifier.fillMaxSize(),
             )
             }
+            } // the pull-to-refresh spring Box
         }
     }
 }
@@ -285,6 +334,13 @@ internal fun MyListHiddenContent(
     onRetryRails: () -> Unit = {},
     /** L2 (round 2): the downloaded-copy ids, for the rail badges. */
     downloadedPostIds: Set<Int> = emptySet(),
+    /**
+     * Round 6 (§4): the shared-element scopes — passed to the rails'
+     * PosterCards so a rail poster can fly to the Detail hero. Null
+     * until the infra wires the SharedTransitionLayout.
+     */
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
 ) {
     // A4-F5 fixup: the empty state grew past one screen — message + Browse
     // button + two rails is ~800dp against ~700dp of usable height on a
@@ -318,6 +374,8 @@ internal fun MyListHiddenContent(
                 isFavorite = isFavorite,
                 onToggleFavorite = onToggleFavorite,
                 downloadedPostIds = downloadedPostIds,
+                sharedTransitionScope = sharedTransitionScope,
+                animatedVisibilityScope = animatedVisibilityScope,
                 modifier = Modifier.padding(bottom = 16.dp),
             )
         } else if (popularLoading) {
@@ -340,11 +398,20 @@ internal fun MyListHiddenContent(
                 onToggleFavorite = onToggleFavorite,
                 downloadedPostIds = downloadedPostIds,
                 titleRes = R.string.mylist_recent_title,
+                sharedTransitionScope = sharedTransitionScope,
+                animatedVisibilityScope = animatedVisibilityScope,
                 modifier = Modifier.padding(bottom = 16.dp),
             )
         }
     }
 }
+
+/** Round 6 (§4): the remove-item exit duration — the ViewModel removal
+ * follows the exit by this long, so the row is seen leaving (fade +
+ * scale on the expressive effects spec) instead of vanishing instantly.
+ * It covers the effects spring's settle; the snackbar (with Undo)
+ * follows the removal, as before. */
+private const val MyListRemoveExitDelayMs = 300L
 
 /**
  * The loaded list: the saved count, the sort chips, and the grid — with
@@ -379,15 +446,47 @@ internal fun MyListLoadedContent(
      */
     onBrowseClick: () -> Unit = {},
     modifier: Modifier = Modifier,
+    /**
+     * Round 6 (§4): the shared-element scopes — passed to the grid's
+     * PosterCards and the starter shelf's rail, so a poster can fly to
+     * the Detail hero. Null until the infra wires the
+     * SharedTransitionLayout.
+     */
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
 ) {
-    // L3 (round 2): the staggered entrance runs once, when the grid first
-    // lands — a per-item delay, capped, on the shipped emphasized spring.
-    // Inspection mode (Paparazzi, previews) renders the final state with
-    // no animation: a golden must pin the settled grid, and no golden
+    // Round 6 (§4): the staggered entrance — each tile enters with the
+    // expressive spatial spring from MaterialTheme.motionScheme (fade +
+    // scale), staggered by position and capped. The per-item visibility
+    // lives in the grid item below, keyed on the filter, so the stagger
+    // re-runs on a filter change, not just on first load. Inspection
+    // mode (Paparazzi, previews) renders the final state with no
+    // animation: a golden must pin the settled grid, and no golden
     // proves motion anyway.
     val inPreview = LocalInspectionMode.current
-    var entered by remember { mutableStateOf(inPreview) }
-    LaunchedEffect(Unit) { entered = true }
+    // Round 6 (§4): the ids that have completed their entrance. The set
+    // lives here (not in the item), keyed on the filter, so scrolling
+    // away and back does not replay an entrance — the id is already in
+    // the set — and a filter change resets it, so the stagger re-runs
+    // for the new set.
+    var enteredIds by remember(state.filter) { mutableStateOf(setOf<Int>()) }
+    // Round 6 (§4): the remove-item exit — the ids currently animating
+    // out. Tapping × marks the row removing (it fades + scales out on
+    // the expressive effects spec) and the ViewModel removal follows
+    // after the exit, so the row is seen leaving instead of vanishing.
+    // The grid reflows with the spring placement in animateItem below.
+    var removingIds by remember { mutableStateOf(setOf<Int>()) }
+    val removalScope = rememberCoroutineScope()
+    val onRemoveWithExit: (Int) -> Unit = { id ->
+        if (id !in removingIds) {
+            removingIds = removingIds + id
+            removalScope.launch {
+                delay(MyListRemoveExitDelayMs)
+                onRemove(id)
+                removingIds = removingIds - id
+            }
+        }
+    }
     // The count names every saved title, hidden ones included — a row
     // this build may not draw is still saved, and the notice below says
     // how many are hidden.
@@ -453,29 +552,50 @@ internal fun MyListLoadedContent(
                 verticalArrangement = Arrangement.spacedBy(RaddTokens.Space.Lg),
             ) {
                 itemsIndexed(visible, key = { _, post -> post.id }) { index, post ->
+                    // Round 6 (§4): the grid stagger — each tile enters
+                    // with the expressive spatial spring (fade + scale),
+                    // staggered by position and capped at 400ms. The
+                    // delay lives in this effect (a spring spec carries
+                    // no delay), and the entered set lives at the parent
+                    // level, so scrolling away and back does not replay
+                    // the entrance — the id is already in the set. In
+                    // Paparazzi the tile renders settled (no animation).
+                    val isEntered = post.id in enteredIds
+                    LaunchedEffect(filter) {
+                        if (inPreview) return@LaunchedEffect
+                        if (post.id in enteredIds) return@LaunchedEffect
+                        delay(minOf(index * 40, 400).toLong())
+                        enteredIds = enteredIds + post.id
+                    }
                     AnimatedVisibility(
-                        visible = entered,
+                        visible = (isEntered || inPreview) && post.id !in removingIds,
                         enter = fadeIn(
-                            animationSpec = tween(
-                                delayMillis = minOf(index * 40, 400),
-                                durationMillis = RaddMotion.DurationEmphasized,
-                                easing = RaddMotion.EmphasizedDecelerate,
-                            ),
+                            animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
                         ) + scaleIn(
-                            animationSpec = tween(
-                                delayMillis = minOf(index * 40, 400),
-                                durationMillis = RaddMotion.DurationEmphasized,
-                                easing = RaddMotion.EmphasizedDecelerate,
-                            ),
+                            animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec(),
                             initialScale = 0.96f,
                         ),
-                        exit = fadeOut(animationSpec = RaddMotion.quick()),
-                        modifier = Modifier.animateItem(),
+                        exit = fadeOut(
+                            animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
+                        ) + scaleOut(
+                            animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
+                            targetScale = 0.9f,
+                        ),
+                        // Round 6 (§4): the grid reflows with the spring
+                        // placement when a row leaves (or a filter
+                        // changes) — the remaining tiles glide to their
+                        // new positions on the expressive spatial spec
+                        // instead of snapping.
+                        modifier = Modifier.animateItem(
+                            fadeInSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
+                            placementSpec = MaterialTheme.motionScheme.defaultSpatialSpec(),
+                            fadeOutSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
+                        ),
                     ) {
                         PosterCard(
                             post = post,
                             onClick = { onPostClick(post) },
-                            onRemove = { onRemove(post.id) },
+                            onRemove = { onRemoveWithExit(post.id) },
                             // APP-06 (Phase 4): the saved tile is the strongest
                             // resume case — it grows the same play button Home's
                             // rails have, opening Detail with autoplay. The tile
@@ -515,6 +635,8 @@ internal fun MyListLoadedContent(
                             // first, with heightIn(min = …), so the extra
                             // lines can actually lay out.)
                             titleMaxLines = if (LocalDensity.current.fontScale > 1.15f) 3 else 1,
+                            sharedTransitionScope = sharedTransitionScope,
+                            animatedVisibilityScope = animatedVisibilityScope,
                         )
                     }
                 }
@@ -527,6 +649,25 @@ internal fun MyListLoadedContent(
                         key = "my_list_filter_empty",
                         span = { GridItemSpan(maxLineSpan) },
                     ) {
+                        // Round 6 (§4): the filtered-empty entrance — it
+                        // fades/scales in on the expressive effects spec
+                        // instead of appearing instantly. Keyed on the
+                        // filter, so it re-enters on each filter change.
+                        // In Paparazzi it renders settled (no animation).
+                        var emptyVisible by remember(filter) { mutableStateOf(inPreview) }
+                        LaunchedEffect(filter) {
+                            if (inPreview) return@LaunchedEffect
+                            emptyVisible = true
+                        }
+                        AnimatedVisibility(
+                            visible = emptyVisible,
+                            enter = fadeIn(
+                                animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
+                            ) + scaleIn(
+                                animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec(),
+                                initialScale = 0.96f,
+                            ),
+                        ) {
                         // Round 3: the filtered-empty state was a bare line
                         // over a void — it gets the same way out the full
                         // empty state has (the Browse button), not the
@@ -555,6 +696,7 @@ internal fun MyListLoadedContent(
                                     .heightIn(min = 48.dp)
                                     .padding(top = RaddTokens.Space.Sm),
                             ) { Text("Browse the catalog") }
+                        }
                         }
                     }
                 }
@@ -587,6 +729,8 @@ internal fun MyListLoadedContent(
                         onToggleFavorite = { onToggleFavorite(it) },
                         downloadedPostIds = state.downloadedPostIds,
                         horizontalPadding = 0.dp,
+                        sharedTransitionScope = sharedTransitionScope,
+                        animatedVisibilityScope = animatedVisibilityScope,
                     )
                 }
             }
@@ -770,6 +914,13 @@ internal fun MyListEmptyContent(
     onRetryRails: () -> Unit = {},
     /** L2 (round 2): the downloaded-copy ids, for the rail badges. */
     downloadedPostIds: Set<Int> = emptySet(),
+    /**
+     * Round 6 (§4): the shared-element scopes — passed to the rails'
+     * PosterCards so a rail poster can fly to the Detail hero. Null
+     * until the infra wires the SharedTransitionLayout.
+     */
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
 ) {
     // A4-F5 fixup: same scroll as the hidden branch — the message, the
     // Browse button and two rails no longer fit one phone screen, and the
@@ -803,6 +954,8 @@ internal fun MyListEmptyContent(
                 // below its last row; the empty state's Column has no such
                 // padding, so the rail carries its own — the cards sit
                 // clear of the bottom nav instead of tight against it.
+                sharedTransitionScope = sharedTransitionScope,
+                animatedVisibilityScope = animatedVisibilityScope,
                 modifier = Modifier.padding(bottom = 16.dp),
             )
         } else if (popularLoading) {
@@ -831,6 +984,8 @@ internal fun MyListEmptyContent(
                 onToggleFavorite = onToggleFavorite,
                 downloadedPostIds = downloadedPostIds,
                 titleRes = R.string.mylist_recent_title,
+                sharedTransitionScope = sharedTransitionScope,
+                animatedVisibilityScope = animatedVisibilityScope,
                 modifier = Modifier.padding(bottom = 16.dp),
             )
         }
@@ -897,6 +1052,13 @@ internal fun PopularRow(
     // A rail heading names the rail; a second line under it says nothing
     // the title does not.
     titleRes: Int = R.string.mylist_popular_title,
+    /**
+     * Round 6 (§4): the shared-element scopes — passed to each rail
+     * PosterCard so a rail poster can fly to the Detail hero. Null
+     * until the infra wires the SharedTransitionLayout.
+     */
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
 ) {
     Column(
         modifier = modifier
@@ -938,6 +1100,8 @@ internal fun PopularRow(
                     // the caption reads whole and every rail card stays
                     // the same height as its neighbours.
                     titleMaxLines = 2,
+                    sharedTransitionScope = sharedTransitionScope,
+                    animatedVisibilityScope = animatedVisibilityScope,
                     modifier = Modifier.weight(1f),
                 )
             }
