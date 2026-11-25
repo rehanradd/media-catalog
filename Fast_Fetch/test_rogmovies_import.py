@@ -14,6 +14,7 @@ Tests:
 """
 
 import base64
+import json
 import os
 import sqlite3
 import tempfile
@@ -36,7 +37,7 @@ SAMPLE_ROG_MOVIE_HTML = """
 <body>
     <div class="entry-content">
         <p>✅ Download Maremma (2026) Prime Video Full Movie in 720p &amp; 480p</p>
-        <p><img src="https://image.tmdb.org/t/p/w500/qsnsKf59pYN3GzfQRqvNjE8tcdz.jpg" alt="poster"></p>
+        <p><img src="https://image.tmdb.org/t/p/original/gMN8kkciIx3abnABV3KJy6DnDgN.jpg" alt="poster"></p>
         <p><strong>Storyline:</strong> A gripping action thriller set in rural Italy.</p>
         <p><strong>Genres:</strong> Action, Thriller</p>
         <p><strong>Language:</strong> Hindi Org + English</p>
@@ -124,6 +125,63 @@ SAMPLE_NEXDRIVE_ROG_SERIES_BATCH = """
 """
 
 
+#: Field-population fixture (2026-11-23): the shape that corrupted 758
+#: live rogmovies rows — a JSON-LD block whose "genre" string sits before
+#: the visible Genre line, and a "/PLOT :" marker whose plot text is in
+#: the NEXT paragraph. The old parser stored raw JSON fragments as genres
+#: and ":" as the synopsis.
+ROG_JSONLD_HTML = """
+<html><head><title>Download 4 Thieves (2020) Season 1 Hindi Complete Watcho Originals Web Series 480p 720p | Rogmovies Official</title>
+<meta property="og:image" content="https://image.tmdb.org/t/p/w500/REALPOSTER123.jpg">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"Movie","name":"4 Thieves","genre":"Drama, Romance","director":{"@type":"Person","name":"Someone"},"aggregateRating":{"@type":"AggregateRating","ratingValue":"7.1"}}</script>
+</head><body>
+<p><strong>Genre:</strong> Drama, Romance</p>
+<p><strong>/PLOT :</strong></p>
+<p>Four thieves plan a heist that goes wrong in every possible way.</p>
+</body></html>
+"""
+
+
+class TestRogmoviesFieldPopulation(unittest.TestCase):
+    def test_json_ld_does_not_pollute_genres(self):
+        meta = fast_fetch.parse_post_metadata(
+            "https://rogmovies.one/download-4-thieves-2020-s01-hindi-complete-watcho-originals-web-series-480p-720p/",
+            ROG_JSONLD_HTML)
+        genres = json.loads(meta["genres"])
+        self.assertEqual(genres, ["Drama", "Romance"])
+        for g in genres:
+            self.assertNotIn('"', g)
+            self.assertNotIn("{", g)
+            self.assertNotIn("@", g)
+
+    def test_plot_marker_line_is_not_the_synopsis(self):
+        meta = fast_fetch.parse_post_metadata(
+            "https://rogmovies.one/download-4-thieves-2020-s01-hindi-complete-watcho-originals-web-series-480p-720p/",
+            ROG_JSONLD_HTML)
+        self.assertEqual(
+            meta["synopsis"],
+            "Four thieves plan a heist that goes wrong in every possible way.")
+
+    def test_marker_only_synopsis_is_dropped(self):
+        html = ROG_JSONLD_HTML.replace(
+            "<p>Four thieves plan a heist that goes wrong in every possible way.</p>",
+            "<p><strong>Genres:</strong> Drama, Romance</p>")
+        meta = fast_fetch.parse_post_metadata(
+            "https://rogmovies.one/download-4-thieves-2020-s01-hindi-complete-watcho-originals-web-series-480p-720p/",
+            html)
+        self.assertIsNone(meta["synopsis"])
+
+    def test_site_default_poster_is_never_accepted(self):
+        default = import_rogmovies.ROGMOVIES_DEFAULT_POSTER
+        self.assertIsNone(import_rogmovies.unwrap_tmdb_poster(default))
+        self.assertIsNone(import_rogmovies.unwrap_tmdb_poster(
+            None, '<img src="%s">' % default))
+        # ... but the real poster from the same page shape still resolves.
+        self.assertEqual(
+            import_rogmovies.unwrap_tmdb_poster(None, SAMPLE_ROG_MOVIE_HTML),
+            "https://image.tmdb.org/t/p/original/gMN8kkciIx3abnABV3KJy6DnDgN.jpg")
+
+
 class TestRogmoviesImport(unittest.TestCase):
 
     def test_unwrap_tmdb_poster_base64(self):
@@ -139,7 +197,7 @@ class TestRogmoviesImport(unittest.TestCase):
         """Test fallback extraction of embedded TMDB image from post HTML."""
         local_poster = "https://rogmovies.one/wp-content/uploads/sample.jpg"
         result = import_rogmovies.unwrap_tmdb_poster(local_poster, SAMPLE_ROG_MOVIE_HTML)
-        self.assertEqual(result, "https://image.tmdb.org/t/p/w500/qsnsKf59pYN3GzfQRqvNjE8tcdz.jpg")
+        self.assertEqual(result, "https://image.tmdb.org/t/p/original/gMN8kkciIx3abnABV3KJy6DnDgN.jpg")
 
     def test_extract_movie_post_data_offline(self):
         """Test extracting movie releases and mirrors from mock Rogmovies and Nexdrive pages."""

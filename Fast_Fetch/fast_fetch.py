@@ -3266,6 +3266,32 @@ def fetch_multimovies_discover() -> list[dict]:
 
 # ── Metadata Parser Helpers ───────────────────────────────────────────────────
 
+def _marker_only(text: str) -> bool:
+    """True when a synopsis capture is just a section marker, not a plot.
+
+    Rogmovies pages head the plot with a bare "/PLOT :" line; the old
+    regex captured the marker punctuation itself (":" / "/PLOT:") and
+    stored it as the synopsis. A real synopsis is a sentence, never just
+    a marker word plus punctuation.
+    """
+    if not text or not text.strip():
+        return True
+    return bool(re.fullmatch(r"[/:\-\s]*(plot|storyline|synopsis)?[/:\-\s]*",
+                             text.strip(), re.IGNORECASE))
+
+
+def _field_label_line(text: str) -> bool:
+    """True when a line is a field label ("Genres:", "Language:"), not prose.
+
+    After tag-stripping, a label and its value land on separate lines, so
+    the synopsis scan must never accept a bare label as the plot.
+    """
+    return bool(re.match(
+        r"^(genres?|language|quality|size|format|director|cast|stars?|"
+        r"release\s*date|year)\s*:",
+        (text or "").strip(), re.IGNORECASE))
+
+
 def parse_post_metadata(page_url: str, html: str) -> dict:
     slug = page_url.rstrip("/").split("/")[-1]
     title_match = re.search(r"<title>(.*?)</title>", html, re.IGNORECASE)
@@ -3341,13 +3367,28 @@ def parse_post_metadata(page_url: str, html: str) -> dict:
     imdb_rating = imdb_m.group(1).strip() if imdb_m else None
 
     # 4. Genres
+    # Field population (2026-11-23): the regexes below used to run on the
+    # RAW html, so the first "Genre" hit was inside the JSON-LD <script>
+    # block and genres stored raw JSON fragments (rogmovies: 758 rows,
+    # e.g. '":"Drama', '"director":{"@type":"Person"'). Run them on the
+    # visible text instead: scripts stripped, tags turned into newlines.
+    # The same strip fixes the synopsis: on rogmovies pages the plot sits
+    # on the line AFTER the "/PLOT :" marker, and the old regex captured
+    # the marker punctuation itself (stored synopsis ":" / "/PLOT:").
+    _no_script = re.sub(r"<script\b[^>]*>.*?</script>", " ",
+                        html, flags=re.IGNORECASE | re.DOTALL)
+    visible_text = html_module.unescape(re.sub(r"<[^>]+>", "\n", _no_script))
     genres_list = []
-    genre_text_m = re.search(r'Genre[s]?\s*[:–-]?\s*([^\n<]+)', html, re.IGNORECASE)
+    genre_text_m = re.search(r"Genre[s]?\s*[:\u2013-]?\s*([^\n]+)", visible_text,
+                            re.IGNORECASE)
     if genre_text_m:
         raw_g = genre_text_m.group(1).strip()
-        for g in re.split(r"[,/|•]", raw_g):
+        for g in re.split(r"[,/|\u2022]", raw_g):
             g_clean = g.strip()
-            if g_clean and len(g_clean) > 2 and g_clean not in genres_list:
+            if (g_clean and len(g_clean) > 2
+                    and not any(c in g_clean for c in "{}@\"")
+                    and g_clean.lower() not in
+                    (x.lower() for x in genres_list)):
                 genres_list.append(g_clean)
 
     COMMON_GENRES = ["Action", "Adventure", "Animation", "Biography", "Comedy", "Crime",
@@ -3360,10 +3401,26 @@ def parse_post_metadata(page_url: str, html: str) -> dict:
     genres = json.dumps(genres_list) if genres_list else None
 
     # 5. Synopsis / Storyline
-    story_m = re.search(r'(?:Storyline|Synopsis|Plot)\s*[:–-]?\s*(?:<[^>]*>)?\s*([^\n<]+)', html, re.IGNORECASE)
-    synopsis = story_m.group(1).strip() if story_m else None
-    if synopsis:
-        synopsis = re.sub(r'<[^>]+>', '', synopsis).strip()
+    synopsis = None
+    story_m = re.search(r"(?:Storyline|Synopsis|Plot)\s*[:\u2013-]?\s*([^\n]*)",
+                        visible_text, re.IGNORECASE)
+    if story_m:
+        cand = story_m.group(1).strip()
+        if _marker_only(cand) or _field_label_line(cand):
+            # The plot text sits on the following line(s), not the marker's.
+            # Only a sentence-like line counts: a bare genre list or a
+            # button label ("Download Now") is not a plot.
+            tail = visible_text[story_m.end():]
+            for line in tail.splitlines():
+                line = line.strip()
+                if not line or _marker_only(line) or _field_label_line(line):
+                    continue
+                if len(line) >= 30 and len(line.split()) >= 5:
+                    cand = line
+                    break
+            else:
+                cand = ""
+        synopsis = re.sub(r"<[^>]+>", "", cand).strip() or None
 
     # 6. 18+ Content Flag (precise word boundaries on title and slug)
     title_slug_text = f"{raw_title} {slug}"
