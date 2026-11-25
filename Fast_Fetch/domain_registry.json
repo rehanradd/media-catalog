@@ -605,14 +605,14 @@
       "sitemap_endpoint": "/sitemap.xml"
     },
     "world4ufree": {
-      "active_base_url": "https://world4ufree.men",
-      "last_verified": "2026-11-23T00:00:00Z",
-      "verified_by": "homepage",
+      "active_base_url": "https://new4.world4ufree.watch",
+      "last_verified": "2026-11-23T01:05:00Z",
+      "verified_by": "wp-json",
       "known_mirrors": [
+        "https://new4.world4ufree.watch",
         "https://world4ufree.men",
         "https://world4ufree.gay",
-        "https://world4ufree.tours",
-        "https://world4ufree.men"
+        "https://world4ufree.tours"
       ],
       "slug_variants": [
         "world4ufree"
@@ -621,7 +621,8 @@
         "gay",
         "tours",
         "garden",
-        "men"
+        "men",
+        "watch"
       ],
       "api_type": "wp_rest_api",
       "status": "active",
@@ -632,17 +633,18 @@
         },
         {
           "domain": "https://world4ufree.gay",
-          "seen_from": "2026-11-08"
+          "seen_from": "2026-11-08",
+          "seen_until": "2026-11-23"
         },
         {
-          "domain": "https://world4ufree.men",
+          "domain": "https://new4.world4ufree.watch",
           "seen_from": "2026-11-23"
         }
       ],
-      "last_checked": "2026-11-23T00:00:00Z",
+      "last_checked": "2026-11-23T01:05:00Z",
       "api_endpoint": "/wp-json/wp/v2/posts",
-      "notes": "Canonical moved to world4ufree.men (site-API hunt 2026-11-23); now a static portal, no WordPress behind it — WP REST 404 on .gay/.men/.tours; no API.",
-      "site_name": "world4ufree"
+      "site_name": "world4ufree",
+      "notes": "Catalog moved to new4.world4ufree.watch (WP REST live, X-WP-Total 24875, sitemap generated 2026-11-23 01:00). world4ufree.gay/.men are now a static portal linking to the new domain; /wp-json 404s there. Verified live from Oracle VM egress 2026-11-23."
     },
     "hindilinks4u": {
       "active_base_url": "https://www.hindilinks4u.zip",

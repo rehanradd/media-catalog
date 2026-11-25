@@ -897,7 +897,7 @@ class RegistryCorrections20261123Tests(unittest.TestCase):
     def test_world4ufree_moved_to_men(self):
         reg = dr.load_registry()
         entry = reg["sites"]["world4ufree"]
-        self.assertEqual(entry["active_base_url"], "https://world4ufree.men")
+        self.assertEqual(entry["active_base_url"], "https://new4.world4ufree.watch")
         self.assertIn("https://world4ufree.men", entry["known_mirrors"])
         self.assertIn("https://world4ufree.gay", entry["known_mirrors"])
         self.assertIn("men", entry["tld_history"])
