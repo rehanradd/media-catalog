@@ -120,11 +120,12 @@ data class DeviceDownload(
      */
     val stalled: Boolean = false,
     /**
-     * D10: the catalog poster's URL for this file — always null today.
-     * Device downloads carry a handle only, never a post id, so there is
-     * no post to look a poster up from; the row always paints the
-     * initials tile. Full art needs the download stores to carry a poster
-     * URL at enqueue time, a data-model change owed after this round.
+     * D10: the catalog poster's URL for this file — the server's own poster
+     * for the title, carried at enqueue time by the caller that knew it
+     * (the Detail screen's post, or Smart Downloads' fetched detail).
+     * Null when the enqueue site knew no poster (an old persisted row, or
+     * a download started before this field existed): the row paints the
+     * initials tile, never a fetched or invented poster.
      */
     val posterUrl: String? = null,
 ) {
@@ -209,6 +210,15 @@ data class DeviceDownloadEntity(
      * attempt when it fails, so a retry is a counted try.
      */
     val attempts: Int = 0,
+    /**
+     * D10: the catalog poster's URL, carried at enqueue time by the
+     * caller that knew it — the Detail screen's post, or Smart
+     * Downloads' fetched detail. Gson tolerates the missing field on
+     * old persisted rows (null): those rows keep the initials tile.
+     * Never fetched here and never invented: null means "no poster
+     * known", and the row paints the tile.
+     */
+    val posterUrl: String? = null,
 )
 
 /**
@@ -267,10 +277,18 @@ class DeviceDownloadsRepository @Inject constructor(
                 Manifest.permission.WRITE_EXTERNAL_STORAGE,
             ) == PackageManager.PERMISSION_GRANTED
 
+    /**
+     * D10: [posterUrl] is the catalog poster's URL when the caller already
+     * knows it — the Detail screen's post, or Smart Downloads' fetched
+     * detail. It is stored on the row as-is, never fetched or validated
+     * here: a blank or unknown poster stays null and the row paints the
+     * initials tile. Old callers pass nothing and old rows carry nothing.
+     */
     suspend fun enqueue(
         handle: String,
         title: String,
         printLabel: String,
+        posterUrl: String? = null,
     ): DeviceDownloadResult = withContext(Dispatchers.IO) {
         if (handle.isBlank()) return@withContext DeviceDownloadResult.Refused(
             "This copy has no address to download.",
@@ -348,6 +366,8 @@ class DeviceDownloadsRepository @Inject constructor(
             enqueuedAt = System.currentTimeMillis(),
             // D12: the first start is attempt 1 — every resume after it counts up from here.
             attempts = 1,
+            // D10: the caller's poster, stored as-is — blank means unknown, never a tile URL.
+            posterUrl = posterUrl?.takeIf { it.isNotBlank() },
         )
         val updated = entries + entry
         persist(updated)
@@ -711,9 +731,9 @@ class DeviceDownloadsRepository @Inject constructor(
                 movedBytes == bytesDownloaded &&
                     System.currentTimeMillis() - movedAt > DOWNLOAD_STALL_AFTER_MS
             } ?: false,
-        // D10: device rows carry no post id, so there is no poster to look
-        // up — always null, by design, until the stores carry one.
-        posterUrl = null,
+        // D10: the poster the enqueue site knew — null for old rows and
+        // poster-less enqueues, which keep the initials tile.
+        posterUrl = posterUrl,
     )
 
     /** Live (speed, ETA) per download, for the foreground notification. */

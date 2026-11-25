@@ -261,4 +261,52 @@ class DeviceDownloadRefreshTest {
             repo.downloads.value.first { it.id == id }.failureReason,
         )
     }
+
+    @Test
+    fun `enqueue with a poster URL stores it and the row carries it`() = runBlocking {
+        // D10: the enqueue site knew the poster — the stored row and the
+        // emitted row both carry the server's own URL, as-is.
+        val poster = "https://catalog.example/posters/echoes.jpg"
+        val result = repo.enqueue("handle-1", "Echoes of Silence", "1080p", poster)
+        assertTrue(result is DeviceDownloadResult.Enqueued)
+        val id = (result as DeviceDownloadResult.Enqueued).download.id
+        assertEquals(poster, repo.entity(id)!!.posterUrl)
+        assertEquals(poster, repo.downloads.value.first { it.id == id }.posterUrl)
+    }
+
+    @Test
+    fun `enqueue without a poster URL leaves the row on the initials tile`() = runBlocking {
+        // D10: no poster known — the stored row and the emitted row both
+        // read null, and the row paints the initials tile.
+        val id = seed("handle-1")
+        assertNull(repo.entity(id)!!.posterUrl)
+        assertNull(repo.downloads.value.first { it.id == id }.posterUrl)
+    }
+
+    @Test
+    fun `a repeat enqueue of the same handle keeps the stored poster`() = runBlocking {
+        // D10: the dedupe path returns the existing entry — its poster
+        // survives the second enqueue instead of resetting to null.
+        val poster = "https://catalog.example/posters/echoes.jpg"
+        val first = repo.enqueue("handle-1", "Echoes of Silence", "1080p", poster)
+        assertTrue(first is DeviceDownloadResult.Enqueued)
+        val second = repo.enqueue("handle-1", "Echoes of Silence", "1080p")
+        assertTrue(second is DeviceDownloadResult.Enqueued)
+        val id = (second as DeviceDownloadResult.Enqueued).download.id
+        assertEquals(poster, repo.downloads.value.first { it.id == id }.posterUrl)
+    }
+
+    @Test
+    fun `an old persisted row without the poster field reads as no poster`() {
+        // D10: Gson tolerates the missing field on rows persisted before
+        // this round — they load with a null poster and keep the tile,
+        // exactly like errorKind and attempts before them.
+        val oldJson = """[{"id":"old-1","handle":"handle-1","url":"https://catalog.example/d/1","title":"Echoes of Silence","printLabel":"1080p","mimeType":"video/mp4","fileName":"Echoes of Silence.mp4","bytesDownloaded":0,"bytesTotal":1000000000,"state":"QUEUED","enqueuedAt":1,"attempts":1}]"""
+        val entries = com.raddstream.app.network.buildRaddGson()
+            .fromJson(oldJson, Array<DeviceDownloadEntity>::class.java)
+        assertEquals(1, entries.size)
+        assertNull(entries[0].posterUrl)
+        assertEquals("Echoes of Silence", entries[0].title)
+        assertEquals(1, entries[0].attempts)
+    }
 }

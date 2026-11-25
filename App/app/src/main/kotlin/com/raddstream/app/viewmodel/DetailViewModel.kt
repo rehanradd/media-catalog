@@ -332,6 +332,13 @@ data class PendingKeep(
     val sizeBytes: Long?,
     val resumable: Boolean,
     val target: KeepTarget,
+    /**
+     * D10: the detail post's own poster URL, so a device-file download
+     * carries real art to its Downloads row instead of the initials tile.
+     * Null when the detail never loaded one — the tile stands in, never
+     * a fetched or invented poster.
+     */
+    val posterUrl: String? = null,
 )
 
 /** One episode inside a season download: its best keepable copy. */
@@ -1679,7 +1686,9 @@ class DetailViewModel @Inject constructor(
                     }
                     is FreeSpaceVerdict.Ok -> Unit
                 }
-                when (deviceDownloads.enqueue(option.streamId, title, option.title)) {
+                // D10: the detail post's own poster rides along, so the
+                // device-file row paints real art.
+                when (deviceDownloads.enqueue(option.streamId, title, option.title, _uiState.value.post?.posterUrl)) {
                     is DeviceDownloadResult.Enqueued -> started++
                     is DeviceDownloadResult.NeedsPermission -> {
                         _navEvents.emit(DetailNavigationEvent.DownloadNeedsPermission)
@@ -2363,6 +2372,9 @@ class DetailViewModel @Inject constructor(
                     sizeBytes = meta?.fileSizeBytes?.takeIf { it > 0 },
                     resumable = meta?.resumable ?: false,
                     target = target,
+                    // D10: the detail post's own poster rides along, so the
+                    // device-file row paints real art.
+                    posterUrl = _uiState.value.post?.posterUrl,
                 ),
             )
         }
@@ -2406,7 +2418,9 @@ class DetailViewModel @Inject constructor(
                 }
                 is FreeSpaceVerdict.Ok -> Unit
             }
-            when (val outcome = deviceDownloads.enqueue(pending.handle, pending.title, pending.printLabel)) {
+            // D10: the pending keep carries the detail post's poster, so
+            // the device-file row paints real art.
+            when (val outcome = deviceDownloads.enqueue(pending.handle, pending.title, pending.printLabel, pending.posterUrl)) {
                 is DeviceDownloadResult.Enqueued -> {
                     lastDownload = null
                     val size = pending.sizeBytes?.takeIf { it > 0 }?.let { " · ${QualityOption.formatBytes(it)}" } ?: ""
@@ -2512,7 +2526,9 @@ class DetailViewModel @Inject constructor(
                     }
                     is FreeSpaceVerdict.Ok -> Unit
                 }
-                when (deviceDownloads.enqueue(item.handle, item.title, item.printLabel)) {
+                // D10: the detail post's own poster rides along, so the
+                // device-file row paints real art.
+                when (deviceDownloads.enqueue(item.handle, item.title, item.printLabel, _uiState.value.post?.posterUrl)) {
                     is DeviceDownloadResult.Enqueued -> started++
                     is DeviceDownloadResult.NeedsPermission -> {
                         _navEvents.emit(DetailNavigationEvent.DownloadNeedsPermission)

@@ -214,7 +214,7 @@ class SmartDownloadsRunner @Inject constructor(
         if (!downloadsForYouFits(liveUsedBytes(kept), candidate.sizeBytes, capGb)) {
             return SeriesOutcome.OverCap
         }
-        return enqueue(candidate, postId)
+        return enqueue(candidate, postId, detail.posterUrl)
     }
 
     private suspend fun premiumAccess(): Boolean =
@@ -236,10 +236,15 @@ class SmartDownloadsRunner @Inject constructor(
      * One candidate, through the same routing the season-keep flow
      * uses: resolve the handle, HLS goes to the engine, anything else
      * goes to the device file downloader.
+     *
+     * D10: [posterUrl] is the series' own poster from the detail this pass
+     * already fetched — it rides to the device-file row so Smart Downloads
+     * paint real art. Null when the detail carried none.
      */
     private suspend fun enqueue(
         candidate: SmartDownloadCandidate,
         postId: Int,
+        posterUrl: String? = null,
     ): SeriesOutcome {
         val resolved = runCatching { catalogRepository.resolveStream(candidate.handle) }.getOrNull()
             ?: return SeriesOutcome.Skipped
@@ -268,7 +273,9 @@ class SmartDownloadsRunner @Inject constructor(
                 KeepOutcome.Unavailable -> SeriesOutcome.Skipped
             }
         } else {
-            when (deviceDownloads.enqueue(candidate.handle, candidate.title, candidate.printLabel)) {
+            // D10: the series poster rides along, so the device-file row
+            // paints real art instead of the initials tile.
+            when (deviceDownloads.enqueue(candidate.handle, candidate.title, candidate.printLabel, posterUrl)) {
                 is DeviceDownloadResult.Enqueued -> {
                     recordFetch(candidate, postId)
                     SeriesOutcome.Enqueued(candidate.title)
