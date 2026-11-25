@@ -583,6 +583,19 @@ class DetailViewModel @Inject constructor(
         ?: (savedStateHandle[Screen.Detail.ARG_WORK_ID] as? Int)?.toLong()
         ?: -1L
 
+    /**
+     * Round-6 motion (Nov 2026): the shared-element key for this
+     * title's hero — "poster-<workId>" for a v2 row, "poster-<postId>"
+     * for a v1 row. The same id the navigation route carried, so it
+     * matches the key the source poster (Library / Search / Home)
+     * registered. The hero carries sharedElement(key) only once the
+     * infra's SharedTransitionLayout hands the screen its scopes;
+     * until then this is just the key, and the hero renders exactly
+     * as before.
+     */
+    val sharedElementKey: String
+        get() = if (workId >= 0) "poster-$workId" else "poster-$postId"
+
     /** The v1 post id the favorite/resume/adoption calls may use — 0 until the v2 bridge resolves. */
     private var resolvedPostId: Int = postId
 
