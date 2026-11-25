@@ -53,6 +53,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.testTag
@@ -495,6 +496,25 @@ internal fun MyListLoadedContent(
                             // instead of painting a silent grey bar.
                             progressFraction = state.progressByPostId[post.id],
                             progressLabel = state.progressLabelByPostId[post.id],
+                            // Round 5: at large font scale a one-line title
+                            // degrades to a single word ("Salaar:…") — the
+                            // grid tiles take a third title line, so the
+                            // full title reads; the slot grows with it, so
+                            // cards stay uniform with each other. At 1.0x
+                            // and 1.15x the one-line slot is unchanged.
+                            // Two lines are not enough here: the × beside
+                            // the title leaves a ~110dp text column, and at
+                            // 1.3x "Salaar: Part 1 – Ceasefire" needs three
+                            // ("Salaar: Part" / "1 –" / "Ceasefire") — the
+                            // two-line attempt still cut "Ceasefire" (record
+                            // 45605943675). The Search grid's wider tiles do
+                            // read the full title on two lines.
+                            // (Round 3 tried maxLines = 2 alone and it did
+                            // nothing: the exact-height slot in PosterCard
+                            // capped the layout to one line — fixed there
+                            // first, with heightIn(min = …), so the extra
+                            // lines can actually lay out.)
+                            titleMaxLines = if (LocalDensity.current.fontScale > 1.15f) 3 else 1,
                         )
                     }
                 }
