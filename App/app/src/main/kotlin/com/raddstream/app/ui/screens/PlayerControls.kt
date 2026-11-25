@@ -176,6 +176,10 @@ internal fun QualityPill(
     val label = stringResource(R.string.player_quality_label, state.qualityLabel)
     val singleQualityMessage = stringResource(R.string.player_quality_single)
     val textColor = if (!state.qualityAuto) RaddCurrent500 else PlayerOnVideo.text
+    // Round 6: the pill presses with the same default-effects spring +
+    // haptic tick as the other bottom controls (ControlTarget) — until
+    // now it pressed with no scale and no tick.
+    val interactionSource = remember { MutableInteractionSource() }
     Box(
         modifier = Modifier
             .heightIn(min = MinControlTarget)
@@ -183,17 +187,20 @@ internal fun QualityPill(
             // Cinema (Nov 2026): no outline — the rung is plain bold text on a
             // translucent solid fill; the border was the outline this slice removes.
             .background(PlayerOnVideo.pillFill, RoundedCornerShape(percent = 50))
+            .pressScale(interactionSource)
             .clickable(
                 onClick = {
                     if (state.canSwitchQuality) onShowQualitySheet()
                     else onMessage(singleQualityMessage)
                 },
                 role = Role.Button,
+                interactionSource = interactionSource,
             )
             .semantics { contentDescription = label }
             .padding(horizontal = 12.dp, vertical = 6.dp),
         contentAlignment = Alignment.Center,
     ) {
+        PressHaptics(interactionSource)
         Text(
             text = state.qualityLabel,
             color = textColor,
@@ -219,19 +226,26 @@ internal fun SpeedPill(
     onShowSpeedSheet: () -> Unit,
 ) {
     val label = stringResource(R.string.player_speed_label, speed)
+    // Round 6: the pill presses with the same default-effects spring +
+    // haptic tick as the other bottom controls (ControlTarget) — until
+    // now it pressed with no scale and no tick.
+    val interactionSource = remember { MutableInteractionSource() }
     Box(
         modifier = Modifier
             .heightIn(min = MinControlTarget)
             .clip(RoundedCornerShape(percent = 50))
             .background(PlayerOnVideo.pillFill, RoundedCornerShape(percent = 50))
+            .pressScale(interactionSource)
             .clickable(
                 onClick = onShowSpeedSheet,
                 role = Role.Button,
+                interactionSource = interactionSource,
             )
             .semantics { contentDescription = label }
             .padding(horizontal = 12.dp, vertical = 6.dp),
         contentAlignment = Alignment.Center,
     ) {
+        PressHaptics(interactionSource)
         Text(
             text = stringResource(R.string.player_speed_short, speed),
             color = RaddCurrent500,
