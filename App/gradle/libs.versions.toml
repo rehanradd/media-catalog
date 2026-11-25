@@ -34,7 +34,7 @@ media3              = "1.11.1"
 nextlib-media3ext = "1.11.1-0.19.0"
 retrofit            = "2.11.0"
 okhttp              = "4.12.0"
-hilt                = "2.58"
+hilt                = "2.59.2"
 hilt-navigation     = "1.2.0"
 hilt-work           = "1.2.0"
 room                = "2.7.2"
@@ -56,7 +56,7 @@ androidx-test       = "1.6.1"
 # 1.4.1 is the stable line the AndroidX release notes list (1.5.0 exists
 # but is a month old). The plugin's minimum AGP is 8.x, so 9.1.1
 # satisfies it.
-benchmark           = "1.4.1"
+benchmark           = "1.5.0"
 # UiAutomator drives the profile generator's Home → Search → Detail
 # journey (tab taps, typing, result taps). 2.3.0 is the stable line that
 # pairs with androidx-test 1.6.1; 2.4.x is newer and unproven here.
