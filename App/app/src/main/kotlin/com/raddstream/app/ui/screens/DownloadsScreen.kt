@@ -3,6 +3,7 @@ package com.raddstream.app.ui.screens
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
@@ -602,6 +603,7 @@ internal fun DeviceDownloadRow(
     // jump per update). Reduced motion: the bar snaps to the live value,
     // no glide.
     val reduceMotion = rememberReduceMotion()
+    val inInspectionMode = LocalInspectionMode.current
     val animatedProgress by animateFloatAsState(
         targetValue = item.progress,
         animationSpec = RaddMotion.defaultSpatial(),
@@ -662,16 +664,25 @@ internal fun DeviceDownloadRow(
             AnimatedContent(
                 targetState = item.state,
                 transitionSpec = {
-                    (fadeIn(animationSpec = RaddMotion.defaultEffects()) +
-                        scaleIn(
-                            initialScale = 0.92f,
-                            animationSpec = RaddMotion.defaultEffects(),
-                        )) togetherWith
-                        (fadeOut(animationSpec = RaddMotion.defaultEffects()) +
-                            scaleOut(
-                                targetScale = 0.92f,
+                    // Paparazzi renders with a frozen clock — an animated
+                    // swap would be captured mid-flight (both contents
+                    // visible, overlapping), so in inspection mode the
+                    // change is instant and the golden shows the settled
+                    // state, the same rule as the entrance stagger.
+                    if (inInspectionMode) {
+                        EnterTransition.None togetherWith ExitTransition.None
+                    } else {
+                        (fadeIn(animationSpec = RaddMotion.defaultEffects()) +
+                            scaleIn(
+                                initialScale = 0.92f,
                                 animationSpec = RaddMotion.defaultEffects(),
-                            ))
+                            )) togetherWith
+                            (fadeOut(animationSpec = RaddMotion.defaultEffects()) +
+                                scaleOut(
+                                    targetScale = 0.92f,
+                                    animationSpec = RaddMotion.defaultEffects(),
+                                ))
+                    }
                 },
                 label = "deviceDownloadStateChange",
             ) { rowState ->
@@ -952,6 +963,7 @@ internal fun KeptItemRow(
     // share on the expressive spatial spring (round 6: was the 250ms tween);
     // reduced motion snaps to the live value.
     val reduceMotion = rememberReduceMotion()
+    val inInspectionMode = LocalInspectionMode.current
     val animatedProgress by animateFloatAsState(
         targetValue = item.progress,
         animationSpec = RaddMotion.defaultSpatial(),
@@ -994,16 +1006,25 @@ internal fun KeptItemRow(
             AnimatedContent(
                 targetState = item.state,
                 transitionSpec = {
-                    (fadeIn(animationSpec = RaddMotion.defaultEffects()) +
-                        scaleIn(
-                            initialScale = 0.92f,
-                            animationSpec = RaddMotion.defaultEffects(),
-                        )) togetherWith
-                        (fadeOut(animationSpec = RaddMotion.defaultEffects()) +
-                            scaleOut(
-                                targetScale = 0.92f,
+                    // Paparazzi renders with a frozen clock — an animated
+                    // swap would be captured mid-flight (both contents
+                    // visible, overlapping), so in inspection mode the
+                    // change is instant and the golden shows the settled
+                    // state, the same rule as the entrance stagger.
+                    if (inInspectionMode) {
+                        EnterTransition.None togetherWith ExitTransition.None
+                    } else {
+                        (fadeIn(animationSpec = RaddMotion.defaultEffects()) +
+                            scaleIn(
+                                initialScale = 0.92f,
                                 animationSpec = RaddMotion.defaultEffects(),
-                            ))
+                            )) togetherWith
+                            (fadeOut(animationSpec = RaddMotion.defaultEffects()) +
+                                scaleOut(
+                                    targetScale = 0.92f,
+                                    animationSpec = RaddMotion.defaultEffects(),
+                                ))
+                    }
                 },
                 label = "keepStateChange",
             ) { rowState ->
