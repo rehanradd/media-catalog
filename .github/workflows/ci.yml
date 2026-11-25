@@ -161,10 +161,14 @@ jobs:
         # the verify task drives testDebugUnitTest, and a Robolectric test
         # loading first in a shared fork breaks Paparazzi's Bridge.init
         # (cashapp/paparazzi#1979; APP-10 verify step 06:31Z 24 Nov).
+        # Keep this list in sync with paparazzi.yml's record list and
+        # with the Paparazzi include list in App/app/build.gradle.kts —
+        # a class missing here never verifies (DetailLargeFont, Nov 2026).
         run: |
           ./gradlew :app:verifyPaparazziDebug \
             --tests "com.raddstream.app.ui.PaparazziPreviewTest" \
             --tests "com.raddstream.app.ui.PlayerLandscapePaparazziTest" \
+            --tests "com.raddstream.app.ui.screens.DetailLargeFontPaparazziTest" \
             --no-daemon --stacktrace --console=plain
 
       - name: 📤 Upload debug APK

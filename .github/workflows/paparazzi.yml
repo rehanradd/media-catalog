@@ -89,10 +89,16 @@ jobs:
         # all in one run). The PaparazziTask forwards --tests to the Test
         # tasks, so only the two Paparazzi-rule classes execute here and
         # no Robolectric class ever loads in their forks. (APP-10, 2026-11-24.)
+        # Keep this list in sync with the Paparazzi include list in
+        # App/app/build.gradle.kts: a class in one but not the other never
+        # records — DetailLargeFontPaparazziTest was added to the build
+        # filter but not here, so record 45541313682 carried no 1.3x
+        # goldens at all (Nov 2026).
         run: |
           ./gradlew :app:recordPaparazziDebug \
             --tests "com.raddstream.app.ui.PaparazziPreviewTest" \
             --tests "com.raddstream.app.ui.PlayerLandscapePaparazziTest" \
+            --tests "com.raddstream.app.ui.screens.DetailLargeFontPaparazziTest" \
             --no-daemon --stacktrace --console=plain
 
       - name: 📤 Upload snapshots + report
