@@ -1053,12 +1053,42 @@ def _unwrap_vidbolt(saved_url: str, fetch) -> tuple:
     if direct is not None:
         resolve_url, referer = direct
         res = fetch(resolve_url, referer=referer)
-        if res.status != 200:
-            return "vidbolt", [], ("blocked" if res.status == 403 else
-                                   "dead_file" if res.status == 404 else
-                                   "transport" if res.status == 0 else "unverified")
-        candidates, failure = _vidbolt_candidates(res, referer)
-        return "vidbolt", candidates, failure
+        if res.status == 200:
+            candidates, failure = _vidbolt_candidates(res, referer)
+            if candidates:
+                return "vidbolt", candidates, failure
+            direct_failure = ("vidbolt", [], failure)
+        else:
+            direct_failure = ("vidbolt", [], (
+                "blocked" if res.status == 403 else
+                "dead_file" if res.status == 404 else
+                "transport" if res.status == 0 else "unverified"))
+        # Direct resolve missed — but the page JS carries the authoritative
+        # id (var q), which can differ from the path id the direct URL was
+        # built from. Only when the page names DIFFERENT title params does
+        # the page-fetch path get a try; otherwise the direct verdict
+        # stands (a 404 stays dead_file, a 403 stays blocked, an empty
+        # 200 stays no_streams — test_current_hosts pins those).
+        page = fetch(saved_url, referer=saved_url)
+        if page.status == 200:
+            match = re.search(r'var q="([^"]+)"', page.text())
+            if match:
+                q_params = urllib.parse.parse_qs(match.group(1))
+                d_params = urllib.parse.parse_qs(
+                    urllib.parse.urlsplit(resolve_url).query)
+                q_params.pop("hevc", None)
+                d_params.pop("hevc", None)
+                if q_params != d_params:
+                    origin = urllib.parse.urlsplit(saved_url)
+                    q_url = (f"{origin.scheme}://{origin.netloc}"
+                             f"/api/resolve?{match.group(1)}")
+                    res2 = fetch(q_url, referer=saved_url)
+                    if res2.status == 200:
+                        candidates, failure = _vidbolt_candidates(
+                            res2, saved_url)
+                        if candidates:
+                            return "vidbolt", candidates, failure
+        return direct_failure
     # Any other vidbolt shape: the old page-fetch path — the page JS
     # carries var q="type=...&id=..." and the resolve answers the same
     # stream JSON. Kept so an unexpected saved shape still resolves

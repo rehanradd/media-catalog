@@ -2222,7 +2222,9 @@ class DatabaseSaveTests(unittest.TestCase):
                        "mime": "video/mp4", "size": 123456, "resumable": False,
                        "renditions": [], "failure": None,
                        "failure_dead": False, "temporary": True}
-        with patch.object(current_hosts, "resolve_copy",
+        with patch.object(current_hosts, "classify_backend",
+                          return_value="fastdl-beer"), \
+             patch.object(current_hosts, "resolve_copy",
                           return_value=stage1_copy), \
              patch.object(fast_fetch, "probe_url_ttl",
                           return_value=(None, {"observed": False,
