@@ -9,6 +9,11 @@ import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -43,30 +48,15 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.FavoriteBorder
-import androidx.compose.material.icons.filled.Flag
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.NotificationsActive
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.ThumbDown
-import androidx.compose.material.icons.filled.ThumbUp
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -100,14 +90,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -146,16 +140,20 @@ import com.raddstream.app.ui.components.SectionHeader
 import com.raddstream.app.ui.components.prefetchPosterArt
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.components.ScrollingChipRow
+import com.raddstream.app.ui.components.rememberReduceMotion
 import com.raddstream.app.ui.layout.CardGeometry
 import com.raddstream.app.player.LadderForScope
 import com.raddstream.app.player.QualityOption
 import com.raddstream.app.ui.navigation.DeepLinks
 import com.raddstream.app.ui.theme.PressHaptics
+import com.raddstream.app.ui.theme.RaddMotion
 import com.raddstream.app.ui.theme.RaddTokens
 import com.raddstream.app.ui.theme.pressScale
 import com.raddstream.app.ui.theme.rememberArtworkAccent
 import com.raddstream.app.viewmodel.DetailNavigationEvent
 import com.raddstream.app.viewmodel.DetailViewModel
+import com.raddstream.app.viewmodel.EpisodeGroup
+import com.raddstream.app.viewmodel.EpisodeProgress
 import com.raddstream.app.viewmodel.QualitySheetMode
 import com.raddstream.app.viewmodel.QualitySheetRow
 import com.raddstream.app.viewmodel.QualitySheetState
@@ -167,6 +165,7 @@ import com.raddstream.app.viewmodel.SeriesDownloadRow
 import com.raddstream.app.viewmodel.bandDisplayName
 import com.raddstream.app.viewmodel.bestForLine
 import com.raddstream.app.viewmodel.formatRuntimeMinutes
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -350,7 +349,7 @@ fun DetailScreen(
                 windowInsets = WindowInsets(0.dp, 0.dp, 0.dp, 0.dp),
                 navigationIcon = {
                     DetailTopBarTarget(onClick = onBackClick) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(painterResource(R.drawable.ic_player_back), contentDescription = "Back")
                     }
                 },
                 actions = {
@@ -377,7 +376,7 @@ fun DetailScreen(
                         Box {
                             DetailTopBarTarget(onClick = { showMoreMenu = true }) {
                                 Icon(
-                                    Icons.Default.MoreVert,
+                                    painterResource(R.drawable.ic_player_more),
                                     contentDescription = "More options",
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -455,7 +454,7 @@ fun DetailScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Lock,
+                            painter = painterResource(R.drawable.ic_action_lock),
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(48.dp),
@@ -565,6 +564,11 @@ fun DetailScreen(
                 playLabel = state.playLabel,
                 playEnabled = state.playEnabled,
                 playStarting = state.playStarting,
+                // DT-1: the determinate arc + stage label while a Play
+                // tap resolves — published by the ViewModel, cleared on
+                // navigation or failure.
+                playProgress = state.playProgress,
+                playStage = state.playStage,
                 onPlayPrimary = viewModel::playPrimary,
                 downloadLabel = state.downloadLabel,
                 downloadEnabled = state.downloadEnabled,
@@ -576,6 +580,18 @@ fun DetailScreen(
                 // Detail redesign (Nov 2026): a season row opens its
                 // sub-page — the episode list no longer lives here.
                 onOpenSeason = onOpenSeason,
+                // DT-3: the episode row — the current season's episodes
+                // on this page, with a per-episode download icon. The
+                // download tap goes through the same storage-permission
+                // wrapper as the primary Download button.
+                episodeProgress = state.episodeProgress,
+                episodeRowSeason = state.episodeRowSeason,
+                nextEpisode = state.nextEpisode,
+                onPlayEpisode = viewModel::playEpisode,
+                onDownloadEpisode = { season, episode ->
+                    downloadWithStoragePermission { viewModel.downloadEpisode(season, episode) }
+                },
+                onSelectEpisodeRowSeason = viewModel::selectEpisodeRowSeason,
                 onActorClick = onActorClick,
                 similarTitles = state.similarTitles,
                 similarLoading = state.similarLoading,
@@ -717,7 +733,7 @@ internal fun ReportBrokenStreamSheetBody(
                         style = MaterialTheme.typography.titleMedium,
                     )
                     Icon(
-                        Icons.Default.ChevronRight,
+                        painterResource(R.drawable.ic_action_chevron_right),
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -929,6 +945,10 @@ internal fun DetailContent(
     playLabel: String = "Play",
     playEnabled: Boolean = false,
     playStarting: Boolean = false,
+    /** DT-1: determinate resolve progress (0.20/0.55/0.85) for the Play button's arc, null when idle. */
+    playProgress: Float? = null,
+    /** DT-1: the resolve stage's plain-words label for the Play button, null when idle. */
+    playStage: String? = null,
     onPlayPrimary: () -> Unit = {},
     downloadLabel: String = "Download",
     downloadEnabled: Boolean = false,
@@ -949,6 +969,22 @@ internal fun DetailContent(
      * episode list no longer lives on this page at all.
      */
     onOpenSeason: (Int) -> Unit,
+    /**
+     * DT-3 (round 2, Nov 2026): the episode row — this page shows the
+     * current season's episodes as a swipeable row with a per-episode
+     * download icon, so a series no longer needs a sub-page visit to
+     * reach an episode. The season rows below stay as the all-seasons
+     * deep-dive. [episodeProgress] is keyed by (season, episode);
+     * [nextEpisode] marks the next unwatched one; [episodeRowSeason]
+     * is the season the row shows (a chip tap changes it); the row
+     * hides when the season's episodes live only in a pack.
+     */
+    episodeProgress: Map<Pair<Int, Int>, EpisodeProgress> = emptyMap(),
+    episodeRowSeason: Int? = null,
+    nextEpisode: Pair<Int, Int>? = null,
+    onPlayEpisode: (Int, Int) -> Unit = { _, _ -> },
+    onDownloadEpisode: (Int, Int) -> Unit = { _, _ -> },
+    onSelectEpisodeRowSeason: (Int) -> Unit = {},
     /** An actor chip in the cast row: open that actor's titles in Search. */
     onActorClick: (String) -> Unit = {},
     similarTitles: List<Post> = emptyList(),
@@ -1029,37 +1065,53 @@ internal fun DetailContent(
             // needs no pageSides of its own. Audit Detail #5: the stale
             // note says what survived — this banner only renders over
             // cached content, so "saved details" is always true here.
+            // DT-5: the banner is a polite live region — a TalkBack
+            // user hears the failed refresh, instead of silently
+            // reading saved details as fresh ones.
             item(contentType = "reload-failure") {
-                InlineLoadFailure(
-                    message = failure,
-                    onRetry = onRetryReload,
-                    staleNote = stringResource(R.string.detail_showing_saved),
+                Box(
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                ) {
+                    InlineLoadFailure(
+                        message = failure,
+                        onRetry = onRetryReload,
+                        staleNote = stringResource(R.string.detail_showing_saved),
+                    )
+                }
+            }
+        }
+
+        item {
+            DetailEntrance(index = 0) {
+                DetailHeroSection(
+                    post = post,
+                    capabilities = capabilities,
+                    seasonCount = if (isSeries) seasons.size else 0,
+                    includedPill = includedPill,
+                    pageSides = pageSides,
+                    matchPercent = matchPercent,
+                    quality = videoQualityText,
                 )
             }
         }
 
         item {
-            DetailHeroSection(
-                post = post,
-                capabilities = capabilities,
-                seasonCount = if (isSeries) seasons.size else 0,
-                includedPill = includedPill,
-                pageSides = pageSides,
-                matchPercent = matchPercent,
-            )
-        }
-
-        item {
-            PrimaryActions(
-                modifier = pageSides,
-                // 2-button detail (Nov 2026): the label, the enabled
-                // state and the hints all come from the ViewModel — the
-                // same state the tap decision reads, so the button and
-                // the tap can never disagree about this title.
-                playLabel = playLabel,
-                playEnabled = playEnabled,
-                playStarting = playStarting,
-                onPlayPrimary = onPlayPrimary,
+            DetailEntrance(index = 1) {
+                PrimaryActions(
+                    modifier = pageSides,
+                    // 2-button detail (Nov 2026): the label, the enabled
+                    // state and the hints all come from the ViewModel — the
+                    // same state the tap decision reads, so the button and
+                    // the tap can never disagree about this title.
+                    playLabel = playLabel,
+                    playEnabled = playEnabled,
+                    playStarting = playStarting,
+                    // DT-1: the determinate arc + stage label while a
+                    // Play tap resolves — published by the ViewModel,
+                    // cleared on navigation or failure.
+                    playProgress = playProgress,
+                    playStage = playStage,
+                    onPlayPrimary = onPlayPrimary,
                 downloadLabel = downloadLabel,
                 downloadEnabled = downloadEnabled,
                 onDownloadPrimary = onDownloadPrimary,
@@ -1069,7 +1121,8 @@ internal fun DetailContent(
                 resume = resume,
                 onStartOver = onStartOver,
                 deadEndReason = deadEndReason,
-            )
+                )
+            }
         }
 
         // APP-02 (Phase 4): the quality selector sits directly under
@@ -1079,14 +1132,16 @@ internal fun DetailContent(
         // never before play. The hero's included pill already states
         // the tier.
         item {
-            DetailQualitySelector(
-                modifier = pageSides,
-                qualityOptions = qualityOptions,
-                lockedBands = lockedQualityBands,
-                selectedBand = selectedBand,
-                onSelectQualityBand = onSelectQualityBand,
-                onOpenQualitySheet = onOpenQualitySheet,
-            )
+            DetailEntrance(index = 2) {
+                DetailQualitySelector(
+                    modifier = pageSides,
+                    qualityOptions = qualityOptions,
+                    lockedBands = lockedQualityBands,
+                    selectedBand = selectedBand,
+                    onSelectQualityBand = onSelectQualityBand,
+                    onOpenQualitySheet = onOpenQualitySheet,
+                )
+            }
         }
 
         // Audit Detail #3 (Nov 2026): the cam warning as a card,
@@ -1175,7 +1230,7 @@ internal fun DetailContent(
                         modifier = Modifier.weight(1f),
                     )
                     Icon(
-                        Icons.Default.ChevronRight,
+                        painterResource(R.drawable.ic_action_chevron_right),
                         contentDescription = null,
                         modifier = Modifier.size(20.dp),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1222,6 +1277,29 @@ internal fun DetailContent(
                     SectionHeader(title = "Seasons", modifier = Modifier.padding(horizontal = 0.dp))
                 }
             }
+            // DT-3: the current season's episodes, right on this page —
+            // a horizontal swipeable row with a per-episode download
+            // icon. The season rows below stay as the all-seasons
+            // deep-dive (the sub-page is untouched). A season whose
+            // episodes live only in a pack has no row to show: the row
+            // hides, and the season row still opens the sub-page.
+            val rowSeason = seasons.firstOrNull { it.number == episodeRowSeason }
+            if (rowSeason != null && rowSeason.episodes.isNotEmpty()) {
+                item(contentType = "episode-row") {
+                    DetailEntrance(index = 5) {
+                        EpisodeRowSection(
+                            seasons = seasons,
+                            selectedSeason = episodeRowSeason,
+                            episodeProgress = episodeProgress,
+                            nextEpisode = nextEpisode,
+                            onSelectSeason = onSelectEpisodeRowSeason,
+                            onPlayEpisode = onPlayEpisode,
+                            onDownloadEpisode = onDownloadEpisode,
+                            modifier = pageSides,
+                        )
+                    }
+                }
+            }
             items(seasons, key = { "season-${it.number}" }) { season ->
                 Box(pageSides) {
                     SeasonRow(
@@ -1238,7 +1316,11 @@ internal fun DetailContent(
         // empty "Cast" header. A tap searches that actor's titles.
         val cast = parseCastNames(post.castNames)
         if (cast.isNotEmpty()) {
-            item { Box(pageSides) { CastSection(cast = cast, onActorClick = onActorClick) } }
+            item {
+                DetailEntrance(index = 6) {
+                    Box(pageSides) { CastSection(cast = cast, onActorClick = onActorClick) }
+                }
+            }
         }
 
         // Detail review (Nov 2026, P1): the similar rail loads after the
@@ -1260,22 +1342,24 @@ internal fun DetailContent(
 
         if (similarTitles.isNotEmpty()) {
             item(contentType = "similar-titles") {
-                Column(
-                    modifier = Modifier
-                        .bringIntoViewRequester(similarBringIntoView)
-                        .then(pageSides),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    SectionHeader(title = "More Like This")
-                    MediaRail(
-                        items = similarTitles,
-                        key = { it.id },
-                        contentPadding = PaddingValues(0.dp),
-                    ) { similar ->
-                        PosterCard(
-                            post = similar,
-                            onClick = { onPostClick(similar) },
-                        )
+                DetailEntrance(index = 7) {
+                    Column(
+                        modifier = Modifier
+                            .bringIntoViewRequester(similarBringIntoView)
+                            .then(pageSides),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        SectionHeader(title = "More Like This")
+                        MediaRail(
+                            items = similarTitles,
+                            key = { it.id },
+                            contentPadding = PaddingValues(0.dp),
+                        ) { similar ->
+                            PosterCard(
+                                post = similar,
+                                onClick = { onPostClick(similar) },
+                            )
+                        }
                     }
                 }
             }
@@ -1293,6 +1377,8 @@ private fun DetailHeroSection(
     pageSides: Modifier,
     /** REA #2: the "97% Match" for this title, or null when no row scored it. */
     matchPercent: Int? = null,
+    /** S2 (round 2): the picked quality band for the meta line, null when the title has no quality options. */
+    quality: String? = null,
 ) {
     val backdropUrl = remember(post.backdropList) {
         post.backdropList.firstOrNull { it.isNotBlank() }
@@ -1313,6 +1399,7 @@ private fun DetailHeroSection(
                 seasonCount = seasonCount,
                 includedPill = includedPill,
                 matchPercent = matchPercent,
+                quality = quality,
             )
         }
         return
@@ -1365,6 +1452,7 @@ private fun DetailHeroSection(
             seasonCount = seasonCount,
             includedPill = includedPill,
             matchPercent = matchPercent,
+            quality = quality,
             // D1: the hero title caps at two lines — a three-line title
             // is what pushed the block into the top bar. The full title
             // stays in the block's semantics and on the no-backdrop
@@ -1384,7 +1472,7 @@ private fun DetailHeroSection(
  * the two must never drift apart. Pure so the meta rules are testable
  * without a device.
  */
-internal fun detailMetaParts(post: PostDetail, seasonCount: Int, matchPercent: Int? = null): List<String> =
+internal fun detailMetaParts(post: PostDetail, seasonCount: Int, matchPercent: Int? = null, quality: String? = null): List<String> =
     listOfNotNull(
         // REA #2 (Netflix, Nov 2026): the Match % leads the line — "97%
         // Match · 2023 · Series" — and only when a row scored this title.
@@ -1398,14 +1486,16 @@ internal fun detailMetaParts(post: PostDetail, seasonCount: Int, matchPercent: I
         // IS a movie. Any other type word stays: a series is named by
         // its type here and counted by its seasons below.
         post.typeLabel?.takeIf { it != "Movie" },
-        // P-5 (Session 121): normalize again at the render site — a language that
-        // arrives as a raw JSON array string ("[\"Tamil\", \"English\"]") reads
-        // "Tamil, English". Idempotent with the mapper-side normalization.
-        // F2 (Batch A): "Unknown"/"N/A" are dropped — the server sends those
-        // when nothing was recorded, and a meta line must never read "Unknown".
-        WireText.listOf(post.language).map { it.trim() }.filter(::isKnownLanguage)
-            .joinToString(", ").takeIf { it.isNotBlank() },
+        // S2 (round 2, Nov 2026): the brief's meta convention is
+        // year · duration · quality — "2023 · 2h 18m · 1080p". The
+        // duration comes from the title's own runtime; the quality is
+        // the picked band ("1080p") or "Auto · up to 4K" from
+        // [DetailViewModel.videoQualityText]. Language is NOT in this
+        // line any more — it lives in the Audio row below ("Audio:
+        // Hindi ›"), which is where a viewer goes to change it, and a
+        // meta line with five parts reads as clutter, not information.
         formatRuntimeMinutes(post.runtimeMinutes),
+        quality?.takeIf { it.isNotBlank() },
         if (seasonCount > 0) "$seasonCount ${if (seasonCount == 1) "season" else "seasons"}" else null,
     )
 
@@ -1426,6 +1516,8 @@ private fun DetailTitleBlock(
     titleMaxLines: Int = 3,
     /** REA #2: the "97% Match" for this title, or null when no row scored it. */
     matchPercent: Int? = null,
+    /** S2 (round 2): the picked quality band for the meta line ("1080p" / "Auto · up to 4K"), null when the title has no quality options. */
+    quality: String? = null,
 ) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         // Robo run 3: this title text is identical to the bar title above
@@ -1445,7 +1537,7 @@ private fun DetailTitleBlock(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.semantics { contentDescription = "Title: $titleText" },
         )
-        val meta = detailMetaParts(post, seasonCount, matchPercent)
+        val meta = detailMetaParts(post, seasonCount, matchPercent, quality)
         if (meta.isNotEmpty()) {
             Text(meta.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -1534,6 +1626,8 @@ private fun PosterHeader(
     includedPill: String? = null,
     /** REA #2: the "97% Match" for this title, or null when no row scored it. */
     matchPercent: Int? = null,
+    /** S2 (round 2): the picked quality band for the meta line, null when the title has no quality options. */
+    quality: String? = null,
 ) {
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         // The poster's own colour, sampled once it loads: a 1dp border in the
@@ -1591,6 +1685,7 @@ private fun PosterHeader(
             seasonCount = seasonCount,
             includedPill = includedPill,
             matchPercent = matchPercent,
+            quality = quality,
             modifier = Modifier.weight(1f),
         )
     }
@@ -1669,13 +1764,17 @@ private fun DetailCastButton() {
  * `heightIn(min = 48.dp)`: SkeletonParityTest reads the source for both.
  */
 @Composable
-private fun PrimaryActions(
+internal fun PrimaryActions(
     modifier: Modifier = Modifier,
     /** The Play label from the ViewModel: "Play", "Resume S1:E3 · 23 min left". */
     playLabel: String,
     playEnabled: Boolean,
     /** The press-in-flight guard: while true Play reads "Starting…" and a second tap is ignored. */
     playStarting: Boolean,
+    /** DT-1: determinate resolve progress (0.20/0.55/0.85), null when no Play tap is in flight. */
+    playProgress: Float? = null,
+    /** DT-1: the stage's plain-words label ("Finding the best copy…"), null when idle. */
+    playStage: String? = null,
     onPlayPrimary: () -> Unit,
     /** The Download label: "Download", or "✓ Downloaded" when the file is already on this device. */
     downloadLabel: String,
@@ -1719,13 +1818,39 @@ private fun PrimaryActions(
                 disabledContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
             ),
         ) {
-            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = if (playStarting) stringResource(R.string.detail_starting) else playLabel,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
+            // DT-1: while a Play tap resolves, the button IS the progress
+            // surface — a determinate arc beside the stage label, never a
+            // bare "Starting…" swap and never a full-screen spinner. The
+            // arc's fraction is the stage the ViewModel published
+            // (0.20 accepted, 0.55 network in flight, 0.85 handoff next);
+            // the label is the stage's plain-words name. When the
+            // progress is null (a Play tap started before the stage
+            // published, or a state restored mid-resolve) the button
+            // falls back to the old "Starting…" text — an arc with no
+            // fraction would be a lie either way.
+            if (playStarting && playProgress != null) {
+                CircularProgressIndicator(
+                    progress = playProgress,
+                    modifier = Modifier.size(20.dp),
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    trackColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.3f),
+                    strokeWidth = 2.5.dp,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = playStage ?: stringResource(R.string.detail_starting),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            } else {
+                Icon(painterResource(R.drawable.ic_player_play), contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = if (playStarting) stringResource(R.string.detail_starting) else playLabel,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
         playHint?.let { hint ->
             Text(
@@ -1751,7 +1876,7 @@ private fun PrimaryActions(
                 .fillMaxWidth()
                 .heightIn(min = 48.dp),
         ) {
-            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(20.dp))
+            Icon(painterResource(R.drawable.ic_action_download), contentDescription = null, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(8.dp))
             Text(
                 text = downloadLabel,
@@ -1828,7 +1953,7 @@ internal fun DetailQualitySelector(
                 modifier = Modifier.weight(1f),
             )
             Icon(
-                Icons.Default.ChevronRight,
+                painterResource(R.drawable.ic_action_chevron_right),
                 contentDescription = null,
                 modifier = Modifier.size(20.dp),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1849,7 +1974,7 @@ internal fun DetailQualitySelector(
                     leadingIcon = if (locked) {
                         {
                             Icon(
-                                Icons.Default.Lock,
+                                painterResource(R.drawable.ic_action_lock),
                                 contentDescription = null,
                                 modifier = Modifier.size(16.dp),
                             )
@@ -1898,7 +2023,7 @@ private fun CamWarningCard(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
-                Icons.Default.Warning,
+                painterResource(R.drawable.ic_action_warning),
                 contentDescription = null,
                 tint = RaddTokens.Color.Warning,
                 modifier = Modifier.size(20.dp),
@@ -2106,7 +2231,7 @@ private fun DetailQualityRowView(
                     if (row.isLocked) {
                         Spacer(Modifier.width(8.dp))
                         Icon(
-                            Icons.Default.Lock,
+                            painterResource(R.drawable.ic_action_lock),
                             contentDescription = null,
                             modifier = Modifier.size(16.dp),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2192,7 +2317,7 @@ private fun DetailQualitySeriesRow(
                 )
             }
             Icon(
-                Icons.Default.Download,
+                painterResource(R.drawable.ic_action_download),
                 contentDescription = null,
                 modifier = Modifier.size(20.dp),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2284,7 +2409,7 @@ private fun DetailUtilityRow(
         horizontalArrangement = Arrangement.SpaceEvenly,
     ) {
         UtilityAction(
-            icon = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+            icon = if (isFavorite) painterResource(R.drawable.ic_action_favorite_filled) else painterResource(R.drawable.ic_action_favorite_border),
             label = if (isFavorite) "Saved" else "Save",
             contentDescription = favoriteActionLabel(isFavorite),
             tint = if (isFavorite) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2295,14 +2420,14 @@ private fun DetailUtilityRow(
         // saved heart; tapping it again clears the vote.
         if (showThumbs) {
             UtilityAction(
-                icon = Icons.Default.ThumbUp,
+                icon = painterResource(R.drawable.ic_action_thumb_up),
                 label = "Like",
                 contentDescription = thumbActionLabel(thumb, 1),
                 tint = if (thumb == 1) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
                 onClick = { onThumb(1) },
             )
             UtilityAction(
-                icon = Icons.Default.ThumbDown,
+                icon = painterResource(R.drawable.ic_action_thumb_down),
                 label = "Dislike",
                 contentDescription = thumbActionLabel(thumb, -1),
                 tint = if (thumb == -1) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2310,8 +2435,11 @@ private fun DetailUtilityRow(
             )
         }
         if (showFollow) {
+            // S8: one bell glyph for both states — the follow state
+            // reads in the tint (secondary when following), not in a
+            // second glyph, so the row carries one icon per meaning.
             UtilityAction(
-                icon = if (isFollowed) Icons.Default.NotificationsActive else Icons.Default.Notifications,
+                icon = painterResource(R.drawable.ic_action_notifications),
                 label = if (isFollowed) "Following" else "Notify me",
                 contentDescription = followActionLabel(isFollowed),
                 tint = if (isFollowed) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2319,7 +2447,7 @@ private fun DetailUtilityRow(
             )
         }
         UtilityAction(
-            icon = Icons.Default.Share,
+            icon = painterResource(R.drawable.ic_action_share),
             label = "Share",
             onClick = onShare,
         )
@@ -2329,13 +2457,13 @@ private fun DetailUtilityRow(
             // sparkle family as the audit's auto_awesome_movies
             // suggestion, and the member this icons version proves.
             UtilityAction(
-                icon = Icons.Default.AutoAwesome,
+                icon = painterResource(R.drawable.ic_action_star),
                 label = "Similar",
                 onClick = onBrowseSimilar,
             )
         }
         UtilityAction(
-            icon = Icons.Default.Flag,
+            icon = painterResource(R.drawable.ic_action_flag),
             label = "Report",
             onClick = onReport,
         )
@@ -2345,7 +2473,7 @@ private fun DetailUtilityRow(
 /** One borderless icon + label action in the utility row. */
 @Composable
 private fun RowScope.UtilityAction(
-    icon: ImageVector,
+    icon: Painter,
     label: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -2368,7 +2496,7 @@ private fun RowScope.UtilityAction(
             .semantics { this.contentDescription = contentDescription ?: label },
     ) {
         Icon(
-            imageVector = icon,
+            painter = icon,
             contentDescription = null,
             modifier = Modifier.size(24.dp),
             tint = tint,
@@ -2520,11 +2648,260 @@ private fun SeasonRow(
             modifier = Modifier.weight(1f),
         )
         Icon(
-            Icons.Default.ChevronRight,
+            painterResource(R.drawable.ic_action_chevron_right),
             contentDescription = null,
             modifier = Modifier.size(20.dp),
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+/**
+ * DT-4 (round 2, partial — no BOM): Detail's entrance motion, the Home
+ * rail pattern: one staggered entrance per section (index × 60ms),
+ * fade + short rise on the RaddMotion springs; reduced-motion users get
+ * a plain fade. Paparazzi renders with a frozen clock, so in inspection
+ * mode the entrance is already over and the golden shows what the phone
+ * shows after it settles. The reload-failure banner is NOT wrapped — a
+ * failure notice must be visible the moment it arrives, never after a
+ * delay.
+ */
+@Composable
+private fun DetailEntrance(
+    index: Int,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    val inInspectionMode = LocalInspectionMode.current
+    val reduceMotion = rememberReduceMotion()
+    var visible by remember { mutableStateOf(inInspectionMode) }
+    LaunchedEffect(Unit) {
+        if (inInspectionMode) return@LaunchedEffect
+        delay(index * 60L)
+        visible = true
+    }
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(
+            animationSpec = if (reduceMotion) snap() else RaddMotion.defaultEffects(),
+        ) + if (reduceMotion) {
+            EnterTransition.None
+        } else {
+            slideInVertically(
+                initialOffsetY = { it / 4 },
+                animationSpec = RaddMotion.defaultSpatial(),
+            )
+        },
+        modifier = modifier,
+    ) {
+        content()
+    }
+}
+
+/**
+ * DT-3 (round 2, Nov 2026): the current season's episodes, on this
+ * page — a horizontal swipeable row with a per-episode download icon.
+ * The season chips appear only when the title has more than one season;
+ * with one season there is nothing to switch between, so the header is
+ * just "Episodes" + the legend. The row shows the season the ViewModel
+ * published (next unwatched season first, then the resume season, then
+ * Season 1) until the viewer picks another chip. A season whose
+ * episodes live only in a pack renders no row at all — the caller hides
+ * the whole section.
+ */
+@Composable
+internal fun EpisodeRowSection(
+    seasons: List<SeasonGroup>,
+    selectedSeason: Int?,
+    episodeProgress: Map<Pair<Int, Int>, EpisodeProgress>,
+    nextEpisode: Pair<Int, Int>?,
+    onSelectSeason: (Int) -> Unit,
+    onPlayEpisode: (Int, Int) -> Unit,
+    onDownloadEpisode: (Int, Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val season = seasons.firstOrNull { it.number == selectedSeason } ?: return
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = "Episodes",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                text = stringResource(R.string.detail_episode_legend),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        if (seasons.size > 1) {
+            ScrollingChipRow(
+                contentPadding = PaddingValues(0.dp),
+                horizontalSpacing = 6.dp,
+                fadeHeight = 48.dp,
+            ) {
+                items(seasons, key = { it.number }) { chipSeason ->
+                    FilterChip(
+                        selected = chipSeason.number == selectedSeason,
+                        onClick = { onSelectSeason(chipSeason.number) },
+                        label = { Text("Season ${chipSeason.number}") },
+                        colors = raddFilterChipColors(),
+                        modifier = Modifier.heightIn(min = 48.dp),
+                    )
+                }
+            }
+        }
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(end = 16.dp),
+        ) {
+            items(season.episodes, key = { "episode-${it.episode}" }) { episode ->
+                val progress = episodeProgress[season.number to episode.episode]
+                EpisodeCard(
+                    season = season.number,
+                    episode = episode,
+                    isWatched = progress?.watched == true,
+                    isNext = nextEpisode == (season.number to episode.episode),
+                    onPlay = { onPlayEpisode(season.number, episode.episode) },
+                    onDownload = { onDownloadEpisode(season.number, episode.episode) },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * DT-3: one episode as a card in the swipeable row — the still (or the
+ * episode-number fallback), the episode number + title, the watched
+ * tick and the jade "Next" mark, and a 48dp download button. The whole
+ * card plays the episode; only the download icon downloads it. The
+ * spoken name is the SeasonScreen wording ("Episode 3, next to
+ * watch"), so a TalkBack user hears the same sentence on both pages.
+ */
+@Composable
+private fun EpisodeCard(
+    season: Int,
+    episode: EpisodeGroup,
+    isWatched: Boolean,
+    isNext: Boolean,
+    onPlay: () -> Unit,
+    onDownload: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val description = when {
+        !episode.playable -> "Episode ${episode.episode}, no playable copy"
+        isNext -> "Episode ${episode.episode}, next to watch"
+        isWatched -> "Episode ${episode.episode}, watched"
+        else -> "Episode ${episode.episode}"
+    }
+    Column(
+        modifier = modifier
+            .width(160.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surface)
+            .clickable(onClick = onPlay, role = Role.Button)
+            .semantics { contentDescription = description },
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(16f / 9f),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (!episode.stillUrl.isNullOrBlank()) {
+                CatalogImage(
+                    url = episode.stillUrl,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    fallbackLabel = "E${episode.episode}",
+                )
+            } else {
+                ImageFallbackCard(
+                    modifier = Modifier.fillMaxSize(),
+                    label = "E${episode.episode}",
+                )
+            }
+            if (isWatched) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(6.dp)
+                        .size(24.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        painterResource(R.drawable.ic_action_check),
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                    )
+                }
+            }
+            if (isNext) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(6.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(MaterialTheme.colorScheme.primary),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "Next",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                    )
+                }
+            }
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 10.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Episode ${episode.episode}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (!episode.title.isNullOrBlank()) {
+                    Text(
+                        text = episode.title,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            IconButton(
+                onClick = onDownload,
+                modifier = Modifier.size(48.dp),
+            ) {
+                Icon(
+                    painterResource(R.drawable.ic_action_download),
+                    contentDescription = "Download episode ${episode.episode}",
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
     }
 }
 

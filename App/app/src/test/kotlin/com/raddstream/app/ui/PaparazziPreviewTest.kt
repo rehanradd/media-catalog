@@ -44,7 +44,9 @@ import com.raddstream.app.player.QualityOption
 import com.raddstream.app.ui.components.PosterCard
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.screens.DetailContent
+import com.raddstream.app.ui.screens.EpisodeRowSection
 import com.raddstream.app.ui.screens.EpisodeTile
+import com.raddstream.app.ui.screens.PrimaryActions
 import com.raddstream.app.ui.screens.SeasonPackRow
 import com.raddstream.app.ui.screens.SeasonTile
 import com.raddstream.app.ui.screens.FilterRail
@@ -63,6 +65,7 @@ import com.raddstream.app.ui.screens.TopBar
 import com.raddstream.app.ui.screens.SearchContent
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.EpisodeGroup
+import com.raddstream.app.viewmodel.EpisodeProgress
 import com.raddstream.app.viewmodel.HomeSection
 import com.raddstream.app.viewmodel.GenreFilter
 import com.raddstream.app.viewmodel.HomeUiState
@@ -827,6 +830,63 @@ class PaparazziPreviewTest {
                     lockedQualityBands = setOf("1080p"),
                     selectedBand = "720p",
                 )
+            }
+        }
+    }
+
+    // DT-3 (round 2, Nov 2026): the episode row's golden. The row lives
+    // below the fold of the full detail page (the LazyColumn only
+    // composes the viewport), so it is shot on its own, like the season
+    // tiles below: E1 watched (tick), E2 next (jade "Next" mark), a
+    // per-episode download icon on each card, and the legend line above
+    // the row. The fixture has two seasons, so the S1/S2 chips above
+    // the row are part of the shot too.
+    @Test
+    fun detailEpisodeRow() {
+        paparazzi.snapshot {
+            themed {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    EpisodeRowSection(
+                        seasons = seriesSeasons,
+                        selectedSeason = 1,
+                        episodeProgress = mapOf(
+                            (1 to 1) to EpisodeProgress(fraction = 1f, watched = true, remainingLabel = null),
+                        ),
+                        nextEpisode = 1 to 2,
+                        onSelectSeason = {},
+                        onPlayEpisode = { _, _ -> },
+                        onDownloadEpisode = { _, _ -> },
+                    )
+                }
+            }
+        }
+    }
+
+    // DT-1 (round 2, Nov 2026): the Play button mid-resolve — the
+    // determinate arc at 0.55 with the stage label ("Finding the best
+    // copy…"), beside the Download button it resolves for. Shot on its
+    // own because the arc only exists while a Play tap is in flight,
+    // and no full-page golden holds that state.
+    @Test
+    fun detailPlayResolving() {
+        paparazzi.snapshot {
+            themed {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    PrimaryActions(
+                        playLabel = "Resume S1:E2 · 30 min left",
+                        playEnabled = true,
+                        playStarting = true,
+                        playProgress = 0.55f,
+                        playStage = "Finding the best copy…",
+                        onPlayPrimary = {},
+                        downloadLabel = "Download S1:E2 · 720p · 1.3 GB",
+                        downloadEnabled = true,
+                        onDownloadPrimary = {},
+                    )
+                }
             }
         }
     }

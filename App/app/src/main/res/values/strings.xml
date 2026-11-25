@@ -172,6 +172,10 @@
     <string name="detail_download_episode_hint">Tap an episode to save it now. Tick more than one to save them all at the same quality.</string>
     <string name="detail_size_unknown">Size unknown</string>
     <string name="detail_latest_episode">Latest episode</string>
+    <!-- DT-3 (round 2, Nov 2026): the episode-row / season-tile legend —
+         the tick is watched, the highlighted tile is next to watch. One
+         string for both pages, so the two never drift apart. -->
+    <string name="detail_episode_legend">✓ Watched · highlighted is next to watch</string>
     <!-- Audit Detail #1/#3/#5/#10 (Nov 2026): the Video row, the cam
          warning card, the stale-details note, and the dimmed-tiles
          line — all plain words, no invented numbers. -->

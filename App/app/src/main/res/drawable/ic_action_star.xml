@@ -1,0 +1,15 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+>
+    <!-- S8 (round 2, Nov 2026): the house Similar glyph — Feather "star", as strokes. Same stroke style as the tab icons. The audit wanted a recognisable mark, not the old 2x2-grid AutoAwesome; a star says "similar titles" where the grid said nothing. Replaces Icons.Default.AutoAwesome on Detail's utility row. -->
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"
+        android:strokeWidth="2"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"/>
+</vector>

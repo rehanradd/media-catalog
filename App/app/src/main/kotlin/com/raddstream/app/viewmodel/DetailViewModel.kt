@@ -239,6 +239,24 @@ data class DetailUiState(
      */
     val playStarting: Boolean = false,
     /**
+     * DT-1 (round 2): determinate resolve progress for the Play button —
+     * the fraction [PlayResolveStage] published (0.20 preparing, 0.55
+     * finding the best copy, 0.85 starting playback), or null when no
+     * Play tap is in flight. Stage fractions only — never a timer, never
+     * faked: a stage publishes only after it actually completed.
+     */
+    val playProgress: Float? = null,
+    /** DT-1: the stage's plain-words label, painted on the Play button while it resolves. */
+    val playStage: String? = null,
+    /**
+     * DT-3 (round 2): the season the Detail page's episode row shows.
+     * Defaults to the next episode's season (see [defaultEpisodeRowSeason]);
+     * a chip tap overrides it until the title reloads.
+     */
+    val episodeRowSeason: Int? = null,
+    /** DT-3: the next episode to watch, for the episode row's "next" mark. */
+    val nextEpisode: Pair<Int, Int>? = null,
+    /**
      * 2-button detail (Nov 2026): the local file for each downloaded
      * handle (READY rows with a localUri), so a "✓ Downloaded" button
      * can play the saved file instead of starting a new download.
@@ -570,6 +588,8 @@ class DetailViewModel @Inject constructor(
     // enforces its own gate at transfer time).
     private var castFeatureEnabled: Boolean = true
     private var castDevicesAvailable: Boolean = false
+    /** DT-3: true once the viewer picked the episode row's season by hand — the default then stops overriding it. */
+    private var episodeRowSeasonUserPicked: Boolean = false
     private val castAvailabilityTracker = CastAvailabilityTracker(appContext)
 
     private fun recomputeCastAvailable() {
@@ -1077,6 +1097,21 @@ class DetailViewModel @Inject constructor(
                 downloadEnabled = downloadEnabled,
                 downloadHint = downloadHint,
                 downloadedUri = downloadedUri,
+                // DT-3: the next episode and the episode row's season,
+                // from the same inputs Play reads — the row and the
+                // button can never disagree about what is next. The
+                // season default only applies until the viewer picks a
+                // season by hand (selectEpisodeRowSeason); a hand-picked
+                // season the layout no longer carries falls back to the
+                // default instead of stranding the row.
+                nextEpisode = nextUnwatchedEpisode(layout, state.episodeProgress),
+                episodeRowSeason = if (episodeRowSeasonUserPicked) {
+                    state.episodeRowSeason?.takeIf { season ->
+                        layout?.seasons?.any { it.number == season } == true
+                    } ?: defaultEpisodeRowSeason(layout, state.episodeProgress, resume)
+                } else {
+                    defaultEpisodeRowSeason(layout, state.episodeProgress, resume)
+                },
                 // APP-02: the selector's chips and the re-validated
                 // selection — published beside the labels, from the same
                 // inputs, so the chips and the buttons can never disagree.
@@ -1145,7 +1180,7 @@ class DetailViewModel @Inject constructor(
                         it.band == band && it.playsHere && !it.isProviderPage && it.streamId.isNotBlank()
                     }
                 }
-            _uiState.update { it.copy(playStarting = true) }
+            beginPlayResolve()
             if (picked != null) {
                 playLadder(picked, ladder = resumeLadder, season = state.resume?.season, episode = state.resume?.episode)
             } else {
@@ -1176,14 +1211,14 @@ class DetailViewModel @Inject constructor(
             val picked = state.selectedBand?.takeIf { it != LadderForScope.AUTO }
                 ?.let { band -> playable.firstOrNull { it.band == band } }
             if (picked != null) {
-                _uiState.update { it.copy(playStarting = true) }
+                beginPlayResolve()
                 playLadder(picked)
                 return
             }
             if (playable.any { isHlsOption(it) }) {
                 // HLS available: play directly on Auto, 1 tap; the
                 // quality switches in the player, not here.
-                _uiState.update { it.copy(playStarting = true) }
+                beginPlayResolve()
                 playBest()
                 return
             }
@@ -1199,7 +1234,7 @@ class DetailViewModel @Inject constructor(
             // below instead of playing nothing.
             val first = selectedRungFor(ladder, state.selectedBand) ?: firstTapOption(ladder)
             if (first != null) {
-                _uiState.update { it.copy(playStarting = true) }
+                beginPlayResolve()
                 playLadder(first)
                 return
             }
@@ -1212,7 +1247,7 @@ class DetailViewModel @Inject constructor(
             playLadder(provider)
             return
         }
-        _uiState.update { it.copy(playStarting = true) }
+        beginPlayResolve()
         playBest()
     }
 
@@ -1232,7 +1267,7 @@ class DetailViewModel @Inject constructor(
         val ladder = ladderForEpisode(season, episode)
         val playable = ladder.options.filter { it.playsHere && !it.isProviderPage && it.streamId.isNotBlank() }
         if (playable.isEmpty() || playable.any { isHlsOption(it) }) {
-            _uiState.update { it.copy(playStarting = true) }
+            beginPlayResolve()
             playEpisode(season, episode)
             return
         }
@@ -1241,11 +1276,11 @@ class DetailViewModel @Inject constructor(
         // through to playEpisode below.
         val first = selectedRungFor(ladder, _uiState.value.selectedBand) ?: firstTapOption(ladder)
         if (first != null) {
-            _uiState.update { it.copy(playStarting = true) }
+            beginPlayResolve()
             playLadder(first, ladder = ladder, season = season, episode = episode)
             return
         }
-        _uiState.update { it.copy(playStarting = true) }
+        beginPlayResolve()
         playEpisode(season, episode)
     }
 
@@ -1327,7 +1362,7 @@ class DetailViewModel @Inject constructor(
             playLadder(option, ladder = sheet.ladder, season = sheet.season, episode = sheet.episode)
             return
         }
-        _uiState.update { it.copy(playStarting = true) }
+        beginPlayResolve()
         playLadder(option, ladder = sheet.ladder, season = sheet.season, episode = sheet.episode)
     }
 
@@ -1749,7 +1784,53 @@ class DetailViewModel @Inject constructor(
      * screen calls this on resume.
      */
     fun clearPlayStarting() {
-        _uiState.update { it.copy(playStarting = false) }
+        endPlayResolve()
+    }
+
+    /**
+     * DT-1: a Play tap was accepted — the button reads the stage, and
+     * the arc fills to the first real stage (local staging done).
+     */
+    private fun beginPlayResolve() {
+        _uiState.update {
+            it.copy(
+                playStarting = true,
+                playProgress = playResolveProgress(PlayResolveStage.PREPARING),
+                playStage = playResolveStageLabel(PlayResolveStage.PREPARING),
+            )
+        }
+    }
+
+    /**
+     * DT-1: publish a later stage — only while a Play tap is in flight,
+     * so a stray call can never paint progress on an idle button.
+     */
+    private fun advancePlayResolve(stage: PlayResolveStage) {
+        if (!_uiState.value.playStarting) return
+        _uiState.update {
+            it.copy(
+                playProgress = playResolveProgress(stage),
+                playStage = playResolveStageLabel(stage),
+            )
+        }
+    }
+
+    /**
+     * DT-1: the Play tap is over — played, refused, or failed. The
+     * progress and the stage clear with the guard, so the button can
+     * never sit on a stale arc.
+     */
+    private fun endPlayResolve() {
+        _uiState.update { it.copy(playStarting = false, playProgress = null, playStage = null) }
+    }
+
+    /**
+     * DT-3: the episode row's season — a chip tap overrides the default
+     * (next episode's season) until the title reloads.
+     */
+    fun selectEpisodeRowSeason(season: Int) {
+        episodeRowSeasonUserPicked = true
+        _uiState.update { it.copy(episodeRowSeason = season) }
     }
 
     /**
@@ -1933,7 +2014,7 @@ class DetailViewModel @Inject constructor(
         // gets a new ViewModel (hiltViewModel per destination), and
         // publishPrimaryActions re-validates the band against the new
         // ladder on every publish anyway.
-        _uiState.update { it.copy(playStarting = false, qualitySheet = null) }
+        _uiState.update { it.copy(playStarting = false, playProgress = null, playStage = null, qualitySheet = null) }
         if (postId < 0 && workId < 0) {
             _uiState.update { it.copy(isLoading = false, error = "This title could not be opened.") }
             return
@@ -2156,6 +2237,8 @@ class DetailViewModel @Inject constructor(
             it.copy(
                 actionMessage = null,
                 playStarting = false,
+                playProgress = null,
+                playStage = null,
                 snackbarActionLabel = null,
                 snackbarAction = null,
             )
@@ -2786,6 +2869,7 @@ class DetailViewModel @Inject constructor(
             val stepped = stepDownRung(ladder, option, premiumAccess, freeQualityCap)
                 ?: run {
                     _uiState.update { it.copy(actionMessage = VipQualityGate.lockedMessage(freeQualityCap)) }
+                    endPlayResolve()
                     return
                 }
             _uiState.update {
@@ -2798,6 +2882,7 @@ class DetailViewModel @Inject constructor(
         val title = _uiState.value.post?.let { it.cleanTitle ?: it.title } ?: "Stream"
         if (effective.streamId.isBlank()) {
             _uiState.update { it.copy(actionMessage = "Nothing playable on this rung yet.") }
+            endPlayResolve()
             return
         }
         // A rung that is a page is not staged and not played: nothing starts, so there is no
@@ -2810,7 +2895,7 @@ class DetailViewModel @Inject constructor(
         // tap, not intent.
         if (effective.isProviderPage) {
             val now = SystemClock.uptimeMillis()
-            _uiState.update { it.copy(selectedBand = effective.band, playStarting = false) }
+            _uiState.update { it.copy(selectedBand = effective.band, playStarting = false, playProgress = null, playStage = null) }
             if (now - lastProviderOpenMs < 2_000) return
             lastProviderOpenMs = now
             viewModelScope.launch {
@@ -2833,6 +2918,9 @@ class DetailViewModel @Inject constructor(
             backupHandles = ladder.options.flatMap { listOf(it.streamId) + it.backupHandles },
         )
         _uiState.update { it.copy(selectedBand = effective.band) }
+        // DT-1: everything is staged — the player handoff is next, so
+        // the arc fills to its last stage before the nav event fires.
+        advancePlayResolve(PlayResolveStage.STARTING_PLAYBACK)
         viewModelScope.launch {
             if (external && effective.playUrl != null) {
                 _navEvents.emit(DetailNavigationEvent.OpenExternal(effective.streamId, effective.playUrl))
@@ -2841,6 +2929,8 @@ class DetailViewModel @Inject constructor(
             } else {
                 // Not a failure and not a silent no-op: the rung can be downloaded, and
                 // saying so is the honest answer to a tap on a picture we cannot stream here.
+                // Nothing plays, so the Play tap ends here.
+                endPlayResolve()
                 keep(effective.streamId, effective.title)
             }
         }
@@ -2931,6 +3021,7 @@ class DetailViewModel @Inject constructor(
         val start = playStartPrint(_uiState.value.layout, print, premiumAccess, freeQualityCap)
         if (start == null) {
             _uiState.update { it.copy(actionMessage = VipQualityGate.lockedMessage(freeQualityCap)) }
+            endPlayResolve()
             return
         }
         if (start.releaseId != print.releaseId) {
@@ -2942,6 +3033,7 @@ class DetailViewModel @Inject constructor(
             print.links.firstOrNull { it.keepable }
         if (link == null) {
             _uiState.update { it.copy(actionMessage = "Nothing playable on this print yet.") }
+            endPlayResolve()
             return
         }
         // The server's own bundle first (plan §5 step 13): its winner is ranked from
@@ -2960,6 +3052,11 @@ class DetailViewModel @Inject constructor(
                 isPreresolveFresh(preresolvedReleaseId, preresolvedAtMs, print.releaseId, System.currentTimeMillis())
             }
             if (cached != null && playV2Bundle(cached, print, external)) return@launch
+            // DT-1: the bundle call is the one slow stage — publish it
+            // before the call starts, never after; the cached path above
+            // never reaches this line, so no arc is shown for a call
+            // that never happened.
+            advancePlayResolve(PlayResolveStage.FINDING_COPY)
             val v2 = runCatching {
                 withTimeout(PLAY_V2_TIMEOUT_MS) {
                     catalogRepository.playV2(
@@ -3141,6 +3238,7 @@ class DetailViewModel @Inject constructor(
         val playUrl = link.playUrl
         if (link.streamId.isBlank() || playUrl.isNullOrBlank()) {
             _uiState.update { it.copy(actionMessage = "This option is download-only.") }
+            endPlayResolve()
             return
         }
         // Nothing plays here, so nothing is staged: no resume scope, no Continue-watching row,
@@ -3169,6 +3267,10 @@ class DetailViewModel @Inject constructor(
             episode,
         )
         rememberWatchStart(scope)
+        // DT-1: the handoff is next — the arc fills to its last stage
+        // before the nav event fires (a no-op when no Play tap is in
+        // flight, e.g. a sheet row played directly).
+        advancePlayResolve(PlayResolveStage.STARTING_PLAYBACK)
         viewModelScope.launch {
             if (external) _navEvents.emit(DetailNavigationEvent.OpenExternal(link.streamId, playUrl))
             else _navEvents.emit(DetailNavigationEvent.PlayStream(link.streamId, title))
