@@ -53,7 +53,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.testTag
@@ -496,13 +495,6 @@ internal fun MyListLoadedContent(
                             // instead of painting a silent grey bar.
                             progressFraction = state.progressByPostId[post.id],
                             progressLabel = state.progressLabelByPostId[post.id],
-                            // Round 3: at large font scale a one-line title
-                            // degrades to a single word ("Salaar:…") — the
-                            // grid tiles take a second title line, so the
-                            // full title reads; the slot grows with it, so
-                            // cards stay uniform with each other. At 1.0x
-                            // and 1.15x the one-line slot is unchanged.
-                            titleMaxLines = if (LocalDensity.current.fontScale > 1.15f) 2 else 1,
                         )
                     }
                 }
