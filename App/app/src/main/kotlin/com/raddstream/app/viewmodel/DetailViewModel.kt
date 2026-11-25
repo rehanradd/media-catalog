@@ -18,6 +18,7 @@ import com.raddstream.app.data.downloads.DeviceDownloadsRepository
 import com.raddstream.app.data.local.SyncedProgressDao
 import com.raddstream.app.data.local.WatchHistoryDao
 import com.raddstream.app.data.local.WatchHistoryEntity
+import com.raddstream.app.images.ImageSizingPolicy
 import com.raddstream.app.network.ApiProvider
 import com.raddstream.app.network.friendlyNetworkError
 import com.raddstream.app.network.models.LinkState
@@ -2178,6 +2179,25 @@ class DetailViewModel @Inject constructor(
                 emptyList()
             }
             _uiState.update { it.copy(similarTitles = items, similarLoading = false) }
+            // App-speed (Nov 2026): warm the first similar titles'
+            // details into the repository's memory cache, so tapping one
+            // opens instantly. Gated on the same metered rule as poster
+            // prefetch — no prefetch on a metered connection the viewer
+            // never granted. Fire-and-forget on its own job: a slow or
+            // failed prefetch must never hold the screen or the list, and
+            // prefetchDetailFor never throws, so this cannot fail the load.
+            if (items.isNotEmpty()) {
+                viewModelScope.launch {
+                    runCatching {
+                        val allowed = settingsRepository.mobileDataAllowed.first()
+                        if (!ImageSizingPolicy.shouldLoad(allowed, connectivityProbe.isMetered())) return@launch
+                        val audio = detailWarmAudio(userRegion)
+                        items.take(SIMILAR_DETAIL_PREFETCH_MAX).forEach { post ->
+                            catalogRepository.prefetchDetailFor(post, audio)
+                        }
+                    }
+                }
+            }
         }
     }
 

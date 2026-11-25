@@ -384,6 +384,16 @@ internal const val DETAIL_LOAD_MAX_ATTEMPTS: Int = 4
  */
 internal const val DETAIL_LOAD_NULL_RETRIES: Int = 2
 
+/**
+ * App-speed (Nov 2026): how many similar titles get their detail warmed
+ * into the memory cache when the Similar rail lands. Two: the viewer taps
+ * the first row first, and each warm is a full 441 KB detail fetch — more
+ * would spend bandwidth on titles nobody opens. Gated on the metered rule
+ * in [DetailViewModel.loadSimilarTitles]; a title already cached costs no
+ * fetch at all.
+ */
+internal const val SIMILAR_DETAIL_PREFETCH_MAX: Int = 2
+
 internal fun detailLoadBackoffMs(attempt: Int): Long =
     when (attempt) {
         1 -> 600L

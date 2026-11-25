@@ -62,6 +62,27 @@ class CatalogRepository @Inject constructor(
     private val workCache = ConcurrentHashMap<Long, Post>()
 
     /**
+     * App-speed (Nov 2026): the parsed-detail memory cache
+     * ([DetailMemoryCache]) — the fast layer under the S1 OkHttp disk
+     * cache. A repeat open of a title this process already parsed answers
+     * from memory: zero network calls, zero parse. Created here, not
+     * injected: the repository's `@Inject` constructor cannot take a
+     * clock, and the cache needs none — its own tests drive it directly.
+     */
+    private val detailMemoryCache = DetailMemoryCache()
+
+    /**
+     * The server this process is talking to, for the memory-cache key — a
+     * viewer who switches catalog servers must never be served the old
+     * server's detail for the same id. The provider answers from its own
+     * in-memory cache once a client exists, so this is a cheap read, not a
+     * store read; "" when no server is configured, in which case the fetch
+     * fails before any answer could be cached.
+     */
+    private suspend fun cacheServer(): String =
+        runCatching { apiProvider.currentBaseUrl() }.getOrNull() ?: ""
+
+    /**
      * Feel-instant S3c: every list page feeds the on-device search index as
      * well as the in-memory fallback cache, so the index grows from the
      * traffic the viewer already caused — no new endpoint, no new call. A
@@ -247,13 +268,30 @@ class CatalogRepository @Inject constructor(
      * resolve). `audio` names the preferred audio language; the server
      * orders preferred-audio tiers first. Both default off, so the
      * compliance probe and the player-side re-read send the old request.
+     *
+     * App-speed (Nov 2026): a non-warm read serves the parsed detail from
+     * the [DetailMemoryCache] — zero network calls, zero parse — and every
+     * successful answer populates it. A warm read never serves from memory:
+     * its job is the server-side pre-resolve, and serving from memory would
+     * skip it.
      */
     suspend fun getPostDetail(postId: Int, warm: Boolean = false, audio: String? = null): PostDetail? {
+        val audioKey = audio?.takeIf { it.isNotBlank() }
+        val cacheKey = DetailCacheKey.V1(postId, cacheServer(), audioKey)
+        // App-speed: a non-warm read serves the parsed detail from memory.
+        // A warm read never does — the warm call's job is the server-side
+        // pre-resolve of the auto tier (audit #1), and serving from memory
+        // would skip it, so the Play press would pay the live resolve
+        // instead. The warm answer still populates the cache below, so the
+        // player-side re-read right after this open hits memory.
+        if (!warm) {
+            detailMemoryCache.get(cacheKey)?.let { return it }
+        }
         val response = try {
             apiProvider.current().getPostDetail(
                 postId,
                 warm = if (warm) "1" else null,
-                audio = audio?.takeIf { it.isNotBlank() },
+                audio = audioKey,
             )
         } catch (ex: CancellationException) {
             // A cancelled load is not a failed load: rethrow so the
@@ -295,9 +333,33 @@ class CatalogRepository @Inject constructor(
         }
         if (response.success && response.data != null) {
             indexDetail(response.data)
+            detailMemoryCache.put(cacheKey, response.data)
             return response.data
         }
         return null
+    }
+
+    /**
+     * App-speed (Nov 2026): warm one title's detail into the memory
+     * cache, so tapping it later opens instantly. Used by the Detail
+     * screen for the first similar titles, once they have loaded. Never
+     * throws and never returns anything: a prefetch is an optimisation,
+     * and a failure here must leave the screen exactly as it was. The
+     * callers' metered-data gate decides whether this runs at all — this
+     * method only decides which route a row takes: a v2 row (a work id)
+     * through the v2 detail, a v1 row through the v1 detail without the
+     * warm flag (a prefetch must not spend the server-side pre-resolve
+     * on a title nobody tapped). A row with neither id prefetches nothing.
+     */
+    suspend fun prefetchDetailFor(post: Post, audio: String? = null) {
+        runCatching {
+            val workId = post.workId
+            if (workId != null && workId > 0) {
+                getWorkDetailV2(workId, audio)
+            } else if (post.id > 0) {
+                getPostDetail(post.id, warm = false, audio = audio)
+            }
+        }
     }
 
     /**
@@ -448,8 +510,18 @@ class CatalogRepository @Inject constructor(
      * ([V2DetailResult.TransientFailure]) from "not found" / readiness failures
      * ([V2DetailResult.Unavailable]), so [DetailViewModel] can show offline vs server
      * messages on v2 taps without breaking [getWorkDetailV2]'s null-on-error contract.
+     *
+     * App-speed (Nov 2026): a repeat fetch serves the parsed detail from
+     * the [DetailMemoryCache] — zero network calls, zero parse — and every
+     * successful fetch populates it. Only successes are stored; a
+     * transient failure or an unavailable title leaves the cache alone, so
+     * the caller's retry re-asks the network instead of re-answering a
+     * failure.
      */
     suspend fun fetchWorkDetailV2(workId: Long, audio: String? = null): V2DetailResult {
+        val audioKey = audio?.takeIf { it.isNotBlank() }
+        val cacheKey = DetailCacheKey.V2(workId, cacheServer(), audioKey)
+        detailMemoryCache.get(cacheKey)?.let { return V2DetailResult.Found(it) }
         val response = try {
             apiProvider.current().getWorkDetail(workId)
         } catch (ex: CancellationException) {
@@ -543,7 +615,7 @@ class CatalogRepository @Inject constructor(
                     val detail = apiProvider.current().getPostDetail(
                         post.id,
                         warm = "1",
-                        audio = audio?.takeIf { it.isNotBlank() },
+                        audio = audioKey,
                     )
                     if (detail.success && detail.data != null) {
                         castNames = detail.data.castNames
@@ -557,6 +629,7 @@ class CatalogRepository @Inject constructor(
         val detail = response.toPostDetail(baseUrl, v1PostId, castNames, seasonArtwork)
             ?: return V2DetailResult.Unavailable
         indexDetail(detail)
+        detailMemoryCache.put(cacheKey, detail)
         return V2DetailResult.Found(detail)
     }
 
