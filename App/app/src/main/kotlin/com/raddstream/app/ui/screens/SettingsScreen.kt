@@ -5,14 +5,21 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
@@ -133,7 +140,6 @@ import com.raddstream.app.ui.components.rememberReduceMotion
 import com.raddstream.app.ui.theme.RaddChipBorderSoft
 import com.raddstream.app.ui.theme.RaddChipLabelSoft
 import com.raddstream.app.ui.theme.RaddCoral400
-import com.raddstream.app.ui.theme.RaddMotion
 import com.raddstream.app.ui.theme.RaddSettingsCard
 import com.raddstream.app.ui.theme.RaddSettingsHelper
 import com.raddstream.app.ui.theme.RaddTextFamily
@@ -480,6 +486,10 @@ internal fun SettingsContent(
     // ST2: the entrance stagger reads the system reduce-motion setting once —
     // under reduced motion the groups appear with no movement at all.
     val reduceMotion = rememberReduceMotion()
+    // Round 6: the theme's motionScheme — the expressive spatial spec for
+    // section expand/collapse and the effects spec for the error entrance.
+    // Every AnimatedVisibility below reads these tokens, never a local spring.
+    val motionScheme = MaterialTheme.motionScheme
     // ST5: the search field clears focus on the Search IME action.
     val focusManager = LocalFocusManager.current
     // ST5: which cards the query keeps — one val per card, so the group headers and
@@ -849,7 +859,23 @@ internal fun SettingsContent(
                             ) {
                                 Text(if (showAccountDetails) "Hide account details" else "Account details")
                             }
-                            if (showAccountDetails) {
+                            // Round 6: the account details expand/collapse
+                            // with AnimatedVisibility — fade + vertical expand
+                            // on the expressive specs. Under reduced motion
+                            // it is instant.
+                            AnimatedVisibility(
+                                visible = showAccountDetails,
+                                enter = fadeIn(
+                                    animationSpec = if (reduceMotion) snap() else motionScheme.defaultEffectsSpec(),
+                                ) + expandVertically(
+                                    animationSpec = if (reduceMotion) snap() else motionScheme.defaultSpatialSpec(),
+                                ),
+                                exit = fadeOut(
+                                    animationSpec = if (reduceMotion) snap() else motionScheme.defaultEffectsSpec(),
+                                ) + shrinkVertically(
+                                    animationSpec = if (reduceMotion) snap() else motionScheme.defaultSpatialSpec(),
+                                ),
+                            ) {
                                 if (account.revealedKey == null && account.keyHint.isNotEmpty()) {
                                     Text(
                                         "Account code on this device: ${account.keyHint}. The full code was shown once, when it " +
@@ -1526,7 +1552,23 @@ internal fun SettingsContent(
                             "Made for watching.",
                             style = settingsHelperStyle,
                         )
-                        if (showBuildDetails) {
+                        // Round 6: the build details expand/collapse with
+                        // AnimatedVisibility — fade + vertical expand on the
+                        // expressive specs, so the section grows instead of
+                        // appearing. Under reduced motion it is instant.
+                        AnimatedVisibility(
+                            visible = showBuildDetails,
+                            enter = fadeIn(
+                                animationSpec = if (reduceMotion) snap() else motionScheme.defaultEffectsSpec(),
+                            ) + expandVertically(
+                                animationSpec = if (reduceMotion) snap() else motionScheme.defaultSpatialSpec(),
+                            ),
+                            exit = fadeOut(
+                                animationSpec = if (reduceMotion) snap() else motionScheme.defaultEffectsSpec(),
+                            ) + shrinkVertically(
+                                animationSpec = if (reduceMotion) snap() else motionScheme.defaultSpatialSpec(),
+                            ),
+                        ) {
                             Text(
                                 aboutBuildDetailsLine(),
                                 style = MaterialTheme.typography.labelSmall,
@@ -1546,7 +1588,23 @@ internal fun SettingsContent(
                     ) {
                         Text(if (showAdvanced) "Hide advanced settings" else "Show advanced settings")
                     }
-                    if (showAdvanced) {
+                    // Round 6: the Advanced section expands/collapses with
+                    // AnimatedVisibility — fade + vertical expand on the
+                    // expressive specs, so the catalog card grows instead of
+                    // appearing. Under reduced motion it is instant.
+                    AnimatedVisibility(
+                        visible = showAdvanced,
+                        enter = fadeIn(
+                            animationSpec = if (reduceMotion) snap() else motionScheme.defaultEffectsSpec(),
+                        ) + expandVertically(
+                            animationSpec = if (reduceMotion) snap() else motionScheme.defaultSpatialSpec(),
+                        ),
+                        exit = fadeOut(
+                            animationSpec = if (reduceMotion) snap() else motionScheme.defaultEffectsSpec(),
+                        ) + shrinkVertically(
+                            animationSpec = if (reduceMotion) snap() else motionScheme.defaultSpatialSpec(),
+                        ),
+                    ) {
                                     // ── Your catalog ──────────────────────────────────────
                                     SettingsCard(title = "Your catalog", fill = MaterialTheme.colorScheme.surfaceContainerHighest) {
                                         // The address is never printed here: a saved catalog reads as
@@ -1690,7 +1748,27 @@ internal fun SettingsContent(
             // card is its SIBLING, not its child — clearAndSetSemantics on a
             // parent hides the whole subtree, card included, so the card would
             // never be announced (and no test could find its text).
-            if (state.loadError != null) {
+            // Round 6: the load-error overlay fades + scales in on the
+            // expressive effects spec (the card starts at 0.96x and settles
+            // to 1.0x) instead of appearing instantly. Under reduced motion
+            // it is instant. In Paparazzi the error is present from the
+            // first composition, so no enter animation runs and the golden
+            // captures the settled state.
+            AnimatedVisibility(
+                visible = state.loadError != null,
+                enter = fadeIn(
+                    animationSpec = if (reduceMotion) snap() else motionScheme.defaultEffectsSpec(),
+                ) + scaleIn(
+                    initialScale = 0.96f,
+                    animationSpec = if (reduceMotion) snap() else motionScheme.defaultEffectsSpec(),
+                ),
+                exit = fadeOut(
+                    animationSpec = if (reduceMotion) snap() else motionScheme.defaultEffectsSpec(),
+                ) + scaleOut(
+                    targetScale = 0.96f,
+                    animationSpec = if (reduceMotion) snap() else motionScheme.defaultEffectsSpec(),
+                ),
+            ) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
@@ -1728,7 +1806,7 @@ internal fun SettingsContent(
                                 fontWeight = FontWeight.SemiBold,
                             )
                             Text(
-                                state.loadError,
+                                state.loadError ?: "",
                                 style = settingsHelperStyle,
                             )
                             Button(
@@ -1815,6 +1893,11 @@ private fun SettingsGroup(
 ) {
     val inInspectionMode = LocalInspectionMode.current
     val reduceMotion = rememberReduceMotion()
+    // Round 6: the entrance runs on the theme's motionScheme — the
+    // expressive spatial spring (which overshoots and settles) for the
+    // slide and the expressive effects spring for the fade. Same token
+    // values RaddMotion carried, now read from the M3 contract itself.
+    val motionScheme = MaterialTheme.motionScheme
     var entered by remember { mutableStateOf(inInspectionMode || reduceMotion) }
     LaunchedEffect(Unit) {
         if (inInspectionMode || reduceMotion) return@LaunchedEffect
@@ -1824,23 +1907,23 @@ private fun SettingsGroup(
     AnimatedVisibility(
         visible = visible && entered,
         enter = fadeIn(
-            animationSpec = if (reduceMotion) snap() else RaddMotion.defaultEffects(),
+            animationSpec = if (reduceMotion) snap() else motionScheme.defaultEffectsSpec(),
         ) + if (reduceMotion) {
             EnterTransition.None
         } else {
             slideInVertically(
                 initialOffsetY = { it / 4 },
-                animationSpec = RaddMotion.defaultSpatial(),
+                animationSpec = motionScheme.defaultSpatialSpec(),
             )
         },
         exit = fadeOut(
-            animationSpec = if (reduceMotion) snap() else RaddMotion.defaultEffects(),
+            animationSpec = if (reduceMotion) snap() else motionScheme.defaultEffectsSpec(),
         ) + if (reduceMotion) {
             ExitTransition.None
         } else {
             slideOutVertically(
                 targetOffsetY = { it / 4 },
-                animationSpec = RaddMotion.defaultSpatial(),
+                animationSpec = motionScheme.defaultSpatialSpec(),
             )
         },
         modifier = modifier,
@@ -1885,7 +1968,8 @@ private fun SettingsCard(
             // ST2: the card grows smoothly when a door inside it opens
             // (sign-in form, account details, build details, contact
             // form, server field) — the size change is a spring, not a jump.
-            .animateContentSize(animationSpec = RaddMotion.defaultSpatial())
+            // Round 6: the spring is the theme's motionScheme spatial spec.
+            .animateContentSize(animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec())
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -2197,6 +2281,18 @@ internal fun aboutBuildDetailsLine(): String =
 @Composable
 internal fun SwitchRow(checked: Boolean, onCheckedChange: (Boolean) -> Unit, label: String) {
     val haptics = LocalHapticFeedback.current
+    // Round 6: the toggle springs — the switch pops with a visible
+    // overshoot (expressive spatial spring, damping < 1) when it flips,
+    // then settles. The resting scale is 1.12x off, 1.20x on, so the on
+    // state reads a touch larger. Under reduced motion there is no
+    // spring and the scale stays 1.12x.
+    val motionScheme = MaterialTheme.motionScheme
+    val reduceMotion = rememberReduceMotion()
+    val switchScale by animateFloatAsState(
+        targetValue = if (reduceMotion) 1.12f else if (checked) 1.2f else 1.12f,
+        animationSpec = if (reduceMotion) snap() else motionScheme.defaultSpatialSpec(),
+        label = "switchSpring",
+    )
     Row(
         // Robo run 4: the row-level merged name ("<label>, on/off") never
         // reached Robo — the Switch's own toggleable node is what a screen
@@ -2249,7 +2345,7 @@ internal fun SwitchRow(checked: Boolean, onCheckedChange: (Boolean) -> Unit, lab
             } else null,
             modifier = Modifier
                 .semantics { contentDescription = label }
-                .scale(1.12f),
+                .scale(switchScale),
         )
     }
 }
@@ -2320,28 +2416,59 @@ internal fun ChipRow(options: List<String>, selectedIndex: Int, onSelect: (Int) 
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         options.forEachIndexed { idx, label ->
-            FilterChip(
-                colors = FilterChipDefaults.filterChipColors(
-                    containerColor = Color.Transparent,
-                    labelColor = RaddChipLabelSoft,
-                    selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
-                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                ),
-                border = FilterChipDefaults.filterChipBorder(
-                    enabled = true,
-                    selected = idx == selectedIndex,
-                    borderColor = RaddChipBorderSoft,
-                    selectedBorderColor = MaterialTheme.colorScheme.primary,
-                    borderWidth = 1.dp,
-                    selectedBorderWidth = 1.5.dp,
-                ),
+            SettingsChip(
+                label = label,
                 selected = idx == selectedIndex,
                 onClick = { onSelect(idx) },
-                label = { Text(label, maxLines = 1, modifier = Modifier.padding(vertical = 12.dp)) },
-                modifier = Modifier.heightIn(min = 48.dp),
             )
         }
     }
+}
+
+/**
+ * Round 6: one chip — its press state lives here so each chip owns its
+ * own interaction source (a remember inside the FlowRow loop would mix
+ * states up when the options change). Pressed, the pill scales to 0.96x
+ * on the expressive effects spring and springs back on release; at rest
+ * it is exactly 1.0x, so no golden moves. Under reduced motion there is
+ * no press scale at all.
+ */
+@Composable
+private fun SettingsChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val motionScheme = MaterialTheme.motionScheme
+    val reduceMotion = rememberReduceMotion()
+    val chipScale by animateFloatAsState(
+        targetValue = if (reduceMotion) 1f else if (pressed) 0.96f else 1f,
+        animationSpec = if (reduceMotion) snap() else motionScheme.defaultEffectsSpec(),
+        label = "chipPress",
+    )
+    FilterChip(
+        colors = FilterChipDefaults.filterChipColors(
+            containerColor = Color.Transparent,
+            labelColor = RaddChipLabelSoft,
+            selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
+            selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        ),
+        border = FilterChipDefaults.filterChipBorder(
+            enabled = true,
+            selected = selected,
+            borderColor = RaddChipBorderSoft,
+            selectedBorderColor = MaterialTheme.colorScheme.primary,
+            borderWidth = 1.dp,
+            selectedBorderWidth = 1.5.dp,
+        ),
+        selected = selected,
+        onClick = onClick,
+        label = { Text(label, maxLines = 1, modifier = Modifier.padding(vertical = 12.dp)) },
+        interactionSource = interactionSource,
+        modifier = Modifier.heightIn(min = 48.dp).scale(chipScale),
+    )
 }
 
 @Composable
