@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.snapping.SnapLayoutInfoProvider
 import androidx.compose.foundation.gestures.snapping.SnapPosition
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -33,7 +34,9 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.raddstream.app.ui.theme.PressHaptics
 import com.raddstream.app.ui.theme.RaddTokens
+import com.raddstream.app.ui.theme.pressScale
 
 /**
  * A4-F3: the one scrolling chip row. Before this, every screen hand-rolled
@@ -202,6 +205,12 @@ fun RaddChip(
     trailingIcon: @Composable (() -> Unit)? = null,
     enabled: Boolean = true,
 ) {
+    // Round 6 (motion): the chip's own press source — the scale + haptic
+    // track the same presses the chip's click owns. Every RaddChip (Home
+    // filter/mood, Search quick/filter, Settings chips) gets a press scale
+    // (0.97) + haptic on the expressive effects spring.
+    val pressSource = remember { MutableInteractionSource() }
+    PressHaptics(pressSource)
     when (style) {
         RaddChipStyle.Filter -> FilterChip(
             selected = selected,
@@ -212,15 +221,17 @@ fun RaddChip(
             leadingIcon = leadingIcon,
             trailingIcon = trailingIcon,
             enabled = enabled,
+            interactionSource = pressSource,
             // Audit #54: a FilterChip is 32 dp tall — the touch-target
             // floor is 48 dp, so the chip itself carries it.
-            modifier = modifier.heightIn(min = 48.dp),
+            modifier = modifier.heightIn(min = 48.dp).pressScale(pressSource),
         )
 
         RaddChipStyle.Navigation -> Surface(
             onClick = onClick,
-            modifier = modifier,
+            modifier = modifier.pressScale(pressSource),
             enabled = enabled,
+            interactionSource = pressSource,
             shape = RaddTokens.Shape.Pill,
             color = Color.Transparent,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), // token-exempt: hairline border, not spacing

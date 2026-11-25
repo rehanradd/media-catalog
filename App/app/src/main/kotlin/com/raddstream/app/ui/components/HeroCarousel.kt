@@ -2,9 +2,15 @@ package com.raddstream.app.ui.components
 
 import android.content.Context
 import android.os.SystemClock
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.snap
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -55,6 +61,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.vectorResource
@@ -141,9 +148,25 @@ fun HeroCarousel(
     onWatchNow: (Post) -> Unit = onPostClick,
     isFavorite: (Post) -> Boolean = { false },
     onToggleFavorite: (Post) -> Unit = {},
+    /**
+     * Round 6 (motion): the shared-element scopes, passed down from the
+     * NavHost's SharedTransitionLayout by the infra branch. Both null by
+     * default — dormant until infra wires them.
+     */
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
 ) {
     if (posts.isEmpty()) return
     val reduceMotion = rememberReduceMotion()
+    // Round 6 (motion): the hero enters with a fade + short rise on the
+    // expressive springs, following the rail pattern — in inspection mode
+    // it is already visible, so a Paparazzi golden shows the settled hero.
+    val inInspectionMode = LocalInspectionMode.current
+    var heroVisible by remember { mutableStateOf(inInspectionMode) }
+    LaunchedEffect(Unit) {
+        if (inInspectionMode) return@LaunchedEffect
+        heroVisible = true
+    }
     val pagerState = rememberPagerState(pageCount = { posts.size })
     val scrollScope = rememberCoroutineScope()
     // True while a finger is down on the visible slide's Watch Now button, reported
@@ -214,6 +237,19 @@ fun HeroCarousel(
     // that once ate Watch Now taps is structural now, not a band calculation
     // ([heroIndicatorOverlapsActionRow] is gone with it).
     Column(modifier.fillMaxWidth()) {
+    AnimatedVisibility(
+        visible = heroVisible,
+        enter = fadeIn(
+            animationSpec = if (reduceMotion) snap() else RaddMotion.defaultEffects(),
+        ) + if (reduceMotion) {
+            EnterTransition.None
+        } else {
+            slideInVertically(
+                initialOffsetY = { it / 4 },
+                animationSpec = RaddMotion.defaultSpatial(),
+            )
+        },
+    ) {
     Box(Modifier.fillMaxWidth().height(heroHeight())) {
         HeroAmbientGlow(
             currentPage = pagerState.currentPage,
@@ -246,9 +282,12 @@ fun HeroCarousel(
                     isFavorite = isFavorite(post),
                     onToggleFavorite = { onToggleFavorite(post) },
                     modifier = Modifier.clip(RoundedCornerShape(HERO_CORNER)),
+                    sharedTransitionScope = sharedTransitionScope,
+                    animatedVisibilityScope = animatedVisibilityScope,
                 )
             }
         }
+    }
     }
 
     if (posts.size > 1) {
@@ -570,6 +609,12 @@ private fun HeroSlide(
     isFavorite: Boolean = false,
     onToggleFavorite: () -> Unit = {},
     modifier: Modifier = Modifier,
+    /**
+     * Round 6 (motion): the shared-element scopes — see [HeroCarousel].
+     * Both null by default; dormant until infra wires them.
+     */
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
 ) {
     val title = heroTitle(post)
     // The spoken line still names the languages (the meta line replaced the
@@ -606,7 +651,9 @@ private fun HeroSlide(
         // the mark collided with the Watch Now / Saved buttons.
         if (backdropUrl.isNullOrBlank()) {
             Box(
-                Modifier.fillMaxSize().background(
+                Modifier.fillMaxSize()
+                    .then(sharedPosterModifier(post, sharedTransitionScope, animatedVisibilityScope))
+                    .background(
                     Brush.verticalGradient(
                         listOf(RaddHeroPlaceholderHigh, RaddHeroPlaceholderLow),
                     ),
@@ -622,7 +669,8 @@ private fun HeroSlide(
             CatalogImage(
                 url = backdropUrl,
                 contentDescription = null, // the merged description above already tells it
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize()
+                    .then(sharedPosterModifier(post, sharedTransitionScope, animatedVisibilityScope)),
                 contentScale = ContentScale.Crop,
                 // Home review (Nov 2026, M1): no fallback label here. When this
                 // image fails or is gated, the fallback card would print the
