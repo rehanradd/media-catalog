@@ -26,7 +26,9 @@ opens would be the wrong tool for this job.
 What one row costs: exactly what a press costs — the gateway page, one hop
 per button, and the Stage-2 gate probe of the winner. The write mirrors
 ``resolve_live_source``'s own persist shape (same columns, same values):
-``final_url`` becomes the R2 asset, ``is_temporary`` stays 0, ``status``
+``final_url`` becomes the R2 asset, ``is_temporary`` is 0 only on a
+proven R2 bucket (API-11 — a fresh-bucket R2 that probes 206 today is
+stored temporary, never permanent), ``status``
 ``'active'``, ``last_checked_at``/``updated_at`` stamped, the failure record
 cleared, ``mime_type``/``http_status``/``is_resumable`` from the gate probe,
 ``expires_at`` NULL (an R2 object declares no freshness window, which is the
@@ -75,10 +77,11 @@ BRIDGE_SELECT = """
 
 #: The persist shape ``resolve_live_source`` writes for a hubcdn press,
 #: minus the expiry call (folded into the ``expires_at = NULL`` below —
-#: see the module docstring).
+#: see the module docstring). ``is_temporary`` is a parameter, not a
+#: constant: 0 only on a proven R2 bucket (API-11), 1 otherwise.
 REWRITE_SQL = """
     UPDATE download_sources
-    SET final_url = ?, is_temporary = 0, status = 'active',
+    SET final_url = ?, is_temporary = ?, status = 'active',
         last_checked_at = CURRENT_TIMESTAMP,
         updated_at = CURRENT_TIMESTAMP,
         last_failed_at = NULL, failure_class = NULL,
@@ -186,8 +189,11 @@ def backfill(db_path, *, apply: bool = False, limit: int | None = None,
             http_status = (206 if (verdict.get("resumable")
                                    and verdict.get("kind") == "file")
                            else 200)
+            # API-11: permanence is per-bucket. A fresh-bucket R2 that
+            # probes 206 today is stored temporary, never permanent.
+            is_temp = (0 if fast_fetch.hubcdn_r2_is_permanent(r2_url) else 1)
             conn.execute(REWRITE_SQL, (
-                r2_url, verdict.get("mime"), http_status,
+                r2_url, is_temp, verdict.get("mime"), http_status,
                 1 if verdict.get("resumable") else 0, row_id))
             if _mirror_projection_expiry(conn, row_id):
                 stats["projection_mirrored"] += 1
