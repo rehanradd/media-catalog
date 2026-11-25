@@ -4,7 +4,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalInspectionMode
 import app.cash.paparazzi.DeviceConfig
 import app.cash.paparazzi.Paparazzi
 import com.android.resources.Density
@@ -67,24 +69,31 @@ class MyListLargeFontPaparazziTest {
             RaddStreamTheme(darkTheme = true) {
                 Surface(color = MaterialTheme.colorScheme.background) {
                     Column(Modifier.fillMaxSize()) {
-                        MyListLoadedContent(
-                            state = MyListUiState(
-                                favorites = listOf(
-                                    post(1, "Jawan", rating = "7.0"),
-                                    post(2, "Salaar: Part 1 – Ceasefire", rating = "6.5"),
+                        // Round 6 (§4): the Library grid stagger checks
+                        // LocalInspectionMode and renders settled when it
+                        // is true — Paparazzi does not set it globally,
+                        // so this test provides it (same pattern as the
+                        // PaparazziPreviewTest Library shots).
+                        CompositionLocalProvider(LocalInspectionMode provides true) {
+                            MyListLoadedContent(
+                                state = MyListUiState(
+                                    favorites = listOf(
+                                        post(1, "Jawan", rating = "7.0"),
+                                        post(2, "Salaar: Part 1 – Ceasefire", rating = "6.5"),
+                                    ),
+                                    sort = ListSort.RECENT,
+                                    popular = listOf(post(3, "McLintock!", rating = "7.0")),
+                                    progressByPostId = mapOf(1 to 0.5f),
+                                    progressLabelByPostId = mapOf(1 to "S2:E5 · 23 min left"),
+                                    downloadedPostIds = setOf(2),
                                 ),
-                                sort = ListSort.RECENT,
-                                popular = listOf(post(3, "McLintock!", rating = "7.0")),
-                                progressByPostId = mapOf(1 to 0.5f),
-                                progressLabelByPostId = mapOf(1 to "S2:E5 · 23 min left"),
-                                downloadedPostIds = setOf(2),
-                            ),
-                            onPostClick = {},
-                            onRemove = {},
-                            onSort = {},
-                            isFavorite = { false },
-                            onToggleFavorite = {},
-                        )
+                                onPostClick = {},
+                                onRemove = {},
+                                onSort = {},
+                                isFavorite = { false },
+                                onToggleFavorite = {},
+                            )
+                        }
                     }
                 }
             }
