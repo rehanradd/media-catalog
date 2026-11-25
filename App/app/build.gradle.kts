@@ -7,10 +7,15 @@ import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
+    // AGP 9.0 built-in Kotlin (BOM bump 2026-11-25): org.jetbrains.kotlin.android
+    // removed — AGP compiles Kotlin itself now; applying it is a fatal error
+    // (Android CI 45577676841: 'no longer required for Kotlin support since AGP 9.0').
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.hilt)
-    alias(libs.plugins.kotlin.kapt)
+    // AGP 9.0 built-in Kotlin: org.jetbrains.kotlin.kapt is incompatible —
+    // replaced by com.android.legacy-kapt (same version as AGP, the documented
+    // stopgap); the kapt(...) dependency lines below are unchanged.
+    alias(libs.plugins.legacy.kapt)
     // Order matters: google-services after the Android plugin (it reads the
     // application id), crashlytics after google-services (it reads the
     // Firebase config the google-services plugin generates from
@@ -18,7 +23,7 @@ plugins {
     // catalog (libs.versions.toml).
     alias(libs.plugins.google.services)
     alias(libs.plugins.crashlytics)
-    // Paparazzi 2.0.0-alpha02 (2026-11-23): JVM screenshot tests — renders real
+    // Paparazzi 2.0.0-alpha05.1 (2026-11-25): JVM screenshot tests — renders real
     // Compose UI via Layoutlib in CI, no emulator. Test-only wiring; no main
     // source changes. Snapshots live in src/test/snapshots (recorded by
     // :app:recordPaparazziDebug, verified by :app:verifyPaparazziDebug).
@@ -131,12 +136,12 @@ val brandDebugSuffix = brand("identity.application.id.debug.suffix", ".debug")
 
 android {
     namespace   = brand("identity.namespace", brandApplicationId)
-    // Library bump 2026-11-23: compileSdk 35 -> 36, forced by Media3
-    // 1.11.1 + NextLib (their AAR metadata requires compiling against
-    // API 36+; proven by CI 45089532958, :app:checkDebugAarMetadata).
+    // BOM bump 2026-11-25: compileSdk 36 -> 37, forced by Compose BOM
+    // 2026.11.01 / material3 1.5.0 (MotionScheme goes public) + AGP 9.1.1
+    // (Google: API 37 needs AGP 9.1.1 minimum).
     // targetSdk stays 35: compileSdk can be raised separately from
-    // targetSdk, and 36's runtime behavior changes are untested.
-    compileSdk  = 36
+    // targetSdk, and 36/37's runtime behavior changes are untested.
+    compileSdk  = 37
 
     sourceSets {
         getByName("main") {
@@ -255,7 +260,9 @@ android {
         // (its AAR manifests declare minSdk 23 since 1.9.0) and NextLib.
         // Android 5.0/5.1 are dropped; the app is pre-launch, so no
         // installed base is affected.
-        minSdk        = 23
+        // BOM bump 2026-11-25: minSdk 23 -> 24, forced by Compose BOM 2026.11.01
+        // (material3-ripple 1.5.0 declares minSdk 24). Android 6.0 is dropped too.
+        minSdk        = 24
         targetSdk     = 35
         versionCode   = versionCodeFromEnv
         versionName   = versionNameFromEnv
@@ -361,13 +368,13 @@ android {
         isCoreLibraryDesugaringEnabled = true
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
+    // AGP 9.0 built-in Kotlin: `kotlinOptions` is gone — the Kotlin jvmTarget
+    // now defaults to compileOptions.targetCompatibility (17) above.
 
     buildFeatures {
         compose     = true
         buildConfig = true
+        resValues   = true
     }
 
     packaging {
@@ -399,6 +406,10 @@ android {
 // body — so an in-test Assume cannot catch it. Excluding here is the only place that works.
 // These classes therefore run on an x86_64 CI runner, never on this ARM host.
 tasks.withType<Test>().configureEach {
+    // Route Robolectric's own runtime downloader through Google's Maven
+    // Central mirror (it does not use Gradle's repositories, so the init
+    // script cannot cover it). Keeps the 429 off the test runtime jar.
+    systemProperty("robolectric.dependency.repo.url", "https://maven-central.storage-download.googleapis.com/maven2")
     // Full failure output (2026-11-23): the default SHORT exception format
     // prints only the exception type + one frame, which hid the message of
     // the Paparazzi Renderer.prepare failure for two CI runs. FULL prints
@@ -443,7 +454,7 @@ tasks.withType<Test>().configureEach {
 // Paparazzi-ONLY, so no Robolectric class loads first in the fork.
 // The wiring matters because Paparazzi 2.x changed the model under us:
 // recordPaparazziDebug / verifyPaparazziDebug are NOT their own Test tasks
-// (that was 1.x). In 2.0.0-alpha02 they are plain DefaultTasks that dependOn
+// (that was 1.x). In 2.0.0-alpha05.1 they are plain DefaultTasks that dependOn
 // testDebugUnitTest, and record/verify is just a system property on that
 // task (PaparazziPlugin.kt: recordTaskProvider/verifyTaskProvider dependOn
 // testTaskProvider; isRecordRun/isVerifyRun are task-graph flags). So an
@@ -708,7 +719,7 @@ dependencies {
 
     // ── Firebase (Crashlytics crash reporting + Analytics) ─────────────────
     // The BOM pins every Firebase library to one tested set (33.7.0:
-    // crashlytics 19.3.0, analytics 22.1.2 — both minSdk 21, below the app's 23). Crashlytics
+    // crashlytics 19.3.0, analytics 22.1.2 — both minSdk 21, below the app's 24). Crashlytics
     // uploads the release mapping file automatically via its Gradle plugin,
     // so release stack traces de-obfuscate without a manual step.
     implementation(platform(libs.firebase.bom))
@@ -726,7 +737,7 @@ dependencies {
     // ── Google Cast sender (E2 slice 3 spike) ─────────────────────────────
     // CastContext / Default Media Receiver wiring only — no cast button UI
     // yet (see App/docs/CAST_SPIKE_20261118.md). 21.4.0 stays pinned;
-    // the app's minSdk is 23 since the 2026-11-23 library bump.
+    // the app's minSdk is 24 since the 2026-11-25 BOM bump.
     implementation(libs.play.services.cast.framework)
     // MX #9 Cast: the real feature — media3-cast 1.11.1 (CastPlayer.Builder
     // + RemoteCastPlayer.Builder) for the remote player, mediarouter for

@@ -353,10 +353,9 @@ internal fun Scrubber(
             currentChapterStartMs.formatTime(),
         ),
     )
-    // P5 (player fixes) — BLOCKED on the pinned BOM: MaterialTheme.motionScheme
-    // is internal in material3 1.4.0 (Compose BOM 2025.11.01); the public API
-    // ships in material3 1.5.0, which needs a BOM bump + MaterialExpressiveTheme
-    // — a separate decision, not this branch. The expansion still rides the
+    // P5 (player fixes) — WIRED by the 2026-11-25 BOM bump: material3 1.5.0
+    // makes MotionScheme public and RaddStreamTheme sets
+    // motionScheme = MotionScheme.expressive(). The expansion still rides the
     // same M3 Expressive spatial token values (0.8/380 default, 0.6/800 fast)
     // via RaddMotion, which carries them directly — same springs, same pixels.
     val isDragging = draggingTargetMs != null

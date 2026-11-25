@@ -6,6 +6,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MotionScheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
@@ -168,19 +169,13 @@ object RaddMotion {
     // life; effects springs (fades, colour) are critically damped (1.0) so
     // they never overshoot. Screen enter/exit transitions keep the legacy
     // tween durations above — the skill keeps those for transitions.
-    // S7 (2027 Home fix) — REVERTED 24 Nov 2026, CI-proven: MotionScheme
-    // is INTERNAL in the pinned material3 (Compose BOM 2025.11.01) —
-    // MaterialTheme.motionScheme, the MotionScheme type and
-    // MotionScheme.expressive() are all `internal`, so no screen can read
-    // them. The developer.android.com reference describes a NEWER
-    // material3; this BOM does not carry the public API. The migration
-    // needs a BOM bump (the catalog notes 2026.11.01 needs compileSdk 37+)
-    // — a separate decision, out of this run. Until then the RaddMotion
-    // specs below carry the same token values, exactly as before.
-    // (MotionScheme itself is not read from MaterialTheme here: the pinned
-    // BOM 2025.11.01 / material3 could not be confirmed to carry it
-    // publicly, so these specs carry the same token values directly.
-    // Wiring MaterialTheme.motionScheme is the BOM-bump follow-up.)
+    // S7 (2027 Home fix) — WIRED 25 Nov 2026 (BOM bump): MotionScheme is
+    // PUBLIC in material3 1.5.0 (Compose BOM 2026.11.01) and
+    // RaddStreamTheme sets motionScheme = MotionScheme.expressive(), so M3
+    // components use the expressive springs natively. The RaddMotion specs
+    // below carry the same token values directly (0.6/800 fast, 0.8/380
+    // default, 1.0/1600 effects) for call sites that animate outside a
+    // MaterialTheme scope — same springs, same pixels, no double source.
     /** Fast move: small shape/bounds changes. */
     fun <T> fastSpatial() = spring<T>(dampingRatio = 0.6f, stiffness = 800f)
 
@@ -270,6 +265,10 @@ fun RaddStreamTheme(
         colorScheme = colorScheme,
         typography = RaddTypography,
         shapes = RaddShapes,
+        // BOM bump 2026-11-25: the M3 Expressive motion contract — M3
+        // components animate on these springs; RaddMotion carries the
+        // same token values for custom animations.
+        motionScheme = MotionScheme.expressive(),
         content = content,
     )
 }

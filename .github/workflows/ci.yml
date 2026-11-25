@@ -6,9 +6,10 @@ name: 🔨 CI — Android Build & Test
 #   lint, builds the debug APK, and uploads it plus failure diagnostics.
 #
 # WHAT IT NEEDS
-#   Nothing secret. JDK 17 (AGP 8.9.3 requires 17+), Android SDK platforms 35 + 36 +
-#   build-tools 35.0.0 (compileSdk=36 in App/app/build.gradle.kts; the
-#   baselineprofile module still compiles at 35).
+#   Nothing secret. JDK 21 (AGP 9.1.1 requires 17+; Paparazzi alpha04+ needs
+#   21), Android SDK platforms 35 + 36 + 37.0 + build-tools 35.0.0 + 36.0.0
+#   (compileSdk=37 in App/app/build.gradle.kts; the baselineprofile module
+#   compiles at 37 too since the BOM bump).
 #
 # DESIGN DECISIONS (2026)
 #   * Android SDK: we install an EXPLICIT package list with
@@ -22,7 +23,7 @@ name: 🔨 CI — Android Build & Test
 #         touches the Kotlin. An explicit step either works fast or fails loud.
 #       - GitHub-hosted ubuntu-24.04 images ship an SDK, but which
 #         platforms/build-tools are preinstalled drifts with image updates;
-#         pinning the packages we need (android-35, android-36, 35.0.0) is deterministic.
+#         pinning the packages we need (android-35, android-36, android-37.0, 35.0.0, 36.0.0) is deterministic.
 #   * Gradle is invoked ONCE per job with `--continue` so the fleet sees
 #     ALL of that job's task results in one log, not just the first failure.
 #     Task names are the AGP-generated per-variant tasks
@@ -86,11 +87,11 @@ jobs:
       - name: 📥 Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
-      - name: ☕ Set up JDK 17 (temurin)
+      - name: ☕ Set up JDK 21 (temurin)
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad  # v6.1.0
         with:
           distribution: temurin
-          java-version: "17"   # matches compileOptions VERSION_17 / jvmTarget 17
+          java-version: "21"   # Gradle runs on 21 (Paparazzi alpha04+ needs it); compileOptions / jvmTarget stay 17
 
       - name: 📦 Restore Gradle caches
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
@@ -98,15 +99,26 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-java17-${{ hashFiles('App/gradle/wrapper/gradle-wrapper.properties', 'App/gradle/libs.versions.toml', 'App/**/*.gradle.kts', 'App/**/*.gradle', 'App/settings.gradle.kts') }}
+            ~/.m2/repository/org/robolectric
+          key: gradle-${{ runner.os }}-java21-${{ hashFiles('App/gradle/wrapper/gradle-wrapper.properties', 'App/gradle/libs.versions.toml', 'App/**/*.gradle.kts', 'App/**/*.gradle', 'App/settings.gradle.kts') }}
           restore-keys: |
-            gradle-${{ runner.os }}-java17-
+            gradle-${{ runner.os }}-java21-
             gradle-${{ runner.os }}-
 
-      - name: 📱 Install Android SDK (platform-tools, android-35, android-36, build-tools 35.0.0)
+      - name: ✅ Accept Android SDK licenses (incl. API 37 preview)
+        # setup-android's own license step cannot accept the API 37 preview
+        # license non-interactively (its sdkmanager --licenses prompts and
+        # stdin is closed in CI). Pre-accept with the preinstalled
+        # cmdline-tools, which writes $ANDROID_HOME/licenses/ for the
+        # installer to honor. `|| true`: a hiccup here must not fail the
+        # job — the install step fails loudly if a license is still missing.
+        run: |
+          SDKMAN="${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools/latest/bin/sdkmanager"
+          if [ -x "$SDKMAN" ]; then yes | "$SDKMAN" --licenses > /dev/null 2>&1 || true; fi
+      - name: 📱 Install Android SDK (platform-tools, android-35, android-36, android-37.0, build-tools 35.0.0, build-tools 36.0.0)
         uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd  # v4.0.4
         with:
-          packages: "platform-tools platforms;android-35 platforms;android-36 build-tools;35.0.0"
+          packages: "platform-tools platforms;android-35 platforms;android-36 platforms;android-37.0 build-tools;35.0.0 build-tools;36.0.0"
 
       - name: 🔧 Make gradlew executable
         run: chmod +x App/gradlew
@@ -121,6 +133,11 @@ jobs:
         run: |
           if [ -z "$GOOGLE_SERVICES_JSON" ]; then echo "GOOGLE_SERVICES_JSON secret is empty" >&2; exit 1; fi
           echo "$GOOGLE_SERVICES_JSON" | base64 -d > App/app/google-services.json
+
+      - name: 🪞 Take what Gradle downloads from Maven Central from its mirror
+        run: |
+          mkdir -p ~/.gradle/init.d
+          cp .github/gradle/maven_central_mirror.gradle ~/.gradle/init.d/
 
       - name: "🏗️🧪 Gradle: debug APK + unit tests (single invocation)"
         working-directory: App
@@ -232,11 +249,11 @@ jobs:
       - name: 📥 Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
-      - name: ☕ Set up JDK 17 (temurin)
+      - name: ☕ Set up JDK 21 (temurin)
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad  # v6.1.0
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
 
       - name: 📦 Restore Gradle caches
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
@@ -244,15 +261,26 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-java17-${{ hashFiles('App/gradle/wrapper/gradle-wrapper.properties', 'App/gradle/libs.versions.toml', 'App/**/*.gradle.kts', 'App/**/*.gradle', 'App/settings.gradle.kts') }}
+            ~/.m2/repository/org/robolectric
+          key: gradle-${{ runner.os }}-java21-${{ hashFiles('App/gradle/wrapper/gradle-wrapper.properties', 'App/gradle/libs.versions.toml', 'App/**/*.gradle.kts', 'App/**/*.gradle', 'App/settings.gradle.kts') }}
           restore-keys: |
-            gradle-${{ runner.os }}-java17-
+            gradle-${{ runner.os }}-java21-
             gradle-${{ runner.os }}-
 
-      - name: 📱 Install Android SDK (platform-tools, android-35, android-36, build-tools 35.0.0)
+      - name: ✅ Accept Android SDK licenses (incl. API 37 preview)
+        # setup-android's own license step cannot accept the API 37 preview
+        # license non-interactively (its sdkmanager --licenses prompts and
+        # stdin is closed in CI). Pre-accept with the preinstalled
+        # cmdline-tools, which writes $ANDROID_HOME/licenses/ for the
+        # installer to honor. `|| true`: a hiccup here must not fail the
+        # job — the install step fails loudly if a license is still missing.
+        run: |
+          SDKMAN="${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools/latest/bin/sdkmanager"
+          if [ -x "$SDKMAN" ]; then yes | "$SDKMAN" --licenses > /dev/null 2>&1 || true; fi
+      - name: 📱 Install Android SDK (platform-tools, android-35, android-36, android-37.0, build-tools 35.0.0, build-tools 36.0.0)
         uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd  # v4.0.4
         with:
-          packages: "platform-tools platforms;android-35 platforms;android-36 build-tools;35.0.0"
+          packages: "platform-tools platforms;android-35 platforms;android-36 platforms;android-37.0 build-tools;35.0.0 build-tools;36.0.0"
 
       - name: 🔧 Make gradlew executable
         run: chmod +x App/gradlew
@@ -263,6 +291,11 @@ jobs:
         run: |
           if [ -z "$GOOGLE_SERVICES_JSON" ]; then echo "GOOGLE_SERVICES_JSON secret is empty" >&2; exit 1; fi
           echo "$GOOGLE_SERVICES_JSON" | base64 -d > App/app/google-services.json
+
+      - name: 🪞 Take what Gradle downloads from Maven Central from its mirror
+        run: |
+          mkdir -p ~/.gradle/init.d
+          cp .github/gradle/maven_central_mirror.gradle ~/.gradle/init.d/
 
       - name: "🔍 Gradle: lintDebug"
         working-directory: App
