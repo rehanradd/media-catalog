@@ -174,11 +174,13 @@ class SearchNoResultsTest {
         // APP-07 (round 2) illustrated the empty state, so the rail sits
         // lower than it used to: the viewer scrolls to the titles, and so
         // does this test, before asserting the first title is visible.
-        compose.onNodeWithText("Dune").performScrollTo().assertIsDisplayed()
+        // useUnmergedTree: the rail card merges its descendants, so the
+        // title text lives only in the unmerged tree.
+        compose.onNodeWithText("Dune", useUnmergedTree = true).performScrollTo().assertIsDisplayed()
         // The rail replaces the fallback button: one Browse door, not two.
         compose.onAllNodesWithText("Browse trending").assertCountEquals(0)
 
-        compose.onAllNodesWithText("Dune")[0].performScrollTo().performClick()
+        compose.onAllNodesWithText("Dune", useUnmergedTree = true)[0].performScrollTo().performClick()
         assertEquals(1, clicked?.id)
         compose.onNodeWithTag(SeeAllTrendingTag).performClick()
         assertEquals(1, browseTaps)

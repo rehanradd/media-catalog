@@ -7,8 +7,10 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.unit.dp
 import androidx.paging.LoadState
 import androidx.paging.LoadStates
@@ -72,13 +74,13 @@ class SearchPagingTest {
             RaddStreamTheme {
                 // A tall viewport: SearchContent is a LazyColumn, and a lazy
                 // item below the fold is never composed — the append footer
-                // must exist as a node before the test can see it. 1200dp,
-                // not 1000dp: the round-2 category tabs add ~112dp above the
-                // results, which pushed the footer out of the old viewport.
-                // 1200dp reaches the first skeleton row (and the inline
-                // retry, which sits in its place) but not the second row,
-                // so the two-cell pin below still holds.
-                Box(Modifier.size(width = 360.dp, height = 1200.dp)) {
+                // must exist as a node before the test can see it. The
+                // viewport height here is a floor, not the whole story:
+                // Robolectric caps the test window (~470dp), so the footer
+                // sits below the fold even in a 1200dp box, and the tests
+                // below scroll the list to it instead of relying on the
+                // box height alone.
+                Box(Modifier.size(width = 360.dp, height = 1000.dp)) {
                     val pagingItems = flow.collectAsLazyPagingItems()
                     SearchContent(
                         state = SearchUiState(
@@ -138,20 +140,27 @@ class SearchPagingTest {
     fun appendLoadingShowsSkeletonRowsNotASpinner() {
         // While the next page is out, the tail of the list is two rows of
         // the S5 geometry-matched skeleton cells — four cells, no spinner.
-        // The test viewport only composes the first row: a LazyColumn never
-        // lays out the second row while it sits below the fold, so the pin
-        // is the two visible cells, not all four.
+        // The footer sits below the fold in the test window (the round-2
+        // category tabs added ~112dp above the results), so the test
+        // scrolls the list to it — item 4, after the tabs, the summary,
+        // the header and the one poster row. Scrolling to it composes
+        // both skeleton rows, so the pin is all four cells.
+        // refresh endOfPaginationReached = true, local to this test: it
+        // stops the pager auto-appending (the Error sibling's fixup-3
+        // mechanism), so the fixture Loading persists instead of being
+        // overwritten by NotLoading before the scroll lands.
         setResults(
             PagingData.from(
                 data = listOf(samplePost(1, "One Piece")),
                 sourceLoadStates = LoadStates(
-                    refresh = idle,
+                    refresh = LoadState.NotLoading(endOfPaginationReached = true),
                     prepend = idle,
                     append = LoadState.Loading,
                 ),
             ),
         )
-        compose.onAllNodesWithTag("searchAppendSkeleton").assertCountEquals(2)
+        compose.onNodeWithTag(SearchResultsListTag).performScrollToIndex(4)
+        compose.onAllNodesWithTag("searchAppendSkeleton").assertCountEquals(4)
     }
 
     @Test
@@ -190,13 +199,12 @@ class SearchPagingTest {
         // if the footer never appears — a missing retry row is not
         // papered over, it is waited for.
         //
-        // The footer is composed but sits below the visible area: the
-        // LazyColumn composes a buffer beyond its viewport, so the node
-        // exists (waitUntil passes — fixup 3's endOfPagination refresh
-        // made the Error persist) while assertIsDisplayed fails (the
-        // row is clipped out of view). Scroll it into view first, the
-        // way a viewer scrolls to reach the retry row; if the node is
-        // already visible this is a no-op.
+        // The footer sits below the fold in the test window (the round-2
+        // category tabs added ~112dp above the results), so scroll the
+        // list to it first — item 4, after the tabs, the summary, the
+        // header and the one poster row — or waitUntil polls a footer
+        // the LazyColumn never composed.
+        compose.onNodeWithTag(SearchResultsListTag).performScrollToIndex(4)
         compose.waitUntil(timeoutMillis = 5_000) {
             compose.onAllNodesWithText("Could not load more.")
                 .fetchSemanticsNodes().isNotEmpty()

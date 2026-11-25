@@ -190,6 +190,9 @@ internal const val FilterRailFadeTag = "filter-rail-fade"
 /** Test tag on the did-you-mean suggestion chip in the results list. */
 internal const val DidYouMeanTag = "searchDidYouMean"
 
+/** Test tag on the results LazyColumn, so a test can scroll it to the append footer. */
+internal const val SearchResultsListTag = "searchResultsList"
+
 /**
  * The Browse route's type for a "See all" tap: the rail's type values are
  * the Browse route's, except "kpop" — the server has no kpop content_type
@@ -802,9 +805,11 @@ internal fun SavedFilterRow(
                 // of this box, not a child of the clickable — as a child,
                 // the X's remove action answered the chip's own tap instead
                 // of the apply action (SavedFilterRowTest, round 2).
+                // No weight here: the row sits in a horizontally scrolling
+                // row, whose width is unbounded, so weight(1f) measures
+                // this box at zero width and the label vanishes.
                 Box(
                     modifier = Modifier
-                        .weight(1f)
                         .clickable { onApply(saved) }
                         .semantics {
                             contentDescription = "Apply saved filter ${saved.label}"
@@ -1716,7 +1721,10 @@ internal fun SearchContent(
                 OutlinedButton(onClick = onShowCloseMatches) { Text("Show close matches") }
             },
         )
-        else -> LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+        else -> LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize().testTag(SearchResultsListTag),
+        ) {
             // SE-1 (round 2): the category tabs sit above the results — a
             // tab strip (Genre / Language / Year) with quick chips under it,
             // so the viewer scopes the list without opening the sheet.
