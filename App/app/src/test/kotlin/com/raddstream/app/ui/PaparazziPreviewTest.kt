@@ -46,7 +46,6 @@ import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.screens.DetailContent
 import com.raddstream.app.ui.screens.EpisodeRowSection
 import com.raddstream.app.ui.screens.EpisodeTile
-import com.raddstream.app.ui.screens.PrimaryActions
 import com.raddstream.app.ui.screens.SeasonPackRow
 import com.raddstream.app.ui.screens.SeasonTile
 import com.raddstream.app.ui.screens.FilterRail
@@ -865,28 +864,44 @@ class PaparazziPreviewTest {
         }
     }
 
-    // DT-1 (round 2, Nov 2026): the Play button mid-resolve — the
-    // determinate arc at 0.55 with the stage label ("Finding the best
-    // copy…"), beside the Download button it resolves for. Shot on its
-    // own because the arc only exists while a Play tap is in flight,
-    // and no full-page golden holds that state.
+    // DT-1 (round 2, Nov 2026): the Play button mid-resolve, in situ —
+    // the determinate arc at 0.55 with the stage label ("Finding the
+    // best copy…") on the movie page. A full-page shot, not a direct
+    // PrimaryActions shot: PrimaryActions stays private (SkeletonParityTest
+    // reads it by that signature), and the button sits above the fold,
+    // so the page shot proves the arc renders where viewers see it.
     @Test
-    fun detailPlayResolving() {
+    fun detailMovieResolving() {
         paparazzi.snapshot {
             themed {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    PrimaryActions(
-                        playLabel = "Resume S1:E2 · 30 min left",
-                        playEnabled = true,
-                        playStarting = true,
-                        playProgress = 0.55f,
-                        playStage = "Finding the best copy…",
-                        onPlayPrimary = {},
-                        downloadLabel = "Download S1:E2 · 720p · 1.3 GB",
-                        downloadEnabled = true,
-                        onDownloadPrimary = {},
-                    )
-                }
+                DetailContent(
+                    post = jawanDetail,
+                    seasons = emptyList(),
+                    workPrints = moviePrints,
+                    capabilities = listOf("Hindi audio"),
+                    isSeries = false,
+                    resume = null,
+                    includedPill = "VIP",
+                    playLabel = "Play",
+                    playEnabled = true,
+                    // DT-1: the resolve is mid-flight — the button
+                    // paints the determinate arc + stage label, not a
+                    // bare "Starting…" swap.
+                    playStarting = true,
+                    playProgress = 0.55f,
+                    playStage = "Finding the best copy…",
+                    videoQualityText = "Auto · up to 1080p",
+                    downloadLabel = "Download · 1080p · 1.3 GB",
+                    downloadEnabled = true,
+                    onOpenSeason = {},
+                    similarTitles = listOf(salaars, mclintock),
+                    reloadError = null,
+                    onRetryReload = {},
+                    isFavorite = false,
+                    onToggleFavorite = {},
+                    onShare = {},
+                    contentPadding = PaddingValues(0.dp),
+                )
             }
         }
     }

@@ -37,7 +37,10 @@ class RaddTokensTest {
 
     @Test
     fun radiiFollowTheSpec() {
-        assertEquals(8.dp, RaddTokens.Radius.Poster)
+        // Round 2 (Nov 2026): the brief's card radius is 16–20dp, and
+        // the Poster token moved 8dp -> 16dp with it — the 8dp the old
+        // assertion pinned was the pre-brief value.
+        assertEquals(16.dp, RaddTokens.Radius.Poster)
         assertEquals(8.dp, RaddTokens.Radius.Thumb)
         assertEquals(4.dp, RaddTokens.Radius.Chip)
         assertEquals(12.dp, RaddTokens.Radius.Input)

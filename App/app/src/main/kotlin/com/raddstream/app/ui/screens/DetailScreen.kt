@@ -1342,24 +1342,28 @@ internal fun DetailContent(
 
         if (similarTitles.isNotEmpty()) {
             item(contentType = "similar-titles") {
-                DetailEntrance(index = 7) {
-                    Column(
-                        modifier = Modifier
-                            .bringIntoViewRequester(similarBringIntoView)
-                            .then(pageSides),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        SectionHeader(title = "More Like This")
-                        MediaRail(
-                            items = similarTitles,
-                            key = { it.id },
-                            contentPadding = PaddingValues(0.dp),
-                        ) { similar ->
-                            PosterCard(
-                                post = similar,
-                                onClick = { onPostClick(similar) },
-                            )
-                        }
+                // DT-4 (round 2): the rail is the page's LAST item and
+                // arrives via scroll, not via page entrance — it carries
+                // no staggered entrance. Wrapping it in DetailEntrance
+                // hid the rail from the semantics tree until its 420ms
+                // delay elapsed, so DetailRedesignTest's swipe-to-rail
+                // could not find "More Like This" (Android 45538692963).
+                Column(
+                    modifier = Modifier
+                        .bringIntoViewRequester(similarBringIntoView)
+                        .then(pageSides),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    SectionHeader(title = "More Like This")
+                    MediaRail(
+                        items = similarTitles,
+                        key = { it.id },
+                        contentPadding = PaddingValues(0.dp),
+                    ) { similar ->
+                        PosterCard(
+                            post = similar,
+                            onClick = { onPostClick(similar) },
+                        )
                     }
                 }
             }
@@ -1764,7 +1768,7 @@ private fun DetailCastButton() {
  * `heightIn(min = 48.dp)`: SkeletonParityTest reads the source for both.
  */
 @Composable
-internal fun PrimaryActions(
+private fun PrimaryActions(
     modifier: Modifier = Modifier,
     /** The Play label from the ViewModel: "Play", "Resume S1:E3 · 23 min left". */
     playLabel: String,
@@ -2815,7 +2819,10 @@ private fun EpisodeCard(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(16f / 9f),
+                // CardGeometryTest: every aspect ratio comes from a
+                // CardGeometry constant — the 16:9 still is
+                // WIDE_ART_ASPECT, never a literal in a screen.
+                .aspectRatio(CardGeometry.WIDE_ART_ASPECT),
             contentAlignment = Alignment.Center,
         ) {
             if (!episode.stillUrl.isNullOrBlank()) {
