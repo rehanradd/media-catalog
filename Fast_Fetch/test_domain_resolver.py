@@ -888,7 +888,7 @@ class RegistryCorrections20261123Tests(unittest.TestCase):
     def test_10xflix_moved_to_beer(self):
         reg = dr.load_registry()
         entry = reg["sites"]["10xflix"]
-        self.assertEqual(entry["active_base_url"], "https://10xflix.beer")
+        self.assertEqual(entry["active_base_url"], "https://10xflix.beer/m")
         self.assertIn("https://10xflix.beer", entry["known_mirrors"])
         # Retirement rule: the old base stays listed (needle superset).
         self.assertIn("https://10xflix.asia", entry["known_mirrors"])

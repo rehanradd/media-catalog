@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-import_10xflix.py — Dedicated staging importer and scraper for 10xflix (https://10xflix.beer).
+import_10xflix.py — Dedicated staging importer and scraper for 10xflix (https://10xflix.beer/m).
 
 Key Features:
   1. Dedicated staging SQLite database: 10xflix.db (strictly isolated from fast_fetch.db).
@@ -58,7 +58,7 @@ import fast_fetch
 from config import staging_db_path
 from domain_resolver import get_active_base_url, resolve_if_dead
 
-DEFAULT_BASE_URL = "https://10xflix.beer"
+DEFAULT_BASE_URL = "https://10xflix.beer/m"
 SITE_NAME = "10xflix"
 DEFAULT_DB_PATH = staging_db_path("10xflix")
 STATUS_FILE = BASE_DIR / "10xflix_status.json"
@@ -364,6 +364,24 @@ def extract_wp_post_metadata(content_html: str) -> dict:
     }
 
 
+def extract_content_poster(content_html: str) -> str | None:
+    """First poster image embedded in a post's content HTML.
+
+    The /m/ install serves no wp:featuredmedia via _embed, but every
+    sampled post carries its poster as the first <img> in content — a
+    blogger.googleusercontent.com /s1600/ image (falling back to a
+    wp-content/uploads image). Without this, every new 10xflix post
+    banks poster_url NULL. Non-poster images (trackers, buttons) are
+    skipped: only the two poster hosts count.
+    """
+    if not content_html:
+        return None
+    for src in re.findall(r'<img[^>]+src=["\']([^"\']+)["\']', content_html, re.IGNORECASE):
+        if "blogger.googleusercontent.com" in src or "/wp-content/uploads/" in src:
+            return src
+    return None
+
+
 def clean_10xflix_title(raw_title: str) -> tuple[str, int | None, int | None, int | None, str]:
     """
     Cleans raw 10xflix title into canonical metadata.
@@ -482,6 +500,11 @@ def extract_post_data_10xflix(
     media_list = embedded.get("wp:featuredmedia", [])
     if media_list and isinstance(media_list, list):
         poster_url = media_list[0].get("source_url")
+    if not poster_url:
+        # 23 Nov 2026: the /m/ install serves no wp:featuredmedia via
+        # _embed (0/5 sampled live posts), but every post carries its
+        # poster as the first blogger image inside content.rendered.
+        poster_url = extract_content_poster(content_html)
 
     # Extract categories
     categories = []

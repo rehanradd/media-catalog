@@ -3,14 +3,14 @@
   "updated_at": "2026-11-23T06:22:36Z",
   "sites": {
     "10xflix": {
-      "active_base_url": "https://10xflix.beer",
-      "last_verified": "2026-11-23T00:00:00Z",
-      "verified_by": "homepage",
+      "active_base_url": "https://10xflix.beer/m",
+      "last_verified": "2026-11-23T01:05:00Z",
+      "verified_by": "wp-json",
       "known_mirrors": [
+        "https://10xflix.beer/m",
         "https://10xflix.beer",
         "https://10xflix.asia",
-        "https://10xflix.bond",
-        "https://10xflix.beer"
+        "https://10xflix.bond"
       ],
       "slug_variants": [
         "10xflix"
@@ -31,17 +31,18 @@
         },
         {
           "domain": "https://10xflix.asia",
-          "seen_from": "2026-11-08"
+          "seen_from": "2026-11-08",
+          "seen_until": "2026-11-23"
         },
         {
-          "domain": "https://10xflix.beer",
+          "domain": "https://10xflix.beer/m",
           "seen_from": "2026-11-23"
         }
       ],
-      "last_checked": "2026-11-23T00:00:00Z",
+      "last_checked": "2026-11-23T01:05:00Z",
       "api_endpoint": "/wp-json/wp/v2/posts",
-      "notes": "Canonical moved to 10xflix.beer (site-API hunt 2026-11-23); WP REST gone on .asia/.beer/.bond (404) — no API; HTML scrape only.",
-      "site_name": "10xflix"
+      "site_name": "10xflix",
+      "notes": "WP install moved under /m/ on 10xflix.beer (root is a splash gate; /wp-json 404s at root, live at /m/wp-json/wp/v2/posts, X-WP-Total 17718 on 2026-11-23). 10xflix.asia 301s to 10xflix.beer. Verified live from Oracle VM egress 2026-11-23."
     },
     "7starhd": {
       "active_base_url": "https://7starhd.surgery",

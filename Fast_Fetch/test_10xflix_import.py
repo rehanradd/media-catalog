@@ -172,5 +172,101 @@ class Session104TenXFlixTests(unittest.TestCase):
         self.assertEqual([r["quality"] for r in rels], ["1080p", "720p"])
 
 
+class Session20261123BeerMoveTests(unittest.TestCase):
+    """23 Nov 2026: the site moved to 10xflix.beer with WordPress under /m/.
+
+    Root /wp-json 404s on every known domain; /m/wp-json/wp/v2/posts is
+    live (X-WP-Total 17,718, newest 2026-11-22, verified from Oracle VM
+    egress). The sync must target the /m/ base, and posts must keep
+    posters even though /m/ serves no wp:featuredmedia via _embed — the
+    poster is the first blogger <img> inside content.rendered (5/5
+    sampled live posts). All fixtures, no live network.
+    """
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.temp_dir.name) / "test_10xflix.db"
+        import_10xflix.init_staging_db(self.db_path)
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    BEER_M_POST = {
+        "title": {"rendered": "Max (2025) Hindi ORG Dubbed South Movie HDRip | 1080p | 720p | 480p | ESubs"},
+        "link": "https://10xflix.beer/m/max-2025-hindi-org-dubbed-south-movie-hdrip-1080p-720p-480p-esubs/",
+        "slug": "max-2025-hindi-org-dubbed-south-movie-hdrip-1080p-720p-480p-esubs",
+        "modified": "2026-11-22T22:10:25",
+        "content": {"rendered": (
+            '<p><img src="https://blogger.googleusercontent.com/img/b/ABC/s1600/Max%20(2025)%20Hindi.jpg" /></p>'
+            '<p><a href="https://mobilejsr.com/view/Cn5QFjTZTK">1080p [2.02GB]</a></p>'
+            '<p><a href="https://mobilejsr.com/view/DcZrtZO37j">720p [997MB]</a></p>'
+        )},
+        "_embedded": {"wp:term": [[{"name": "Action"}]]},
+    }
+
+    def test_default_base_url_is_beer_m(self):
+        self.assertEqual(import_10xflix.DEFAULT_BASE_URL, "https://10xflix.beer/m")
+
+    def test_client_resolves_to_registry_beer_m(self):
+        # The shipped registry is the source of truth; the client must
+        # resolve to the /m/ base, not the dead .asia root.
+        self.assertEqual(
+            import_10xflix.TenXFlixClient().base_url, "https://10xflix.beer/m")
+
+    def test_extract_post_data_beer_m_poster_fallback(self):
+        data = import_10xflix.extract_post_data_10xflix(
+            self.BEER_M_POST, resolve_direct=False)
+        self.assertIsNotNone(data)
+        self.assertEqual(
+            data["post_url"],
+            "https://10xflix.beer/m/max-2025-hindi-org-dubbed-south-movie-hdrip-1080p-720p-480p-esubs/")
+        self.assertIn("blogger.googleusercontent.com", data["poster_url"])
+        self.assertIn("/s1600/", data["poster_url"])
+        self.assertEqual(len(data["releases"]), 2)
+
+    def test_content_poster_prefers_blogger_image(self):
+        html = (
+            '<img src="https://example.com/tracker.gif" />'
+            '<img src="https://blogger.googleusercontent.com/img/b/ABC/s1600/Poster.jpg" />'
+            '<img src="https://10xflix.beer/m/wp-content/uploads/2026/11/other.jpg" />'
+        )
+        self.assertIn("blogger.googleusercontent.com",
+                      import_10xflix.extract_content_poster(html))
+        self.assertIsNone(import_10xflix.extract_content_poster(
+            '<img src="https://example.com/tracker.gif" />'))
+        self.assertIsNone(import_10xflix.extract_content_poster(""))
+
+    def test_sync_queues_beer_m_posts_offline(self):
+        # Stub the HTTP client: the sync path must build
+        # {base}/wp-json/wp/v2/posts under /m/ and queue the post.
+        from unittest.mock import patch
+
+        requested = []
+        post = self.BEER_M_POST
+
+        class StubClient:
+            base_url = "https://10xflix.beer/m"
+
+            def get_json(self, url, timeout=15):
+                requested.append(url)
+                return 200, [post], {"x-wp-total": "17718"}
+
+        with patch.object(import_10xflix, "TenXFlixClient", StubClient):
+            new_count = import_10xflix.sync_wp_api_to_db(
+                self.db_path, max_pages=1)
+
+        self.assertEqual(new_count, 1)
+        self.assertTrue(requested)
+        self.assertIn("https://10xflix.beer/m/wp-json/wp/v2/posts",
+                      requested[0])
+        with sqlite3.connect(str(self.db_path)) as conn:
+            row = conn.execute(
+                "SELECT loc, scraped FROM sitemap_cache;").fetchone()
+        self.assertEqual(
+            row[0],
+            "https://10xflix.beer/m/max-2025-hindi-org-dubbed-south-movie-hdrip-1080p-720p-480p-esubs/")
+        self.assertEqual(row[1], 0)
+
+
 if __name__ == "__main__":
     unittest.main()
