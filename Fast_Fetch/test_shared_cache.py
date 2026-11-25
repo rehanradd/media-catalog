@@ -319,19 +319,34 @@ class TestSharedByConstruction(unittest.TestCase):
         self.assertIsNone(resolved_cache.lookup_cache(conn, 100, now=NOW))
 
     def test_ip_bound_row_is_refused_without_opt_in(self):
+        # API-01: opting in alone no longer serves a bound row — the old
+        # opt-in replayed one client's token to any caller, which is the
+        # hole (F-01). The row serves only to the IP it was minted for.
         conn = _make_conn()
         conn.execute(
             "INSERT INTO resolved_cache (link_id, url, category, kind,"
             " mime_type, file_size_bytes, resolved_at, expires_at,"
             " reverify_after, is_resumable, http_status, source, ip_bound,"
-            " fail_count) VALUES (100, 'https://pixeldrain.com/api/file/X',"
-            " 'A', 'file', 'video/mp4', 1000, ?, ?, ?, 1, 200, 'jit', 1, 0)",
+            " minted_ip, fail_count) VALUES (100,"
+            " 'https://pixeldrain.com/api/file/X',"
+            " 'A', 'file', 'video/mp4', 1000, ?, ?, ?, 1, 200, 'jit', 1,"
+            " '203.0.113.7', 0)",
             (NOW, NOW + 3600, NOW + 120))
         conn.commit()
         self.assertIsNone(resolved_cache.lookup_cache(conn, 100, now=NOW))
+        self.assertIsNone(
+            resolved_cache.lookup_cache(conn, 100, now=NOW,
+                                        allow_ip_bound=True),
+            "opt-in without the minting IP proves nothing")
+        self.assertIsNone(
+            resolved_cache.lookup_cache(conn, 100, now=NOW,
+                                        allow_ip_bound=True,
+                                        client_ip="198.51.100.9"),
+            "a foreign IP reads as a miss and re-resolves")
         self.assertIsNotNone(
             resolved_cache.lookup_cache(conn, 100, now=NOW,
-                                        allow_ip_bound=True))
+                                        allow_ip_bound=True,
+                                        client_ip="203.0.113.7"))
 
 
 class TestNoteSharedDemand(unittest.TestCase):

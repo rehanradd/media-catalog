@@ -59,6 +59,8 @@ FIXTURE = [
      "active", 0, None, None, None, None, None, None, None, None),
     (10, "hubcdn", CLOUD.format("JJJ"), CLOUD.format("JJJ"),
      "active", 0, None, None, None, None, None, None, None, None),
+    (11, "hubcdn", CLOUD.format("KKK"), CLOUD.format("KKK"),
+     "active", 0, None, None, None, None, None, None, None, None),
 ]
 
 
@@ -84,6 +86,10 @@ def fake_unwrap(url, timeout=8):
     if key == "JJJ":
         return {"ok": False, "error": "preparing_download",
                 "preparing_target": "https://new1.filesdl.in/drive/xyz"}
+    if key == "KKK":
+        return {"ok": True,
+                "r2_url": "https://pub-5703108c07374cf4bf82a6a6e2041364.r2.dev/k",
+                "google_url": GOOGLE.format("k")}
     raise AssertionError(f"unexpected unwrap of {url}")
 
 
@@ -135,7 +141,7 @@ class BackfillHubcdnTests(unittest.TestCase):
         stats = bh.backfill(self.db, apply=False, delay=0.0,
                             unwrap=counting_unwrap, probe=fake_probe)
         self.assertEqual(calls, [])
-        self.assertEqual(stats["scanned"], 7)  # rows 1, 2, 3, 4, 8, 9, 10
+        self.assertEqual(stats["scanned"], 8)  # rows 1, 2, 3, 4, 8, 9, 10, 11
         self.assertEqual(stats["rewritten"], 0)
         self.assertEqual(stats["skipped_direct"], 1)  # row 5 only
         self.assertEqual(self.row(1)["final_url"], CLOUD.format("AAA"))
@@ -144,13 +150,14 @@ class BackfillHubcdnTests(unittest.TestCase):
         stats = bh.backfill(self.db, apply=True, delay=0.0,
                             unwrap=fake_unwrap, probe=fake_probe)
         self.assertEqual(stats, {
-            "scanned": 7, "rewritten": 2, "google_only": 1,
+            "scanned": 8, "rewritten": 3, "google_only": 1,
             "unwrap_failed": 2, "probe_failed": 1, "preparing": 1,
             "skipped_direct": 1, "projection_mirrored": 0})
         first = self.row(1)
         self.assertEqual(first["final_url"], R2.format("a"))
         self.assertEqual(first["status"], "active")
-        self.assertEqual(first["is_temporary"], 0)
+        # Row 1's bucket (pub-x123) is unproven, so it banks temporary.
+        self.assertEqual(first["is_temporary"], 1)
         self.assertEqual(first["mime_type"], "video/x-matroska")
         self.assertEqual(first["http_status"], 206)
         self.assertEqual(first["is_resumable"], 1)
@@ -158,6 +165,18 @@ class BackfillHubcdnTests(unittest.TestCase):
         self.assertIsNone(first["last_failed_at"])
         self.assertIsNone(first["failure_class"])
         self.assertIsNone(first["expires_at"])
+        # Row 11's bucket is the measured-proven one: permanent.
+        eleventh = self.row(11)
+        self.assertEqual(
+            eleventh["final_url"],
+            "https://pub-5703108c07374cf4bf82a6a6e2041364.r2.dev/k")
+        self.assertEqual(eleventh["is_temporary"], 0)
+
+    def test_apply_banks_fresh_bucket_temporary_and_proven_permanent(self):
+        bh.backfill(self.db, apply=True, delay=0.0,
+                    unwrap=fake_unwrap, probe=fake_probe)
+        self.assertEqual(self.row(1)["is_temporary"], 1)  # pub-x123, unproven
+        self.assertEqual(self.row(11)["is_temporary"], 0)  # proven bucket
 
     def test_apply_clears_stale_failure_and_expiry(self):
         bh.backfill(self.db, apply=True, delay=0.0,
