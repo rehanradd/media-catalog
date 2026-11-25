@@ -372,5 +372,76 @@ class CrawlSurfaceTests(unittest.TestCase):
                                  SUBJECT["subjectId"])
 
 
+#: Feed-item shape (field population, 2026-11-23): the harvest feed carries
+#: `staffList` — typed entries, same shape as `stars` — but no `cast`/`stars`
+#: at all, and an empty `description`. Modelled on the live SEAL Team feed
+#: item (subjectId 5302091346856006688), whose names sat unused in raw_meta
+#: while cast_names stayed NULL. One director, one writer, one untyped
+#: producer (staffType 9 — must never become cast), and a duplicated actor
+#: (same staffId, two character spellings — deduped).
+FEED_STAFF_LIST = [
+    {"staffId": "8993816003504131888", "staffType": 1,
+     "name": "David Boreanaz", "character": "Jason Hayes"},
+    {"staffId": "8458292268125015736", "staffType": 1,
+     "name": "Neil Brown Jr.", "character": "Ray Perry"},
+    {"staffId": "4705052152108044080", "staffType": 1,
+     "name": "A.J. Buckley", "character": "Sonny Quinn"},
+    {"staffId": "8993816003504131888", "staffType": 1,
+     "name": "David Boreanaz", "character": "Jason Hayes (S1)"},
+    {"staffId": "9000000000000000009", "staffType": 2,
+     "name": "Christopher Chulack", "character": "Director"},
+    {"staffId": "9000000000000000010", "staffType": 3,
+     "name": "Benjamin Cavell", "character": "Writer"},
+    {"staffId": "9000000000000000011", "staffType": 9,
+     "name": "Some Producer", "character": "Producer"},
+]
+FEED_ITEM = dict(SUBJECT, title="SEAL Team S1-S7", description="",
+                 releaseDate="2017-09-27", genre="Action,Drama,War",
+                 detailPath="seal-team-a1OiEtlDFj6",
+                 subjectId="5302091346856006688", staffList=FEED_STAFF_LIST)
+FEED_URL = "https://themoviebox.xyz/detail/seal-team-a1OiEtlDFj6"
+
+
+class StaffListFallbackTests(unittest.TestCase):
+    def test_staff_list_maps_to_cast_director_writers_on_the_harvest_path(self):
+        record = mb._build_record(FEED_ITEM, [], FEED_URL)
+        self.assertIsNotNone(record)
+        self.assertEqual(
+            record["cast_names"],
+            "David Boreanaz, Neil Brown Jr., A.J. Buckley")
+        self.assertEqual(record["director"], "Christopher Chulack")
+        self.assertEqual(record["raw_meta"]["writers"], "Benjamin Cavell")
+        # The untyped producer never becomes cast, director or writer.
+        for field in (record["cast_names"], record["director"],
+                      record["raw_meta"]["writers"]):
+            self.assertNotIn("Some Producer", field)
+        # Raw evidence is still kept.
+        self.assertIn("David Boreanaz", record["raw_meta"]["staff"])
+
+    def test_explicit_cast_still_wins_over_staff_list(self):
+        item = dict(FEED_ITEM, cast="Someone Else")
+        record = mb._build_record(item, [], FEED_URL)
+        self.assertEqual(record["cast_names"], "Someone Else")
+        # ... but the director still comes from the staff list.
+        self.assertEqual(record["director"], "Christopher Chulack")
+
+    def test_untyped_and_bare_string_staff_are_never_cast(self):
+        cast, directors, writers = mb._credits_from_staff_list(
+            [[{"staffId": "1", "name": "No Type Person"},
+              {"staffId": "2", "staffType": 9, "name": "Producer Person"}],
+             "Just, A, String"])
+        self.assertEqual((cast, directors, writers), ([], [], []))
+
+    def test_detail_path_stars_still_win_over_staff_list(self):
+        # The detail answer carries both: stars are the authority there.
+        payload = {"code": 0, "message": "ok", "data": dict(
+            DATA, subject=dict(SUBJECT, staffList=FEED_STAFF_LIST))}
+        record = record_for(payload)
+        self.assertIn("Dominic Purcell", record["cast_names"])
+        self.assertNotIn("David Boreanaz", record["cast_names"])
+        self.assertEqual(record["director"],
+                         "Bobby Roth, Kevin Hooks, Dwight H. Little")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

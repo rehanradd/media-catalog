@@ -239,8 +239,11 @@ EPISODE_KEYS = ("episodeNumber", "episode_number", "episode", "epNum", "ep")
 SEASON_KEYS = ("seasonNumber", "season_number", "season", "se")
 CAST_KEYS = ("cast", "actors")
 #: ``staffList`` is credited people of *any* kind (its ``staffType`` distinguishes
-#: them and no populated example has been captured from this site yet), so its
-#: names are kept as raw evidence rather than asserted to be the cast.
+#: them). Its names are kept as raw evidence in ``raw_meta["staff"]`` AND, since
+#: 2026-11-23, mapped to cast/director/writer by ``_credits_from_staff_list``
+#: — the feed items carry ``staffList`` (typed, same shape as ``stars``) but no
+#: ``cast``/``stars`` at all, which is why harvest rows had cast 45% with the
+#: names sitting unused in raw_meta.
 STAFF_LIST_KEYS = ("staffList", "staff")
 DUB_KEYS = ("dubs", "languages", "audio", "subtitles", "audioLanguages")
 RATING_KEYS = ("rating", "imdbRating", "imdb_rating", "voteAverage",
@@ -1169,6 +1172,13 @@ def _build_record(anchor: dict, candidates: list, page_url: str) -> dict | None:
     backdrop_urls = [s for s in ([backdrop] + stills) if s]
     evidence = _trailer_evidence(candidates[0][0] if candidates else anchor,
                                  candidates[0][1] if candidates else [])
+    # Staff fallback (2026-11-23): feed items carry `staffList` but no
+    # `cast`/`stars`, so without this the harvest path kept the names only
+    # as raw evidence while cast_names stayed empty. Typed only — an
+    # untyped entry is ignored, never asserted to be cast. The detail path
+    # later overrides these from `stars` when it has them.
+    staff_cast, staff_directors, staff_writers = _credits_from_staff_list(
+        _lookup_values(anchor, all_ancestors, STAFF_LIST_KEYS))
 
     record = {
         "canonical_key": fast_fetch.generate_canonical_key(title, year),
@@ -1184,8 +1194,11 @@ def _build_record(anchor: dict, candidates: list, page_url: str) -> dict | None:
         "imdb_rating": _lookup(anchor, [], RATING_KEYS),
         "synopsis": _lookup(anchor, [], SYNOPSIS_KEYS),
         "genres": _join_labels(_lookup_raw(anchor, all_ancestors, GENRE_KEYS)),
-        "director": None,
-        "cast_names": _join_labels(_lookup_raw(anchor, all_ancestors, CAST_KEYS)),
+        "director": ", ".join(staff_directors) or None,
+        "cast_names": (
+            _join_labels(_lookup_raw(anchor, all_ancestors, CAST_KEYS))
+            or (", ".join(staff_cast) or None)
+        ),
         "duration": _duration_text(_lookup(anchor, [], DURATION_KEYS)),
         "release_date": release_date,
         "languages": _join_labels(_lookup_values(anchor, all_ancestors, DUB_KEYS)),
@@ -1211,6 +1224,7 @@ def _build_record(anchor: dict, candidates: list, page_url: str) -> dict | None:
             "avgHueDark": _lookup(anchor, [], ("avgHueDark", "avg_hue_dark")),
             "staff": _join_labels(_lookup_raw(anchor, all_ancestors,
                                               STAFF_LIST_KEYS)),
+            "writers": ", ".join(staff_writers) or None,
             "isPornographic": _flag(anchor, all_ancestors, ADULT_FLAG_KEYS) or None,
             "webHighRisk": _flag(anchor, all_ancestors, HIGH_RISK_KEYS) or None,
             **evidence,
@@ -1374,6 +1388,51 @@ def _credits_from_stars(stars):
             bucket, target = "writer", writers
         else:
             bucket, target = "cast", cast
+        if ident not in seen[bucket]:
+            seen[bucket].add(ident)
+            target.append(name)
+    return cast, directors, writers
+
+
+def _credits_from_staff_list(values) -> tuple[list, list, list]:
+    """``(cast, directors, writers)`` from ``staffList`` entries, typed only.
+
+    Feed items carry ``staffList`` — the same entry shape as ``stars``
+    (``staffType`` 1 actor / 2 director / 3 writer, ``character`` the role
+    played or "Director"/"Writer") — but no ``cast``/``stars`` at all, so
+    harvest rows kept the names only as raw evidence. Unlike
+    ``_credits_from_stars``, an entry with an unknown or missing type is
+    IGNORED, never asserted to be cast: staffList is credited people of
+    any kind, and a producer must not become a cast member. A bare
+    ``staff`` string carries no types at all and is ignored here (it stays
+    in ``raw_meta["staff"]`` as evidence). Entries dedupe by ``staffId``.
+    """
+    cast, directors, writers = [], [], []
+    seen = {"cast": set(), "director": set(), "writer": set()}
+    entries: list = []
+    for value in values if isinstance(values, list) else []:
+        if isinstance(value, list):
+            entries.extend(value)
+        elif isinstance(value, dict):
+            entries.append(value)
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        name = (_as_text(entry.get("name")) or _as_text(entry.get("staffName"))
+                or _as_text(entry.get("title")))
+        if not name:
+            continue
+        ident = _as_text(entry.get("staffId")) or name.casefold()
+        staff_type = _positive_int(entry.get("staffType"))
+        role = (_as_text(entry.get("character")) or "").strip().casefold()
+        if staff_type == 2 or role == "director":
+            bucket, target = "director", directors
+        elif staff_type == 3 or role == "writer":
+            bucket, target = "writer", writers
+        elif staff_type == 1:
+            bucket, target = "cast", cast
+        else:
+            continue
         if ident not in seen[bucket]:
             seen[bucket].add(ident)
             target.append(name)
