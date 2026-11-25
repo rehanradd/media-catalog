@@ -569,7 +569,8 @@ class WorkflowSuiteCoverageTests(unittest.TestCase):
     # measured offline-green solo (1,300 tests) and registered as a real CI
     # step in backend-ci.yml. Only the live-network audit remains.
     UNREGISTERED = frozenset({
-        "test_all_sites.py",
+        "test_all_sites.py", "test_wp_rest.py",
+
     })
 
     def _steps(self):

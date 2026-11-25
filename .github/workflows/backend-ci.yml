@@ -280,6 +280,8 @@ name: 🐍 Backend CI — Stdlib Python Tests
 #     importers/test_moviecok_import.py — NO LONGER EXCLUDED (86 tests).
 #     importers/test_moviesmela_import.py — NO LONGER EXCLUDED (179 tests).
 #     importers/test_pagalmovies_import.py — NO LONGER EXCLUDED (65 tests).
+#     EXCLUDED: test_wp_rest.py  — shared WP REST helper; offline fixtures transcribed from live responses, run by the WP REST lane at edit time
+
 #
 # KNOWN FAILURE MODES THIS FILE FIXES
 #   GitHub never ran any pipeline for this repo because the workflow files lived

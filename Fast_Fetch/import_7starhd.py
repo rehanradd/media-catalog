@@ -5,8 +5,13 @@ import_7starhd.py — Dedicated staging importer and scraper for 7StarHD (https:
 Key Features:
   1. Dedicated staging SQLite database: 7starhd.db (isolated from production fast_fetch.db).
   2. Full WP REST API sync: Paginates /wp-json/wp/v2/posts?per_page=100 across 23,400+ titles.
+     Sync stores the full REST post (with _embed=1) as raw_json, so
+     extraction runs off the post itself — no per-post page fetch
+     (WP REST adoption, 2026-11-23).
   3. Clean Metadata Extraction:
-     - Title, year, audio/language, poster image, synopsis.
+     - Title, year, audio/language, poster image, synopsis, IMDb rating,
+       genres, cast, director, release date, 18+ flag — all from the
+       source's own info block and categories, never fabricated.
   4. Precise Quality & File Size Extraction:
      - Extracts per-release button text: "1080p [2.48GB]", "720p [1.40GB]", "480p [481MB]"
      - Captures exact resolution tier and file size.
@@ -51,6 +56,7 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 import fast_fetch
+import wp_rest
 from config import staging_db_path
 from domain_resolver import get_active_base_url, resolve_if_dead
 
@@ -170,12 +176,26 @@ def init_staging_db(db_path: Path):
     fast_fetch.init_db()
 
 
+def _ensure_sitemap_raw_json(db_path: Path) -> None:
+    """WP REST adoption (2026-11-23): the queue carries the full REST post
+    (``raw_json``) so extraction needs no per-post page fetch. Neither the
+    local ``init_staging_db`` schema nor the shared ``fast_fetch`` schema
+    has such a column; add it when missing."""
+    with sqlite3.connect(str(db_path)) as conn:
+        cols = {c[1] for c in conn.execute(
+            "PRAGMA table_info(sitemap_cache);").fetchall()}
+        if "raw_json" not in cols:
+            conn.execute("ALTER TABLE sitemap_cache ADD COLUMN raw_json TEXT;")
+            conn.commit()
+
+
 def sync_api_to_db(client: SevenStarHDClient, db_path: Path, max_pages: int | None = None, site_name: str = "7starhd", start_page: int = 1) -> int:
     """
     Ingests all post URLs from WordPress REST API (/wp-json/wp/v2/posts?per_page=100)
     into sitemap_cache table in staging SQLite database.
     """
     init_staging_db(db_path)
+    _ensure_sitemap_raw_json(db_path)
     print(f"\n[*] Probing {site_name.upper()} WP REST API at {client.base_url}/wp-json/wp/v2/posts...")
     probe_url = f"{client.base_url}/wp-json/wp/v2/posts?per_page=100"
     headers = {"User-Agent": fast_fetch.USER_AGENT}
@@ -221,7 +241,10 @@ def sync_api_to_db(client: SevenStarHDClient, db_path: Path, max_pages: int | No
     for page in range(start_page, pages_to_fetch + 1):
         if STOP_REQUESTED:
             break
-        page_url = f"{client.base_url}/wp-json/wp/v2/posts?per_page=100&page={page}"
+        # _embed=1 carries wp:term (category names — incl. "18+ Adult")
+        # inside each post; the whole post is stored as raw_json so the
+        # worker extracts from it instead of fetching the page.
+        page_url = f"{client.base_url}/wp-json/wp/v2/posts?per_page=100&page={page}&_embed=1"
         p_code, p_data, _ = client.get_json(page_url)
         if p_code != 200 or not isinstance(p_data, list):
             if p_code in (400, 404) or (isinstance(p_data, dict) and p_data.get("code") == "rest_post_invalid_page_number"):
@@ -241,7 +264,8 @@ def sync_api_to_db(client: SevenStarHDClient, db_path: Path, max_pages: int | No
             if (slug and slug in existing_slugs) or (post_url in existing_locs):
                 total_existing += 1
             else:
-                records.append((post_url, modified, slug, 0, site_name))
+                records.append((post_url, modified, slug, 0, site_name,
+                                json.dumps(item)))
                 if slug:
                     existing_slugs.add(slug)
                 existing_locs.add(post_url)
@@ -255,11 +279,12 @@ def sync_api_to_db(client: SevenStarHDClient, db_path: Path, max_pages: int | No
                 with fast_fetch.get_db() as conn:
                     conn.executemany(
                         """
-                        INSERT INTO sitemap_cache (loc, lastmod, slug, scraped, site)
-                        VALUES (?, ?, ?, ?, ?)
+                        INSERT INTO sitemap_cache (loc, lastmod, slug, scraped, site, raw_json)
+                        VALUES (?, ?, ?, ?, ?, ?)
                         ON CONFLICT(loc) DO UPDATE SET
                             lastmod = COALESCE(excluded.lastmod, sitemap_cache.lastmod),
-                            slug = COALESCE(excluded.slug, sitemap_cache.slug)
+                            slug = COALESCE(excluded.slug, sitemap_cache.slug),
+                            raw_json = COALESCE(excluded.raw_json, sitemap_cache.raw_json)
                         """,
                         records,
                     )
@@ -279,11 +304,12 @@ def sync_api_to_db(client: SevenStarHDClient, db_path: Path, max_pages: int | No
             with fast_fetch.get_db() as conn:
                 conn.executemany(
                     """
-                    INSERT INTO sitemap_cache (loc, lastmod, slug, scraped, site)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO sitemap_cache (loc, lastmod, slug, scraped, site, raw_json)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     ON CONFLICT(loc) DO UPDATE SET
                         lastmod = COALESCE(excluded.lastmod, sitemap_cache.lastmod),
-                        slug = COALESCE(excluded.slug, sitemap_cache.slug)
+                        slug = COALESCE(excluded.slug, sitemap_cache.slug),
+                        raw_json = COALESCE(excluded.raw_json, sitemap_cache.raw_json)
                     """,
                     records,
                 )
@@ -347,44 +373,74 @@ def extract_post_data_7starhd(
     page_html: str,
     site_name: str = "7starhd",
     resolve_direct: bool = True,
+    rest_post: dict | None = None,
 ) -> dict | None:
-    """
-    Parses full media metadata, releases, and MobileJSR mirror streams from a 7StarHD post.
+    """Parses full media metadata, releases, and MobileJSR mirror streams
+    from a 7StarHD post.
+
+    WP REST adoption (2026-11-23): when ``rest_post`` (one WP REST post
+    dict) is given, everything comes from it — title.rendered, the
+    labelled info block in ``content.rendered`` (IMDB Ratings, Released
+    Date, Genres, Languages, Director, Host, Judges, Stars, Plot), the
+    poster (first content image; featured_media is 0 here) and the
+    per-quality MobileJSR buttons in the content — and no page fetch is
+    needed. Without it the old page-HTML path runs, with the same label
+    parsing so neither path fabricates metadata.
     """
     slug = post_url.rstrip("/").split("/")[-1]
 
     # 1. Post title & metadata
-    # 7StarHD and 10xflix put the full post title in the first <h2> heading (e.g. <h2>The Punisher (2026)...</h2>)
-    # The <title> tag is static generic site branding ("7StarHD" or "10xflix").
-    raw_title = None
-    h2_matches = re.findall(r"<h2[^>]*>(.*?)</h2>", page_html, re.I | re.S)
-    for h2_candidate in h2_matches:
-        cand = re.sub(r"<[^>]+>", "", h2_candidate).strip()
-        cand_lower = cand.lower()
-        if cand and cand_lower not in ("7starhd", "10xflix", "screenshots", "download links", "trailer"):
-            raw_title = html.unescape(cand)
-            break
-
-    if not raw_title:
-        title_m = re.search(r"<title>(.*?)</title>", page_html, re.I)
-        if title_m:
-            cand = (
-                title_m.group(1)
-                .split(" – 7StarHD")[0]
-                .split(" - 7StarHD")[0]
-                .split(" – 10xflix")[0]
-                .split(" - 10xflix")[0]
-                .split(" | ")[0]
-                .strip()
-            )
-            if cand.lower() not in ("7starhd", "10xflix", ""):
+    if rest_post is not None:
+        # REST: title.rendered IS the post title. (On the page, the
+        # <title> tag is static site branding and the <h2> only repeats
+        # the title.) The release buttons and the info block both live
+        # in content.rendered.
+        raw_title = html.unescape(
+            str((rest_post.get("title") or {}).get("rendered") or slug))
+        page_html = (rest_post.get("content") or {}).get("rendered") or ""
+    else:
+        # 7StarHD and 10xflix put the full post title in the first <h2> heading (e.g. <h2>The Punisher (2026)...</h2>)
+        # The <title> tag is static generic site branding ("7StarHD" or "10xflix").
+        raw_title = None
+        h2_matches = re.findall(r"<h2[^>]*>(.*?)</h2>", page_html, re.I | re.S)
+        for h2_candidate in h2_matches:
+            cand = re.sub(r"<[^>]+>", "", h2_candidate).strip()
+            cand_lower = cand.lower()
+            if cand and cand_lower not in ("7starhd", "10xflix", "screenshots", "download links", "trailer"):
                 raw_title = html.unescape(cand)
+                break
 
-    if not raw_title:
-        raw_title = slug.replace("-", " ").title()
+        if not raw_title:
+            title_m = re.search(r"<title>(.*?)</title>", page_html, re.I)
+            if title_m:
+                cand = (
+                    title_m.group(1)
+                    .split(" – 7StarHD")[0]
+                    .split(" - 7StarHD")[0]
+                    .split(" – 10xflix")[0]
+                    .split(" - 10xflix")[0]
+                    .split(" | ")[0]
+                    .strip()
+                )
+                if cand.lower() not in ("7starhd", "10xflix", ""):
+                    raw_title = html.unescape(cand)
+
+        if not raw_title:
+            raw_title = slug.replace("-", " ").title()
 
     year_m = re.search(r"\b(19\d{2}|20\d{2})\b", raw_title)
     year = int(year_m.group(1)) if year_m else None
+    if year is None and rest_post is not None:
+        # REST only: fall back to the year in the content heading line
+        # (the text before the first info label) — later dates (episode
+        # air dates) are not the title year.
+        _head = wp_rest.content_text(rest_post)
+        _imdb_at = _head.find("IMDb:")
+        if _imdb_at > 0:
+            _head = _head[:_imdb_at]
+        _year_m = re.search(r"\b(19\d{2}|20\d{2})\b", _head)
+        if _year_m:
+            year = int(_year_m.group(1))
 
     # Strip year and trailing resolution/quality noise
     clean_title = re.sub(r"\s*[\(\[]?\b(19\d{2}|20\d{2})\b.*$", "", raw_title).strip()
@@ -398,28 +454,51 @@ def extract_post_data_7starhd(
         clean_title = slug.replace("-", " ").title()
 
     content_type = "movie"
-    if re.search(r'\b(?:Season\s*\d+|S\d+|Complete\s+Series|Episodes?)\b', raw_title, re.I):
+    # SxxEyy is the usual series form here ("S017E12", "S01E020"): the
+    # plain S\d+ alternative needs a word boundary after the digits,
+    # which "S017E12" does not have (the E follows the digits), so the
+    # compact season+episode form is matched first; a bare "Series"
+    # word also marks a series.
+    if re.search(r'\b(?:Season\s*\d+|S\d+\s*E\d+|S\d+|Complete\s+Series|Series|Episodes?)\b', raw_title, re.I):
         content_type = "series"
 
     canonical_key = fast_fetch.generate_canonical_key(clean_title, year)
 
+    # Labels from the post text (both paths): the info block carries
+    # Title / IMDB Ratings / Released Date / Genres / Languages /
+    # Director / Host / Judges / Stars / Quality / Plot.
+    labels = wp_rest.post_labels(rest_post) if rest_post is not None \
+        else wp_rest.parse_labelled_text(wp_rest.strip_html(page_html))
+
     # 2. Poster image
-    poster_url = None
-    img_m = re.search(r'<img[^>]+src=["\'](https?://[^"\']+\.(?:jpg|jpeg|png|webp))["\']', page_html, re.I)
-    if img_m:
-        poster_url = img_m.group(1)
+    if rest_post is not None:
+        # featured_media is 0 on this site and there is no embedded
+        # media; the poster is the first content image.
+        poster_url = wp_rest.poster_from_post(rest_post)
     else:
-        og_m = re.search(r'<meta property=["\']og:image["\'] content=["\']([^"\']+)["\']', page_html, re.I)
-        if og_m:
-            poster_url = og_m.group(1)
+        poster_url = None
+        img_m = re.search(r'<img[^>]+src=["\'](https?://[^"\']+\.(?:jpg|jpeg|png|webp))["\']', page_html, re.I)
+        if img_m:
+            poster_url = img_m.group(1)
+        else:
+            og_m = re.search(r'<meta property=["\']og:image["\'] content=["\']([^"\']+)["\']', page_html, re.I)
+            if og_m:
+                poster_url = og_m.group(1)
 
     # 3. Synopsis & Language
-    synopsis = None
-    desc_m = re.search(r'<meta name=["\']description["\'] content=["\']([^"\']+)["\']', page_html, re.I)
-    if desc_m:
-        synopsis = html.unescape(desc_m.group(1).strip())
+    if rest_post is not None:
+        # The excerpt is the same metadata dump as the info block, never
+        # a synopsis — only a real Plot:/Storyline: label counts.
+        synopsis = labels.get("story")
+    else:
+        synopsis = None
+        desc_m = re.search(r'<meta name=["\']description["\'] content=["\']([^"\']+)["\']', page_html, re.I)
+        if desc_m:
+            synopsis = html.unescape(desc_m.group(1).strip())
+        elif labels.get("story"):
+            synopsis = labels["story"]
 
-    language = "Hindi"
+    language = None
     raw_lower = raw_title.lower()
     if "dual audio" in raw_lower:
         language = "Hindi + English"
@@ -429,6 +508,45 @@ def extract_post_data_7starhd(
         language = "South Hindi Dubbed"
     elif "english" in raw_lower:
         language = "English"
+    if language is None:
+        # The info block's Languages: label (e.g. "Hindi", "English").
+        if labels.get("languages"):
+            language = re.sub(r"\s*\([^)]*\)", "", labels["languages"]).strip() or None
+        if language is None:
+            language = "Hindi"
+
+    # Metadata from the source's own labels — never fabricated: the old
+    # code banked ["Action", "Drama"] for EVERY post and None for the
+    # rating. Genres come from the Genres: label (else filtered
+    # categories); rating from the IMDb block (N/A -> None); cast =
+    # Stars + Judges + Host (all on-screen talent).
+    if rest_post is not None:
+        genres_list = wp_rest.genres_from_post(rest_post)
+    else:
+        genres_list = labels.get("genres")
+    genres = json.dumps(genres_list) if genres_list else None
+    imdb_rating = labels.get("imdb_rating")
+    cast_parts: list[str] = []
+    for _key in ("cast", "judges", "host"):
+        for _name in labels.get(_key) or []:
+            if _name not in cast_parts:
+                cast_parts.append(_name)
+    cast_names = ", ".join(cast_parts) if cast_parts else None
+    director = labels.get("director")
+    release_date = labels.get("release_date")
+    # 18+: the source says so itself — an "18+ Adult" category, "[18+]"
+    # in the title, or an Erotic/Adult genre label.
+    _adult_genres = {"erotic", "adult", "xxx", "porn", "pornographic"}
+    _cat_names: list[str] = []
+    if rest_post is not None:
+        for _group in (rest_post.get("_embedded") or {}).get("wp:term") or []:
+            _cat_names.extend(
+                t.get("name", "") for t in _group if isinstance(t, dict))
+    is_18_plus = 1 if (
+        "[18+]" in raw_title
+        or any("18+" in c for c in _cat_names)
+        or any(g.lower() in _adult_genres for g in (genres_list or []))
+    ) else 0
 
     # 4. Extract MobileJSR releases
     button_releases = parse_7starhd_release_links(page_html)
@@ -484,9 +602,13 @@ def extract_post_data_7starhd(
         "seasons": None,
         "poster_url": poster_url,
         "backdrop_urls": None,
-        "imdb_rating": None,
+        "imdb_rating": imdb_rating,
         "synopsis": synopsis,
-        "genres": json.dumps(["Action", "Drama"]),
+        "genres": genres,
+        "cast_names": cast_names,
+        "director": director,
+        "release_date": release_date,
+        "is_18_plus": is_18_plus,
         "language": language,
         "source_site": site_name,
         "canonical_key": canonical_key,
@@ -500,18 +622,40 @@ def scrape_7starhd_worker(
     client: SevenStarHDClient,
     site_name: str = "7starhd",
     resolve_direct: bool = True,
+    raw_json_str: str | None = None,
 ) -> tuple[bool, int, int]:
-    """Worker task: fetches post, extracts releases & sources, persists to SQLite."""
-    code, final_url, html_text = client.get_text(post_url)
-    if code != 200 or not html_text:
-        return False, 0, 0
+    """Worker task: extracts releases & sources from a post, persists to SQLite.
 
-    data = extract_post_data_7starhd(
-        post_url=final_url,
-        page_html=html_text,
-        site_name=site_name,
-        resolve_direct=resolve_direct,
-    )
+    WP REST adoption (2026-11-23): when the queue row carries ``raw_json``
+    (the full REST post from sync), extraction runs off it and the worker
+    makes NO page fetch at all. Rows synced before the adoption (no
+    raw_json) fall back to fetching the post page.
+    """
+    data = None
+    if raw_json_str:
+        try:
+            rest_post = json.loads(raw_json_str)
+        except (json.JSONDecodeError, TypeError):
+            rest_post = None
+        if isinstance(rest_post, dict) and rest_post.get("content"):
+            data = extract_post_data_7starhd(
+                post_url=post_url,
+                page_html="",
+                site_name=site_name,
+                resolve_direct=resolve_direct,
+                rest_post=rest_post,
+            )
+    if data is None:
+        code, final_url, html_text = client.get_text(post_url)
+        if code != 200 or not html_text:
+            return False, 0, 0
+
+        data = extract_post_data_7starhd(
+            post_url=final_url,
+            page_html=html_text,
+            site_name=site_name,
+            resolve_direct=resolve_direct,
+        )
     if not data or not data.get("releases"):
         with fast_fetch._DB_WRITE_LOCK:
             with fast_fetch.get_db() as conn:
@@ -638,6 +782,7 @@ def run_7starhd_scraper(
         raise ValueError(f"delay must be at least {MIN_REQUEST_DELAY}s")
 
     init_staging_db(db_path)
+    _ensure_sitemap_raw_json(db_path)
     fast_fetch.DB_PATH = db_path
 
     if retry_failed:
@@ -650,10 +795,10 @@ def run_7starhd_scraper(
     with sqlite3.connect(str(db_path)) as conn:
         c = conn.cursor()
         c.execute(
-            "SELECT loc FROM sitemap_cache WHERE site = ? AND scraped = 0 ORDER BY rowid ASC",
+            "SELECT loc, raw_json FROM sitemap_cache WHERE site = ? AND scraped = 0 ORDER BY rowid ASC",
             (site_name,),
         )
-        pending_urls = [row[0] for row in c.fetchall()]
+        pending_urls = [(row[0], row[1]) for row in c.fetchall()]
 
     # If cache is empty, automatically sync API
     if not pending_urls:
@@ -662,10 +807,10 @@ def run_7starhd_scraper(
         with sqlite3.connect(str(db_path)) as conn:
             c = conn.cursor()
             c.execute(
-                "SELECT loc FROM sitemap_cache WHERE site = ? AND scraped = 0 ORDER BY rowid ASC",
+                "SELECT loc, raw_json FROM sitemap_cache WHERE site = ? AND scraped = 0 ORDER BY rowid ASC",
                 (site_name,),
             )
-            pending_urls = [row[0] for row in c.fetchall()]
+            pending_urls = [(row[0], row[1]) for row in c.fetchall()]
 
     if limit is not None:
         pending_urls = pending_urls[:max(0, limit)]
@@ -699,14 +844,17 @@ def run_7starhd_scraper(
             thread_local.client = SevenStarHDClient(base_url=base_url, request_interval=delay)
         return thread_local.client
 
-    def process_url(url: str):
+    def process_url(url_and_raw):
         if STOP_REQUESTED:
             return False, 0, 0
+        url, raw_json_str = url_and_raw
         c = get_thread_client()
-        return scrape_7starhd_worker(url, c, site_name=site_name, resolve_direct=resolve_direct)
+        return scrape_7starhd_worker(
+            url, c, site_name=site_name, resolve_direct=resolve_direct,
+            raw_json_str=raw_json_str)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-        future_map = {executor.submit(process_url, u): u for u in pending_urls}
+        future_map = {executor.submit(process_url, u): u[0] for u in pending_urls}
         for future in concurrent.futures.as_completed(future_map):
             if STOP_REQUESTED:
                 break
