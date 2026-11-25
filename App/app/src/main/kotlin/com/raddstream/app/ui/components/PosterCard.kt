@@ -38,6 +38,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -131,6 +132,14 @@ fun PosterCard(
      */
     onPlayClick: (() -> Unit)? = null,
     /**
+     * L2 (round 2): the download badge — a verified copy of this title
+     * sits on the device (see MyListViewModel.downloadedPostIdsFor). Only
+     * My List passes it: the keep store is the only download state
+     * joinable to a tile by post id. False everywhere else — a tile must
+     * never claim a copy it cannot prove.
+     */
+    isDownloaded: Boolean = false,
+    /**
      * My List review (Nov 2026): the compact meta line for the 3-up
      * starter rail — rating and year only, "★ 8.6 · 2024", no type word.
      * Three segments truncate to "S..." in a 3-up cell; Home and Search
@@ -219,6 +228,7 @@ fun PosterCard(
         }
         if (tileBadges.isNotEmpty()) append(", ").append(tileBadges.joinToString(", ") { it.a11y })
         if (matchPercent != null) append(", $matchPercent percent match")
+        if (isDownloaded) append(", downloaded")
         if (progressLabel != null) append(", ").append(progressLabel)
     }
 
@@ -254,6 +264,11 @@ fun PosterCard(
     // Review redesign (Nov 2026): frameless — no Card, no rim, no glow.
     // The poster paints edge-to-edge and the text sits below it on the
     // page background, so the tile reads as artwork, not as a boxed card.
+    // L2 (round 2): the poster radius is the Card token (16dp) —
+    // verify-first measured the true value at 8dp (Shape.Poster), not the
+    // 10dp the Library rating read or the 12dp the Search rating read;
+    // both measurements were wrong. The brief's 16–20dp range is the bar,
+    // and the Card token is its 16dp end.
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -288,14 +303,14 @@ fun PosterCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(CardGeometry.POSTER_ASPECT)
-                .clip(RaddTokens.Shape.Poster)
+                .clip(RaddTokens.Shape.Card)
                 .background(MaterialTheme.colorScheme.surfaceVariant)
                 .then(
                     if (isFocused) {
                         Modifier.border(
                             width = 2.dp, // token-exempt: focus-border width, not spacing
                             color = MaterialTheme.colorScheme.primary,
-                            shape = RaddTokens.Shape.Poster,
+                            shape = RaddTokens.Shape.Card,
                         )
                     } else Modifier
                 ),
@@ -606,7 +621,19 @@ fun PosterCard(
                 // could straddle the rail's clip edge ("Dual Audio" cut mid-glyph).
                 // The slot is always 24 dp — the pill's own height — so card height
                 // is invariant to badge presence and rails stay uniform.
-                Box(Modifier.fillMaxWidth().height(24.dp), contentAlignment = Alignment.CenterStart) { // token-exempt: badge-slot height, fixed component geometry
+                // L2 (round 2): the badge slot — the download badge rides
+                // here, ahead of the audio badges, so it never competes
+                // with the NEW pill, the heart or the play button on the
+                // poster (max one badge per card on the art). The slot
+                // stays 24dp either way, so card height is invariant.
+                Row(
+                    Modifier.fillMaxWidth().height(24.dp), // token-exempt: badge-slot height, fixed component geometry
+                    horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Micro),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (isDownloaded) {
+                        DownloadedBadge()
+                    }
                     // Dub status decides whether this title is watchable at all for a
                     // Hindi/Urdu-first viewer, so it is said on the tile, not after a tap.
                     AudioBadgeChipRow(badges = tileBadges)
@@ -693,6 +720,15 @@ internal fun trimMetaLineToWordBoundary(text: String, cutIndex: Int): String {
 }
 
 /**
+ * S2 (round 2, decided then blocked on data): the brief's meta line is
+ * year • duration • quality — but the list wire carries neither a
+ * duration nor a quality (Post has no such field; PostDetail carries
+ * runtime_minutes, but the list row never carries it, and quality lives
+ * on Detail's RankedPrint). The line stays rating • year • type — the
+ * honest data the wire carries — until the server sends duration and
+ * best_quality on the list row, when the segments below gain them; the
+ * header comment records the same wait for the quality badge.
+ *
  * My List review (Nov 2026): the rail meta line, as one pure function so
  * the compact form is assertable without a layout. Full form is
  * "★ 6.7 · 2026 · Series"; the compact form (the 3-up starter rail, where
@@ -723,6 +759,39 @@ internal fun posterMetaLine(post: Post, compact: Boolean, matchPercent: Int? = n
             post.yearLabel,
             post.typeLabel,
         ).joinToString(" · ")
+    }
+}
+
+/**
+ * L2 (round 2): the download badge — a jade filled check in a pill, not
+ * a grey icon, so a downloaded title reads as "yours, ready" at a
+ * glance (the award lift). Paint-only: the tile's one spoken sentence
+ * already says "downloaded".
+ */
+@Composable
+private fun DownloadedBadge(modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .clip(RaddTokens.Shape.Pill)
+            .background(MaterialTheme.colorScheme.primary)
+            .padding(horizontal = RaddTokens.Space.Sm, vertical = RaddTokens.Space.Micro)
+            .clearAndSetSemantics { },
+        horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Micro),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            painter = painterResource(R.drawable.ic_action_check),
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onPrimary,
+            modifier = Modifier.size(12.dp), // token-exempt: icon size, not spacing
+        )
+        Text(
+            text = stringResource(R.string.poster_downloaded),
+            color = MaterialTheme.colorScheme.onPrimary,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+        )
     }
 }
 

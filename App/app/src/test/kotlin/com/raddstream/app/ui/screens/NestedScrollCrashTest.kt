@@ -55,6 +55,7 @@ import com.raddstream.app.viewmodel.HomeSection
 import com.raddstream.app.viewmodel.HomeUiState
 import com.raddstream.app.viewmodel.LanguagesUiState
 import com.raddstream.app.viewmodel.ListSort
+import com.raddstream.app.viewmodel.MyListFilter
 import com.raddstream.app.viewmodel.RegionUiState
 import com.raddstream.app.viewmodel.ReleaseLayoutBuilder
 import com.raddstream.app.viewmodel.ResumeTile
@@ -538,13 +539,22 @@ class NestedScrollCrashTest {
     }
 
     @Test
-    fun myListSortRow() {
+    fun myListFilterRow() {
+        // L1 (round 2): the sort chips became the filter chips with the
+        // sort as a cycling button — the button still names the order in
+        // force, so the old "Recently added" assertion still holds.
         compose.setContent {
             RaddStreamTheme {
-                MyListSortRow(sort = ListSort.RECENT, onSort = {})
+                MyListFilterRow(
+                    filter = MyListFilter.ALL,
+                    sort = ListSort.RECENT,
+                    onFilter = {},
+                    onSort = {},
+                )
             }
         }
         compose.onNodeWithText("Recently added").assertIsDisplayed()
+        compose.onNodeWithText("All").assertIsDisplayed()
     }
 
     // ── Account screens ──────────────────────────────────────────────────

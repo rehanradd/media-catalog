@@ -30,6 +30,7 @@ import com.raddstream.app.network.models.Post
 import com.raddstream.app.ui.components.PosterCard
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.ListSort
+import com.raddstream.app.viewmodel.MyListFilter
 import com.raddstream.app.viewmodel.MyListUiState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -39,10 +40,12 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 
 /**
- * Mockup (Nov 2026): the My List sort chips are 48dp tall, all three
+ * Mockup (Nov 2026): the My List filter chips are 48dp tall, all four
  * fully visible in one row in mockup order, the active chip jade-filled
  * — and the "Trending to Start Your List" rail sits below the grid as a full-span
- * footer whenever the trending load produced titles. Runs on the JVM
+ * footer whenever the trending load produced titles. L1 (round 2): the
+ * sort chips became the filter chips (All / Movies / Series / Downloads)
+ * with the sort as a cycling button at the row's right end. Runs on the JVM
  * under Robolectric because this project has no emulator image.
  *
  * Requires an x86_64 runner. Robolectric's native runtime has no
@@ -56,12 +59,12 @@ class MyListMockupScreenTest {
     @get:Rule
     val compose = createComposeRule()
 
-    private fun post(id: Int, title: String) = Post(
+    private fun post(id: Int, title: String, contentType: String = "movie") = Post(
         id = id,
         title = title,
         cleanTitle = title,
         year = 2024,
-        contentType = "movie",
+        contentType = contentType,
         // No poster URL: the card renders the branded fallback, so no image
         // load runs in the test.
         posterUrl = null,
@@ -78,62 +81,109 @@ class MyListMockupScreenTest {
     private fun chipHeightDp(tag: String) =
         with(compose.density) { chipNode(tag).boundsInRoot.height.toDp() }
 
-    @Test
-    fun sortChipsAreInMockupOrderWithRecentlyAddedSelected() {
+    // L1 (round 2): the filter row is wider than a phone — four chips
+    // plus the sort button — so these row tests run in a 600dp box, where
+    // every chip is on screen at once. On a 390dp phone the chip strip
+    // scrolls (ScrollingChipRow + the S3 fade); the loaded-content tests
+    // below prove the row works at phone width.
+    private fun filterRowContent(
+        filter: MyListFilter,
+        sort: ListSort,
+        onFilter: (MyListFilter) -> Unit = {},
+        onSort: (ListSort) -> Unit = {},
+    ) {
         compose.setContent {
             RaddStreamTheme {
-                Box(Modifier.width(390.dp)) {
-                    MyListSortRow(sort = ListSort.RECENT, onSort = {})
+                Box(Modifier.width(600.dp)) {
+                    MyListFilterRow(filter = filter, sort = sort, onFilter = onFilter, onSort = onSort)
                 }
             }
         }
-        // All three are on screen, in mockup order, left to right.
-        compose.onNodeWithTag("myListSortChip_RECENT").assertIsDisplayed()
-        compose.onNodeWithTag("myListSortChip_TITLE").assertIsDisplayed()
-        compose.onNodeWithTag("myListSortChip_UNWATCHED").assertIsDisplayed()
-        val lefts = listOf(
-            chipLeft("myListSortChip_RECENT"),
-            chipLeft("myListSortChip_TITLE"),
-            chipLeft("myListSortChip_UNWATCHED"),
-        )
-        assertTrue("sort chips read left-to-right as $lefts", lefts == lefts.sorted())
-        // Only the active chip is selected.
-        compose.onNodeWithTag("myListSortChip_RECENT").assertIsSelected()
-        compose.onNodeWithTag("myListSortChip_TITLE").assertIsNotSelected()
-        compose.onNodeWithTag("myListSortChip_UNWATCHED").assertIsNotSelected()
     }
 
     @Test
-    fun sortChipsAre48dpTall() {
-        compose.setContent {
-            RaddStreamTheme {
-                Box(Modifier.width(390.dp)) {
-                    MyListSortRow(sort = ListSort.RECENT, onSort = {})
-                }
-            }
-        }
+    fun filterChipsAreInMockupOrderWithAllSelected() {
+        filterRowContent(filter = MyListFilter.ALL, sort = ListSort.RECENT)
+        // All four are on screen, in mockup order, left to right.
+        compose.onNodeWithTag("myListFilterChip_ALL").assertIsDisplayed()
+        compose.onNodeWithTag("myListFilterChip_MOVIES").assertIsDisplayed()
+        compose.onNodeWithTag("myListFilterChip_SERIES").assertIsDisplayed()
+        compose.onNodeWithTag("myListFilterChip_DOWNLOADS").assertIsDisplayed()
+        val lefts = listOf(
+            chipLeft("myListFilterChip_ALL"),
+            chipLeft("myListFilterChip_MOVIES"),
+            chipLeft("myListFilterChip_SERIES"),
+            chipLeft("myListFilterChip_DOWNLOADS"),
+        )
+        assertTrue("filter chips read left-to-right as $lefts", lefts == lefts.sorted())
+        // Only the active chip is selected.
+        compose.onNodeWithTag("myListFilterChip_ALL").assertIsSelected()
+        compose.onNodeWithTag("myListFilterChip_MOVIES").assertIsNotSelected()
+        compose.onNodeWithTag("myListFilterChip_SERIES").assertIsNotSelected()
+        compose.onNodeWithTag("myListFilterChip_DOWNLOADS").assertIsNotSelected()
+    }
+
+    @Test
+    fun filterChipsAre48dpTall() {
+        filterRowContent(filter = MyListFilter.ALL, sort = ListSort.RECENT)
         // FilterChip's own visual height is 32dp — the mockup's chips are
         // 48dp, the touch-target floor, so the chip itself carries it.
-        listOf("myListSortChip_RECENT", "myListSortChip_TITLE", "myListSortChip_UNWATCHED")
-            .forEach { tag ->
-                assertEquals("$tag is not 48dp tall", 48.dp, chipHeightDp(tag))
-            }
+        listOf(
+            "myListFilterChip_ALL",
+            "myListFilterChip_MOVIES",
+            "myListFilterChip_SERIES",
+            "myListFilterChip_DOWNLOADS",
+        ).forEach { tag ->
+            assertEquals("$tag is not 48dp tall", 48.dp, chipHeightDp(tag))
+        }
     }
 
     @Test
-    fun tappingASortChipSelectsIt() {
-        var selected by mutableStateOf(ListSort.RECENT)
-        compose.setContent {
-            RaddStreamTheme {
-                Box(Modifier.width(390.dp)) {
-                    MyListSortRow(sort = selected, onSort = { selected = it })
-                }
-            }
+    fun tappingAFilterChipSelectsIt() {
+        var selected by mutableStateOf(MyListFilter.ALL)
+        filterRowContent(
+            filter = selected,
+            sort = ListSort.RECENT,
+            onFilter = { selected = it },
+        )
+        compose.onNodeWithTag("myListFilterChip_SERIES").performClick()
+        compose.onNodeWithTag("myListFilterChip_SERIES").assertIsSelected()
+        compose.onNodeWithTag("myListFilterChip_ALL").assertIsNotSelected()
+        assertEquals(MyListFilter.SERIES, selected)
+    }
+
+    @Test
+    fun sortButtonCyclesTheOrder() {
+        // L1 (round 2): the sort is a visible secondary control at the
+        // row's right end — one tap cycles Recently added → Title A–Z →
+        // Unwatched first, no sheet.
+        var sort by mutableStateOf(ListSort.RECENT)
+        filterRowContent(
+            filter = MyListFilter.ALL,
+            sort = sort,
+            onSort = { sort = it },
+        )
+        compose.onNodeWithTag(MyListSortButtonTag).assertIsDisplayed()
+        compose.onNodeWithText("Recently added").assertIsDisplayed()
+        compose.onNodeWithTag(MyListSortButtonTag).performClick()
+        assertEquals(ListSort.TITLE, sort)
+        compose.onNodeWithText("Title A–Z").assertIsDisplayed()
+        compose.onNodeWithTag(MyListSortButtonTag).performClick()
+        assertEquals(ListSort.UNWATCHED, sort)
+        compose.onNodeWithText("Unwatched first").assertIsDisplayed()
+    }
+
+    @Test
+    fun sortButtonIs48dpTall() {
+        filterRowContent(filter = MyListFilter.ALL, sort = ListSort.RECENT)
+        val height = with(compose.density) {
+            compose.onAllNodesWithTag(MyListSortButtonTag)
+                .fetchSemanticsNodes().single().boundsInRoot.height.toDp()
         }
-        compose.onNodeWithTag("myListSortChip_TITLE").performClick()
-        compose.onNodeWithTag("myListSortChip_TITLE").assertIsSelected()
-        compose.onNodeWithTag("myListSortChip_RECENT").assertIsNotSelected()
-        assertEquals(ListSort.TITLE, selected)
+        // The floor is a minimum: the button's own M3 content padding
+        // makes it taller than 48dp, and that is fine — what the review
+        // forbids is a button UNDER the floor.
+        assertTrue("Sort button is $height tall, expected at least 48dp", height >= 48.dp)
     }
 
     @Test
@@ -246,13 +296,19 @@ class MyListMockupScreenTest {
         popular: List<Post> = emptyList(),
         progressByPostId: Map<Int, Float> = emptyMap(),
         progressLabelByPostId: Map<Int, String> = emptyMap(),
+        filter: MyListFilter = MyListFilter.ALL,
+        downloadedPostIds: Set<Int> = emptySet(),
+        railsLoadFailed: Boolean = false,
     ) = MyListUiState(
         favorites = favorites,
         sort = ListSort.RECENT,
+        filter = filter,
         hiddenCount = hiddenCount,
         popular = popular,
         progressByPostId = progressByPostId,
         progressLabelByPostId = progressLabelByPostId,
+        downloadedPostIds = downloadedPostIds,
+        railsLoadFailed = railsLoadFailed,
     )
 
     private fun loadedContent(
@@ -260,6 +316,8 @@ class MyListMockupScreenTest {
         onPostClick: (Post) -> Unit = {},
         onPlayClick: (Post) -> Unit = {},
         onRemove: (Int) -> Unit = {},
+        onFilter: (MyListFilter) -> Unit = {},
+        onRetryRails: () -> Unit = {},
     ) {
         compose.setContent {
             RaddStreamTheme {
@@ -270,12 +328,27 @@ class MyListMockupScreenTest {
                         onPlayClick = onPlayClick,
                         onRemove = onRemove,
                         onSort = {},
+                        onFilter = onFilter,
+                        onRetryRails = onRetryRails,
                         isFavorite = { false },
                         onToggleFavorite = {},
                     )
                 }
             }
         }
+    }
+
+    // L1 (round 2): the filter taps below drive the row's onFilter the
+    // way the screen does — the state is re-set with the new filter, so
+    // the grid cross-fades to the filtered set. The clock advances past
+    // the cross-fade and the staggered entrance (400ms delay + 400ms
+    // duration at most) before any absence is asserted.
+    // The test's onFilter re-sets the content with the new filter (the
+    // way the ViewModel emits a new state); the click already fired it,
+    // so this only settles the cross-fade + entrance afterwards.
+    private fun tapFilterAndSettle(filter: MyListFilter) {
+        compose.onNodeWithTag("myListFilterChip_${filter.name}").performClick()
+        compose.mainClock.advanceTimeBy(1000)
     }
 
     @Test
@@ -369,8 +442,9 @@ class MyListMockupScreenTest {
     fun savedTileGrowsAPlayButton() {
         // APP-06: the saved tile is the strongest resume case — it grows
         // the same play button Home's rails have, one per saved title.
-        // Two saves hide the starter shelf, so every Play node here is a
-        // saved tile's, not a discovery rail's.
+        // Two saves still show the starter shelf (the bound is five), but
+        // the shelf tiles carry no play button — PopularRow never passes
+        // onPlayClick — so every Play node here is a saved tile's.
         loadedContent(
             loadedState(listOf(post(1, "Inception"), post(2, "Dune"))),
         )
@@ -430,12 +504,116 @@ class MyListMockupScreenTest {
         assertTrue("remove tap also played: $played", played == null)
     }
 
+    // ── L1/L2/L4 (round 2) ────────────────────────────────────────────
+
+    @Test
+    fun filterMoviesHidesSeries() {
+        // L1: the Movies chip scopes the grid to movies — the series tile
+        // leaves, the movie tile stays, the count still names the whole list.
+        val favorites = listOf(
+            post(1, "Inception", "movie"),
+            post(2, "Gen V", "series"),
+        )
+        var current by mutableStateOf(loadedState(favorites))
+        loadedContent(current, onFilter = { current = loadedState(favorites, filter = it) })
+        tapFilterAndSettle(MyListFilter.MOVIES)
+        compose.onNodeWithContentDescription("Inception, 2024 · Movie").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Gen V, 2024 · Series").assertDoesNotExist()
+        compose.onNodeWithText("2 titles").assertIsDisplayed()
+    }
+
+    @Test
+    fun filterDownloadsShowsOnlyDownloaded() {
+        // L1 + L2: the Downloads chip shows only titles with a verified
+        // copy on the device.
+        val favorites = listOf(post(1, "Inception"), post(2, "Dune"))
+        var current by mutableStateOf(
+            loadedState(favorites, downloadedPostIds = setOf(2)),
+        )
+        loadedContent(
+            current,
+            onFilter = { current = loadedState(favorites, filter = it, downloadedPostIds = setOf(2)) },
+        )
+        tapFilterAndSettle(MyListFilter.DOWNLOADS)
+        compose.onNodeWithContentDescription("Dune, 2024 · Movie, downloaded").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Inception, 2024 · Movie").assertDoesNotExist()
+    }
+
+    @Test
+    fun filterWithNoMatchNamesTheFilter() {
+        // L1: a filter that matches nothing says so in the grid instead of
+        // leaving a blank screen — the line names the filter, not the list.
+        val favorites = listOf(post(1, "Inception"))
+        var current by mutableStateOf(loadedState(favorites))
+        loadedContent(current, onFilter = { current = loadedState(favorites, filter = it) })
+        tapFilterAndSettle(MyListFilter.SERIES)
+        compose.onNodeWithText("No series saved yet").assertIsDisplayed()
+        compose.onNodeWithText("1 title").assertIsDisplayed()
+    }
+
+    @Test
+    fun downloadedTileWearsTheBadge() {
+        // L2: a verified copy on the device badges the tile — and the
+        // tile's one spoken sentence says "downloaded".
+        loadedContent(
+            loadedState(
+                listOf(post(1, "Inception")),
+                downloadedPostIds = setOf(1),
+            ),
+        )
+        compose.onNodeWithContentDescription("Inception, 2024 · Movie, downloaded")
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun starterShelfHidesUnderAFilter() {
+        // L1: the shelf is a discovery footer for the whole list — under
+        // a filter it would show titles the filter just hid.
+        val favorites = listOf(post(1, "Inception"))
+        var current by mutableStateOf(
+            loadedState(
+                favorites,
+                popular = listOf(post(2, "Dune"), post(3, "McLintock!")),
+            ),
+        )
+        loadedContent(
+            current,
+            onFilter = {
+                current = loadedState(
+                    favorites,
+                    popular = listOf(post(2, "Dune"), post(3, "McLintock!")),
+                    filter = it,
+                )
+            },
+        )
+        compose.onNodeWithText("Trending to Start Your List").assertIsDisplayed()
+        tapFilterAndSettle(MyListFilter.MOVIES)
+        compose.onNodeWithText("Trending to Start Your List").assertDoesNotExist()
+    }
+
+    @Test
+    fun railsErrorCardOffersRetry() {
+        // L4: a failed rail load leaves the inline retry where the shelf
+        // would have been — the card says what failed and offers the retry.
+        var retried = false
+        loadedContent(
+            loadedState(listOf(post(1, "Inception")), railsLoadFailed = true),
+            onRetryRails = { retried = true },
+        )
+        compose.onNodeWithText("Couldn't load suggestions").assertIsDisplayed()
+        compose.onNodeWithTag(MyListRailsRetryTag).assertIsDisplayed()
+        compose.onNodeWithTag(MyListRailsRetryTag).performClick()
+        assertTrue("retry tap did not fire", retried)
+    }
+
     // ── Hidden list ───────────────────────────────────────────────────
 
     private fun hiddenContent(
         popular: List<Post> = emptyList(),
         popularLoading: Boolean = false,
         recent: List<Post> = emptyList(),
+        railsLoadFailed: Boolean = false,
+        onRetryRails: () -> Unit = {},
     ) {
         compose.setContent {
             RaddStreamTheme {
@@ -452,8 +630,30 @@ class MyListMockupScreenTest {
                         popular = popular,
                         recent = recent,
                         popularLoading = popularLoading,
+                        railsLoadFailed = railsLoadFailed,
+                        onRetryRails = onRetryRails,
                         onPostClick = {},
                         onBrowseClick = {},
+                    )
+                }
+            }
+        }
+    }
+
+    // L4 (round 2): the empty state gets the same inline retry — its
+    // helper mirrors hiddenContent (same scroll host, same rails params).
+    private fun emptyContent(
+        railsLoadFailed: Boolean = false,
+        onRetryRails: () -> Unit = {},
+    ) {
+        compose.setContent {
+            RaddStreamTheme {
+                Box(Modifier.width(390.dp).fillMaxHeight()) {
+                    MyListEmptyContent(
+                        popular = emptyList(),
+                        onPostClick = {},
+                        railsLoadFailed = railsLoadFailed,
+                        onRetryRails = onRetryRails,
                     )
                 }
             }
@@ -513,5 +713,26 @@ class MyListMockupScreenTest {
         hiddenContent(popularLoading = true)
         compose.onNodeWithTag("posterRailSkeleton").assertIsDisplayed()
         compose.onNodeWithText("Trending to Start Your List").assertDoesNotExist()
+    }
+
+    @Test
+    fun hiddenBranchShowsRailsErrorCardWhenRailsFail() {
+        // L4: the rails failed and there is nothing to show — the retry
+        // card stands where the rail would have been.
+        var retried = false
+        hiddenContent(railsLoadFailed = true, onRetryRails = { retried = true })
+        compose.onNodeWithText("Couldn't load suggestions").assertIsDisplayed()
+        compose.onNodeWithTag(MyListRailsRetryTag).performClick()
+        assertTrue("retry tap did not fire", retried)
+    }
+
+    @Test
+    fun emptyBranchShowsRailsErrorCardWhenRailsFail() {
+        // L4: the truly-empty state gets the same inline retry.
+        var retried = false
+        emptyContent(railsLoadFailed = true, onRetryRails = { retried = true })
+        compose.onNodeWithText("Couldn't load suggestions").assertIsDisplayed()
+        compose.onNodeWithTag(MyListRailsRetryTag).performClick()
+        assertTrue("retry tap did not fire", retried)
     }
 }

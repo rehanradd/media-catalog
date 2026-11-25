@@ -348,6 +348,13 @@
     <string name="mylist_count_one">1 title</string>
     <string name="mylist_count_many">%1$d titles</string>
     <string name="mylist_save_failed">Couldn\'t save — check your connection</string>
+    <string name="mylist_rails_failed_title">Couldn\'t load suggestions</string>
+    <string name="mylist_rails_failed_message">Check your connection and try again — your saved titles are unaffected.</string>
+    <string name="mylist_rails_retry">Retry</string>
+    <string name="mylist_filter_empty_movies">No movies saved yet</string>
+    <string name="mylist_filter_empty_series">No series saved yet</string>
+    <string name="mylist_filter_empty_downloads">No downloads yet</string>
+    <string name="poster_downloaded">Downloaded</string>
 
     <!-- ═══ LOCAL LIBRARY ═══ the phone's own videos, folders first.
          Every value here is painted by LocalFilesScreen (or the Downloads
