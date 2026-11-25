@@ -73,11 +73,15 @@ class FirebaseConsentTest {
         FirebaseConsent.applier = { _, consented -> seen.add(consented) }
         try {
             // Flush first: RaddStreamApplication's onCreate launches its own
-            // Telemetry.refresh on a background scope, and that refresh reads
-            // the same DataStore load this one awaits — so by the time this
-            // returns, the application's apply (of the initial, unanswered
-            // consent: false) has landed in `seen`. Clear it so the assertion
-            // sees only this test's two refreshes.
+            // Telemetry.refresh on a background scope, applying the initial,
+            // unanswered consent (false) exactly once — but on its own scope,
+            // unsynchronised with this test. Usually it lands during this
+            // flush (both refreshes await the same DataStore load); under
+            // load it may land after the clear, or between the two refreshes
+            // below. The value is the same either way and the apply is
+            // idempotent, so the flush only narrows the window — the
+            // assertion below is written to tolerate the stray false
+            // wherever it lands, rather than assuming the flush caught it.
             Telemetry.refresh(settings)
             seen.clear()
             settings.saveAnalyticsConsent(true)
@@ -87,6 +91,25 @@ class FirebaseConsentTest {
         } finally {
             FirebaseConsent.applier = previous
         }
-        assertEquals(listOf(true, false), seen)
+        // The application's background apply (see the flush comment) may add
+        // one stray `false` — before the `true`, between the two refreshes,
+        // or after them — so the exact list is timing-dependent (run
+        // 45527500354 attempt 3: [false, true, false]). What the test pins
+        // is what matters: exactly one `true` (the first refresh), a `false`
+        // after it (the second refresh), and at most two `false`s in total
+        // (the second refresh plus the one background apply).
+        assertEquals(
+            "exactly one apply of true: the first refresh",
+            listOf(true),
+            seen.filter { it },
+        )
+        assertTrue(
+            "a false must follow the true: the second refresh",
+            seen.lastIndexOf(false) > seen.indexOf(true),
+        )
+        assertTrue(
+            "at most two falses: the second refresh plus the one background apply",
+            seen.count { !it } <= 2,
+        )
     }
 }
