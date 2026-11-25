@@ -58,6 +58,15 @@ PENDING_SELECT = (
 STOP_REQUESTED = False
 
 
+# A page that fails this many times in a row is a poison URL, not a
+# transient error — live case: the sitemap itself carries the malformed
+# loc .../movies/sound-of-%20AndyDay%20tvdom/, which failed every fleet
+# run and was re-queued forever because the failure path never moved
+# scraped off 0. At this count it is parked on -1 (needs review), exactly
+# like a skipped page, and the next run stops retrying it.
+MAX_FAILURES = 3
+
+
 def _sigint_handler(signum, frame):
     global STOP_REQUESTED
     print("\n[!] Graceful shutdown requested... Finishing current batch.", flush=True)
@@ -668,6 +677,12 @@ def save_post_to_staging(db_path: Path, item_res: dict):
             cur.execute(
                 "UPDATE sitemap_cache SET error_count = error_count + 1 WHERE loc = ?;",
                 (loc,),
+            )
+            # Poison-URL cutoff (see MAX_FAILURES): a page that keeps
+            # failing is parked on -1 instead of being re-queued forever.
+            cur.execute(
+                "UPDATE sitemap_cache SET scraped = -1 WHERE loc = ? AND error_count >= ?;",
+                (loc, MAX_FAILURES),
             )
             return
 

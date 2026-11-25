@@ -23,6 +23,7 @@ from import_desicinemas import (
     save_post_to_staging,
     scrape_post_item,
     slug_from_url,
+    sync_sitemaps,
     unpack_dean_edwards,
 )
 
@@ -420,6 +421,109 @@ class TestDesiCinemasScrapeState(unittest.TestCase):
         finally:
             if os.path.exists(str(db_path)):
                 os.remove(str(db_path))
+
+
+class TestDesiCinemasPoisonUrlAndSitemaps(unittest.TestCase):
+    """23 Nov 2026: the live sitemap carries a malformed loc that failed
+    every fleet run and was re-queued forever; and the audit's '1 post vs
+    1,001 sitemap URLs' assumed the importer sees one sitemap file, while
+    the live index carries numbered movies/episodes sitemaps too."""
+
+    POISON_LOC = "https://www.desicinemas.pk/movies/sound-of-%20AndyDay%20tvdom/"
+
+    def _db(self):
+        tf = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        db_path = Path(tf.name)
+        self.addCleanup(lambda: os.path.exists(str(db_path)) and os.remove(str(db_path)))
+        init_staging_db(db_path)
+        return db_path
+
+    def test_repeated_failure_parks_poison_url(self):
+        db_path = self._db()
+        with sqlite3.connect(str(db_path)) as conn:
+            conn.execute(
+                "INSERT INTO sitemap_cache (loc, slug, scraped) VALUES (?, ?, 0);",
+                (self.POISON_LOC, "sound-of-%20AndyDay%20tvdom"),
+            )
+            conn.commit()
+        failed = {"loc": self.POISON_LOC, "success": False, "reason": "http_404"}
+        for attempt in (1, 2):
+            save_post_to_staging(db_path, failed)
+            with sqlite3.connect(str(db_path)) as conn:
+                scraped, errors = conn.execute(
+                    "SELECT scraped, error_count FROM sitemap_cache WHERE loc = ?;",
+                    (self.POISON_LOC,),
+                ).fetchone()
+            self.assertEqual(scraped, 0, f"attempt {attempt} must stay queued")
+            self.assertEqual(errors, attempt)
+        save_post_to_staging(db_path, failed)
+        with sqlite3.connect(str(db_path)) as conn:
+            scraped, errors = conn.execute(
+                "SELECT scraped, error_count FROM sitemap_cache WHERE loc = ?;",
+                (self.POISON_LOC,),
+            ).fetchone()
+            self.assertEqual(errors, 3)
+            self.assertEqual(scraped, -1)
+            drained = [row[0] for row in conn.execute(PENDING_SELECT, QUEUED_SCRAPE_STATES).fetchall()]
+        self.assertNotIn(self.POISON_LOC, drained)
+
+    def test_sync_discovers_numbered_sitemaps(self):
+        index_xml = """<?xml version="1.0" encoding="UTF-8"?>
+<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+<sitemap><loc>https://www.desicinemas.pk/page-sitemap.xml</loc><lastmod>2025-01-11T20:09:41+00:00</lastmod></sitemap>
+<sitemap><loc>https://www.desicinemas.pk/movies-sitemap.xml</loc><lastmod>2026-11-22T18:22:23+00:00</lastmod></sitemap>
+<sitemap><loc>https://www.desicinemas.pk/movies-sitemap2.xml</loc><lastmod>2026-11-22T18:22:23+00:00</lastmod></sitemap>
+<sitemap><loc>https://www.desicinemas.pk/movies-sitemap3.xml</loc><lastmod>2026-11-22T18:22:23+00:00</lastmod></sitemap>
+<sitemap><loc>https://www.desicinemas.pk/series-sitemap.xml</loc><lastmod>2026-11-22T18:22:23+00:00</lastmod></sitemap>
+<sitemap><loc>https://www.desicinemas.pk/episodes-sitemap.xml</loc><lastmod>2026-11-22T18:22:23+00:00</lastmod></sitemap>
+<sitemap><loc>https://www.desicinemas.pk/episodes-sitemap2.xml</loc><lastmod>2026-11-22T18:22:23+00:00</lastmod></sitemap>
+<sitemap><loc>https://www.desicinemas.pk/cast-sitemap.xml</loc><lastmod>2026-11-22T18:22:23+00:00</lastmod></sitemap>
+<sitemap><loc>https://www.desicinemas.pk/seasons-sitemap.xml</loc><lastmod>2026-11-22T18:22:23+00:00</lastmod></sitemap>
+</sitemapindex>"""
+
+        def urlset(*locs):
+            body = "".join(
+                f"<url><loc>{loc}</loc><lastmod>2026-11-22T18:22:23+00:00</lastmod></url>"
+                for loc in locs)
+            return f'<?xml version="1.0" encoding="UTF-8"?><urlset>{body}</urlset>'
+
+        pages = {
+            "https://www.desicinemas.pk/movies-sitemap.xml": urlset(
+                "https://www.desicinemas.pk/movies/film-one/",
+                "https://www.desicinemas.pk/movies/film-two/"),
+            "https://www.desicinemas.pk/movies-sitemap2.xml": urlset(
+                "https://www.desicinemas.pk/movies/film-three/"),
+            "https://www.desicinemas.pk/movies-sitemap3.xml": urlset(
+                "https://www.desicinemas.pk/movies/film-four/"),
+            "https://www.desicinemas.pk/series-sitemap.xml": urlset(
+                "https://www.desicinemas.pk/series/show-one/"),
+            "https://www.desicinemas.pk/episodes-sitemap.xml": urlset(
+                "https://www.desicinemas.pk/episode/show-one-episode-1/"),
+            "https://www.desicinemas.pk/episodes-sitemap2.xml": urlset(
+                "https://www.desicinemas.pk/episode/show-one-episode-2/"),
+        }
+
+        class StubClient:
+            def get_text(self, url, referer=None, timeout=None):
+                if url.endswith("/sitemap_index.xml"):
+                    return (200, url, index_xml, {})
+                return (200, url, pages.get(url, ""), {})
+
+        db_path = self._db()
+        queued = sync_sitemaps(StubClient(), db_path,
+                               base_url="https://www.desicinemas.pk")
+        self.assertEqual(queued, 7)
+        with sqlite3.connect(str(db_path)) as conn:
+            locs = {row[0] for row in conn.execute("SELECT loc FROM sitemap_cache;").fetchall()}
+        self.assertEqual(locs, {
+            "https://www.desicinemas.pk/movies/film-one/",
+            "https://www.desicinemas.pk/movies/film-two/",
+            "https://www.desicinemas.pk/movies/film-three/",
+            "https://www.desicinemas.pk/movies/film-four/",
+            "https://www.desicinemas.pk/series/show-one/",
+            "https://www.desicinemas.pk/episode/show-one-episode-1/",
+            "https://www.desicinemas.pk/episode/show-one-episode-2/",
+        })
 
 
 if __name__ == "__main__":
