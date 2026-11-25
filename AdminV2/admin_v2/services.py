@@ -1307,7 +1307,8 @@ class Service:
             if k in body and not (0 <= int(body[k]) <= 10_000_000):
                 raise bad("Coin price must be between 0 and 10,000,000.")
         for k in ("maintenance_mode", "feature_downloads", "feature_pure_cinema",
-                  "feature_chromecast", "feature_quality_gate", "coins_enabled"):
+                  "feature_chromecast", "feature_quality_gate", "coins_enabled",
+                  "ads_enabled", "clean_ads_only"):
             if k in body and int(body[k]) not in (0, 1):
                 raise bad("That flag must be 0 or 1.")
         before = self.get_monetization(actor)

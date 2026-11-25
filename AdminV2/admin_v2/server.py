@@ -1480,9 +1480,9 @@ def _page_tuning(self, user, sess, query):
 
 
 def _page_monetization(self, user, sess, query):
-    """Monetization (audit §Tuning/Money): the 22 controls the API
+    """Monetization (audit §Tuning/Money): the 25 controls the API
     already had — VIP prices, the six coin pass prices, payment rails,
-    ad zones, feature flags — now reachable from the UI. Token inputs
+    ad zones and switches, feature flags — now reachable from the UI. Token inputs
     are password fields, never prefilled: blank means "keep the stored
     token" (put_monetization strips empty tokens before saving)."""
     mon = self.service.get_monetization(user)
@@ -1524,7 +1524,9 @@ def _page_monetization(self, user, sess, query):
              '<div class="card"><h3>VIP prices (PKR)</h3>%s%s</div>'
              '<div class="card"><h3>Coin prices</h3>%s</div>'
              '<div class="card"><h3>Payment rails (PKR)</h3>%s%s%s%s</div>'
-             '<div class="card"><h3>Ad zones</h3>%s%s</div>'
+             '<div class="card"><h3>Ads</h3>%s%s%s%s'
+             '<p class="muted">Ads off serves no ad unit to the app. '
+             'Clean ads only serves Monetag alone and withholds the Adsterra ID.</p></div>'
              '<div class="card"><h3>Tokens (blank keeps the stored one)</h3>'
              '<p class="muted">ShrinkMe: %s. Droplink: %s.</p>%s%s</div>'
              '<div class="card"><h3>Flags</h3>%s%s%s%s%s%s</div>'
@@ -1542,6 +1544,8 @@ def _page_monetization(self, user, sess, query):
         text_field("pak_raast_id", "Raast ID"),
         text_field("monetag_zone_id", "Monetag zone ID"),
         text_field("adsterra_tag_id", "Adsterra tag ID"),
+        flag_field("ads_enabled", "Ads"),
+        flag_field("clean_ads_only", "Clean ads only (Monetag only)"),
         "Configured" if mon.get("shrinkme_configured") else "Not set",
         "Configured" if mon.get("droplink_configured") else "Not set",
         text_field("shrinkme_api_token", "ShrinkMe API token", "password"),

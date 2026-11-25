@@ -335,7 +335,7 @@ class TestMigrationsV4V5(unittest.TestCase):
         self.assertEqual(
             [r[0] for r in conn.execute(
                 "SELECT version FROM schema_version ORDER BY version")],
-            [1, 2, 3, 4, 5])
+            [1, 2, 3, 4, 5, 6])
 
     def test_v5_columns_and_coin_defaults(self):
         from admin_v2.store import migrate
@@ -356,6 +356,17 @@ class TestMigrationsV4V5(unittest.TestCase):
             "SELECT coins_enabled FROM app_remote_config_v2 WHERE id=1"
             ).fetchone()[0], 0)
 
+    def test_v6_columns_and_ads_defaults(self):
+        """Migration 6 (PNL-05): a live-like DB gains the ads switches,
+        fail-closed — ads off, clean-ads-only on."""
+        from admin_v2.store import migrate
+        conn = self._live_like_db()
+        migrate(conn)
+        row = conn.execute(
+            "SELECT ads_enabled, clean_ads_only FROM app_remote_config_v2 "
+            "WHERE id=1").fetchone()
+        self.assertEqual(tuple(row), (0, 1))
+
     def test_migrate_is_idempotent(self):
         from admin_v2.store import migrate
         conn = self._live_like_db()
@@ -364,7 +375,7 @@ class TestMigrationsV4V5(unittest.TestCase):
         self.assertEqual(
             [r[0] for r in conn.execute(
                 "SELECT version FROM schema_version ORDER BY version")],
-            [1, 2, 3, 4, 5])
+            [1, 2, 3, 4, 5, 6])
 
     def test_list_scheduled_works_after_v4(self):
         from admin_v2.store import migrate
