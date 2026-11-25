@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -241,7 +242,10 @@ fun PosterCard(
     // density-scaled, so a 200% font scale grows the slot instead of
     // clipping the line. Screen audit #7: the slot scales with
     // titleMaxLines — the search grid's two-line titles get a two-line
-    // slot, so its cards stay uniform with each other.
+    // slot, so its cards stay uniform with each other. Round 5: the slot
+    // is a floor, not a cap (see the title Text below) — an exact
+    // height() is a hair short of the laid-out lines at 1.3x, so the
+    // layout collapsed to one line.
     val titleLineHeight = MaterialTheme.typography.titleSmall.lineHeight
     val titleSlotHeight = with(LocalDensity.current) {
         // TextUnit has no isSpecified in this Compose version — Unspecified
@@ -595,7 +599,17 @@ fun PosterCard(
                             if (trimmed != displayTitle) displayTitle = trimmed
                         }
                     },
-                    modifier = Modifier.height(titleSlotHeight * titleMaxLines),
+                    // Round 5: heightIn(min = …), not height(…) — the slot
+                    // is the uniform floor every tile reserves, never a
+                    // cap. An exact height() of two line heights is a hair
+                    // short of two laid-out lines at 1.3x (font padding),
+                    // so the layout collapsed to one ellipsized line and
+                    // the trim below cut it to "Salaar:…" — maxLines = 2
+                    // had no visible effect (round 3, record 45580590803;
+                    // the Search grid's two-line titles collapse the same
+                    // way at 1.3x). The min keeps rails uniform; the lines
+                    // measure their natural height above it.
+                    modifier = Modifier.heightIn(min = titleSlotHeight * titleMaxLines),
                 )
                 if (showDetails) {
                     // S2: width-aware meta line (see metaLineForWidth) —
