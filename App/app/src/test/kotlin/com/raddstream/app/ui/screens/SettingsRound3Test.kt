@@ -6,8 +6,11 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.semantics.SemanticsNode
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import com.raddstream.app.data.RemoteFeatures
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.SettingsUiState
@@ -74,8 +77,29 @@ class SettingsRound3Test {
         compose.waitForIdle()
     }
 
-    private fun topOf(text: String): Float =
-        compose.onNodeWithText(text).fetchSemanticsNode().boundsInRoot.top
+    /**
+     * Document order of the node carrying [text] in the semantics tree
+     * (depth-first). The LAST match wins, so a header with the same text
+     * as its card does not shadow the card.
+     *
+     * Order is read from the tree, not from bounds: below-fold nodes
+     * report 0.0 bounds in this Robolectric setup, so a bounds comparison
+     * passes vacuously on zeros — and fails the moment one node lands in
+     * the viewport, as the round-3 mega-cards move did.
+     */
+    private fun documentOrderIndex(text: String): Int {
+        val flat = mutableListOf<SemanticsNode>()
+        fun walk(node: SemanticsNode) {
+            flat += node
+            node.children.forEach(::walk)
+        }
+        walk(compose.onRoot().fetchSemanticsNode())
+        val index = flat.indexOfLast { node ->
+            node.config.getOrNull(SemanticsProperties.Text)?.any { it.text == text } == true
+        }
+        assertTrue("no node with text \"$text\"", index >= 0)
+        return index
+    }
 
     @Test
     fun staggerIsSeventyMsPerGroup() {
@@ -91,12 +115,14 @@ class SettingsRound3Test {
         // Round 3: the debug-only harness card is the last thing on the
         // screen now — it used to be the first impression. DEBUG is true
         // under testDebugUnitTest, so it renders here as in a debug build.
+        // Order is read from the semantics tree (document order), not from
+        // bounds — see documentOrderIndex.
         render()
-        val debugTop = topOf("Resolve Test (debug)")
-        val helpTop = topOf("Help")
+        val debugIndex = documentOrderIndex("Resolve Test (debug)")
+        val helpIndex = documentOrderIndex("Help")
         assertTrue(
-            "debug harness ($debugTop) is not below the last group ($helpTop)",
-            debugTop > helpTop,
+            "debug harness (index $debugIndex) is not below the last group (index $helpIndex)",
+            debugIndex > helpIndex,
         )
     }
 }

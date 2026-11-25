@@ -7,12 +7,15 @@ import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.semantics.SemanticsNode
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
@@ -106,8 +109,30 @@ class SettingsRound2Test {
         compose.waitForIdle()
     }
 
-    private fun topOf(text: String): Float =
-        compose.onNodeWithText(text).fetchSemanticsNode().boundsInRoot.top
+    /**
+     * Document order of the node carrying [text] in the semantics tree
+     * (depth-first). The LAST match wins: "Appearance" matches the group
+     * header too, so the card is the later node.
+     *
+     * Order is read from the tree, not from bounds: below-fold nodes
+     * report 0.0 bounds in this Robolectric setup, so a bounds comparison
+     * passes vacuously on zeros — and fails the moment one node lands in
+     * the viewport, as the round-3 mega-cards move did (group 0's card
+     * top went real at 311.0 while groups 1–4 stayed 0.0).
+     */
+    private fun documentOrderIndex(text: String): Int {
+        val flat = mutableListOf<SemanticsNode>()
+        fun walk(node: SemanticsNode) {
+            flat += node
+            node.children.forEach(::walk)
+        }
+        walk(compose.onRoot().fetchSemanticsNode())
+        val index = flat.indexOfLast { node ->
+            node.config.getOrNull(SemanticsProperties.Text)?.any { it.text == text } == true
+        }
+        assertTrue("no node with text \"$text\"", index >= 0)
+        return index
+    }
 
     @Test
     fun searchFiltersToMatchingCardOnly() {
@@ -151,19 +176,17 @@ class SettingsRound2Test {
         render()
         // Card titles, one per group, in §0.8 order — each is unique text.
         // "Appearance" matches the header too, so the card is the later node.
-        val appearanceTop = compose.onAllNodesWithText("Appearance")
-            .fetchSemanticsNodes().maxOf { it.boundsInRoot.top }
-        val tops = listOf(
-            topOf("VIP membership"),
-            topOf("Content preference"),
-            topOf("Offline"),
-            appearanceTop,
-            topOf("Help"),
+        val order = listOf(
+            documentOrderIndex("VIP membership"),
+            documentOrderIndex("Content preference"),
+            documentOrderIndex("Offline"),
+            documentOrderIndex("Appearance"),
+            documentOrderIndex("Help"),
         )
         assertEquals(
-            "groups are not in Account, Playback, Downloads, Appearance, About order: $tops",
-            tops.sorted(),
-            tops,
+            "groups are not in Account, Playback, Downloads, Appearance, About order: $order",
+            order.sorted(),
+            order,
         )
     }
 
