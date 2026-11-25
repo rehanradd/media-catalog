@@ -16,6 +16,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -49,6 +51,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -638,8 +641,17 @@ private fun PlayerScreenContent(
         // the pinned material3 1.4.0; wiring it is the BOM-bump follow-up.)
         val chromeVisible = controlsVisible || state.startPhase != StartPhase.NONE
         val reduceMotion = rememberReduceMotion()
-        val chromeEnter = fadeIn(if (reduceMotion) tween(REDUCED_MOTION_FADE_MS) else RaddMotion.fastEffects())
-        val chromeExit = fadeOut(if (reduceMotion) tween(REDUCED_MOTION_FADE_MS) else RaddMotion.defaultEffects())
+        // Round 6: the chrome fades AND scales (expressive effects spec) —
+        // the bars settle in from 0.97 instead of only fading. Under
+        // reduced motion the scale is dropped (30ms crossfade only). The
+        // settled state is unchanged (alpha 1, scale 1), so the Paparazzi
+        // goldens do not move.
+        val chromeEnter = if (reduceMotion) fadeIn(tween(REDUCED_MOTION_FADE_MS)) else fadeIn(RaddMotion.fastEffects()) + scaleIn(RaddMotion.fastEffects(), initialScale = 0.97f)
+        val chromeExit = if (reduceMotion) fadeOut(tween(REDUCED_MOTION_FADE_MS)) else fadeOut(RaddMotion.defaultEffects()) + scaleOut(RaddMotion.defaultEffects(), targetScale = 0.97f)
+        // The zoom chip pops a little harder (0.9, anchored top-end) so its
+        // appear/disappear reads on a small target.
+        val chipEnter = if (reduceMotion) fadeIn(tween(REDUCED_MOTION_FADE_MS)) else fadeIn(RaddMotion.fastEffects()) + scaleIn(RaddMotion.fastEffects(), initialScale = 0.9f, transformOrigin = TransformOrigin(1f, 0f))
+        val chipExit = if (reduceMotion) fadeOut(tween(REDUCED_MOTION_FADE_MS)) else fadeOut(RaddMotion.defaultEffects()) + scaleOut(RaddMotion.defaultEffects(), targetScale = 0.9f, transformOrigin = TransformOrigin(1f, 0f))
         if (!state.locked) {
             if (state.pureCinema) {
                 AnimatedVisibility(
@@ -664,8 +676,8 @@ private fun PlayerScreenContent(
                 // 80dp top clearance sits it just below the top bar.
                 AnimatedVisibility(
                     visible = chromeVisible && state.aspect != AspectMode.FIT,
-                    enter = chromeEnter,
-                    exit = chromeExit,
+                    enter = chipEnter,
+                    exit = chipExit,
                 ) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopEnd) {
                         ZoomResetChip(

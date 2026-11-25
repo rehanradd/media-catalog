@@ -1133,13 +1133,26 @@ internal fun ZoomResetChip(
     // semantics block below (not a @Composable context), so the
     // description is read here, in the composable body.
     val resetDescription = stringResource(R.string.player_zoom_reset)
+    // Round 6: the chip presses with the same default-effects spring +
+    // haptic tick as the other controls — until now it pressed with no
+    // scale and no tick. The clickable keeps no ripple (borderless
+    // chip), but shares its interaction source with pressScale so the
+    // scale tracks the real press state.
+    val interactionSource = remember { MutableInteractionSource() }
     Surface(
         color = Color.Black.copy(alpha = 0.55f),
         shape = RoundedCornerShape(16.dp),
         modifier = modifier
             .semantics { contentDescription = resetDescription }
-            .clickableNoRipple(onClick = onReset),
+            .pressScale(interactionSource)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                role = Role.Button,
+                onClick = onReset,
+            ),
     ) {
+        PressHaptics(interactionSource)
         Text(
             text = AspectMode.FIT.label,
             color = Color.White,

@@ -2,6 +2,7 @@ package com.raddstream.app.ui.screens
 
 import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
@@ -10,20 +11,30 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.ui.theme.RaddInk950
+import com.raddstream.app.ui.theme.RaddMotion
 import com.raddstream.app.ui.theme.RaddPlayerSheet
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 /**
@@ -59,18 +70,39 @@ internal fun PlayerSheet(
             content()
         }
     } else {
-        BackHandler(onBack = onDismiss)
+        // Round 6: the landscape panel slides in from the right on the
+        // expressive spatial spring (defaultSpatial) — the portrait
+        // ModalBottomSheet already slides on M3's own spring, but this
+        // panel used to appear instantly. The dismiss is intercepted so
+        // the panel slides back out before the caller removes it; a
+        // second dismiss while one is already running is dropped.
+        val panelOffset = remember { Animatable(360.dp, Dp.VectorConverter) }
+        val scope = rememberCoroutineScope()
+        var dismissing by remember { mutableStateOf(false) }
+        LaunchedEffect(Unit) {
+            panelOffset.animateTo(0.dp, RaddMotion.defaultSpatial())
+        }
+        fun requestDismiss() {
+            if (dismissing) return
+            dismissing = true
+            scope.launch {
+                panelOffset.animateTo(360.dp, RaddMotion.defaultSpatial())
+                onDismiss()
+            }
+        }
+        BackHandler(onBack = ::requestDismiss)
         Box(Modifier.fillMaxSize()) {
             // The video side: tapping it dismisses the panel, nothing else.
             Box(
                 Modifier
                     .fillMaxHeight()
                     .fillMaxWidth(0.6f)
-                    .clickableNoRipple { onDismiss() },
+                    .clickableNoRipple { requestDismiss() },
             )
             Box(
                 Modifier
                     .align(Alignment.CenterEnd)
+                    .offset(x = panelOffset.value)
                     .fillMaxHeight()
                     .fillMaxWidth(0.4f)
                     .widthIn(max = 320.dp)
