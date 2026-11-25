@@ -495,7 +495,7 @@ internal fun DeviceDownloadRow(
             )
             .padding(RaddTokens.Space.Lg),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Md),
+        horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Sm),
     ) {
         DownloadThumb(posterUrl = item.posterUrl, title = cleanTitle)
         Column(
@@ -808,7 +808,7 @@ internal fun KeptItemRow(
             .background(MaterialTheme.colorScheme.surface)
             .padding(RaddTokens.Space.Lg),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Md),
+        horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Sm),
     ) {
         DownloadThumb(posterUrl = item.posterUrl, title = cleanTitle)
         Column(
@@ -1225,7 +1225,7 @@ internal fun DownloadsEmptyPreview() {
                 .alpha(0.6f)
                 .padding(RaddTokens.Space.Lg),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Md),
+            horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Sm),
         ) {
             DownloadThumb(posterUrl = null, title = "Example title")
             Column(
@@ -1399,7 +1399,11 @@ private fun DownloadMetaLine(
         if (rest != null) {
             Text(
                 rest,
-                style = MaterialTheme.typography.bodySmall,
+                // labelSmall (11sp) — the remainder is descriptive text, and
+                // at bodySmall it needed ~80px against ~71px available, so
+                // it cut to "High bit…". 11sp is the meta line's original
+                // size; the badge and the size stay at bodySmall.
+                style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f),
                 maxLines = 1,
