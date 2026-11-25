@@ -5,7 +5,7 @@
 // is `BaselineProfileGenerator` — the Startup Profile covering
 // Home → Search → Detail.
 //
-// The plugin needs AGP 8.0+; this project is on 8.9.3. No Gradle-managed
+// The plugin needs AGP 8.0+; this project is on 9.1.1 (BOM bump 2026-11-25). No Gradle-managed
 // device is configured: generation runs on a connected device (rooted, or
 // API 33+) the operator provides — see the generator's KDoc for the
 // prerequisites and the exact command. CI never runs the generator
@@ -25,7 +25,7 @@ plugins {
 
 android {
     namespace = "com.raddstream.app.baselineprofile"
-    compileSdk = 35
+    compileSdk = 37 // BOM bump 2026-11-25: tracks the app module (was 35).
 
     defaultConfig {
         // minSdk 23, the same as the app's since the 2026-11-23 library

@@ -50,11 +50,11 @@ jobs:
       - name: 📥 Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
-      - name: ☕ Set up JDK 17 (temurin)
+      - name: ☕ Set up JDK 21 (temurin)
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad  # v6.1.0
         with:
           distribution: temurin
-          java-version: "17"   # matches compileOptions VERSION_17 / jvmTarget 17
+          java-version: "21"   # Gradle runs on 21 (Paparazzi alpha04+ needs it); compileOptions / jvmTarget stay 17
 
       - name: 📦 Restore Gradle caches
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
@@ -62,15 +62,15 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-java17-${{ hashFiles('App/gradle/wrapper/gradle-wrapper.properties', 'App/gradle/libs.versions.toml', 'App/**/*.gradle.kts', 'App/**/*.gradle', 'App/settings.gradle.kts') }}
+          key: gradle-${{ runner.os }}-java21-${{ hashFiles('App/gradle/wrapper/gradle-wrapper.properties', 'App/gradle/libs.versions.toml', 'App/**/*.gradle.kts', 'App/**/*.gradle', 'App/settings.gradle.kts') }}
           restore-keys: |
-            gradle-${{ runner.os }}-java17-
+            gradle-${{ runner.os }}-java21-
             gradle-${{ runner.os }}-
 
-      - name: 📱 Install Android SDK (platform-tools, android-35, android-36, build-tools 35.0.0)
+      - name: 📱 Install Android SDK (platform-tools, android-35, android-36, android-37, build-tools 35.0.0, build-tools 36.0.0)
         uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd  # v4.0.4
         with:
-          packages: "platform-tools platforms;android-35 platforms;android-36 build-tools;35.0.0"
+          packages: "platform-tools platforms;android-35 platforms;android-36 platforms;android-37 build-tools;35.0.0 build-tools;36.0.0"
 
       - name: 🔧 Make gradlew executable
         run: chmod +x App/gradlew

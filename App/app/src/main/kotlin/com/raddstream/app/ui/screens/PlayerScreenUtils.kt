@@ -35,9 +35,10 @@ import kotlin.math.roundToInt
  * token set carries ([RaddMotion.FadeWhenReduced]). One constant, owned
  * here, so the fade duration lives in one place.
  *
- * MaterialTheme.motionScheme itself is NOT read: it is internal in the
- * pinned material3 1.4.0 (Compose BOM 2025.11.01) and only becomes public
- * in material3 1.5.0 — wiring it is the BOM-bump follow-up, not this branch.
+ * MaterialTheme.motionScheme is read at the theme level now: the 2026-11-25
+ * BOM bump (material3 1.5.0) makes it public and RaddStreamTheme sets
+ * motionScheme = MotionScheme.expressive(). This fade constant stays owned
+ * here because it is a plain duration, not a spec.
  */
 internal const val REDUCED_MOTION_FADE_MS = 30
 

@@ -18,7 +18,7 @@ plugins {
     // catalog (libs.versions.toml).
     alias(libs.plugins.google.services)
     alias(libs.plugins.crashlytics)
-    // Paparazzi 2.0.0-alpha02 (2026-11-23): JVM screenshot tests — renders real
+    // Paparazzi 2.0.0-alpha05.1 (2026-11-25): JVM screenshot tests — renders real
     // Compose UI via Layoutlib in CI, no emulator. Test-only wiring; no main
     // source changes. Snapshots live in src/test/snapshots (recorded by
     // :app:recordPaparazziDebug, verified by :app:verifyPaparazziDebug).
@@ -131,12 +131,12 @@ val brandDebugSuffix = brand("identity.application.id.debug.suffix", ".debug")
 
 android {
     namespace   = brand("identity.namespace", brandApplicationId)
-    // Library bump 2026-11-23: compileSdk 35 -> 36, forced by Media3
-    // 1.11.1 + NextLib (their AAR metadata requires compiling against
-    // API 36+; proven by CI 45089532958, :app:checkDebugAarMetadata).
+    // BOM bump 2026-11-25: compileSdk 36 -> 37, forced by Compose BOM
+    // 2026.11.01 / material3 1.5.0 (MotionScheme goes public) + AGP 9.1.1
+    // (Google: API 37 needs AGP 9.1.1 minimum).
     // targetSdk stays 35: compileSdk can be raised separately from
-    // targetSdk, and 36's runtime behavior changes are untested.
-    compileSdk  = 36
+    // targetSdk, and 36/37's runtime behavior changes are untested.
+    compileSdk  = 37
 
     sourceSets {
         getByName("main") {
@@ -443,7 +443,7 @@ tasks.withType<Test>().configureEach {
 // Paparazzi-ONLY, so no Robolectric class loads first in the fork.
 // The wiring matters because Paparazzi 2.x changed the model under us:
 // recordPaparazziDebug / verifyPaparazziDebug are NOT their own Test tasks
-// (that was 1.x). In 2.0.0-alpha02 they are plain DefaultTasks that dependOn
+// (that was 1.x). In 2.0.0-alpha05.1 they are plain DefaultTasks that dependOn
 // testDebugUnitTest, and record/verify is just a system property on that
 // task (PaparazziPlugin.kt: recordTaskProvider/verifyTaskProvider dependOn
 // testTaskProvider; isRecordRun/isVerifyRun are task-graph flags). So an
