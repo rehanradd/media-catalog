@@ -53,7 +53,9 @@ class HomeMyListStripTest {
         assertNull(continueWatchingMatchFor(post(), emptyList()))
         assertNull(
             continueWatchingMatchFor(
-                post(workRef = "work:salaar"),
+                // A different title AND a different handle — neither the
+                // handle nor the title fallback can match.
+                post(title = "Salaar", workRef = "work:salaar"),
                 listOf(tile(workRef = "work:jawan")),
             ),
         )

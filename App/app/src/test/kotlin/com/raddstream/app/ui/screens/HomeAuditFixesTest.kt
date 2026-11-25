@@ -277,11 +277,24 @@ class HomeAuditFixesTest {
     fun trendingRailShowsSeeAllToTheSameOrder() {
         var browsedType: String? = "untouched"
         var browsedSort: String? = "untouched"
+        // Eight titles: the hero takes the first six, so the rail keeps
+        // two — HO-1 dedupes the hero's titles out of its own rail, and
+        // with only two titles the rail would render nothing at all (no
+        // See All node to find).
         val section = HomeSection(
             key = "trending",
             title = "Most available",
             type = null,
-            items = listOf(post(1, "Jawan", 2023), post(2, "Salaar", 2023)),
+            items = listOf(
+                post(1, "Jawan", 2023),
+                post(2, "Salaar", 2023),
+                post(3, "Pushpa 2", 2024),
+                post(4, "Animal", 2023),
+                post(5, "Dunki", 2023),
+                post(6, "Fighter", 2024),
+                post(7, "Pathaan", 2023),
+                post(8, "Tiger 3", 2023),
+            ),
             sort = "trending",
         )
         compose.setContent {

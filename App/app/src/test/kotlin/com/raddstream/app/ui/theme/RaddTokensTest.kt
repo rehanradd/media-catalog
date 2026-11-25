@@ -37,7 +37,10 @@ class RaddTokensTest {
 
     @Test
     fun radiiFollowTheSpec() {
-        assertEquals(8.dp, RaddTokens.Radius.Poster)
+        // Round 2 (2027 Home fix): the poster radius is 16dp now — the
+        // brief's 16–20dp range, decided by the parent — not the 8dp the
+        // token used to carry.
+        assertEquals(16.dp, RaddTokens.Radius.Poster)
         assertEquals(8.dp, RaddTokens.Radius.Thumb)
         assertEquals(4.dp, RaddTokens.Radius.Chip)
         assertEquals(12.dp, RaddTokens.Radius.Input)
