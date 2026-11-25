@@ -68,7 +68,7 @@ import com.raddstream.app.ui.theme.rememberArtworkAccent
  * on low-RAM phones (Compose performance guidance). Review redesign (Nov 2026):
  * frameless — the M11 artwork-accent rim and the dark footer box are gone (both
  * reviewers read the rim as a selected/promoted outline), so the poster paints
- * edge-to-edge at 10dp corners and the title + meta sit below it on the page
+ * edge-to-edge at 16dp corners (2027 brief 16–20dp; was 10dp) and the title + meta sit below it on the page
  * background; the NEW pill is a small dark chip, top-left, never covering faces
  * or logos. No quality badge: the list wire carries no quality field (it
  * lives on Detail's RankedPrint), and inventing one would break the honesty
@@ -131,9 +131,9 @@ fun PosterCard(
     onPlayClick: (() -> Unit)? = null,
     /**
      * My List review (Nov 2026): the compact meta line for the 3-up
-     * starter rail — rating and year only, "★ 8.6 · 2024", no type word.
+     * starter rail — year and rating only, "2024 · ★ 8.6", no type word.
      * Three segments truncate to "S..." in a 3-up cell; Home and Search
-     * rails have room and keep the full "★ 6.7 · 2026 · Series" line, so
+     * rails have room and keep the full "2024 · ★ 8.6 · Series" line, so
      * this stays false everywhere except [PopularRow]. The type stays in
      * the tile's spoken sentence and on Detail — only the painted rail
      * line loses it.
@@ -188,7 +188,7 @@ fun PosterCard(
     // guarded choke point — the old inline `takeIf { it > 0 }` let an
     // impossible year (2027 for a 2024 work, 20215) straight onto the tile.
     // Mockup (Nov 2026): the meta line carries the rating too — one line,
-    // "★ 6.7 · 2026 · Series" — so the rating badge that used to ride the
+    // "2024 · ★ 8.6 · Series" — so the rating badge that used to ride the
     // poster is gone: it would say the same number twice on one tile.
     val details = posterMetaLine(post, compactMeta, matchPercent)
     // Screen audit #7: a bare-type meta line ("Series") is redundant under
@@ -390,8 +390,8 @@ fun PosterCard(
             }
 
             // Mockup (Nov 2026): no rating badge on the poster any more —
-            // the rating lives in the meta line under the poster ("★ 6.7 ·
-            // 2026 · Series"), and a badge here would say the same number
+            // the rating lives in the meta line under the poster ("2024 ·
+            // ★ 8.6 · Series"), and a badge here would say the same number
             // twice. The scrim stays: the 3dp progress bar below still
             // needs contrast against bright artwork.
 
@@ -659,11 +659,20 @@ private const val META_DROP_YEAR_BELOW_DP = 100f
 
 /**
  * S2 (2027 Home fix): the priority-dropped meta line. Segments paint in
- * priority order — match, rating, year, type — and the narrow tile drops
+ * priority order — match, year, rating, type — and the narrow tile drops
  * the lowest-priority segment first: below 140dp the type word goes
- * ("★ 7.0 · 2023"), below 100dp the year goes too ("★ 7.0"). Rating and
+ * ("2023 · ★ 7.0"), below 100dp the year goes too ("★ 7.0"). Rating and
  * match never drop — they are the reason the tile is on screen. Pure, so
  * the gate test asserts it without a layout.
+ *
+ * S2 (2027 Home fix, round 2): the year leads the line — the brief's
+ * year•duration•quality, as far as the list wire honestly reaches.
+ * Duration and quality are NOT on the list wire ([Post] carries neither
+ * field — duration lives only on Detail's [PostDetail.runtimeMinutes],
+ * quality only on Detail's RankedPrint), so those segments are omitted,
+ * never invented; the line is year • rating • type from the fields the
+ * row actually has. A server `best_quality` + duration on the list
+ * projection would complete the brief's line.
  */
 internal fun metaLineForWidth(post: Post, compact: Boolean, matchPercent: Int? = null, width: Dp): String {
     val dropType = compact || width < META_DROP_TYPE_BELOW_DP.dp
@@ -671,8 +680,8 @@ internal fun metaLineForWidth(post: Post, compact: Boolean, matchPercent: Int? =
     val match = matchPercent?.let { "$it% Match" }
     return listOfNotNull(
         match,
-        UserWords.displayRating(post.imdbRating)?.let { "★ $it" },
         if (dropYear) null else post.yearLabel,
+        UserWords.displayRating(post.imdbRating)?.let { "★ $it" },
         if (dropType) null else post.typeLabel,
     ).joinToString(" · ")
 }
@@ -694,16 +703,21 @@ internal fun trimMetaLineToWordBoundary(text: String, cutIndex: Int): String {
 /**
  * My List review (Nov 2026): the rail meta line, as one pure function so
  * the compact form is assertable without a layout. Full form is
- * "★ 6.7 · 2026 · Series"; the compact form (the 3-up starter rail, where
- * three segments truncate to "S...") drops the type word — "★ 8.6 · 2024".
+ * "2024 · ★ 8.6 · Series"; the compact form (the 3-up starter rail, where
+ * three segments truncate to "S...") drops the type word — "2024 · ★ 8.6".
  * Both join with a middle dot (Gemini home review, Nov 2026: one separator
  * everywhere — the hero, the spoken sentence and the cards all use · now).
  * The type stays in the tile's spoken sentence
  * and on Detail; only the painted rail line loses it. An absent rating or
  * year simply leaves its slot out — never an invented value.
  *
+ * S2 (2027 Home fix, round 2): the year leads — the brief's
+ * year•duration•quality as far as the list wire honestly reaches (see
+ * [metaLineForWidth]: no duration or quality field on the list row, so
+ * those segments are omitted, never invented).
+ *
  * REA #2 (Netflix, Nov 2026): [matchPercent] paints first — "97% Match ·
- * ★ 8.6 · 2024 · Series" — and alone when nothing else paints ("97%
+ * 2024 · ★ 8.6 · Series" — and alone when nothing else paints ("97%
  * Match", never "97% Match · " with a dangling separator). Null means no
  * match to paint: the line is exactly as before.
  */
@@ -712,14 +726,14 @@ internal fun posterMetaLine(post: Post, compact: Boolean, matchPercent: Int? = n
     return if (compact) {
         listOfNotNull(
             match,
-            UserWords.displayRating(post.imdbRating)?.let { "★ $it" },
             post.yearLabel,
+            UserWords.displayRating(post.imdbRating)?.let { "★ $it" },
         ).joinToString(" · ")
     } else {
         listOfNotNull(
             match,
-            UserWords.displayRating(post.imdbRating)?.let { "★ $it" },
             post.yearLabel,
+            UserWords.displayRating(post.imdbRating)?.let { "★ $it" },
             post.typeLabel,
         ).joinToString(" · ")
     }

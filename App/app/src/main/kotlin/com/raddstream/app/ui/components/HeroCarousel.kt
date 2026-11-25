@@ -343,26 +343,32 @@ internal fun heroArtUrls(posts: List<Post>): List<String> =
     posts.mapNotNull { it.heroArtUrl?.takeIf { url -> url.isNotBlank() } }.distinct()
 
 /**
- * The hero's one meta line (review redesign, Nov 2026): seasons, first genre, year —
- * "Season 1–2 · Reality · 2026". The seasons text is normalised by
- * [heroSeasonsLabel] (the server sends "2", "S01–S03" and "[1, 2]" for the same
- * fact — a raw list leaked onto the card as "[1, 2]"), the genre reads
- * capitalised, and the parts join with " · ". Null when the title carries none
- * of the three, so the slide prints no empty line. Pure, so the line is
- * testable without a pager.
+ * The hero's one meta line (review redesign, Nov 2026): year, seasons,
+ * first genre — "2026 · Season 1–2 · Reality". The seasons text is
+ * normalised by [heroSeasonsLabel] (the server sends "2", "S01–S03" and
+ * "[1, 2]" for the same fact — a raw list leaked onto the card as
+ * "[1, 2]"), the genre reads capitalised, and the parts join with " · ".
+ * Null when the title carries none of the three, so the slide prints no
+ * empty line. Pure, so the line is testable without a pager.
+ *
+ * S2 (2027 Home fix, round 2): the year leads — the brief's
+ * year•duration•quality as far as the list wire honestly reaches (the
+ * seasons ARE the length fact for a series; duration/quality need server
+ * fields — see [posterMetaLine]). The rating keeps its slot after the
+ * year, in the same relative order as the rail line.
  */
 internal fun heroMetaLine(post: Post): String? {
     val parts = listOfNotNull(
+        post.yearLabel,
         // E2 Ratings (Nov 2026): the hero is the one big surface that
         // never painted a rating — the meta line is the only words under
-        // the title, so the rating leads it, "★ 8.6 · Season 1–2 · Drama
-        // · 2026", the same rating-first order the rail meta line
+        // the title, so the rating rides it, "2026 · ★ 8.6 · Season 1–2
+        // · Drama", in the same year-first order the rail meta line
         // ([posterMetaLine]) already uses. An absent or unparseable
         // rating leaves its slot out — never an invented value.
         UserWords.displayRating(post.imdbRating)?.let { "★ $it" },
         heroSeasonsLabel(post.seasons),
         post.genreList.firstOrNull()?.lowercase()?.replaceFirstChar { it.uppercase() }?.takeIf { it.isNotBlank() },
-        post.yearLabel,
     )
     return parts.joinToString(" · ").takeIf { it.isNotBlank() }
 }

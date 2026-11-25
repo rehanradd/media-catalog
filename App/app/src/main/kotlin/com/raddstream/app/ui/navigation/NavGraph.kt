@@ -694,7 +694,7 @@ fun RaddStreamNavGraph(
                     onPlaySomethingClick = { post ->
                         navController.navigateToPost(post)
                     },
-                    onBrowseType = { type -> navController.navigate(Screen.Browse.createRoute(type)) },
+                    onBrowseType = { type, sort -> navController.navigate(Screen.Browse.createRoute(type, sort)) },
                     // A facet chip on Home lands on Search with the filter
                     // already applied — the same tab, not a pushed copy.
                     onFacetSelected = { genre, industry, language ->
@@ -719,6 +719,13 @@ fun RaddStreamNavGraph(
                     navArgument(Screen.Browse.ARG_TYPE) {
                         type = NavType.StringType
                         defaultValue = "all"
+                    },
+                    // H10: the sort the rail was ordered by — "" means no
+                    // sort, the old behaviour; "trending" is the one sort
+                    // Browse reproduces.
+                    navArgument(Screen.Browse.ARG_SORT) {
+                        type = NavType.StringType
+                        defaultValue = ""
                     },
                 ),
                 deepLinks = listOf(

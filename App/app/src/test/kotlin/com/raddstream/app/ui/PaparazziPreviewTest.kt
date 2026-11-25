@@ -56,6 +56,8 @@ import com.raddstream.app.ui.screens.ChipRow
 import com.raddstream.app.ui.screens.EdgeFeedbackLine
 import com.raddstream.app.ui.screens.EdgeHud
 import com.raddstream.app.ui.screens.HomeContent
+import com.raddstream.app.ui.screens.HomeMoodRow
+import com.raddstream.app.ui.screens.MyListStrip
 import com.raddstream.app.ui.screens.Hud
 import com.raddstream.app.ui.screens.MyListEmptyContent
 import com.raddstream.app.ui.screens.MyListLoadedContent
@@ -63,6 +65,8 @@ import com.raddstream.app.ui.screens.TopBar
 import com.raddstream.app.ui.screens.SearchContent
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.EpisodeGroup
+import com.raddstream.app.viewmodel.HomeFilter
+import com.raddstream.app.viewmodel.HomeMood
 import com.raddstream.app.viewmodel.HomeSection
 import com.raddstream.app.viewmodel.GenreFilter
 import com.raddstream.app.viewmodel.HomeUiState
@@ -255,7 +259,7 @@ class PaparazziPreviewTest {
 
     // My List review (Nov 2026): the empty state — the jade heart in its
     // tinted container, the retitled starter rail, the compact
-    // "★ 7.0 · 2023" meta, and the rail pulled up under the message
+    // "2023 · ★ 7.0" meta, and the rail pulled up under the message
     // instead of floating in a void.
     // UI/UX audit Library #6 (Nov 2026): the preview used to pass
     // isFavorite = { it.id == 1 }, so Jawan's heart rendered filled —
@@ -413,6 +417,10 @@ class PaparazziPreviewTest {
         ),
         trialDaysRemaining = 5,
         favoriteIds = setOf(1),
+        // H11: the My List strip — Jawan is half-watched (the CW row
+        // above), so its strip tile carries the progress bar + label;
+        // Salaar has no CW row, so its tile shows the poster alone.
+        savedPosts = listOf(jawan, salaars),
         facets = FacetsResponse(
             genres = listOf(FacetEntry("action", "Action", 120), FacetEntry("drama", "Drama", 98)),
             languages = listOf(FacetEntry("hindi", "Hindi", 210)),
@@ -435,6 +443,58 @@ class PaparazziPreviewTest {
                 // renders its entrance as already over when it is set.
                 CompositionLocalProvider(LocalInspectionMode provides true) {
                     HomeContent(state = loadedHome, heroAutoplay = false)
+                }
+            }
+        }
+    }
+
+    /**
+     * H9 (2027 Home fix, round 2): the mood row as a standalone golden —
+     * the homeLoaded viewport (461×1000) shows the hero, chips, CW and
+     * rail 1, so the mood row below rail 1 never reaches the golden.
+     * "Feel good" is selected here so the golden pins the selected state
+     * (jade tint + bold label) next to the unselected moods.
+     */
+    @Test
+    fun homeMoodRow() {
+        paparazzi.snapshot {
+            themed {
+                // Audit #3: see homeLoaded — the mood row's entrance is a
+                // real-time animation, so inspection mode renders it as
+                // already over.
+                CompositionLocalProvider(LocalInspectionMode provides true) {
+                    HomeMoodRow(
+                        selected = HomeMood.FeelGood,
+                        onSelect = {},
+                        filter = HomeFilter.All,
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * H11 (2027 Home fix, round 2): the My List strip as a standalone
+     * golden — the homeLoaded viewport never reaches it either (it sits
+     * below the broadcasts/sync line, above rail 1, and the viewport
+     * ends mid-rail-1). Jawan is half-watched (the CW row in loadedHome),
+     * so its strip tile carries the progress bar + label; Salaar has no
+     * CW row, so its tile shows the poster alone.
+     */
+    @Test
+    fun homeMyListStrip() {
+        paparazzi.snapshot {
+            themed {
+                // Audit #3: see homeLoaded — the strip's entrance is a
+                // real-time animation, so inspection mode renders it as
+                // already over.
+                CompositionLocalProvider(LocalInspectionMode provides true) {
+                    MyListStrip(
+                        savedPosts = listOf(jawan, salaars),
+                        continueWatching = loadedHome.continueWatching,
+                        onPostClick = {},
+                        onPlayClick = {},
+                    )
                 }
             }
         }

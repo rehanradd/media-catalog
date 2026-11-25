@@ -124,6 +124,87 @@ internal fun homeFilterMatches(section: HomeSection, filter: HomeFilter): Boolea
     }
 }
 
+/**
+ * H9 (2027 Home fix, round 2): mood filters — "Something short", "Feel
+ * good", "Mind-bending", "Dark & gritty". A discovery prompt, not a
+ * category: the moods filter the rails below the mood row (which sits
+ * after the Top 10 chart), where the sticky category row under the hero
+ * is the navigation. Null means no mood — every rail shows.
+ */
+enum class HomeMood(val label: String) {
+    Short("Something short"),
+    FeelGood("Feel good"),
+    MindBending("Mind-bending"),
+    DarkGritty("Dark & gritty"),
+    ;
+}
+
+/**
+ * Whether this post matches the mood. Pure, so the chip filter is
+ * testable. The predicates are honest heuristics over fields the list
+ * row actually carries — genres, animation flag, content type — never a
+ * claim about data the row does not have:
+ *
+ * - Short: a film is one sitting; a series is a commitment. No duration
+ *   field exists on the list wire ([Post] carries none — duration lives
+ *   only on Detail's `PostDetail.runtimeMinutes`), so "short" is the
+ *   type, not a runtime claim, and the tiles paint no duration.
+ * - Feel good: Comedy / Family / Romance / Animation — or any animated
+ *   title (animation reads as feel-good even when the genre list does
+ *   not say so).
+ * - Mind-bending: Sci-Fi / Thriller / Mystery.
+ * - Dark & gritty: Crime / Horror / Thriller. (Thriller matches both
+ *   moods — a title can be mind-bending AND dark; the filter narrows,
+ *   it does not sort into one box.)
+ *
+ * Genre matching is case-insensitive on the post's [Post.genreList]
+ * (already placeholder-filtered), with the "Sci-Fi" / "Science Fiction"
+ * spellings unified.
+ */
+internal fun moodMatchesPost(post: Post, mood: HomeMood?): Boolean {
+    if (mood == null) return true
+    return when (mood) {
+        HomeMood.Short -> post.contentType == "movie"
+        HomeMood.FeelGood -> post.isAnimated == true ||
+            post.genreList.any { it.lowercase() in FeelGoodGenres }
+        HomeMood.MindBending -> post.genreList.any { it.lowercase() in MindBendingGenres }
+        HomeMood.DarkGritty -> post.genreList.any { it.lowercase() in DarkGrittyGenres }
+    }
+}
+
+private val FeelGoodGenres = setOf("comedy", "family", "romance", "animation", "musical")
+private val MindBendingGenres = setOf("sci-fi", "science fiction", "scifi", "thriller", "mystery", "psychological")
+private val DarkGrittyGenres = setOf("crime", "horror", "thriller")
+
+/**
+ * H11 (2027 Home fix, round 2): the Continue Watching row a saved post
+ * is already in — by server handle first (the v2 rows' `id` is a
+ * negative sentinel, never a post id, so the id alone cannot match),
+ * falling back to the title when the handle is absent. Pure, so the
+ * match is testable. Returns null when the saved title is not being
+ * watched — the strip then shows the poster with no progress bar, never
+ * an invented one.
+ *
+ * The fallback is year-blind on purpose: the tile's [Post] carries no
+ * year ([ResumeTile.of] builds it from a local row), so a year-strict
+ * key would never match a saved post that has one. The same-title
+ * remake caveat follows: with no handle, a title match is the best the
+ * wire can say — the progress shown is the real row's, never invented.
+ */
+internal fun continueWatchingMatchFor(
+    post: Post,
+    continueWatching: List<ResumeTile>,
+): ResumeTile? {
+    val ref = post.workRef?.trim()?.takeIf { it.isNotBlank() }
+    if (ref != null) {
+        continueWatching.firstOrNull { it.workRef == ref }?.let { return it }
+    }
+    val titleKey = UserWords.workKey(null, post.displayTitle, null)
+    return continueWatching.firstOrNull { tile ->
+        UserWords.workKey(null, tile.post.displayTitle, null) == titleKey
+    }
+}
+
 data class HomeSection(
     val key: String,
     val title: String,
@@ -189,14 +270,15 @@ data class HomeSection(
 
     /**
      * True when Browse can reproduce this rail's order. Browse takes a type
-     * but no sort, so a rail ordered by a server sort has no "See all": the
-     * Browse page would silently re-sort it to freshest-first. A related
-     * rail has no Browse equivalent either — Browse cannot reproduce a
-     * seed's neighbours. A "For you" rail has none either: Browse cannot
-     * reproduce a taste-ranked order, so its "See all" would silently
-     * re-sort the picks to freshest-first.
+     * and a sort — the trending sort is the one Browse reproduces (its v2
+     * path already sorted by trending), so a trending rail has a "See all".
+     * Any other server sort still has none: Browse would silently re-sort
+     * it to freshest-first. A related rail has no Browse equivalent either
+     * — Browse cannot reproduce a seed's neighbours. A "For you" rail has
+     * none either: Browse cannot reproduce a taste-ranked order, so its
+     * "See all" would silently re-sort the picks to freshest-first.
      */
-    val browseEquivalent: Boolean get() = sort == null && relatedWorkId == null && !forYou
+    val browseEquivalent: Boolean get() = (sort == null || sort == "trending") && relatedWorkId == null && !forYou
 
     /**
      * A rail that already has rows and whose newest refresh came back empty-handed. Without
@@ -300,6 +382,14 @@ data class HomeUiState(
      * the DataStore flow; the filtering itself is a pure function of it.
      */
     val kidsMode: Boolean = false,
+    /**
+     * H11 (2027 Home fix, round 2): the viewer's saved titles as display
+     * posts — the My List strip between the broadcasts/sync line and rail
+     * 1. Populated from `latestFavorites` via [myListDisplayPost] in
+     * [observeFavorites]; empty means no My List, and the strip simply
+     * does not render. Appended last so no positional construction breaks.
+     */
+    val savedPosts: List<Post> = emptyList(),
 ) {
     /**
      * MX #7 — Kids Lock: the rails a kid sees. Each rail keeps only
@@ -317,6 +407,14 @@ data class HomeUiState(
     val visibleContinueWatching: List<ResumeTile>
         get() = if (!kidsMode) continueWatching else continueWatching
             .filter { KidsLock.isKidAppropriate(it.post) }
+
+    /**
+     * H11: the My List strip in kids mode — the viewer's own saved titles,
+     * kid-appropriate only. A saved adult title is still an adult title,
+     * even though the viewer chose it.
+     */
+    val visibleSavedPosts: List<Post>
+        get() = if (!kidsMode) savedPosts else savedPosts.filter { KidsLock.isKidAppropriate(it) }
     /**
      * Pick 3 (home review, Nov 2026): the three titles the redesigned card
      * offers — the first rail with at least three rows AFTER the hero's own
@@ -993,6 +1091,10 @@ class HomeViewModel @Inject constructor(
                     it.copy(
                         favoriteIds = favorites.map { fav -> fav.id }.toSet(),
                         favoriteWorkRefs = favorites.mapNotNull { fav -> fav.workRef }.toSet(),
+                        // H11: the My List strip reads the same saved rows
+                        // the My List screen shows, through the same
+                        // title-suffix stripping.
+                        savedPosts = favorites.map { myListDisplayPost(it) },
                     )
                 }
                 refreshForYou()
