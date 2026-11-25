@@ -1,6 +1,20 @@
 package com.raddstream.app.ui.screens
 
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import android.speech.RecognizerIntent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.DrawableRes
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,30 +33,18 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CardMembership
-import androidx.compose.material.icons.filled.Category
-import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.DateRange
-import androidx.compose.material.icons.filled.HighQuality
-import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Language
-import androidx.compose.material.icons.filled.Movie
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Sort
-import androidx.compose.material.icons.filled.Theaters
-import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -57,6 +59,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
@@ -74,14 +78,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -94,6 +103,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.paging.LoadState
 import androidx.paging.compose.LazyPagingItems
 import androidx.paging.compose.collectAsLazyPagingItems
+import kotlinx.coroutines.delay
 import com.raddstream.app.R
 import com.raddstream.app.network.friendlyNetworkError
 import com.raddstream.app.network.models.Post
@@ -112,17 +122,23 @@ import com.raddstream.app.ui.components.SearchResultsSkeleton
 import com.raddstream.app.ui.components.SectionHeader
 import com.raddstream.app.ui.components.SkeletonBox
 import com.raddstream.app.ui.components.prefetchPosterArt
+import com.raddstream.app.ui.components.rememberReduceMotion
 import com.raddstream.app.ui.components.searchNextPrefetchUrls
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.components.RaddChip
 import com.raddstream.app.ui.components.RaddChipStyle
 import com.raddstream.app.ui.components.ScrollingChipRow
 import com.raddstream.app.ui.layout.CardGeometry
+import com.raddstream.app.ui.theme.RaddEmphasized
+import com.raddstream.app.ui.theme.RaddMotion
+import com.raddstream.app.ui.theme.RaddTokens
 import com.raddstream.app.viewmodel.GenreFilter
 import com.raddstream.app.viewmodel.LanguageFilter
 import com.raddstream.app.viewmodel.IndustryFilter
 import com.raddstream.app.viewmodel.LocalSearchResult
+import com.raddstream.app.viewmodel.MaxSavedFilters
 import com.raddstream.app.viewmodel.QualityFilter
+import com.raddstream.app.viewmodel.SavedSearchFilter
 import com.raddstream.app.viewmodel.SearchSort
 import com.raddstream.app.viewmodel.SearchUiState
 import com.raddstream.app.viewmodel.SearchViewModel
@@ -223,6 +239,37 @@ fun SearchScreen(
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
 
+    // SE-3 (round 2): voice entry. The mic opens the platform speech
+    // recognizer and the first heard phrase runs as a search at once
+    // (submit, not debounce — a spoken phrase is a complete query, and it
+    // joins recents like a typed submit). A device with no recognizer
+    // never sees the mic: [isVoiceSearchAvailable] answers once per
+    // composition, and the field hides the button on false instead of
+    // offering a dead control.
+    val voiceContext = LocalContext.current
+    val voiceSearchAvailable = remember { isVoiceSearchAvailable(voiceContext.packageManager) }
+    val voiceLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (result.resultCode != android.app.Activity.RESULT_OK) return@rememberLauncherForActivityResult
+        val heard = result.data
+            ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+            ?.firstOrNull()?.trim().orEmpty()
+        if (heard.isNotBlank()) {
+            focusManager.clearFocus()
+            keyboardController?.hide()
+            viewModel.onQueryChanged(heard)
+            viewModel.submitCurrentQuery()
+        }
+    }
+    val onVoiceSearch: () -> Unit = {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Search titles or cast")
+        }
+        runCatching { voiceLauncher.launch(intent) }
+    }
+
     // An actor tap runs as a search at once — and is recorded as a recent,
     // like any search the viewer ran. Keyed on the argument, so a rotation
     // or a later edit never re-runs it.
@@ -282,13 +329,12 @@ fun SearchScreen(
             // Mockup (Nov 2026): the title is a heading in the content, not
             // a top bar. The bar's Tune icon and "Filtered" pill are gone
             // with it — the rail's Filters chip is the one entry to the
-            // sheet, and it already shows the active count. Bold, not
-            // SemiBold: the Gemini review (Nov 2026) read the SemiBold
-            // title as thin against the field below it.
+            // sheet, and it already shows the active count. SE-7 (round 2):
+            // the screen title wears the display face at headline weight —
+            // the one display-scale moment on this utility screen.
             Text(
                 text = "Search",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
+                style = RaddEmphasized.headlineMedium,
                 color = MaterialTheme.colorScheme.onBackground,
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
             )
@@ -301,9 +347,24 @@ fun SearchScreen(
                     keyboardController?.hide()
                     viewModel.submitCurrentQuery()
                 },
+                // SE-3 (round 2): voice entry — the mic shows only where a
+                // recognizer exists, and speaks the query at once.
+                onVoiceSearch = if (voiceSearchAvailable) onVoiceSearch else null,
+                voiceSearchAvailable = voiceSearchAvailable,
             )
 
             Spacer(Modifier.height(8.dp))
+            // SE-2 (round 2): the saved-filter row — one tap re-applies a
+            // filter combination this viewer kept. It sits above the rail,
+            // and only while at least one filter is saved.
+            if (state.savedFilters.isNotEmpty()) {
+                SavedFilterRow(
+                    savedFilters = state.savedFilters,
+                    onApply = viewModel::applySavedFilter,
+                    onRemove = viewModel::removeSavedFilter,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+            }
             val pasted = classifyPastedText(state.query)
             when (pasted) {
                 is PastedText.DirectVideo -> {
@@ -396,6 +457,11 @@ fun SearchScreen(
                     onOpenSettings = onOpenSettings,
                     onSeeAllTrending = { onBrowse(browseTypeForSeeAll(state.filters.type)) },
                     onSeeAllRecommended = { onBrowse(browseTypeForSeeAll(state.filters.type)) },
+                    // SE-1 (round 2): the category tabs scope the results —
+                    // genre, language and year, one tap each.
+                    onSelectGenre = viewModel::selectGenre,
+                    onSelectLanguage = viewModel::selectLanguage,
+                    onSetYearRange = viewModel::setYearRange,
                 )
             } else if (state.visibleRecents.isNotEmpty()) {
                 // A pasted link replaces the results, not the history: the
@@ -433,6 +499,10 @@ fun SearchScreen(
                     state = state,
                     viewModel = viewModel,
                     onDone = { showSheet = false },
+                    // SE-2 (round 2): the sheet is where a filter combination
+                    // gets saved — the Save action reads the live state.
+                    savedFilters = state.savedFilters,
+                    onSaveFilter = viewModel::saveCurrentFilters,
                 )
             }
         }
@@ -447,12 +517,17 @@ fun SearchScreen(
  * character is typed, and the accessible name rides on semantics instead.
  * The field searches titles and cast names; only the prompt is unified
  * with Home's bar, not the capability.
- * Mockup (Nov 2026): one rounded field, 52dp tall, 16dp corners, prompt
+ * Mockup (Nov 2026): one rounded field, 52dp tall, prompt
  * "Search titles or cast" (screenshot-fix D2, 2026-11-16: the old
  * "Search titles, genres, or cast" truncated mid-word — "Search titles,
  * genres, or" — on a narrow phone, because the field is too narrow for
  * 30 characters next to the search icon. The shorter prompt names what
  * the field takes and fits).
+ * SE-3 (round 2): the field is a full pill now (Shape.Pill), with a mic
+ * beside the clear action — voice entry, TalkBack "Voice search". The mic
+ * only exists when [voiceSearchAvailable] is true; a device with no
+ * speech recognizer never sees it. The trailing actions crossfade
+ * (AnimatedContent) instead of swapping, so the field never jumps.
  */
 @Composable
 internal fun SearchField(
@@ -464,6 +539,9 @@ internal fun SearchField(
     // shows — while Search keeps the shorter hint. The review's prompt
     // names all three: titles, genres, or cast.
     label: String = "Search titles or cast",
+    /** SE-3: voice entry — null means no mic (no recognizer on this device). */
+    onVoiceSearch: (() -> Unit)? = null,
+    voiceSearchAvailable: Boolean = false,
 ) {
     TextField(
         value = query,
@@ -472,11 +550,30 @@ internal fun SearchField(
             .semantics { contentDescription = label },
         singleLine = true,
         placeholder = { Text(label) },
-        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+        leadingIcon = { Icon(painterResource(R.drawable.ic_tab_search), contentDescription = null) },
         trailingIcon = {
-            if (query.isNotEmpty()) {
-                IconButton(onClick = { onQueryChanged("") }) {
-                    Icon(Icons.Default.Close, contentDescription = "Clear search")
+            AnimatedContent(
+                targetState = query.isNotEmpty(),
+                transitionSpec = { fadeIn() togetherWith fadeOut() },
+                label = "searchFieldTrailing",
+            ) { hasText ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (voiceSearchAvailable && onVoiceSearch != null) {
+                        IconButton(onClick = onVoiceSearch) {
+                            Icon(
+                                painterResource(R.drawable.ic_action_mic),
+                                contentDescription = "Voice search",
+                            )
+                        }
+                    }
+                    if (hasText) {
+                        IconButton(onClick = { onQueryChanged("") }) {
+                            Icon(
+                                painterResource(R.drawable.ic_action_close),
+                                contentDescription = "Clear search",
+                            )
+                        }
+                    }
                 }
             }
         },
@@ -484,7 +581,7 @@ internal fun SearchField(
         // Session 121 (P-12): searching dismisses the keyboard so the
         // results are visible instead of sitting under it.
         keyboardActions = KeyboardActions(onSearch = { onSubmit() }),
-        shape = RoundedCornerShape(16.dp),
+        shape = RaddTokens.Shape.Pill,
         colors = TextFieldDefaults.colors(
             focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
             unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -494,6 +591,235 @@ internal fun SearchField(
             disabledIndicatorColor = Color.Transparent,
         ),
     )
+}
+
+/**
+ * SE-3 (round 2): whether this device can answer a voice search — a speech
+ * recognizer must be installed. Pure over the [PackageManager] so a test can
+ * pin it without an activity. A missing recognizer hides the mic entirely
+ * (never a dead button), per the SE-3 decision.
+ */
+internal fun isVoiceSearchAvailable(packageManager: PackageManager): Boolean {
+    val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        packageManager.queryIntentActivities(
+            intent,
+            PackageManager.ResolveInfoFlags.of(0),
+        ).isNotEmpty()
+    } else {
+        @Suppress("DEPRECATION")
+        packageManager.queryIntentActivities(intent, 0).isNotEmpty()
+    }
+}
+
+/**
+ * Motion (round 2): the entrance delay for one result row, in ms — 40ms per
+ * row, capped at 300ms so a long list never waits on the animation. Pure
+ * over the row's position, so it is stable across recompositions and
+ * unit-testable without a composition (see SearchMotionTest).
+ */
+internal fun searchEntranceDelayMs(index: Int): Int = (index * 40).coerceIn(0, 300)
+
+/**
+ * Motion (round 2): one result row's entrance — a fade on the effects
+ * spring plus a 24dp rise on the spatial spring, behind its delay. The
+ * delay is a coroutine delay before the flip, so the springs themselves
+ * stay the RaddMotion tokens. Reduce-motion renders the content directly:
+ * no movement, no wait.
+ */
+@Composable
+internal fun SearchStaggeredFade(
+    delayMillis: Int,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    if (rememberReduceMotion()) {
+        Box(modifier) { content() }
+        return
+    }
+    // Home's rail pattern, copied exactly: under inspection mode
+    // (Paparazzi) the content starts visible, so the golden shows what the
+    // phone shows after the entrance, not the pre-entrance empty list.
+    // Paparazzi does not set inspection mode itself — the snapshot test
+    // provides it (shotSearch wraps in LocalInspectionMode provides true).
+    val inInspectionMode = LocalInspectionMode.current
+    var visible by remember { mutableStateOf(inInspectionMode) }
+    LaunchedEffect(Unit) {
+        if (inInspectionMode) return@LaunchedEffect
+        if (delayMillis > 0) delay(delayMillis.toLong())
+        visible = true
+    }
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(animationSpec = RaddMotion.defaultEffects()) +
+            slideInVertically(animationSpec = RaddMotion.defaultSpatial()) { it / 4 },
+        exit = fadeOut(),
+        modifier = modifier,
+    ) { content() }
+}
+
+/** The three scopes the category tabs offer above the results (SE-1). */
+internal enum class SearchCategoryTab { GENRE, LANGUAGE, YEAR }
+
+/** Test tags for the category tabs and their quick chips (SE-1). */
+internal const val CategoryTabGenreTag = "searchCategoryTabGenre"
+internal const val CategoryTabLanguageTag = "searchCategoryTabLanguage"
+internal const val CategoryTabYearTag = "searchCategoryTabYear"
+
+/**
+ * SE-1 (round 2): the category tabs above the results — a tab strip
+ * (Genre / Language / Year) with quick chips under it, so the viewer
+ * scopes the list without opening the sheet. The chips are the most-picked
+ * values in each facet; the sheet still holds the full list. A tap applies
+ * at once (the ViewModel re-runs the search), and the selected chip is the
+ * live filter value — tapping the selected chip again clears it back to All.
+ */
+@Composable
+internal fun CategoryTabs(
+    state: SearchUiState,
+    onSelectGenre: (GenreFilter) -> Unit,
+    onSelectLanguage: (LanguageFilter) -> Unit,
+    onSetYearRange: (Int?, Int?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var selectedTab by remember { mutableStateOf(SearchCategoryTab.GENRE) }
+    Column(modifier = modifier.fillMaxWidth()) {
+        TabRow(selectedTabIndex = selectedTab.ordinal) {
+            Tab(
+                selected = selectedTab == SearchCategoryTab.GENRE,
+                onClick = { selectedTab = SearchCategoryTab.GENRE },
+                text = { Text("Genre") },
+                modifier = Modifier.testTag(CategoryTabGenreTag),
+            )
+            Tab(
+                selected = selectedTab == SearchCategoryTab.LANGUAGE,
+                onClick = { selectedTab = SearchCategoryTab.LANGUAGE },
+                text = { Text("Language") },
+                modifier = Modifier.testTag(CategoryTabLanguageTag),
+            )
+            Tab(
+                selected = selectedTab == SearchCategoryTab.YEAR,
+                onClick = { selectedTab = SearchCategoryTab.YEAR },
+                text = { Text("Year") },
+                modifier = Modifier.testTag(CategoryTabYearTag),
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            when (selectedTab) {
+                SearchCategoryTab.GENRE -> {
+                    listOf(
+                        GenreFilter.ACTION, GenreFilter.COMEDY, GenreFilter.DRAMA,
+                        GenreFilter.HORROR, GenreFilter.THRILLER,
+                    ).forEach { genre ->
+                        FilterChip(
+                            colors = raddFilterChipColors(),
+                            selected = state.filters.genre == genre,
+                            onClick = {
+                                onSelectGenre(if (state.filters.genre == genre) GenreFilter.ALL else genre)
+                            },
+                            label = { Text(genre.label) },
+                            modifier = Modifier.heightIn(min = 48.dp),
+                        )
+                    }
+                }
+                SearchCategoryTab.LANGUAGE -> {
+                    listOf(
+                        LanguageFilter.HINDI, LanguageFilter.URDU, LanguageFilter.TAMIL,
+                        LanguageFilter.TELUGU, LanguageFilter.PUNJABI, LanguageFilter.ENGLISH,
+                    ).forEach { language ->
+                        FilterChip(
+                            colors = raddFilterChipColors(),
+                            selected = state.filters.language == language,
+                            onClick = {
+                                onSelectLanguage(if (state.filters.language == language) LanguageFilter.ALL else language)
+                            },
+                            label = { Text(displayLanguageName(language.label)) },
+                            modifier = Modifier.heightIn(min = 48.dp),
+                        )
+                    }
+                }
+                SearchCategoryTab.YEAR -> {
+                    listOf(
+                        "2025" to (2025 to 2025),
+                        "2024" to (2024 to 2024),
+                        "2023" to (2023 to 2023),
+                        "2020s" to (2020 to 2029),
+                    ).forEach { (label, range) ->
+                        val selected = state.filters.yearFrom == range.first &&
+                            state.filters.yearTo == range.second
+                        FilterChip(
+                            colors = raddFilterChipColors(),
+                            selected = selected,
+                            onClick = {
+                                if (selected) onSetYearRange(null, null)
+                                else onSetYearRange(range.first, range.second)
+                            },
+                            label = { Text(label) },
+                            modifier = Modifier.heightIn(min = 48.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * SE-2 (round 2): the saved-filter row above the rail — one chip per kept
+ * combination, newest last. A tap re-applies the combination (the ViewModel
+ * re-runs the search); the X removes it. The row only exists while at
+ * least one filter is saved — the caller hides it otherwise.
+ */
+@Composable
+internal fun SavedFilterRow(
+    savedFilters: List<SavedSearchFilter>,
+    onApply: (SavedSearchFilter) -> Unit,
+    onRemove: (SavedSearchFilter) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        savedFilters.forEach { saved ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    .clickable { onApply(saved) }
+                    // The row's spoken name is the apply action; the X next
+                    // to it stays its own node ("Remove saved filter …") —
+                    // merging descendants would swallow it into this node.
+                    .semantics { contentDescription = "Apply saved filter ${saved.label}" }
+                    .padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp)
+                    .heightIn(min = 40.dp),
+            ) {
+                Text(
+                    text = saved.label,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                IconButton(
+                    onClick = { onRemove(saved) },
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Icon(
+                        painterResource(R.drawable.ic_action_close),
+                        contentDescription = "Remove saved filter ${saved.label}",
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+        }
+    }
 }
 
 /**
@@ -608,6 +934,10 @@ internal fun FilterRail(
     ).count { it }
     val filtersLabel = if (activeFilterCount > 0) "Filters ($activeFilterCount)" else "Filters"
     val filtersA11y = if (activeFilterCount > 0) "Filters, $activeFilterCount active" else "Filters"
+    // Motion (round 2): the rail's taps tick — the same light haptic the
+    // press system uses (PressHaptics), so a chip tap feels answered.
+    val haptics = LocalHapticFeedback.current
+    val chipTick: () -> Unit = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove) }
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -628,13 +958,14 @@ internal fun FilterRail(
                 iconColor = MaterialTheme.colorScheme.onSurface,
             ),
             selected = false,
-            onClick = onOpenFilters,
+            onClick = { chipTick(); onOpenFilters() },
             label = {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(18.dp))
+                    // S8 (round 2): the house sliders glyph, not Icons.Default.Tune.
+                    Icon(painterResource(R.drawable.ic_action_sliders), contentDescription = null, modifier = Modifier.size(18.dp))
                     Text(filtersLabel)
                 }
             },
@@ -676,7 +1007,7 @@ internal fun FilterRail(
                         labelColor = MaterialTheme.colorScheme.onSurface,
                     ),
                     selected = selected,
-                    onClick = { onSelectType(value) },
+                    onClick = { chipTick(); onSelectType(value) },
                     label = {
                         Text(
                             label,
@@ -742,7 +1073,8 @@ internal fun RecentsList(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Icon(
-                    Icons.Default.History,
+                    // S8 (round 2): the house history glyph, not Icons.Default.History.
+                    painterResource(R.drawable.ic_action_history),
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(20.dp),
@@ -759,7 +1091,12 @@ internal fun RecentsList(
                     onClick = { onRemoveRecent(recent) },
                     modifier = Modifier.testTag("$RemoveRecentTagPrefix$recent"),
                 ) {
-                    Icon(Icons.Default.Close, contentDescription = "Remove $recent")
+                    Icon(
+                        // S8 (round 2): the house close glyph — and SE-7: the
+                        // TalkBack label says what removing removes.
+                        painterResource(R.drawable.ic_action_close),
+                        contentDescription = "Remove $recent",
+                    )
                 }
             }
         }
@@ -980,12 +1317,37 @@ internal fun SearchDiscoveryContent(
         }
         if (state.visibleTrending.isEmpty() && state.visibleRecents.isEmpty() && state.visibleRecommended.isEmpty()) {
             Spacer(Modifier.height(28.dp))
-            Icon(
-                Icons.Default.Search,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(48.dp).align(Alignment.CenterHorizontally),
-            )
+            // APP-07 (round 2): the empty discovery state is illustrated,
+            // not a bare icon — the H6 pattern: a 120dp jade-ringed circle
+            // holding a 64dp house search mark, with a hint that points at
+            // the category tabs above the results.
+            Box(
+                modifier = Modifier
+                    .size(120.dp)
+                    .align(Alignment.CenterHorizontally)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(118.dp)
+                        .clip(CircleShape)
+                        .border(
+                            width = 1.5.dp,
+                            color = MaterialTheme.colorScheme.tertiary,
+                            shape = CircleShape,
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        painterResource(R.drawable.ic_tab_search),
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.size(64.dp),
+                    )
+                }
+            }
             Spacer(Modifier.height(16.dp))
             Text(
                 text = "Search your catalog",
@@ -996,7 +1358,7 @@ internal fun SearchDiscoveryContent(
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                text = "Search titles and cast names to find movies, series, and anime",
+                text = "Search titles and cast names — or start from a genre, a language, or a year",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -1025,7 +1387,8 @@ private fun SeeAllButton(onClick: () -> Unit, tag: String) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Icon(
-            Icons.Default.ChevronRight,
+            // S8 (round 2): the house chevron glyph, not Icons.Default.ChevronRight.
+            painterResource(R.drawable.ic_action_chevron_right),
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.size(18.dp),
@@ -1100,21 +1463,50 @@ internal fun SearchNoResultsContent(
 ) {
     val filterNames = activeFilterSummary(state.filters)
     Column(
+        // SE-5 (round 2): the no-results root is a polite live region — a
+        // TalkBack viewer hears "No matches" + the explanation when the
+        // search lands empty, without the focus being stolen.
         modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState())
-            .testTag(NoResultsTag),
+            .testTag(NoResultsTag)
+            .semantics { liveRegion = LiveRegionMode.Polite },
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Spacer(Modifier.height(28.dp))
-        Icon(
-            Icons.Default.Search,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(48.dp),
-        )
+        // APP-07 (round 2): the no-results state is illustrated, not a bare
+        // icon — the H6 pattern: a 120dp jade-ringed circle holding a 64dp
+        // house search mark. The same art as the discovery empty state,
+        // so the two empty states read as one family.
+        Box(
+            modifier = Modifier
+                .size(120.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(118.dp)
+                    .clip(CircleShape)
+                    .border(
+                        width = 1.5.dp,
+                        color = MaterialTheme.colorScheme.tertiary,
+                        shape = CircleShape,
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    painterResource(R.drawable.ic_tab_search),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.tertiary,
+                    modifier = Modifier.size(64.dp),
+                )
+            }
+        }
         Spacer(Modifier.height(16.dp))
         Text(
             text = "No matches",
-            style = MaterialTheme.typography.titleMedium,
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurface,
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth(),
@@ -1221,6 +1613,11 @@ internal fun SearchContent(
     onOpenSettings: () -> Unit = {},
     onSeeAllTrending: () -> Unit = {},
     onSeeAllRecommended: () -> Unit = {},
+    // SE-1 (round 2): the category tabs scope the results — genre,
+    // language and year, one tap each, from the results list itself.
+    onSelectGenre: (GenreFilter) -> Unit = {},
+    onSelectLanguage: (LanguageFilter) -> Unit = {},
+    onSetYearRange: (Int?, Int?) -> Unit = { _, _ -> },
 ) {
     // Session 121 (P-12): scrolling the results dismisses the keyboard — the open
     // keyboard covering the top row was the other half of the complaint (the first
@@ -1299,12 +1696,25 @@ internal fun SearchContent(
             // list — and the way back is right here.
             title = "No exact matches",
             message = "No titles exactly match \"${state.query}\".",
-            icon = { Icon(Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(40.dp)) },
+            // S8 (round 2): the house search glyph, not Icons.Default.Search.
+            icon = { Icon(painterResource(R.drawable.ic_tab_search), contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(40.dp)) },
             action = {
                 OutlinedButton(onClick = onShowCloseMatches) { Text("Show close matches") }
             },
         )
         else -> LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+            // SE-1 (round 2): the category tabs sit above the results — a
+            // tab strip (Genre / Language / Year) with quick chips under it,
+            // so the viewer scopes the list without opening the sheet.
+            item {
+                CategoryTabs(
+                    state = state,
+                    onSelectGenre = onSelectGenre,
+                    onSelectLanguage = onSelectLanguage,
+                    onSetYearRange = onSetYearRange,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 4.dp),
+                )
+            }
             // Feel-instant S3a: the previous results stay on screen while a
             // fresh search runs — and this one skeleton row on top is the
             // signal that they are refreshing, so the stale count below it
@@ -1322,11 +1732,15 @@ internal fun SearchContent(
                 // P1-S3: one filter entry point — the top bar's Tune icon (and
                 // the "Filtered" pill) opens the sheet. The header keeps only
                 // the count; a second "Sort" door to the same sheet is gone.
+                // SE-5 (round 2): the summary line is a polite live region —
+                // a TalkBack viewer hears "Showing 34 of 52 results" when the
+                // page lands, without the focus being stolen.
                 Text(
                     text = resultsSummary(loadedCount, state.serverTotal, hasMore, state.totalCapped),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+                        .semantics { liveRegion = LiveRegionMode.Polite },
                 )
             }
 
@@ -1354,6 +1768,9 @@ internal fun SearchContent(
             // instead. Name the query, so the viewer knows why "Avengers"
             // is what came back for "Avngers" — and offer the exact-only
             // view, which is the empty state above.
+            // SE-6 (round 2): the exact-only action is a real button now —
+            // an OutlinedButton, not a bare TextButton — so the choice reads
+            // as an action, not a caption.
             if (state.isFuzzy) {
                 item {
                     Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
@@ -1362,12 +1779,16 @@ internal fun SearchContent(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        TextButton(onClick = onShowExactOnly) { Text("Show exact matches only") }
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = onShowExactOnly,
+                            modifier = Modifier.heightIn(min = 48.dp),
+                        ) { Text("Show exact matches only") }
                     }
                 }
             }
 
-            groups.forEach { group ->
+            groups.forEachIndexed { groupIndex, group ->
                 item {
                     // A4-F4: the header names the section, nothing more — the
                     // summary line above is the one count on this screen. The
@@ -1388,30 +1809,39 @@ internal fun SearchContent(
                 // groups, and an index key lets the rows shift under a
                 // press in flight. A content key keeps the row — and the
                 // press on it — alive across the re-emission.
-                group.items.chunked(2).forEach { pair ->
+                // Motion (round 2): the rows stagger in — each pair fades
+                // and rises 24dp behind the one above it, on the emphasized
+                // spring, capped at 300ms so a long list never waits on the
+                // animation. The delay is pure over the row's position, so
+                // it is stable across recompositions.
+                group.items.chunked(2).forEachIndexed { pairIndex, pair ->
                     item(key = "${group.typeKey}-${pair.joinToString(separator = ",") { it.id.toString() }}") {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        SearchStaggeredFade(
+                            delayMillis = searchEntranceDelayMs(groupIndex * 10 + pairIndex),
                         ) {
-                            pair.forEach { post ->
-                                // Screen audit #7 (Nov 2026): result tiles
-                                // get two title lines and no bare-type meta
-                                // — a long title reads whole under the
-                                // "Series" header instead of truncating to
-                                // "One Piece ·…", and the "Series" line
-                                // under it no longer restates the header.
-                                // The discovery rails above keep the
-                                // one-line tile and the full meta line.
-                                PosterCard(
-                                    post = post,
-                                    onClick = { onPostClick(post) },
-                                    modifier = Modifier.weight(1f),
-                                    titleMaxLines = 2,
-                                    suppressBareTypeMeta = true,
-                                )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                pair.forEach { post ->
+                                    // Screen audit #7 (Nov 2026): result tiles
+                                    // get two title lines and no bare-type meta
+                                    // — a long title reads whole under the
+                                    // "Series" header instead of truncating to
+                                    // "One Piece ·…", and the "Series" line
+                                    // under it no longer restates the header.
+                                    // The discovery rails above keep the
+                                    // one-line tile and the full meta line.
+                                    PosterCard(
+                                        post = post,
+                                        onClick = { onPostClick(post) },
+                                        modifier = Modifier.weight(1f),
+                                        titleMaxLines = 2,
+                                        suppressBareTypeMeta = true,
+                                    )
+                                }
+                                if (pair.size == 1) Spacer(Modifier.weight(1f))
                             }
-                            if (pair.size == 1) Spacer(Modifier.weight(1f))
                         }
                         Spacer(Modifier.height(12.dp))
                     }
@@ -1466,6 +1896,9 @@ private fun FilterSheetContent(
     state: SearchUiState,
     viewModel: SearchViewModel,
     onDone: () -> Unit,
+    // SE-2 (round 2): the saved-filter state the footer Save action reads.
+    savedFilters: List<SavedSearchFilter> = emptyList(),
+    onSaveFilter: () -> Unit = {},
 ) {
     FilterSheetBody(
         state = state,
@@ -1479,6 +1912,8 @@ private fun FilterSheetContent(
         onSetYearRange = viewModel::setYearRange,
         onResetFilters = viewModel::resetFilters,
         onDone = onDone,
+        savedFilters = savedFilters,
+        onSaveFilter = onSaveFilter,
     )
 }
 
@@ -1497,6 +1932,9 @@ internal fun FilterSheetBody(
     onResetFilters: () -> Unit,
     onDone: () -> Unit,
     modifier: Modifier = Modifier,
+    // SE-2 (round 2): the saved-filter state the footer Save action reads.
+    savedFilters: List<SavedSearchFilter> = emptyList(),
+    onSaveFilter: () -> Unit = {},
 ) {
     // F10 (Batch B): the sheet is two parts — a scrolling list of sections
     // and a footer that never scrolls away. The old sheet scrolled the
@@ -1546,7 +1984,7 @@ internal fun FilterSheetBody(
                 },
                 onSelect = { onSelectType(it.second) },
                 allDescription = "All types",
-                icon = Icons.Default.Category,
+                icon = R.drawable.ic_action_grid,
             )
             // Audit Search #9: "Complete series" is a type value
             // (content_type complete_season), not a boolean — but it sat
@@ -1592,7 +2030,7 @@ internal fun FilterSheetBody(
                 isSelected = { state.filters.industry == it },
                 onSelect = onSelectIndustry,
                 allDescription = "All industries",
-                icon = Icons.Default.Movie,
+                icon = R.drawable.ic_action_film,
             )
             FacetChips(
                 title = "Genre",
@@ -1601,7 +2039,7 @@ internal fun FilterSheetBody(
                 isSelected = { state.filters.genre == it },
                 onSelect = onSelectGenre,
                 allDescription = "All genres",
-                icon = Icons.Default.Theaters,
+                icon = R.drawable.ic_action_tv,
             )
             // Audit Search #10 (Nov 2026): Language was a collapsed "All ⌄"
             // dropdown while every other section shows chips. The chips are
@@ -1619,7 +2057,7 @@ internal fun FilterSheetBody(
                 isSelected = { state.filters.language == it },
                 onSelect = onSelectLanguage,
                 allDescription = "All languages",
-                icon = Icons.Default.Language,
+                icon = R.drawable.ic_action_globe,
             )
             FacetChips(
                 title = "Quality",
@@ -1628,10 +2066,10 @@ internal fun FilterSheetBody(
                 isSelected = { state.filters.quality == it },
                 onSelect = onSelectQuality,
                 allDescription = "All qualities",
-                icon = Icons.Default.HighQuality,
+                icon = R.drawable.ic_action_award,
             )
             if (!state.isVip) {
-                FacetHeader(title = "Plan", icon = Icons.Default.CardMembership)
+                FacetHeader(title = "Plan", icon = R.drawable.ic_action_credit_card)
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -1648,7 +2086,7 @@ internal fun FilterSheetBody(
                 HorizontalDivider(Modifier.padding(top = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
             }
 
-            FacetHeader(title = "Sort results", icon = Icons.Default.Sort)
+            FacetHeader(title = "Sort results", icon = R.drawable.ic_action_sort)
             SearchSort.entries.forEach { sort ->
                 SortOptionRow(
                     sort = sort,
@@ -1658,7 +2096,7 @@ internal fun FilterSheetBody(
             }
             HorizontalDivider(Modifier.padding(top = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
 
-            FacetHeader(title = "Year range", icon = Icons.Default.DateRange)
+            FacetHeader(title = "Year range", icon = R.drawable.ic_action_calendar)
             Text(
                 stringResource(R.string.search_filters_help),
                 style = MaterialTheme.typography.bodySmall,
@@ -1685,6 +2123,16 @@ internal fun FilterSheetBody(
             Spacer(Modifier.height(8.dp))
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        // SE-2 (round 2): "Save this filter" — keeps the current combination
+        // as a one-tap row above the results. Disabled while nothing is
+        // active (there is nothing to keep) and at the cap of 8 saved.
+        OutlinedButton(
+            onClick = onSaveFilter,
+            enabled = state.hasActiveFilters && savedFilters.size < MaxSavedFilters,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(top = 8.dp),
+        ) {
+            Text("Save this filter")
+        }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1771,8 +2219,9 @@ private fun <T> FacetChips(
     allDescription: String,
     // F10 (Batch B): the section's icon, painted beside the title so the
     // groups read apart at a glance instead of five bare headings in a
-    // row.
-    icon: ImageVector? = null,
+    // row. S8 (round 2): a house drawable resource, not an Icons.Default
+    // vector — the sheet is part of the icon system now.
+    @DrawableRes icon: Int? = null,
 ) {
     FacetHeader(title = title, icon = icon)
     // F10 (Batch B): 8dp gaps read as five separate rows of buttons; 6dp
@@ -1808,11 +2257,11 @@ private fun <T> FacetChips(
  * Year blocks so every section opens the same way.
  */
 @Composable
-private fun FacetHeader(title: String, icon: ImageVector?) {
+private fun FacetHeader(title: String, @DrawableRes icon: Int?) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         if (icon != null) {
             Icon(
-                icon,
+                painterResource(icon),
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(20.dp),

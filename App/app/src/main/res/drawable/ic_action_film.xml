@@ -1,0 +1,17 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+>
+    <!-- S8 (2027 Search fix): the house movie glyph — Feather "film".
+         Same stroke style as the tab icons (stroke 2, round caps; the caller's
+         tint recolours it). Replaces Icons.Default.Movie on Search (Industry facet header). -->
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M2 2h20v20H2zM7 2v20M17 2v20M2 12h20M2 7h5M2 17h5M17 17h5M17 7h5"
+        android:strokeWidth="2"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"/>
+</vector>

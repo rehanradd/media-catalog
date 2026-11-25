@@ -4,12 +4,12 @@
     android:viewportWidth="24"
     android:viewportHeight="24"
 >
-    <!-- S8 (2027 Home fix): the house history glyph — Feather "clock"
-         (circle + hands, as strokes). Same stroke style as the tab icons.
-         Replaces Icons.Default.History on Home's "no active shows" row. -->
+    <!-- S8 (2027 Search fix): the house history glyph — Feather "clock".
+         Same stroke style as the tab icons (stroke 2, round caps; the caller's
+         tint recolours it). Replaces Icons.Default.History on Search (recents rows). -->
     <path
         android:fillColor="@android:color/transparent"
-        android:pathData="M22 12A10 10 0 1 1 2 12A10 10 0 1 1 22 12z"
+        android:pathData="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z"
         android:strokeWidth="2"
         android:strokeColor="#FF000000"
         android:strokeLineCap="round"

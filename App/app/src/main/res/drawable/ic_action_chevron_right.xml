@@ -1,0 +1,17 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+>
+    <!-- S8 (2027 Search fix): the house chevron glyph — Feather "chevron-right".
+         Same stroke style as the tab icons (stroke 2, round caps; the caller's
+         tint recolours it). Replaces Icons.Default.ChevronRight on Search (See all). -->
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M9 18l6-6-6-6"
+        android:strokeWidth="2"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"/>
+</vector>
