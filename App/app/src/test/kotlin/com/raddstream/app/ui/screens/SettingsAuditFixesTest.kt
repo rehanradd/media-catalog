@@ -2,7 +2,11 @@ package com.raddstream.app.ui.screens
 
 import androidx.compose.ui.graphics.Color
 import com.raddstream.app.ui.theme.RaddChipBorderSoft
+import com.raddstream.app.ui.theme.RaddCurrentContainerDark
+import com.raddstream.app.ui.theme.RaddInk850
+import com.raddstream.app.ui.theme.RaddInk900
 import com.raddstream.app.ui.theme.RaddSettingsCard
+import com.raddstream.app.ui.theme.RaddTideContainerDark
 import com.raddstream.app.ui.theme.contrastRatio
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -35,5 +39,28 @@ class SettingsAuditFixesTest {
             "unselected chip border is only $ratio:1 vs black, under the M3 3:1 component bar",
             ratio >= 3f,
         )
+    }
+
+    /**
+     * Round 2 (ST1): the cards stopped sharing one flat fill — each group
+     * has its own tone now, and the border must clear 3:1 on every one of
+     * them, not just the old card. surfaceContainerHigh is excluded by
+     * design (2.96:1) and no group uses it as a chip-bearing fill.
+     */
+    @Test
+    fun unselectedChipBorderClearsComponentBarOnEveryGroupFill() {
+        val fills = mapOf(
+            "primaryContainer" to RaddCurrentContainerDark,
+            "tertiaryContainer" to RaddTideContainerDark,
+            "surfaceContainerLow" to RaddInk900,
+            "surfaceContainer" to RaddInk850,
+        )
+        for ((name, fill) in fills) {
+            val ratio = contrastRatio(RaddChipBorderSoft, fill)
+            assertTrue(
+                "unselected chip border is only $ratio:1 vs $name, under the M3 3:1 component bar",
+                ratio >= 3f,
+            )
+        }
     }
 }

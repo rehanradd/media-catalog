@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import java.io.IOException
 import app.cash.paparazzi.DeviceConfig
 import app.cash.paparazzi.Paparazzi
+import com.raddstream.app.data.RemoteFeatures
 import com.raddstream.app.network.models.CoverageType
 import com.raddstream.app.network.models.FacetEntry
 import com.raddstream.app.network.models.FacetsResponse
@@ -45,6 +46,8 @@ import com.raddstream.app.ui.components.PosterCard
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.screens.DetailContent
 import com.raddstream.app.ui.screens.EpisodeTile
+import com.raddstream.app.ui.screens.SettingsActions
+import com.raddstream.app.ui.screens.SettingsContent
 import com.raddstream.app.ui.screens.SeasonPackRow
 import com.raddstream.app.ui.screens.SeasonTile
 import com.raddstream.app.ui.screens.FilterRail
@@ -64,6 +67,7 @@ import com.raddstream.app.ui.screens.SearchContent
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.EpisodeGroup
 import com.raddstream.app.viewmodel.HomeSection
+import com.raddstream.app.viewmodel.SettingsUiState
 import com.raddstream.app.viewmodel.GenreFilter
 import com.raddstream.app.viewmodel.HomeUiState
 import com.raddstream.app.viewmodel.ListSort
@@ -356,6 +360,88 @@ class PaparazziPreviewTest {
                     selectedIndex = 1,
                     onSelect = {},
                 )
+            }
+        }
+    }
+
+    /**
+     * Settings round 2 (2027): the whole screen from fake state — the five
+     * groups in §0.8 order with their tonal fills and pastel headers, the
+     * search field on top, the debug harness card (DEBUG is true under
+     * testDebugUnitTest, so it renders here as it does in a debug build).
+     * The Kids Lock card arrives as an empty slot: the real card needs a
+     * KidsLockViewModel, which needs a repository — its own coverage lives
+     * in the Kids Lock tests, not in this golden. Inspection mode is
+     * provided (Home's pattern): the group entrance is a real-time stagger
+     * and Paparazzi never advances its frozen clock.
+     */
+    @Test
+    fun settingsScreen() {
+        paparazzi.snapshot {
+            themed {
+                CompositionLocalProvider(LocalInspectionMode provides true) {
+                    SettingsContent(
+                        state = SettingsUiState(),
+                        features = RemoteFeatures(),
+                        actions = SettingsActions(),
+                        searchQuery = "",
+                        onSearchQueryChange = {},
+                        kidsLockCard = {},
+                        profileLinkDialog = {},
+                        onOpenDownloads = {},
+                        onOpenVipUpgrade = {},
+                        onOpenRegionChoice = {},
+                        onOpenDashboard = {},
+                        onOpenProfile = {},
+                        onOpenHelp = {},
+                        onOpenLanguages = {},
+                        onOpenWatchHistory = {},
+                        onOpenResolveTest = {},
+                        onOpenPressTest = {},
+                        onOpenDiagnostics = {},
+                        showDiagnostics = false,
+                        scrollToContact = false,
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Settings round 2, ST6: the load-error branch — the J1 overlay card
+     * ("Couldn't load your settings" + Retry) over the dimmed settings,
+     * with the diagnosis line naming the failure.
+     */
+    @Test
+    fun settingsScreenLoadError() {
+        paparazzi.snapshot {
+            themed {
+                CompositionLocalProvider(LocalInspectionMode provides true) {
+                    SettingsContent(
+                        state = SettingsUiState(
+                            loadError = "Couldn't reach your preferences.",
+                        ),
+                        features = RemoteFeatures(),
+                        actions = SettingsActions(),
+                        searchQuery = "",
+                        onSearchQueryChange = {},
+                        kidsLockCard = {},
+                        profileLinkDialog = {},
+                        onOpenDownloads = {},
+                        onOpenVipUpgrade = {},
+                        onOpenRegionChoice = {},
+                        onOpenDashboard = {},
+                        onOpenProfile = {},
+                        onOpenHelp = {},
+                        onOpenLanguages = {},
+                        onOpenWatchHistory = {},
+                        onOpenResolveTest = {},
+                        onOpenPressTest = {},
+                        onOpenDiagnostics = {},
+                        showDiagnostics = false,
+                        scrollToContact = false,
+                    )
+                }
             }
         }
     }
