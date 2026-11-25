@@ -210,7 +210,7 @@ internal fun EdgeFeedbackLine(hud: Hud) {
     }
     val icon = when (spec.kind) {
         EdgeKind.BRIGHTNESS -> painterResource(R.drawable.ic_player_brightness_medium)
-        EdgeKind.VOLUME -> painterResource(R.drawable.ic_player_volume)
+        EdgeKind.VOLUME -> painterResource(R.drawable.ic_player_volume_up)
         EdgeKind.BOOST -> painterResource(R.drawable.ic_player_fast_forward)
     }
     val trackColor = if (spec.kind == EdgeKind.BOOST) RaddCurrent500 else Color.White
