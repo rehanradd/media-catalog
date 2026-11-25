@@ -28,8 +28,11 @@ class SkeletonParityTest {
         val start = source.indexOf(signature)
         assertTrue("must find $signature", start >= 0)
         // The next top-level composable starts the following block; the
-        // skeleton bodies here are short, so 8_000 chars is ample.
-        return source.substring(start, minOf(source.length, start + 8_000))
+        // bodies here are short, so 10_000 chars is ample. (Round 6: the
+        // hero title's lineHeight sits ~8.4k chars into HeroSlide, past
+        // the old 8_000 window, once the shared-element params land —
+        // the window must cover the whole slide body, not just its head.)
+        return source.substring(start, minOf(source.length, start + 10_000))
     }
 
     @Test

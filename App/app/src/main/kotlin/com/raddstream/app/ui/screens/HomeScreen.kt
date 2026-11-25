@@ -12,8 +12,9 @@ import com.google.android.play.core.install.model.ActivityResult as PlayCoreActi
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
-import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
@@ -219,10 +220,9 @@ fun HomeScreen(
     viewModel: HomeViewModel = hiltViewModel(),
     /**
      * Round 6 motion infra: the shared-transition scopes the NavHost
-     * passes in. Null outside navigation (Paparazzi previews, tests) —
-     * sharedElement() calls no-op and the screen renders exactly as
-     * before. Screen branches thread these into their poster/hero
-     * sharedElement() calls; this branch only carries them.
+     * passes in from its SharedTransitionLayout. Null outside navigation
+     * (Paparazzi previews, tests) — sharedElement() calls no-op and the
+     * screen renders exactly as before.
      */
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
@@ -310,6 +310,8 @@ fun HomeScreen(
             onPickThreeShown = viewModel::markPickThreeShown,
             onPickThreeVisitEnded = viewModel::endPickThreeVisit,
             onDismissTrialNote = viewModel::dismissTrialNote,
+            sharedTransitionScope = sharedTransitionScope,
+            animatedVisibilityScope = animatedVisibilityScope,
         )
 
         state.updateNotice?.let { update ->
@@ -406,6 +408,12 @@ internal fun HomeContent(
     onPickThreeShown: () -> Unit = {},
     onPickThreeVisitEnded: () -> Unit = {},
     onDismissTrialNote: () -> Unit = {},
+    /**
+     * Round 6 (motion): the shared-element scopes — see [HomeScreen].
+     * Both null by default; dormant until infra wires them.
+     */
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
 ) {
     // Mockup (Nov 2026): the header replaces the M12 banner — one compact
     // row pinned above the scroll (the centred logo on its own, since the
@@ -572,6 +580,8 @@ internal fun HomeContent(
                         onToggleFavorite = { post -> onToggleFavorite(post) },
                         autoplay = heroAutoplay,
                         intervalMs = heroIntervalMs,
+                        sharedTransitionScope = sharedTransitionScope,
+                        animatedVisibilityScope = animatedVisibilityScope,
                     )
                 }
                 // Screenshot-fix D7 (2026-11-16): 6dp, not 12dp — the
@@ -758,6 +768,8 @@ internal fun HomeContent(
                         continueWatching = state.visibleContinueWatching,
                         onPostClick = onPostClick,
                         onPlayClick = onPlayClick,
+                        sharedTransitionScope = sharedTransitionScope,
+                        animatedVisibilityScope = animatedVisibilityScope,
                     )
                 }
             }
@@ -799,6 +811,8 @@ internal fun HomeContent(
                         // the pool it draws from. Every other rail passes null
                         // and keeps its header exactly as it was.
                         onPlaySomething = if (section.forYou) onPlaySomething else null,
+                        sharedTransitionScope = sharedTransitionScope,
+                        animatedVisibilityScope = animatedVisibilityScope,
                     )
                 }
             }
@@ -907,6 +921,8 @@ internal fun HomeContent(
                         // the pool it draws from. Every other rail passes null
                         // and keeps its header exactly as it was.
                         onPlaySomething = if (section.forYou) onPlaySomething else null,
+                        sharedTransitionScope = sharedTransitionScope,
+                        animatedVisibilityScope = animatedVisibilityScope,
                     )
                 }
             }
@@ -1212,6 +1228,12 @@ internal fun MyListStrip(
     onPostClick: (Post) -> Unit,
     onPlayClick: (Post) -> Unit = {},
     modifier: Modifier = Modifier,
+    /**
+     * Round 6 (motion): the shared-element scopes — see [HomeScreen].
+     * Both null by default; dormant until infra wires them.
+     */
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
 ) {
     val inInspectionMode = LocalInspectionMode.current
     val reduceMotion = rememberReduceMotion()
@@ -1253,6 +1275,8 @@ internal fun MyListStrip(
                     onClick = { onPostClick(post) },
                     // APP-06 one-tap play, same as the My List screen.
                     onPlayClick = { onPlayClick(post) },
+                    sharedTransitionScope = sharedTransitionScope,
+                    animatedVisibilityScope = animatedVisibilityScope,
                     // Audit #8: the compact line (year · rating) fits the
                     // 132dp rail card; the type stays in the tile's spoken
                     // sentence and on Detail. Two title lines, like the
@@ -1355,8 +1379,17 @@ private fun ContinueWatchingRow(
                     )
                 }
                 tile.progressFraction?.let { fraction ->
+                    // Round 6 (motion): the bar glides to its value on a
+                    // spring — animateFloatAsState starts at the target on
+                    // first composition, so a golden still shows the
+                    // settled fraction. The semantics keep the true value.
+                    val animatedFraction by animateFloatAsState(
+                        targetValue = fraction.coerceIn(0f, 1f),
+                        animationSpec = if (rememberReduceMotion()) snap() else RaddMotion.defaultSpatial(),
+                        label = "continueWatchingProgress",
+                    )
                     LinearProgressIndicator(
-                        progress = { fraction },
+                        progress = { animatedFraction },
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(4.dp) // token-exempt: progress-bar thickness, not spacing
@@ -1876,6 +1909,12 @@ private fun HomeRailSection(
     onRetry: () -> Unit,
     /** REA #4: the "Play Something" shuffle for the "For you" row only. */
     onPlaySomething: (() -> Unit)? = null,
+    /**
+     * Round 6 (motion): the shared-element scopes — see [HomeScreen].
+     * Both null by default; dormant until infra wires them.
+     */
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
 ) {
     // UI-fix P1-X1: rails arrive staggered (index * 60 ms, fade + a short
     // rise — the Region screen's index * 90 pattern, extended to rails).
@@ -1992,6 +2031,8 @@ private fun HomeRailSection(
                         // Home fix (Nov 2026): direct play — the tile's
                         // play button opens Detail with autoplay.
                         onPlayClick = { onPlayClick(post) },
+                        sharedTransitionScope = sharedTransitionScope,
+                        animatedVisibilityScope = animatedVisibilityScope,
                         rank = if (isRanked && itemIndex < 10) itemIndex + 1 else null,
                         // Audit #8: the full "2023 · ★ 7.0 · Movie" line
                         // truncates the type word mid-word ("Mo…") on a

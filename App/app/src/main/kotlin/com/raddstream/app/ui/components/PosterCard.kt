@@ -1,6 +1,10 @@
 package com.raddstream.app.ui.components
 
 import android.graphics.Bitmap
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
@@ -58,10 +62,42 @@ import com.raddstream.app.network.models.isNewReleaseYear
 import com.raddstream.app.ui.layout.CardGeometry
 import com.raddstream.app.ui.theme.PressHaptics
 import com.raddstream.app.ui.theme.RaddArtScrim
+import com.raddstream.app.ui.theme.RaddMotion
 import com.raddstream.app.ui.theme.RaddTokens
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.ui.theme.pressScale
 import com.raddstream.app.ui.theme.rememberArtworkAccent
+
+/**
+ * Round 6 (motion): the shared-element key for a work's artwork — the
+ * "poster-<workId>" key the Detail hero uses on the other side of the
+ * transition. The key identifies the WORK, not literally a poster: the
+ * hero's backdrop-first art and a rail tile's poster are the same work.
+ * Infra should consolidate this into Motion.kt; the mega-merge dedupes.
+ */
+internal fun sharedPosterKey(post: Post): String = "poster-${post.workId ?: post.id}"
+
+/**
+ * Round 6 (motion): the shared-element modifier for a work's artwork.
+ * Returns [Modifier] unchanged when either scope is null (dormant until
+ * the infra branch passes the scopes from the NavHost's
+ * SharedTransitionLayout). Only the artwork morphs — the scrim, progress
+ * bar and rank stay put.
+ */
+@Composable
+internal fun sharedPosterModifier(
+    post: Post,
+    sharedTransitionScope: SharedTransitionScope?,
+    animatedVisibilityScope: AnimatedVisibilityScope?,
+): Modifier {
+    if (sharedTransitionScope == null || animatedVisibilityScope == null) return Modifier
+    return with(sharedTransitionScope) {
+        Modifier.sharedElement(
+            sharedContentState = rememberSharedContentState(key = sharedPosterKey(post)),
+            animatedVisibilityScope = animatedVisibilityScope,
+        )
+    }
+}
 
 /**
  * The canonical catalog tile. Used by Home rails, the search grid, My List and
@@ -173,6 +209,14 @@ fun PosterCard(
      * sentence — only the painted line is suppressed.
      */
     suppressBareTypeMeta: Boolean = false,
+    /**
+     * Round 6 (motion): the shared-element scopes, passed down from the
+     * NavHost's SharedTransitionLayout by the infra branch. Both null by
+     * default — the tile compiles and renders exactly as before until the
+     * scopes arrive, so this is dormant until infra wires them.
+     */
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
 ) {
     // Rail-title cleanup (Nov 2026): the tile paints the same clean title
     // Detail and the hero paint ([UserWords.detailTitle] — the server's
@@ -347,7 +391,8 @@ fun PosterCard(
             val rankClearance = if (rank != null && rank in 1..10) 56.dp else 0.dp // token-exempt: rank-numeral clearance, a layout constant derived from the ~54dp numeral
             if (posterUrl == null) {
                 ImageFallbackCard(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize()
+                        .then(sharedPosterModifier(post, sharedTransitionScope, animatedVisibilityScope)),
                     // Audit #9: the caption below the poster already
                     // carries the title — the fallback paints the logo +
                     // initials only, never the title twice. (F6's full
@@ -359,7 +404,8 @@ fun PosterCard(
                 CatalogImage(
                     url = posterUrl,
                     contentDescription = null, // tile-level a11y already announced the title
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize()
+                        .then(sharedPosterModifier(post, sharedTransitionScope, animatedVisibilityScope)),
                     // A dead poster URL must not look like "no artwork exists" — the
                     // branded fallback says what failed, and keeps the title readable.
                     // Audit #9: initials only here too — the caption below
@@ -395,6 +441,15 @@ fun PosterCard(
             )
 
             progressFraction?.let { fraction ->
+                // Round 6 (motion): the bar glides to its value on a spring
+                // instead of jumping — animateFloatAsState starts at the
+                // target on first composition, so a Paparazzi golden still
+                // shows the settled fraction.
+                val animatedFraction by animateFloatAsState(
+                    targetValue = fraction.coerceIn(0f, 1f),
+                    animationSpec = if (rememberReduceMotion()) snap() else RaddMotion.defaultSpatial(),
+                    label = "posterProgress",
+                )
                 Box(
                     Modifier
                         .align(Alignment.BottomCenter)
@@ -408,7 +463,7 @@ fun PosterCard(
                     // as a loading strip. Only My List passes a fraction.
                     Box(
                         Modifier
-                            .fillMaxWidth(fraction.coerceIn(0f, 1f))
+                            .fillMaxWidth(animatedFraction)
                             .fillMaxHeight()
                             .background(MaterialTheme.colorScheme.primary),
                     )
