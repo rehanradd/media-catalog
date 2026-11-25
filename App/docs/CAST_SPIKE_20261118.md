@@ -76,8 +76,11 @@ whether it plays first).
    Receiver cannot.
 4. **Presigned URLs work only while fresh.** FSL-style R2 links carry their
    auth in query params, which travel inside the URL — but they expire
-   (FSL ~8h, FSLv2 ~5h). Cast a just-resolved handle; never hand the
+   (FSL ~5h, FSLv2 ~5h). Cast a just-resolved handle; never hand the
    receiver a stored presigned URL. `PlaybackInfo.isExpired` is the check.
+   Correction 2026-11-24: FSL is ~5h — fresh mints measured
+   `X-Amz-Expires=18000`, not 28800 (8h); the 8h rows came from a
+   different minting path.
 5. **No free way to verify receiver playback without a device.** Google
    offers no Cast receiver emulator. The community `chromecast-device-emulator`
    (npm) emulates the *receiver app* (the web page), not the media pipeline,
