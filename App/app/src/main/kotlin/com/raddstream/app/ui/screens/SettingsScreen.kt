@@ -145,6 +145,7 @@ import com.raddstream.app.viewmodel.KeepTtl
 import com.raddstream.app.viewmodel.KidsLockViewModel
 import com.raddstream.app.viewmodel.KidsPinOutcome
 import com.raddstream.app.viewmodel.MembershipCardCopy
+import com.raddstream.app.viewmodel.SettingsUiState
 import com.raddstream.app.viewmodel.SettingsViewModel
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -1722,6 +1723,7 @@ internal fun SettingsContent(
                     }
                 }
             }
+        }
     }
 }
 
@@ -2284,7 +2286,7 @@ internal fun ChipRow(options: List<String>, selectedIndex: Int, onSelect: (Int) 
                     containerColor = Color.Transparent,
                     labelColor = RaddChipLabelSoft,
                     selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
-                    selectedLabelColor = colorScheme.onPrimaryContainer,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
                 ),
                 border = FilterChipDefaults.filterChipBorder(
                     enabled = true,
