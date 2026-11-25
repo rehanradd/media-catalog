@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -48,6 +49,18 @@ class SearchLiveRegionTest {
         contentType = "series",
         posterUrl = null,
     )
+
+    // SemanticsConfiguration has no getOrNull in this project's Compose
+    // version (BOM 2025.11.01) — the contains + get pair is the
+    // version-proof way to read an optional semantics property.
+    private fun liveRegionMode(node: SemanticsNodeInteraction): LiveRegionMode? {
+        val config = node.fetchSemanticsNode().config
+        return if (config.contains(SemanticsProperties.LiveRegion)) {
+            config[SemanticsProperties.LiveRegion]
+        } else {
+            null
+        }
+    }
 
     @Test
     fun resultsSummaryIsAPoliteLiveRegion() {
@@ -95,7 +108,7 @@ class SearchLiveRegionTest {
         assertEquals(
             "The results summary must announce politely when the page lands",
             LiveRegionMode.Polite,
-            summary.fetchSemanticsNode().config.getOrNull(SemanticsProperties.LiveRegion),
+            liveRegionMode(summary),
         )
     }
 
@@ -117,7 +130,7 @@ class SearchLiveRegionTest {
         assertEquals(
             "The no-results root must announce politely when the search lands empty",
             LiveRegionMode.Polite,
-            root.fetchSemanticsNode().config.getOrNull(SemanticsProperties.LiveRegion),
+            liveRegionMode(root),
         )
     }
 }
