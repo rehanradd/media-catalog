@@ -419,7 +419,13 @@ def extract_post_data_ssrmovies_enhanced(
 
     # 2. Content Type (Movie vs Series)
     content_type = "movie"
-    if re.search(r'\b(?:Season\s*\d+|S\d+|Complete\s+Series|Episodes?)\b', raw_title, re.I):
+    # SxxEyy is the usual series form here ("S01E020", "S017E12"): the
+    # plain S\d+ alternative needs a word boundary after the digits,
+    # which "S01E020" does not have (the E follows the digits), so the
+    # compact season+episode form is matched first; a bare "Series"
+    # word also marks a series. (Same fix as 7starhd, 2026-11-23: the
+    # branch-2 live proof banked 'Sa Re Ga Ma Pa' S01E020 as a movie.)
+    if re.search(r'\b(?:Season\s*\d+|S\d+\s*E\d+|S\d+|Complete\s+Series|Series|Episodes?)\b', raw_title, re.I):
         content_type = "series"
 
     # Labels from the post text (both paths): the info block carries
