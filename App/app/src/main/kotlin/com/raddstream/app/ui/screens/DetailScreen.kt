@@ -2763,15 +2763,14 @@ internal fun EpisodeRowSection(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             contentPadding = PaddingValues(end = 16.dp),
         ) {
-            items(season.episodes, key = { "episode-${it.episode}" }) { episode ->
-                val progress = episodeProgress[season.number to episode.episode]
+            items(season.episodes, key = { "episode-${it.numberWithinSeason}" }) { episode ->
+                val progress = episodeProgress[season.number to episode.numberWithinSeason]
                 EpisodeCard(
-                    season = season.number,
                     episode = episode,
                     isWatched = progress?.watched == true,
-                    isNext = nextEpisode == (season.number to episode.episode),
-                    onPlay = { onPlayEpisode(season.number, episode.episode) },
-                    onDownload = { onDownloadEpisode(season.number, episode.episode) },
+                    isNext = nextEpisode == (season.number to episode.numberWithinSeason),
+                    onPlay = { onPlayEpisode(season.number, episode.numberWithinSeason) },
+                    onDownload = { onDownloadEpisode(season.number, episode.numberWithinSeason) },
                 )
             }
         }
@@ -2788,7 +2787,6 @@ internal fun EpisodeRowSection(
  */
 @Composable
 private fun EpisodeCard(
-    season: Int,
     episode: EpisodeGroup,
     isWatched: Boolean,
     isNext: Boolean,
@@ -2796,11 +2794,15 @@ private fun EpisodeCard(
     onDownload: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // DT-3: EpisodeGroup carries no playable flag of its own — the
+    // same derivation SeasonScreen's seasonTiles uses: any print that
+    // plays here or opens a provider page.
+    val playable = episode.prints.any { it.playableHere || it.opensProviderPage }
     val description = when {
-        !episode.playable -> "Episode ${episode.episode}, no playable copy"
-        isNext -> "Episode ${episode.episode}, next to watch"
-        isWatched -> "Episode ${episode.episode}, watched"
-        else -> "Episode ${episode.episode}"
+        !playable -> "Episode ${episode.numberWithinSeason}, no playable copy"
+        isNext -> "Episode ${episode.numberWithinSeason}, next to watch"
+        isWatched -> "Episode ${episode.numberWithinSeason}, watched"
+        else -> "Episode ${episode.numberWithinSeason}"
     }
     Column(
         modifier = modifier
@@ -2821,12 +2823,12 @@ private fun EpisodeCard(
                     url = episode.stillUrl,
                     contentDescription = null,
                     modifier = Modifier.fillMaxSize(),
-                    fallbackLabel = "E${episode.episode}",
+                    fallbackLabel = "E${episode.numberWithinSeason}",
                 )
             } else {
                 ImageFallbackCard(
                     modifier = Modifier.fillMaxSize(),
-                    label = "E${episode.episode}",
+                    label = "E${episode.numberWithinSeason}",
                 )
             }
             if (isWatched) {
@@ -2873,7 +2875,7 @@ private fun EpisodeCard(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Episode ${episode.episode}",
+                    text = "Episode ${episode.numberWithinSeason}",
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -2896,7 +2898,7 @@ private fun EpisodeCard(
             ) {
                 Icon(
                     painterResource(R.drawable.ic_action_download),
-                    contentDescription = "Download episode ${episode.episode}",
+                    contentDescription = "Download episode ${episode.numberWithinSeason}",
                     modifier = Modifier.size(20.dp),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
