@@ -1267,10 +1267,10 @@ internal fun DownloadsEmptyPreview() {
  * The row's poster slot (D10). A keep whose catalog post is already in the
  * app's cache paints its real poster; everything else paints the same
  * initials tile the poster cards use — never a fetched poster that does
- * not exist, never a fake one. The device rows carry no post id at all, so
- * they always take the tile: full art for them needs the download stores
- * to carry a poster URL at enqueue time, a data-model change owed after
- * this round.
+ * not exist, never a fake one. A device row paints real art when its
+ * enqueue site knew the poster (the Detail screen's post, or Smart
+ * Downloads' fetched detail — carried on the stored row at enqueue
+ * time); an older row, or one enqueued without a poster, keeps the tile.
  */
 @Composable
 private fun DownloadThumb(posterUrl: String?, title: String) {
