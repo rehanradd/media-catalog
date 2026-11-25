@@ -68,7 +68,7 @@ from datetime import datetime, timezone
 
 from .errors import ApiError, bad, conflict, not_found
 from .security import valid_domain
-from .store import COIN_REDEEM_FIELDS, FLEET_SITES
+from .store import FLEET_SITES
 
 HINT_SALT = "radd-payment-hint:v1:"
 HINT_CHARS = 8
@@ -77,17 +77,19 @@ PLAN_DAYS = {"vip_monthly": 30, "vip_yearly": 365}
 PLAN_DEFAULT_PKR = {"vip_monthly": 200, "vip_yearly": 1500}
 PAYMENT_METHODS = ("jazzcash", "easypaisa", "raast")
 
-# The 16 real app_remote_config fields the Android app actually reads
-# (viewer.py GET /api/v1/app/remote-config + VipRemoteConfig.kt),
-# plus the six coin pass prices the panel could previously neither
-# show nor edit (admin-panel audit 2026-11-08 §Money).
+# The 17 real app_remote_config fields the Android app actually reads
+# (viewer.py GET /api/v1/app/remote-config + VipRemoteConfig.kt).
+# Coins are gone (removal 2026-11-17, PNL-03): the six coin pass
+# prices and the `coins_enabled` switch are NOT carried here — the
+# live row keeps its stored 0 for the flag and its dormant prices,
+# and no panel write ever touches them again.
 #
 # PNL-01 redesign §0A N1 (canonical field→route map): this is the
 # v2-writable live-row set — exactly store.MONETIZATION_FIELDS, and
 # every draft field on the live-row route must be in BOTH lists. The
 # one N1 addition is free_quality_cap: editable in the draft and
 # served from the live row, yet no writer could ever put it there
-# (save_remote_config rejected it as unknown). 24 fields: the 23
+# (save_remote_config rejected it as unknown). 17 fields: the 16
 # above + the cap. The monetization publish and rollback carry
 # exactly this set; the generic publish carries the draft's live-row
 # subset (maintenance_mode, apk_update_url, free_quality_cap).
@@ -97,9 +99,9 @@ REMOTE_CONFIG_FIELDS = [
     "monetag_zone_id", "adsterra_tag_id", "shrinkme_api_token",
     "droplink_api_token", "maintenance_mode", "apk_update_url",
     "feature_downloads", "feature_pure_cinema", "feature_chromecast",
-    "feature_quality_gate", "coins_enabled",
+    "feature_quality_gate",
     "free_quality_cap",
-] + COIN_REDEEM_FIELDS
+]
 
 # N1 decision for the APK trio + the link-shorteners flag (second
 # opinion §4.1: writer or removal from the served body). The trio
@@ -116,22 +118,29 @@ RELEASE_OWNED_LIVE_FIELDS = [
     "apk_update_version_code", "feature_link_shorteners",
 ]
 
-# The other 15 live-row fields (admin_panel.MONETIZATION_FIELDS minus
-# the sets above): ad cadence, coin/streak/pass prices. They stay
-# v1-only BY EXPLICIT DECISION (PNL-01 redesign §4): no v2 UI, no v2
-# writer, no silent claim — they are edited in v1 /admin, which stamps
-# the same version allocator (admin_panel._save_monetization).
+# The other 22 live-row fields (admin_panel.MONETIZATION_FIELDS minus
+# the sets above): ad cadence, plus the coin/streak/pass prices and the
+# `coins_enabled` flag. The 3 ad fields stay v1-only BY EXPLICIT
+# DECISION (PNL-01 redesign §4): no v2 UI, no v2 writer, no silent
+# claim — they are edited in v1 /admin, which stamps the same version
+# allocator (admin_panel._save_monetization). The 19 coin fields are
+# v1-only by the PNL-03 removal: no v2 writer ever touches them, the
+# columns stay dormant on the live row (flag 0), and v1 /admin still
+# lists them — a v1 save is the only write path left.
 V1_ONLY_LIVE_FIELDS = [
     "ad_preroll_min_gap_minutes", "ad_native_card_every_posters",
-    "ad_app_open_min_gap_minutes", "coin_per_rewarded_ad",
-    "rewarded_daily_cap", "coin_share", "coin_finish_watch",
+    "ad_app_open_min_gap_minutes", "coins_enabled",
+    "coin_per_rewarded_ad", "rewarded_daily_cap",
+    "coin_share", "coin_finish_watch",
     "pass_day_pkr", "pass_weekend_pkr", "pass_monthly_vip_pkr",
     "streak_day1_coins", "streak_day3_coins", "streak_day7_pass_hours",
     "streak_day_boundary_hour", "streak_tz",
+    "coin_redeem_day", "coin_redeem_weekend", "coin_redeem_monthly",
+    "coin_redeem_download", "coin_redeem_request", "coin_redeem_theme",
 ]
 
-# Every field on the live app_remote_config row (24 v2-writable + 4
-# release-owned + 15 v1-only = 43). The startup migration adds all of
+# Every field on the live app_remote_config row (17 v2-writable + 4
+# release-owned + 22 v1-only = 43). The startup migration adds all of
 # them (the v1 read path SELECTs all 43); the coverage test pins the
 # 43 against admin_panel.MONETIZATION_FIELDS.
 ALL_LIVE_REMOTE_CONFIG_FIELDS = (REMOTE_CONFIG_FIELDS
@@ -163,8 +172,9 @@ _REMOTE_CONFIG_INT_FIELDS = frozenset({
     "pass_day_pkr", "pass_weekend_pkr", "pass_monthly_vip_pkr",
     "streak_day1_coins", "streak_day3_coins", "streak_day7_pass_hours",
     "streak_day_boundary_hour",
-} | set(COIN_REDEEM_FIELDS))
-
+    "coin_redeem_day", "coin_redeem_weekend", "coin_redeem_monthly",
+    "coin_redeem_download", "coin_redeem_request", "coin_redeem_theme",
+})
 ENGINE_SYNC_SITES = frozenset({
     "vegamovies", "rogmovies", "ssrmovies", "7starhd", "katmoviehd",
     "multimovies", "10xflix", "hdhub4u", "filmyzilla",
@@ -248,7 +258,7 @@ def ensure_live_remote_config_columns(catalog_path):
     """Startup migration for the live app_remote_config row (PNL-01 D7).
 
     Adds every column in ALL_LIVE_REMOTE_CONFIG_FIELDS (all 43 live-row
-    fields — the 24 v2-writable plus the 4 release-owned plus the 15
+    fields — the 17 v2-writable plus the 4 release-owned plus the 22
     v1-only) plus config_version
     that the catalog predates, idempotently. The v1-only columns must
     be here too: the v1 read path (`admin_panel.remote_config`) SELECTs
@@ -1090,7 +1100,6 @@ class LiveStores:
         try:
             now = time.time()
             rows = list(self._ledger_accounts(conn))
-            balances = self.request_coin_balances([r["id"] for r in rows])
             items = []
             for r in rows:
                 hint = account_hint(r["key_hash"])
@@ -1106,7 +1115,6 @@ class LiveStores:
                     "tier": "vip" if is_vip else "free",
                     "vip_until": int(r["vip_until"]) if r["vip_until"] else 0,
                     "device_count": None, "devices": "unknown",
-                    "balance": balances.get(r["id"], 0),
                     "created_at": r["created_at"], "last_seen_at": r["last_seen_at"],
                     "revoked": bool(r["revoked_at"]),
                 })
@@ -1382,27 +1390,6 @@ class LiveStores:
                     "profile": (str(r["profile_name"] or "")
                                 if "profile_name" in cols else ""),
                 }
-            return out
-        finally:
-            conn.close()
-
-    def request_coin_balances(self, account_ids):
-        """{account_id: balance} — the derived wallet, SUM(delta)."""
-        ids = sorted({int(a) for a in account_ids})
-        if not ids:
-            return {}
-        conn = self._ro(self.ledger_path, "ledger")
-        try:
-            if not _has_table(conn, "coin_ledger"):
-                return {i: 0 for i in ids}
-            marks = ",".join("?" for _ in ids)
-            out = {i: 0 for i in ids}
-            for r in conn.execute(
-                    "SELECT account_id, COALESCE(SUM(delta), 0) AS bal"
-                    " FROM coin_ledger WHERE account_id IN (%s)"
-                    " GROUP BY account_id" % marks,
-                    tuple(ids)).fetchall():
-                out[int(r["account_id"])] = int(r["bal"])
             return out
         finally:
             conn.close()
@@ -1758,41 +1745,9 @@ class LiveStores:
         finally:
             conn.close()
 
-    def coin_summary(self):
-        """Coin ledger totals by reason (read-only, user-state DB).
-
-        The panel had no coin balance/ledger view at all (audit §Coin
-        system). `granted`/`spent` are sums of positive/negative
-        deltas; `by_reason` maps each LEDGER_REASONS key to its row
-        count and total. A ledger without the table yet is an honest
-        empty answer, not an error.
-        """
-        conn = self._ro(self.ledger_path, "ledger")
-        try:
-            if not _has_table(conn, "coin_ledger"):
-                return {"available": False, "rows": 0, "granted": 0,
-                        "spent": 0, "by_reason": {}}
-            rows = conn.execute(
-                "SELECT COUNT(*) AS n FROM coin_ledger").fetchone()["n"]
-            granted = conn.execute(
-                "SELECT COALESCE(SUM(delta), 0) AS s FROM coin_ledger "
-                "WHERE delta > 0").fetchone()["s"]
-            spent = conn.execute(
-                "SELECT COALESCE(SUM(delta), 0) AS s FROM coin_ledger "
-                "WHERE delta < 0").fetchone()["s"]
-            by_reason = {r["reason"]: {"rows": r["n"], "total": r["s"]}
-                         for r in conn.execute(
-                "SELECT reason, COUNT(*) AS n, COALESCE(SUM(delta), 0) AS s "
-                "FROM coin_ledger GROUP BY reason").fetchall()}
-            return {"available": True, "rows": int(rows),
-                    "granted": int(granted), "spent": int(spent),
-                    "by_reason": by_reason}
-        finally:
-            conn.close()
-
     # -- remote config (real app_remote_config, catalog DB) --------------
     def read_remote_config(self):
-        """The 24 real fields (18 app + 6 coin), id=1. Tokens are never
+        """The 17 real fields, id=1. Tokens are never
         returned here; the caller masks them (see read_remote_config_masked)."""
         conn = self._ro(self.catalog_path, "catalog")
         try:
@@ -1854,11 +1809,8 @@ class LiveStores:
         for k in ("vip_monthly_pkr", "vip_yearly_pkr"):
             if k in fields and not (0 <= int(fields[k]) <= 10_000_000):
                 raise bad("VIP price must be between 0 and 10,000,000.")
-        for k in COIN_REDEEM_FIELDS:
-            if k in fields and not (0 <= int(fields[k]) <= 10_000_000):
-                raise bad("Coin price must be between 0 and 10,000,000.")
         for k in ("maintenance_mode", "feature_downloads", "feature_pure_cinema",
-                  "feature_chromecast", "feature_quality_gate", "coins_enabled"):
+                  "feature_chromecast", "feature_quality_gate"):
             if k in fields and int(fields[k]) not in (0, 1):
                 raise bad("That flag must be 0 or 1.")
         if "free_quality_cap" in fields and fields["free_quality_cap"] not in ("480p", "720p"):

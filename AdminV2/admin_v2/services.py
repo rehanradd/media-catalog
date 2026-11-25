@@ -46,7 +46,7 @@ from .security import (
     valid_hex, valid_slug,
 )
 from .store import (
-    COIN_REDEEM_FIELDS, FLEET_SITES, MONETIZATION_FIELDS, TUNING_DEFAULTS,
+    FLEET_SITES, MONETIZATION_FIELDS, TUNING_DEFAULTS,
     WRITE_LOCK, connect, init_catalog_fixture, init_ledger_fixture, migrate,
 )
 
@@ -1509,11 +1509,8 @@ class Service:
         for k in ("vip_monthly_pkr", "vip_yearly_pkr"):
             if k in body and not (0 <= int(body[k]) <= 10_000_000):
                 raise bad("VIP price must be between 0 and 10,000,000.")
-        for k in COIN_REDEEM_FIELDS:
-            if k in body and not (0 <= int(body[k]) <= 10_000_000):
-                raise bad("Coin price must be between 0 and 10,000,000.")
         for k in ("maintenance_mode", "feature_downloads", "feature_pure_cinema",
-                  "feature_chromecast", "feature_quality_gate", "coins_enabled"):
+                  "feature_chromecast", "feature_quality_gate"):
             if k in body and int(body[k]) not in (0, 1):
                 raise bad("That flag must be 0 or 1.")
         before = self.get_monetization(actor)
@@ -1992,7 +1989,7 @@ class Service:
         rollback.refused audit row — no half-rolled-back state, no
         silent panel-ahead-of-live. The live push carries the same
         field set as the monetization publish (MONETIZATION_FIELDS,
-        which after N1 includes free_quality_cap); the 15 v1-only
+        which after N1 includes free_quality_cap); the 22 v1-only
         fields stay out of scope — no snapshots exist for them, and a
         rollback must not invent values for them. Paused features are
         only ANNOTATED in the audit (is_paused consult); the restored
@@ -2373,8 +2370,7 @@ class Service:
         Mirrors v1 admin_panel._request_rows: titles and notes are the
         viewer's own words, so they are scrubbed at the edge (URLs
         removed); the account column is the one-way hint plus the linked
-        profile name; the balance is the derived coin wallet. No live
-        ledger means an honest empty state, like every other v1 screen.
+        profile name. No live ledger means an honest empty state, like every other v1 screen.
         """
         self.require_role(actor, write=False)
         live = self._live_ledger()
@@ -2386,13 +2382,11 @@ class Service:
         recent = live.list_movie_requests(limit=20)
         ids = sorted({r["account_id"] for r in open_rows + recent})
         handles = live.request_account_handles(ids)
-        balances = live.request_coin_balances(ids)
         for row in open_rows + recent:
             handle = handles.get(row["account_id"],
                                  {"hint": "acct-?", "profile": ""})
             row["hint"] = handle["hint"]
             row["profile"] = handle["profile"]
-            row["balance"] = balances.get(row["account_id"], 0)
             row["title"] = scrub_text(row["title"], 100)
             row["notes"] = scrub_text(row["notes"], 200)
         return {
@@ -3674,7 +3668,6 @@ class Service:
         - projection truth: rev, age, link coverage, unchecked links,
           identity suspects, release dups, id-map rows
         - adult volume: flagged posts and works
-        - coins: ledger rows, granted, spent, by reason
         - fleet: per-crawler status with last-sync ages
         Every read is guarded: a missing table or a dead store yields
         an honest zero/empty, never a 500.
@@ -3684,7 +3677,7 @@ class Service:
         live_led = self._live_ledger()
         out = {"available": False, "link_health": {}, "review_queue_count": 0,
                "review_queue": [], "projection": {}, "drift": {}, "adult": {},
-               "coins": {}, "fleet": []}
+               "fleet": []}
         if live_cat is not None:
             out["available"] = True
             try:
@@ -3721,10 +3714,6 @@ class Service:
                 pass
         if live_led is not None:
             out["available"] = True
-            try:
-                out["coins"] = live_led.coin_summary()
-            except Exception:
-                pass
         return out
 
     def dashboard(self, actor):

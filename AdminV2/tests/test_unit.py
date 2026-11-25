@@ -288,15 +288,20 @@ class TestValidation(unittest.TestCase):
         self.assertEqual(job["status"], "dead")
 
 
-class TestMigrationsV4V5(unittest.TestCase):
-    """Migrations v4/v5 (admin-panel audit §Live): the live DB applied
+class TestMigrationsV4V5V6(unittest.TestCase):
+    """Migrations v4/v5/v6 (admin-panel audit §Live): the live DB applied
     v1 BEFORE scheduled_publishes was added to v1's SQL, so it never
     got the table and /admin/live 500'd. v4 creates it; v5 adds the
-    coin + redirect columns. Never append to an applied migration."""
+    coin + redirect columns; v6 adds the coins_enabled flag column
+    (appended to v1 after the live DB applied it) and migrates the
+    stored 720p quality default to the 480p standing default. Never
+    append to an applied migration."""
 
     def _live_like_db(self):
         """A DB in the live DB's exact pre-fix state: v1 SQL with the
-        scheduled_publishes CREATE stripped, then v2+v3 applied."""
+        scheduled_publishes CREATE stripped, then v2+v3 applied — and
+        with coins_enabled stripped too, because the flag was appended
+        to v1's SQL after the live DB applied it (same v4 lesson)."""
         import re
         import sqlite3
         from admin_v2.store import MIGRATIONS
@@ -305,6 +310,10 @@ class TestMigrationsV4V5(unittest.TestCase):
             r"CREATE TABLE IF NOT EXISTS scheduled_publishes \(.*?\);\n",
             "", v1, flags=re.S)
         self.assertNotIn("scheduled_publishes", stripped)
+        stripped = re.sub(
+            r" *coins_enabled INTEGER NOT NULL DEFAULT 0,\n",
+            "", stripped)
+        self.assertNotIn("coins_enabled", stripped)
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row
         conn.executescript(stripped)
@@ -332,7 +341,7 @@ class TestMigrationsV4V5(unittest.TestCase):
         self.assertEqual(
             [r[0] for r in conn.execute(
                 "SELECT version FROM schema_version ORDER BY version")],
-            [1, 2, 3, 4, 5])
+            [1, 2, 3, 4, 5, 6])
 
     def test_v5_columns_and_coin_defaults(self):
         from admin_v2.store import migrate
@@ -353,6 +362,45 @@ class TestMigrationsV4V5(unittest.TestCase):
             "SELECT coins_enabled FROM app_remote_config_v2 WHERE id=1"
             ).fetchone()[0], 0)
 
+    def test_v6_adds_coins_enabled_and_migrates_quality_default(self):
+        """PNL-02/03: a live-like DB without coins_enabled gains the
+        column at 0, and a stored 720p default migrates to 480p —
+        while a stored value that is not the old default is untouched."""
+        from admin_v2.store import migrate
+        conn = self._live_like_db()
+        migrate(conn)
+        cols = {r[1] for r in conn.execute(
+            "PRAGMA table_info(app_remote_config_v2)")}
+        self.assertIn("coins_enabled", cols)
+        self.assertEqual(conn.execute(
+            "SELECT coins_enabled FROM app_remote_config_v2 WHERE id=1"
+            ).fetchone()[0], 0)
+        # Fresh rows seed the 480p default.
+        self.assertEqual(conn.execute(
+            "SELECT free_quality_cap FROM tuning_settings WHERE id=1"
+            ).fetchone()[0], "480p")
+        self.assertEqual(conn.execute(
+            "SELECT free_quality_cap FROM app_remote_config_v2 WHERE id=1"
+            ).fetchone()[0], "480p")
+        # A stored old default migrates on the next run.
+        conn.execute("UPDATE tuning_settings SET free_quality_cap='720p' WHERE id=1")
+        conn.execute("UPDATE app_remote_config_v2 SET free_quality_cap='720p' WHERE id=1")
+        conn.commit()
+        migrate(conn)
+        self.assertEqual(conn.execute(
+            "SELECT free_quality_cap FROM tuning_settings WHERE id=1"
+            ).fetchone()[0], "480p")
+        self.assertEqual(conn.execute(
+            "SELECT free_quality_cap FROM app_remote_config_v2 WHERE id=1"
+            ).fetchone()[0], "480p")
+        # A stored value that is not the old default is untouched.
+        conn.execute("UPDATE tuning_settings SET free_quality_cap='1080p' WHERE id=1")
+        conn.commit()
+        migrate(conn)
+        self.assertEqual(conn.execute(
+            "SELECT free_quality_cap FROM tuning_settings WHERE id=1"
+            ).fetchone()[0], "1080p")
+
     def test_migrate_is_idempotent(self):
         from admin_v2.store import migrate
         conn = self._live_like_db()
@@ -363,7 +411,7 @@ class TestMigrationsV4V5(unittest.TestCase):
         self.assertEqual(
             [r[0] for r in conn.execute(
                 "SELECT version FROM schema_version ORDER BY version")],
-            [1, 2, 3, 4, 5])
+            [1, 2, 3, 4, 5, 6])
 
     def test_list_scheduled_works_after_v4(self):
         from admin_v2.store import migrate
@@ -388,14 +436,19 @@ class TestMigrationsV4V5(unittest.TestCase):
         self.assertTrue(svc.get_monetization(owner)["shrinkme_configured"])
         self.assertEqual(svc.get_monetization(owner)["vip_monthly_pkr"], 250)
 
-    def test_monetization_coin_validation(self):
+    def test_monetization_coin_fields_refused(self):
+        # Coins removed (PNL-03): a coin price or the coins switch is
+        # an unknown field now, not a range error — and nothing is saved.
         svc, owner, _aud = make_service()
         with self.assertRaises(ApiError):
             svc.put_monetization(owner, {"coin_redeem_day": -1})
         with self.assertRaises(ApiError):
-            svc.put_monetization(owner, {"coin_redeem_day": 10_000_001})
-        svc.put_monetization(owner, {"coin_redeem_day": 600})
-        self.assertEqual(svc.get_monetization(owner)["coin_redeem_day"], 600)
+            svc.put_monetization(owner, {"coin_redeem_day": 600})
+        with self.assertRaises(ApiError):
+            svc.put_monetization(owner, {"coins_enabled": 1})
+        mon = svc.get_monetization(owner)
+        self.assertNotIn("coin_redeem_day", mon)
+        self.assertNotIn("coins_enabled", mon)
 
     def test_tuning_empty_email_is_unset_not_error(self):
         svc, owner, _aud = make_service()
@@ -403,6 +456,46 @@ class TestMigrationsV4V5(unittest.TestCase):
         self.assertEqual(svc.get_tuning(owner)["disclaimer_email"], "")
         with self.assertRaises(ApiError):
             svc.put_tuning(owner, {"disclaimer_email": "not-an-email"})
+
+
+class TestPhase4Pnl0203(unittest.TestCase):
+    """Phase 4 PNL-02 (480p default) + PNL-03 (coins removal).
+
+    The per-viewer default itself lives in the app (Settings ->
+    player_default_quality, wired into the start rung by
+    resolveStartBand); what the panel owes is the server default:
+    480p everywhere a 720p used to ship, and no coins surface left
+    with a read or write path.
+    """
+
+    def test_fresh_db_defaults_to_480p(self):
+        svc, owner, _aud = make_service()
+        self.assertEqual(
+            svc.get_tuning(owner)["free_quality_cap"], "480p")
+        self.assertEqual(
+            svc._config_row()["free_quality_cap"], "480p")
+        # The fixture client — the proof layer for the pairing matrix —
+        # serves the 480p cap and coins off on a fresh database.
+        cfg = fixture_app.public_remote_config(svc)
+        self.assertEqual(cfg["free_quality_cap"], "480p")
+        self.assertFalse(cfg["feature_flags"]["coins"])
+
+    def test_draft_cap_accepts_480p_and_720p_only(self):
+        svc, owner, _aud = make_service()
+        svc.draft_remote_config(owner, {"free_quality_cap": "480p"})
+        self.assertEqual(
+            svc._config_row()["free_quality_cap"], "480p")
+        svc.draft_remote_config(owner, {"free_quality_cap": "720p"})
+        self.assertEqual(
+            svc._config_row()["free_quality_cap"], "720p")
+        with self.assertRaises(ApiError):
+            svc.draft_remote_config(owner, {"free_quality_cap": "1080p"})
+
+    def test_monetization_carries_no_coin_keys(self):
+        svc, owner, _aud = make_service()
+        mon = svc.get_monetization(owner)
+        for key in mon:
+            self.assertNotIn("coin", key)
 
 
 class TestLiveSchedule(unittest.TestCase):

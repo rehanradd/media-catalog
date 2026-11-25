@@ -129,7 +129,7 @@ class RemoteConfigWatcher @Inject constructor(
         settings.saveDisclaimer(config.disclaimer)
         // The free quality cap rides the same body, under the same rule: a
         // failed poll leaves the last good cap in place, and a body that
-        // carries no cap (an older deployment) stores the shipped "720p".
+        // carries no cap (an older deployment) stores the shipped "480p".
         settings.saveFreeQualityCap(config.freeQualityCap)
         // The caps travel with the switch, and only a body that carries them overrides what this
         // build already enforces — a partial body leaves the shipped 25/12/4 windows in force

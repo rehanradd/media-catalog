@@ -56,7 +56,8 @@ class VipQualityGateTest {
         assertTrue(VipQualityGate.isPremiumBand("2160p"))
         assertTrue(VipQualityGate.isPremiumBand(" 1080P "))
         assertTrue(VipQualityGate.isPremiumBand("4K"))
-        assertFalse(VipQualityGate.isPremiumBand("720p"))
+        // The shipped cap is 480p, so 720p is premium under the no-arg default.
+        assertTrue(VipQualityGate.isPremiumBand("720p"))
         assertFalse(VipQualityGate.isPremiumBand("sd"))
         assertFalse(VipQualityGate.isPremiumBand(null))
 
@@ -89,9 +90,9 @@ class VipQualityGateTest {
             VipQualityGate.LOCKED_MESSAGE,
             VipQualityGate.lockedMessage("720p"),
         )
-        // A cap the server never sends reads as the shipped one.
+        // A cap the server never sends reads as the shipped one (480p).
         assertEquals(
-            VipQualityGate.LOCKED_MESSAGE,
+            "720p, 1080p and 4K sources are part of VIP. Upgrade to unlock them.",
             VipQualityGate.lockedMessage("4K"),
         )
     }
@@ -116,18 +117,22 @@ class VipQualityGateTest {
     }
 
     @Test
-    fun `a free viewer gets the free rungs and a fresh auto pointer`() {
+    fun `a free viewer under the shipped cap keeps only the 480p rung`() {
         val ladder = LadderForScope(
-            options = listOf(option("2160p"), option("1080p"), option("720p")),
-            autoBand = "1080p",
-            downloadOnlyBands = listOf("2160p", "720p"),
+            options = listOf(option("2160p"), option("1080p"), option("720p"), option("480p")),
+            autoBand = "720p",
+            downloadOnlyBands = listOf("720p"),
         )
 
         val gated = VipQualityGate.gate(ladder, isVip = false)
 
-        assertEquals(listOf("720p"), gated.options.map { it.band })
-        assertNull("the auto pointer must not keep naming a locked rung", gated.autoBand)
-        assertEquals(listOf("720p"), gated.downloadOnlyBands)
+        assertEquals(listOf("480p"), gated.options.map { it.band })
+        assertNull(
+            "the auto pointer dies with its rung, exactly as under an explicit 480p cap — " +
+                "it never falls back to a kept rung",
+            gated.autoBand,
+        )
+        assertTrue(gated.downloadOnlyBands.isEmpty())
     }
 
     @Test
@@ -144,14 +149,14 @@ class VipQualityGateTest {
     @Test
     fun `a labelled 4K rung is caught even without a canonical band`() {
         val ladder = LadderForScope(
-            options = listOf(option("unspecified", title = "4K Ultra HD · HEVC"), option("720p")),
+            options = listOf(option("unspecified", title = "4K Ultra HD · HEVC"), option("480p")),
             autoBand = "unspecified",
             downloadOnlyBands = emptyList(),
         )
 
         val gated = VipQualityGate.gate(ladder, isVip = false)
 
-        assertEquals(listOf("720p"), gated.options.map { it.band })
+        assertEquals(listOf("480p"), gated.options.map { it.band })
         assertNull(gated.autoBand)
     }
 
@@ -160,7 +165,7 @@ class VipQualityGateTest {
         val layout = ReleaseLayout(
             isSeriesLike = false,
             seasons = emptyList(),
-            workPrints = listOf(print(1, "2160p"), print(2, "1080p"), print(3, "720p")),
+            workPrints = listOf(print(1, "2160p"), print(2, "1080p"), print(3, "480p")),
             capabilities = listOf("4K", "1080p", "Official prints"),
             officialPrintCount = 3,
             camPrintCount = 0,
@@ -238,7 +243,7 @@ class VipQualityGateTest {
     @Test
     fun `a season with only premium prints disappears instead of becoming an empty row`() {
         val premium = print(10, "1080p")
-        val free = print(11, "720p")
+        val free = print(11, "480p")
         val layout = ReleaseLayout(
             isSeriesLike = true,
             seasons = listOf(
@@ -289,13 +294,13 @@ class VipQualityGateTest {
         )
 
         val ladder = LadderForScope(
-            options = listOf(option("1080p"), option("720p")),
+            options = listOf(option("1080p"), option("480p")),
             autoBand = "1080p",
             downloadOnlyBands = emptyList(),
         )
         assertSame(ladder, VipQualityGate.gate(ladder, VipQualityGate.premiumAccess(false, false)))
         assertEquals(
-            listOf("720p"),
+            listOf("480p"),
             VipQualityGate.gate(ladder, VipQualityGate.premiumAccess(true, false)).options.map { it.band },
         )
     }

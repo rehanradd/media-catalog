@@ -215,10 +215,14 @@ class TestPublish(PublishFlowBase):
         conn.commit()
         conn.close()
         live = LiveStores(catalog_path=path)
+        # Mega-wave4: `coins_enabled` is not a v2-writable field
+        # (PNL-03 removal), so the drift probe no longer carries it —
+        # apk_update_url alone is missing from this old catalog and
+        # still triggers schema_drift.
         with self.assertRaises(ApiError) as ctx:
             live.save_remote_config(
                 {"apk_update_url": "https://example.test/app.apk",
-                 "maintenance_mode": 1, "coins_enabled": 0},
+                 "maintenance_mode": 1},
                 config_version=4)
         self.assertEqual(ctx.exception.code, "schema_drift")
         self.assertEqual(ctx.exception.status, 500)
@@ -239,12 +243,20 @@ class TestPublish(PublishFlowBase):
         live = LiveStores(catalog_path=path)
         out = live.save_remote_config(
             {"apk_update_url": "https://example.test/app.apk",
-             "maintenance_mode": 1, "coins_enabled": 0}, config_version=4)
+             "maintenance_mode": 1}, config_version=4)
         cols = {r[1] for r in sqlite3.connect(path).execute(
             "PRAGMA table_info(app_remote_config)")}
         self.assertIn("apk_update_url", cols)
-        self.assertIn("coins_enabled", cols)
         self.assertIn("config_version", cols)
+        # Coins removed (PNL-03): the startup migration still adds the
+        # dormant `coins_enabled` column (the v1 read path SELECTs all
+        # 43, and the fixture client reads the flag) — but a publish
+        # never WRITES it, so the saved row keeps the default 0.
+        self.assertIn("coins_enabled", cols)
+        row = sqlite3.connect(path).execute(
+            "SELECT coins_enabled FROM app_remote_config WHERE id=1"
+        ).fetchone()
+        self.assertEqual(row[0], 0)
         self.assertEqual(out["apk_update_url"], "https://example.test/app.apk")
         self.assertEqual(out["config_version"], 4)
 

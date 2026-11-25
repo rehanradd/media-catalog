@@ -35,11 +35,13 @@ data class VipRemoteConfig(
     val settingsUnavailable: Boolean = false,
     /**
      * The best picture a free viewer may play, as the operator set it in the
-     * panel ("480p" or "720p"; "720p" when unset). The quality gate reads it;
-     * any other value decodes but is treated as "720p" by the gate.
+     * panel ("480p" or "720p"; "480p" when unset — the standing launch
+     * default: playback always starts at 480p unless the viewer set
+     * their own default). The quality gate reads it; any other value
+     * decodes but is treated as "480p" by the gate.
      */
     @SerializedName("free_quality_cap")
-    val freeQualityCap: String = "720p",
+    val freeQualityCap: String = "480p",
     /**
      * The version code of the APK the operator published, or 0 when they
      * published no code. The update notice compares it against this build;

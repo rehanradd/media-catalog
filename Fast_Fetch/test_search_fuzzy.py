@@ -5,10 +5,13 @@ returns catalog rows one edit away from the query, token by token. The
 free-only filter mirrors the client's VipQualityGate: a work counts as
 included for a free viewer when it has at least one print that is not a
 premium band — and a print with no quality label counts as free, the same
-as the client treats an unknown band.
+as the client treats an unknown band. Which bands are premium depends on
+the operator's free-quality cap: under the shipped 480p default a 720p
+print is premium for a free viewer; under a 720p operator cap it is free.
 """
 
 import os
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -17,6 +20,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fast_fetch
+import panel_feed
 import search_fuzzy
 import viewer
 
@@ -178,6 +182,39 @@ class FuzzySearchTests(unittest.TestCase):
         with patch.object(viewer, "DB_PATH", self.db_path):
             all_posts = viewer.api_v1_get_posts(limit=10)
             self.assertEqual(all_posts["total"], 3)
+            # No panel DB in this fixture, so the shipped 480p default
+            # applies (Phase 4 PNL-02): a 720p print is premium for a
+            # free viewer, and only the unlabelled work stays free.
+            free = viewer.api_v1_get_posts(limit=10, free_only=True)
+            self.assertEqual(free["total"], 1)
+            self.assertEqual(
+                sorted(r["clean_title"] for r in free["results"]),
+                ["Unlabelled"])
+
+    def test_free_only_under_720p_cap_keeps_720p_print(self):
+        """The other side of the cap: when the operator raised the cap
+        to 720p, a 720p print is free for a free viewer again."""
+        fast_fetch.save_scraped_data(self.media(
+            "site_a", "https://site-a.example/premium-only/",
+            title="Premium Only (2019)", clean_title="Premium Only", quality="1080p"))
+        fast_fetch.save_scraped_data(self.media(
+            "site_b", "https://site-b.example/free-too/",
+            title="Free Too (2019)", clean_title="Free Too", quality="720p"))
+        fast_fetch.save_scraped_data(self.media(
+            "site_c", "https://site-c.example/unlabelled/",
+            title="Unlabelled (2019)", clean_title="Unlabelled", quality=None))
+        panel_path = Path(self.temp_dir.name) / "panel.db"
+        conn = sqlite3.connect(panel_path)
+        conn.execute(
+            "CREATE TABLE tuning_settings (id INTEGER PRIMARY KEY,"
+            " free_quality_cap TEXT)")
+        conn.execute(
+            "INSERT INTO tuning_settings (id, free_quality_cap)"
+            " VALUES (1, '720p')")
+        conn.commit()
+        conn.close()
+        with patch.object(viewer, "DB_PATH", self.db_path), \
+                patch.object(panel_feed, "PANEL_DB_PATH", str(panel_path)):
             free = viewer.api_v1_get_posts(limit=10, free_only=True)
             self.assertEqual(free["total"], 2)
             self.assertEqual(

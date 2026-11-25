@@ -518,13 +518,15 @@ class TestCoverageMap(RedesignBase):
 
     def test_43_fields_partition(self):
         """(f)/N1: the live row's 43 fields partition exactly into the
-        24 v2-writable fields, the 4 release-owned (v1-edited) fields,
-        and the 15 v1-only fields — pinned against the v1 field spec."""
+        17 v2-writable fields, the 4 release-owned (v1-edited) fields,
+        and the 22 v1-only fields — pinned against the v1 field spec.
+        (Mega-wave4: 24/15 was PNL-01; PNL-03 moved the 19 coin fields
+        out of the v2-writable set into v1-only, keeping the 43 total.)"""
         v1_keys = [row[0] for row in admin_panel.MONETIZATION_FIELDS]
         self.assertEqual(len(v1_keys), 43)
-        self.assertEqual(len(REMOTE_CONFIG_FIELDS), 24)
+        self.assertEqual(len(REMOTE_CONFIG_FIELDS), 17)
         self.assertEqual(len(RELEASE_OWNED_LIVE_FIELDS), 4)
-        self.assertEqual(len(V1_ONLY_LIVE_FIELDS), 15)
+        self.assertEqual(len(V1_ONLY_LIVE_FIELDS), 22)
         self.assertEqual(
             set(REMOTE_CONFIG_FIELDS) | set(RELEASE_OWNED_LIVE_FIELDS)
             | set(V1_ONLY_LIVE_FIELDS), set(v1_keys))
@@ -563,17 +565,18 @@ class TestCoverageMap(RedesignBase):
         for key in V2_ONLY_SNAPSHOT_FIELDS:
             self.assertNotIn(key, cols)
 
-    def test_no_publish_intent_table_and_schema_version_5(self):
+    def test_no_publish_intent_table_and_schema_version_6(self):
         """(f)/§0A: the intent journal + reconciler are dropped — no
         publish_intent table exists, and the migration chain ends at
-        v5 (the v6 journal migration is gone)."""
+        v6 (PNL-02/03: coins_enabled column + 720p->480p default flip).
+        (Mega-wave4: v5 was PNL-01; v6 is the merged chain end.)"""
         svc, _owner, _aud = make_service()
         tables = {r[0] for r in svc.admin.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
         self.assertNotIn("publish_intent", tables)
         self.assertEqual(svc.admin.execute(
             "SELECT MAX(version) AS v FROM schema_version"
-        ).fetchone()["v"], 5)
+        ).fetchone()["v"], 6)
 
 
 class TestDriftGuard(RedesignBase):

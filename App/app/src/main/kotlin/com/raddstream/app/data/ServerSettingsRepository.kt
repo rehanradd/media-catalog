@@ -790,19 +790,20 @@ class ServerSettingsRepository @Inject constructor(
     /**
      * The best picture a free viewer may play, as the operator set it:
      * "480p" or "720p". Anything else the server sent — a typo, an older
-     * deployment — reads as the shipped "720p", never a stricter cap the
-     * operator did not ask for.
+     * deployment — reads as the shipped "480p", the standing launch
+     * default: playback always starts at 480p unless the viewer set
+     * their own default.
      */
     val freeQualityCap: Flow<String> = dataStore.data.map { preferences ->
-        (preferences[FREE_QUALITY_CAP_KEY] ?: "720p")
-            .takeIf { it == "480p" || it == "720p" } ?: "720p"
+        (preferences[FREE_QUALITY_CAP_KEY] ?: "480p")
+            .takeIf { it == "480p" || it == "720p" } ?: "480p"
     }
 
     /** Record one received free quality cap, from the same successful poll as [saveTabs]. */
     suspend fun saveFreeQualityCap(cap: String) {
         dataStore.edit { preferences ->
             preferences[FREE_QUALITY_CAP_KEY] =
-                cap.takeIf { it == "480p" || it == "720p" } ?: "720p"
+                cap.takeIf { it == "480p" || it == "720p" } ?: "480p"
         }
     }
 

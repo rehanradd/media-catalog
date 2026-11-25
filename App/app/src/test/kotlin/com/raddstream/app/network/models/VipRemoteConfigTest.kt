@@ -465,7 +465,7 @@ class VipRemoteConfigTest {
         assertEquals("", config.disclaimer.text)
         assertEquals(0, config.disclaimer.version)
         assertEquals("", config.disclaimer.email)
-        assertEquals("720p", config.freeQualityCap)
+        assertEquals("480p", config.freeQualityCap)
         assertEquals(0, config.apkUpdateVersionCode)
         assertEquals(0, config.minVersionCode)
         assertEquals(false, config.settingsUnavailable)

@@ -27,35 +27,39 @@ FLEET_SITES = [
 
 # Coin pass prices, stored in the live catalog's app_remote_config
 # (day 500 / weekend 1200 / monthly 5000 / download 100 / request
-# 300 / theme 250 — the live values the security audit found). The
-# panel could neither show nor edit them (admin-panel audit 2026-11-08
-# §Money); they are monetization fields now, read from the catalog
-# when wired and from the panel row otherwise.
-COIN_REDEEM_FIELDS = [
-    "coin_redeem_day", "coin_redeem_weekend", "coin_redeem_monthly",
-    "coin_redeem_download", "coin_redeem_request", "coin_redeem_theme",
-]
+# 300 / theme 250 — the live values the security audit found). Coins
+# were removed 2026-11-17 (standing order; PNL-03): the six prices are
+# no longer a panel write path — they are NOT in MONETIZATION_FIELDS,
+# the Monetization page has no editor for them, and a publish never
+# carries them. The columns stay in old rows, dormant, and the
+# COIN_REDEEM_DEFAULTS below exist only so migration v5 can still add
+# them on a database that predates v5; a future migration may drop
+# them. The master switch `coins_enabled` stays in the schema at 0
+# (its own column, never written by the panel) so the app contract
+# still reads `feature_flags.coins: false`.
 COIN_REDEEM_DEFAULTS = {
     "coin_redeem_day": 500, "coin_redeem_weekend": 1200,
     "coin_redeem_monthly": 5000, "coin_redeem_download": 100,
     "coin_redeem_request": 300, "coin_redeem_theme": 250,
 }
 
-# The docs inventory names 16 monetization fields; the design says 17.
-# The 17th column is the row id itself. No field is invented here.
-# PNL-01 redesign §0A N1 adds the 18th: free_quality_cap — the
-# silent-loss field (draft-editable, served from the live row, no
-# writer until now). It joins here so the monetization publish and
-# rollback carry it, and live_stores.REMOTE_CONFIG_FIELDS with it:
-# the canonical map requires a live-row draft field to be in BOTH.
+# The 17 monetization fields the panel can write: the 16 named in the
+# docs inventory plus free_quality_cap (PNL-01 redesign §0A N1 — the
+# silent-loss field: draft-editable, served from the live row, no writer
+# until now). It joins here so the monetization publish and rollback
+# carry it, and live_stores.REMOTE_CONFIG_FIELDS with it: the canonical
+# map requires a live-row draft field to be in BOTH. No field is
+# invented here. (The six coin pass prices used to make this 23; they
+# are gone with the coins removal, and `coins_enabled` has no panel
+# write path.)
 MONETIZATION_FIELDS = [
     "pak_till_id", "pak_jazzcash_number", "pak_easypaisa_number",
     "pak_raast_id", "vip_monthly_pkr", "vip_yearly_pkr",
     "monetag_zone_id", "adsterra_tag_id", "shrinkme_api_token",
     "droplink_api_token", "maintenance_mode", "apk_update_url",
     "feature_downloads", "feature_pure_cinema", "feature_chromecast",
-    "feature_quality_gate", "coins_enabled", "free_quality_cap",
-] + COIN_REDEEM_FIELDS
+    "feature_quality_gate", "free_quality_cap",
+]
 
 # Canonical tuning defaults (launch plan Phase 0, G-7): one value per knob,
 # and `panel_feed.TUNING_KNOBS` / `TABS_DEFAULT` agree with it. `warmup_count`
@@ -70,7 +74,7 @@ TUNING_DEFAULTS = {
     "import_concurrency": 1, "prefetch_queue": 100,
     "prefetch_concurrency": 1, "hero_max": 6, "section_cap": 20,
     "home_sections_max": 12, "domain_check_interval_min": 60,
-    "free_quality_cap": "720p",
+    "free_quality_cap": "480p",
     "theme_mode": "dark", "theme_accent": "",
     "theme_dynamic_color": 0, "theme_hero_autoplay": 1,
     "theme_hero_interval_s": 5,
@@ -132,7 +136,7 @@ MIGRATIONS = [
       force_update_message TEXT DEFAULT '', maintenance_message TEXT DEFAULT '',
       brand_primary TEXT DEFAULT '#2563EB', brand_accent TEXT DEFAULT '#2563EB',
       region_order TEXT DEFAULT 'pakistan,india,asia,international',
-      free_quality_cap TEXT DEFAULT '720p', updated_by INTEGER, updated_at INTEGER);
+      free_quality_cap TEXT DEFAULT '480p', updated_by INTEGER, updated_at INTEGER);
     CREATE TABLE IF NOT EXISTS app_remote_config_history (
       id INTEGER PRIMARY KEY, config_version INTEGER NOT NULL,
       snapshot_json TEXT NOT NULL, published_by INTEGER, published_at INTEGER);
@@ -322,6 +326,37 @@ def _ensure_v5_columns(conn):
     conn.commit()
 
 
+def _ensure_v6_columns(conn):
+    """Migration 6 (2026-11-24, Phase 4 PNL-02/03): idempotent, same
+    pattern as v5 — a re-run adds nothing twice.
+
+    - app_remote_config_v2.coins_enabled: the flag was appended to
+      migration 1's SQL AFTER the live panel DB had already applied
+      v1, so the live DB never got the column (same v4 lesson — the
+      live panel row 500'd on no-such-column only when no live catalog
+      was wired, which is why it stayed latent). The flag itself is
+      dormant at 0 with no panel write path; the column must still
+      exist because the fixture client reads it.
+    - free_quality_cap '720p' -> '480p' on the two stored rows that
+      still carry the old shipped default (tuning_settings + the panel
+      config row). Only the old default moves: an operator value that
+      is not '720p' is untouched, and a row the operator later sets
+      to '720p' stays '720p'. Fresh rows get '480p' from the schema
+      default and TUNING_DEFAULTS already.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(app_remote_config_v2)")}
+    if "coins_enabled" not in cols:
+        conn.execute("ALTER TABLE app_remote_config_v2 ADD COLUMN "
+                     "coins_enabled INTEGER NOT NULL DEFAULT 0")
+    for table in ("tuning_settings", "app_remote_config_v2"):
+        tcols = {r[1] for r in conn.execute("PRAGMA table_info(%s)" % table)}
+        if "free_quality_cap" in tcols:
+            conn.execute("UPDATE %s SET free_quality_cap = '480p' "
+                         "WHERE free_quality_cap = '720p'" % table)
+    conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (6)")
+    conn.commit()
+
+
 def connect(path):
     conn = sqlite3.connect(path, timeout=5.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -343,6 +378,7 @@ def migrate(conn):
                 conn.execute("INSERT INTO schema_version (version) VALUES (?)", (version,))
         conn.commit()
         _ensure_v5_columns(conn)
+        _ensure_v6_columns(conn)
         # CSRF tokens are per-session form secrets, not passwords: they
         # are stored with the session so server-rendered forms can use
         # them. The session token itself is never stored, only hashed.

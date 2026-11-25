@@ -79,7 +79,7 @@ def public_remote_config(service):
         # Additive v2 fields: an old app must ignore these safely.
         "sections": home_layout(service),
         "active_broadcasts": service.active_broadcasts(),
-        "free_quality_cap": cfg.get("free_quality_cap", "720p"),
+        "free_quality_cap": cfg.get("free_quality_cap", "480p"),
         "region_order": cfg.get("region_order", ""),
         "refresh_note": "visible on next app refresh",
     }

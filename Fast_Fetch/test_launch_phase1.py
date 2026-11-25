@@ -69,15 +69,16 @@ from admin_v2.live_stores import LiveStores, REMOTE_CONFIG_FIELDS
 from admin_v2.services import Service
 
 
-# The catalog row's numeric columns: flags, prices and coin costs. Everything
-# else in REMOTE_CONFIG_FIELDS is text. Used only to add a column the v1 DDL
+# The catalog row's numeric columns: flags and prices. Everything else in
+# REMOTE_CONFIG_FIELDS is text. Used only to add a column the v1 DDL
 # predates, so the fixture catalog always carries every field the v2 staged
-# publish writes.
+# publish writes. Coins are gone from the v2 field set (Phase 4 PNL-03),
+# so no coin column is added here; the v1 DDL still carries them.
 _NUMERIC_FIELDS = {
     "vip_monthly_pkr", "vip_yearly_pkr",
     "maintenance_mode", "feature_downloads", "feature_pure_cinema",
-    "feature_chromecast", "feature_quality_gate", "coins_enabled",
-} | set(panel_store.COIN_REDEEM_FIELDS)
+    "feature_chromecast", "feature_quality_gate",
+}
 
 # Flags the v1 panel shows read-only after Phase 1 (D-6).
 _V1_READ_ONLY_FLAGS = (
