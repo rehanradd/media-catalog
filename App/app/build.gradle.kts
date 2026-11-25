@@ -260,7 +260,9 @@ android {
         // (its AAR manifests declare minSdk 23 since 1.9.0) and NextLib.
         // Android 5.0/5.1 are dropped; the app is pre-launch, so no
         // installed base is affected.
-        minSdk        = 23
+        // BOM bump 2026-11-25: minSdk 23 -> 24, forced by Compose BOM 2026.11.01
+        // (material3-ripple 1.5.0 declares minSdk 24). Android 6.0 is dropped too.
+        minSdk        = 24
         targetSdk     = 35
         versionCode   = versionCodeFromEnv
         versionName   = versionNameFromEnv
@@ -717,7 +719,7 @@ dependencies {
 
     // ── Firebase (Crashlytics crash reporting + Analytics) ─────────────────
     // The BOM pins every Firebase library to one tested set (33.7.0:
-    // crashlytics 19.3.0, analytics 22.1.2 — both minSdk 21, below the app's 23). Crashlytics
+    // crashlytics 19.3.0, analytics 22.1.2 — both minSdk 21, below the app's 24). Crashlytics
     // uploads the release mapping file automatically via its Gradle plugin,
     // so release stack traces de-obfuscate without a manual step.
     implementation(platform(libs.firebase.bom))
@@ -735,7 +737,7 @@ dependencies {
     // ── Google Cast sender (E2 slice 3 spike) ─────────────────────────────
     // CastContext / Default Media Receiver wiring only — no cast button UI
     // yet (see App/docs/CAST_SPIKE_20261118.md). 21.4.0 stays pinned;
-    // the app's minSdk is 23 since the 2026-11-23 library bump.
+    // the app's minSdk is 24 since the 2026-11-25 BOM bump.
     implementation(libs.play.services.cast.framework)
     // MX #9 Cast: the real feature — media3-cast 1.11.1 (CastPlayer.Builder
     // + RemoteCastPlayer.Builder) for the remote player, mediarouter for
