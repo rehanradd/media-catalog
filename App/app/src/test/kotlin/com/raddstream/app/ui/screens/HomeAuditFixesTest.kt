@@ -263,6 +263,14 @@ class HomeAuditFixesTest {
                 )
             }
         }
+        compose.onNodeWithContentDescription("Dismiss announcement")
+            .assertHeightIsEqualTo(48.dp).assertWidthIsEqualTo(48.dp)
+        compose.onNodeWithContentDescription("Remove Jawan from Continue Watching")
+            .assertHeightIsEqualTo(48.dp).assertWidthIsEqualTo(48.dp)
+        compose.onNodeWithContentDescription("Dismiss trial note")
+            .assertHeightIsEqualTo(48.dp).assertWidthIsEqualTo(48.dp)
+    }
+
     // ── H10 (2027 Home fix, round 2): the trending rail's "See all" ─────
 
     @Test
