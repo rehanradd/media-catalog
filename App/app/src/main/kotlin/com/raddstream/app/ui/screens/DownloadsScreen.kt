@@ -1355,7 +1355,7 @@ private fun QualityBadge(quality: String) {
             .clip(RaddTokens.Shape.Chip)
             .background(MaterialTheme.colorScheme.secondaryContainer)
             .padding(
-                horizontal = RaddTokens.Space.Sm,
+                horizontal = RaddTokens.Space.Xs,
                 vertical = RaddTokens.Space.Micro,
             ),
         contentAlignment = Alignment.Center,
@@ -1385,8 +1385,10 @@ private fun DownloadMetaLine(
     val (badge, rest) = qualityBadgeParts(printLabel)
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Sm),
-        modifier = Modifier.semantics { contentDescription = printLabelDescription },
+        horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Xs),
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics { contentDescription = printLabelDescription },
     ) {
         badge?.let { QualityBadge(it) }
         // The remainder flexes (weight) so the size is never the part the
