@@ -72,8 +72,13 @@ class SearchPagingTest {
             RaddStreamTheme {
                 // A tall viewport: SearchContent is a LazyColumn, and a lazy
                 // item below the fold is never composed — the append footer
-                // must exist as a node before the test can see it.
-                Box(Modifier.size(width = 360.dp, height = 1000.dp)) {
+                // must exist as a node before the test can see it. 1200dp,
+                // not 1000dp: the round-2 category tabs add ~112dp above the
+                // results, which pushed the footer out of the old viewport.
+                // 1200dp reaches the first skeleton row (and the inline
+                // retry, which sits in its place) but not the second row,
+                // so the two-cell pin below still holds.
+                Box(Modifier.size(width = 360.dp, height = 1200.dp)) {
                     val pagingItems = flow.collectAsLazyPagingItems()
                     SearchContent(
                         state = SearchUiState(

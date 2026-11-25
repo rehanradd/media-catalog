@@ -171,7 +171,10 @@ class SearchNoResultsTest {
         )
 
         compose.onNodeWithText("Trending now").assertIsDisplayed()
-        compose.onNodeWithText("Dune").assertIsDisplayed()
+        // APP-07 (round 2) illustrated the empty state, so the rail sits
+        // lower than it used to: the viewer scrolls to the titles, and so
+        // does this test, before asserting the first title is visible.
+        compose.onNodeWithText("Dune").performScrollTo().assertIsDisplayed()
         // The rail replaces the fallback button: one Browse door, not two.
         compose.onAllNodesWithText("Browse trending").assertCountEquals(0)
 

@@ -91,6 +91,7 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -792,21 +793,34 @@ internal fun SavedFilterRow(
                 modifier = Modifier
                     .clip(RoundedCornerShape(24.dp))
                     .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                    .clickable { onApply(saved) }
-                    // The row's spoken name is the apply action; the X next
-                    // to it stays its own node ("Remove saved filter …") —
-                    // merging descendants would swallow it into this node.
-                    .semantics { contentDescription = "Apply saved filter ${saved.label}" }
-                    .padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp)
+                    .padding(top = 4.dp, bottom = 4.dp)
                     .heightIn(min = 40.dp),
             ) {
-                Text(
-                    text = saved.label,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                // The label is the apply control: its spoken name and its
+                // click live on the same node, so a TalkBack double-tap on
+                // the announced name applies the filter. The X is a sibling
+                // of this box, not a child of the clickable — as a child,
+                // the X's remove action answered the chip's own tap instead
+                // of the apply action (SavedFilterRowTest, round 2).
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { onApply(saved) }
+                        .semantics {
+                            contentDescription = "Apply saved filter ${saved.label}"
+                            onClick(label = "Apply saved filter ${saved.label}") { onApply(saved); true }
+                        }
+                        .padding(start = 12.dp, top = 4.dp, bottom = 4.dp),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    Text(
+                        text = saved.label,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
                 IconButton(
                     onClick = { onRemove(saved) },
                     modifier = Modifier.size(32.dp),
