@@ -134,6 +134,16 @@ internal fun RowEndFade(modifier: Modifier = Modifier, height: Dp = 48.dp) {
     // fade on a 360dp row dims only the last sliver of the cut chip, so
     // the row still read as broken-off, not scrollable. At 48dp the last
     // chip visibly dims into the edge, which is the scroll cue.
+    //
+    // S3 (2027 Home fix, round 2): the linear fade still read as a
+    // hard cut — the chips are dark-on-dark (the chip fill to the
+    // background is ~10 RGB steps), so a linear ramp leaves the cut chip
+    // legible until the last ~10px, and the golden showed the letters
+    // fading only in the final sliver. The stops are eased now: the fade
+    // reaches 75% background at the halfway point, so the cut chip is
+    // substantially dimmed through the whole second half and the row
+    // reads as fading, not clipped. Same 48dp width — the width was
+    // never the problem, the ramp was.
     Box(
         modifier = modifier
             .width(48.dp)
@@ -141,6 +151,7 @@ internal fun RowEndFade(modifier: Modifier = Modifier, height: Dp = 48.dp) {
             .background(
                 Brush.horizontalGradient(
                     0f to Color.Transparent,
+                    0.5f to MaterialTheme.colorScheme.background.copy(alpha = 0.75f),
                     1f to MaterialTheme.colorScheme.background,
                 ),
             ),
