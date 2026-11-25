@@ -1634,8 +1634,15 @@ def link_is_adult(source_id: int, db_path) -> bool:
     Every list route hides a flagged title, but a redirector addressed by a bare
     link id never sees the list: without this, the play route alone would be an
     adult viewer. An unknown link answers True too, so a vanished row, a typo and
-    a flagged title are indistinguishable — and none of them plays."""
-    with sqlite3.connect(db_path) as conn:
+    a flagged title are indistinguishable — and none of them plays. A database
+    that cannot be opened at all answers True too, so no failure mode of the
+    lookup can play.
+    """
+    try:
+        conn = sqlite3.connect(db_path)
+    except sqlite3.Error:
+        return True          # unopenable database: refuse, never play
+    with conn:
         try:
             # Session 125: serve-path pragmas.
             db_pragmas.apply_serve_pragmas(conn)
