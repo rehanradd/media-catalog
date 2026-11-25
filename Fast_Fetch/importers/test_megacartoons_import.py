@@ -280,5 +280,15 @@ class TestExportAndSync(unittest.TestCase):
         self.assertTrue(ok)
 
 
+class TestMegaCartoonsRegistry(unittest.TestCase):
+    def test_registry_entry_names_the_wp_json_route(self):
+        reg_path = Path(__file__).resolve().parent.parent / "domain_registry.json"
+        reg = json.loads(reg_path.read_text())
+        entry = reg["sites"]["megacartoons"]
+        self.assertEqual(entry["active_base_url"], "https://www.megacartoons.net")
+        self.assertEqual(entry["api_type"], "wp_rest_api")
+        self.assertIn("/wp-json/wp/v2/posts", entry.get("api_endpoint", ""))
+
+
 if __name__ == "__main__":
     unittest.main()

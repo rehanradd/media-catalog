@@ -820,8 +820,8 @@
     },
     "megacartoons": {
       "active_base_url": "https://www.megacartoons.net",
-      "last_verified": "2026-11-09T20:20:00Z",
-      "verified_by": "homepage",
+      "last_verified": "2026-11-23T01:32:43Z",
+      "verified_by": "wp_rest_api",
       "known_mirrors": [
         "https://megacartoons.net",
         "https://www.megacartoons.net"
@@ -832,10 +832,11 @@
       "tld_history": [
         "net"
       ],
-      "api_type": "homepage",
+      "api_type": "wp_rest_api",
       "status": "active",
-      "last_checked": "2026-11-09T20:20:00Z",
-      "notes": "Enumerated via wp-json /wp-json/wp/v2/posts (the tracker verifies the homepage because cartoon titles carry no quality marker for the wp-json proof)."
+      "last_checked": "2026-11-23T01:32:43Z",
+      "notes": "Enumerated via wp-json /wp-json/wp/v2/posts (the tracker verifies the homepage because cartoon titles carry no quality marker for the wp-json proof). Backfill COMPLETE 2026-11-23: all 2,823 wp posts staged (31 series, 2,837 Range+ffprobe-active episode sources, verify OK). Source stale since 2024-12-17 — one-time backfill only; promotion to live is still owed (blocked behind the source_site backfill + gate).",
+      "api_endpoint": "/wp-json/wp/v2/posts"
     },
     "missav": {
       "active_base_url": "https://missav.ws",
