@@ -29,5 +29,13 @@ def conflict(message="That action conflicts with the current state."):
     return ApiError("conflict", message, 409)
 
 
+def backup_required(message):
+    """A live write refused for want of a fresh verified backup
+    (PNL-08). 409: the request conflicts with the panel's backup
+    precondition, not with the input. The message always says what
+    to do (take a verified backup first)."""
+    return ApiError("backup_required", message, 409)
+
+
 def rate_limited(message="Too many tries. Wait a moment and try again."):
     return ApiError("rate_limited", message, 429)

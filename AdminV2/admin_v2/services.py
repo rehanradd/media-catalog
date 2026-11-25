@@ -21,6 +21,7 @@ import time
 from datetime import datetime, timezone
 
 from . import security, smart
+from .backup_guard import BackupGuard
 from .errors import ApiError, bad, conflict, forbidden, not_found
 from .live_stores import (
     FLEET_SITES as _LIVE_FLEET_SITES,  # noqa: F401  (same list, live-verified)
@@ -157,7 +158,7 @@ class Service:
                  live_registry_path=None, live_status_dir=None,
                  live_cert_path=None, live_fleet_base_dir=None,
                  live_fleet_runner=None, live=None,
-                 live_host_registry_path=None):
+                 live_host_registry_path=None, backup_guard="default"):
         # PNL-04 fail-closed: there is no default TOTP key. A previous
         # build silently fell back to a public literal when no key was
         # configured, so every TOTP secret would have been wrapped
@@ -189,19 +190,30 @@ class Service:
         # Live stores: injected LiveStores, or built from explicit
         # paths. None = no live store configured (fixture behaviour).
         # Workspace tests pass temp copies; the live gate passes the
-        # real paths only after a backup.
+        # real paths only after a backup — and since PNL-08 that is
+        # enforced, not just noted: a BackupGuard ("default" builds
+        # one from RADD_BACKUP_MARKER_DIR / RADD_BACKUP_MAX_AGE_S)
+        # is attached to the LiveStores, and _rw refuses every live
+        # write without a fresh verified backup marker. An injected
+        # `live` carries its own guard (tests inject guard-less
+        # instances); passing backup_guard=None here means "no guard"
+        # and is for fixture/test use only, never live.
         if live is not None:
             self.live = live
         elif any((live_catalog_path, live_ledger_path, live_registry_path,
                   live_status_dir, live_cert_path, live_fleet_base_dir,
                   live_fleet_runner, live_host_registry_path)):
+            guard = backup_guard
+            if guard == "default":
+                guard = BackupGuard.from_env()
             self.live = LiveStores(
                 catalog_path=live_catalog_path, ledger_path=live_ledger_path,
                 registry_path=live_registry_path, status_dir=live_status_dir,
                 cert_path=live_cert_path,
                 fleet_base_dir=live_fleet_base_dir or "/opt/radd-stream/Fast_Fetch",
                 fleet_runner=live_fleet_runner,
-                host_registry_path=live_host_registry_path)
+                host_registry_path=live_host_registry_path,
+                backup_guard=guard)
         else:
             self.live = None
         self._bg_stop = None
@@ -215,6 +227,15 @@ class Service:
 
     def _live_ledger(self):
         return self.live if (self.live is not None and self.live.has_ledger) else None
+
+    def backup_status(self):
+        """Read-only: freshness of the verified backup for each
+        configured live store (PNL-08). {} when no live store is
+        wired. Used by the entry point's startup warning; never
+        raises for a missing dir or bad marker."""
+        if self.live is None:
+            return {}
+        return self.live.backup_status()
 
     def _get_work_any(self, work_id):
         """One work from the real catalog when wired, else the fixture.

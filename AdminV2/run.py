@@ -8,7 +8,10 @@ system as real data. Live deployment is a separate gated step:
 branch + hosted CI + backup + live test + rollback note.
 
 Live stores (optional, read from env; any WRITE to them needs a
-backup before first live use — see the Phase 2 handoff):
+backup before first live use — since PNL-08 this is ENFORCED in
+code by admin_v2/backup_guard.py, not just noted: LiveStores._rw
+refuses the write with ApiError "backup_required" (409) unless a
+fresh verified backup marker exists for that store):
     RADD_CATALOG_DB      merged catalog DB (posts, app_remote_config, ...)
     RADD_USER_STATE_DB   user_state.db (accounts + payment ledger)
     RADD_DOMAIN_REGISTRY domain_registry.json
@@ -17,6 +20,10 @@ backup before first live use — see the Phase 2 handoff):
     RADD_STATUS_DIR      directory of <site>_status.json files
     RADD_CERT_PATH       fullchain.pem for the cert-expiry read
     RADD_FLEET_DIR       Fast_Fetch dir (crawler scripts)
+    RADD_BACKUP_MARKER_DIR  directory holding the gate backups and
+                         their *.verified.json markers (live: /home/ubuntu).
+                         Unset = every live write refused until set.
+    RADD_BACKUP_MAX_AGE_S   freshness window in seconds (default 86400 = 24h).
     RADD_TOTP_KEY        base64 TOTP encryption key (rotated 2026-11-11;
                          REQUIRED — the panel exits without it, there is
                          no default key; see PNL-04).
@@ -90,6 +97,14 @@ def main():
     )
     if args.background_jobs:
         svc.start_background_jobs(domain_checker=check_domain)
+    # PNL-08: warn (never die) when a configured live store has no
+    # fresh verified backup — its writes will be refused until the
+    # gate records one. Read-only check; the refusal itself happens
+    # per write in LiveStores._rw.
+    for store, st in svc.backup_status().items():
+        if not st["ok"]:
+            print("WARNING: live %s writes are refused: %s"
+                  % (store, st["reason"]), file=sys.stderr)
     host_checker = lambda old, new: check_host_move(
         old, new,
         fleet_base_dir=os.environ.get("RADD_FLEET_DIR")
