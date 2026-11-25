@@ -28,6 +28,11 @@ import host_classifier as hc  # noqa: E402
 
 R2_ASSET = "https://pub-abc123.r2.dev/movie.mkv"
 GOOGLE_ASSET = "https://video-downloads.googleusercontent.com/dl/movie"
+PROVEN_R2 = "https://pub-5703108c07374cf4bf82a6a6e2041364.r2.dev/movie.mkv"
+FRESH_R2 = "https://pub-423049f6aaaa1111.r2.dev/movie.mkv"
+GOFILE_PAGE = "https://gofile.io/d/SAYYBt81"
+GOFILE_DIRECT = "https://store-eu-par-1.gofile.io/download/web/abc123/movie.mkv"
+TELEGRAM_PAGE = "https://t.me/filesdll_bot"
 
 
 def gateway_page(buttons) -> str:
@@ -318,6 +323,276 @@ class UnwrapTests(unittest.TestCase):
                                        _fetch=lambda u: ("", ""),
                                        _hop=HopRecorder({}))
         self.assertEqual(res["error"], "empty_cloud_page")
+
+
+class BucketTests(unittest.TestCase):
+    """The bucket label is parsed per URL; permanence is per-bucket."""
+
+    def test_bucket_parsed_from_r2_url(self):
+        self.assertEqual(hc.hubcdn_r2_bucket(R2_ASSET), "abc123")
+        self.assertEqual(
+            hc.hubcdn_r2_bucket(PROVEN_R2),
+            "5703108c07374cf4bf82a6a6e2041364")
+
+    def test_bucket_is_none_for_non_r2_urls(self):
+        for url in (GOOGLE_ASSET, GOFILE_PAGE, TELEGRAM_PAGE,
+                    "https://abc.r2.dev/a.mkv",
+                    "https://pub-abc.r2.dev.evil.cn/y.mkv"):
+            with self.subTest(url=url):
+                self.assertIsNone(hc.hubcdn_r2_bucket(url))
+
+    def test_only_the_measured_bucket_is_proven(self):
+        self.assertTrue(hc.hubcdn_r2_bucket_is_proven(PROVEN_R2))
+        self.assertFalse(hc.hubcdn_r2_bucket_is_proven(FRESH_R2))
+        self.assertFalse(hc.hubcdn_r2_bucket_is_proven(R2_ASSET))
+        self.assertFalse(hc.hubcdn_r2_bucket_is_proven(GOOGLE_ASSET))
+
+    def test_permanence_verdict_follows_the_bucket(self):
+        self.assertTrue(fast_fetch.hubcdn_r2_is_permanent(PROVEN_R2))
+        self.assertFalse(fast_fetch.hubcdn_r2_is_permanent(FRESH_R2))
+        self.assertFalse(fast_fetch.hubcdn_r2_is_permanent(GOOGLE_ASSET))
+
+
+class MirrorRoleTests(unittest.TestCase):
+    """The fan-out's other two mirrors get roles of their own."""
+
+    def test_role_accepts_gofile_page(self):
+        self.assertEqual(hc.hubcdn_asset_role(GOFILE_PAGE), "gofile")
+        self.assertEqual(hc.hubcdn_asset_service(GOFILE_PAGE), "gofile")
+
+    def test_role_accepts_telegram_bot_as_record_only(self):
+        self.assertEqual(hc.hubcdn_asset_role(TELEGRAM_PAGE), "telegram")
+        self.assertIsNone(hc.hubcdn_asset_service(TELEGRAM_PAGE))
+
+    def test_role_refuses_gofile_lookalikes(self):
+        for hostile in ("https://www.gofile.io/d/SAYYBt81",
+                        "https://gofile.io.evil.cn/d/SAYYBt81",
+                        "https://gofile.io/d/",
+                        "https://gofile.io/download/SAYYBt81"):
+            with self.subTest(hostile=hostile):
+                self.assertIsNone(hc.hubcdn_asset_role(hostile))
+
+    def test_role_refuses_telegram_lookalikes(self):
+        for hostile in ("https://telegram.me/filesdll_bot",
+                        "https://t.me.evil.cn/filesdll_bot",
+                        "https://t.me/",
+                        "https://t.me/filesdll_bot/extra/path"):
+            with self.subTest(hostile=hostile):
+                self.assertIsNone(hc.hubcdn_asset_role(hostile))
+
+
+def four_mirror_buttons():
+    return [
+        trigger("/l.php?id=9&amp;t=a", "480p [500MB]"),
+        trigger("https://hubcdn.io/l.php?id=10", "1080p [4.2GB]"),
+        trigger("https://hubcdn.io/l.php?id=11", "Download - GoFile.io"),
+        trigger("https://hubcdn.io/l.php?id=12", "Telegram File"),
+    ]
+
+
+def four_mirror_hops():
+    return {
+        "https://hubcdn.io/l.php?id=9&t=a": (302, R2_ASSET),
+        "https://hubcdn.io/l.php?id=10": (302, GOOGLE_ASSET),
+        "https://hubcdn.io/l.php?id=11": (302, GOFILE_PAGE),
+        "https://hubcdn.io/l.php?id=12": (302, TELEGRAM_PAGE),
+    }
+
+
+class FanoutTests(unittest.TestCase):
+    """The whole fan-out is collected in one unwrap (API-11)."""
+
+    def unwrap(self, hops, buttons):
+        page = gateway_page(buttons)
+        recorder = HopRecorder(hops)
+        res = fast_fetch.unwrap_hubcdn(
+            "https://hubcdn.io/cloud/abc123",
+            _fetch=lambda u: (page, "session=xyz"), _hop=recorder)
+        return res, recorder
+
+    def test_all_four_mirrors_are_collected(self):
+        res, _rec = self.unwrap(four_mirror_hops(), four_mirror_buttons())
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["r2_url"], R2_ASSET)
+        self.assertEqual(res["google_url"], GOOGLE_ASSET)
+        self.assertEqual(res["gofile_url"], GOFILE_PAGE)
+        self.assertEqual(res["telegram_url"], TELEGRAM_PAGE)
+        self.assertEqual(res["r2_bucket"], "abc123")
+
+    def test_gofile_only_page_is_ok(self):
+        res, _rec = self.unwrap(
+            {"https://hubcdn.io/l.php?id=11": (302, GOFILE_PAGE)},
+            [trigger("https://hubcdn.io/l.php?id=11", "GoFile")])
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["gofile_url"], GOFILE_PAGE)
+        self.assertIsNone(res["r2_url"])
+        self.assertIsNone(res["google_url"])
+
+    def test_telegram_only_page_is_not_ok(self):
+        res, _rec = self.unwrap(
+            {"https://hubcdn.io/l.php?id=12": (302, TELEGRAM_PAGE)},
+            [trigger("https://hubcdn.io/l.php?id=12", "Telegram")])
+        self.assertFalse(res["ok"], res)
+        self.assertEqual(res["error"], "no_trusted_asset_in_any_redirect")
+        self.assertEqual(res["telegram_url"], TELEGRAM_PAGE)
+
+    def test_duplicate_href_is_hopped_once(self):
+        buttons = [
+            trigger("/l.php?id=9&amp;t=a", "Cloud Direct"),
+            trigger("/l.php?id=9&amp;t=a", "Cloud Direct copy"),
+            trigger("https://hubcdn.io/l.php?id=10", "Direct Download"),
+        ]
+        res, rec = self.unwrap(happy_hops(), buttons)
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(len(rec.urls), 2)
+
+    def test_hopping_stops_once_all_slots_are_filled(self):
+        hops = four_mirror_hops()
+        hops["https://hubcdn.io/l.php?id=13"] = (302, PROVEN_R2)
+        buttons = four_mirror_buttons() + [
+            trigger("https://hubcdn.io/l.php?id=13", "Extra R2")]
+        res, rec = self.unwrap(hops, buttons)
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(len(rec.urls), 4)
+
+    def test_rate_limit_hop_stops_the_loop(self):
+        hops = {"https://hubcdn.io/l.php?id=9&t=a": (429, None)}
+        buttons = [
+            trigger("/l.php?id=9&amp;t=a", "480p [500MB]"),
+            trigger("https://hubcdn.io/l.php?id=10", "1080p [4.2GB]"),
+        ]
+        res, rec = self.unwrap(hops, buttons)
+        self.assertFalse(res["ok"], res)
+        self.assertEqual(res["error"], "hubcdn_rate_limited")
+        self.assertEqual(len(rec.urls), 1)
+
+    def test_hop_delay_math(self):
+        self.assertEqual(fast_fetch._hubcdn_hop_delay(None, 100.0), 0.0)
+        self.assertEqual(
+            fast_fetch._hubcdn_hop_delay(100.0, 100.5), 0.5)
+        self.assertEqual(
+            fast_fetch._hubcdn_hop_delay(100.0, 101.5), 0.0)
+        self.assertEqual(
+            fast_fetch._hubcdn_hop_delay(100.0, 100.0, interval=2.0), 2.0)
+
+
+def stage2_file(url):
+    return {"ok": True, "kind": "file", "mime": "video/x-matroska",
+            "resumable": True, "renditions": [], "failure": None}
+
+
+def stage2_playlist(url):
+    return {"ok": True, "kind": "playlist",
+            "mime": "application/x-mpegurl",
+            "resumable": False, "renditions": [], "failure": None}
+
+
+def stage2_403(url):
+    return {"ok": False, "kind": None, "mime": None, "size": None,
+            "resumable": False, "renditions": [], "failure": "http_403"}
+
+
+class ProbeRecorder:
+    """The Stage-2 gate, answering per URL and recording the order."""
+
+    def __init__(self, verdicts):
+        self.verdicts = verdicts
+        self.urls = []
+
+    def __call__(self, url):
+        self.urls.append(url)
+        return self.verdicts.get(url, stage2_403(url))
+
+
+def gofile_active(url):
+    return {"status": "active", "final_url": GOFILE_DIRECT,
+            "content_type": "video/x-matroska", "size_bytes": 123456,
+            "http_status": 206}
+
+
+def gofile_dead(url):
+    return {"status": "unverified", "final_url": None}
+
+
+class MirrorPickTests(unittest.TestCase):
+    """The mirror fall-through: a 403 never fails a press with a live mirror."""
+
+    def test_r2_403_falls_through_to_google(self):
+        probe = ProbeRecorder({FRESH_R2: stage2_403(FRESH_R2),
+                               GOOGLE_ASSET: stage2_file(GOOGLE_ASSET)})
+        res = {"r2_url": FRESH_R2, "google_url": GOOGLE_ASSET}
+        url, verdict, embed, temp, bucket = fast_fetch._hubcdn_pick_mirror(
+            res, want="watch", _probe=probe)
+        self.assertEqual(url, GOOGLE_ASSET)
+        self.assertEqual(temp, 1)
+        self.assertIsNone(bucket)
+        self.assertIsNone(embed)
+        self.assertEqual(probe.urls, [FRESH_R2, GOOGLE_ASSET])
+
+    def test_proven_r2_wins_permanent(self):
+        probe = ProbeRecorder({PROVEN_R2: stage2_file(PROVEN_R2),
+                               GOOGLE_ASSET: stage2_file(GOOGLE_ASSET)})
+        res = {"r2_url": PROVEN_R2, "google_url": GOOGLE_ASSET}
+        url, _verdict, _embed, temp, bucket = fast_fetch._hubcdn_pick_mirror(
+            res, want="watch", _probe=probe)
+        self.assertEqual(url, PROVEN_R2)
+        self.assertEqual(temp, 0)
+        self.assertEqual(bucket, "5703108c07374cf4bf82a6a6e2041364")
+        self.assertEqual(probe.urls, [PROVEN_R2])
+
+    def test_fresh_r2_wins_temporary(self):
+        probe = ProbeRecorder({FRESH_R2: stage2_file(FRESH_R2),
+                               GOOGLE_ASSET: stage2_file(GOOGLE_ASSET)})
+        res = {"r2_url": FRESH_R2, "google_url": GOOGLE_ASSET}
+        url, _verdict, _embed, temp, bucket = fast_fetch._hubcdn_pick_mirror(
+            res, want="watch", _probe=probe)
+        self.assertEqual(url, FRESH_R2)
+        self.assertEqual(temp, 1)
+        self.assertEqual(bucket, "423049f6aaaa1111")
+        self.assertEqual(probe.urls, [FRESH_R2])
+
+    def test_r2_and_google_403_fall_through_to_gofile(self):
+        probe = ProbeRecorder({})
+        res = {"r2_url": FRESH_R2, "google_url": GOOGLE_ASSET,
+               "gofile_url": GOFILE_PAGE}
+        url, verdict, embed, temp, bucket = fast_fetch._hubcdn_pick_mirror(
+            res, want="watch", _probe=probe, _gofile_unwrap=gofile_active)
+        self.assertEqual(url, GOFILE_DIRECT)
+        self.assertIsNone(verdict)
+        self.assertEqual(embed["status"], "active")
+        self.assertEqual(temp, 1)
+        self.assertIsNone(bucket)
+        self.assertEqual(probe.urls, [FRESH_R2, GOOGLE_ASSET])
+
+    def test_dead_gofile_leaves_nothing(self):
+        probe = ProbeRecorder({})
+        res = {"r2_url": FRESH_R2, "google_url": GOOGLE_ASSET,
+               "gofile_url": GOFILE_PAGE}
+        got = fast_fetch._hubcdn_pick_mirror(
+            res, want="watch", _probe=probe, _gofile_unwrap=gofile_dead)
+        self.assertEqual(got, (None, None, None, 1, None))
+
+    def test_gofile_skipped_without_unwrapper(self):
+        probe = ProbeRecorder({})
+        res = {"r2_url": FRESH_R2, "google_url": GOOGLE_ASSET,
+               "gofile_url": GOFILE_PAGE}
+        got = fast_fetch._hubcdn_pick_mirror(res, want="watch", _probe=probe)
+        self.assertEqual(got, (None, None, None, 1, None))
+
+    def test_download_want_skips_a_playlist_r2(self):
+        probe = ProbeRecorder({FRESH_R2: stage2_playlist(FRESH_R2),
+                               GOOGLE_ASSET: stage2_file(GOOGLE_ASSET)})
+        res = {"r2_url": FRESH_R2, "google_url": GOOGLE_ASSET}
+        url, _verdict, _embed, temp, _bucket = fast_fetch._hubcdn_pick_mirror(
+            res, want="download", _probe=probe)
+        self.assertEqual(url, GOOGLE_ASSET)
+        self.assertEqual(temp, 1)
+
+    def test_no_mirrors_returns_nothing(self):
+        got = fast_fetch._hubcdn_pick_mirror(
+            {"r2_url": None, "google_url": None}, want="watch",
+            _probe=ProbeRecorder({}))
+        self.assertEqual(got, (None, None, None, 1, None))
 
 
 if __name__ == "__main__":

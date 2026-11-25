@@ -6990,8 +6990,23 @@ def _preresolve_is_warm(source_id: int, conn=None) -> bool | None:
         return False
 
 
+def _press_client_ip(handler) -> str | None:
+    """The pressing client's address for the IP-bound cache rule, or None.
+
+    ``redact.client_ip`` is the same per-user key the rate limiter uses
+    (CF-Connecting-IP first behind Cloudflare, loopback peer only). A
+    fault or an undeterminable address reads as "no IP" — never a guess:
+    an IP-bound row then refuses and the press re-resolves, which is the
+    safe direction.
+    """
+    try:
+        return redact.client_ip(handler) or None
+    except Exception:      # noqa: BLE001 — a client-IP fault is a miss
+        return None
+
+
 def _servable_banked_hit(conn, source_id, *, want="watch", now=None,
-                         prober=None):
+                         prober=None, client_ip=None):
     """The banked row servable right now, or None (H4 R9).
 
     ``resolved_cache.lookup_cache`` plus the serve-time re-probe: a fresh
@@ -7001,6 +7016,11 @@ def _servable_banked_hit(conn, source_id, *, want="watch", now=None,
     cache miss — the caller falls through to the live resolver, which
     re-resolves and fails over to the next verified candidate.
 
+    ``client_ip`` is the pressing client's address (API-01): the lookup
+    opts into same-IP serving of IP-bound rows, so a token minted for one
+    client is never 302'd to another — a foreign IP reads as a miss and
+    the press re-resolves instead.
+
     ``prober`` is test-only injection (the production probe is
     ``serve_verify``'s default, capped at 5 s, ranged, clearance-aware).
     A fault anywhere here is fail-open: a cache problem must never break
@@ -7009,7 +7029,8 @@ def _servable_banked_hit(conn, source_id, *, want="watch", now=None,
     try:
         import resolved_cache
         hit = resolved_cache.lookup_cache(conn, int(source_id), want=want,
-                                          now=now)
+                                          allow_ip_bound=True,
+                                          client_ip=client_ip, now=now)
     except Exception:      # noqa: BLE001 — a cache fault is a miss
         return None
     if hit is None:
@@ -8536,7 +8557,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         # the live resolver below re-resolves and fails
                         # over instead of 302-ing a dead winner.
                         hit = _servable_banked_hit(conn, int(source_id),
-                                                   want="watch")
+                                                   want="watch",
+                                                   client_ip=_press_client_ip(self))
                         if hit is not None:
                             # Fill-hit measurement (play-fast §2 (j)):
                             # one aggregate counter bump per served press
@@ -8612,7 +8634,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 try:
                     import resolved_cache
                     with get_db() as conn:
-                        resolved_cache.record_resolved_cache(conn, int(source_id), res)
+                        # API-01: the row is minted for THIS press's client,
+                        # so a same-IP later press can be served it — a copy
+                        # is banked (the answer itself is untouched) and the
+                        # cache keeps the IP only on ip_bound=1 rows.
+                        banked = dict(res)
+                        banked["minted_ip"] = _press_client_ip(self)
+                        resolved_cache.record_resolved_cache(
+                            conn, int(source_id), banked)
                         # Fill-hit measurement: this press just paid for a
                         # full resolve (see the hit branch above).
                         conn.execute("PRAGMA busy_timeout = 250")
@@ -8755,7 +8784,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         # the live resolver below takes over, so a dead
                         # banked file is never handed to a downloader.
                         hit = _servable_banked_hit(conn, int(source_id),
-                                                   want="download")
+                                                   want="download",
+                                                   client_ip=_press_client_ip(self))
                         if hit is not None and hit.get("kind") == "file":
                             # Fill-hit measurement (play-fast §2 (j)): one
                             # aggregate counter bump per served download
@@ -8817,8 +8847,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     try:
                         import resolved_cache
                         with get_db() as conn:
+                            # API-01: same minting-IP stamp as the stream
+                            # route above — this row was minted for this
+                            # press's client.
+                            banked = dict(res)
+                            banked["minted_ip"] = _press_client_ip(self)
                             resolved_cache.record_resolved_cache(
-                                conn, int(source_id), res)
+                                conn, int(source_id), banked)
                             # Fill-hit measurement: this download just paid
                             # for a full resolve (see the hit note above).
                             conn.execute("PRAGMA busy_timeout = 250")

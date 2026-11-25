@@ -298,8 +298,33 @@ HUBCDN_BASE = "https://hubcdn.io"
 
 #: An unwrap's asset role -> the ``service`` label to stamp the result with, so
 #: the projector ranks the byte URL by the CDN that actually serves it
-#: (``catalog_v2._is_tier1`` knows both spellings).
-HUBCDN_ASSET_SERVICES = {"stream": "fsl_r2", "download": "google_cdn"}
+#: (``catalog_v2._is_tier1`` knows both spellings). ``"telegram"`` is
+#: deliberately absent: a bot deep-link is not a file and must never be
+#: stamped with a serving service.
+HUBCDN_ASSET_SERVICES = {"stream": "fsl_r2", "download": "google_cdn",
+                         "gofile": "gofile"}
+
+#: R2 buckets proven publicly readable (measured live, final-origin map
+#: 01:45 PKT 24 Nov 2026): the OLD ``cf_route`` bucket answers Range 206
+#: with no token and never expires, so a URL on it may be banked
+#: permanent. Any other bucket is UNPROVEN — a freshly minted bucket
+#: (``pub-423049f6…``) 403s on Oracle, Tor AND WARP — so its URLs bank
+#: temporary and are re-resolved, never served as permanent. The set
+#: grows only by measurement, never by assumption.
+HUBCDN_PROVEN_R2_BUCKETS = frozenset(
+    {"5703108c07374cf4bf82a6a6e2041364"})
+
+#: The Gofile mirror's landing page (``gofile.io/d/<id>``). A page, not a
+#: file: it earns its role by exact host + path shape, never by the
+#: direct-file gate below, and the caller must still unwrap it with the
+#: gofile resolver before it can be served.
+_HUBCDN_GOFILE_HOST = "gofile.io"
+_HUBCDN_GOFILE_SHAPE = re.compile(r"^/d/[A-Za-z0-9_-]+$", re.I)
+
+#: The Telegram mirror (``t.me/<bot>``). Record-only: a bot deep-link,
+#: never a byte URL, so it is collected as evidence and never served.
+_HUBCDN_TELEGRAM_HOST = "t.me"
+_HUBCDN_TELEGRAM_SHAPE = re.compile(r"^/[A-Za-z0-9_]+$", re.I)
 
 #: ``pub-<bucket-hash>.r2.dev`` is Cloudflare's *public development* endpoint for
 #: an R2 bucket. The ``pub-`` label is what makes it a public bucket rather than
@@ -324,14 +349,24 @@ def hubcdn_asset_role(location: str) -> Optional[str]:
 
     ``"stream"`` — a public Cloudflare R2 bucket (``pub-*.r2.dev``).
     ``"download"`` — the Google Cloud CDN front (``video-downloads.googleusercontent.com``).
+    ``"gofile"`` — the Gofile mirror page (``gofile.io/d/<id>``): a landing
+    page the caller must unwrap with the gofile resolver, never a byte
+    URL on its own.
+    ``"telegram"`` — the Telegram mirror (``t.me/<bot>``): record-only, a
+    bot deep-link, never playable.
 
-    The test is the authority table first: :func:`classify` must already call the
-    host a direct file, and :func:`_direct_file_shape_ok` must accept its shape,
-    before the hubcdn-specific prefix/name refinement is consulted. A
-    substring-only check on the Location is what would let ``r2.dev.attacker.tld``
-    or ``pub-x.r2.dev.evil.cn`` in (crown order qoder14_repin item 3), and an
-    unwrapped link is by construction a URL we did not choose.
+    The gofile/telegram roles are decided BEFORE the direct-file gate:
+    neither target is a direct file, so the gate would refuse both, and
+    the exact host + path shape is the trust check for them — the same
+    strictness the R2 shape check applies to buckets (a suffix or
+    subdomain lookalike buys nothing).
     """
+    host = _hostname(location)
+    path = urllib.parse.urlsplit(str(location or "")).path or ""
+    if host == _HUBCDN_GOFILE_HOST and _HUBCDN_GOFILE_SHAPE.match(path):
+        return "gofile"
+    if host == _HUBCDN_TELEGRAM_HOST and _HUBCDN_TELEGRAM_SHAPE.match(path):
+        return "telegram"
     result = classify(location)
     if result.category != CATEGORY_DIRECT_FILE or not _direct_file_shape_ok(location):
         return None
@@ -349,13 +384,41 @@ def hubcdn_asset_service(location: str) -> Optional[str]:
     """The ``service`` label an unwrapped asset should be stamped with, or None.
 
     Stamping the byte URL with the CDN that serves it (``fsl_r2`` /
-    ``google_cdn``) instead of the gateway's ``hubcdn`` is what makes the two
-    halves rank differently: the bucket is the streamable copy, the Google front
+    ``google_cdn`` / ``gofile``) instead of the gateway's ``hubcdn`` is what makes the
+    mirrors rank differently: the bucket is the streamable copy, the Google front
     is the download copy — both Category A, both tier 1
-    (``catalog_v2._is_tier1`` knows both spellings).
+    (``catalog_v2._is_tier1`` knows both spellings). A Telegram mirror has
+    no service: it is not a file, so there is nothing to stamp it with.
     """
     role = hubcdn_asset_role(location)
     return HUBCDN_ASSET_SERVICES.get(role) if role else None
+
+
+def hubcdn_r2_bucket(url: str) -> Optional[str]:
+    """The R2 bucket label of a ``pub-<bucket>.r2.dev`` URL, or None.
+
+    The bucket is the part after ``pub-`` in the hostname — it is what
+    permanence is per (API-11): the same path on two buckets is two
+    different trust decisions. A non-R2 URL, a bare ``*.r2.dev`` host
+    without the ``pub-`` label, or a lookalike suffix has no bucket.
+    """
+    host = _hostname(url)
+    if not host or not _HUBCDN_R2_SHAPE.match(host):
+        return None
+    return host[len("pub-"):len(host) - len(".r2.dev")]
+
+
+def hubcdn_r2_bucket_is_proven(url: str) -> bool:
+    """True only when the URL's R2 bucket is in the measured-proven set.
+
+    The set (``HUBCDN_PROVEN_R2_BUCKETS``) holds buckets a live probe
+    proved publicly readable; membership is the only thing that earns a
+    banked R2 URL permanent treatment. An unproven bucket is not dead —
+    it may still probe 206 right now — it is simply not trusted past
+    this press.
+    """
+    bucket = hubcdn_r2_bucket(url)
+    return bucket is not None and bucket in HUBCDN_PROVEN_R2_BUCKETS
 
 
 def hubcdn_page_buttons(html: str) -> list:
@@ -535,6 +598,111 @@ def backend_of(url: str = "", service: str = "") -> str:
     (modiplay/bingr == vidrift, modiplay/streamhg == iqsmart's StreamHG).
     """
     return classify(url, service).backend
+
+
+# ---------------------------------------------------------------------------
+# IP-bound hosts (API-01, full-project checkup F-01)
+# ---------------------------------------------------------------------------
+# A token minted on one egress 403s from any other, so a banked row for one
+# of these hosts is servable only to the IP it was minted for — never
+# replayed across client IPs. Proven live 2026-11-23 (final-origin map):
+# the same URL answers 200/206 from the Oracle egress and 403/404 from the
+# hatch egress, for all six. VOE is /16-bound (its `i=` embeds the minting
+# IP's /16, 3 mints confirmed); 1xplayer's path literally embeds the
+# minting IP + epoch. The other four are proven bound to *an* IP, with no
+# wider scope measured, so they match exact-IP only — the fail-closed
+# direction (a too-narrow match costs a re-resolve; a too-wide match
+# serves a 403).
+#
+# Two layers, same rule as `classify`: the final-URL HOST is evidence, the
+# service label is the fallback for when the host has rotated. A host is
+# added here only on probe evidence of IP-binding (same URL, two egresses,
+# one 403) — never on suspicion. NOT IP-bound, proven the same way:
+# greenmotors, HubCloud FSL/10g, HubCDN Google, gdrive, pixeldrain,
+# bbupload, aryzap, dramadog, gdflix, mediafire, themoviebox (Referer-bound,
+# not IP-bound).
+#
+# Scope values: "ip" — the exact client IP must match; "/16" — the first
+# two IPv4 octets must match (VOE only, until another host proves it).
+
+#: Service labels whose minted tokens are IP-bound (pkembed is mixdrop's
+#: embed label — same mxcontent.net final host, same binding).
+IP_BOUND_LABELS: Dict[str, str] = {
+    "mixdrop": "ip",
+    "pkembed": "ip",
+    "vidhide": "ip",
+    "streamtape": "ip",
+    "voe": "/16",
+    "1xplayer": "ip",
+    "mega": "ip",
+}
+
+#: Final-URL host suffixes whose minted tokens are IP-bound (matched with
+#: `_host_matches`, so subdomains are covered: `<random>.mxcontent.net`,
+#: `<digits>.tapecontent.net`, `<random>.cloudwindow-route.com`,
+#: `*.cdn-centaurus.com`, `cdn30091.asrmo449ddj.com`,
+#: `gfs<N>.userstorage.mega.co.nz`).
+IP_BOUND_HOSTS: Dict[str, str] = {
+    "mxcontent.net": "ip",
+    "tapecontent.net": "ip",
+    "cloudwindow-route.com": "/16",
+    "cdn-centaurus.com": "ip",
+    "asrmo449ddj.com": "ip",
+    "userstorage.mega.co.nz": "ip",
+}
+
+
+def ip_binding_scope(url: str = "", service: str = "") -> Optional[str]:
+    """The IP-binding scope for a resolved link, or None when it is not
+    IP-bound.
+
+    Host first, label second — the same evidence order as `classify`: a
+    URL whose host is a proven IP-bound CDN is bound whatever its label
+    says (labels lie; the mixdrop family alone files rows under two
+    labels), and a label match covers a mint whose final host has rotated
+    off the table. Returns "ip" (exact-IP match) or "/16" (VOE's proven
+    /16 binding). Pure data lookup, no I/O.
+    """
+    host = _hostname(url)
+    if host:
+        for marker, scope in IP_BOUND_HOSTS.items():
+            if _host_matches(marker, host):
+                return scope
+    label = str(service or "").strip().lower()
+    if label:
+        return IP_BOUND_LABELS.get(label)
+    return None
+
+
+def ip_matches_scope(scope: str, minted_ip: str, client_ip: str) -> bool:
+    """True when `client_ip` is the IP a token minted for `minted_ip` may
+    be served to, under `scope`.
+
+    "ip" needs the exact address; "/16" needs the same first two IPv4
+    octets (VOE). Anything unparseable fails CLOSED — a comparison that
+    cannot be proven is a re-resolve, never a serve. IPv6 has no /16
+    notion here and matches exact only.
+    """
+    minted = str(minted_ip or "").strip()
+    client = str(client_ip or "").strip()
+    if not minted or not client:
+        return False
+    if scope == "/16":
+        m_parts = minted.split(".")
+        c_parts = client.split(".")
+        if len(m_parts) == 4 and len(c_parts) == 4:
+            try:
+                if all(0 <= int(p) <= 255 for p in m_parts[:2] + c_parts[:2]):
+                    return m_parts[:2] == c_parts[:2]
+            except ValueError:
+                return False
+    # Exact match, case-insensitive (IPv6 hex): normalised through
+    # ipaddress so "2001:DB8::1" and "2001:db8:0:0:0:0:0:1" compare equal.
+    try:
+        import ipaddress
+        return (ipaddress.ip_address(minted) == ipaddress.ip_address(client))
+    except ValueError:
+        return minted.lower() == client.lower()
 
 
 # ---------------------------------------------------------------------------

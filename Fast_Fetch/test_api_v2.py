@@ -45,6 +45,8 @@ import tempfile
 import time
 import unittest
 import unittest.mock
+import urllib.error
+import urllib.request
 from pathlib import Path
 from urllib.parse import parse_qsl, unquote, urlparse
 
@@ -53,6 +55,7 @@ os.environ.setdefault("RADD_SKIP_LIVE_ENRICH", "1")
 import api_v2
 import catalog_api
 import catalog_v2
+import current_hosts
 import fast_fetch
 import redact
 import resolved_cache
@@ -223,9 +226,22 @@ class V2WireFixture(unittest.TestCase):
         self.db_path = Path(self.tmp.name) / "wire.db"
         # `save_scraped_data` resolves its own connection from `fast_fetch.DB_PATH`,
         # so an unpatched path here would write fixtures into the real catalog.
+        # API-05: the static path probes the stored URL before serving it,
+        # and the fixture's URLs are fake tags on real hosts
+        # (`video-downloads.googleusercontent.com/DUNE-CDN` does not exist)
+        # — an unstubbed probe would answer 404 against live network and
+        # turn every /resolve test into a live-resolve test. The probe
+        # itself is pinned by `V2StaticProbeUnitTests` (fake opener, no
+        # network); everything here assumes it says "alive", exactly as
+        # the static path behaved before API-05. A test that cares about
+        # another verdict patches `api_v2._probe_static_url` itself, over
+        # this stub.
         self._patches = [
             unittest.mock.patch.object(fast_fetch, "DB_PATH", self.db_path),
             unittest.mock.patch.object(viewer, "DB_PATH", self.db_path),
+            unittest.mock.patch.object(
+                api_v2, "_probe_static_url",
+                return_value=api_v2._STATIC_PROBE_ALIVE),
         ]
         for patcher in self._patches:
             patcher.start()
@@ -1384,6 +1400,347 @@ class V2PlayCacheAwareFallbackTests(V2WireFixture):
         self.assertEqual(reply.json["release_id"], sibling)
         self.assertNotEqual(reply.json["release_id"], best)
         self.assertTrue(reply.json["playable"])
+
+
+# ── API-05: /resolve probes the static URL before serving it ─────────────────
+
+class V2StaticUrlProbeTests(V2WireFixture):
+    """API-05 (F-17): the `/resolve` static path served a stored URL with
+    zero probing — a row labelled `active` whose token had expired (any
+    FSL/Google row banked weeks ago) reached the player as playable.
+
+    `resolve_target` now probes the stored URL first (mocked here — no
+    live network in tests): "alive" serves it exactly as before,
+    "dead" records the failure in the negative cache and falls through
+    to live resolve, "unknown" falls through without recording. A row
+    the bank already proved dead skips the probe entirely. The probe
+    itself is pinned by `V2StaticProbeUnitTests` below, through a fake
+    opener.
+    """
+
+    def _static_url(self):
+        row = self.conn.execute(
+            "SELECT final_url FROM cat_links WHERE resource_id = 'DUNE-CDN'"
+        ).fetchone()
+        return str(row["final_url"])
+
+    def _failure_record(self, tag):
+        return self.conn.execute(
+            "SELECT last_failed_at, failure_class, failure_resolver_v"
+            " FROM download_sources WHERE resource_id = ?", (tag,)).fetchone()
+
+    def _live_resolve(self, url="https://fresh.example/DUNE-CDN"):
+        return {"success": True, "url": url, "refreshed": True,
+                "cached": False, "mime_type": "video/mp4",
+                "file_size_bytes": 123, "is_resumable": True,
+                "is_temporary": False}
+
+    def test_alive_static_url_is_served_without_touching_the_resolver(self):
+        resolver = unittest.mock.Mock(
+            side_effect=AssertionError(
+                "live resolve must not run when the probe is alive"))
+        with unittest.mock.patch.object(
+                api_v2, "_probe_static_url",
+                return_value=api_v2._STATIC_PROBE_ALIVE), \
+                unittest.mock.patch.object(
+                    fast_fetch, "resolve_live_source", resolver):
+            kind, payload = api_v2.resolve_target(
+                self.conn, link_id=self.public_link_id, operator=False)
+        self.assertEqual(kind, "url")
+        self.assertEqual(payload["url"], self._static_url())
+        self.assertTrue(payload["cached"])
+        self.assertFalse(payload["refreshed"])
+
+    def test_dead_static_url_falls_through_and_records_the_failure(self):
+        resolver = unittest.mock.Mock(return_value=self._live_resolve())
+        with unittest.mock.patch.object(
+                api_v2, "_probe_static_url",
+                return_value=api_v2._STATIC_PROBE_DEAD), \
+                unittest.mock.patch.object(
+                    fast_fetch, "resolve_live_source", resolver):
+            kind, payload = api_v2.resolve_target(
+                self.conn, link_id=self.public_link_id, operator=False)
+        self.assertEqual(kind, "url")
+        self.assertEqual(payload["url"], "https://fresh.example/DUNE-CDN")
+        self.assertTrue(payload["refreshed"])
+        self.assertFalse(payload["cached"])
+        self.assertEqual(payload["mime_type"], "video/mp4")
+        self.assertEqual(payload["file_size_bytes"], 123)
+        self.assertTrue(payload["resumable"])
+        self.assertIsNone(payload["expires_in"])
+        resolver.assert_called_once()
+        record = self._failure_record("DUNE-CDN")
+        self.assertIsNotNone(record["last_failed_at"])
+        self.assertEqual(record["failure_class"], "probe_failed")
+        self.assertEqual(record["failure_resolver_v"],
+                         fast_fetch.RESOLVER_VERSION)
+
+    def test_unknown_static_url_falls_through_without_recording_a_failure(self):
+        # A blocked (403/429) or unreachable host is evidence about the
+        # network, not about the link: the press re-resolves, and the
+        # bank records nothing, so the next press may prove it live.
+        resolver = unittest.mock.Mock(return_value=self._live_resolve())
+        with unittest.mock.patch.object(
+                api_v2, "_probe_static_url",
+                return_value=api_v2._STATIC_PROBE_UNKNOWN), \
+                unittest.mock.patch.object(
+                    fast_fetch, "resolve_live_source", resolver):
+            kind, payload = api_v2.resolve_target(
+                self.conn, link_id=self.public_link_id, operator=False)
+        self.assertEqual(kind, "url")
+        self.assertEqual(payload["url"], "https://fresh.example/DUNE-CDN")
+        resolver.assert_called_once()
+        self.assertIsNone(self._failure_record("DUNE-CDN")["last_failed_at"])
+
+    def test_dead_static_url_and_failed_live_resolve_fails_honestly(self):
+        resolver = unittest.mock.Mock(
+            return_value={"success": False, "reason": "re_resolve_failed"})
+        with unittest.mock.patch.object(
+                api_v2, "_probe_static_url",
+                return_value=api_v2._STATIC_PROBE_DEAD), \
+                unittest.mock.patch.object(
+                    fast_fetch, "resolve_live_source", resolver):
+            kind, payload = api_v2.resolve_target(
+                self.conn, link_id=self.public_link_id, operator=False)
+        self.assertEqual(kind, "failed")
+        self.assertEqual(payload["reason"], "re_resolve_failed")
+        self.assertEqual(payload["link_id"], self.public_link_id)
+
+    def test_known_dead_static_url_skips_the_probe_entirely(self):
+        self._mark_resolve_failure("DUNE-CDN")
+        probe = unittest.mock.Mock(
+            side_effect=AssertionError(
+                "a known-dead row must not be probed again"))
+        resolver = unittest.mock.Mock(return_value=self._live_resolve())
+        with unittest.mock.patch.object(api_v2, "_probe_static_url", probe), \
+                unittest.mock.patch.object(
+                    fast_fetch, "resolve_live_source", resolver):
+            kind, payload = api_v2.resolve_target(
+                self.conn, link_id=self.public_link_id, operator=False)
+        self.assertEqual(kind, "url")
+        self.assertEqual(payload["url"], "https://fresh.example/DUNE-CDN")
+        probe.assert_not_called()
+        resolver.assert_called_once()
+
+    def test_stale_version_failure_is_probed_again(self):
+        # Session 107 versioning: a failure recorded by an older
+        # resolver is stale — a new unwrapper may have landed since —
+        # so the static path probes (and serves) as if unfailed.
+        self._mark_resolve_failure(
+            "DUNE-CDN", version=fast_fetch.RESOLVER_VERSION - 1)
+        resolver = unittest.mock.Mock(
+            side_effect=AssertionError(
+                "live resolve must not run when the probe is alive"))
+        with unittest.mock.patch.object(
+                api_v2, "_probe_static_url",
+                return_value=api_v2._STATIC_PROBE_ALIVE), \
+                unittest.mock.patch.object(
+                    fast_fetch, "resolve_live_source", resolver):
+            kind, payload = api_v2.resolve_target(
+                self.conn, link_id=self.public_link_id, operator=False)
+        self.assertEqual(kind, "url")
+        self.assertEqual(payload["url"], self._static_url())
+
+    def test_expired_failure_is_probed_again(self):
+        self._mark_resolve_failure(
+            "DUNE-CDN",
+            age_seconds=fast_fetch.NEGATIVE_CACHE_TTL_SECONDS + 3600)
+        resolver = unittest.mock.Mock(
+            side_effect=AssertionError(
+                "live resolve must not run when the probe is alive"))
+        with unittest.mock.patch.object(
+                api_v2, "_probe_static_url",
+                return_value=api_v2._STATIC_PROBE_ALIVE), \
+                unittest.mock.patch.object(
+                    fast_fetch, "resolve_live_source", resolver):
+            kind, payload = api_v2.resolve_target(
+                self.conn, link_id=self.public_link_id, operator=False)
+        self.assertEqual(kind, "url")
+        self.assertEqual(payload["url"], self._static_url())
+
+    def test_resolve_redirects_to_the_static_url_when_the_probe_is_alive(self):
+        with unittest.mock.patch.object(
+                api_v2, "_probe_static_url",
+                return_value=api_v2._STATIC_PROBE_ALIVE):
+            reply = self.get(
+                f"/api/v2/resolve/{self.handle(self.public_link_id)}")
+        self.assertEqual(reply.status, 302, reply.text)
+        self.assertEqual(reply.header("location"), self._static_url())
+
+    def test_resolve_redirects_to_the_fresh_url_when_the_probe_is_dead(self):
+        resolver = unittest.mock.Mock(return_value=self._live_resolve())
+        with unittest.mock.patch.object(
+                api_v2, "_probe_static_url",
+                return_value=api_v2._STATIC_PROBE_DEAD), \
+                unittest.mock.patch.object(
+                    fast_fetch, "resolve_live_source", resolver):
+            reply = self.get(
+                f"/api/v2/resolve/{self.handle(self.public_link_id)}")
+        self.assertEqual(reply.status, 302, reply.text)
+        self.assertEqual(reply.header("location"),
+                         "https://fresh.example/DUNE-CDN")
+
+    def test_static_probe_user_agent_matches_the_probe_layer(self):
+        self.assertEqual(api_v2._STATIC_PROBE_USER_AGENT,
+                         current_hosts.USER_AGENT)
+
+
+class _FakeProbeResponse:
+    """One canned probe exchange: status, headers, and a body the probe
+    may read at most 2 bytes of."""
+
+    def __init__(self, status, headers=None, body=b"x"):
+        self.status = status
+        self.headers = dict(headers or {})
+        self._body = body
+        self.read_sizes = []
+
+    def read(self, size=-1):
+        self.read_sizes.append(size)
+        return self._body[:size] if size >= 0 else self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class _FakeProbeOpener:
+    """Answers canned exchanges keyed by (method, url), recording calls.
+
+    ``answers`` maps ``(method, url)`` to ``("response", status, headers)``
+    or ``("raise", exception)``.
+    """
+
+    def __init__(self, answers):
+        self.answers = answers
+        self.calls = []
+        self.last_response = None
+
+    def open(self, req, timeout=None):
+        self.calls.append((req.get_method(), req.full_url, timeout,
+                           req.get_header("Range")))
+        kind = self.answers[(req.get_method(), req.full_url)]
+        if kind[0] == "raise":
+            raise kind[1]
+        self.last_response = _FakeProbeResponse(kind[1], kind[2])
+        return self.last_response
+
+
+class V2StaticProbeUnitTests(unittest.TestCase):
+    """`_probe_static_url` itself, through a fake opener: mocked HTTP,
+    no live network. The URL never matters here — only the exchange."""
+
+    URL = "https://video-downloads.googleusercontent.com/DUNE-CDN"
+
+    def _probe(self, answers):
+        opener = _FakeProbeOpener(answers)
+        with unittest.mock.patch.object(
+                urllib.request, "build_opener", return_value=opener):
+            verdict = api_v2._probe_static_url(self.URL)
+        return verdict, opener
+
+    def _response(self, status, headers=None):
+        return ("response", status, headers or {})
+
+    def test_head_206_video_is_alive_and_reads_at_most_two_bytes(self):
+        verdict, opener = self._probe(
+            {("HEAD", self.URL): self._response(
+                206, {"Content-Type": "video/mp4"})})
+        self.assertEqual(verdict, api_v2._STATIC_PROBE_ALIVE)
+        self.assertEqual(len(opener.calls), 1)
+        self.assertEqual(opener.calls[0][0], "HEAD")
+        self.assertEqual(opener.calls[0][2],
+                         api_v2._STATIC_PROBE_TIMEOUT_SECONDS)
+        self.assertIsNone(opener.calls[0][3])
+        self.assertEqual(opener.last_response.read_sizes, [2])
+
+    def test_head_200_without_a_content_type_is_alive(self):
+        verdict, _opener = self._probe(
+            {("HEAD", self.URL): self._response(200)})
+        self.assertEqual(verdict, api_v2._STATIC_PROBE_ALIVE)
+
+    def test_head_200_octet_stream_is_alive(self):
+        verdict, _opener = self._probe(
+            {("HEAD", self.URL): self._response(
+                200, {"Content-Type": "application/octet-stream"})})
+        self.assertEqual(verdict, api_v2._STATIC_PROBE_ALIVE)
+
+    def test_head_200_html_page_is_dead(self):
+        # A deleted-file landing page answers 200 too — the Content-Type
+        # is what gives it away, and serving it would hand the player a
+        # page that looks alive while playing nothing.
+        verdict, _opener = self._probe(
+            {("HEAD", self.URL): self._response(
+                200, {"Content-Type": "text/html; charset=utf-8"})})
+        self.assertEqual(verdict, api_v2._STATIC_PROBE_DEAD)
+
+    def test_head_404_and_410_are_dead_with_no_second_request(self):
+        for status in (404, 410):
+            verdict, opener = self._probe(
+                {("HEAD", self.URL): self._response(status)})
+            self.assertEqual(verdict, api_v2._STATIC_PROBE_DEAD)
+            self.assertEqual(len(opener.calls), 1)
+
+    def test_head_302_with_a_location_is_alive(self):
+        verdict, opener = self._probe(
+            {("HEAD", self.URL): self._response(
+                302, {"Location": "https://cdn.example/fresh"})})
+        self.assertEqual(verdict, api_v2._STATIC_PROBE_ALIVE)
+        self.assertEqual(len(opener.calls), 1)
+
+    def test_head_302_without_a_location_is_unknown(self):
+        verdict, _opener = self._probe(
+            {("HEAD", self.URL): self._response(302)})
+        self.assertEqual(verdict, api_v2._STATIC_PROBE_UNKNOWN)
+
+    def test_head_403_429_and_500_are_unknown_with_no_second_request(self):
+        # Back off: never hammer a host that refuses the probe, and never
+        # record the refusal as the link's death.
+        for status in (403, 429, 500):
+            verdict, opener = self._probe(
+                {("HEAD", self.URL): self._response(status)})
+            self.assertEqual(verdict, api_v2._STATIC_PROBE_UNKNOWN)
+            self.assertEqual(len(opener.calls), 1)
+
+    def test_head_transport_error_is_unknown(self):
+        verdict, opener = self._probe(
+            {("HEAD", self.URL): ("raise", urllib.error.URLError("boom"))})
+        self.assertEqual(verdict, api_v2._STATIC_PROBE_UNKNOWN)
+        self.assertEqual(len(opener.calls), 1)
+
+    def test_head_method_refused_falls_back_to_a_one_byte_range_get(self):
+        verdict, opener = self._probe(
+            {("HEAD", self.URL): self._response(405),
+             ("GET", self.URL): self._response(
+                 206, {"Content-Type": "video/mp4"})})
+        self.assertEqual(verdict, api_v2._STATIC_PROBE_ALIVE)
+        self.assertEqual(len(opener.calls), 2)
+        self.assertEqual(opener.calls[1][0], "GET")
+        self.assertEqual(opener.calls[1][3], "bytes=0-0")
+        self.assertEqual(opener.last_response.read_sizes, [2])
+
+    def test_range_fallback_404_is_dead(self):
+        verdict, opener = self._probe(
+            {("HEAD", self.URL): self._response(501),
+             ("GET", self.URL): self._response(404)})
+        self.assertEqual(verdict, api_v2._STATIC_PROBE_DEAD)
+        self.assertEqual(len(opener.calls), 2)
+
+    def test_range_fallback_html_page_is_dead(self):
+        verdict, _opener = self._probe(
+            {("HEAD", self.URL): self._response(405),
+             ("GET", self.URL): self._response(
+                 200, {"Content-Type": "text/html"})})
+        self.assertEqual(verdict, api_v2._STATIC_PROBE_DEAD)
+
+    def test_range_fallback_302_with_a_location_is_alive(self):
+        verdict, _opener = self._probe(
+            {("HEAD", self.URL): self._response(405),
+             ("GET", self.URL): self._response(
+                 302, {"Location": "https://cdn.example/fresh"})})
+        self.assertEqual(verdict, api_v2._STATIC_PROBE_ALIVE)
 
 
 # ── 2. provenance: nothing that names a source ever leaves ──────────────────
