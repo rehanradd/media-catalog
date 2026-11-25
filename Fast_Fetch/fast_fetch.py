@@ -5684,14 +5684,66 @@ def unwrap_multiup(multiup_url: str, timeout: int = 12, _http=None,
     return ("", file_id, 0, None)
 
 
+#: KMHD bridge token (API-07, 2026-11-24): the dandndn API JWT used to
+#: live as a literal default in fetch_kmhd_bridge (and again in the
+#: KatMovieHD ingest path below). A committed credential cannot be
+#: rotated without a code change, so the token is now resolved per call
+#: from operator config only — never a literal in code. Resolution order:
+#:   1. explicit ``token`` argument (ingest passes the page's PUBLIC_TOKEN);
+#:   2. ``RADD_KMHD_TOKEN`` environment variable (read fresh on every call);
+#:   3. ``DOMAINS["kmhd_token"]`` — a domains_config DB row of that name
+#:      (get_domains copies every row verbatim).
+#: No token configured means the bridge API is NOT called: the caller
+#: gets the same bridge-page fallback row the API-failure path yields,
+#: so an unconfigured token degrades to "no playable source" instead of
+#: sending an empty/anonymous Bearer. DOMAINS is an import-time snapshot,
+#: so a DB/registry rotation reaches a long-lived serve process only
+#: after restart (see refresh_domains); the env var is read per call so
+#: CLI/sync runs and tests pick up rotation immediately.
+#: The literal that used to sit here is treated as EXPOSED — rotate it
+#: (owner action) and never put a replacement literal in code.
+KMHD_TOKEN_ENV_VAR = "RADD_KMHD_TOKEN"
+
+
+def _kmhd_token(explicit: str = "") -> str:
+    """Resolve the KMHD bridge JWT for this call, or "" when unconfigured.
+
+    Per-call resolution (explicit arg, then env, then DOMAINS) so a
+    rotated token is picked up without a code change. Never returns a
+    literal: the only sources are the caller's argument and operator
+    config.
+    """
+    if explicit:
+        return explicit
+    env_token = os.environ.get(KMHD_TOKEN_ENV_VAR, "") or ""
+    if env_token:
+        return env_token
+    return str(DOMAINS.get("kmhd_token", "") or "")
+
+
 def fetch_kmhd_bridge(file_id: str, token: str = "") -> list[dict]:
     """
     Directly queries KatMovieHD backend API (https://api.dandndn.one/api/v1/file/<file_id>)
     with JWT token to retrieve direct HubDrive, GDFlix, KatDrive, 1fichier, SendCM mirrors.
+    The token is resolved per call by _kmhd_token (explicit argument,
+    then RADD_KMHD_TOKEN, then DOMAINS["kmhd_token"]); with none
+    configured the API is not called and the bridge-page fallback row
+    is returned. No credential literal lives in this file (API-07).
     """
     results = []
+    token = _kmhd_token(token)
     if not token:
-        token = DOMAINS.get("kmhd_token", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTgwNzQ4NDIzMywiaWF0IjoxNzkxNzIyNzgxfQ.35zU5UqB-EwO8_8kYlK-3r1M69tH-0hQ58MhQ0g-5wU")
+        # No operator token configured: do not call the API with an
+        # empty/anonymous Bearer — yield the bridge-page fallback row
+        # (same shape as the API-failure path below).
+        return [{
+            "source_name": "KMHD Bridge",
+            "service": "kmhd",
+            "resource_id": file_id,
+            "source_url": f"https://links.kmhd.me/file/{file_id}",
+            "final_url": f"https://links.kmhd.me/file/{file_id}",
+            "is_temporary": 0,
+        }]
 
     api_url = f"https://api.dandndn.one/api/v1/file/{file_id}"
     req = urllib.request.Request(api_url, headers={
@@ -6047,22 +6099,29 @@ def extract_post_data_katmoviehd(post_url: str, html: str, verbose: bool = True)
 
     releases = []
     for full_u, fid in kmhd_files:
-        api_u = f"https://api.dandndn.one/api/v1/file/{fid}"
-        req_api = urllib.request.Request(api_u, headers={
-            'User-Agent': USER_AGENT,
-            'Authorization': f'Bearer {token or "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTgwNzQ4NDIzMywiaWF0IjoxNzkxNzIyNzgxfQ.35zU5UqB-EwO8_8kYlK-3r1M69tH-0hQ58MhQ0g-5wU"}',
-            'Origin': 'https://links.kmhd.me'
-        })
+        # API-07: the bridge JWT is resolved per call from operator
+        # config (_kmhd_token: page PUBLIC_TOKEN, then RADD_KMHD_TOKEN,
+        # then DOMAINS["kmhd_token"]) — never a literal. With no token
+        # the name/size lookup is skipped (fname stays fid, size 0),
+        # exactly as the API-failure path leaves them.
+        api_token = _kmhd_token(token)
         fname = fid
         fsize_bytes = 0
-        try:
-            with urllib.request.urlopen(req_api, context=_tls_context(api_u),
-                                        timeout=8) as r_api:
-                d_api = json.loads(r_api.read().decode('utf-8'))
-                fname = d_api.get("name") or fid
-                fsize_bytes = d_api.get("size") or 0
-        except Exception:
-            pass
+        if api_token:
+            api_u = f"https://api.dandndn.one/api/v1/file/{fid}"
+            req_api = urllib.request.Request(api_u, headers={
+                'User-Agent': USER_AGENT,
+                'Authorization': f'Bearer {api_token}',
+                'Origin': 'https://links.kmhd.me'
+            })
+            try:
+                with urllib.request.urlopen(req_api, context=_tls_context(api_u),
+                                            timeout=8) as r_api:
+                    d_api = json.loads(r_api.read().decode('utf-8'))
+                    fname = d_api.get("name") or fid
+                    fsize_bytes = d_api.get("size") or 0
+            except Exception:
+                pass
 
         qual_m = re.search(r'\b(480p|720p|1080p|2160p|4k)\b', fname, re.I)
         qual = qual_m.group(1).lower() if qual_m else "720p"
