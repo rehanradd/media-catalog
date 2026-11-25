@@ -7,7 +7,7 @@
 
 ## ✅ Open items — index (q3, 2026-10-30; pointers only)
 
-1. **This file is a pointer, not a history** 153 session files (150 dated + 3 undated) cover
+1. **This file is a pointer, not a history** 154 session files (151 dated + 3 undated) cover
 
    every one of them verbatim: [`checkpoints/README.md`](checkpoints/README.md). Nothing was
    deleted, reworded, or summarized. The count is `ls Fast_Fetch/checkpoints/*.md` minus `README.md`,
@@ -75,7 +75,6 @@ The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete i
 - **2026-11-21 — 1fichier resolver wiring (TrueLink port):** `_unwrap_1fichier` (file page → hidden-form POST → btn-general link; no password plumbing anywhere, so password=None at dispatch; 404 = dead_file, 403 = blocked) wired into STAGE1_BACKENDS, preference lists, classify_backend (exact + dotted-suffix match on 1fichier.com; 1fichier.com.evil.com / not1fichier.com stay unknown), resolve_copy dispatch, fast_fetch stage-1 tuples. Tests: test_current_hosts 51→56, test_truelink_1fichier 25/25, test_host_classifier 77/77. Fixture-only: Oracle IP locked (error #350), never live-probed; live proof waits on the WARP-in-production decision (owner-only). NOT merged — parent merges after the gate.
 - **2026-11-21 — One Piece identity cluster:** catalog_api read "One Piece (2026) 1080P" as eps 1080–2026 and _print_scope minted phantom seasons; search cut the page by trending before relevance re-sort (7344 missed a 5-row page). Fix: release_descriptor.episode_range_bounds (projector's parse) + SQL relevance ordering with a versioned cursor. Migration onepiece_identity_fold.sql (gate-owned, unrun): 7344/7345/1242 → 69654, 307 → 58940; 21 posts. Tests: catalog_api 177/177, onepiece_identity_fold 8/8 (new) + CI step. Full note: `20261121-onepiece-identity.md`.
 - **2026-11-24 — PNL-02/03:** 480p default; coins surface removed from panel; v6 migration; branch `muse/phase4-pnl02-03-quality-coins-20261124`.
-- **2026-11-21 — Registry §2 (MovieBox + wp_family):** probed live from the Oracle VM: themoviebox.xyz 200, aoneroom POST /subject/filter 200, moviehax/animeworld/hindidubbedmovies/hindianimeszone 200 + sitemaps/wp-json 200, thebollyflix.gen.in -> io.in (403 Cloudflare, unverifiable). Registries 27->33 sites, 42->49 hosts (45 live, rows 1,415,996). New radd-domain-probe timer daily 10:30, own timer. Nginx DRAFT header removed (lines 1-32), no reload. Panel: 9xmovies REAL move (to 9xmovie.cologne); other 4 stale/false positives. Importer registry wiring still open.
 ## Moved out (reference prose, verbatim)
 
 - ✍️ Incoming Agent Checklist → `../docs/SPEC_INCOMING_AGENT_CHECKLIST.md` (294 lines) — the onboarding procedure, unchanged

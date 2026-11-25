@@ -2,6 +2,7 @@
 
 Newest first. Each file is a session block moved verbatim out of `Fast_Fetch/CONTINUITY.md` on 2026-10-30.
 
+- 2026-11-25 — CONTINUITY.md rotation (pnl0203): the oldest session-history bullet (Registry §2, MovieBox + wp_family) rotated out of `CONTINUITY.md` verbatim to bring the index back under its 12 KB budget. Full note: `20261125-continuity-rotation-pnl0203-registry.md`.
 - 2026-11-24 — Bank defects (a) + (b) from the resolver latency audit: negative-cache hit re-mints a temporary copy with a bridge instead of 404ing; a successful resolve never banks an already-expired expiry; a 403 re-probe on a signed URL with an open window serves the row. New `test_bank_defects.py` (9 tests) + CI step. Branch `resolver-bank-defects` from `db753c56`. Full note: `20261124-bank-defects.md`.
 
 Entries written to `CONTINUITY.md` by another lane *after* the rotation are not lost: the rebase onto
