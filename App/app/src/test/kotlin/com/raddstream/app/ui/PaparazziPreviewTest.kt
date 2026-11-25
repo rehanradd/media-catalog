@@ -106,17 +106,6 @@ class PaparazziPreviewTest {
     @get:Rule
     val paparazzi = Paparazzi(deviceConfig = DeviceConfig.PIXEL_5)
 
-    /**
-     * Round 2 (Search): the same shots at 1.3× font scale — the large-font
-     * golden that proves the results list (tabs, summary, chips, grid)
-     * still fits without truncation when the viewer enlarges text. Same
-     * pattern as BottomNavLargeFontPaparazziTest.
-     */
-    @get:Rule
-    val paparazziLargeFont = Paparazzi(
-        deviceConfig = DeviceConfig.PIXEL_5.copy(fontScale = 1.3f),
-    )
-
     private fun fakePost(
         id: Int,
         title: String,
@@ -905,10 +894,9 @@ class PaparazziPreviewTest {
         state: SearchUiState,
         groups: List<TypeGroup> = emptyList(),
         pagingData: PagingData<Post> = PagingData.empty(),
-        rule: Paparazzi = paparazzi,
     ) {
         val pagingDataFlow = MutableStateFlow(pagingData)
-        rule.snapshot {
+        paparazzi.snapshot {
             themed {
                 // Round 2 (Search): the result rows stagger in on the phone
                 // (SearchStaggeredFade) — under inspection mode they start
@@ -978,25 +966,6 @@ class PaparazziPreviewTest {
                 data = listOf(jawan, salaars, moneyHeist),
                 sourceLoadStates = LoadStates(refresh = idle, prepend = idle, append = idle),
             ),
-        )
-    }
-
-    @Test
-    fun searchResultsLargeFont() {
-        // Round 2 (Search): the same results list at 1.3× font scale —
-        // the tabs, the summary line, the fuzzy banner and the exact-only
-        // button must still fit without truncation or overlap. Shot
-        // through the large-font rule; the golden is recorded by the same
-        // record run as searchResults.
-        val idle = LoadState.NotLoading(endOfPaginationReached = false)
-        shotSearch(
-            searchResults,
-            groups = searchResultGroups,
-            pagingData = PagingData.from(
-                data = listOf(jawan, salaars, moneyHeist),
-                sourceLoadStates = LoadStates(refresh = idle, prepend = idle, append = idle),
-            ),
-            rule = paparazziLargeFont,
         )
     }
 

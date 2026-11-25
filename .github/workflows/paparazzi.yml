@@ -93,6 +93,7 @@ jobs:
           ./gradlew :app:recordPaparazziDebug \
             --tests "com.raddstream.app.ui.PaparazziPreviewTest" \
             --tests "com.raddstream.app.ui.PlayerLandscapePaparazziTest" \
+            --tests "com.raddstream.app.ui.SearchLargeFontPaparazziTest" \
             --no-daemon --stacktrace --console=plain
 
       - name: 📤 Upload snapshots + report
