@@ -408,7 +408,11 @@ class ResolveBankingTests(unittest.TestCase):
         after = int(time.time())
         self.assertTrue(res["success"], res)
         row = self._row(source_id)
-        self.assertEqual(row["is_temporary"], 0)
+        # Mega wave-1 reconciliation (API-11): the Google twin is temporary
+        # (its token rotates); only an R2 URL on a proven bucket banks
+        # is_temporary 0. The 900 s window + measured_window below are
+        # API-03's claim and still hold.
+        self.assertEqual(row["is_temporary"], 1)
         self.assertIsNotNone(row["expires_at"])
         self.assertGreaterEqual(row["expires_at"], before + 900)
         self.assertLessEqual(row["expires_at"], after + 900)
