@@ -54,6 +54,9 @@ class TestDefaults(AdsControlsBase):
         svc, owner, _aud = make_service()
         ads = fixture_app.public_remote_config(svc)["ads"]
         self.assertIs(ads["enabled"], False)
+        # Mega reconciliation: the app reads `ads_enabled` (VipRemoteAds),
+        # so it is published alongside `enabled` with the same value.
+        self.assertIs(ads["ads_enabled"], False)
         self.assertIs(ads["clean_ads_only"], True)
         self.assertEqual(ads["monetag_rewarded_zone_id"], "")
         self.assertEqual(ads["adsterra_native_banner_id"], "")
@@ -72,6 +75,7 @@ class TestGating(AdsControlsBase):
         self.assertEqual(row["adsterra_tag_id"], ADSTERRA)
         ads = self._served_ads()
         self.assertIs(ads["enabled"], True)
+        self.assertIs(ads["ads_enabled"], True)
         self.assertIs(ads["clean_ads_only"], True)
         self.assertEqual(ads["monetag_rewarded_zone_id"], MONETAG)
         self.assertEqual(ads["adsterra_native_banner_id"], "")
@@ -88,6 +92,7 @@ class TestGating(AdsControlsBase):
         self.assertEqual(row["adsterra_tag_id"], ADSTERRA)
         ads = self._served_ads()
         self.assertIs(ads["enabled"], False)
+        self.assertIs(ads["ads_enabled"], False)
         self.assertEqual(ads["monetag_rewarded_zone_id"], "")
         self.assertEqual(ads["adsterra_native_banner_id"], "")
 
@@ -151,6 +156,7 @@ class TestValidationAndMigration(AdsControlsBase):
         svc.admin.commit()
         ads = fixture_app.public_remote_config(svc)["ads"]
         self.assertIs(ads["enabled"], False)
+        self.assertIs(ads["ads_enabled"], False)
         self.assertIs(ads["clean_ads_only"], True)
 
 

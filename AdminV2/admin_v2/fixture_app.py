@@ -80,6 +80,7 @@ def public_remote_config(service):
             "raast_instant_id": cfg["pak_raast_id"],
         },
         "ads": {"enabled": _ads_on,
+                "ads_enabled": _ads_on,
                 "clean_ads_only": _clean_only,
                 "monetag_rewarded_zone_id": cfg["monetag_zone_id"] if _ads_on else "",
                 "adsterra_native_banner_id": cfg["adsterra_tag_id"] if _ads_on and not _clean_only else ""},

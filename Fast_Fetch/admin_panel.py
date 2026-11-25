@@ -1712,6 +1712,7 @@ SETTINGS_UNAVAILABLE = "the settings row is unavailable"
 _V1_READ_ONLY_FLAGS = frozenset({
     "maintenance_mode", "feature_pure_cinema", "feature_chromecast",
     "feature_downloads", "feature_quality_gate", "coins_enabled",
+    "ads_enabled",
 })
 
 _TEXT = "text"
@@ -1815,6 +1816,15 @@ MONETIZATION_FIELDS = (
     # knob is a flag, never a coin amount, so `_resolve_coin_knob`'s
     # "a stored 0 means the shipped number" rule does not apply to it.
     ("coins_enabled", "Coins: master switch (off = no grants, no spends)", _FLAG, 0),
+    # Ads master switch (Lane F, 2026-11-23): OFF by default, like the
+    # gate. The app reads it as `ads.ads_enabled` (see `remote_config`
+    # below) and its ad governor refuses every surface while it is off —
+    # before this knob existed the server published no `ads_enabled` key
+    # at all, so the app's switch defaulted false forever and no panel
+    # edit could ever turn an ad on. A zone id alone is inventory, not
+    # permission: the switch is what turns the surfaces on. The knob is
+    # a flag, never an amount, so `_resolve_coin_knob`'s "a stored 0
+    # means the shipped number" rule does not apply to it.
     # The free cap lives on this row (launch plan Phase 0, G-8): the served
     # cap is the catalog value, not `tuning_settings`. A TEXT column is
     # created `DEFAULT ''` (see `_column_ddl`), so a row that predates this
@@ -2500,6 +2510,7 @@ def remote_config(conn):
         # a client can tell "off" from "unconfigured".
         "ads": {
             "enabled": flag("ads_enabled"),
+            "ads_enabled": flag("ads_enabled"),
             "clean_ads_only": flag("clean_ads_only"),
             "monetag_rewarded_zone_id": (
                 shown("monetag_zone_id") if flag("ads_enabled") else ""),

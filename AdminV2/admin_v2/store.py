@@ -302,6 +302,7 @@ def _ensure_v5_columns(conn):
     wanted = [
         ("domain_registry", "last_redirect_to", "TEXT"),
         ("domain_health_checks", "final_domain", "TEXT"),
+        ("app_remote_config_v2", "ads_enabled", "INTEGER NOT NULL DEFAULT 0"),
     ]
     for name, default in COIN_REDEEM_DEFAULTS.items():
         wanted.append(("app_remote_config_v2", name,

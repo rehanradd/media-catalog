@@ -82,7 +82,7 @@ PLAN_DAYS = {"vip_monthly": 30, "vip_yearly": 365}
 PLAN_DEFAULT_PKR = {"vip_monthly": 200, "vip_yearly": 1500}
 PAYMENT_METHODS = ("jazzcash", "easypaisa", "raast")
 
-# The 16 real app_remote_config fields the Android app actually reads
+# The 17 real app_remote_config fields the Android app actually reads
 # (viewer.py GET /api/v1/app/remote-config + VipRemoteConfig.kt),
 # plus the six coin pass prices the panel could previously neither
 # show nor edit (admin-panel audit 2026-11-08 §Money).

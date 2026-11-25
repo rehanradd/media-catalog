@@ -1529,7 +1529,7 @@ def _page_monetization(self, user, sess, query):
              'Clean ads only serves Monetag alone and withholds the Adsterra ID.</p></div>'
              '<div class="card"><h3>Tokens (blank keeps the stored one)</h3>'
              '<p class="muted">ShrinkMe: %s. Droplink: %s.</p>%s%s</div>'
-             '<div class="card"><h3>Flags</h3>%s%s%s%s%s%s</div>'
+             '<div class="card"><h3>Flags</h3>%s%s%s%s%s%s%s</div>'
              '<label for="mon-apk_update_url">APK update URL</label>'
              '<input id="mon-apk_update_url" name="apk_update_url" type="text" value="%s">'
              '<div class="stickybar"><button type="submit">Save monetization</button></div></form>') % (
@@ -1556,6 +1556,7 @@ def _page_monetization(self, user, sess, query):
         flag_field("feature_chromecast", "Chromecast"),
         flag_field("feature_quality_gate", "Quality gate"),
         flag_field("coins_enabled", "Coins"),
+        flag_field("ads_enabled", "Ads"),
         templates.esc(mon.get("apk_update_url") or ""),
     )
     return templates.layout("Monetization", body, active="monetization", error=error)

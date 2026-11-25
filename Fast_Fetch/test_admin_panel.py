@@ -753,6 +753,17 @@ class Monetization(Fixture):
         self.assertEqual(data["ads"]["monetag_rewarded_zone_id"], "")
         self.assertEqual(data["ads"]["adsterra_native_banner_id"], "")
 
+    def test_ads_enabled_key_published_for_the_app(self):
+        """Lane F / mega reconciliation: the app reads
+        `ads_enabled` (VipRemoteAds), so the served body carries
+        it alongside PNL-05's `enabled` key, with the same value."""
+        self.save({"monetag_zone_id": "10293847",
+                   "adsterra_tag_id": "0d1a7f3b9c"})
+        self._set_ads_flags(1, 1)
+        data = self.public()
+        self.assertIs(data["ads"]["ads_enabled"], True)
+        self.assertIs(data["ads"]["enabled"], True)
+
     def test_the_public_projection_names_no_provenance_key(self):
         """This body leaves the box on the public port, so it obeys the same rule
         as every other emitter: no `url`/`site`/`service`/`hoster` key, whatever
@@ -803,8 +814,13 @@ class Monetization(Fixture):
         # PNL-05: ads default OFF (fail-closed, the app's own rule) and
         # clean-ads-only defaults ON (Monetag first, clean ads only) —
         # so a fresh deployment serves no ad unit id at all.
+        # Mega reconciliation: `ads_enabled` is published alongside
+        # `enabled` with the same value — the app reads `ads_enabled`
+        # (VipRemoteAds), so PNL-05's rename alone would leave the
+        # switch defaulting false on the phone forever.
         self.assertEqual(data["ads"],
-                         {"enabled": False, "clean_ads_only": True,
+                         {"enabled": False, "ads_enabled": False,
+                          "clean_ads_only": True,
                           "monetag_rewarded_zone_id": "",
                           "adsterra_native_banner_id": ""})
 
