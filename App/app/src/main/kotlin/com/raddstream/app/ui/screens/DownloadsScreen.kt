@@ -686,6 +686,13 @@ internal fun DeviceDownloadRow(
                 },
                 label = "deviceDownloadStateChange",
             ) { rowState ->
+            // AnimatedContent lays its content out in a Box — a `when`
+            // that emits several children (bar + status + attempt + saved
+            // + reason) would stack them all on top of each other. The
+            // inner Column restores the vertical layout the `when` had
+            // when it was a direct child of the outer Column (same 2.dp
+            // spacing), so the row renders exactly as before.
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             when (rowState) {
                 DeviceDownloadState.DOWNLOADING -> {
                     // Restyle 2026-11-13: rounded ends + a visible track — the bar
@@ -800,6 +807,7 @@ internal fun DeviceDownloadRow(
                         )
                     }
                 }
+            }
             }
             }
         }
@@ -1028,6 +1036,12 @@ internal fun KeptItemRow(
                 },
                 label = "keepStateChange",
             ) { rowState ->
+            // AnimatedContent lays its content out in a Box — a `when`
+            // that emits several children would stack them all on top of
+            // each other. The inner Column restores the vertical layout
+            // the `when` had as a direct child of the outer Column (same
+            // 2.dp spacing), so the row renders exactly as before.
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             when (rowState) {
                 KeepState.DOWNLOADING, KeepState.NO_SPACE -> {
                     // Restyle 2026-11-13: rounded ends + a visible track, same as
@@ -1147,6 +1161,7 @@ internal fun KeptItemRow(
                         )
                     }
                 }
+            }
             }
             }
         }
