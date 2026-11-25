@@ -102,6 +102,7 @@ jobs:
             --tests "com.raddstream.app.ui.screens.SettingsLargeFontPaparazziTest" \
             --tests "com.raddstream.app.ui.DownloadsPaparazziTest" \
             --tests "com.raddstream.app.ui.DownloadsPaparazziLargeFontTest" \
+            --tests "com.raddstream.app.ui.screens.MyListLargeFontPaparazziTest" \
             --no-daemon --stacktrace --console=plain
 
       - name: 📤 Upload snapshots + report

@@ -65,6 +65,8 @@ import com.raddstream.app.ui.screens.MyListStrip
 import com.raddstream.app.ui.screens.Hud
 import com.raddstream.app.ui.screens.MyListEmptyContent
 import com.raddstream.app.ui.screens.MyListLoadedContent
+import com.raddstream.app.ui.screens.MyListRailsErrorCard
+import com.raddstream.app.viewmodel.MyListFilter
 import com.raddstream.app.ui.screens.TopBar
 import com.raddstream.app.ui.screens.ZoomResetChip
 import com.raddstream.app.ui.screens.SearchContent
@@ -310,6 +312,45 @@ class PaparazziPreviewTest {
                         popular = listOf(mclintock),
                         progressByPostId = mapOf(1 to 0.5f),
                         progressLabelByPostId = mapOf(1 to "S2:E5 · 23 min left"),
+                    ),
+                    onPostClick = {},
+                    onRemove = {},
+                    onSort = {},
+                    isFavorite = { false },
+                    onToggleFavorite = {},
+                )
+            }
+        }
+    }
+
+    // L4 (round 2): the inline rails-retry card — a failed trending/recent
+    // load never strands the viewer with a silently missing rail. The card
+    // says what failed and offers the retry, on the same tonal surface the
+    // designed empty states use.
+    @Test
+    fun myListRailsError() {
+        paparazzi.snapshot {
+            themed {
+                MyListRailsErrorCard(onRetry = {})
+            }
+        }
+    }
+
+    // L1 (round 2): the filter that matches nothing says so in the grid —
+    // one movie saved, Series chip active. The golden also pins the filter
+    // row in its Series state, the sort button naming the order in force,
+    // and the shelf staying hidden under a filter (popular is loaded but
+    // the rail must not show).
+    @Test
+    fun myListFilteredEmpty() {
+        paparazzi.snapshot {
+            themed {
+                MyListLoadedContent(
+                    state = MyListUiState(
+                        favorites = listOf(jawan),
+                        sort = ListSort.RECENT,
+                        filter = MyListFilter.SERIES,
+                        popular = listOf(mclintock),
                     ),
                     onPostClick = {},
                     onRemove = {},
