@@ -176,6 +176,35 @@ private val FeelGoodGenres = setOf("comedy", "family", "romance", "animation", "
 private val MindBendingGenres = setOf("sci-fi", "science fiction", "scifi", "thriller", "mystery", "psychological")
 private val DarkGrittyGenres = setOf("crime", "horror", "thriller")
 
+/**
+ * H11 (2027 Home fix, round 2): the Continue Watching row a saved post
+ * is already in — by server handle first (the v2 rows' `id` is a
+ * negative sentinel, never a post id, so the id alone cannot match),
+ * falling back to the title when the handle is absent. Pure, so the
+ * match is testable. Returns null when the saved title is not being
+ * watched — the strip then shows the poster with no progress bar, never
+ * an invented one.
+ *
+ * The fallback is year-blind on purpose: the tile's [Post] carries no
+ * year ([ResumeTile.of] builds it from a local row), so a year-strict
+ * key would never match a saved post that has one. The same-title
+ * remake caveat follows: with no handle, a title match is the best the
+ * wire can say — the progress shown is the real row's, never invented.
+ */
+internal fun continueWatchingMatchFor(
+    post: Post,
+    continueWatching: List<ResumeTile>,
+): ResumeTile? {
+    val ref = post.workRef?.trim()?.takeIf { it.isNotBlank() }
+    if (ref != null) {
+        continueWatching.firstOrNull { it.workRef == ref }?.let { return it }
+    }
+    val titleKey = UserWords.workKey(null, post.displayTitle, null)
+    return continueWatching.firstOrNull { tile ->
+        UserWords.workKey(null, tile.post.displayTitle, null) == titleKey
+    }
+}
+
 data class HomeSection(
     val key: String,
     val title: String,
@@ -352,6 +381,14 @@ data class HomeUiState(
      * the DataStore flow; the filtering itself is a pure function of it.
      */
     val kidsMode: Boolean = false,
+    /**
+     * H11 (2027 Home fix, round 2): the viewer's saved titles as display
+     * posts — the My List strip between the broadcasts/sync line and rail
+     * 1. Populated from `latestFavorites` via [myListDisplayPost] in
+     * [observeFavorites]; empty means no My List, and the strip simply
+     * does not render. Appended last so no positional construction breaks.
+     */
+    val savedPosts: List<Post> = emptyList(),
 ) {
     /**
      * MX #7 — Kids Lock: the rails a kid sees. Each rail keeps only
@@ -369,6 +406,14 @@ data class HomeUiState(
     val visibleContinueWatching: List<ResumeTile>
         get() = if (!kidsMode) continueWatching else continueWatching
             .filter { KidsLock.isKidAppropriate(it.post) }
+
+    /**
+     * H11: the My List strip in kids mode — the viewer's own saved titles,
+     * kid-appropriate only. A saved adult title is still an adult title,
+     * even though the viewer chose it.
+     */
+    val visibleSavedPosts: List<Post>
+        get() = if (!kidsMode) savedPosts else savedPosts.filter { KidsLock.isKidAppropriate(it) }
     /**
      * Pick 3 (home review, Nov 2026): the three titles the redesigned card
      * offers — the first rail with at least three rows AFTER the hero's own
@@ -1045,6 +1090,10 @@ class HomeViewModel @Inject constructor(
                     it.copy(
                         favoriteIds = favorites.map { fav -> fav.id }.toSet(),
                         favoriteWorkRefs = favorites.mapNotNull { fav -> fav.workRef }.toSet(),
+                        // H11: the My List strip reads the same saved rows
+                        // the My List screen shows, through the same
+                        // title-suffix stripping.
+                        savedPosts = favorites.map { myListDisplayPost(it) },
                     )
                 }
                 refreshForYou()

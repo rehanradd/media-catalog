@@ -130,6 +130,7 @@ import com.raddstream.app.viewmodel.HomeSection
 import com.raddstream.app.viewmodel.HomeUiState
 import com.raddstream.app.viewmodel.ResumeTile
 import com.raddstream.app.viewmodel.HomeViewModel
+import com.raddstream.app.viewmodel.continueWatchingMatchFor
 import com.raddstream.app.viewmodel.homeFilterMatches
 import com.raddstream.app.viewmodel.moodMatchesPost
 import com.raddstream.app.viewmodel.homeSyncLine
@@ -730,6 +731,24 @@ internal fun HomeContent(
                 }
             }
 
+            // H11 (2027 Home fix, round 2): the My List strip — the viewer's
+            // saved titles as a rail between the broadcasts/sync line and
+            // rail 1, so the saved titles are one tap away instead of a tab
+            // away. Only when the viewer has saved something; an empty My
+            // List is no strip, not an empty rail. No dedupe against the
+            // rails below: the same title in "My List" and a genre rail is
+            // legitimate, like Netflix.
+            if (state.visibleSavedPosts.isNotEmpty()) {
+                item(key = "myListStrip") {
+                    MyListStrip(
+                        savedPosts = state.visibleSavedPosts,
+                        continueWatching = state.visibleContinueWatching,
+                        onPostClick = onPostClick,
+                        onPlayClick = onPlayClick,
+                    )
+                }
+            }
+
             // H1 (2027 Home fix, round 2): the hero lives at the top of
             // the feed now (above the sticky chips) — it moved out of
             // this branch, so nothing renders here in its place.
@@ -1150,6 +1169,90 @@ internal fun HomeMoodRow(
         }
     }
 }
+
+/**
+ * H11 (2027 Home fix, round 2): the My List strip — the viewer's saved
+ * titles as a rail between the broadcasts/sync line and rail 1, so the
+ * saved titles are one tap away instead of a tab away. A doorway, not a
+ * second My List: the tiles open Detail, the play button starts the work
+ * at once (APP-06 one-tap play, same as the My List screen), and there
+ * is no remove × on the tiles — a × on a horizontal rail is a
+ * slipping-thumb trap, and the My List screen already owns removal. No
+ * dedupe against the rails below: the same title in "My List" and a
+ * genre rail is legitimate, like Netflix. Progress comes only from a
+ * real Continue Watching row ([continueWatchingMatchFor]) — never
+ * invented. No "See all" on the header: the full list lives in the
+ * Library tab, not on a Browse route, and the bottom nav already
+ * reaches it. The strip renders only when `savedPosts` is non-empty;
+ * an empty My List is no strip, not an empty rail. The entrance matches
+ * the rails (S7 spring, inspection-mode immediate, reduced-motion
+ * fade-only) — the strip is a rail, so it enters like one.
+ */
+@Composable
+internal fun MyListStrip(
+    savedPosts: List<Post>,
+    continueWatching: List<ResumeTile>,
+    onPostClick: (Post) -> Unit,
+    onPlayClick: (Post) -> Unit = {},
+    modifier: Modifier = Modifier,
+) {
+    val inInspectionMode = LocalInspectionMode.current
+    val reduceMotion = rememberReduceMotion()
+    var visible by remember { mutableStateOf(inInspectionMode) }
+    LaunchedEffect(Unit) {
+        if (inInspectionMode) return@LaunchedEffect
+        visible = true
+    }
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(
+            animationSpec = if (reduceMotion) snap() else RaddMotion.defaultEffects(),
+        ) + if (reduceMotion) {
+            EnterTransition.None
+        } else {
+            slideInVertically(
+                initialOffsetY = { it / 4 },
+                animationSpec = RaddMotion.defaultSpatial(),
+            )
+        },
+    ) {
+        Column(modifier = modifier.testTag(MyListStripTag)) {
+            SectionHeader(
+                title = "My List",
+                modifier = Modifier.padding(horizontal = RaddTokens.Space.Gutter),
+            )
+            MediaRail(
+                items = savedPosts,
+                key = { post -> post.id },
+                itemWidthDp = CardGeometry.RAIL_CARD_WIDTH_DP,
+            ) { post ->
+                // H11: the progress of the real Continue Watching row for
+                // this title, if one exists — the "S1:E3 · 20 min left"
+                // label and the bar. A title not being watched shows the
+                // poster with no progress, never an invented one.
+                val match = continueWatchingMatchFor(post, continueWatching)
+                PosterCard(
+                    post = post,
+                    onClick = { onPostClick(post) },
+                    // APP-06 one-tap play, same as the My List screen.
+                    onPlayClick = { onPlayClick(post) },
+                    // Audit #8: the compact line (year · rating) fits the
+                    // 132dp rail card; the type stays in the tile's spoken
+                    // sentence and on Detail. Two title lines, like the
+                    // rails, so long titles do not truncate mid-word.
+                    compactMeta = true,
+                    titleMaxLines = 2,
+                    progressFraction = match?.progressFraction,
+                    progressLabel = match?.resumeLabel,
+                )
+            }
+            Spacer(Modifier.height(RaddTokens.Space.Sm))
+        }
+    }
+}
+
+/** H11: the My List strip, so tests can find it without the title. */
+internal const val MyListStripTag = "homeMyListStrip"
 
 /**
  * Mockup (Nov 2026): one Continue Watching row — full width, thumb, title,

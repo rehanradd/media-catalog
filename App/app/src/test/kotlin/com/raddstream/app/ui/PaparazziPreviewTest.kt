@@ -57,6 +57,7 @@ import com.raddstream.app.ui.screens.EdgeFeedbackLine
 import com.raddstream.app.ui.screens.EdgeHud
 import com.raddstream.app.ui.screens.HomeContent
 import com.raddstream.app.ui.screens.HomeMoodRow
+import com.raddstream.app.ui.screens.MyListStrip
 import com.raddstream.app.ui.screens.Hud
 import com.raddstream.app.ui.screens.MyListEmptyContent
 import com.raddstream.app.ui.screens.MyListLoadedContent
@@ -416,6 +417,10 @@ class PaparazziPreviewTest {
         ),
         trialDaysRemaining = 5,
         favoriteIds = setOf(1),
+        // H11: the My List strip — Jawan is half-watched (the CW row
+        // above), so its strip tile carries the progress bar + label;
+        // Salaar has no CW row, so its tile shows the poster alone.
+        savedPosts = listOf(jawan, salaars),
         facets = FacetsResponse(
             genres = listOf(FacetEntry("action", "Action", 120), FacetEntry("drama", "Drama", 98)),
             languages = listOf(FacetEntry("hindi", "Hindi", 210)),
@@ -462,6 +467,33 @@ class PaparazziPreviewTest {
                         selected = HomeMood.FeelGood,
                         onSelect = {},
                         filter = HomeFilter.All,
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * H11 (2027 Home fix, round 2): the My List strip as a standalone
+     * golden — the homeLoaded viewport never reaches it either (it sits
+     * below the broadcasts/sync line, above rail 1, and the viewport
+     * ends mid-rail-1). Jawan is half-watched (the CW row in loadedHome),
+     * so its strip tile carries the progress bar + label; Salaar has no
+     * CW row, so its tile shows the poster alone.
+     */
+    @Test
+    fun homeMyListStrip() {
+        paparazzi.snapshot {
+            themed {
+                // Audit #3: see homeLoaded — the strip's entrance is a
+                // real-time animation, so inspection mode renders it as
+                // already over.
+                CompositionLocalProvider(LocalInspectionMode provides true) {
+                    MyListStrip(
+                        savedPosts = listOf(jawan, salaars),
+                        continueWatching = loadedHome.continueWatching,
+                        onPostClick = {},
+                        onPlayClick = {},
                     )
                 }
             }
