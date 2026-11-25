@@ -51,6 +51,15 @@ object DeviceDownloadErrorKind {
     const val SAVE_FAILED = "save_failed"
 }
 
+/**
+ * D11: a download whose byte count has not moved for longer than this
+ * reads as stalled, not "calculating…" — on both the device rows (tracked
+ * in [DeviceDownloadsRepository.markProgress]) and the keep rows (tracked
+ * in the ViewModel's per-task marks). Thirty seconds: long enough that a
+ * slow start or a single slow chunk never trips it.
+ */
+internal const val DOWNLOAD_STALL_AFTER_MS = 30_000L
+
 /** One public download as the Downloads screen and the service both see it. */
 data class DeviceDownload(
     val id: String,
@@ -97,6 +106,27 @@ data class DeviceDownload(
      * persisted rows carry null and fall back to the generic status line.
      */
     val errorKind: String? = null,
+    /**
+     * D12: how many times this download has been (re)started — the row
+     * names its attempt when it fails. 0 when the count was never recorded
+     * (an old persisted row); the row normalizes it to at least 1.
+     */
+    val attempts: Int = 0,
+    /**
+     * D11: true while this download is DOWNLOADING and its byte count has
+     * not moved for longer than [DOWNLOAD_STALL_AFTER_MS] — the row says
+     * "Stalled", not "calculating…". Computed in [toUi] from the
+     * last-movement marks; false for every other state.
+     */
+    val stalled: Boolean = false,
+    /**
+     * D10: the catalog poster's URL for this file — always null today.
+     * Device downloads carry a handle only, never a post id, so there is
+     * no post to look a poster up from; the row always paints the
+     * initials tile. Full art needs the download stores to carry a poster
+     * URL at enqueue time, a data-model change owed after this round.
+     */
+    val posterUrl: String? = null,
 ) {
     val progress: Float
         get() = if (bytesTotal > 0) {
@@ -109,8 +139,12 @@ data class DeviceDownload(
         get() = if (bytesTotal > 0) (progress * 100).toInt().coerceIn(0, 100) else null
 
     val playing: Boolean get() = state == DeviceDownloadState.READY && !localUri.isNullOrBlank()
+    /**
+     * D19: a queued row is not downloading yet — offering it Pause is a
+     * contradiction. Only a row actually moving can be paused.
+     */
     val canPause: Boolean
-        get() = state == DeviceDownloadState.QUEUED || state == DeviceDownloadState.DOWNLOADING
+        get() = state == DeviceDownloadState.DOWNLOADING
     val canResume: Boolean
         get() = state == DeviceDownloadState.PAUSED ||
             state == DeviceDownloadState.FAILED ||
@@ -168,6 +202,13 @@ data class DeviceDownloadEntity(
      * diagnostic; it stops being displayed.
      */
     val errorKind: String? = null,
+    /**
+     * D12: how many times this download has been (re)started — 1 on the
+     * first enqueue, +1 on every resume. Old persisted rows carry no
+     * field and read 0 (never recorded), never 1. The row names its
+     * attempt when it fails, so a retry is a counted try.
+     */
+    val attempts: Int = 0,
 )
 
 /**
@@ -305,6 +346,8 @@ class DeviceDownloadsRepository @Inject constructor(
             bytesTotal = meta.fileSizeBytes ?: 0L,
             state = DeviceDownloadState.QUEUED,
             enqueuedAt = System.currentTimeMillis(),
+            // D12: the first start is attempt 1 — every resume after it counts up from here.
+            attempts = 1,
         )
         val updated = entries + entry
         persist(updated)
@@ -381,12 +424,15 @@ class DeviceDownloadsRepository @Inject constructor(
                     bytesTotal = meta.fileSizeBytes?.takeIf { size -> size > 0 } ?: it.bytesTotal,
                     error = null,
                     errorKind = null,
+                    // D12: a re-resolved retry is a fresh start — and a counted one.
+                    attempts = it.attempts + 1,
                 )
             }
             runCatching { DownloadService.start(context, id) }
             return
         }
-        update(id) { it.copy(state = DeviceDownloadState.QUEUED, error = null, errorKind = null) }
+        // D12: a plain resume counts as an attempt too.
+        update(id) { it.copy(state = DeviceDownloadState.QUEUED, error = null, errorKind = null, attempts = it.attempts + 1) }
         runCatching { DownloadService.start(context, id) }
     }
 
@@ -425,7 +471,7 @@ class DeviceDownloadsRepository @Inject constructor(
     }
 
     internal fun markProgress(id: String, downloaded: Long, total: Long) {
-        // Rolling speed over the last five progress ticks (~750 ms apart):
+        // Rolling speed over the last five progress ticks (~250 ms apart):
         // the Downloads row and the notification read the same rate, and a
         // stalled transfer reads as "calculating" instead of a frozen ETA.
         // Computed before markRunning emits, so the row never lags a tick.
@@ -436,6 +482,14 @@ class DeviceDownloadsRepository @Inject constructor(
         liveRates[id] = speed to DownloadSpeed.etaSeconds(
             (total - downloaded).coerceAtLeast(0L), speed,
         )
+        // D11: the stall clock — the last instant this download's byte count
+        // actually moved. A tick that arrives with the same count does not
+        // reset it; only real movement does.
+        val nowMs = System.currentTimeMillis()
+        val prev = lastBytesChange[id]
+        if (prev == null || prev.first != downloaded) {
+            lastBytesChange[id] = downloaded to nowMs
+        }
         markRunning(id, downloaded, total)
         val now = System.currentTimeMillis()
         if (now - (persistedAt[id] ?: 0L) >= PROGRESS_FLUSH_MS) {
@@ -448,6 +502,7 @@ class DeviceDownloadsRepository @Inject constructor(
     private fun dropLiveRate(id: String) {
         speedSamples.remove(id)
         liveRates.remove(id)
+        lastBytesChange.remove(id)
     }
 
     internal fun markPaused(id: String, downloaded: Long) {
@@ -647,6 +702,18 @@ class DeviceDownloadsRepository @Inject constructor(
             else -> null
         },
         errorKind = errorKind,
+        attempts = attempts,
+        // D11: stalled only while actually downloading — a paused row keeps
+        // its last mark out of the picture (dropLiveRate cleared it), and a
+        // row that never moved reads as starting, not stalled.
+        stalled = state == DeviceDownloadState.DOWNLOADING &&
+            lastBytesChange[id]?.let { (movedBytes, movedAt) ->
+                movedBytes == bytesDownloaded &&
+                    System.currentTimeMillis() - movedAt > DOWNLOAD_STALL_AFTER_MS
+            } ?: false,
+        // D10: device rows carry no post id, so there is no poster to look
+        // up — always null, by design, until the stores carry one.
+        posterUrl = null,
     )
 
     /** Live (speed, ETA) per download, for the foreground notification. */
@@ -657,6 +724,9 @@ class DeviceDownloadsRepository @Inject constructor(
 
     /** Live (speed, ETA) per download, derived from [speedSamples]. */
     private val liveRates = HashMap<String, Pair<Long, Long?>>()
+
+    /** D11: last (bytes, wall-clock ms) at which each download's byte count actually moved. */
+    private val lastBytesChange = HashMap<String, Pair<Long, Long>>()
 
     private fun videoMime(declared: String?, kind: String?): String? {
         val mime = declared?.trim()?.lowercase(Locale.ROOT).orEmpty()

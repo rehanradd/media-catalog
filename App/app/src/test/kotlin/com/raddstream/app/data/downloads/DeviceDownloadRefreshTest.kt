@@ -216,6 +216,23 @@ class DeviceDownloadRefreshTest {
     }
 
     @Test
+    fun `enqueue starts at attempt 1 and each resume counts one more`() = runBlocking {
+        // D12: a retry is a counted try — the row names its attempt when it fails.
+        val id = seed("handle-1")
+        assertEquals(1, repo.entity(id)!!.attempts)
+        assertEquals(1, repo.downloads.value.first { it.id == id }.attempts)
+        repo.markPaused(id, 300_000_000L)
+        repo.requestResume(id)
+        assertEquals(2, repo.entity(id)!!.attempts)
+        assertEquals(2, repo.downloads.value.first { it.id == id }.attempts)
+        // A re-resolved retry counts too.
+        repo.markFailed(id, 0L, 1_000_000_000L, "HTTP 404", errorKind = "link_expired")
+        repo.requestResume(id)
+        assertEquals(3, repo.entity(id)!!.attempts)
+        assertEquals(DeviceDownloadState.QUEUED, repo.entity(id)!!.state)
+    }
+
+    @Test
     fun `stored raw http text never reaches the row`() = runBlocking {
         val id = seed("handle-1")
         repo.markFailed(id, 100_000_000L, 1_000_000_000L, "HTTP 404", errorKind = "link_expired")

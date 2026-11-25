@@ -1,7 +1,10 @@
 package com.raddstream.app.ui.screens
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,24 +12,13 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Movie
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -34,32 +26,51 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import com.raddstream.app.R
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.raddstream.app.data.cache.RetryPolicy
 import com.raddstream.app.data.downloads.DeviceDownload
 import com.raddstream.app.data.downloads.DeviceDownloadState
 import com.raddstream.app.data.downloads.DownloadSpeed
+import com.raddstream.app.ui.components.CatalogImage
 import com.raddstream.app.ui.components.DownloadsSkeleton
 import com.raddstream.app.ui.components.EmptyState
 import com.raddstream.app.ui.components.UserWords
+import com.raddstream.app.ui.components.rememberReduceMotion
+import com.raddstream.app.ui.theme.PressHaptics
+import com.raddstream.app.ui.theme.RaddMotion
+import com.raddstream.app.ui.theme.RaddTokens
+import com.raddstream.app.ui.theme.pressScale
 import com.raddstream.app.viewmodel.DownloadRow
 import com.raddstream.app.viewmodel.DownloadsViewModel
 import com.raddstream.app.viewmodel.KeepState
@@ -86,6 +97,14 @@ fun DownloadsScreen(
     // A keep tap has to ask the engine a question before it can navigate, and navigation is a
     // side effect — so it runs on the composition's own scope and dies with the screen.
     val clicks = rememberCoroutineScope()
+    // D15: a completion ticks the haptic the moment a download finishes —
+    // the notice itself is announced by the status row's live region (D20).
+    val haptics = LocalHapticFeedback.current
+    LaunchedEffect(Unit) {
+        viewModel.completionEvents.collect {
+            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+        }
+    }
     // Phase 4 (Downloads #7): a queued device row names its place in line —
     // 1-based among queued device rows, in list order.
     val queuedDevicePositions: Map<String, Int> = state.allDownloads
@@ -98,24 +117,40 @@ fun DownloadsScreen(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("Downloads") },
+                // D18: the screen title is a display-bold headline, not a
+                // default-weight title.
+                title = { Text("Downloads", style = MaterialTheme.typography.headlineSmall) },
                 navigationIcon = {
                     IconButton(onClick = onBackClick) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(
+                            painter = painterResource(R.drawable.ic_action_arrow_left),
+                            contentDescription = "Back",
+                        )
                     }
                 },
                 actions = {
                     IconButton(onClick = viewModel::refresh) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Refresh storage")
+                        Icon(
+                            painter = painterResource(R.drawable.ic_action_refresh),
+                            // D13: refresh re-reads storage AND re-emits the
+                            // lists now, so the label says what it does.
+                            contentDescription = "Refresh downloads",
+                        )
                     }
                 },
             )
         },
     ) { contentPadding ->
-        LazyColumn(
+        // D19: pull-to-refresh — the same refresh the top-bar button runs.
+        PullToRefreshBox(
+            isRefreshing = state.isRefreshing,
+            onRefresh = viewModel::refresh,
             modifier = Modifier.fillMaxSize().padding(contentPadding),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(RaddTokens.Space.Gutter),
+            verticalArrangement = Arrangement.spacedBy(RaddTokens.Space.Lg),
         ) {
             item { StorageCard(state.storage, onFreeUpSpace = viewModel::freeUpSpace) }
             item { LocalFilesEntry(onOpenLocalFiles) }
@@ -124,13 +159,17 @@ fun DownloadsScreen(
                     // A notice the viewer can clear — and undo, when it names
                     // a sweep deletion. The old plain line persisted until it
                     // was overwritten or the screen died.
+                    // D20: the notice row is the screen's polite live region
+                    // — a completion or an error is announced to TalkBack
+                    // the moment it lands.
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth()
+                            .semantics { liveRegion = LiveRegionMode.Polite },
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
                             text = msg,
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.weight(1f),
                         )
@@ -148,7 +187,10 @@ fun DownloadsScreen(
                             onClick = viewModel::clearStatus,
                             modifier = Modifier.semantics { contentDescription = "Dismiss notice" },
                         ) {
-                            Icon(Icons.Default.Close, contentDescription = null)
+                            Icon(
+                                painter = painterResource(R.drawable.ic_action_close),
+                                contentDescription = null,
+                            )
                         }
                     }
                 }
@@ -171,6 +213,14 @@ fun DownloadsScreen(
                         }
                     },
                 ) { row ->
+                    // D16 + D19: a row glides to its new place when the list
+                    // changes, and a swipe runs the row's own actions —
+                    // pause/resume one way, cancel/delete the other — never
+                    // gesture-only, the buttons stay.
+                    SwipeableDownloadRow(
+                        swipeActions = downloadSwipeActions(row, viewModel),
+                        modifier = Modifier.animateItem(),
+                    ) {
                     when (row) {
                         is DownloadRow.Device -> DeviceDownloadRow(
                             item = row.download,
@@ -206,6 +256,7 @@ fun DownloadsScreen(
                             onUpgrade = onOpenVipUpgrade,
                         )
                     }
+                    }
                 }
             }
 
@@ -229,7 +280,7 @@ fun DownloadsScreen(
                             "Files go to Movies/RaddStream and play in any video player.",
                         icon = {
                             Icon(
-                                Icons.Default.Download,
+                                painter = painterResource(R.drawable.ic_action_download),
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(40.dp),
@@ -254,6 +305,7 @@ fun DownloadsScreen(
                 }
             }
         }
+        }
     }
 }
 
@@ -262,20 +314,20 @@ private fun LocalFilesEntry(onOpenLocalFiles: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RaddTokens.Shape.Card)
             .background(MaterialTheme.colorScheme.surface)
             .clickable { onOpenLocalFiles() }
-            .padding(14.dp),
+            .padding(RaddTokens.Space.Lg),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
-            Icons.Default.Folder,
+            painter = painterResource(R.drawable.ic_action_folder),
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.size(28.dp),
         )
         Column(
-            modifier = Modifier.weight(1f).padding(start = 12.dp),
+            modifier = Modifier.weight(1f).padding(start = RaddTokens.Space.Md),
         ) {
             Text(
                 "Videos on this phone",
@@ -285,12 +337,12 @@ private fun LocalFilesEntry(onOpenLocalFiles: () -> Unit) {
             )
             Text(
                 stringResource(R.string.local_library_entry_subtitle),
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         Icon(
-            Icons.Default.ChevronRight,
+            painter = painterResource(R.drawable.ic_action_chevron_right),
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -302,21 +354,21 @@ internal fun NoticeCard(text: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RaddTokens.Shape.Card)
             .background(MaterialTheme.colorScheme.surfaceVariant)
-            .padding(14.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+            .padding(RaddTokens.Space.Lg),
+        horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Sm),
         verticalAlignment = Alignment.Top,
     ) {
         Icon(
-            Icons.Default.Info,
+            painter = painterResource(R.drawable.ic_action_info),
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.size(20.dp),
         )
         Text(
             text = text,
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
@@ -330,17 +382,17 @@ internal fun StorageCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RaddTokens.Shape.Card)
             .background(MaterialTheme.colorScheme.surface)
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+            .padding(RaddTokens.Space.Lg),
+        verticalArrangement = Arrangement.spacedBy(RaddTokens.Space.Sm),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Sm),
         ) {
             Icon(
-                Icons.Default.Download,
+                painter = painterResource(R.drawable.ic_action_download),
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(20.dp),
@@ -371,7 +423,7 @@ internal fun StorageCard(
             }
         }
         if (storage == null) {
-            Text("Storage information unavailable.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Storage information unavailable.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             return
         }
         LinearProgressIndicator(
@@ -384,7 +436,7 @@ internal fun StorageCard(
         if (storage.lowSpace) {
             Text(
                 "Low space — a download needs room for the whole file.",
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.error,
             )
         }
@@ -410,10 +462,26 @@ internal fun DeviceDownloadRow(
     onRemove: () -> Unit,
 ) {
     val cleanTitle = cleanDownloadTitle(item.title)
+    // D8 + D16: the bar glides between ticks instead of jumping — the
+    // displayed share animates to the live one on the S7 250ms spring.
+    // Reduced motion: the bar snaps to the live value, no glide.
+    val reduceMotion = rememberReduceMotion()
+    val animatedProgress by animateFloatAsState(
+        targetValue = item.progress,
+        animationSpec = RaddMotion.default(),
+        label = "downloadProgress",
+    )
+    val shownProgress = if (reduceMotion) item.progress else animatedProgress
+    // D16: one press source per action — the scale tracks the real press
+    // and the haptic ticks once on press-down.
+    val playSource = remember { MutableInteractionSource() }
+    val pauseSource = remember { MutableInteractionSource() }
+    val resumeSource = remember { MutableInteractionSource() }
+    val removeSource = remember { MutableInteractionSource() }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RaddTokens.Shape.Card)
             .background(MaterialTheme.colorScheme.surface)
             // A finished download is a file on this device: the whole row opens it
             // in the local player, with no server and no redirector involved. The
@@ -423,14 +491,14 @@ internal fun DeviceDownloadRow(
                 onClickLabel = if (item.playing) "Play $cleanTitle offline" else null,
                 onClick = onPlay,
             )
-            .padding(12.dp),
+            .padding(RaddTokens.Space.Lg),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Md),
     ) {
-        DownloadThumb()
+        DownloadThumb(posterUrl = item.posterUrl, title = cleanTitle)
         Column(
             modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            verticalArrangement = Arrangement.spacedBy(RaddTokens.Space.Xs),
         ) {
             Text(
                 text = cleanTitle,
@@ -456,17 +524,19 @@ internal fun DeviceDownloadRow(
                     // An unknown size is an indeterminate bar, not a flat 0%: the
                     // bytes are moving, the total is what is unknown — and the
                     // completion gate still refuses to mark it READY.
+                    // D17: the bar is 6dp, not the 4dp hairline — it reads at
+                    // render scale.
                     if (item.bytesTotal > 0) {
                         LinearProgressIndicator(
-                            progress = { item.progress },
-                            modifier = Modifier.fillMaxWidth(),
+                            progress = { shownProgress },
+                            modifier = Modifier.fillMaxWidth().height(6.dp),
                             color = MaterialTheme.colorScheme.primary,
                             trackColor = MaterialTheme.colorScheme.surfaceVariant,
                             strokeCap = StrokeCap.Round,
                         )
                     } else {
                         LinearProgressIndicator(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().height(6.dp),
                             color = MaterialTheme.colorScheme.primary,
                             trackColor = MaterialTheme.colorScheme.surfaceVariant,
                             strokeCap = StrokeCap.Round,
@@ -474,7 +544,7 @@ internal fun DeviceDownloadRow(
                     }
                     Text(
                         deviceProgressLine(item),
-                        style = MaterialTheme.typography.labelSmall,
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -488,13 +558,13 @@ internal fun DeviceDownloadRow(
                         } else {
                             "Queued"
                         },
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                     bytesSavedLine(item.bytesDownloaded, item.bytesTotal, item.percent)?.let { saved ->
                         Text(
                             saved,
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -506,8 +576,8 @@ internal fun DeviceDownloadRow(
                     // bar the moment it stops moving.
                     if (item.bytesTotal > 0) {
                         LinearProgressIndicator(
-                            progress = { item.progress },
-                            modifier = Modifier.fillMaxWidth(),
+                            progress = { shownProgress },
+                            modifier = Modifier.fillMaxWidth().height(6.dp),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             trackColor = MaterialTheme.colorScheme.surfaceVariant,
                             strokeCap = StrokeCap.Round,
@@ -515,13 +585,22 @@ internal fun DeviceDownloadRow(
                     }
                     Text(
                         deviceStatusLine(item),
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
+                    // D12: a failed row names its attempt, so a retry is a
+                    // counted try, not a mystery.
+                    deviceAttemptLine(item.attempts)?.let { attempt ->
+                        Text(
+                            attempt,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     bytesSavedLine(item.bytesDownloaded, item.bytesTotal, item.percent)?.let { saved ->
                         Text(
                             saved,
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -530,58 +609,94 @@ internal fun DeviceDownloadRow(
                     item.failureReason?.let { reason ->
                         Text(
                             reason,
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
                 DeviceDownloadState.READY -> {
-                    Text(
-                        deviceStatusLine(item),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
+                    // D15: a finished row says so — a jade check that draws
+                    // in with the S7 spring, plus "Downloaded ✓" in words.
+                    // Distinct from paused/failed at a glance.
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Sm),
+                    ) {
+                        DoneCheck()
+                        Text(
+                            deviceStatusLine(item),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
                 }
             }
         }
         Row(
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Xs),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (item.playing) {
                 IconButton(
                     onClick = onPlay,
+                    interactionSource = playSource,
                     modifier = Modifier
                         .background(MaterialTheme.colorScheme.surfaceVariant, CircleShape)
+                        .pressScale(playSource)
                         .semantics { contentDescription = "Play $cleanTitle" },
                 ) {
-                    Icon(Icons.Default.PlayArrow, contentDescription = null)
+                    Icon(
+                        painter = painterResource(R.drawable.ic_player_play),
+                        contentDescription = null,
+                    )
                 }
             }
             if (item.canPause) {
                 IconButton(
                     onClick = onPause,
-                    modifier = Modifier.semantics { contentDescription = "Pause $cleanTitle" },
+                    interactionSource = pauseSource,
+                    modifier = Modifier
+                        .pressScale(pauseSource)
+                        .semantics { contentDescription = "Pause $cleanTitle" },
                 ) {
-                    Icon(Icons.Default.Pause, contentDescription = null)
+                    Icon(
+                        painter = painterResource(R.drawable.ic_player_pause),
+                        contentDescription = null,
+                    )
                 }
             }
             if (item.canResume) {
                 IconButton(
                     onClick = onResume,
-                    modifier = Modifier.semantics { contentDescription = "Resume $cleanTitle" },
+                    interactionSource = resumeSource,
+                    modifier = Modifier
+                        .pressScale(resumeSource)
+                        .semantics { contentDescription = "Resume $cleanTitle" },
                 ) {
-                    Icon(Icons.Default.PlayArrow, contentDescription = null)
+                    Icon(
+                        painter = painterResource(R.drawable.ic_player_play),
+                        contentDescription = null,
+                    )
                 }
             }
             IconButton(
                 onClick = onRemove,
-                modifier = Modifier.semantics {
-                    contentDescription = "${if (item.playing) "Delete" else "Cancel"} $cleanTitle"
-                },
+                interactionSource = removeSource,
+                modifier = Modifier
+                    .pressScale(removeSource)
+                    .semantics {
+                        contentDescription = "${if (item.playing) "Delete" else "Cancel"} $cleanTitle"
+                    },
             ) {
-                Icon(Icons.Default.Close, contentDescription = null)
+                Icon(
+                    painter = painterResource(R.drawable.ic_action_close),
+                    contentDescription = null,
+                )
             }
+            PressHaptics(playSource)
+            PressHaptics(pauseSource)
+            PressHaptics(resumeSource)
+            PressHaptics(removeSource)
         }
     }
 }
@@ -595,7 +710,8 @@ private fun deviceStatusLine(item: DeviceDownload): String {
         DeviceDownloadState.QUEUED -> "Queued"
         DeviceDownloadState.DOWNLOADING -> "Downloading$percent"
         DeviceDownloadState.PAUSED -> "Paused — resume when you are ready"
-        DeviceDownloadState.READY -> "Saved on device — plays here or in any video player"
+        // D15: a finished row says so in words, with the jade check beside it.
+        DeviceDownloadState.READY -> "Downloaded ✓ — plays here or in any video player"
         DeviceDownloadState.FAILED -> "Download failed — resume, or cancel and try again"
         DeviceDownloadState.PARTIAL -> "Partially saved$percent — retry to finish the missing parts"
     }
@@ -633,7 +749,11 @@ internal fun deviceProgressLine(item: DeviceDownload): String {
     } else {
         formatMiB(item.bytesDownloaded)
     }
-    val speed = if (item.bytesPerSec > 0) {
+    // D11: a download at 0 B/s for longer than the stall window says so —
+    // "calculating…" is only the first seconds, never minutes of no movement.
+    val speed = if (item.stalled) {
+        "Stalled — check connection"
+    } else if (item.bytesPerSec > 0) {
         DownloadSpeed.formatSpeed(item.bytesPerSec) +
             (DownloadSpeed.formatEta(item.etaSeconds)?.let { " · $it" } ?: "")
     } else {
@@ -663,19 +783,35 @@ internal fun KeptItemRow(
     onUpgrade: () -> Unit = {},
 ) {
     val cleanTitle = cleanDownloadTitle(item.title)
+    // D8 + D16: same glide as the device row — the bar animates to the live
+    // share on the S7 250ms spring; reduced motion snaps to the live value.
+    val reduceMotion = rememberReduceMotion()
+    val animatedProgress by animateFloatAsState(
+        targetValue = item.progress,
+        animationSpec = RaddMotion.default(),
+        label = "keepProgress",
+    )
+    val shownProgress = if (reduceMotion) item.progress else animatedProgress
+    // D16: one press source per action — the scale tracks the real press
+    // and the haptic ticks once on press-down.
+    val playSource = remember { MutableInteractionSource() }
+    val pauseSource = remember { MutableInteractionSource() }
+    val retrySource = remember { MutableInteractionSource() }
+    val cancelSource = remember { MutableInteractionSource() }
+    val upgradeSource = remember { MutableInteractionSource() }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RaddTokens.Shape.Card)
             .background(MaterialTheme.colorScheme.surface)
-            .padding(12.dp),
+            .padding(RaddTokens.Space.Lg),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Md),
     ) {
-        DownloadThumb()
+        DownloadThumb(posterUrl = item.posterUrl, title = cleanTitle)
         Column(
             modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            verticalArrangement = Arrangement.spacedBy(RaddTokens.Space.Xs),
         ) {
             Text(cleanTitle, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface, maxLines = 2)
             DownloadMetaLine(
@@ -687,29 +823,30 @@ internal fun KeptItemRow(
                 KeepState.DOWNLOADING, KeepState.NO_SPACE -> {
                     // Restyle 2026-11-13: rounded ends + a visible track, same as
                     // the active-download bar above — one progress language. Jade now.
+                    // D17: the bar is 6dp, not the 4dp hairline.
                     LinearProgressIndicator(
-                        progress = { item.progress },
-                        modifier = Modifier.fillMaxWidth(),
+                        progress = { shownProgress },
+                        modifier = Modifier.fillMaxWidth().height(6.dp),
                         color = MaterialTheme.colorScheme.primary,
                         trackColor = MaterialTheme.colorScheme.surfaceVariant,
                         strokeCap = StrokeCap.Round,
                     )
-                    Text(keepProgressLine(item), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(keepProgressLine(item), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     // The bar is the progress, the line is the reason: a stalled
                     // NO_SPACE row must say why, not just show a frozen bar and
                     // a button.
                     if (item.state == KeepState.NO_SPACE) {
-                        Text(statusLine(item), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
+                        Text(statusLine(item), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
                     }
                 }
                 KeepState.QUEUED -> {
                     // Phase 4 (Downloads #7): waiting, not downloading at
                     // 0% — no determinate bar, just the reason it waits.
-                    Text(statusLine(item), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
+                    Text(statusLine(item), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
                     bytesSavedLine(item.bytesDownloaded, item.bytesTotal, item.percent)?.let { saved ->
                         Text(
                             saved,
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -719,32 +856,55 @@ internal fun KeptItemRow(
                     // bar, just the reason, same shape as the QUEUED branch.
                     // (Fix 2026-11-24: this branch was missing and the
                     // 'when' failed to compile — GATED is the 8th state.)
-                    Text(statusLine(item), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
+                    // Round-2 wart fix: the status sentence used to wrap to
+                    // five narrow lines because the wide "View VIP options"
+                    // pill squeezed its column. The pill now rides BELOW the
+                    // text, full-width, so the sentence has the whole row.
+                    Text(statusLine(item), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
                     bytesSavedLine(item.bytesDownloaded, item.bytesTotal, item.percent)?.let { saved ->
                         Text(
                             saved,
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                    OutlinedButton(
+                        onClick = onUpgrade,
+                        interactionSource = upgradeSource,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .pressScale(upgradeSource)
+                            .semantics { contentDescription = "View VIP options $cleanTitle" },
+                    ) { Text("View VIP options") }
+                    PressHaptics(upgradeSource)
                 }
                 KeepState.PAUSED, KeepState.FAILED -> {
                     // Phase 4 (Downloads #2): a stalled row keeps its
                     // progress — a dimmed bar at the saved share.
                     if (item.bytesTotal > 0) {
                         LinearProgressIndicator(
-                            progress = { item.progress },
-                            modifier = Modifier.fillMaxWidth(),
+                            progress = { shownProgress },
+                            modifier = Modifier.fillMaxWidth().height(6.dp),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             trackColor = MaterialTheme.colorScheme.surfaceVariant,
                             strokeCap = StrokeCap.Round,
                         )
                     }
-                    Text(statusLine(item), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
+                    Text(statusLine(item), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
+                    // D12: a failed row names its attempt, so a retry is a
+                    // counted try, not a mystery.
+                    keepAttemptLine(item.attempt)?.let { attempt ->
+                        Text(
+                            attempt,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     bytesSavedLine(item.bytesDownloaded, item.bytesTotal, item.percent)?.let { saved ->
                         Text(
                             saved,
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -753,19 +913,27 @@ internal fun KeptItemRow(
                     item.failureReason?.let { reason ->
                         Text(
                             reason,
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
                 KeepState.READY, KeepState.EXPIRING -> {
-                    Text(statusLine(item), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
+                    // D15: a finished keep says so — the jade check draws in
+                    // with the S7 spring, plus "Downloaded ✓" in words.
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Sm),
+                    ) {
+                        DoneCheck()
+                        Text(statusLine(item), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
+                    }
                     // The stored reason, under the generic line — same rule as
                     // the device row.
                     item.failureReason?.let { reason ->
                         Text(
                             reason,
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -773,17 +941,22 @@ internal fun KeptItemRow(
             }
         }
         Row(
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Xs),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (item.playable) {
                 IconButton(
                     onClick = onPlay,
+                    interactionSource = playSource,
                     modifier = Modifier
                         .background(MaterialTheme.colorScheme.surfaceVariant, CircleShape)
+                        .pressScale(playSource)
                         .semantics { contentDescription = "Play $cleanTitle" },
                 ) {
-                    Icon(Icons.Default.PlayArrow, contentDescription = null)
+                    Icon(
+                        painter = painterResource(R.drawable.ic_player_play),
+                        contentDescription = null,
+                    )
                 }
             }
             when (item.state) {
@@ -792,79 +965,138 @@ internal fun KeptItemRow(
                     // not only retried forever.
                     OutlinedButton(
                         onClick = onRetry,
+                        interactionSource = retrySource,
                         modifier = Modifier
                             .heightIn(min = 48.dp)
+                            .pressScale(retrySource)
                             .semantics { contentDescription = "Retry $cleanTitle" },
                     ) { Text("Retry") }
                     IconButton(
                         onClick = onCancel,
-                        modifier = Modifier.semantics {
-                            contentDescription = "Cancel $cleanTitle"
-                        },
+                        interactionSource = cancelSource,
+                        modifier = Modifier
+                            .pressScale(cancelSource)
+                            .semantics {
+                                contentDescription = "Cancel $cleanTitle"
+                            },
                     ) {
-                        Icon(Icons.Default.Close, contentDescription = null)
+                        Icon(
+                            painter = painterResource(R.drawable.ic_action_close),
+                            contentDescription = null,
+                        )
                     }
                 }
                 KeepState.GATED -> {
                     // Phase 4 (Downloads #4): Retry cannot succeed — the
-                    // gate will refuse again. Offer the upgrade, or dismiss.
-                    OutlinedButton(
-                        onClick = onUpgrade,
-                        modifier = Modifier
-                            .heightIn(min = 48.dp)
-                            .semantics { contentDescription = "View VIP options $cleanTitle" },
-                    ) { Text("View VIP options") }
+                    // gate will refuse again. The upgrade pill rides below
+                    // the status text now (round-2 wart fix); the × here
+                    // only dismisses the row.
                     IconButton(
                         onClick = onCancel,
-                        modifier = Modifier.semantics {
-                            contentDescription = "${keepActionLabel(item.state) ?: "Dismiss"} $cleanTitle"
-                        },
+                        interactionSource = cancelSource,
+                        modifier = Modifier
+                            .pressScale(cancelSource)
+                            .semantics {
+                                contentDescription = "${keepActionLabel(item.state) ?: "Dismiss"} $cleanTitle"
+                            },
                     ) {
-                        Icon(Icons.Default.Close, contentDescription = null)
+                        Icon(
+                            painter = painterResource(R.drawable.ic_action_close),
+                            contentDescription = null,
+                        )
                     }
                 }
                 KeepState.PAUSED -> {
                     OutlinedButton(
                         onClick = onRetry,
+                        interactionSource = retrySource,
                         modifier = Modifier
                             .heightIn(min = 48.dp)
+                            .pressScale(retrySource)
                             .semantics { contentDescription = "Resume $cleanTitle" },
                     ) { Text("Resume") }
                     IconButton(
                         onClick = onCancel,
-                        modifier = Modifier.semantics {
-                            contentDescription = "${keepActionLabel(item.state) ?: "Cancel"} $cleanTitle"
-                        },
+                        interactionSource = cancelSource,
+                        modifier = Modifier
+                            .pressScale(cancelSource)
+                            .semantics {
+                                contentDescription = "${keepActionLabel(item.state) ?: "Cancel"} $cleanTitle"
+                            },
                     ) {
-                        Icon(Icons.Default.Close, contentDescription = null)
+                        Icon(
+                            painter = painterResource(R.drawable.ic_action_close),
+                            contentDescription = null,
+                        )
                     }
                 }
-                KeepState.DOWNLOADING, KeepState.QUEUED -> {
+                KeepState.DOWNLOADING -> {
                     IconButton(
                         onClick = onPause,
-                        modifier = Modifier.semantics { contentDescription = "Pause $cleanTitle" },
+                        interactionSource = pauseSource,
+                        modifier = Modifier
+                            .pressScale(pauseSource)
+                            .semantics { contentDescription = "Pause $cleanTitle" },
                     ) {
-                        Icon(Icons.Default.Pause, contentDescription = null)
+                        Icon(
+                            painter = painterResource(R.drawable.ic_player_pause),
+                            contentDescription = null,
+                        )
                     }
                     IconButton(
                         onClick = onCancel,
-                        modifier = Modifier.semantics {
-                            contentDescription = "${keepActionLabel(item.state) ?: "Cancel"} $cleanTitle"
-                        },
+                        interactionSource = cancelSource,
+                        modifier = Modifier
+                            .pressScale(cancelSource)
+                            .semantics {
+                                contentDescription = "${keepActionLabel(item.state) ?: "Cancel"} $cleanTitle"
+                            },
                     ) {
-                        Icon(Icons.Default.Close, contentDescription = null)
+                        Icon(
+                            painter = painterResource(R.drawable.ic_action_close),
+                            contentDescription = null,
+                        )
+                    }
+                }
+                KeepState.QUEUED -> {
+                    // D19 note: a queued keep is not downloading yet — a
+                    // Pause button on it is a contradiction. Only the ×.
+                    IconButton(
+                        onClick = onCancel,
+                        interactionSource = cancelSource,
+                        modifier = Modifier
+                            .pressScale(cancelSource)
+                            .semantics {
+                                contentDescription = "${keepActionLabel(item.state) ?: "Cancel"} $cleanTitle"
+                            },
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_action_close),
+                            contentDescription = null,
+                        )
                     }
                 }
                 KeepState.READY, KeepState.EXPIRING ->
                     IconButton(
                         onClick = onCancel,
-                        modifier = Modifier.semantics {
-                            contentDescription = "${keepActionLabel(item.state) ?: "Cancel"} $cleanTitle"
-                        },
+                        interactionSource = cancelSource,
+                        modifier = Modifier
+                            .pressScale(cancelSource)
+                            .semantics {
+                                contentDescription = "${keepActionLabel(item.state) ?: "Cancel"} $cleanTitle"
+                            },
                     ) {
-                        Icon(Icons.Default.Close, contentDescription = null)
+                        Icon(
+                            painter = painterResource(R.drawable.ic_action_close),
+                            contentDescription = null,
+                        )
                     }
             }
+            PressHaptics(playSource)
+            PressHaptics(pauseSource)
+            PressHaptics(retrySource)
+            PressHaptics(cancelSource)
+            PressHaptics(upgradeSource)
         }
     }
 }
@@ -891,7 +1123,8 @@ private fun statusLine(item: KeptItem): String {
         KeepState.PAUSED -> "Paused"
         KeepState.NO_SPACE -> "Not enough space to finish — free room and retry"
         KeepState.GATED -> "Locked to VIP — this quality needs a VIP plan"
-        KeepState.READY -> "Saved on device — available offline"
+        // D15: a finished keep says so in words, with the jade check beside it.
+        KeepState.READY -> "Downloaded ✓ — available offline"
         KeepState.EXPIRING -> "Kept — expires in ${formatRemaining(item.remainingMillis(System.currentTimeMillis()))}"
         KeepState.FAILED -> "Download failed — retry to resume"
     }
@@ -914,7 +1147,11 @@ internal fun keepProgressLine(item: KeptItem): String {
     } else {
         formatMiB(item.bytesDownloaded)
     }
-    val speed = if (item.bytesPerSec > 0) {
+    // D11: same stall rule as the device row — 0 B/s past the stall window
+    // says so; "calculating…" is only the first seconds.
+    val speed = if (item.stalled) {
+        "Stalled — check connection"
+    } else if (item.bytesPerSec > 0) {
         DownloadSpeed.formatSpeed(item.bytesPerSec) +
             (DownloadSpeed.formatEta(item.etaSeconds)?.let { " · $it" } ?: "")
     } else {
@@ -970,28 +1207,28 @@ internal fun DownloadsEmptyPreview() {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+            .padding(top = RaddTokens.Space.Sm),
+        verticalArrangement = Arrangement.spacedBy(RaddTokens.Space.Sm),
     ) {
         Text(
             "Your downloads will look like this:",
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
+                .clip(RaddTokens.Shape.Card)
                 .background(MaterialTheme.colorScheme.surface)
                 .alpha(0.6f)
-                .padding(12.dp),
+                .padding(RaddTokens.Space.Lg),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Md),
         ) {
-            DownloadThumb()
+            DownloadThumb(posterUrl = null, title = "Example title")
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(RaddTokens.Space.Xs),
             ) {
                 Text(
                     "Example title",
@@ -1000,21 +1237,23 @@ internal fun DownloadsEmptyPreview() {
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                 )
-                Text(
-                    "1080p · 1.2 GB",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                DownloadMetaLine(
+                    printLabel = "1080p · High bitrate",
+                    printLabelDescription = "Example title — 1080p · High bitrate",
+                    sizeText = "1.2 GB",
                 )
                 LinearProgressIndicator(
                     progress = { 0.45f },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().height(6.dp),
                     color = MaterialTheme.colorScheme.primary,
                     trackColor = MaterialTheme.colorScheme.surfaceVariant,
                     strokeCap = StrokeCap.Round,
                 )
+                // D11: the sample row shows a download that is MOVING — the
+                // old "calculating…" was the stale copy this round replaces.
                 Text(
-                    "45% · 540 MB / 1.2 GB · calculating…",
-                    style = MaterialTheme.typography.labelSmall,
+                    "45% · 540 MB / 1.2 GB · 12.0 MB/s · about 1 min left",
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -1023,34 +1262,100 @@ internal fun DownloadsEmptyPreview() {
 }
 
 /**
- * The row's poster slot. Neither download system stores poster art on
- * the row (the engine task keeps the title only; a public file keeps its
- * name), so the slot is a neutral 2:3 tile with a film icon — never a
- * fetched poster, never a fake one. Real art needs the row to carry a
- * poster URL, a data-model change.
+ * The row's poster slot (D10). A keep whose catalog post is already in the
+ * app's cache paints its real poster; everything else paints the same
+ * initials tile the poster cards use — never a fetched poster that does
+ * not exist, never a fake one. The device rows carry no post id at all, so
+ * they always take the tile: full art for them needs the download stores
+ * to carry a poster URL at enqueue time, a data-model change owed after
+ * this round.
  */
 @Composable
-private fun DownloadThumb() {
-    Box(
+private fun DownloadThumb(posterUrl: String?, title: String) {
+    CatalogImage(
+        url = posterUrl,
+        contentDescription = null,
+        fallbackLabel = title,
         modifier = Modifier
             .size(width = 56.dp, height = 84.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant),
+            .clip(RaddTokens.Shape.Thumb),
+    )
+}
+
+/**
+ * D21: split a print label into its quality badge and the rest — "1080p ·
+ * High bitrate" becomes badge "1080p" + "High bitrate"; "720p" is a badge
+ * alone; "Rank #1" is not a quality at all, so it stays whole (the run-9
+ * label rule still paints it once). Pure, so a unit test pins it.
+ */
+internal fun qualityBadgeParts(printLabel: String?): Pair<String?, String?> {
+    if (printLabel.isNullOrBlank()) return null to null
+    val firstToken = printLabel.split('·', ' ').firstOrNull()?.trim().orEmpty()
+    val isQuality = firstToken.matches(Regex("""(?i)^\d{3,4}p$|^4k$|^8k$"""))
+    if (!isQuality) return null to printLabel
+    val rest = printLabel.removePrefix(firstToken).trim().trimStart('·').trim()
+    return firstToken to rest.ifBlank { null }
+}
+
+/** D12: a failed keep names its attempt — "Attempt 2 of 6" (the engine caps retries at 6). Null when the count was never recorded. */
+internal fun keepAttemptLine(attempt: Int): String? =
+    if (attempt > 0) "Attempt $attempt of ${RetryPolicy.MAX_ATTEMPTS}" else null
+
+/** D12: a failed device file names its attempt — "Attempt 2". No cap exists on this side, so none is printed. Null when the count was never recorded. */
+internal fun deviceAttemptLine(attempts: Int): String? =
+    if (attempts > 0) "Attempt $attempts" else null
+
+/**
+ * D15: the finished row's jade check — it draws in with the S7 spatial
+ * spring the moment the row lands finished, so the completion feels
+ * finished, not just stopped. Reduced motion: no pop, the check is simply
+ * there.
+ */
+@Composable
+private fun DoneCheck(modifier: Modifier = Modifier) {
+    val reduceMotion = rememberReduceMotion()
+    val scale = remember { Animatable(if (reduceMotion) 1f else 0.6f) }
+    LaunchedEffect(Unit) {
+        if (!reduceMotion) scale.animateTo(1f, animationSpec = RaddMotion.fastSpatial())
+    }
+    Icon(
+        painter = painterResource(R.drawable.ic_action_check),
+        contentDescription = null,
+        tint = MaterialTheme.colorScheme.primary,
+        modifier = modifier
+            .size(24.dp)
+            .graphicsLayer(scaleX = scale.value, scaleY = scale.value),
+    )
+}
+
+/** D21: quality as a badge, never truncating text — a tonal chip, with the size beside it in the meta line. */
+@Composable
+private fun QualityBadge(quality: String) {
+    Box(
+        modifier = Modifier
+            .clip(RaddTokens.Shape.Chip)
+            .background(MaterialTheme.colorScheme.secondaryContainer)
+            .padding(
+                horizontal = RaddTokens.Space.Sm,
+                vertical = RaddTokens.Space.Micro,
+            ),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            Icons.Default.Movie,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(28.dp),
+        Text(
+            text = quality,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            maxLines = 1,
         )
     }
 }
 
 /**
- * One meta line: the quality label when it says something the title does
- * not, then the file size. The label keeps its own node (and its spoken
- * "title — label" line) so the run-9 label tests still read it exactly.
+ * One meta line: the quality badge when the label carries one, then the
+ * rest of the label + the file size — short, word-safe, never truncated
+ * mid-word ("1080p…" died with the badge). The line keeps its own node
+ * (and its spoken "title — label" line) so the run-9 label tests still
+ * read it exactly.
  */
 @Composable
 private fun DownloadMetaLine(
@@ -1058,28 +1363,142 @@ private fun DownloadMetaLine(
     printLabelDescription: String,
     sizeText: String?,
 ) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        if (printLabel != null) {
+    val (badge, rest) = qualityBadgeParts(printLabel)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Sm),
+        modifier = Modifier.semantics { contentDescription = printLabelDescription },
+    ) {
+        badge?.let { QualityBadge(it) }
+        val meta = listOfNotNull(rest, sizeText).joinToString(" · ")
+        if (meta.isNotEmpty()) {
             Text(
-                printLabel,
-                style = MaterialTheme.typography.labelSmall,
+                meta,
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
-                    .weight(1f)
-                    .semantics { contentDescription = printLabelDescription },
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        sizeText?.let {
-            Text(
-                it,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
+    }
+}
+
+/**
+ * D19: what a swipe does on one row. Start-to-end (swipe right) is the
+ * pause/resume toggle; end-to-start (swipe left) is the destructive
+ * action — cancel, delete or dismiss, the same action the row's × runs.
+ * Either side may be null (a queued row has nothing to pause), and a null
+ * side disables that swipe direction. The swipe is a gesture shortcut,
+ * never gesture-only: every action stays on a button too.
+ */
+private data class SwipeActions(
+    val startToEnd: (() -> Unit)?,
+    val startIconRes: Int?,
+    val endToStart: (() -> Unit)?,
+    val endIconRes: Int?,
+)
+
+private fun downloadSwipeActions(row: DownloadRow, viewModel: DownloadsViewModel): SwipeActions =
+    when (row) {
+        is DownloadRow.Device -> {
+            val item = row.download
+            SwipeActions(
+                startToEnd = when (item.state) {
+                    DeviceDownloadState.DOWNLOADING -> { { viewModel.pauseDownload(item) } }
+                    DeviceDownloadState.PAUSED,
+                    DeviceDownloadState.FAILED,
+                    DeviceDownloadState.PARTIAL -> { { viewModel.resumeDownload(item) } }
+                    else -> null
+                },
+                startIconRes = when (item.state) {
+                    DeviceDownloadState.DOWNLOADING -> R.drawable.ic_player_pause
+                    DeviceDownloadState.PAUSED,
+                    DeviceDownloadState.FAILED,
+                    DeviceDownloadState.PARTIAL -> R.drawable.ic_player_play
+                    else -> null
+                },
+                endToStart = { viewModel.removeDownload(item) },
+                endIconRes = R.drawable.ic_action_close,
+            )
+        }
+        is DownloadRow.Keep -> {
+            val item = row.item
+            SwipeActions(
+                startToEnd = when (item.state) {
+                    KeepState.DOWNLOADING -> { { viewModel.pause(item) } }
+                    KeepState.PAUSED -> { { viewModel.retry(item) } }
+                    else -> null
+                },
+                startIconRes = when (item.state) {
+                    KeepState.DOWNLOADING -> R.drawable.ic_player_pause
+                    KeepState.PAUSED -> R.drawable.ic_player_play
+                    else -> null
+                },
+                endToStart = { viewModel.cancel(item) },
+                endIconRes = R.drawable.ic_action_close,
             )
         }
     }
+
+/**
+ * D19: the swipe box around one download row. The swipe runs the action
+ * and the row snaps back — it never dismisses the row itself, so a swipe
+ * can never silently delete a download. The background names the action
+ * while the finger is down: jade pause/play one way, danger × the other.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SwipeableDownloadRow(
+    swipeActions: SwipeActions,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    val dismissState = rememberSwipeToDismissBoxState(
+        confirmValueChange = { value ->
+            when (value) {
+                SwipeToDismissBoxValue.DismissedToEnd -> swipeActions.startToEnd?.invoke()
+                SwipeToDismissBoxValue.DismissedToStart -> swipeActions.endToStart?.invoke()
+                SwipeToDismissBoxValue.Settled -> Unit
+            }
+            // The swipe is a shortcut, not a removal: always snap back.
+            false
+        },
+    )
+    SwipeToDismissBox(
+        state = dismissState,
+        modifier = modifier,
+        backgroundContent = {
+            val direction = dismissState.dismissDirection
+            if (direction != SwipeToDismissBoxValue.Settled) {
+                val toEnd = direction == SwipeToDismissBoxValue.DismissedToEnd
+                Row(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(RaddTokens.Shape.Card)
+                        .background(
+                            if (toEnd) MaterialTheme.colorScheme.primaryContainer
+                            else MaterialTheme.colorScheme.errorContainer,
+                        )
+                        .padding(horizontal = RaddTokens.Space.Lg),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = if (toEnd) Arrangement.Start else Arrangement.End,
+                ) {
+                    val iconRes = if (toEnd) swipeActions.startIconRes else swipeActions.endIconRes
+                    iconRes?.let {
+                        Icon(
+                            painter = painterResource(it),
+                            contentDescription = null,
+                            tint = if (toEnd) MaterialTheme.colorScheme.onPrimaryContainer
+                            else MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.size(24.dp),
+                        )
+                    }
+                }
+            }
+        },
+        enableDismissFromStartToEnd = swipeActions.startToEnd != null,
+        enableDismissFromEndToStart = swipeActions.endToStart != null,
+    ) { content() }
 }
 
 /** "2.4 GB", "32 GB" — a whole number of gigabytes reads without its ".0". */

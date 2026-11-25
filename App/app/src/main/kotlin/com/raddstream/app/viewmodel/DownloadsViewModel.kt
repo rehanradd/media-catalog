@@ -11,7 +11,9 @@ import com.raddstream.app.data.cache.CacheTaskEntity
 import com.raddstream.app.data.cache.CacheTaskState
 import com.raddstream.app.data.cache.KeepTtlHolder
 import com.raddstream.app.data.cache.OfflineCacheEngine
+import com.raddstream.app.data.downloads.DOWNLOAD_STALL_AFTER_MS
 import com.raddstream.app.data.downloads.DeviceDownload
+import com.raddstream.app.data.downloads.DeviceDownloadState
 import com.raddstream.app.data.downloads.DeviceDownloadsRepository
 import com.raddstream.app.data.downloads.DownloadSpeed
 import com.raddstream.app.data.downloads.SmartDownloadsRunner
@@ -24,7 +26,10 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -72,6 +77,25 @@ data class KeptItem(
      * engine stores stable tokens; this is the mapped sentence, never the raw token.
      */
     val failureReason: String? = null,
+    /**
+     * D12: the engine's attempt counter for this task (0 = never recorded) —
+     * the row names its attempt when it fails, so a retry is a counted try.
+     */
+    val attempt: Int = 0,
+    /**
+     * D11: true when this keep has been downloading with no byte movement
+     * for longer than [DOWNLOAD_STALL_AFTER_MS] — the row says "Stalled",
+     * not "calculating…". Computed in [toKeptItem] from the per-task
+     * last-movement marks; false for every non-downloading state.
+     */
+    val stalled: Boolean = false,
+    /**
+     * D10: the catalog poster's URL when this keep's post is already in the
+     * app's cache — the row paints real art instead of the initials tile.
+     * Null when the post was never cached (the common case for a keep made
+     * from a bare handle): the tile stands in, never a fetched poster.
+     */
+    val posterUrl: String? = null,
 ) {
     val progress: Float
         get() = if (bytesTotal > 0) (bytesDownloaded.toFloat() / bytesTotal.toFloat()).coerceIn(0f, 1f) else 0f
@@ -163,6 +187,14 @@ data class DownloadsUiState(
     val statusMessage: String? = null,
     /** The notice names a sweep deletion that can still be undone (re-downloaded). */
     val canUndoSweep: Boolean = false,
+    /** D13: true while a pull-to-refresh re-read is in flight — the spinner. */
+    val isRefreshing: Boolean = false,
+    /**
+     * D13: a tick that changes on every refresh, so the pull-to-refresh
+     * re-read always reaches the screen even when the lists themselves are
+     * unchanged — a StateFlow does not re-emit an equal list.
+     */
+    val refreshTick: Long = 0L,
 ) {
     val hasAnything: Boolean get() = deviceDownloads.isNotEmpty() || items.isNotEmpty()
 
@@ -211,6 +243,26 @@ class DownloadsViewModel @Inject constructor(
     /** Keeps the last sweep deleted, so Undo can re-queue them (fresh download, bytes are gone). */
     private var lastSwept: List<KeptItem> = emptyList()
 
+    /**
+     * D15: ids of rows already finished when this ViewModel first saw
+     * them — they complete silently; only a row that finishes WHILE the
+     * screen is open announces itself.
+     */
+    private val knownReadyIds = mutableSetOf<String>()
+    private var seededReady = false
+    private val _completionEvents = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    /**
+     * D15: one event per row that finishes while the screen is open — the
+     * screen ticks the haptic once per event.
+     */
+    val completionEvents: SharedFlow<String> = _completionEvents.asSharedFlow()
+
+    /** D11: per-task (bytes, last-movement time) for keeps — the stall clock. */
+    private val keepProgressMarks = mutableMapOf<Long, Pair<Long, Long>>()
+
+    /** D13: the last task rows seen, so a pull-to-refresh can re-project without waiting for the engine to emit. */
+    private var lastTasks: List<CacheTaskEntity> = emptyList()
+
     init {
         viewModelScope.launch {
             settingsRepository.autoDeleteWatched.collect { autoDeleteWatched = it }
@@ -225,20 +277,95 @@ class DownloadsViewModel @Inject constructor(
         }
         viewModelScope.launch {
             cacheRepository.tasksFlow().collect { rows ->
+                lastTasks = rows
                 val items = rows.mapNotNull(::toKeptItem)
                 _uiState.update { it.copy(items = items, isLoading = false) }
+                noteReady()
                 sweepWatched(items)
             }
         }
         viewModelScope.launch {
             deviceDownloads.downloads.collect { rows ->
                 _uiState.update { it.copy(deviceDownloads = rows, isLoading = false) }
+                noteReady()
             }
         }
     }
 
+    /**
+     * D13: a real refresh, not a spinner that lies — re-read storage,
+     * re-project the last task rows (with fresh stall marks and rates),
+     * and bump [DownloadsUiState.refreshTick] so the re-read reaches the
+     * screen even when the lists are unchanged. No repo change: the engine
+     * owns its rows; this screen only re-reads what it already holds.
+     */
     fun refresh() {
-        viewModelScope.launch { _uiState.update { it.copy(storage = readStorage()) } }
+        viewModelScope.launch {
+            _uiState.update { it.copy(isRefreshing = true, storage = readStorage()) }
+            val items = lastTasks.mapNotNull(::toKeptItem)
+            _uiState.update {
+                it.copy(items = items, isRefreshing = false, refreshTick = System.currentTimeMillis())
+            }
+            noteReady()
+        }
+    }
+
+    /**
+     * D15: announce a row that finishes while this screen is open. The
+     * first sighting seeds the known set silently — a row that was already
+     * finished when Downloads opened is not news. A finished row that
+     * leaves the list is pruned, so re-adding it later announces again.
+     * Each new finish emits one [completionEvents] event (the screen's
+     * haptic tick) and names the title in the status line, which the live
+     * region reads aloud.
+     */
+    private fun noteReady() {
+        val state = _uiState.value
+        val readyNow = state.items
+            .filter { it.state == KeepState.READY || it.state == KeepState.EXPIRING }
+            .map { "keep-${it.id}" } +
+            state.deviceDownloads
+                .filter { it.state == DeviceDownloadState.READY }
+                .map { "device-${it.id}" }
+        if (!seededReady) {
+            knownReadyIds.addAll(readyNow)
+            seededReady = true
+            return
+        }
+        val newly = readyNow.filterNot { it in knownReadyIds }
+        knownReadyIds.retainAll(readyNow.toSet())
+        knownReadyIds.addAll(newly)
+        if (newly.isEmpty()) return
+        viewModelScope.launch {
+            newly.forEach { id ->
+                _completionEvents.emit(id)
+                val title = state.items.firstOrNull { "keep-${it.id}" == id }?.title
+                    ?: state.deviceDownloads.firstOrNull { "device-${it.id}" == id }?.title
+                if (title != null) {
+                    _uiState.update { it.copy(statusMessage = "Download complete: $title.") }
+                }
+            }
+        }
+    }
+
+    /**
+     * D11: the keep-side stall clock — true only while the engine says
+     * LOADING and the byte count has not moved for longer than
+     * [DOWNLOAD_STALL_AFTER_MS]. A task that is not loading clears its
+     * mark, so a paused row never reads as stalled.
+     */
+    private fun isKeepStalled(task: CacheTaskEntity): Boolean {
+        if (task.stateEnum != CacheTaskState.LOADING) {
+            keepProgressMarks.remove(task.id)
+            return false
+        }
+        val now = System.currentTimeMillis()
+        val prev = keepProgressMarks[task.id]
+        if (prev == null || prev.first != task.downloadedBytes) {
+            keepProgressMarks[task.id] = task.downloadedBytes to now
+            return false
+        }
+        return now - prev.second > DOWNLOAD_STALL_AFTER_MS
     }
 
     /**
@@ -485,6 +612,13 @@ class DownloadsViewModel @Inject constructor(
             // keep (0 = unknown, never auto-deleted); see CacheSeeds.
             postId = task.releaseId.toInt().takeIf { it > 0 } ?: 0,
             failureReason = if (state == KeepState.FAILED) failureReasonFor(task.lastError) else null,
+            attempt = task.attempt,
+            stalled = isKeepStalled(task),
+            // D10: real art only when the post is already cached — the
+            // in-memory lookup never fetches, so an uncached post stays
+            // on the initials tile instead of inventing a poster.
+            posterUrl = task.releaseId.toInt().takeIf { it > 0 }
+                ?.let { catalogRepository.cachedPost(it)?.posterUrl },
         )
     }
 
