@@ -2,11 +2,8 @@ package com.raddstream.app.ui.screens
 
 import androidx.compose.ui.graphics.Color
 import com.raddstream.app.ui.theme.RaddChipBorderSoft
-import com.raddstream.app.ui.theme.RaddCurrentContainerDark
-import com.raddstream.app.ui.theme.RaddInk850
-import com.raddstream.app.ui.theme.RaddInk900
+import com.raddstream.app.ui.theme.RaddInk750
 import com.raddstream.app.ui.theme.RaddSettingsCard
-import com.raddstream.app.ui.theme.RaddTideContainerDark
 import com.raddstream.app.ui.theme.contrastRatio
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -43,19 +40,15 @@ class SettingsAuditFixesTest {
     }
 
     /**
-     * Round 2 (ST1): the cards stopped sharing one flat fill — each group
-     * has its own tone now, and the border must clear 3:1 on every one of
-     * them, not just the old card. surfaceContainerHigh is excluded because
-     * no group uses it as a chip-bearing fill (with the #787878 border it
-     * would clear 3:1 too).
+     * Round 5 (ST1): the cards share ONE fill now — surfaceContainerHighest,
+     * one tonal step above the group shell — so the border is measured on
+     * that fill, not on the round-2 per-group tones. #7C7C7C clears 3:1 on
+     * it (3.11:1); the old #787878 measured 2.94:1 there and failed.
      */
     @Test
     fun unselectedChipBorderClearsComponentBarOnEveryGroupFill() {
         val fills = mapOf(
-            "primaryContainer" to RaddCurrentContainerDark,
-            "tertiaryContainer" to RaddTideContainerDark,
-            "surfaceContainerLow" to RaddInk900,
-            "surfaceContainer" to RaddInk850,
+            "surfaceContainerHighest" to RaddInk750,
         )
         for ((name, fill) in fills) {
             val ratio = contrastRatio(RaddChipBorderSoft, fill)
