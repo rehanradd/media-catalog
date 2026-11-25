@@ -170,6 +170,8 @@ jobs:
             --tests "com.raddstream.app.ui.PlayerLandscapePaparazziTest" \
             --tests "com.raddstream.app.ui.screens.DetailLargeFontPaparazziTest" \
             --tests "com.raddstream.app.ui.screens.SettingsLargeFontPaparazziTest" \
+            --tests "com.raddstream.app.ui.DownloadsPaparazziTest" \
+            --tests "com.raddstream.app.ui.DownloadsPaparazziLargeFontTest" \
             --no-daemon --stacktrace --console=plain
 
       - name: 📤 Upload debug APK

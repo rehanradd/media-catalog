@@ -450,10 +450,13 @@ tasks.withType<Test>().configureEach {
                 // record run succeeds vacuously (no golden in the artifact) and
                 // the plain run fails it with paparazzi#1979 Bridge.init.
                 includeTestsMatching("com.raddstream.app.ui.screens.SettingsLargeFontPaparazziTest")
+                includeTestsMatching("com.raddstream.app.ui.DownloadsPaparazziTest")
+                includeTestsMatching("com.raddstream.app.ui.DownloadsPaparazziLargeFontTest")
             } else {
                 excludeTestsMatching("com.raddstream.app.ui.PaparazziPreviewTest")
                 excludeTestsMatching("com.raddstream.app.ui.PlayerLandscapePaparazziTest")
                 excludeTestsMatching("com.raddstream.app.ui.DownloadsPaparazziTest")
+                excludeTestsMatching("com.raddstream.app.ui.DownloadsPaparazziLargeFontTest")
                 excludeTestsMatching("com.raddstream.app.ui.navigation.BottomNavLargeFontPaparazziTest")
                 excludeTestsMatching("com.raddstream.app.ui.screens.DetailLargeFontPaparazziTest")
                 excludeTestsMatching("com.raddstream.app.ui.screens.SettingsLargeFontPaparazziTest")

@@ -3,7 +3,10 @@ package com.raddstream.app.viewmodel
 import com.raddstream.app.data.downloads.DeviceDownload
 import com.raddstream.app.data.downloads.DeviceDownloadState
 import com.raddstream.app.data.local.WatchHistoryEntity
+import com.raddstream.app.ui.screens.deviceAttemptLine
 import com.raddstream.app.ui.screens.keepActionLabel
+import com.raddstream.app.ui.screens.keepAttemptLine
+import com.raddstream.app.ui.screens.qualityBadgeParts
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
@@ -213,6 +216,31 @@ class DownloadsRulesTest {
         // The park reasons are states, not failures: they never reach this mapping.
         assertNull(failureReasonFor("gated"))
         assertNull(failureReasonFor("no_space"))
+    }
+
+    @Test
+    fun `quality badge splits the label, rank labels stay whole`() {
+        // D21: the badge takes the quality token; the rest stays a label.
+        // "Rank #1" is not a quality, so it stays whole (run-9 rule).
+        assertEquals("1080p" to "High bitrate", qualityBadgeParts("1080p · High bitrate"))
+        assertEquals("720p" to null, qualityBadgeParts("720p"))
+        assertEquals("4K" to "HDR", qualityBadgeParts("4K · HDR"))
+        assertEquals(null to "Rank #1", qualityBadgeParts("Rank #1"))
+        assertEquals(null to null, qualityBadgeParts(null))
+        assertEquals(null to null, qualityBadgeParts(""))
+        assertEquals(null to null, qualityBadgeParts("   "))
+    }
+
+    @Test
+    fun `attempt lines count tries, unrecorded counts say nothing`() {
+        // D12: a retry is a counted try; a count that was never recorded
+        // renders nothing rather than inventing "Attempt 1".
+        assertEquals("Attempt 2 of 6", keepAttemptLine(2))
+        assertEquals("Attempt 1 of 6", keepAttemptLine(1))
+        assertNull(keepAttemptLine(0))
+        assertEquals("Attempt 2", deviceAttemptLine(2))
+        assertEquals("Attempt 1", deviceAttemptLine(1))
+        assertNull(deviceAttemptLine(0))
     }
 
     @Test

@@ -644,6 +644,11 @@ class DownloadService : Service() {
             .setContentTitle(entry.title)
             .setContentText(text)
             .setOnlyAlertOnce(true)
+            // D6: a download's notification is public on the lock screen —
+            // progress + Pause/Cancel actions, not a hidden "content
+            // hidden" stub. (No MediaSession chip: the notification carries
+            // no media session, so there is nothing more to surface.)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setContentIntent(openAppIntent())
             .setOngoing(state == DeviceDownloadState.DOWNLOADING ||
                 state == DeviceDownloadState.QUEUED)
@@ -669,6 +674,8 @@ class DownloadService : Service() {
             .setContentTitle(title)
             .setContentText("Download complete · Movies/$SUBDIR")
             .setAutoCancel(true)
+            // D6: the completion notice is public on the lock screen too.
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setContentIntent(openAppIntent())
             .build()
 
@@ -788,7 +795,10 @@ class DownloadService : Service() {
         private const val SUBDIR = "RaddStream"
         private const val SEGMENT_DIR = "segmented"
         private const val CHUNK_BYTES = 64 * 1024
-        private const val NOTIFY_INTERVAL_MS = 750L
+        // D8: the progress tick is 250 ms, not 750 — the row and the
+        // notification track a moving download instead of jumping in
+        // three-quarter-second steps.
+        private const val NOTIFY_INTERVAL_MS = 250L
 
         /** Null when the transfer provably completed as video; otherwise the failure reason. */
         internal fun completionDefect(downloaded: Long, total: Long, contentType: String): String? =

@@ -140,7 +140,11 @@ class DownloadRowLabelTest {
                 )
             }
         }
-        compose.onNodeWithText("1080p · High bitrate").assertIsDisplayed()
+        // D21: the quality is a badge now — "1080p" never truncates — and
+        // the rest of the label rides beside it; the spoken line is
+        // unchanged, so the run-9 rule still holds.
+        compose.onNodeWithText("1080p").assertIsDisplayed()
+        compose.onNodeWithText("High bitrate").assertIsDisplayed()
         compose.onNode(hasContentDescription("Fall — 1080p · High bitrate")).assertIsDisplayed()
     }
 }
