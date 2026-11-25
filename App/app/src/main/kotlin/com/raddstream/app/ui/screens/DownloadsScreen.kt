@@ -1,7 +1,17 @@
 package com.raddstream.app.ui.screens
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -17,8 +27,9 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -26,25 +37,30 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import com.raddstream.app.R
@@ -80,6 +96,7 @@ import com.raddstream.app.viewmodel.KeepState
 import com.raddstream.app.viewmodel.KeepRoute
 import com.raddstream.app.viewmodel.KeptItem
 import com.raddstream.app.viewmodel.StorageInfo
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -145,9 +162,72 @@ fun DownloadsScreen(
         },
     ) { contentPadding ->
         // D19: pull-to-refresh — the same refresh the top-bar button runs.
+        // Round 6: the indicator is a tonal circle whose scale and alpha
+        // ride the expressive spatial/effects springs as the finger drags —
+        // the M3 default snaps, this one eases in and out. Invisible at
+        // rest (distanceFraction 0), so the goldens are unaffected;
+        // reduced motion snaps it in instead. While refreshing the target
+        // is 1f, so the spinner stays fully visible for the whole refresh
+        // even after the finger lifts.
+        val pullState = rememberPullToRefreshState()
+        val reduceMotion = rememberReduceMotion()
         PullToRefreshBox(
             isRefreshing = state.isRefreshing,
             onRefresh = viewModel::refresh,
+            state = pullState,
+            indicator = {
+                val pullTarget = if (state.isRefreshing) 1f else pullState.distanceFraction
+                val pullFraction by animateFloatAsState(
+                    targetValue = pullTarget,
+                    animationSpec = if (reduceMotion) snap() else RaddMotion.defaultSpatial(),
+                    label = "pullScale",
+                )
+                val pullAlpha by animateFloatAsState(
+                    targetValue = pullTarget,
+                    animationSpec = if (reduceMotion) snap() else RaddMotion.defaultEffects(),
+                    label = "pullAlpha",
+                )
+                if (pullFraction > 0f) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .graphicsLayer {
+                                scaleX = pullFraction
+                                scaleY = pullFraction
+                                alpha = pullAlpha
+                            },
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            tonalElevation = 4.dp,
+                            shadowElevation = 4.dp,
+                        ) {
+                            Box(
+                                modifier = Modifier.size(40.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                if (state.isRefreshing) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(28.dp),
+                                        color = MaterialTheme.colorScheme.primary,
+                                        trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                                        strokeWidth = 3.dp,
+                                    )
+                                } else {
+                                    CircularProgressIndicator(
+                                        progress = { pullState.distanceFraction },
+                                        modifier = Modifier.size(28.dp),
+                                        color = MaterialTheme.colorScheme.primary,
+                                        trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                                        strokeWidth = 3.dp,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
             modifier = Modifier.fillMaxSize().padding(contentPadding),
         ) {
         LazyColumn(
@@ -207,22 +287,29 @@ fun DownloadsScreen(
                 item {
                     NoticeCard(DOWNLOADS_QUIET_LINE)
                 }
-                items(
+                itemsIndexed(
                     state.allDownloads,
-                    key = { row ->
+                    key = { _, row ->
                         when (row) {
                             is DownloadRow.Device -> "device-${row.download.id}"
                             is DownloadRow.Keep -> "keep-${row.item.id}"
                         }
                     },
-                ) { row ->
+                ) { index, row ->
                     // D16 + D19: a row glides to its new place when the list
                     // changes, and a swipe runs the row's own actions —
                     // pause/resume one way, cancel/delete the other — never
                     // gesture-only, the buttons stay.
+                    // Round 6: the entrance stagger — rows fade + rise in
+                    // with the expressive spring on load and when a new
+                    // download is added; animateItem stays on the outer
+                    // wrapper so placement still glides.
+                    DownloadRowEntrance(
+                        index = index,
+                        modifier = Modifier.animateItem(),
+                    ) {
                     SwipeableDownloadRow(
                         swipeActions = downloadSwipeActions(row, viewModel),
-                        modifier = Modifier.animateItem(),
                     ) {
                     when (row) {
                         is DownloadRow.Device -> DeviceDownloadRow(
@@ -258,6 +345,7 @@ fun DownloadsScreen(
                             onPause = { viewModel.pause(row.item) },
                             onUpgrade = onOpenVipUpgrade,
                         )
+                    }
                     }
                     }
                 }
@@ -309,6 +397,48 @@ fun DownloadsScreen(
             }
         }
         }
+    }
+}
+
+/**
+ * Round 6 (Downloads): row entrance stagger — the Home rail pattern.
+ * Rows enter with a spring stagger (index × 60ms) on load and when a new
+ * download is added (a new key gets a fresh entrance; rows already on
+ * screen keep their remembered visible state, so they do not re-animate
+ * when the list shifts). Fade + short rise on the expressive specs;
+ * reduced motion gets a plain fade. Paparazzi renders with a frozen
+ * clock, so in inspection mode the entrance is already over and the
+ * golden shows what the phone shows after it settles.
+ */
+@Composable
+private fun DownloadRowEntrance(
+    index: Int,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    val inInspectionMode = LocalInspectionMode.current
+    val reduceMotion = rememberReduceMotion()
+    var visible by remember { mutableStateOf(inInspectionMode) }
+    LaunchedEffect(Unit) {
+        if (inInspectionMode) return@LaunchedEffect
+        delay(index * 60L)
+        visible = true
+    }
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(
+            animationSpec = if (reduceMotion) snap() else RaddMotion.defaultEffects(),
+        ) + if (reduceMotion) {
+            EnterTransition.None
+        } else {
+            slideInVertically(
+                initialOffsetY = { it / 4 },
+                animationSpec = RaddMotion.defaultSpatial(),
+            )
+        },
+        modifier = modifier,
+    ) {
+        content()
     }
 }
 
@@ -466,12 +596,15 @@ internal fun DeviceDownloadRow(
 ) {
     val cleanTitle = cleanDownloadTitle(item.title)
     // D8 + D16: the bar glides between ticks instead of jumping — the
-    // displayed share animates to the live one on the S7 250ms spring.
-    // Reduced motion: the bar snaps to the live value, no glide.
+    // displayed share animates to the live one on the expressive spatial
+    // spring (round 6: was the 250ms tween, now the MotionScheme spatial
+    // spec — the bar springs, eased, as progress updates, not a linear
+    // jump per update). Reduced motion: the bar snaps to the live value,
+    // no glide.
     val reduceMotion = rememberReduceMotion()
     val animatedProgress by animateFloatAsState(
         targetValue = item.progress,
-        animationSpec = RaddMotion.default(),
+        animationSpec = RaddMotion.defaultSpatial(),
         label = "downloadProgress",
     )
     val shownProgress = if (reduceMotion) item.progress else animatedProgress
@@ -519,7 +652,30 @@ internal fun DeviceDownloadRow(
                 // download is moving.
                 sizeText = if (item.bytesTotal > 0) formatMiB(item.bytesTotal) else null,
             )
-            when (item.state) {
+            // Round 6: a state change animates — the status content fades
+            // + scales in on the expressive effects spec while the old one
+            // fades + scales out, so downloading → completed/failed/paused
+            // reads as a change, not a swap. The progress bar collapses
+            // with the old content. On first composition AnimatedContent
+            // shows the initial content directly, so Paparazzi goldens
+            // show the settled state.
+            AnimatedContent(
+                targetState = item.state,
+                transitionSpec = {
+                    (fadeIn(animationSpec = RaddMotion.defaultEffects()) +
+                        scaleIn(
+                            initialScale = 0.92f,
+                            animationSpec = RaddMotion.defaultEffects(),
+                        )) togetherWith
+                        (fadeOut(animationSpec = RaddMotion.defaultEffects()) +
+                            scaleOut(
+                                targetScale = 0.92f,
+                                animationSpec = RaddMotion.defaultEffects(),
+                            ))
+                },
+                label = "deviceDownloadStateChange",
+            ) { rowState ->
+            when (rowState) {
                 DeviceDownloadState.DOWNLOADING -> {
                     // Restyle 2026-11-13: rounded ends + a visible track — the bar
                     // reads as a progress bar, not a hairline. Jade now, so the
@@ -633,6 +789,7 @@ internal fun DeviceDownloadRow(
                         )
                     }
                 }
+            }
             }
         }
         Row(
@@ -758,7 +915,12 @@ internal fun deviceProgressLine(item: DeviceDownload): String {
         "Stalled — check connection"
     } else if (item.bytesPerSec > 0) {
         DownloadSpeed.formatSpeed(item.bytesPerSec) +
-            (DownloadSpeed.formatEta(item.etaSeconds)?.let { " · $it" } ?: "")
+            // Round 6: drop the "about " from the ETA — "12.0 MB/s · 1 min
+            // left" fits the meta line in 2 lines at 1.0x, while "about 1
+            // min left" wrapped to a third line with "left" orphaned.
+            // formatEta itself keeps "about " (its test pins it, and the
+            // notification uses it) — only the row line trims it.
+            (DownloadSpeed.formatEta(item.etaSeconds)?.let { " · ${it.removePrefix("about ")}" } ?: "")
     } else {
         "calculating…"
     }
@@ -787,11 +949,12 @@ internal fun KeptItemRow(
 ) {
     val cleanTitle = cleanDownloadTitle(item.title)
     // D8 + D16: same glide as the device row — the bar animates to the live
-    // share on the S7 250ms spring; reduced motion snaps to the live value.
+    // share on the expressive spatial spring (round 6: was the 250ms tween);
+    // reduced motion snaps to the live value.
     val reduceMotion = rememberReduceMotion()
     val animatedProgress by animateFloatAsState(
         targetValue = item.progress,
-        animationSpec = RaddMotion.default(),
+        animationSpec = RaddMotion.defaultSpatial(),
         label = "keepProgress",
     )
     val shownProgress = if (reduceMotion) item.progress else animatedProgress
@@ -822,7 +985,29 @@ internal fun KeptItemRow(
                 printLabelDescription = item.printLabelDescription(),
                 sizeText = if (item.bytesTotal > 0) formatMiB(item.bytesTotal) else null,
             )
-            when (item.state) {
+            // Round 6: a state change animates — same fade + scale on the
+            // expressive effects spec as the device row, so downloading →
+            // completed/failed/paused reads as a change, not a swap. The
+            // progress bar collapses with the old content. On first
+            // composition AnimatedContent shows the initial content
+            // directly, so Paparazzi goldens show the settled state.
+            AnimatedContent(
+                targetState = item.state,
+                transitionSpec = {
+                    (fadeIn(animationSpec = RaddMotion.defaultEffects()) +
+                        scaleIn(
+                            initialScale = 0.92f,
+                            animationSpec = RaddMotion.defaultEffects(),
+                        )) togetherWith
+                        (fadeOut(animationSpec = RaddMotion.defaultEffects()) +
+                            scaleOut(
+                                targetScale = 0.92f,
+                                animationSpec = RaddMotion.defaultEffects(),
+                            ))
+                },
+                label = "keepStateChange",
+            ) { rowState ->
+            when (rowState) {
                 KeepState.DOWNLOADING, KeepState.NO_SPACE -> {
                     // Restyle 2026-11-13: rounded ends + a visible track, same as
                     // the active-download bar above — one progress language. Jade now.
@@ -941,6 +1126,7 @@ internal fun KeptItemRow(
                         )
                     }
                 }
+            }
             }
         }
         Row(
@@ -1156,7 +1342,9 @@ internal fun keepProgressLine(item: KeptItem): String {
         "Stalled — check connection"
     } else if (item.bytesPerSec > 0) {
         DownloadSpeed.formatSpeed(item.bytesPerSec) +
-            (DownloadSpeed.formatEta(item.etaSeconds)?.let { " · $it" } ?: "")
+            // Round 6: same "about " trim as the device row — the ETA
+            // reads "1 min left" and the meta line fits in 2 lines.
+            (DownloadSpeed.formatEta(item.etaSeconds)?.let { " · ${it.removePrefix("about ")}" } ?: "")
     } else {
         "calculating…"
     }
@@ -1254,8 +1442,10 @@ internal fun DownloadsEmptyPreview() {
                 )
                 // D11: the sample row shows a download that is MOVING — the
                 // old "calculating…" was the stale copy this round replaces.
+                // Round 6: the ETA reads "1 min left" (the "about " trim
+                // the real rows got) so the sample matches the live copy.
                 Text(
-                    "45% · 540 MB / 1.2 GB · 12.0 MB/s · about 1 min left",
+                    "45% · 540 MB / 1.2 GB · 12.0 MB/s · 1 min left",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
