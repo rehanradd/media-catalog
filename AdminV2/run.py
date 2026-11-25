@@ -18,7 +18,8 @@ backup before first live use — see the Phase 2 handoff):
     RADD_CERT_PATH       fullchain.pem for the cert-expiry read
     RADD_FLEET_DIR       Fast_Fetch dir (crawler scripts)
     RADD_TOTP_KEY        base64 TOTP encryption key (rotated 2026-11-11;
-                         the shipped default must never be used live).
+                         REQUIRED — the panel exits without it, there is
+                         no default key; see PNL-04).
   --background-jobs starts the opt-in staggered domain-health +
   daily-analytics thread (OD-10). Off by default.
 """
@@ -36,16 +37,33 @@ from admin_v2.services import Service
 
 
 def _totp_key():
-    """TOTP encryption key from RADD_TOTP_KEY (base64), or None to let
-    the Service use its default (fixture only — never live)."""
+    """TOTP encryption key from RADD_TOTP_KEY (base64).
+
+    Fail closed (PNL-04): the panel refuses to start when the key is
+    missing, is not valid base64, or decodes to fewer than 16 bytes.
+    There is no default key — a previous build silently fell back to
+    a public literal in that case, and that fallback is removed. The
+    key value is never printed or logged; the errors name only the
+    variable and the requirement.
+    """
     raw = os.environ.get("RADD_TOTP_KEY", "").strip()
     if not raw:
-        return None
+        raise SystemExit(
+            "RADD_TOTP_KEY is not set: the admin panel refuses to start "
+            "without a TOTP encryption key (base64, at least 16 bytes). "
+            "There is no default key.")
     try:
         key = base64.b64decode(raw, validate=True)
     except Exception:
-        return None
-    return key if len(key) >= 16 else None
+        raise SystemExit(
+            "RADD_TOTP_KEY is not valid base64: the admin panel refuses "
+            "to start. Set it to a base64 key of at least 16 bytes. "
+            "There is no default key.") from None
+    if len(key) < 16:
+        raise SystemExit(
+            "RADD_TOTP_KEY is too short (decodes to fewer than 16 bytes): "
+            "the admin panel refuses to start. There is no default key.")
+    return key
 
 
 def main():
@@ -58,10 +76,10 @@ def main():
     parser.add_argument("--background-jobs", action="store_true",
                         help="Start the opt-in staggered domain-health + daily analytics thread.")
     args = parser.parse_args()
-    totp_key = _totp_key()
+    totp_key = _totp_key()  # fail closed (SystemExit) when unset/invalid
     svc = Service(
         args.base_dir,
-        totp_key=totp_key if totp_key is not None else b"workspace-totp-key-change-at-gate",
+        totp_key=totp_key,
         live_catalog_path=os.environ.get("RADD_CATALOG_DB"),
         live_ledger_path=os.environ.get("RADD_USER_STATE_DB"),
         live_registry_path=os.environ.get("RADD_DOMAIN_REGISTRY"),

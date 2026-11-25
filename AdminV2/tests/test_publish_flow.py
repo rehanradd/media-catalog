@@ -10,7 +10,7 @@ import unittest
 import urllib.parse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from helpers import make_service  # noqa: E402
+from helpers import make_service, TEST_TOTP_KEY  # noqa: E402
 from admin_v2.live_stores import LiveStores  # noqa: E402
 from admin_v2.server import AdminApp  # noqa: E402
 from admin_v2.services import Service  # noqa: E402
@@ -51,7 +51,7 @@ class PublishFlowBase(unittest.TestCase):
         conn.commit()
         conn.close()
         self.live = LiveStores(catalog_path=self.catalog_path)
-        self.svc = Service(os.path.join(self.tmp, "admin"), live=self.live)
+        self.svc = Service(os.path.join(self.tmp, "admin"), totp_key=TEST_TOTP_KEY, live=self.live)
         owner_id = self.svc.create_owner("owner", "correct horse battery staple")
         self.owner = {"id": owner_id, "username": "owner", "role": "owner"}
         res = self.svc.login("owner", "correct horse battery staple")

@@ -12,6 +12,7 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from helpers import TEST_TOTP_KEY  # noqa: E402
 from admin_v2.errors import ApiError  # noqa: E402
 from admin_v2.live_stores import (  # noqa: E402
     LiveStores,
@@ -66,7 +67,7 @@ class LiveTvBase(unittest.TestCase):
             json.dump(REGISTRY, fh, indent=2)
         self.live = LiveStores(fleet_base_dir=self.fleet_dir)
         self.admin_dir = os.path.join(self.tmp, "admin")
-        self.svc = Service(self.admin_dir, live=self.live)
+        self.svc = Service(self.admin_dir, totp_key=TEST_TOTP_KEY, live=self.live)
         self.owner_id = self.svc.create_owner("owner", "correct horse battery staple")
         self.owner = {"id": self.owner_id, "username": "owner", "role": "owner"}
         self.auditor = {"id": 999, "username": "auditor", "role": "auditor"}

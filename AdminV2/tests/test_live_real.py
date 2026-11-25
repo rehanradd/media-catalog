@@ -15,7 +15,7 @@ import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from helpers import good_checker, make_service  # noqa: E402
+from helpers import good_checker, make_service, TEST_TOTP_KEY  # noqa: E402
 from admin_v2 import fixture_app, templates  # noqa: E402
 from admin_v2.live_stores import LiveStores, account_hint, fleet_command  # noqa: E402
 from admin_v2.server import AdminApp  # noqa: E402
@@ -259,7 +259,7 @@ class LiveBase(unittest.TestCase):
             fleet_base_dir="/opt/radd-stream/Fast_Fetch",
             fleet_runner=_fake_runner)
         self.admin_dir = os.path.join(self.tmp, "admin")
-        self.svc = Service(self.admin_dir, live=self.live)
+        self.svc = Service(self.admin_dir, totp_key=TEST_TOTP_KEY, live=self.live)
         self.owner_id = self.svc.create_owner("owner", "correct horse battery staple")
         self.owner = {"id": self.owner_id, "username": "owner", "role": "owner"}
         self.auditor = {"id": 999, "username": "auditor", "role": "auditor"}
