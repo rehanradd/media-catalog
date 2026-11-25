@@ -23,14 +23,24 @@ Pinned here:
   keep-alive, timeouts reported (never retried);
 * single writer: concurrent submissions land sequentially, lock retries work,
   lock exhaustion fails loud, enrichment columns are never touched.
+* graceful stop (INF-05): SIGTERM/SIGINT only set the stop event (a second
+  signal still kills at once), workers stop after their in-flight URL, the
+  writer flushes what was earned, the run reports "stopped": true and
+  exits 0 — and the batch itself watches the STOP file, so an orphaned
+  child exits on its own.
 """
 
 from __future__ import annotations
 
+import contextlib
 import http.client
+import io
+import json
 import os
+import signal
 import socket
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import threading
@@ -1138,7 +1148,7 @@ class EngineTests(unittest.TestCase):
     def test_run_pilot_apply_writes_verdicts_only(self):
         summary = fast_probe.run_pilot(
             self.conn, max_rows=10, workers=4, timeout=5.0, spacing_s=0.0,
-            session_factory=self.factory)
+            session_factory=self.factory, stop_file="")
         self.assertEqual(summary["mode"], "apply")
         self.assertEqual(summary["distinct_urls"], 4)   # a, b, gone, x
         self.assertEqual(summary["saved_by_dedup"], 1)  # a.mp4 twice
@@ -1160,10 +1170,11 @@ class EngineTests(unittest.TestCase):
     @_public_dns
     def test_run_compare_agreement(self):
         fast_probe.run_pilot(self.conn, max_rows=10, workers=4, timeout=5.0,
-                             spacing_s=0.0, session_factory=self.factory)
+                             spacing_s=0.0, session_factory=self.factory,
+                             stop_file="")
         summary = fast_probe.run_compare(
             self.conn, max_rows=10, workers=4, timeout=5.0, spacing_s=0.0,
-            session_factory=self.factory)
+            session_factory=self.factory, stop_file="")
         self.assertEqual(summary["mode"], "dry-run")
         self.assertEqual(summary["agreement"], 1.0)
         self.assertEqual(summary["rows_total"], 5)
@@ -1173,7 +1184,7 @@ class EngineTests(unittest.TestCase):
         self.conn.commit()
         summary = fast_probe.run_compare(
             self.conn, max_rows=10, workers=4, timeout=5.0, spacing_s=0.0,
-            session_factory=self.factory)
+            session_factory=self.factory, stop_file="")
         self.assertEqual(summary["agreed"], 4)
         self.assertEqual(summary["agreement"], 0.8)
         self.assertEqual(summary["disagreements"], {"dead->active": 1})
@@ -1218,6 +1229,321 @@ class ConnectTimeoutTests(unittest.TestCase):
 
     def test_explicit_timeout_passes_through(self):
         self.assertEqual(self._dial_timeout("example.com", 80, timeout=3.5), 3.5)
+
+# ── graceful stop (INF-05) ───────────────────────────────────────────────────
+
+_FAST_FETCH_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+class GracefulStopTests(unittest.TestCase):
+    """INF-05: a batch stops gracefully on a signal or the stop file.
+
+    Root cause (measured 2026-11-23/24): the sweep loop only read the STOP
+    file between batches — batches run 30 min to 14 h — so a gate stop
+    could only ever land as a hand-sent SIGTERM to the exact child PID,
+    which killed the child mid-write (queued verdicts lost) and counted
+    as a wrapper failure; and killing the WRAPPER orphaned the child,
+    which never reads the STOP file and kept writing through the backup
+    window (greenmotors: wrapper gone 18:54:17, child alive until
+    19:09:22). The fix: SIGTERM/SIGINT only set the stop event (a second
+    signal still kills at once), workers stop after their in-flight URL,
+    the writer flushes what was earned, the run reports "stopped": true
+    and exits 0 — and the batch itself watches the STOP file, so an
+    orphaned child exits on its own.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db = os.path.join(self.tmp.name, "cat.db")
+        self.conn = _make_ledger(self.db)
+        self.stop_path = os.path.join(self.tmp.name, "sweep.stop")
+
+    def tearDown(self):
+        self.conn.close()
+        self.tmp.cleanup()
+
+    @staticmethod
+    def _groups(urls):
+        return [{"url": u, "row_ids": [i + 1], "stored": None}
+                for i, u in enumerate(urls)]
+
+    def _insert_rows(self, hosts):
+        """hosts: {hostname: [path, ...]} unchecked rows, one per URL."""
+        rid = 0
+        for host, paths in hosts.items():
+            for path in paths:
+                rid += 1
+                url = "http://%s%s" % (host, path)
+                self.conn.execute(
+                    "INSERT INTO download_sources (id, source_url, final_url,"
+                    " checked_at, status, is_resumable, file_size_bytes)"
+                    " VALUES (?, ?, ?, NULL, 'active', 1, 999)",
+                    (rid, url, url))
+        self.conn.commit()
+        return rid
+
+    def _event_setting_factory(self, event, log, after=1):
+        """Fake factory answering 200 that sets *event* after *after* calls."""
+        calls = {"n": 0}
+
+        def behaviour(host, target, n, method="HEAD"):
+            calls["n"] += 1
+            if calls["n"] == after:
+                event.set()
+            return (200, {}, False)
+
+        return _make_factory(behaviour, log)
+
+    # ── _probe_host ──
+
+    @_public_dns
+    def test_probe_host_stops_when_event_preset(self):
+        event = threading.Event()
+        event.set()
+        log = []
+        stats = fast_probe._probe_host(
+            "a.example", self._groups(["http://a.example/1.mp4",
+                                       "http://a.example/2.mp4"]),
+            session_factory=_make_factory(_status_map({}), log),
+            timeout=5.0, spacing_s=0.0, headers=fast_probe.probe_headers(),
+            out_queue=None, stop_event=event, stop_file="")
+        self.assertTrue(stats["stopped"])
+        self.assertEqual(stats["probed"], 0)
+        self.assertEqual(stats["verdicts"], 0)
+        self.assertEqual([e for e in log if e[0] == "request"], [])
+
+    @_public_dns
+    def test_probe_host_stops_after_first_url_when_event_set_mid_walk(self):
+        event = threading.Event()
+        log = []
+        stats = fast_probe._probe_host(
+            "a.example", self._groups(["http://a.example/1.mp4",
+                                       "http://a.example/2.mp4",
+                                       "http://a.example/3.mp4"]),
+            session_factory=self._event_setting_factory(event, log),
+            timeout=5.0, spacing_s=0.0, headers=fast_probe.probe_headers(),
+            out_queue=None, stop_event=event, stop_file="")
+        self.assertTrue(stats["stopped"])
+        self.assertEqual(stats["probed"], 1)
+        self.assertEqual(stats["verdicts"], 1)
+        self.assertEqual(stats["results"]["http://a.example/1.mp4"][0],
+                         "active")
+
+    @_public_dns
+    def test_probe_host_stops_when_stop_file_present(self):
+        Path(self.stop_path).touch()
+        log = []
+        stats = fast_probe._probe_host(
+            "a.example", self._groups(["http://a.example/1.mp4"]),
+            session_factory=_make_factory(_status_map({}), log),
+            timeout=5.0, spacing_s=0.0, headers=fast_probe.probe_headers(),
+            out_queue=None, stop_event=None, stop_file=self.stop_path)
+        self.assertTrue(stats["stopped"])
+        self.assertEqual(stats["probed"], 0)
+
+    @_public_dns
+    def test_probe_host_stops_when_stop_file_appears_mid_walk(self):
+        log = []
+        calls = {"n": 0}
+
+        def behaviour(host, target, n, method="HEAD"):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                Path(self.stop_path).touch()
+            return (200, {}, False)
+
+        stats = fast_probe._probe_host(
+            "a.example", self._groups(["http://a.example/1.mp4",
+                                       "http://a.example/2.mp4"]),
+            session_factory=_make_factory(behaviour, log),
+            timeout=5.0, spacing_s=0.0, headers=fast_probe.probe_headers(),
+            out_queue=None, stop_event=None, stop_file=self.stop_path)
+        self.assertTrue(stats["stopped"])
+        self.assertEqual(stats["probed"], 1)
+
+    @_public_dns
+    def test_probe_host_ignores_missing_stop_file(self):
+        log = []
+        stats = fast_probe._probe_host(
+            "a.example", self._groups(["http://a.example/1.mp4"]),
+            session_factory=_make_factory(_status_map({}), log),
+            timeout=5.0, spacing_s=0.0, headers=fast_probe.probe_headers(),
+            out_queue=None, stop_event=None, stop_file=self.stop_path)
+        self.assertFalse(stats["stopped"])
+        self.assertEqual(stats["probed"], 1)
+
+    # ── run_pilot / run_compare ──
+
+    @_public_dns
+    def test_run_pilot_stops_before_pool_when_event_preset(self):
+        self._insert_rows({"a.example": ["/1.mp4", "/2.mp4"],
+                           "b.example": ["/3.mp4", "/4.mp4"]})
+        event = threading.Event()
+        event.set()
+        log = []
+        factory = _make_factory(_status_map({}), log)
+        summary = fast_probe.run_pilot(
+            self.conn, max_rows=10, workers=2, timeout=5.0, spacing_s=0.0,
+            session_factory=factory, stop_event=event, stop_file="")
+        self.assertTrue(summary["stopped"])
+        self.assertEqual(summary["distinct_urls"], 4)
+        self.assertEqual(summary["probed"], 0)
+        self.assertEqual(summary["writer"]["rows_written"], 0)
+        self.assertEqual(factory.created["n"], 0)  # no connection dialled
+
+    @_public_dns
+    def test_run_pilot_stops_mid_batch_and_flushes_earned_verdicts(self):
+        # One host, 40 distinct URLs, 0.2 s per probe: a full batch takes
+        # ~8 s; the stop lands at ~1.5 s (batch startup alone is ~0.5 s —
+        # writer connect + ensure_schema — so a 0.5 s stop would race the
+        # first probe), so only a few URLs are probed — and every verdict
+        # earned IS written (the writer flushes on stop).
+        self._insert_rows({"slow.example": ["/f%02d.mp4" % i for i in range(40)]})
+        log = []
+
+        def behaviour(host, target, n, method="HEAD"):
+            time.sleep(0.2)
+            return (200, {}, False)
+
+        factory = _make_factory(behaviour, log)
+        event = threading.Event()
+        stopper = threading.Thread(target=lambda: (time.sleep(1.5),
+                                                  event.set()),
+                                   daemon=True)
+        stopper.start()
+        summary = fast_probe.run_pilot(
+            self.conn, max_rows=1000, workers=1, timeout=5.0, spacing_s=0.0,
+            session_factory=factory, stop_event=event, stop_file="")
+        stopper.join(timeout=5)
+        self.assertTrue(summary["stopped"])
+        self.assertGreater(summary["probed"], 0)
+        self.assertLess(summary["probed"], 40)
+        self.assertEqual(summary["writer"]["rows_written"],
+                         summary["verdicts"])
+        self.assertLess(summary["elapsed_s"], 5.0)  # full batch is ~8 s
+        checked = self.conn.execute(
+            "SELECT COUNT(*) FROM download_sources"
+            " WHERE checked_at IS NOT NULL").fetchone()[0]
+        self.assertEqual(checked, summary["probed"])
+        remaining = self.conn.execute(
+            "SELECT COUNT(*) FROM download_sources"
+            " WHERE checked_at IS NULL").fetchone()[0]
+        self.assertEqual(remaining, 40 - summary["probed"])
+
+    @_public_dns
+    def test_run_pilot_stops_before_pool_when_stop_file_present(self):
+        self._insert_rows({"a.example": ["/1.mp4", "/2.mp4"]})
+        Path(self.stop_path).touch()
+        log = []
+        summary = fast_probe.run_pilot(
+            self.conn, max_rows=10, workers=2, timeout=5.0, spacing_s=0.0,
+            session_factory=_make_factory(_status_map({}), log),
+            stop_event=None, stop_file=self.stop_path)
+        self.assertTrue(summary["stopped"])
+        self.assertEqual(summary["probed"], 0)
+        self.assertEqual(summary["writer"]["rows_written"], 0)
+
+    @_public_dns
+    def test_run_compare_stops_before_pool_when_event_preset(self):
+        self._insert_rows({"a.example": ["/1.mp4"]})
+        event = threading.Event()
+        event.set()
+        summary = fast_probe.run_compare(
+            self.conn, max_rows=10, workers=2, timeout=5.0, spacing_s=0.0,
+            session_factory=_make_factory(_status_map({}), []),
+            stop_event=event, stop_file="")
+        self.assertTrue(summary["stopped"])
+        self.assertEqual(summary["rows_total"], 0)
+
+    # ── signal handlers ──
+
+    def test_install_handlers_first_signal_sets_event(self):
+        old_term = signal.getsignal(signal.SIGTERM)
+        old_int = signal.getsignal(signal.SIGINT)
+        try:
+            fast_probe._STOP_EVENT.clear()
+            fast_probe._STOP_SIGNAL_COUNT[0] = 0
+            event = fast_probe.install_stop_handlers()
+            self.assertFalse(event.is_set())
+            self.assertFalse(fast_probe.stop_requested())
+            signal.raise_signal(signal.SIGTERM)
+            for _ in range(500):
+                if event.is_set():
+                    break
+                time.sleep(0.01)
+            self.assertTrue(event.is_set())
+            self.assertTrue(fast_probe.stop_requested())
+        finally:
+            signal.signal(signal.SIGTERM, old_term)
+            signal.signal(signal.SIGINT, old_int)
+            fast_probe._STOP_EVENT.clear()
+            fast_probe._STOP_SIGNAL_COUNT[0] = 0
+
+    def test_first_signal_does_not_kill_process(self):
+        code = (
+            "import os, signal, sys, time\n"
+            "sys.path.insert(0, sys.argv[1])\n"
+            "import fast_probe\n"
+            "fast_probe.install_stop_handlers()\n"
+            "os.kill(os.getpid(), signal.SIGTERM)\n"
+            "t0 = time.time()\n"
+            "while not fast_probe.stop_requested() and time.time() - t0 < 5:\n"
+            "    time.sleep(0.01)\n"
+            "print('alive stopped=%s' % fast_probe.stop_requested())\n"
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", code, _FAST_FETCH_DIR],
+            capture_output=True, text=True, timeout=30)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("alive stopped=True", proc.stdout)
+
+    def test_second_signal_kills_process(self):
+        code = (
+            "import os, signal, sys, time\n"
+            "sys.path.insert(0, sys.argv[1])\n"
+            "import fast_probe\n"
+            "fast_probe.install_stop_handlers()\n"
+            "os.kill(os.getpid(), signal.SIGTERM)\n"
+            "t0 = time.time()\n"
+            "while not fast_probe.stop_requested() and time.time() - t0 < 5:\n"
+            "    time.sleep(0.01)\n"
+            "os.kill(os.getpid(), signal.SIGTERM)\n"
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", code, _FAST_FETCH_DIR],
+            capture_output=True, text=True, timeout=30)
+        self.assertEqual(proc.returncode, -signal.SIGTERM, proc.stderr)
+
+    # ── CLI ──
+
+    def test_main_apply_with_stop_file_present_returns_zero_and_stopped(self):
+        self._insert_rows({"a.example": ["/1.mp4", "/2.mp4"],
+                           "b.example": ["/3.mp4"]})
+        Path(self.stop_path).touch()
+        old_term = signal.getsignal(signal.SIGTERM)
+        old_int = signal.getsignal(signal.SIGINT)
+        try:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = fast_probe.main(["--apply", "--db", self.db,
+                                      "--max-rows", "10",
+                                      "--stop-file", self.stop_path])
+            summary = json.loads(out.getvalue())
+            self.assertEqual(rc, 0)
+            self.assertTrue(summary["stopped"])
+            self.assertEqual(summary["probed"], 0)
+            self.assertEqual(summary["writer"]["rows_written"], 0)
+            # Nothing was probed or written: every row still unchecked.
+            remaining = self.conn.execute(
+                "SELECT COUNT(*) FROM download_sources"
+                " WHERE checked_at IS NULL").fetchone()[0]
+            self.assertEqual(remaining, 3)
+        finally:
+            signal.signal(signal.SIGTERM, old_term)
+            signal.signal(signal.SIGINT, old_int)
+            fast_probe._STOP_EVENT.clear()
+            fast_probe._STOP_SIGNAL_COUNT[0] = 0
+
 
 if __name__ == "__main__":
     unittest.main()
