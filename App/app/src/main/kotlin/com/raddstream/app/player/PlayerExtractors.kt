@@ -1,3 +1,5 @@
+@file:OptIn(UnstableApi::class)
+
 package com.raddstream.app.player
 
 import androidx.annotation.OptIn
