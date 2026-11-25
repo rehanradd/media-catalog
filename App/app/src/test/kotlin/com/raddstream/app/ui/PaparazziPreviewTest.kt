@@ -259,7 +259,7 @@ class PaparazziPreviewTest {
 
     // My List review (Nov 2026): the empty state — the jade heart in its
     // tinted container, the retitled starter rail, the compact
-    // "★ 7.0 · 2023" meta, and the rail pulled up under the message
+    // "2023 · ★ 7.0" meta, and the rail pulled up under the message
     // instead of floating in a void.
     // UI/UX audit Library #6 (Nov 2026): the preview used to pass
     // isFavorite = { it.id == 1 }, so Jawan's heart rendered filled —

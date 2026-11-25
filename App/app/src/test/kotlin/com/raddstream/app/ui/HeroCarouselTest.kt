@@ -65,7 +65,7 @@ class HeroCarouselTest {
         // genres were never recorded — a missing value, not a genre — so the
         // hero's meta line skips it and reads the next real genre, or the
         // year alone when there is none.
-        assertEquals("Action · 2026", heroMetaLine(post(genres = "Unknown, Action", year = 2026)))
+        assertEquals("2026 · Action", heroMetaLine(post(genres = "Unknown, Action", year = 2026)))
         assertEquals("2026", heroMetaLine(post(genres = "Unknown", year = 2026)))
         assertEquals("2026", heroMetaLine(post(genres = "N/A", year = 2026)))
     }
