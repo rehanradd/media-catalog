@@ -1456,8 +1456,8 @@ private fun SwipeableDownloadRow(
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
             when (value) {
-                SwipeToDismissBoxValue.DismissedToEnd -> swipeActions.startToEnd?.invoke()
-                SwipeToDismissBoxValue.DismissedToStart -> swipeActions.endToStart?.invoke()
+                SwipeToDismissBoxValue.StartToEnd -> swipeActions.startToEnd?.invoke()
+                SwipeToDismissBoxValue.EndToStart -> swipeActions.endToStart?.invoke()
                 SwipeToDismissBoxValue.Settled -> Unit
             }
             // The swipe is a shortcut, not a removal: always snap back.
@@ -1470,7 +1470,7 @@ private fun SwipeableDownloadRow(
         backgroundContent = {
             val direction = dismissState.dismissDirection
             if (direction != SwipeToDismissBoxValue.Settled) {
-                val toEnd = direction == SwipeToDismissBoxValue.DismissedToEnd
+                val toEnd = direction == SwipeToDismissBoxValue.StartToEnd
                 Row(
                     modifier = Modifier
                         .fillMaxSize()
