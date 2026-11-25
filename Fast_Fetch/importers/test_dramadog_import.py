@@ -37,6 +37,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -180,6 +181,48 @@ class TestSitemaps(unittest.TestCase):
         self.assertEqual(len(dd.parse_child_sitemap(xml)), 2)
 
 
+FLAT_INDEX_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+<url><loc>https://dramadog.app/</loc></url>
+<url><loc>https://dramadog.app/trending</loc></url>
+<url><loc>https://dramadog.app/drama/after-divorce-my-three-brothers-spoil-me-rotten</loc><lastmod>2026-11-22</lastmod></url>
+<url><loc>https://dramadog.app/drama/reborn-to-freeze-them-all</loc><lastmod>2026-11-22</lastmod></url>
+<url><loc>https://dramadog.app/drama/her-vengeance</loc><lastmod>2026-11-22</lastmod></url>
+<url><loc>https://dramadog.app/platform/goodshort</loc></url>
+</urlset>"""
+
+
+class TestFlatSitemap(unittest.TestCase):
+    def test_flat_index_has_no_children(self):
+        # The site flattened /sitemap.xml 2026-11-23: the old per-platform
+        # children 404 and the index is a flat urlset, not a sitemapindex.
+        self.assertEqual(dd.parse_sitemap_index(FLAT_INDEX_XML), [])
+
+    def test_flat_index_yields_drama_urls_directly(self):
+        self.assertEqual(dd.parse_child_sitemap(FLAT_INDEX_XML), [
+            "https://dramadog.app/drama/after-divorce-my-three-brothers-spoil-me-rotten",
+            "https://dramadog.app/drama/reborn-to-freeze-them-all",
+            "https://dramadog.app/drama/her-vengeance",
+        ])
+
+    def test_sync_reads_flat_index_without_child_fetches(self):
+        db = tempfile.NamedTemporaryFile(suffix=".db", delete=False).name
+        fetched = []
+
+        def fake_fetch(url):
+            fetched.append(url)
+            if url.endswith("/sitemap.xml"):
+                return (200, FLAT_INDEX_XML)
+            return (200, DRAMA_HTML)
+
+        totals = dd.sync(db_path=db, limit=2, fetcher=fake_fetch,
+                         prober=probe_upto(66), delay=0)
+        self.assertEqual(totals["posts_written"], 2)
+        # Only the index was fetched for enumeration — no child sitemaps exist.
+        self.assertEqual([u for u in fetched if u.endswith(".xml")],
+                         ["https://dramadog.app/sitemap.xml"])
+
+
 class TestParsePage(unittest.TestCase):
     def test_json_ld_title_episodes_genres_poster(self):
         page = dd.parse_drama_page(
@@ -243,6 +286,48 @@ class TestParsePage(unittest.TestCase):
         page = dd.parse_drama_page(
             html, "https://dramadog.app/drama/the-heirs-captive")
         self.assertEqual(page["drama_id"], "22262")
+
+
+class TestProbeReferer(unittest.TestCase):
+    class _Resp:
+        status = 206
+
+        def __init__(self, body=b"#EXTM3U\n"):
+            self._body = body
+            self.headers = {"Content-Type": "application/vnd.apple.mpegurl"}
+
+        def read(self, n=-1):
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def test_probe_sends_dramadog_referer(self):
+        # Measured live 2026-11-23: v.73920583.xyz 403s a bare Range probe
+        # and 206s with Referer: https://dramadog.app/. Without this, every
+        # title on a hotlink-gated CDN is wrongly skipped at build time.
+        seen = {}
+
+        def fake_open(req, timeout=None):
+            seen["referer"] = req.get_header("Referer")
+            return self._Resp()
+
+        with mock.patch.object(dd.urllib.request, "urlopen", side_effect=fake_open):
+            result = dd.probe_m3u8("https://v.73920583.xyz/pk/5140/e001/playlist.m3u8")
+        self.assertTrue(result["ok"])
+        self.assertEqual(seen["referer"], "https://dramadog.app/")
+
+    def test_built_sources_carry_the_referer(self):
+        page = dd.parse_drama_page(
+            DRAMA_HTML,
+            "https://dramadog.app/drama/after-divorce-my-three-brothers-spoil-me-rotten")
+        record = dd.build_record(page, probe=probe_upto(66))
+        self.assertEqual(
+            record["releases"][0]["sources"][0]["raw_meta"]["referer"],
+            "https://dramadog.app/")
 
 
 class TestBuildRecord(unittest.TestCase):

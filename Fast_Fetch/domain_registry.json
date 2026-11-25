@@ -799,8 +799,8 @@
     },
     "dramadog": {
       "active_base_url": "https://dramadog.app",
-      "last_verified": "2026-11-23T00:00:00Z",
-      "verified_by": "api",
+      "last_verified": "2026-11-23T01:27:50Z",
+      "verified_by": "sitemap",
       "known_mirrors": [
         "https://dramadog.app"
       ],
@@ -812,10 +812,10 @@
       ],
       "api_type": "json_api",
       "status": "active",
-      "last_checked": "2026-11-23T01:00:00Z",
+      "last_checked": "2026-11-23T01:27:50Z",
       "api_endpoint": "/api/suggest",
       "sitemap_endpoint": "/sitemap.xml",
-      "notes": "Same-host /api/ proven by the site-API hunt 2026-11-23 (~05:00 PKT): /api/suggest?q=, /api/alive, /api/geo return JSON metadata only (title/slug/cover/episode count) — no stream links or qualities. Full catalog enumeration is via /sitemap.xml (173 KB), not the API. Re-probe 23 Nov ~06:00 PKT: whole host CF 403 (Just a moment) from Oracle curl, including / and /api/* — CF-gated from this egress right now, not proof the API is gone; the browser/HAR path still reaches it.",
+      "notes": "Short vertical dramas. Same-host /api/ proven live 2026-11-23: GET /api/eps/<drama_id> (one .m3u8 per episode, in order), GET /api/suggest?q= (search), GET /api/alive (episode counts). Sitemap flattened 2026-11-23: the 30 per-platform child sitemaps 404 now; /sitemap.xml is a flat urlset with 1,500 /drama/ URLs. Importer handles both the old sitemapindex and the flat urlset.",
       "site_name": "dramadog"
     },
     "megacartoons": {
