@@ -246,6 +246,7 @@ fun MyListScreen(
                 isFavorite = isFavorite,
                 onToggleFavorite = onToggleFavoriteWithTick,
                 onRetryRails = { viewModel.retryRails() },
+                onBrowseClick = onBrowseClick,
                 modifier = Modifier.fillMaxSize(),
             )
             }
@@ -370,6 +371,12 @@ internal fun MyListLoadedContent(
     onFilter: (MyListFilter) -> Unit = {},
     /** L4 (round 2): the inline rails-retry tap. Defaults to no-op. */
     onRetryRails: () -> Unit = {},
+    /**
+     * Round 3: the filtered-empty state's way out — the same Browse
+     * button the full empty state has. Defaults to no-op so existing
+     * callers (and the mockup tests) keep compiling.
+     */
+    onBrowseClick: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     // L3 (round 2): the staggered entrance runs once, when the grid first
@@ -500,21 +507,35 @@ internal fun MyListLoadedContent(
                         key = "my_list_filter_empty",
                         span = { GridItemSpan(maxLineSpan) },
                     ) {
-                        Text(
-                            text = stringResource(
-                                when (filter) {
-                                    MyListFilter.MOVIES -> R.string.mylist_filter_empty_movies
-                                    MyListFilter.SERIES -> R.string.mylist_filter_empty_series
-                                    MyListFilter.DOWNLOADS -> R.string.mylist_filter_empty_downloads
-                                    MyListFilter.ALL -> R.string.mylist_filter_empty_movies
-                                },
-                            ),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = RaddTokens.Space.Step48),
-                        )
+                        // Round 3: the filtered-empty state was a bare line
+                        // over a void — it gets the same way out the full
+                        // empty state has (the Browse button), not the
+                        // starter rail: under a filter the rail would show
+                        // titles the filter just hid (L1).
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                text = stringResource(
+                                    when (filter) {
+                                        MyListFilter.MOVIES -> R.string.mylist_filter_empty_movies
+                                        MyListFilter.SERIES -> R.string.mylist_filter_empty_series
+                                        MyListFilter.DOWNLOADS -> R.string.mylist_filter_empty_downloads
+                                        MyListFilter.ALL -> R.string.mylist_filter_empty_movies
+                                    },
+                                ),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = RaddTokens.Space.Step48),
+                            )
+                            OutlinedButton(
+                                onClick = onBrowseClick,
+                                modifier = Modifier
+                                    .testTag(MyListBrowseButtonTag)
+                                    .heightIn(min = 48.dp)
+                                    .padding(top = RaddTokens.Space.Sm),
+                            ) { Text("Browse the catalog") }
+                        }
                     }
                 }
             // F12 & Small #9: place the starter shelf inside the scrolling grid as

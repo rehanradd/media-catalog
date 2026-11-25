@@ -648,8 +648,16 @@ fun PosterCard(
                 }
 
                 progressLabel?.let { label ->
+                    // Round 3 (Library): the painted line is the compact
+                    // form at large font scale (see
+                    // progressLabelForFontScale); the spoken sentence above
+                    // keeps the full label.
+                    val displayLabel = progressLabelForFontScale(
+                        label,
+                        LocalDensity.current.fontScale,
+                    )
                     Text(
-                        text = label,
+                        text = displayLabel,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold,
@@ -735,6 +743,19 @@ internal fun trimMetaLineToWordBoundary(text: String, cutIndex: Int): String {
     // so the line never ends on a dangling "·".
     return trimmed.removeSuffix("·…").let { if (it != trimmed) "${it.trimEnd()}…" else trimmed }
 }
+
+/**
+ * Round 3 (Library): the painted progress line at large font scale.
+ * "S2:E5 · 23 min left" fits the tile's text column at 1.0x but
+ * overflows it at 1.3x ("S2:E5 · 23 mi…"). The painted line drops the
+ * lowest-priority word — "left" — so the episode scope and the minutes
+ * still read in full; the spoken sentence (built from the full label)
+ * still says "23 min left", so TalkBack loses nothing. A label that
+ * does not end in " left" paints unchanged — the ellipsis is the
+ * fallback, as before. Pure string work, like the meta helpers.
+ */
+internal fun progressLabelForFontScale(label: String, fontScale: Float): String =
+    if (fontScale > 1.0f) label.removeSuffix(" left") else label
 
 /**
  * S2 (round 2, decided then blocked on data): the brief's meta line is

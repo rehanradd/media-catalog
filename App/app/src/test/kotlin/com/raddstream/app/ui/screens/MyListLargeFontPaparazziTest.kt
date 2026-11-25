@@ -44,13 +44,21 @@ class MyListLargeFontPaparazziTest {
         ),
     )
 
-    private fun post(id: Int, title: String, contentType: String = "movie") = Post(
+    // Round 3: the fixture posts carry the same ratings as the 1.0x
+    // fixtures (Jawan 7.0, Salaar 6.5, McLintock 7.0). Without a rating
+    // the meta line legitimately reads year-only ("2023") — an absent
+    // rating leaves its slot out, never an invented value — and the
+    // round-3 re-rate misread that fixture gap as a 1.3x rendering
+    // defect. With ratings, this shot proves the full "2023 · ★ 7.0"
+    // line survives large font.
+    private fun post(id: Int, title: String, contentType: String = "movie", rating: String? = null) = Post(
         id = id,
         title = title,
         cleanTitle = title,
         year = 2023,
         contentType = contentType,
         posterUrl = null,
+        imdbRating = rating,
     )
 
     @Test
@@ -62,11 +70,11 @@ class MyListLargeFontPaparazziTest {
                         MyListLoadedContent(
                             state = MyListUiState(
                                 favorites = listOf(
-                                    post(1, "Jawan"),
-                                    post(2, "Salaar: Part 1 – Ceasefire"),
+                                    post(1, "Jawan", rating = "7.0"),
+                                    post(2, "Salaar: Part 1 – Ceasefire", rating = "6.5"),
                                 ),
                                 sort = ListSort.RECENT,
-                                popular = listOf(post(3, "McLintock!")),
+                                popular = listOf(post(3, "McLintock!", rating = "7.0")),
                                 progressByPostId = mapOf(1 to 0.5f),
                                 progressLabelByPostId = mapOf(1 to "S2:E5 · 23 min left"),
                                 downloadedPostIds = setOf(2),
