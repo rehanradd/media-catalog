@@ -8,6 +8,7 @@ import com.raddstream.app.data.VipPendingSubmission
 import com.raddstream.app.network.friendlyNetworkError
 import com.raddstream.app.network.models.AccountEntitlement
 import com.raddstream.app.network.models.VipRemoteConfig
+import com.raddstream.app.player.RewardedAdProvider
 import com.raddstream.app.repository.CatalogRepository
 import com.raddstream.app.sync.PaymentFiled
 import com.raddstream.app.sync.Refusal
@@ -150,6 +151,10 @@ data class VipUiState(
     val pending: VipPendingSubmission? = null,
     val statusMessage: String? = null,
     val rewardedVipExpiresAt: Long = 0L,
+    /** The Monetag rewarded zone id the server published, blank when it published none. */
+    val rewardedZoneId: String = "",
+    /** True only while a real rewarded network is bound; false until an SDK is wired. */
+    val rewardedProviderAvailable: Boolean = false,
     /** Whether this device holds a sync key. */
     val signedIn: Boolean = false,
     /** The server's own answer, or null while it has never been read on this device. */
@@ -191,6 +196,16 @@ data class VipUiState(
     /** Server-side membership only. A rewarded device pass is deliberately not VIP here. */
     val isVip: Boolean get() = entitlement?.vip == true
 
+    /** The zone the server published, if any. */
+    val hasRewardedZone: Boolean get() = rewardedZoneId.isNotBlank()
+
+    /**
+     * The rewarded offer may be shown only when BOTH halves exist: a network that can
+     * actually show an ad, and a zone the operator published for it. Either half missing
+     * means the tap would have nothing behind it, so the section stays hidden (APP-03).
+     */
+    val rewardedAvailable: Boolean get() = rewardedProviderAvailable && hasRewardedZone
+
     /** True if the VIP pass has been cancelled either on the server or pending locally. */
     val isCancelled: Boolean
         get() = (entitlement?.vipCancelledAt != null && (entitlement.vipCancelledAt ?: 0.0) > 0.0) || isCancelPending
@@ -212,12 +227,14 @@ class VipViewModel @Inject constructor(
     private val catalogRepository: CatalogRepository,
     private val settingsRepository: ServerSettingsRepository,
     private val syncAccountRepository: SyncAccountRepository,
+    private val rewardedAdProvider: RewardedAdProvider,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(VipUiState())
     val uiState = _uiState.asStateFlow()
 
     init {
+        _uiState.update { it.copy(rewardedProviderAvailable = rewardedAdProvider.isAvailable) }
         observePending()
         observeRewardedVip()
         observeAccount()
@@ -271,11 +288,15 @@ class VipViewModel @Inject constructor(
     }
 
     /**
-     * Called when a rewarded ad reports completion. The pass is stored on this device
-     * only; no server entitlement is implied, and the card says so. Watching again
-     * while a pass is live extends it rather than restarting the four hours.
+     * The rewarded-ad completion handler. Private on purpose: the ONLY caller is
+     * [requestRewardedPass]'s completion callback, which runs after the network reports a
+     * completed view. No screen, button or other path may call this — a tap that grants a
+     * pass without an ad is the APP-03 defect, and a private function cannot be tapped.
+     * The pass is stored on this device only; no server entitlement is implied, and the
+     * card says so. Watching again while a pass is live extends it rather than restarting
+     * the four hours.
      */
-    fun grantRewardedVip(hours: Int = RewardedVipPass.DEFAULT_HOURS) {
+    private fun grantRewardedVip(hours: Int = RewardedVipPass.DEFAULT_HOURS) {
         val safeHours = hours.coerceIn(1, ServerSettingsRepository.MAX_REWARDED_VIP_HOURS)
         viewModelScope.launch {
             settingsRepository.grantRewardedVip(safeHours)
@@ -288,6 +309,31 @@ class VipViewModel @Inject constructor(
                 it.copy(statusMessage = "$safeHours-hour VIP pass activated on this device.")
             }
         }
+    }
+
+    /**
+     * The ONLY entry point to a rewarded pass. The tap shows an ad first through the bound
+     * [RewardedAdProvider]; the grant happens only in that provider's completion callback.
+     * With no network bound ([NoRewardedAdProvider][com.raddstream.app.player.NoRewardedAdProvider])
+     * the offer is never rendered, so this is unreachable from the UI — the guard below is
+     * defence in depth for any future caller, and it answers in words rather than granting.
+     * A close, a failure or no fill grants nothing: the message says the ad did not finish.
+     */
+    fun requestRewardedPass() {
+        val state = _uiState.value
+        if (!state.rewardedAvailable) {
+            _uiState.update { it.copy(statusMessage = "Rewarded passes aren't available right now.") }
+            return
+        }
+        rewardedAdProvider.showRewarded(
+            zoneId = state.rewardedZoneId,
+            onRewarded = { grantRewardedVip() },
+            onUnavailable = {
+                _uiState.update {
+                    it.copy(statusMessage = "The ad didn't finish, so no pass was activated.")
+                }
+            },
+        )
     }
 
     /** The state the screen renders, evaluated against the current wall clock. */
@@ -592,6 +638,7 @@ private fun VipUiState.withConfig(config: VipRemoteConfig): VipUiState {
         jazzCashMobileAccount = config.payments.jazzcash.mobileAccount.trim(),
         easyPaisaMobile = config.payments.easypaisa.mobileNumber.trim(),
         raastInstantId = config.payments.raast.instantId.trim(),
+        rewardedZoneId = config.ads.monetagRewardedZoneId.trim(),
     )
     // A channel the viewer already picked stays picked; otherwise the first one the
     // operator actually published is chosen, so a submission never names a channel that

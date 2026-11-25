@@ -162,10 +162,17 @@ fun VipUpgradeScreen(
                 onCancelClick = { showCancelConfirmDialog = true },
                 onResumeClick = viewModel::resumePass,
             )
-            RewardedVipSection(
-                expiresAt = state.rewardedVipExpiresAt,
-                onActivatePass = { viewModel.grantRewardedVip() },
-            )
+            // APP-03: the rewarded offer exists only when an ad can actually play behind
+            // it — a bound rewarded network AND a zone the operator published — or when a
+            // pass granted earlier is still live (its countdown stays visible). With no
+            // network bound there is no entry point at all: no tap may grant a pass
+            // without an ad.
+            if (state.rewardedAvailable || RewardedVipPass.isActive(state.rewardedVipExpiresAt)) {
+                RewardedVipSection(
+                    expiresAt = state.rewardedVipExpiresAt,
+                    onActivatePass = viewModel::requestRewardedPass,
+                )
+            }
             when {
                 state.isLoading -> LoadingCard()
                 state.loadError != null -> LoadErrorCard(
@@ -417,10 +424,13 @@ private fun VipHero() {
 /**
  * The 4-hour VIP pass: a live countdown when one is stored, otherwise the offer.
  *
- * Session 123 (VIP-4): the button used to read "Watch Ad for 4-Hour VIP Pass"
- * while no ad played at all — the tap activated the pass directly. The button
- * now says what it does. No ad plays in this build; a rewarded network, when
- * added, plays an ad first and then calls the same completion handler.
+ * APP-03: this section renders only when a rewarded ad can actually play first
+ * ([VipUiState.rewardedAvailable] — a bound network AND a published zone) or when a pass
+ * granted earlier is still live. The button below says "Watch Ad" and means it: the tap
+ * shows the ad, and the pass is granted only when the network reports a completed view.
+ * The free tap is gone — Session 123 (VIP-4) had already renamed the button to say no ad
+ * played, which was honest about the bug but left the gate giving itself away; no ad
+ * network is bound yet, so until one is, this section does not render at all.
  *
  * The countdown is driven by a one-second ticker with a wall-clock deadline, so it
  * cannot drift while the screen sleeps and it shows the truth after a process death.
@@ -476,8 +486,8 @@ private fun RewardedVipSection(expiresAt: Long, onActivatePass: () -> Unit) {
                 )
             } else {
                 Text(
-                    "Activate a four-hour VIP pass on this device — ad-free playback " +
-                        "and direct downloads. No ad plays when you tap this.",
+                    "Watch a short ad to activate a four-hour VIP pass on this device — " +
+                        "ad-free playback and direct downloads.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -488,14 +498,8 @@ private fun RewardedVipSection(expiresAt: Long, onActivatePass: () -> Unit) {
                         modifier = Modifier.size(18.dp),
                     )
                     Spacer(Modifier.width(8.dp))
-                    Text("Activate 4-Hour VIP Pass")
+                    Text("Watch Ad for 4-Hour VIP Pass")
                 }
-                Text(
-                    "When a rewarded network is added, an ad will play first and then " +
-                        "call the same completion handler.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
         }
     }

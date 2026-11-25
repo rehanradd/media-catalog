@@ -6,6 +6,8 @@ import com.raddstream.app.player.AdSwitch
 import com.raddstream.app.player.AdWallClock
 import com.raddstream.app.player.DataStoreAdSwitch
 import com.raddstream.app.player.NoAdInventory
+import com.raddstream.app.player.NoRewardedAdProvider
+import com.raddstream.app.player.RewardedAdProvider
 import com.raddstream.app.player.SystemAdWallClock
 import dagger.Module
 import dagger.Provides
@@ -39,6 +41,16 @@ object AdModule {
     @Provides
     @Singleton
     fun provideAdInventory(): AdInventory = NoAdInventory()
+
+    /**
+     * The rewarded surface's binding, on the same rule as the inventory above: until a
+     * rewarded SDK is wired, the answer is "no network". The VIP screen hides the offer
+     * entirely while this binding stands, so no tap can grant a pass without an ad — and
+     * wiring a real network swaps this one line, not the screen or the grant path.
+     */
+    @Provides
+    @Singleton
+    fun provideRewardedAdProvider(): RewardedAdProvider = NoRewardedAdProvider()
 
     /**
      * The operator's switch, read from the DataStore mirror that
