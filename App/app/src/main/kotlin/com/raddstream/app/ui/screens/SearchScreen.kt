@@ -187,6 +187,9 @@ internal const val SeeAllRecommendedTag = "see-all-recommended"
 /** Test tag on the filter rail's right-edge fade mask. */
 internal const val FilterRailFadeTag = "filter-rail-fade"
 
+/** Test tag on the quick-chips row's right-edge fade mask (S3, round 5). */
+internal const val QuickChipsFadeTag = "quick-chips-fade"
+
 /** Test tag on the did-you-mean suggestion chip in the results list. */
 internal const val DidYouMeanTag = "searchDidYouMean"
 
@@ -709,9 +712,14 @@ internal fun CategoryTabs(
             )
         }
         Spacer(Modifier.height(8.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        // S3 (round 5): the last quick chip hard-clipped at the right edge
+        // ("Thrill…") — the row rides ScrollingChipRow now, so the shared
+        // RowEndFade replaces the hard clip. Start stays 0 because the
+        // outer column already pads 16dp (same as the filter rail); end is
+        // 16dp so the last chip never rests flush against the edge.
+        ScrollingChipRow(
+            contentPadding = PaddingValues(start = 0.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
+            fadeTestTag = QuickChipsFadeTag,
         ) {
             when (selectedTab) {
                 SearchCategoryTab.GENRE -> {
@@ -719,15 +727,17 @@ internal fun CategoryTabs(
                         GenreFilter.ACTION, GenreFilter.COMEDY, GenreFilter.DRAMA,
                         GenreFilter.HORROR, GenreFilter.THRILLER,
                     ).forEach { genre ->
-                        FilterChip(
-                            colors = raddFilterChipColors(),
-                            selected = state.filters.genre == genre,
-                            onClick = {
-                                onSelectGenre(if (state.filters.genre == genre) GenreFilter.ALL else genre)
-                            },
-                            label = { Text(genre.label) },
-                            modifier = Modifier.heightIn(min = 48.dp),
-                        )
+                        item {
+                            FilterChip(
+                                colors = raddFilterChipColors(),
+                                selected = state.filters.genre == genre,
+                                onClick = {
+                                    onSelectGenre(if (state.filters.genre == genre) GenreFilter.ALL else genre)
+                                },
+                                label = { Text(genre.label) },
+                                modifier = Modifier.heightIn(min = 48.dp),
+                            )
+                        }
                     }
                 }
                 SearchCategoryTab.LANGUAGE -> {
@@ -735,15 +745,17 @@ internal fun CategoryTabs(
                         LanguageFilter.HINDI, LanguageFilter.URDU, LanguageFilter.TAMIL,
                         LanguageFilter.TELUGU, LanguageFilter.PUNJABI, LanguageFilter.ENGLISH,
                     ).forEach { language ->
-                        FilterChip(
-                            colors = raddFilterChipColors(),
-                            selected = state.filters.language == language,
-                            onClick = {
-                                onSelectLanguage(if (state.filters.language == language) LanguageFilter.ALL else language)
-                            },
-                            label = { Text(displayLanguageName(language.label)) },
-                            modifier = Modifier.heightIn(min = 48.dp),
-                        )
+                        item {
+                            FilterChip(
+                                colors = raddFilterChipColors(),
+                                selected = state.filters.language == language,
+                                onClick = {
+                                    onSelectLanguage(if (state.filters.language == language) LanguageFilter.ALL else language)
+                                },
+                                label = { Text(displayLanguageName(language.label)) },
+                                modifier = Modifier.heightIn(min = 48.dp),
+                            )
+                        }
                     }
                 }
                 SearchCategoryTab.YEAR -> {
@@ -755,16 +767,18 @@ internal fun CategoryTabs(
                     ).forEach { (label, range) ->
                         val selected = state.filters.yearFrom == range.first &&
                             state.filters.yearTo == range.second
-                        FilterChip(
-                            colors = raddFilterChipColors(),
-                            selected = selected,
-                            onClick = {
-                                if (selected) onSetYearRange(null, null)
-                                else onSetYearRange(range.first, range.second)
-                            },
-                            label = { Text(label) },
-                            modifier = Modifier.heightIn(min = 48.dp),
-                        )
+                        item {
+                            FilterChip(
+                                colors = raddFilterChipColors(),
+                                selected = selected,
+                                onClick = {
+                                    if (selected) onSetYearRange(null, null)
+                                    else onSetYearRange(range.first, range.second)
+                                },
+                                label = { Text(label) },
+                                modifier = Modifier.heightIn(min = 48.dp),
+                            )
+                        }
                     }
                 }
             }

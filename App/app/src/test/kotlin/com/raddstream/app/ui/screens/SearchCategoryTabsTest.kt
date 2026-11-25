@@ -108,4 +108,16 @@ class SearchCategoryTabsTest {
         compose.onNodeWithText("2025").performClick()
         assertEquals(null to null, range)
     }
+
+    @Test
+    fun quickChipsRightEdgeFadeMaskExists() {
+        // S3 (round 5): the last quick chip hard-clipped at the right edge
+        // ("Thrill…") — a fade mask over the row's right edge replaces the
+        // hard clip. The mask is the shared ScrollingChipRow fade
+        // (unconditional), a plain overlay with no click handling, so the
+        // test only pins its presence — the chips beneath stay tappable
+        // through it.
+        setTabs()
+        compose.onNodeWithTag(QuickChipsFadeTag).assertExists()
+    }
 }
