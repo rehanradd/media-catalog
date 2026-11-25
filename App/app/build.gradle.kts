@@ -440,10 +440,13 @@ tasks.withType<Test>().configureEach {
                 includeTestsMatching("com.raddstream.app.ui.PaparazziPreviewTest")
                 includeTestsMatching("com.raddstream.app.ui.PlayerLandscapePaparazziTest")
                 includeTestsMatching("com.raddstream.app.ui.navigation.BottomNavLargeFontPaparazziTest")
+                includeTestsMatching("com.raddstream.app.ui.DownloadsPaparazziTest")
+                includeTestsMatching("com.raddstream.app.ui.DownloadsPaparazziLargeFontTest")
             } else {
                 excludeTestsMatching("com.raddstream.app.ui.PaparazziPreviewTest")
                 excludeTestsMatching("com.raddstream.app.ui.PlayerLandscapePaparazziTest")
                 excludeTestsMatching("com.raddstream.app.ui.DownloadsPaparazziTest")
+                excludeTestsMatching("com.raddstream.app.ui.DownloadsPaparazziLargeFontTest")
                 excludeTestsMatching("com.raddstream.app.ui.navigation.BottomNavLargeFontPaparazziTest")
             }
         }

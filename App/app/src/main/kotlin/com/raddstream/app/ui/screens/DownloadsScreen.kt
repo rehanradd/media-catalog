@@ -65,7 +65,9 @@ import com.raddstream.app.data.downloads.DownloadSpeed
 import com.raddstream.app.ui.components.CatalogImage
 import com.raddstream.app.ui.components.DownloadsSkeleton
 import com.raddstream.app.ui.components.EmptyState
+import com.raddstream.app.ui.components.ImageFallbackCard
 import com.raddstream.app.ui.components.UserWords
+import com.raddstream.app.ui.components.channelMonogram
 import com.raddstream.app.ui.components.rememberReduceMotion
 import com.raddstream.app.ui.theme.PressHaptics
 import com.raddstream.app.ui.theme.RaddMotion
@@ -1272,14 +1274,31 @@ internal fun DownloadsEmptyPreview() {
  */
 @Composable
 private fun DownloadThumb(posterUrl: String?, title: String) {
-    CatalogImage(
-        url = posterUrl,
-        contentDescription = null,
-        fallbackLabel = title,
-        modifier = Modifier
-            .size(width = 56.dp, height = 84.dp)
-            .clip(RaddTokens.Shape.Thumb),
-    )
+    // PosterCard pattern: a null URL paints the fallback tile directly.
+    // CatalogImage resolves Hilt singletons at composition (imageSizingHolder
+    // via EntryPointAccessors.fromApplication), and Paparazzi's layoutlib
+    // context has no Hilt application — calling it with a null URL crashes
+    // the snapshot (IllegalStateException, DownloadsPaparazziLargeFontTest).
+    // The tile is identical either way: CatalogImage's own null-URL path
+    // renders this same ImageFallbackCard. The title already sits in the
+    // text column beside the thumb, so the tile carries the initials only
+    // (Audit #9, same as PosterCard) — never the title twice.
+    val thumbModifier = Modifier
+        .size(width = 56.dp, height = 84.dp)
+        .clip(RaddTokens.Shape.Thumb)
+    if (posterUrl == null) {
+        ImageFallbackCard(
+            label = channelMonogram(title),
+            modifier = thumbModifier,
+        )
+    } else {
+        CatalogImage(
+            url = posterUrl,
+            contentDescription = null,
+            fallbackLabel = title,
+            modifier = thumbModifier,
+        )
+    }
 }
 
 /**
