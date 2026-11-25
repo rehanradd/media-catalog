@@ -709,6 +709,10 @@ class RemoteConfigOverTheWire(TwoPortFixture):
     def test_the_public_port_serves_the_payment_screen(self):
         self.save({"pak_till_id": "123456", "pak_raast_id": "03001234567",
                    "vip_yearly_pkr": 1500, "monetag_zone_id": "10293847"})
+        # The zone id alone serves nothing: the ads switch is a flag,
+        # edited in the v2 panel, so flip it the way the panel does.
+        self.conn.execute("UPDATE app_remote_config SET ads_enabled=1 WHERE id=1")
+        self.conn.commit()
         status, headers, raw = self.public_fetch(self.PATH)
         self.assertEqual(status, 200, raw[:200])
         self.assertTrue(headers.get("Content-Type", "").startswith("application/json"))

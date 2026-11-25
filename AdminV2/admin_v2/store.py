@@ -55,7 +55,8 @@ COIN_REDEEM_DEFAULTS = {
 MONETIZATION_FIELDS = [
     "pak_till_id", "pak_jazzcash_number", "pak_easypaisa_number",
     "pak_raast_id", "vip_monthly_pkr", "vip_yearly_pkr",
-    "monetag_zone_id", "adsterra_tag_id", "shrinkme_api_token",
+    "monetag_zone_id", "adsterra_tag_id", "ads_enabled", "clean_ads_only",
+    "shrinkme_api_token",
     "droplink_api_token", "maintenance_mode", "apk_update_url",
     "feature_downloads", "feature_pure_cinema", "feature_chromecast",
     "feature_quality_gate", "free_quality_cap",
@@ -124,6 +125,8 @@ MIGRATIONS = [
       vip_monthly_pkr INTEGER NOT NULL DEFAULT 200,
       vip_yearly_pkr INTEGER NOT NULL DEFAULT 1500,
       monetag_zone_id TEXT DEFAULT '', adsterra_tag_id TEXT DEFAULT '',
+      ads_enabled INTEGER NOT NULL DEFAULT 0,
+      clean_ads_only INTEGER NOT NULL DEFAULT 1,
       shrinkme_api_token TEXT DEFAULT '', droplink_api_token TEXT DEFAULT '',
       maintenance_mode INTEGER NOT NULL DEFAULT 0, apk_update_url TEXT DEFAULT '',
       feature_downloads INTEGER NOT NULL DEFAULT 1,
@@ -314,6 +317,7 @@ def _ensure_v5_columns(conn):
     wanted = [
         ("domain_registry", "last_redirect_to", "TEXT"),
         ("domain_health_checks", "final_domain", "TEXT"),
+        ("app_remote_config_v2", "ads_enabled", "INTEGER NOT NULL DEFAULT 0"),
     ]
     for name, default in COIN_REDEEM_DEFAULTS.items():
         wanted.append(("app_remote_config_v2", name,
@@ -327,8 +331,10 @@ def _ensure_v5_columns(conn):
 
 
 def _ensure_v6_columns(conn):
-    """Migration 6 (2026-11-24, Phase 4 PNL-02/03): idempotent, same
-    pattern as v5 — a re-run adds nothing twice.
+    """Migration 6 (2026-11-24, PNL-02/03 + PNL-05): idempotent, same
+    pattern as v5 — a re-run adds nothing twice. Two halves, one
+    version: the PNL-02/03 coins/quality half and the PNL-05 ads
+    half landed in the same chain, so v6 applies both.
 
     - app_remote_config_v2.coins_enabled: the flag was appended to
       migration 1's SQL AFTER the live panel DB had already applied
@@ -343,11 +349,19 @@ def _ensure_v6_columns(conn):
       is not '720p' is untouched, and a row the operator later sets
       to '720p' stays '720p'. Fresh rows get '480p' from the schema
       default and TUNING_DEFAULTS already.
+    - app_remote_config_v2 ads_enabled: the ads master switch,
+      DEFAULT 0 (fail-closed: a deployment that never set it shows
+      no ads, the app's own rule in VipRemoteAds).
+    - app_remote_config_v2 clean_ads_only: DEFAULT 1 (standing
+      order: Monetag first, clean ads only).
     """
     cols = {r[1] for r in conn.execute("PRAGMA table_info(app_remote_config_v2)")}
-    if "coins_enabled" not in cols:
-        conn.execute("ALTER TABLE app_remote_config_v2 ADD COLUMN "
-                     "coins_enabled INTEGER NOT NULL DEFAULT 0")
+    for col, coltype in (("coins_enabled", "INTEGER NOT NULL DEFAULT 0"),
+                         ("ads_enabled", "INTEGER NOT NULL DEFAULT 0"),
+                         ("clean_ads_only", "INTEGER NOT NULL DEFAULT 1")):
+        if col not in cols:
+            conn.execute("ALTER TABLE app_remote_config_v2 ADD COLUMN %s %s"
+                         % (col, coltype))
     for table in ("tuning_settings", "app_remote_config_v2"):
         tcols = {r[1] for r in conn.execute("PRAGMA table_info(%s)" % table)}
         if "free_quality_cap" in tcols:

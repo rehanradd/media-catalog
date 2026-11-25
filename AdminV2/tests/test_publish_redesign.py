@@ -27,6 +27,7 @@ guard, T10 audit diff + hash, T11 staleness pins, F8 get_live diff.
 Every live integration runs against TEMP COPIES (real
 app_remote_config DDL). No test ever touches a live DB.
 """
+import base64
 import importlib.util
 import json
 import os
@@ -43,7 +44,7 @@ import unittest
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from helpers import make_service  # noqa: E402
+from helpers import TEST_TOTP_KEY, make_service  # noqa: E402
 from admin_v2.errors import ApiError  # noqa: E402
 from admin_v2.live_stores import (  # noqa: E402
     ALL_LIVE_REMOTE_CONFIG_FIELDS, RELEASE_OWNED_LIVE_FIELDS,
@@ -85,7 +86,8 @@ class RedesignBase(unittest.TestCase):
         conn.commit()
         conn.close()
         self.live = LiveStores(catalog_path=self.catalog_path)
-        self.svc = Service(os.path.join(self.tmp, "admin"), live=self.live)
+        self.svc = Service(os.path.join(self.tmp, "admin"),
+                           totp_key=TEST_TOTP_KEY, live=self.live)
         owner_id = self.svc.create_owner("owner", "correct horse battery staple")
         self.owner = {"id": owner_id, "username": "owner", "role": "owner"}
         return self.svc
@@ -153,9 +155,10 @@ class TestConcurrentPublish(RedesignBase):
     def test_publish_racing_pause_serializes(self):
         """(a)/N2: a publish racing a feature pause both land and
         versions stay strictly increasing with no duplicates. The
-        pause bumps the panel version without writing live (pause->live
-        is PNL-11's), so the live row may lag the panel by one — that
-        lag is legal; a duplicate version is not."""
+        pause writes 0 to the live row (PNL-11) whichever order the
+        race lands — a publish racing it is overlaid, never
+        re-enabling — so the flag ends 0 either way; the versions
+        are what must stay strictly increasing."""
         self._live_service()
         self.svc.draft_remote_config(self.owner, {"brand_primary": "#222222"})
         errors = []
@@ -181,8 +184,9 @@ class TestConcurrentPublish(RedesignBase):
         t2.join()
         self.assertEqual(errors, [])
         self.assertTrue(self.svc.is_paused("feature", "downloads"))
-        # The pause wrote no live row: the flag is still the draft value.
-        self.assertEqual(self._live_row()["feature_downloads"], 1)
+        # Either order ends with the flag 0: the pause writes 0, and
+        # a publish racing it is overlaid, never re-enabling.
+        self.assertEqual(self._live_row()["feature_downloads"], 0)
         versions = [h["config_version"] for h in self._history()]
         self.assertEqual(len(versions), 3)  # seed v0 + publish + pause
         self.assertEqual(len(set(versions)), 3)
@@ -280,6 +284,7 @@ class TestLiveUnavailable(RedesignBase):
         tmp = tempfile.mkdtemp(prefix="adminv2-nolive-")
         missing = os.path.join(tmp, "no-such-catalog.db")
         svc = Service(os.path.join(tmp, "admin"),
+                      totp_key=TEST_TOTP_KEY,
                       live=LiveStores(catalog_path=missing))
         owner_id = svc.create_owner("owner", "correct horse battery staple")
         owner = {"id": owner_id, "username": "owner", "role": "owner"}
@@ -310,7 +315,8 @@ class TestLiveUnavailable(RedesignBase):
         self._publish(brand_primary="#111111")
         admin_dir = os.path.join(self.tmp, "admin")
         missing = os.path.join(self.tmp, "no-such-catalog.db")
-        svc2 = Service(admin_dir, live=LiveStores(catalog_path=missing))
+        svc2 = Service(admin_dir, totp_key=TEST_TOTP_KEY,
+                       live=LiveStores(catalog_path=missing))
         owner2 = {"id": self.owner["id"], "username": "owner",
                   "role": "owner"}
         before_draft = dict(svc2._config_row())
@@ -348,6 +354,8 @@ class TestLiveUnavailable(RedesignBase):
         tmp = tempfile.mkdtemp(prefix="adminv2-boot-")
         env = dict(os.environ)
         env["RADD_CATALOG_DB"] = os.path.join(tmp, "no-such-catalog.db")
+        env["RADD_TOTP_KEY"] = base64.b64encode(
+            TEST_TOTP_KEY).decode("ascii")
         proc = subprocess.Popen(
             [sys.executable, run_py, "--base-dir",
              os.path.join(tmp, "data"), "--port", "18096"],
@@ -445,28 +453,30 @@ class TestRollback(RedesignBase):
 
 class TestPauseAnnotation(RedesignBase):
     def test_publish_annotates_paused_features_without_rewriting(self):
-        """(N4)/PNL-11 boundary: is_paused() is consulted ONLY to
-        annotate the audit — the publish writes the DRAFT flag value
-        to live, never a held 0. A pause is a pauses-table row, not a
-        config flag; pause->live propagation is PNL-11's."""
+        """(N4)/PNL-11 boundary: a publish while a feature is paused
+        holds the live flag at 0 (the overlay) and annotates the pause
+        in the audit — it never re-enables the feature from the draft,
+        and the draft itself is never rewritten. The pause already
+        wrote 0 to live (pause->live propagation is PNL-11's)."""
         self._live_service()
         self._publish()  # v1, downloads on
         self.assertEqual(self._live_row()["feature_downloads"], 1)
         self.svc.pause(self.owner, {"target_type": "feature",
                                     "target_id": "downloads",
                                     "reason": "abuse report"})
-        # The pause itself wrote no live row.
-        self.assertEqual(self._live_row()["feature_downloads"], 1)
+        # The pause itself wrote 0 to the live row (PNL-11).
+        self.assertEqual(self._live_row()["feature_downloads"], 0)
         self._publish(brand_primary="#333333")  # publish while paused
-        self.assertEqual(self._live_row()["feature_downloads"], 1)
+        self.assertEqual(self._live_row()["feature_downloads"], 0)
         rows = self._audit("remote_config.publish")
         after = json.loads(rows[-1]["after_json"])
         self.assertIn("downloads", after["paused_active"])
 
     def test_rollback_annotates_paused_features(self):
-        """(N4)/PNL-11 boundary: a rollback writes the snapshot's flag
-        values as they stand (a rollback to a pre-pause snapshot does
-        not resume anything) and annotates the pause in the audit."""
+        """(N4)/PNL-11 boundary: a rollback to a pre-pause snapshot
+        does not resume anything — the live flag stays 0 under the
+        pause (the overlay), while the draft keeps the snapshot's 1
+        for a later resume. The pause is annotated in the audit."""
         self._live_service()
         self._publish()  # v1, downloads on
         self.svc.pause(self.owner, {"target_type": "feature",
@@ -474,24 +484,35 @@ class TestPauseAnnotation(RedesignBase):
                                     "reason": "abuse report"})
         out = self.svc.rollback_remote_config(
             self.owner, {"version": 1, "confirm": True})
-        self.assertEqual(self._live_row()["feature_downloads"], 1)
+        self.assertEqual(self._live_row()["feature_downloads"], 0)
+        self.assertEqual(self.svc._config_row()["feature_downloads"], 1)
         self.assertEqual(out["config_version"],
                          self._live_row()["config_version"])
         rows = self._audit("remote_config.rollback")
         after = json.loads(rows[-1]["after_json"])
         self.assertIn("downloads", after["paused_active"])
 
-    def test_pause_writes_no_live_row(self):
-        """(N4)/PNL-11 boundary: creating a feature pause touches
-        only the panel (pause row + version bump + audit) — the live
-        row, live version included, is byte-identical afterwards."""
+    def test_pause_writes_live_flag_off(self):
+        """(N4)/PNL-11 boundary: creating a feature pause writes the
+        live flag to 0 (pause->live propagation is PNL-11's: a pause
+        is only real when the app sees it) and stamps the version —
+        the live row changes by exactly that flag + version (plus
+        updated_at, which every live write stamps), nothing else."""
         self._live_service()
         self._publish()
         before = dict(self._live_row())
         self.svc.pause(self.owner, {"target_type": "feature",
                                     "target_id": "downloads",
                                     "reason": "abuse report"})
-        self.assertEqual(dict(self._live_row()), before)
+        after = dict(self._live_row())
+        self.assertEqual(after["feature_downloads"], 0)
+        self.assertEqual(after["config_version"],
+                         before["config_version"] + 1)
+        for key in before:
+            if key in ("feature_downloads", "config_version",
+                      "updated_at"):
+                continue
+            self.assertEqual(after[key], before[key])
         self.assertEqual(self.svc._config_row()["config_version"], 2)
 
 
@@ -516,15 +537,16 @@ class TestCoverageMap(RedesignBase):
         self.assertEqual(set(DRAFT_REMOTE_CONFIG_FIELDS),
                          live_route | panel_feed)
 
-    def test_43_fields_partition(self):
-        """(f)/N1: the live row's 43 fields partition exactly into the
-        17 v2-writable fields, the 4 release-owned (v1-edited) fields,
+    def test_45_fields_partition(self):
+        """(f)/N1: the live row's 45 fields partition exactly into the
+        19 v2-writable fields, the 4 release-owned (v1-edited) fields,
         and the 22 v1-only fields — pinned against the v1 field spec.
         (Mega-wave4: 24/15 was PNL-01; PNL-03 moved the 19 coin fields
-        out of the v2-writable set into v1-only, keeping the 43 total.)"""
+        out of the v2-writable set into v1-only, keeping the 43 total;
+        PNL-05 then added the 2 ads switches to the v2 set, 43 -> 45.)"""
         v1_keys = [row[0] for row in admin_panel.MONETIZATION_FIELDS]
-        self.assertEqual(len(v1_keys), 43)
-        self.assertEqual(len(REMOTE_CONFIG_FIELDS), 17)
+        self.assertEqual(len(v1_keys), 45)
+        self.assertEqual(len(REMOTE_CONFIG_FIELDS), 19)
         self.assertEqual(len(RELEASE_OWNED_LIVE_FIELDS), 4)
         self.assertEqual(len(V1_ONLY_LIVE_FIELDS), 22)
         self.assertEqual(
@@ -547,6 +569,22 @@ class TestCoverageMap(RedesignBase):
             self.assertNotIn(key, DRAFT_REMOTE_CONFIG_FIELDS)
             self.assertNotIn(key, REMOTE_CONFIG_FIELDS)
 
+    def test_live_migration_defaults_match_v1_spec(self):
+        """(f)/D7: the startup migration seeds a predated column
+        with its TRUE default (the v1 field spec's), not 0/"": a
+        catalog predating clean_ads_only must serve 1, and one
+        predating free_quality_cap must serve "480p"."""
+        from admin_v2.live_stores import _LIVE_COLUMN_DEFAULTS  # noqa: E402
+        v1 = {row[0]: row[3] for row in admin_panel.MONETIZATION_FIELDS}
+        for key, default in _LIVE_COLUMN_DEFAULTS.items():
+            self.assertEqual(v1[key], default,
+                           "migration default for %s disagrees with v1" % key)
+        # And every v1 field with a non-zero/non-empty default is in
+        # the map — a missing entry silently seeds 0/"".
+        for key, default in v1.items():
+            if default not in (0, ""):
+                self.assertIn(key, _LIVE_COLUMN_DEFAULTS)
+
     def test_v2_only_fields_in_snapshot_not_live_row(self):
         """(f)/N1: the 9 snapshot-only fields land in the published
         snapshot, never as live-row columns."""
@@ -568,7 +606,8 @@ class TestCoverageMap(RedesignBase):
     def test_no_publish_intent_table_and_schema_version_6(self):
         """(f)/§0A: the intent journal + reconciler are dropped — no
         publish_intent table exists, and the migration chain ends at
-        v6 (PNL-02/03: coins_enabled column + 720p->480p default flip).
+        v6 (PNL-02/03: coins_enabled column + 720p->480p default flip;
+        PNL-05: ads_enabled + clean_ads_only columns).
         (Mega-wave4: v5 was PNL-01; v6 is the merged chain end.)"""
         svc, _owner, _aud = make_service()
         tables = {r[0] for r in svc.admin.execute(
@@ -643,6 +682,8 @@ class TestDriftGuard(RedesignBase):
         tmp, _repo, _root = self._layout(diverge=True)
         env = dict(os.environ)
         env["RADD_CATALOG_DB"] = self._temp_catalog(tmp)
+        env["RADD_TOTP_KEY"] = base64.b64encode(
+            TEST_TOTP_KEY).decode("ascii")
         proc = subprocess.run(
             [sys.executable, os.path.join(tmp, "AdminV2", "run.py"),
              "--base-dir", os.path.join(tmp, "data"),
@@ -657,6 +698,8 @@ class TestDriftGuard(RedesignBase):
         tmp, _repo, _root = self._layout(diverge=False)
         env = dict(os.environ)
         env["RADD_CATALOG_DB"] = self._temp_catalog(tmp)
+        env["RADD_TOTP_KEY"] = base64.b64encode(
+            TEST_TOTP_KEY).decode("ascii")
         proc = subprocess.Popen(
             [sys.executable, os.path.join(tmp, "AdminV2", "run.py"),
              "--base-dir", os.path.join(tmp, "data"),
@@ -708,10 +751,12 @@ class TestBackupGuard(RedesignBase):
 
     def test_backup_guard_refusal_blocks_publish(self):
         """T8/D6: a refusing guard is a 409 pre-flight — nothing is
-        written, no version is consumed."""
+        written, no version is consumed. The guard under test is
+        the one the live store carries (the pre-flight consults
+        the store's guard, the same authority LiveStores._rw
+        enforces)."""
         self._live_service()
-        old = services_mod.BackupGuard
-        services_mod.BackupGuard = self._stub_guard(ok=False)
+        self.live.backup_guard = self._stub_guard(ok=False)()
         try:
             self.svc.draft_remote_config(self.owner,
                                          {"maintenance_mode": 1})
@@ -727,23 +772,24 @@ class TestBackupGuard(RedesignBase):
             self.assertEqual(
                 [h["config_version"] for h in self._history()], [0])
         finally:
-            services_mod.BackupGuard = old
+            self.live.backup_guard = None
 
     def test_backup_guard_pass_proceeds(self):
         """T8/D6: a passing guard lets the publish through."""
         self._live_service()
-        old = services_mod.BackupGuard
-        services_mod.BackupGuard = self._stub_guard(ok=True)
+        self.live.backup_guard = self._stub_guard(ok=True)()
         try:
             out = self._publish(maintenance_mode=1)
             self.assertEqual(out["config_version"], 1)
             self.assertEqual(self._live_row()["maintenance_mode"], 1)
         finally:
-            services_mod.BackupGuard = old
+            self.live.backup_guard = None
 
     def test_backup_guard_absent_proceeds(self):
-        """T8/D6: with PNL-08 not landed yet (BackupGuard None) the
-        pre-flight is a documented no-op and publish proceeds."""
+        """T8/D6: a guard-less live store (fixture/test instance)
+        has no pre-flight — the pre-flight consults the store's
+        guard, and a store carrying none proceeds, the same shape
+        as PNL-08 not landed yet (BackupGuard None)."""
         self._live_service()
         old = services_mod.BackupGuard
         services_mod.BackupGuard = None

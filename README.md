@@ -3,7 +3,7 @@
 A media-catalog and source-link service with a REST API and an Android client.
 The backend aggregates public catalog metadata and source links into SQLite;
 the app browses it and plays it. This file is the only reference doc in the
-repo — everything in it was verified against the live system on 2026-11-17.
+repo — everything in it was verified against the live system on 2026-11-24.
 Agent manual: `AGENTS.md`. Session logs: `Fast_Fetch/CONTINUITY.md`,
 `App/docs/SESSION_HISTORY.md`, `Fast_Fetch/checkpoints/`,
 `docs/checkpoints/`.
@@ -19,10 +19,10 @@ Agent manual: `AGENTS.md`. Session logs: `Fast_Fetch/CONTINUITY.md`,
   `/tmp/muse-panel-push` and `/tmp/muse-r2-push` on the VM are Muse's
   machinery — never touch them.
 
-## Domains (verified 2026-11-17)
+## Domains (verified 2026-11-24)
 
 - **Primary: `https://radd-stream.ccwu.cc`** — Cloudflare Free, proxied,
-  SSL Full. Certificate expires 2027-02-14.
+  SSL Full.
 - **Panel / API host and backup: `https://raddstream.duckdns.org`**
 - **IP fallback: `http://92.4.95.252`** (plain HTTP)
 
@@ -31,10 +31,10 @@ domain changes, update the payload and this section together:
 
 `{"status":"ok","primary":"https://radd-stream.ccwu.cc","backups":["https://raddstream.duckdns.org","http://92.4.95.252"],"v":"1.0.0"}`
 
-## How it runs (live, verified 2026-11-17)
+## How it runs (live, verified 2026-11-24)
 
 - **API:** `radd-stream.service` — `fast_fetch.py serve` on `127.0.0.1:8080`
-  behind nginx. `GET /api/v1/posts` answers 200. Catalog: 225,517 posts.
+  behind nginx. `GET /api/v1/posts` answers 200. Catalog: 227,101 posts.
 - **Panel:** AdminV2 `run.py --base-dir ./data-live --port 18080
   --strict-host --background-jobs`, run from
   `/home/ubuntu/admin-v2-workspace-20261105` with six `RADD_*` env vars and a
@@ -45,21 +45,21 @@ domain changes, update the payload and this section together:
   symlink to `sites-available`. Edit the enabled file, verify with
   `sudo nginx -T`. Gzip and posts caching are live.
 - **Live DB:** `/home/ubuntu/radd-stream-data/merged_catalog_20261025.db`
-  (same dir holds `user_state.db`). Site registry: 27 sites
+  (same dir holds `user_state.db`). Site registry: 33 sites
   (`Fast_Fetch/domain_registry.json` is the source of truth for domains).
 - **Watchdog:** `Fast_Fetch/radd_watchdog.py`, monitor/alert only. Timers:
   light every 15 min, medium hourly, heavy Wed 02:00.
 - **Backups:** gate backups go to the private Hugging Face dataset
-  `radddao/radd-stream-gate-backups`. All 11 done and verified 2026-11-17.
-  The two newest gate backups stay on disk as rollback nets — never
-  delete them.
+  `radddao/radd-stream-gate-backups`; every gate verifies its backup
+  (integrity + counts) before deploy. The three newest gate backups stay
+  on disk as rollback nets — never delete them.
 
 ## Build, test, push, deploy
 
-- **CI is the gate.** `backend-ci.yml` (108 test steps), `ci.yml` (Android
-  build + test); 6 workflows total. No local Gradle; APKs come from GitHub
+- **CI is the gate.** `backend-ci.yml` (163 test steps), `ci.yml` (Android
+  build + test); 9 workflows total. No local Gradle; APKs come from GitHub
   Actions only — debug APK from CI, signed release only on the owner's tag
-  (never create, move, or delete a tag). Current signed release: `v1.0.4`.
+  (never create, move, or delete a tag). Current signed release: `v1.1.7` (published 2026-11-18).
 - **Push route (bundle):** commit locally, `git bundle` the new commit(s),
   `scp` the bundle to the VM, fresh clone in `/tmp` on the VM (never the
   live tree), fetch the bundle, push with `~/bin/git-askpass.sh` and
@@ -82,13 +82,13 @@ domain changes, update the payload and this section together:
 ## Architecture in brief
 
 - **`Fast_Fetch/`** — Python backend, stdlib only. `fast_fetch.py` (engine,
-  9,331 lines), `viewer.py` (API server, 8,180 lines), `redact.py` (edge
-  redaction), `importers/` (26 site importers), `backup_manager.py`.
+  11,875 lines), `viewer.py` (API server, 9,319 lines), `redact.py` (edge
+  redaction), `importers/` (27 site importers), `backup_manager.py`.
 - **`App/`** — Android app in Kotlin/Compose (Home, Search, Player, Detail,
-  My List, Downloads, Live TV, Settings). Room v8, Media3 1.3.1. Direct APK
+  My List, Downloads, Live TV, Settings). Room v15, Media3 1.11.1. Direct APK
   distribution — no Play Store.
 - **`AdminV2/`** — operator panel (`server.py`, `pairing.py`, `services.py`,
-  `store.py`). Its tests are not in CI.
+  `store.py`). Its tests run in `backend-ci.yml`.
 - **Key routes:** `/api/v1/posts?q=` (search — there is no bare
   `/api/v1/search` route), `/api/v1/app/remote-config`, `/api/v2/play`,
   `/api/v2/works`. Press a stream handle with a plain no-follow GET:
@@ -96,9 +96,9 @@ domain changes, update the payload and this section together:
 - **Adult content:** stored and flagged (`is_18_plus`), never served on any
   public surface. The full law is in `AGENTS.md`.
 
-## Key live facts (2026-11-17)
+## Key live facts (2026-11-24)
 
 - Live tree and main agree; API and panel both healthy. Public catalog
-  total ~203,300. Press-banking is live (second press answers in ~0.02 s).
+  total 204,862. Press-banking is live (second press answers in ~0.02 s).
 - SSH to the VM dies at ~280 s — keep remote commands short, or redirect
   output to a VM-side file and fetch it separately.

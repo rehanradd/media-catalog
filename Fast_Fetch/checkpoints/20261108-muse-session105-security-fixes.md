@@ -61,7 +61,7 @@ code-only: no local Gradle run exists on this VM by owner order, so CI
   cap 10/day + same-day dedup on body SHA-256 (`contact_ip_budget` in the
   panel DB); `rate_limited` → route maps to 429; no IP → no budget/dedup.
   `test_contact_intake` 15 OK (+7).
-- **8. LAN share token — DONE (code), NOT verified on CI yet.**
+- **8. LAN share token — DONE (code).** [DECIDED 2026-11-24 — deviation accepted; loopback-only brief superseded; rationale in LanShareServer.kt KDoc; token-only is the control]
   `LanShareServer.start()` mints a fresh 128-bit random per start (hex,
   32 chars, `LanShareProtocol.generateSessionToken()` — hex, not base64,
   because `java.util.Base64` needs API 26 and `android.util.Base64` is

@@ -50,10 +50,10 @@ is safe: `propagate` commits per batch and parks its cursor.
 `--once --max-rows 500 --demand-limit 200`, `TimeoutStartSec=3600`.
 Timer: every 6 hours at 02,08,14,20:30 — 2 h offset from the prefetch
 timer (00,06,12,18:30), clear of the daily backup at 03:40. Install is a
-gate step (see `LINK_SWEEP_RUNBOOK.md`); the units are NOT installed by
-this branch.
+gate step (see the runbook section appended 2026-11-24 below); the units
+were NOT installed by this branch.
 
-**`Fast_Fetch/LINK_SWEEP_RUNBOOK.md` (new).** Install, checks, and the
+**`Fast_Fetch/LINK_SWEEP_RUNBOOK.md` (new — trashed 2026-11-17, content folded into the runbook section below).** Install, checks, and the
 honest arithmetic (below).
 
 **`Fast_Fetch/test_link_state_runner.py` (new, 12 tests).** `ids` mode:
@@ -115,3 +115,166 @@ The code is in the branch; the timer is installed only at the gate
 (supervisor's call, with the backup + live test). The serve tick keeps
 running meanwhile — the two cursors (`serve`, `sweep`,
 `sweep-demand`) are independent.
+
+## Runbook — restored 2026-11-24 (DOC-06)
+
+Restored from the trash copy `Fast_Fetch/LINK_SWEEP_RUNBOOK.md` (deleted by
+the 2026-11-17 one-doc cleanup, commit `09083d43`) and folded into this
+checkpoint instead of restored as a separate file: this checkpoint is the
+runbook's live home, and the pointer in "What changed" above (which named
+`LINK_SWEEP_RUNBOOK.md`) is fixed to point here. Every claim below was
+re-verified 2026-11-24 against the code on main (`a6e27ad6`) and against the
+live box (read-only). The "Not live" note above is the 2026-11-15 position;
+the live state below supersedes it.
+
+### Two runners — do not confuse them
+
+The trash runbook names `link_state_runner.py` as "the runner". That was
+true on 2026-11-15 and is still true of the timer lane — but it is NOT the
+live sweep. Since the 18 Nov swap (user-approved 18:13 PKT 18 Nov) the
+continuous sweep is `fast_probe.py`, driven by `fast-probe-sweep-loop.sh`.
+Both run, on different lanes:
+
+| | `link_state_runner.py` (timer lane) | `fast_probe.py` (live sweep) |
+|---|---|---|
+| Fired by | `radd-link-sweep.timer`, every 6 h at 02,08,14,20:30 | `fast-probe-sweep-loop.sh`, continuous loop |
+| Batch | demand-first 200 pressed rows, then 500 background rows | 5,000 distinct URLs, 48 workers |
+| Selection | `resolved_cache` presses (demand) + id-ordered pending scan (background) | biggest hosts first, deduped by URL, per-host cap `max(4, max_rows // 24)` |
+| Guards | load gate 4.0 / 300 s, 1,500 MB floor, yields on a running prefetch sweep or backup, Nice=19 + idle IO | none in code — the operator runs it under `nice -n 19` (see the `fast_probe.py` header); no load gate, no memory floor, no neighbour check |
+| State | `link_state_cursor` scopes `sweep` + `sweep-demand` | writes only the five verdict columns on `download_sources`; no `link_state_cursor` / `link_state_runs` rows |
+| Stop | SIGTERM / systemd timeout: `propagate` commits per batch and parks its cursor, resumes next run | see "Stopping the live sweep" below — pre-INF-05 a SIGTERM kills it mid-write |
+
+Before declaring the sweep stopped, check BOTH process names — plus the
+wrapper (`pgrep -f '[f]ast-probe-sweep-loop'`):
+
+```bash
+pgrep -f '[f]ast_probe.py'
+pgrep -f '[l]ink_state_runner.py'
+```
+
+### Install (timer lane — gate step, on the Oracle VM)
+
+```bash
+sudo cp Fast_Fetch/systemd/radd-link-sweep.service Fast_Fetch/systemd/radd-link-sweep.timer \
+    /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now radd-link-sweep.timer
+systemctl list-timers radd-link-sweep.timer   # next firing, last firing
+```
+
+Timer: every 6 hours at 02,08,14,20:30 (2 h offset from the prefetch
+timer at 00,06,12,18:30, clear of the daily backup at 03:40), plus
+`RandomizedDelaySec=600` (up to 10 min jitter — the runbook omitted this)
+and `Persistent=true` (a missed firing catches up). Verified against the
+unit files on main: `ExecStart` runs `link_state_runner.py --once
+--max-rows 500 --demand-limit 200 --load-ceiling 4.0 --max-wait-seconds
+300`, `Nice=19`, `IOSchedulingClass=idle`, `TimeoutStartSec=3600`. The
+units ARE installed live (verified 24 Nov: the timer fired 02:30:55 PKT);
+the commands above are the re-install procedure.
+
+### Check it
+
+```bash
+journalctl -u radd-link-sweep.service --since "6 hours ago"   # per-run summary
+sqlite3 'file:/home/ubuntu/radd-stream-data/merged_catalog_20261025.db?mode=ro' \
+  "SELECT scope, last_id, rows_checked, state FROM link_state_cursor WHERE scope LIKE 'sweep%';"
+```
+
+The cursor query reflects the timer lane ONLY — `fast_probe.py` writes no
+cursor rows. Per-site sweep scopes (`sweep-<site>`) also match the
+`LIKE 'sweep%'` filter. Verified live 24 Nov: `sweep-demand|0|2759|
+complete`, `sweep|912901|16800|running`, plus per-site rows. The 02:30 run
+that day, from the journal: demand phase 30 pressed rows → 28 checked, 24
+updated (`expired` 18, `active` 6); background phase 600 checked, 572
+updated (`expired` 369, `active` 169, `dead` 34), `last_id` 912901; cache
+prune 0 orphans, 94 expired; 32.2 s CPU, 47.3 MB peak.
+
+### Guards (timer lane — verified against `link_state_runner.py` on main)
+
+- Load gate: waits while 1-minute load is above 4.0 (max 300 s), then
+  yields — exit 0, the next timer firing retries. (`LOAD_CEILING = 4.0`,
+  `MAX_WAIT_SECONDS = 300`, via `prefetch_worker.wait_for_quiet_machine`.)
+- Memory floor: yields below 1,500 MB MemAvailable. (`MEMORY_FLOOR_MB =
+  1500`.)
+- Neighbour check: yields while `radd-prefetch.service` or
+  `radd-backup-hf.service` is active (read via `systemctl is-active`).
+- Nice=19 + idle IO class (from the unit file).
+- A yield returns exit 0 with `yielded` set — the timer retries next
+  firing.
+- `--max-rows` is a page-boundary stop (200-row pages), so a run can
+  overshoot by up to one page: the 02:30 run checked 600 background rows
+  against `--max-rows 500`.
+- Cache hygiene (not in the trash runbook): every non-dry-run ends with a
+  bounded `resolved_cache` prune (orphans + expired DELETEs); it never
+  fails the sweep. Live: 0 orphans, 94 expired on the 02:30 run.
+
+### Stopping the live sweep (INF-05 — target, NOT live yet)
+
+Post-INF-05 behaviour (branch
+`muse/phase4-inf05-sweep-stuck-child-20261124`, tip `1ca54327`, CI-green,
+NOT merged): SIGTERM/SIGINT only set the stop event (a second signal still
+kills at once); workers stop after their in-flight URL; the writer flushes
+earned verdicts; the run reports `"stopped": true` and exits 0. The batch
+watches the STOP file (`--stop-file`, default
+`/tmp/fast-probe-sweep.stop`, env `RADD_SWEEP_STOP_FILE`). The wrapper trap
+forwards TERM/INT to the child. INF-05 also commits the wrapper to the repo
+as `Fast_Fetch/fast-probe-sweep-loop.sh`.
+
+LIVE TODAY (24 Nov, verified read-only): the wrapper on the VM is still
+the OLD Nov-18 copy (1,511 bytes, `forward_term` count 0, no trap, child
+in the foreground). Until INF-05 lands and the wrapper is installed at the
+next natural relaunch, the OLD behaviour applies: SIGTERM to the child is
+exit 143 mid-write (queued verdicts lost, writer never flushed); killing
+the wrapper orphans the child, which never reads the STOP file mid-batch
+and keeps writing through the backup window. Do NOT describe INF-05
+behaviour as live. Observed 08:38 PKT 24 Nov: `/tmp/fast-probe-sweep.stop`
+present since 06:45 while a `fast_probe.py` child (PID 2727160,
+`--apply --max-rows 5000 --workers 48`, wrapper PID 2727157) was still
+probing — exactly the old-behaviour signature.
+
+Gate check until the wrapper is installed: after touching STOP,
+`pgrep -f '[f]ast_probe.py'` must clear AND the wrapper must be gone — a
+child with no wrapper is the stuck child; SIGTERM the exact child PID once
+(graceful once INF-05 lands; exit 143 until then). After the wrapper
+install, the pgrep check alone suffices. Install (gate owner, at the next
+natural relaunch — do NOT install mid-gate, do NOT restart a running loop
+to pick it up): `cp Fast_Fetch/fast-probe-sweep-loop.sh
+/home/ubuntu/fast-probe-sweep-loop.sh`, verify `grep -c forward_term`
+is >= 2, relaunch ONLY via the wrapper, never `fast_probe.py` directly
+(it runs one batch and exits).
+
+Relaunch (live): `nohup /home/ubuntu/fast-probe-sweep-loop.sh >/dev/null
+2>&1 &`, then verify BOTH the wrapper process and a `fast_probe.py`
+child are running, plus a fresh "sweep loop started" line in
+`/tmp/fast-probe-sweep.log`. The loop runs 5,000-row batches until a batch
+probes 0 rows; a batch runs 30 min to 14 h (INF-05 measurement) — the stop
+can never wait that out, which is why the graceful stop exists.
+
+### Honest arithmetic (kept from the runbook, timer lane)
+
+A probe costs ~1–2 s of worker time (host-dependent; presigned hosts
+~4.4 s/row). Four runs a day at 500 rows is ~2,000 rows/day from this
+runner plus ~1,600/day from the tick — full coverage of 4.43M rows still
+takes years. What the runner fixes is the ORDER: pressed rows get
+verdicts within a day. Raising `--max-rows` needs a quiet-window
+measurement first, not optimism — and never while a gate backup or a
+prefetch sweep is running.
+
+### What changed in this restore
+
+1. Runner identity: the runbook's `link_state_runner.py` is the timer
+   lane, which still runs; the live sweep is `fast_probe.py` (wrapper
+   `fast-probe-sweep-loop.sh`). The install/guards/verify sections above
+   describe the timer lane; the live sweep gets its own rows in the table
+   and the stopping section.
+2. Added the INF-05 stopping section with the honest live-vs-target
+   transition — INF-05 is NOT live until it lands and the wrapper is
+   installed at the next natural relaunch.
+3. Added the cache-prune step (runbook omission) and the page-boundary
+   `--max-rows` overshoot (600 observed vs 500).
+4. Added `RandomizedDelaySec=600` + `Persistent=true` (timer details the
+   runbook omitted).
+5. Scoped the "interruption is safe" claim to the timer lane; the live
+   sweep's interruption story is the INF-05 section.
+6. Clarified the cursor check reflects the timer lane only
+   (`fast_probe.py` writes no cursor rows).

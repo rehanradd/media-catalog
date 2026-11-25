@@ -614,6 +614,39 @@ class PanelFeedTests(unittest.TestCase):
             name: default
             for name, (default, _lo, _hi) in panel_feed.TUNING_KNOBS.items()})
 
+    def test_tuning_knobs_read_operator_values_without_quarantine_columns(self):
+        # PNL-07: the real panel never stores the two quarantine knobs
+        # (store.py TUNING_DEFAULTS has no such columns), so a panel
+        # database built the way the panel builds it has 11 backend
+        # columns, not 13. The old bulk SELECT over all 13 failed on
+        # the missing column and answered defaults for EVERY knob —
+        # the fixture above hid it by creating the quarantine columns
+        # itself. A missing column must cost only its own default.
+        real_path = os.path.join(self.tmp.name, "real-panel.db")
+        conn = sqlite3.connect(real_path)
+        conn.execute(
+            "CREATE TABLE tuning_settings (id INTEGER PRIMARY KEY, "
+            "resolver_concurrency INTEGER, candidate_cap INTEGER, "
+            "cache_ttl_h INTEGER, warmup_count INTEGER, "
+            "warmup_interval_h INTEGER, rate_limit_play_per_min INTEGER, "
+            "import_cap INTEGER, import_concurrency INTEGER, "
+            "prefetch_queue INTEGER, prefetch_concurrency INTEGER, "
+            "domain_check_interval_min INTEGER)")
+        conn.execute(
+            "INSERT INTO tuning_settings VALUES "
+            "(1, 4, 20, 12, 50, 48, 60, 100, 3, 250, 2, 120)")
+        conn.commit()
+        conn.close()
+        knobs = panel_feed.read_tuning_knobs(panel_path=real_path)
+        self.assertEqual(knobs, {
+            "resolver_concurrency": 4, "candidate_cap": 20,
+            "cache_ttl_h": 12, "warmup_count": 50,
+            "warmup_interval_h": 48, "rate_limit_play_per_min": 60,
+            "import_cap": 100, "import_concurrency": 3,
+            "prefetch_queue": 250, "prefetch_concurrency": 2,
+            "domain_check_interval_min": 120,
+            "quarantine_min_failures": 3, "quarantine_min_days": 2})
+
     def test_tuning_knob_falls_back_to_caller_default_when_unwired(self):
         # The single-knob primitive answers the CALLER's default when the
         # panel cannot answer — a consumer's shipped behaviour is its own,

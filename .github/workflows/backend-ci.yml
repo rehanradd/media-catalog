@@ -123,21 +123,46 @@ name: 🐍 Backend CI — Stdlib Python Tests
 #       name, the status and the health stay for the audit; an unflagged row loses nothing; the badge
 #       stays operator-only; and over a real loopback socket a flagged source id is refused before
 #       the resolver runs. Offline — temp catalog, 127.0.0.1 port 0, no network)
+#     - (INF-04, 2026-11-24) +39 per-site parser suites, promoted from
+#       EXCLUDED after each was measured offline-green solo (1,300 tests
+#       total — see the INF-04 step block below and the PROMOTED notes in
+#       the exclusion block). Rule that replaces the old carve-out: a suite
+#       whose fixtures are captured bytes + temp SQLite is a CI step; only
+#       a suite that needs the live internet stays excluded
+#       (test_all_sites.py).
 #
 #   Deliberately EXCLUDED:
 #     - Fast_Fetch/test_all_sites.py  — live 10-site network audit; needs the
-#       internet and would make CI flaky/non-deterministic.
-#     - importers/test_<site>_import.py and importers/test_host_resolvers.py —
-#       the per-site parser suites. They gate a parser against bytes captured
-#       from someone else's website, so their value is concentrated in the edit
-#       that changes that parser, and running them on every Fast_Fetch push
-#       would tie a green light to third-party page shapes that nobody in that
-#       push touched. They are run by the scraper's own lane at edit time, and
-#       importers/test_import_fzmovies.py (72 tests, measured offline in 1.3 s
-#       on 2026-10-30 — re-count it, do not trust this number) stays in that
-#       class on purpose even though its fixtures are inlined transcriptions and
-#       it needs no network: registering one importer suite and not the other
-#       five would be a rule no one can state.
+#       internet and would make CI flaky/non-deterministic. It is the ONLY
+#       exclusion left: INF-04 (2026-11-24) ran the other 39 excluded suites
+#       solo and every one passed offline (1,300 tests), so the old per-site
+#       carve-out below is retired, not extended.
+#
+#   RETIRED RULE (INF-04, 2026-11-24 — kept as history, not as law): the
+#   per-site parser suites used to be excluded on the grounds that they gate
+#   a parser against bytes captured from someone else's website, so their
+#   value was concentrated in the edit that changed that parser, and running
+#   them on every Fast_Fetch push would tie a green light to third-party page
+#   shapes nobody in that push touched. The measurement that retired it: all
+#   39 suites run offline against inlined/captured fixtures + temp SQLite —
+#   no suite in the set reaches the network (several replace socket.socket
+#   with a raiser so an accidental live request FAILS the run), and each one
+#   passed solo on this lane. A red X from one of them is therefore always a
+#   real regression in our own parser or its fixtures, never a flake from a
+#   live site — the same property the admin_panel/engagement carve-out below
+#   already required. The new rule is statable and is enforced by the
+#   manifest guard: a suite that is offline + deterministic + stdlib-only
+#   gets a CI step; a suite that needs the live internet gets an EXCLUDED
+#   line with its reason. Two of the 39 needed a one-line fix to be
+#   promotable, both the same established pattern as test_host_resolvers.py
+#   (which was already a step): importers/test_animahd_import.py and
+#   importers/test_moviesmela_import.py insert Fast_Fetch/ on sys.path,
+#   because the importers they test import host_resolvers, which imports
+#   warp_proxy from there. test_7starhd_import.py's mobilejsr test was
+#   rewritten (not deleted): mobilejsr.com is dead in the host registry
+#   since 2026-11-18, so unwrap_mobilejsr short-circuits to one bridge row
+#   without fetching, and the old mock test asserting >=3 unwrapped sources
+#   tested a path that can no longer run for this host.
 #
 #   WHY admin_panel/engagement ARE NOT COVERED BY THAT EXCLUSION: the site-parser
 #   carve-out is about fixtures that drift when *someone else's website* changes.
@@ -162,7 +187,7 @@ name: 🐍 Backend CI — Stdlib Python Tests
 #
 #   ADMIN PANEL V2 SUITES — SEPARATE JOB `panel-tests` (added 2026-11-23).
 #   The Admin Panel v2 (AdminV2/) has its own unittest suites under
-#   AdminV2/tests/ — 312 tests, stdlib only (http.server, sqlite3, unittest),
+#   AdminV2/tests/ — 401 tests, stdlib only (http.server, sqlite3, unittest),
 #   run as `python3 -S AdminV2/tests/test_*.py` from the repo root. They were
 #   in git and passing locally but NOT in CI; this workflow now runs them.
 #   They live in a SEPARATE job, not in the `tests` job, for one reason: time.
@@ -188,38 +213,38 @@ name: 🐍 Backend CI — Stdlib Python Tests
 #     - test_live_tv_controls.py (27 tests)
 #     - test_vip_grant_atomic.py (2 tests; `from tests.helpers` -> `from
 #       helpers`, the standard pattern)
-#   After the fix, all 15 files pass: 312 tests (278 trunk + 33
-#   test_publish_redesign.py (§0A) + 1 new test_publish_flow test).
+#   After the fix, all 18 files pass: 401 tests.
 #
 #   MACHINE-READABLE EXCLUSION BLOCK (parsed by Fast_Fetch/test_ci_manifest.py
 #   — the drift guard). One line per top-level Fast_Fetch/test_*.py that is
 #   deliberately NOT a CI step. A new test file that appears in neither this
 #   block nor a run: step fails the guard: silence both ways is rot.
 #     EXCLUDED: test_all_sites.py  — live 10-site network audit; needs the internet
-#     EXCLUDED: test_10xflix_import.py  — per-site parser
-#     EXCLUDED: test_7starhd_import.py  — per-site parser
-#     EXCLUDED: test_9xmovies.py  — per-site parser
+#     PROMOTED (INF-04, 2026-11-24 — 22 top-level suites, 283 tests, each measured offline-green solo; real steps below):
+#     test_10xflix_import.py — NO LONGER EXCLUDED (7 tests).
+#     test_7starhd_import.py — NO LONGER EXCLUDED (6 tests).
+#     test_9xmovies.py — NO LONGER EXCLUDED (6 tests).
 #     PROMOTED (prod-leak audit, 2026-11-20 — the old hold reason, "owner not
 #     yet verified offline", is stale: the suite uses temp dirs only and
 #     mode=ro connections, proved by the audit; it now has a real step below):
 #     test_audit_staging.py — NO LONGER EXCLUDED.
-#     EXCLUDED: test_backfill_animated_flag.py  — operator migration, not a suite
-#     EXCLUDED: test_bolly4u_import.py  — per-site parser
-#     EXCLUDED: test_desicinemas.py  — per-site parser
-#     EXCLUDED: test_filmyzilla_import.py  — per-site parser
-#     EXCLUDED: test_hdhub4u_import.py  — per-site parser
-#     EXCLUDED: test_hdtvb_import.py  — per-site parser
-#     EXCLUDED: test_hindilinks4u.py  — per-site parser
-#     EXCLUDED: test_hindilinks4u_retry.py  — per-site parser
-#     EXCLUDED: test_import_katmoviehd.py  — per-site parser
-#     EXCLUDED: test_katmoviehd.py  — per-site parser
-#     EXCLUDED: test_katmoviehd_import.py  — per-site parser
-#     EXCLUDED: test_moviezguru.py  — per-site parser
-#     EXCLUDED: test_multimovies_import.py  — per-site parser
-#     EXCLUDED: test_rareanimes_import.py  — per-site parser
-#     EXCLUDED: test_rogmovies_import.py  — per-site parser
-#     EXCLUDED: test_ssrmovies_import.py  — per-site parser
-#     EXCLUDED: test_toonworld4all.py  — per-site parser
+#     test_backfill_animated_flag.py — NO LONGER EXCLUDED (13 tests).
+#     test_bolly4u_import.py — NO LONGER EXCLUDED (9 tests).
+#     test_desicinemas.py — NO LONGER EXCLUDED (15 tests).
+#     test_filmyzilla_import.py — NO LONGER EXCLUDED (20 tests).
+#     test_hdhub4u_import.py — NO LONGER EXCLUDED (27 tests).
+#     test_hdtvb_import.py — NO LONGER EXCLUDED (12 tests).
+#     test_hindilinks4u.py — NO LONGER EXCLUDED (24 tests).
+#     test_hindilinks4u_retry.py — NO LONGER EXCLUDED (13 tests).
+#     test_import_katmoviehd.py — NO LONGER EXCLUDED (40 tests).
+#     test_katmoviehd.py — NO LONGER EXCLUDED (5 tests).
+#     test_katmoviehd_import.py — NO LONGER EXCLUDED (14 tests).
+#     test_moviezguru.py — NO LONGER EXCLUDED (6 tests).
+#     test_multimovies_import.py — NO LONGER EXCLUDED (9 tests).
+#     test_rareanimes_import.py — NO LONGER EXCLUDED (15 tests).
+#     test_rogmovies_import.py — NO LONGER EXCLUDED (6 tests).
+#     test_ssrmovies_import.py — NO LONGER EXCLUDED (8 tests).
+#     test_toonworld4all.py — NO LONGER EXCLUDED (14 tests).
 #     PROMOTED (this line replaces the old hold entry, which the guard's EXCLUDED_RE
 #     would otherwise read as a live exclusion and call an overlap):
 #     test_transient_dead_heal.py — NO LONGER EXCLUDED. History: it was UNTRACKED qoder13
@@ -227,8 +252,8 @@ name: 🐍 Backend CI — Stdlib Python Tests
 #       96c689e) and the old line was the honest hold, not a mute; the hold's own rule was
 #       "its owner must commit it, then it gets a real step", it committed tracked at
 #       1cfea81, and the step below is that promotion.
-#     EXCLUDED: test_vegamovies_import.py  — per-site parser
-#     EXCLUDED: test_world4ufree_import.py  — per-site parser
+#     test_vegamovies_import.py — NO LONGER EXCLUDED (6 tests).
+#     test_world4ufree_import.py — NO LONGER EXCLUDED (8 tests).
 #     Widened under order qoder12_ci_manifest_widen (2026-11-05): the guard's
 #     accounting used to glob TOP LEVEL ONLY, which is why every importers/
 #     suite below was named nowhere and nothing complained. Each now carries an
@@ -237,23 +262,24 @@ name: 🐍 Backend CI — Stdlib Python Tests
 #     offline-green got real run steps instead: test_host_resolvers.py, 171
 #     tests, and test_stream_resolvers.py, 45 tests, both verified offline on
 #     this lane before promotion.)
-#     EXCLUDED: importers/test_5movierulz_import.py  — per-site parser; fixture layout follows the site, run by that site's own agent at edit time
-#     EXCLUDED: importers/test_animahd_import.py  — per-site parser; fixture layout follows the site, run by that site's own agent at edit time
-#     EXCLUDED: importers/test_aryplus_import.py  — per-site parser; fixture layout follows the site, run by that site's own agent at edit time
-#     EXCLUDED: importers/test_desiserials_import.py  — per-site parser; fixture layout follows the site, run by that site's own agent at edit time
-#     EXCLUDED: importers/test_dramacool_import.py  — per-site parser; fixture layout follows the site, run by that site's own agent at edit time
-#     EXCLUDED: importers/test_filmiyin_import.py  — per-site parser; fixture layout follows the site, run by that site's own agent at edit time
-#     EXCLUDED: importers/test_filmyhit_import.py  — per-site parser; fixture layout follows the site, run by that site's own agent at edit time
-#     EXCLUDED: importers/test_filmywap_import.py  — per-site parser; fixture layout follows the site, run by that site's own agent at edit time
-#     EXCLUDED: importers/test_import_humtv.py  — per-site parser; fixture layout follows the site, run by that site's own agent at edit time
-#     EXCLUDED: importers/test_import_fzmovies.py  — per-site parser; fixture layout follows the site, run by that site's own agent at edit time
-#     EXCLUDED: importers/test_import_wp_family.py  — per-site parser family (captured Dooplay/WP page shapes, offline fixtures)
-#     EXCLUDED: importers/test_kisskh_import.py  — per-site parser; fixture layout follows the site, run by that site's own agent at edit time
-#     EXCLUDED: importers/test_kuttymovies_import.py  — per-site parser; fixture layout follows the site, run by that site's own agent at edit time
-#     EXCLUDED: importers/test_levidia_import.py  — per-site parser; fixture layout follows the site, run by that site's own agent at edit time
-#     EXCLUDED: importers/test_moviecok_import.py  — per-site parser; fixture layout follows the site, run by that site's own agent at edit time
-#     EXCLUDED: importers/test_moviesmela_import.py  — per-site parser; fixture layout follows the site, run by that site's own agent at edit time
-#     EXCLUDED: importers/test_pagalmovies_import.py  — per-site parser; fixture layout follows the site, run by that site's own agent at edit time
+#     PROMOTED (INF-04, 2026-11-24 — 17 importers/ suites, 1,017 tests, each measured offline-green solo; real steps below):
+#     importers/test_5movierulz_import.py — NO LONGER EXCLUDED (48 tests).
+#     importers/test_animahd_import.py — NO LONGER EXCLUDED (48 tests).
+#     importers/test_aryplus_import.py — NO LONGER EXCLUDED (37 tests).
+#     importers/test_desiserials_import.py — NO LONGER EXCLUDED (59 tests).
+#     importers/test_dramacool_import.py — NO LONGER EXCLUDED (33 tests).
+#     importers/test_filmiyin_import.py — NO LONGER EXCLUDED (47 tests).
+#     importers/test_filmyhit_import.py — NO LONGER EXCLUDED (32 tests).
+#     importers/test_filmywap_import.py — NO LONGER EXCLUDED (35 tests).
+#     importers/test_import_humtv.py — NO LONGER EXCLUDED (23 tests).
+#     importers/test_import_fzmovies.py — NO LONGER EXCLUDED (72 tests).
+#     importers/test_import_wp_family.py — NO LONGER EXCLUDED (39 tests).
+#     importers/test_kisskh_import.py — NO LONGER EXCLUDED (129 tests).
+#     importers/test_kuttymovies_import.py — NO LONGER EXCLUDED (45 tests).
+#     importers/test_levidia_import.py — NO LONGER EXCLUDED (40 tests).
+#     importers/test_moviecok_import.py — NO LONGER EXCLUDED (86 tests).
+#     importers/test_moviesmela_import.py — NO LONGER EXCLUDED (179 tests).
+#     importers/test_pagalmovies_import.py — NO LONGER EXCLUDED (65 tests).
 #
 # KNOWN FAILURE MODES THIS FILE FIXES
 #   GitHub never ran any pipeline for this repo because the workflow files lived
@@ -1202,6 +1228,96 @@ jobs:
       - name: 🧪 test_javmost_import.py
         run: python3 -S Fast_Fetch/importers/test_javmost_import.py
 
+      # INF-04 per-site parser suites (2026-11-24): the 39 suites
+      # promoted from EXCLUDED after each was measured offline-green
+      # solo on this lane (1,300 tests total). Offline — captured /
+      # inlined fixtures + temp SQLite; several replace socket.socket
+      # with a raiser, so a live request would FAIL the run instead
+      # of passing it. A red X here is a real parser/fixture
+      # regression, never a live-site flake. Two local timings are
+      # load starvation on this 1.5-CPU box, not suite cost:
+      # test_rogmovies_import.py 61 s and test_vegamovies_import.py
+      # 71 s at load ~12 with no sleeps and no sockets in either file.
+
+      - name: 🧪 test_10xflix_import.py
+        run: python3 -S Fast_Fetch/test_10xflix_import.py
+      - name: 🧪 test_7starhd_import.py
+        run: python3 -S Fast_Fetch/test_7starhd_import.py
+      - name: 🧪 test_9xmovies.py
+        run: python3 -S Fast_Fetch/test_9xmovies.py
+      - name: 🧪 test_backfill_animated_flag.py
+        run: python3 -S Fast_Fetch/test_backfill_animated_flag.py
+      - name: 🧪 test_bolly4u_import.py
+        run: python3 -S Fast_Fetch/test_bolly4u_import.py
+      - name: 🧪 test_desicinemas.py
+        run: python3 -S Fast_Fetch/test_desicinemas.py
+      - name: 🧪 test_filmyzilla_import.py
+        run: python3 -S Fast_Fetch/test_filmyzilla_import.py
+      - name: 🧪 test_hdhub4u_import.py
+        run: python3 -S Fast_Fetch/test_hdhub4u_import.py
+      - name: 🧪 test_hdtvb_import.py
+        run: python3 -S Fast_Fetch/test_hdtvb_import.py
+      - name: 🧪 test_hindilinks4u.py
+        run: python3 -S Fast_Fetch/test_hindilinks4u.py
+      - name: 🧪 test_hindilinks4u_retry.py
+        run: python3 -S Fast_Fetch/test_hindilinks4u_retry.py
+      - name: 🧪 test_import_katmoviehd.py
+        run: python3 -S Fast_Fetch/test_import_katmoviehd.py
+      - name: 🧪 test_katmoviehd.py
+        run: python3 -S Fast_Fetch/test_katmoviehd.py
+      - name: 🧪 test_katmoviehd_import.py
+        run: python3 -S Fast_Fetch/test_katmoviehd_import.py
+      - name: 🧪 test_moviezguru.py
+        run: python3 -S Fast_Fetch/test_moviezguru.py
+      - name: 🧪 test_multimovies_import.py
+        run: python3 -S Fast_Fetch/test_multimovies_import.py
+      - name: 🧪 test_rareanimes_import.py
+        run: python3 -S Fast_Fetch/test_rareanimes_import.py
+      - name: 🧪 test_rogmovies_import.py
+        run: python3 -S Fast_Fetch/test_rogmovies_import.py
+      - name: 🧪 test_ssrmovies_import.py
+        run: python3 -S Fast_Fetch/test_ssrmovies_import.py
+      - name: 🧪 test_toonworld4all.py
+        run: python3 -S Fast_Fetch/test_toonworld4all.py
+      - name: 🧪 test_vegamovies_import.py
+        run: python3 -S Fast_Fetch/test_vegamovies_import.py
+      - name: 🧪 test_world4ufree_import.py
+        run: python3 -S Fast_Fetch/test_world4ufree_import.py
+      - name: 🧪 importers/test_5movierulz_import.py
+        run: python3 -S Fast_Fetch/importers/test_5movierulz_import.py
+      - name: 🧪 importers/test_animahd_import.py
+        run: python3 -S Fast_Fetch/importers/test_animahd_import.py
+      - name: 🧪 importers/test_aryplus_import.py
+        run: python3 -S Fast_Fetch/importers/test_aryplus_import.py
+      - name: 🧪 importers/test_desiserials_import.py
+        run: python3 -S Fast_Fetch/importers/test_desiserials_import.py
+      - name: 🧪 importers/test_dramacool_import.py
+        run: python3 -S Fast_Fetch/importers/test_dramacool_import.py
+      - name: 🧪 importers/test_filmiyin_import.py
+        run: python3 -S Fast_Fetch/importers/test_filmiyin_import.py
+      - name: 🧪 importers/test_filmyhit_import.py
+        run: python3 -S Fast_Fetch/importers/test_filmyhit_import.py
+      - name: 🧪 importers/test_filmywap_import.py
+        run: python3 -S Fast_Fetch/importers/test_filmywap_import.py
+      - name: 🧪 importers/test_import_fzmovies.py
+        run: python3 -S Fast_Fetch/importers/test_import_fzmovies.py
+      - name: 🧪 importers/test_import_humtv.py
+        run: python3 -S Fast_Fetch/importers/test_import_humtv.py
+      - name: 🧪 importers/test_import_wp_family.py
+        run: python3 -S Fast_Fetch/importers/test_import_wp_family.py
+      - name: 🧪 importers/test_kisskh_import.py
+        run: python3 -S Fast_Fetch/importers/test_kisskh_import.py
+      - name: 🧪 importers/test_kuttymovies_import.py
+        run: python3 -S Fast_Fetch/importers/test_kuttymovies_import.py
+      - name: 🧪 importers/test_levidia_import.py
+        run: python3 -S Fast_Fetch/importers/test_levidia_import.py
+      - name: 🧪 importers/test_moviecok_import.py
+        run: python3 -S Fast_Fetch/importers/test_moviecok_import.py
+      - name: 🧪 importers/test_moviesmela_import.py
+        run: python3 -S Fast_Fetch/importers/test_moviesmela_import.py
+      - name: 🧪 importers/test_pagalmovies_import.py
+        run: python3 -S Fast_Fetch/importers/test_pagalmovies_import.py
+
       # The admin panel feed for the app (sections / broadcasts / hides): the
       # resolver, the adult fail-closed rule, the hide expiry/restore rules,
       # and the posts-route hide enforcement. Offline — temp SQLite files.
@@ -1320,7 +1436,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/radd-data-dir"
           echo "RADD_DATA_DIR=$RUNNER_TEMP/radd-data-dir" >> "$GITHUB_ENV"
 
-      # Admin Panel v2 suites (AdminV2/tests/, 312 tests, stdlib only).
+      # Admin Panel v2 suites (AdminV2/tests/, 401 tests, stdlib only).
       # One step per suite: a red X names the exact failing suite. Run as
       # `python3 -S` from the repo root — the tests insert AdminV2/ into
       # sys.path themselves (helpers.py), so they import AdminV2/admin_v2/,
@@ -1328,8 +1444,14 @@ jobs:
       - name: 🧪 test_a10a16.py (panel)
         run: python3 -S AdminV2/tests/test_a10a16.py
 
+      - name: 🧪 test_ads_controls.py (panel)
+        run: python3 -S AdminV2/tests/test_ads_controls.py
+
       - name: 🧪 test_api.py (panel)
         run: python3 -S AdminV2/tests/test_api.py
+
+      - name: 🧪 test_backup_guard.py (panel)
+        run: python3 -S AdminV2/tests/test_backup_guard.py
 
       - name: 🧪 test_domain_check.py (panel)
         run: python3 -S AdminV2/tests/test_domain_check.py
@@ -1360,6 +1482,9 @@ jobs:
 
       - name: 🧪 test_regressions.py (panel)
         run: python3 -S AdminV2/tests/test_regressions.py
+
+      - name: 🧪 test_tuning_consumers.py (panel)
+        run: python3 -S AdminV2/tests/test_tuning_consumers.py
 
       - name: 🧪 test_ui_overhaul.py (panel)
         run: python3 -S AdminV2/tests/test_ui_overhaul.py

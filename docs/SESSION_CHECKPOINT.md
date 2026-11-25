@@ -30,20 +30,21 @@ Update this file after each independently verified milestone so work can resume 
    CI instead of silently losing it.
 8. **`[Q3-ONBOARD-PAY]` backend, branch `q3-backend-auth-payments` @ `9df2f62`** — the device-gated
    3-day trial, the PBKDF2 phone+PIN link, and the merchant relay that can credit a claim (83 offline
-   tests, CI step 33): pointer, not a copy —
-   `../Fast_Fetch/checkpoints/20261031-q3-lane-zero-friction-onboarding-and-the-merchant-relay.md`.
+   tests, CI step 33): pointer, not a copy — session text in git history
+   (file trashed 2026-11-17, `09083d43`).
    Two findings outrank the feature itself: **the review that governs this exact task —
-   `docs/RADD_RELAY_AND_AUTH_ARCHITECTURE.md`, R1-R9 — was already in trunk when the brief landed,
+   the relay/auth review, R1-R9 (file retired 2026-11-17, `09083d43`) — was already in trunk when the brief landed,
    and the brief did not name it**, so a lane re-derives from scratch what another lane already
    ruled (this lane's first draft of the session log told the owner to open an nginx route that R2
    rules against). Point at the governing ruling-file when you post a task. And
    **`Fast_Fetch/test_accounts.py` (61) and `Fast_Fetch/test_payments.py` (85) exist, pass, and are
-   not in `backend-ci.yml` at all**, so `accounts.py` and `payments.py` — the money and the keys —
-   have no hosted gate on any lane's push. Owner's call to register them; this lane reported and did
-   not silently widen everyone's gate.
+   registered in `backend-ci.yml`** (update 2026-11-24: the gap this item reported is now closed),
+   so `accounts.py` and `payments.py` — the money and the keys — have a hosted gate on every lane's
+   push. Owner's call to register them — done; this lane reported it and did not silently widen
+   everyone's gate.
 9. **`[Q3-PREMERGE-P]` — the pre-merge catalog copy and five-site merge are GATED, NOT OPEN.** qoder1
-   approved the plan at `ef91096` with four corrections, landed into
-   `../Fast_Fetch/checkpoints/20261101-01xx-q3-lane-premerge-copy-plan-queued-not-run.md`:
+   approved the plan at `ef91096` with four corrections, landed into git history
+   (file trashed 2026-11-17, `09083d43`):
    **C1** the source-side `wal_checkpoint(TRUNCATE)` is withdrawn — a read-write open checkpoints and
    rewrites the file it touches, so the instruction would have written into five databases that are not the
    lane's, and `.backup` from `-readonly` folds the WAL by construction; **C2** `fuser` is informational only
@@ -87,7 +88,7 @@ Update this file after each independently verified milestone so work can resume 
 ## Rotated session history
 
 Session blocks moved verbatim to [`docs/checkpoints/`](checkpoints/README.md); nothing was deleted or reworded.
-The list below is the rotation window (2026-10-29 → 2026-10-31), not the newest work; the full newest-first index is in `checkpoints/README.md`.
+The list below is the rotation window (2026-10-29 → 2026-10-31), not the newest work; the full newest-first index is in `checkpoints/README.md`. (2026-11-24: the unlinked entries below name session files moved to the trash bin 2026-11-17; only the two linked entries still exist in this directory.)
 
 - 2026-10-31 09:05 — q4 App lane `[Q4-ONBOARD-GREEN]`: onboarding went hosted-green at `03e926b`, the favourites rescue is provably not self-contained, and both lines own Room version 7 — three run ids measured, one destructive-migration trap found by reading
 - 2026-10-30 22:55 — Release signing secrets active on GitHub, tag v1.0.0 triggered `[RELEASE-SIGNING-ACTIVE]` — release pipeline live

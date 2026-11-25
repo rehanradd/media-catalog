@@ -178,8 +178,9 @@ class TestUiOverhaul(unittest.TestCase):
         self.assertIn('name="disclaimer_text"', html)
         self.assertIn('name="disclaimer_email"', html)
         self.assertIn("Save tuning", html)
-        # Honest labels: some controls are stored-only, never faked.
-        self.assertIn("Stored only", html)
+        # Honest labels: every control is applied somewhere now
+        # (PNL-07) — no control is stored-only, never faked.
+        self.assertNotIn("Stored only", html)
         self.assertIn("Applies:", html)
 
     def test_monetization_page_renders_without_coin_prices_or_tokens(self):

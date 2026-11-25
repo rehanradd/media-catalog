@@ -9,6 +9,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from admin_v2.security import hash_password  # noqa: E402
 from admin_v2.services import Service  # noqa: E402
 
+# Explicit test-only TOTP key (PNL-04). Service has no default key and
+# refuses to construct without one, so tests pass this fixture key.
+# It is a test fixture only and must never be used outside tests.
+TEST_TOTP_KEY = b"test-only-totp-key-0000"
+
 
 def make_service():
     """Panel-only service for the suites that never wire a live catalog.
@@ -18,7 +23,7 @@ def make_service():
     response "live": "not_configured". Suites that exercise the live
     catalog pass live= explicitly and are unaffected."""
     tmp = tempfile.mkdtemp(prefix="adminv2-test-")
-    svc = Service(tmp)
+    svc = Service(tmp, totp_key=TEST_TOTP_KEY)
     owner_id = svc.create_owner("owner", "correct horse battery staple")
     owner = {"id": owner_id, "username": "owner", "role": "owner"}
     # Auditor, inserted directly (there is no admin-account creation

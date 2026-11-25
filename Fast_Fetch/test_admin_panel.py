@@ -473,6 +473,10 @@ class Monetization(Fixture):
         self.assertEqual(self.values()["vip_monthly_pkr"], "200")
         self.assertEqual(self.values()["vip_yearly_pkr"], "1500")
         self.assertFalse(self.values()["pak_till_id"])
+        # PNL-05: the ads switches show their fail-closed defaults on
+        # the card before anything is saved (off / clean-only).
+        self.assertEqual(self.values()["ads_enabled"], "off")
+        self.assertEqual(self.values()["clean_ads_only"], "on")
         # 250 is `docs/MONETIZATION_AND_FLEET_PLAN.md:46` (owner's decision, and the
         # plan doc is authoritative). A pinned test, not a comment, because both
         # `payments.PLAN_DEFAULTS` and this spec's first draft said 200, and the
@@ -674,17 +678,91 @@ class Monetization(Fixture):
                    "vip_monthly_pkr": 200, "vip_yearly_pkr": 1500,
                    "monetag_zone_id": "10293847", "adsterra_tag_id": "0d1a7f3b9c",
                    "shrinkme_api_token": self.TOKEN_VALUE})
+        # The zone ids alone serve nothing: the ads switches are flags,
+        # so they are edited in the v2 panel, not the v1 save — flip
+        # them the way the panel does, by writing the row directly.
+        with admin_panel._session(self.db_path) as conn:
+            conn.execute("UPDATE app_remote_config SET ads_enabled=1, "
+                         "clean_ads_only=0 WHERE id=1")
+            conn.commit()
         data = self.public()
         self.assertTrue(data["success"])
         self.assertEqual(data["currency"], "PKR")
         self.assertEqual(data["vip"], {"monthly_pkr": 200, "yearly_pkr": 1500})
         self.assertEqual(data["payments"]["jazzcash"]["till_id"], "123456")
         self.assertEqual(data["payments"]["raast"]["instant_id"], "03001234567")
+        self.assertIs(data["ads"]["enabled"], True)
+        self.assertIs(data["ads"]["clean_ads_only"], False)
         self.assertEqual(data["ads"]["monetag_rewarded_zone_id"], "10293847")
         self.assertEqual(data["ads"]["adsterra_native_banner_id"], "0d1a7f3b9c")
         self.assertEqual(data["link_shorteners"],
                          [{"network": "shrinkme", "configured": True},
                           {"network": "droplink", "configured": False}])
+
+    # ── the ads switches (PNL-05) ──────────────────────────────────────
+    def _set_ads_flags(self, enabled, clean_only):
+        with admin_panel._session(self.db_path) as conn:
+            conn.execute("UPDATE app_remote_config SET ads_enabled=?, "
+                         "clean_ads_only=? WHERE id=1", (enabled, clean_only))
+            conn.commit()
+
+    def test_ads_off_serves_no_unit_id(self):
+        """Zone ids stored, switch off: the public body serves no ad
+        inventory at all — the ids alone are not an ad decision."""
+        self.save({"monetag_zone_id": "10293847",
+                   "adsterra_tag_id": "0d1a7f3b9c"})
+        self._set_ads_flags(0, 1)
+        data = self.public()
+        self.assertIs(data["ads"]["enabled"], False)
+        self.assertEqual(data["ads"]["monetag_rewarded_zone_id"], "")
+        self.assertEqual(data["ads"]["adsterra_native_banner_id"], "")
+
+    def test_clean_ads_only_withholds_adsterra(self):
+        """Ads on, clean-ads-only on (the default): Monetag is served,
+        Adsterra is withheld even though its id is stored."""
+        self.save({"monetag_zone_id": "10293847",
+                   "adsterra_tag_id": "0d1a7f3b9c"})
+        self._set_ads_flags(1, 1)
+        data = self.public()
+        self.assertIs(data["ads"]["enabled"], True)
+        self.assertIs(data["ads"]["clean_ads_only"], True)
+        self.assertEqual(data["ads"]["monetag_rewarded_zone_id"], "10293847")
+        self.assertEqual(data["ads"]["adsterra_native_banner_id"], "")
+
+    def test_an_older_settings_row_gains_ads_columns_with_fail_closed_defaults(self):
+        """The 17-column row a running deployment already holds must pick
+        up the ads switches on the next read, with their defaults, without
+        losing what the operator saved."""
+        self.conn.execute("DROP TABLE IF EXISTS app_remote_config")
+        keep = ("pak_till_id", "pak_jazzcash_number", "pak_easypaisa_number",
+                "pak_raast_id", "vip_monthly_pkr", "vip_yearly_pkr", "monetag_zone_id",
+                "adsterra_tag_id", "shrinkme_api_token", "droplink_api_token",
+                "feature_link_shorteners", "maintenance_mode", "apk_update_url",
+                "feature_downloads", "feature_pure_cinema", "feature_chromecast",
+                "feature_quality_gate")
+        self.conn.execute("CREATE TABLE app_remote_config ("
+                          " id INTEGER PRIMARY KEY CHECK (id = 1),"
+                          + ", ".join(f"{name} TEXT NOT NULL DEFAULT ''" for name in keep)
+                          + ", updated_at INTEGER NOT NULL DEFAULT 0)")
+        self.conn.execute("INSERT INTO app_remote_config(id, monetag_zone_id,"
+                          " adsterra_tag_id) VALUES(1, '10293847', '0d1a7f3b9c')")
+        self.conn.commit()
+        data = self.public()
+        self.assertIs(data["ads"]["enabled"], False)
+        self.assertIs(data["ads"]["clean_ads_only"], True)
+        self.assertEqual(data["ads"]["monetag_rewarded_zone_id"], "")
+        self.assertEqual(data["ads"]["adsterra_native_banner_id"], "")
+
+    def test_ads_enabled_key_published_for_the_app(self):
+        """Lane F / mega reconciliation: the app reads
+        `ads_enabled` (VipRemoteAds), so the served body carries
+        it alongside PNL-05's `enabled` key, with the same value."""
+        self.save({"monetag_zone_id": "10293847",
+                   "adsterra_tag_id": "0d1a7f3b9c"})
+        self._set_ads_flags(1, 1)
+        data = self.public()
+        self.assertIs(data["ads"]["ads_enabled"], True)
+        self.assertIs(data["ads"]["enabled"], True)
 
     def test_the_public_projection_names_no_provenance_key(self):
         """This body leaves the box on the public port, so it obeys the same rule
@@ -737,6 +815,18 @@ class Monetization(Fixture):
                          {"downloads": True, "pure_cinema": True,
                           "chromecast": True, "quality_gate": False,
                           "coins": False})
+        # PNL-05: ads default OFF (fail-closed, the app's own rule) and
+        # clean-ads-only defaults ON (Monetag first, clean ads only) —
+        # so a fresh deployment serves no ad unit id at all.
+        # Mega reconciliation: `ads_enabled` is published alongside
+        # `enabled` with the same value — the app reads `ads_enabled`
+        # (VipRemoteAds), so PNL-05's rename alone would leave the
+        # switch defaulting false on the phone forever.
+        self.assertEqual(data["ads"],
+                         {"enabled": False, "ads_enabled": False,
+                          "clean_ads_only": True,
+                          "monetag_rewarded_zone_id": "",
+                          "adsterra_native_banner_id": ""})
 
     def test_the_non_flag_controls_round_trip_through_the_save_and_the_public_body(self):
         """Non-flag controls still round-trip through the v1 save: the URL
@@ -764,10 +854,13 @@ class Monetization(Fixture):
             "feature_pure_cinema": True,
             "feature_chromecast": False,
             "feature_quality_gate": True,
+            "ads_enabled": True,
+            "clean_ads_only": False,
         })
         self.assertEqual(answered[0], 400, answered)
         data = self.public()
         self.assertEqual(data["feature_flags"], before["feature_flags"])
+        self.assertEqual(data["ads"], before["ads"])
         self.assertEqual(data["maintenance_mode"],
                          before["maintenance_mode"])
         self.assertEqual(data["apk_update_url"], before["apk_update_url"])

@@ -87,6 +87,12 @@ _V1_READ_ONLY_FLAGS = (
 )
 
 
+# Explicit test-only TOTP key (PNL-04): Service has no default key and
+# refuses to construct without one. Same fixture value as
+# AdminV2/tests/helpers.py TEST_TOTP_KEY; test fixture only, never live.
+_TEST_TOTP_KEY = b"test-only-totp-key-0000"
+
+
 def _fresh_service(live=True):
     """A Service on temp dirs, with an owner actor. live=False wires no live
     catalog (panel-only mode); otherwise a real LiveStores over a temp
@@ -111,7 +117,7 @@ def _fresh_service(live=True):
     admin_dir = os.path.join(tmp, "admin")
     # PNL-01 §0A N3: panel-only mode is the fixture branch — no live
     # store configured, so publish works panel-only, labelled.
-    svc = Service(admin_dir, live=live_stores)
+    svc = Service(admin_dir, totp_key=_TEST_TOTP_KEY, live=live_stores)
     owner_id = svc.create_owner("owner", "correct horse battery staple")
     owner = {"id": owner_id, "username": "owner", "role": "owner"}
     return svc, owner, catalog_path

@@ -31,7 +31,12 @@ Rules:
 - Reads open the real DBs read-only (sqlite URI mode=ro). NEVER write
   to a live DB from the workspace; writes here are only ever called
   against temp copies in tests, and at the live gate only after a
-  backup. Every write method says so in its docstring.
+  backup. Since PNL-08 that backup is ENFORCED in code, not just
+  noted: every write goes through _rw, which refuses (ApiError
+  "backup_required", 409) unless a fresh verified backup marker
+  exists for that store — see admin_v2/backup_guard.py. A LiveStores
+  with backup_guard=None is a fixture/test instance and is never
+  live; the live entry point always passes a real guard.
 - No credential, token, key hash, or transaction id is ever returned
   or logged by this module. Operator display is account_hint only:
   "acct-" + first 8 hex of sha256("radd-payment-hint:v1:" + key_hash),
@@ -77,7 +82,7 @@ PLAN_DAYS = {"vip_monthly": 30, "vip_yearly": 365}
 PLAN_DEFAULT_PKR = {"vip_monthly": 200, "vip_yearly": 1500}
 PAYMENT_METHODS = ("jazzcash", "easypaisa", "raast")
 
-# The 17 real app_remote_config fields the Android app actually reads
+# The 19 real app_remote_config fields the Android app actually reads
 # (viewer.py GET /api/v1/app/remote-config + VipRemoteConfig.kt).
 # Coins are gone (removal 2026-11-17, PNL-03): the six coin pass
 # prices and the `coins_enabled` switch are NOT carried here — the
@@ -89,14 +94,16 @@ PAYMENT_METHODS = ("jazzcash", "easypaisa", "raast")
 # every draft field on the live-row route must be in BOTH lists. The
 # one N1 addition is free_quality_cap: editable in the draft and
 # served from the live row, yet no writer could ever put it there
-# (save_remote_config rejected it as unknown). 17 fields: the 16
-# above + the cap. The monetization publish and rollback carry
+# (save_remote_config rejected it as unknown). PNL-05 (Wave 3) adds
+# the two ads switches to the v2 set. 19 fields: the 18 above + the
+# cap. The monetization publish and rollback carry
 # exactly this set; the generic publish carries the draft's live-row
 # subset (maintenance_mode, apk_update_url, free_quality_cap).
 REMOTE_CONFIG_FIELDS = [
     "pak_till_id", "pak_jazzcash_number", "pak_easypaisa_number",
     "pak_raast_id", "vip_monthly_pkr", "vip_yearly_pkr",
-    "monetag_zone_id", "adsterra_tag_id", "shrinkme_api_token",
+    "monetag_zone_id", "adsterra_tag_id", "ads_enabled", "clean_ads_only",
+    "shrinkme_api_token",
     "droplink_api_token", "maintenance_mode", "apk_update_url",
     "feature_downloads", "feature_pure_cinema", "feature_chromecast",
     "feature_quality_gate",
@@ -139,10 +146,10 @@ V1_ONLY_LIVE_FIELDS = [
     "coin_redeem_download", "coin_redeem_request", "coin_redeem_theme",
 ]
 
-# Every field on the live app_remote_config row (17 v2-writable + 4
-# release-owned + 22 v1-only = 43). The startup migration adds all of
-# them (the v1 read path SELECTs all 43); the coverage test pins the
-# 43 against admin_panel.MONETIZATION_FIELDS.
+# Every field on the live app_remote_config row (19 v2-writable + 4
+# release-owned + 22 v1-only = 45). The startup migration adds all of
+# them (the v1 read path SELECTs all 45); the coverage test pins the
+# 45 against admin_panel.MONETIZATION_FIELDS.
 ALL_LIVE_REMOTE_CONFIG_FIELDS = (REMOTE_CONFIG_FIELDS
                                  + RELEASE_OWNED_LIVE_FIELDS
                                  + V1_ONLY_LIVE_FIELDS)
@@ -157,13 +164,51 @@ V2_ONLY_SNAPSHOT_FIELDS = [
 REMOTE_CONFIG_SECRETS = ("shrinkme_api_token", "droplink_api_token")
 
 # Columns stored as INTEGER (everything else in the live-row field
-# sets is TEXT). Covers all 43 live-row fields: the startup migration
+# sets is TEXT). Covers all 45 live-row fields: the startup migration
 # adds every live-row column, and the only TEXT v1-only field is
 # streak_tz.
+# True defaults for added live-row columns (must agree with the v1
+# field spec admin_panel.MONETIZATION_FIELDS - the migration seeds
+# the SERVED value, not just the column: a catalog predating
+# clean_ads_only must serve 1 (standing order), not 0. Fields not
+# listed here default to 0 (INTEGER) or '' (TEXT). Pinned by
+# test_publish_redesign.TestCoverageMap against the v1 spec.
+_LIVE_COLUMN_DEFAULTS = {
+    "ad_app_open_min_gap_minutes": 240,
+    "ad_native_card_every_posters": 12,
+    "ad_preroll_min_gap_minutes": 25,
+    "clean_ads_only": 1,
+    "coin_finish_watch": 15,
+    "coin_per_rewarded_ad": 5,
+    "coin_redeem_day": 500,
+    "coin_redeem_download": 100,
+    "coin_redeem_monthly": 5000,
+    "coin_redeem_request": 300,
+    "coin_redeem_theme": 250,
+    "coin_redeem_weekend": 1200,
+    "coin_share": 25,
+    "feature_chromecast": 1,
+    "feature_downloads": 1,
+    "feature_pure_cinema": 1,
+    "free_quality_cap": "480p",
+    "pass_day_pkr": 20,
+    "pass_monthly_vip_pkr": 250,
+    "pass_weekend_pkr": 50,
+    "rewarded_daily_cap": 10,
+    "streak_day1_coins": 10,
+    "streak_day3_coins": 30,
+    "streak_day7_pass_hours": 24,
+    "streak_day_boundary_hour": 4,
+    "streak_tz": "Asia/Karachi",
+    "vip_monthly_pkr": 200,
+    "vip_yearly_pkr": 1500,
+}
+
 _REMOTE_CONFIG_INT_FIELDS = frozenset({
     "vip_monthly_pkr", "vip_yearly_pkr", "maintenance_mode",
     "feature_downloads", "feature_pure_cinema", "feature_chromecast",
     "feature_quality_gate", "coins_enabled",
+    "ads_enabled", "clean_ads_only",
     "apk_update_size_bytes", "apk_update_version_code",
     "feature_link_shorteners",
     "ad_preroll_min_gap_minutes", "ad_native_card_every_posters",
@@ -257,12 +302,12 @@ def _has_table(conn, name):
 def ensure_live_remote_config_columns(catalog_path):
     """Startup migration for the live app_remote_config row (PNL-01 D7).
 
-    Adds every column in ALL_LIVE_REMOTE_CONFIG_FIELDS (all 43 live-row
-    fields — the 17 v2-writable plus the 4 release-owned plus the 22
+    Adds every column in ALL_LIVE_REMOTE_CONFIG_FIELDS (all 45 live-row
+    fields — the 19 v2-writable plus the 4 release-owned plus the 22
     v1-only) plus config_version
     that the catalog predates, idempotently. The v1-only columns must
     be here too: the v1 read path (`admin_panel.remote_config`) SELECTs
-    all 43, so a catalog that only ever saw the v2 migration would
+    all 45, so a catalog that only ever saw the v2 migration would
     answer settings_unavailable on every poll. Runs at panel startup —
     Service construction calls it when a live catalog is wired — never
     in the request path, so a publish never takes an exclusive schema
@@ -283,10 +328,16 @@ def ensure_live_remote_config_columns(catalog_path):
         for key in sorted(set(ALL_LIVE_REMOTE_CONFIG_FIELDS) | {"config_version"}):
             if key in cols:
                 continue
-            coltype = ("INTEGER NOT NULL DEFAULT 0"
-                       if key in _REMOTE_CONFIG_INT_FIELDS
-                       or key == "config_version"
-                       else "TEXT NOT NULL DEFAULT ''")
+            # Seed the TRUE default (v1 spec via _LIVE_COLUMN_DEFAULTS),
+            # not 0/"": a predated column must serve what a catalog
+            # that had it from the start serves (clean_ads_only=1,
+            # vip_monthly_pkr=200, free_quality_cap="480p", ...).
+            if key in _REMOTE_CONFIG_INT_FIELDS or key == "config_version":
+                default = _LIVE_COLUMN_DEFAULTS.get(key, 0)
+                coltype = "INTEGER NOT NULL DEFAULT %d" % default
+            else:
+                default = _LIVE_COLUMN_DEFAULTS.get(key, "")
+                coltype = "TEXT NOT NULL DEFAULT '%s'" % default
             conn.execute("ALTER TABLE app_remote_config ADD COLUMN %s %s"
                          % (key, coltype))
             added.append(key)
@@ -675,7 +726,7 @@ class LiveStores:
                  registry_path=None, status_dir=None, cert_path=None,
                  fleet_base_dir="/opt/radd-stream/Fast_Fetch",
                  fleet_log_dir=None, fleet_runner=None,
-                 host_registry_path=None):
+                 host_registry_path=None, backup_guard=None):
         self.catalog_path = catalog_path
         self.ledger_path = ledger_path
         self.registry_path = registry_path
@@ -687,6 +738,10 @@ class LiveStores:
         # the property below derives it from the domain registry's
         # directory, else the fleet dir.
         self._host_registry_path = host_registry_path
+        # Backup precondition (PNL-08): a BackupGuard, or None for
+        # fixture/test instances (never live). The guard is consulted
+        # by _rw before ANY live SQLite write opens.
+        self.backup_guard = backup_guard
         # fleet_runner(cmd, cwd, log_path) -> pid-like int. Injected in
         # tests so no real crawler is ever spawned there.
         self.fleet_runner = fleet_runner or self._default_runner
@@ -703,10 +758,40 @@ class LiveStores:
     def _rw(self, path, what):
         if not path or not os.path.exists(path):
             raise LiveUnavailable("No %s store is configured here." % what)
+        # PNL-08 backup precondition: the single funnel for every
+        # live SQLite write. A guard-less instance is a fixture/test
+        # instance (never live); a guarded one refuses the write
+        # unless a fresh verified backup marker covers this store.
+        # Reads (_ro) are never gated — refusing a read would hide
+        # the very state an operator needs to see.
+        if self.backup_guard is not None:
+            self.backup_guard.require(what, path)
         conn = sqlite3.connect(path, timeout=10.0, check_same_thread=False,
                                isolation_level=None)
         conn.row_factory = sqlite3.Row
         return conn
+
+    def backup_status(self):
+        """Read-only freshness report for each configured live store:
+        {"catalog": {...}, "ledger": {...}} from BackupGuard.status
+        (ok / reason / marker / age_s). Stores with no path configured
+        are omitted. Never raises for a missing dir or bad marker —
+        a missing backup is a report, not a crash."""
+        out = {}
+        for store, path in (("catalog", self.catalog_path),
+                            ("ledger", self.ledger_path)):
+            if not path or not os.path.exists(path):
+                continue
+            if self.backup_guard is None:
+                out[store] = {
+                    "ok": False,
+                    "reason": ("no backup guard is configured on this "
+                               "LiveStores instance (fixture/test instance, "
+                               "never live)"),
+                    "marker": None, "age_s": None}
+            else:
+                out[store] = self.backup_guard.status(store, path)
+        return out
 
     @property
     def has_catalog(self):
@@ -1016,7 +1101,8 @@ class LiveStores:
         incremented, rows only UPDATED, never deleted).
 
         WRITE path: only ever run against a COPY in tests; at the live
-        gate only after a backup of the catalog DB. Returns counters.
+        gate _rw enforces the backup precondition (PNL-08) before the
+        write opens. Returns counters.
         """
         conn = self._rw(self.catalog_path, "catalog")
         try:
@@ -1441,8 +1527,9 @@ class LiveStores:
         Returns {"id", "status", "changed"}; None when the row does not
         exist. A re-mark writes nothing and reports the status the row
         already holds — the operator's double-click closes nobody twice.
-        Writes run against temp copies in tests; at the live gate only
-        after a backup, like every other ledger write here.
+        Writes run against temp copies in tests; at the live gate _rw
+        enforces the backup precondition (PNL-08), like every other
+        ledger write here.
         """
         if status not in self.REQUEST_TERMINAL_STATUSES:
             raise ValueError("unknown request status: %r" % (status,))
@@ -1781,7 +1868,8 @@ class LiveStores:
     def save_remote_config(self, fields, config_version=None):
         """v1 save-monetization pattern: partial save, validated,
         all-or-nothing, updated_at=time.time(). WRITE path: tests run
-        this on a COPY only; live use needs a catalog backup first.
+        this on a COPY only; live use goes through _rw, which enforces
+        the backup precondition (PNL-08) before the write opens.
 
         config_version stamps the published version onto the served row
         in the same UPDATE, so a flag change is never live without a
@@ -1810,7 +1898,8 @@ class LiveStores:
             if k in fields and not (0 <= int(fields[k]) <= 10_000_000):
                 raise bad("VIP price must be between 0 and 10,000,000.")
         for k in ("maintenance_mode", "feature_downloads", "feature_pure_cinema",
-                  "feature_chromecast", "feature_quality_gate"):
+                  "feature_chromecast", "feature_quality_gate",
+                  "ads_enabled", "clean_ads_only"):
             if k in fields and int(fields[k]) not in (0, 1):
                 raise bad("That flag must be 0 or 1.")
         if "free_quality_cap" in fields and fields["free_quality_cap"] not in ("480p", "720p"):
@@ -1840,6 +1929,51 @@ class LiveStores:
                 conn.execute(
                     "UPDATE app_remote_config SET %s, updated_at=? WHERE id=1"
                     % sets, list(write.values()) + [time.time()])
+                conn.execute("COMMIT")
+            except Exception:
+                try:
+                    conn.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
+                raise
+            return self.read_remote_config_masked()
+        finally:
+            conn.close()
+
+    def save_pause_flag(self, column, value, config_version):
+        """Internal pause-path write (PNL-11): set one live flag
+        column + stamp the version in the same UPDATE, exactly
+        like save_remote_config. The pause machinery writes
+        columns the v2 save path does NOT serve (coins_enabled
+        is RELEASE_OWNED — the app reads it from the release,
+        the panel only ever holds it at 0 while paused) — so
+        this validates against ALL_LIVE_REMOTE_CONFIG_FIELDS,
+        not REMOTE_CONFIG_FIELDS. Only _write_feature_pause_live
+        calls it, with a column from FEATURE_PAUSE_COLUMNS.
+        """
+        if column not in ALL_LIVE_REMOTE_CONFIG_FIELDS:
+            raise bad("Unknown live column: %s" % column)
+        if int(value) not in (0, 1):
+            raise bad("That flag must be 0 or 1.")
+        try:
+            config_version = int(config_version)
+        except (TypeError, ValueError):
+            raise bad("config_version must be a whole number.")
+        conn = self._rw(self.catalog_path, "catalog")
+        try:
+            cols = {r[1] for r in
+                    conn.execute("PRAGMA table_info(app_remote_config)")}
+            if column not in cols or "config_version" not in cols:
+                raise ApiError(
+                    "schema_drift",
+                    "The live catalog is missing column(s) %s — restart "
+                    "the panel to migrate, then retry." % column, 500)
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                conn.execute(
+                    "UPDATE app_remote_config SET %s=?, config_version=?, "
+                    "updated_at=? WHERE id=1" % column,
+                    [int(value), config_version, time.time()])
                 conn.execute("COMMIT")
             except Exception:
                 try:
@@ -2410,7 +2544,10 @@ class LiveStores:
         """v1 run-scraper: INSERT admin_fleet_audit 'running' + spawn
         the SAME bounded command v1 uses + background watcher updating
         the audit row. WRITE + spawn path: tests inject a fake runner
-        and use a COPY of the catalog; live use needs a backup first."""
+        and use a COPY of the catalog; live use goes through _rw, which
+        enforces the backup precondition (PNL-08) before the audit row
+        is written — the crawler is never spawned without a fresh
+        verified backup."""
         if site not in FLEET_SITES:
             raise bad("Unknown crawler.")
         if mode not in FLEET_MODES:
