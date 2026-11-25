@@ -14,7 +14,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.SharedTransitionScope
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -97,7 +96,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -1374,33 +1372,34 @@ internal fun DetailContent(
 
         if (similarTitles.isNotEmpty()) {
             item(contentType = "similar-titles") {
-                // DT-4 (round 2) + round-6 motion: the rail is the
-                // page's LAST item and arrives via scroll — it carries
-                // the scroll-arrival entrance (DetailScrollEntrance),
-                // not DetailEntrance. DetailEntrance hid the rail from
-                // the semantics tree until its 420ms delay elapsed, so
-                // DetailRedesignTest's swipe-to-rail could not find
-                // "More Like This" (Android 45538692963). The
-                // graphicsLayer entrance keeps the rail findable from
-                // the first frame; it only looks like it arrives.
-                DetailScrollEntrance(index = 7) {
-                    Column(
-                        modifier = Modifier
-                            .bringIntoViewRequester(similarBringIntoView)
-                            .then(pageSides),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        SectionHeader(title = "More Like This")
-                        MediaRail(
-                            items = similarTitles,
-                            key = { it.id },
-                            contentPadding = PaddingValues(0.dp),
-                        ) { similar ->
-                            PosterCard(
-                                post = similar,
-                                onClick = { onPostClick(similar) },
-                            )
-                        }
+                // DT-4 (round 2): the rail is the page's LAST item and
+                // arrives via scroll, not via page entrance — it carries
+                // no staggered entrance. Wrapping it in DetailEntrance
+                // hid the rail from the semantics tree until its 420ms
+                // delay elapsed, so DetailRedesignTest's swipe-to-rail
+                // could not find "More Like This" (Android 45538692963).
+                // Round-6 tried a graphicsLayer entrance instead, but
+                // Paparazzi captures the spring mid-flight (LocalInspectionMode
+                // is false in PaparazziPreviewTest, and the animation clock
+                // does not settle the spring), so the whole rail vanished
+                // from all 7 Detail goldens (records 199 + 205). No
+                // entrance here: the rail renders settled, as before.
+                Column(
+                    modifier = Modifier
+                        .bringIntoViewRequester(similarBringIntoView)
+                        .then(pageSides),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    SectionHeader(title = "More Like This")
+                    MediaRail(
+                        items = similarTitles,
+                        key = { it.id },
+                        contentPadding = PaddingValues(0.dp),
+                    ) { similar ->
+                        PosterCard(
+                            post = similar,
+                            onClick = { onPostClick(similar) },
+                        )
                     }
                 }
             }
@@ -2823,62 +2822,6 @@ private fun DetailEntrance(
             )
         },
         modifier = modifier,
-    ) {
-        content()
-    }
-}
-
-/**
- * Round-6 motion (Nov 2026): the scroll-arrival entrance — the same
- * staggered fade + rise as [DetailEntrance], but painted with a
- * graphicsLayer (alpha + translationY) instead of AnimatedVisibility,
- * so the content stays in the semantics tree from the first frame.
- * [DetailEntrance] hides its content until the delay elapses, which
- * broke DetailRedesignTest's swipe-to-rail ("More Like This" was not
- * findable until 420ms after it scrolled into view — Android
- * 45538692963). This one is findable immediately; it only LOOKS
- * like it arrives. In inspection mode (Paparazzi) it starts settled,
- * and reduced-motion viewers get the settled state at once.
- */
-@Composable
-private fun DetailScrollEntrance(
-    index: Int,
-    modifier: Modifier = Modifier,
-    content: @Composable () -> Unit,
-) {
-    val inInspectionMode = LocalInspectionMode.current
-    val reduceMotion = rememberReduceMotion()
-    // Round-6 motion, Paparazzi guard: in inspection mode (and for
-    // reduced-motion viewers) the section renders settled, with NO
-    // animation state at all — no animateFloatAsState, no graphicsLayer.
-    // A spring-driven alpha captured mid-flight hid the whole rail in
-    // the first record (detailMovie lost "More Like This"), so the
-    // settled path must not go through an Animatable. The animated
-    // path below is for real devices only.
-    if (inInspectionMode || reduceMotion) {
-        content()
-        return
-    }
-    var visible by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        delay(index * 60L)
-        visible = true
-    }
-    val alpha by animateFloatAsState(
-        targetValue = if (visible) 1f else 0f,
-        animationSpec = RaddMotion.defaultEffects(),
-        label = "detailScrollEntranceAlpha",
-    )
-    val offsetY by animateFloatAsState(
-        targetValue = if (visible) 0f else 24f,
-        animationSpec = RaddMotion.defaultSpatial(),
-        label = "detailScrollEntranceOffsetY",
-    )
-    Box(
-        modifier = modifier.graphicsLayer {
-            this.alpha = alpha
-            this.translationY = offsetY
-        },
     ) {
         content()
     }
