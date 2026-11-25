@@ -555,6 +555,10 @@ class MyListMockupScreenTest {
             onRemove = { removed += it },
         )
         compose.onNodeWithContentDescription("Remove Inception from My List").performClick()
+        // Round 6 (§4): the × animates the row out (fade + scale) before
+        // the removal lands — the clock advances past the 300ms exit so
+        // the removal has fired before it is asserted.
+        compose.mainClock.advanceTimeBy(1000)
         assertEquals(listOf(1), removed)
         assertTrue("remove tap also opened a title: $opened", opened.isEmpty())
         assertTrue("remove tap also played: $played", played == null)

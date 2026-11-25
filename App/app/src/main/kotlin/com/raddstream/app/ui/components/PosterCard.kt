@@ -213,7 +213,9 @@ fun PosterCard(
      * Round 6 (motion): the shared-element scopes, passed down from the
      * NavHost's SharedTransitionLayout by the infra branch. Both null by
      * default — the tile compiles and renders exactly as before until the
-     * scopes arrive, so this is dormant until infra wires them.
+     * scopes arrive, so this is dormant until infra wires them. When
+     * wired, the poster image carries sharedElement(key =
+     * "poster-<workId>"), one key per work, shared with the Detail hero.
      */
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null,

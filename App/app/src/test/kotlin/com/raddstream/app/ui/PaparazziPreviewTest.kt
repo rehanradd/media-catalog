@@ -305,20 +305,27 @@ class PaparazziPreviewTest {
     fun myListPopulated() {
         paparazzi.snapshot {
             themed {
-                MyListLoadedContent(
-                    state = MyListUiState(
-                        favorites = listOf(jawan, salaars),
-                        sort = ListSort.RECENT,
-                        popular = listOf(mclintock),
-                        progressByPostId = mapOf(1 to 0.5f),
-                        progressLabelByPostId = mapOf(1 to "S2:E5 · 23 min left"),
-                    ),
-                    onPostClick = {},
-                    onRemove = {},
-                    onSort = {},
-                    isFavorite = { false },
-                    onToggleFavorite = {},
-                )
+                // Round 6 (§4): the Library entrances (grid stagger,
+                // filtered-empty) check LocalInspectionMode and render
+                // settled when it is true — Paparazzi does not set it
+                // globally, so this test provides it (the same pattern
+                // seven other tests in this file already use).
+                CompositionLocalProvider(LocalInspectionMode provides true) {
+                    MyListLoadedContent(
+                        state = MyListUiState(
+                            favorites = listOf(jawan, salaars),
+                            sort = ListSort.RECENT,
+                            popular = listOf(mclintock),
+                            progressByPostId = mapOf(1 to 0.5f),
+                            progressLabelByPostId = mapOf(1 to "S2:E5 · 23 min left"),
+                        ),
+                        onPostClick = {},
+                        onRemove = {},
+                        onSort = {},
+                        isFavorite = { false },
+                        onToggleFavorite = {},
+                    )
+                }
             }
         }
     }
@@ -345,19 +352,25 @@ class PaparazziPreviewTest {
     fun myListFilteredEmpty() {
         paparazzi.snapshot {
             themed {
-                MyListLoadedContent(
-                    state = MyListUiState(
-                        favorites = listOf(jawan),
-                        sort = ListSort.RECENT,
-                        filter = MyListFilter.SERIES,
-                        popular = listOf(mclintock),
-                    ),
-                    onPostClick = {},
-                    onRemove = {},
-                    onSort = {},
-                    isFavorite = { false },
-                    onToggleFavorite = {},
-                )
+                // Round 6 (§4): the filtered-empty entrance checks
+                // LocalInspectionMode and renders settled when it is
+                // true — Paparazzi does not set it globally, so this
+                // test provides it (same pattern as myListPopulated).
+                CompositionLocalProvider(LocalInspectionMode provides true) {
+                    MyListLoadedContent(
+                        state = MyListUiState(
+                            favorites = listOf(jawan),
+                            sort = ListSort.RECENT,
+                            filter = MyListFilter.SERIES,
+                            popular = listOf(mclintock),
+                        ),
+                        onPostClick = {},
+                        onRemove = {},
+                        onSort = {},
+                        isFavorite = { false },
+                        onToggleFavorite = {},
+                    )
+                }
             }
         }
     }
