@@ -565,24 +565,11 @@ class WorkflowSuiteCoverageTests(unittest.TestCase):
     #: cannot run; registering one means deleting it here; deleting or renaming one fails too.
     #: What it enforces is `in_gate | UNREGISTERED == on_disk` — exact set equality, modulo the
     #: debt — which becomes plain equality the moment the debt is paid.
+    # INF-04 (2026-11-24) paid 39 of the 40 names that were here: each was
+    # measured offline-green solo (1,300 tests) and registered as a real CI
+    # step in backend-ci.yml. Only the live-network audit remains.
     UNREGISTERED = frozenset({
-        "test_10xflix_import.py", "test_5movierulz_import.py", "test_7starhd_import.py",
-        "test_9xmovies.py",
-        "test_all_sites.py", "test_animahd_import.py", "test_aryplus_import.py",
-        "test_backfill_animated_flag.py",
-        "test_bolly4u_import.py", "test_desicinemas.py",
-        "test_desiserials_import.py", "test_dramacool_import.py",
-        "test_filmiyin_import.py", "test_filmyhit_import.py",
-        "test_filmywap_import.py", "test_filmyzilla_import.py", "test_hdhub4u_import.py",
-        "test_hdtvb_import.py", "test_hindilinks4u.py", "test_hindilinks4u_retry.py",
-        "test_import_fzmovies.py", "test_import_humtv.py", "test_import_katmoviehd.py",
-        "test_import_wp_family.py", "test_katmoviehd.py", "test_katmoviehd_import.py",
-        "test_kisskh_import.py", "test_kuttymovies_import.py", "test_levidia_import.py",
-        "test_moviecok_import.py", "test_moviesmela_import.py", "test_moviezguru.py",
-        "test_multimovies_import.py", "test_pagalmovies_import.py",
-        "test_rareanimes_import.py", "test_rogmovies_import.py",
-        "test_ssrmovies_import.py",
-        "test_toonworld4all.py", "test_vegamovies_import.py", "test_world4ufree_import.py",
+        "test_all_sites.py",
     })
 
     def _steps(self):

@@ -19,8 +19,10 @@ fresh at play time):
   null FileName/filesize, so that is the dead signal; the file host
   answers image/png on genuine Matroska bytes and honors ranges only
   via a ?range= query param, so not resumable); hubcdn (hdboss.in gateway:
-  /cloud/<token> page -> /l.php 302s; the public R2 mirror is permanent and
-  preferred, Google direct second, Gofile/Telegram banked as mirrors only —
+  /cloud/<token> page -> /l.php 302s; the public R2 mirror is permanent on
+  a proven bucket only (DOC-01 2026-11-24: per-bucket — old bucket
+  pub-5703… permanent, a freshly minted bucket 403s) and preferred,
+  Google direct second, Gofile/Telegram banked as mirrors only —
   see _unwrap_hubcdn).
 
 Rules this module enforces, wherever it is used:
@@ -124,8 +126,10 @@ WATCH_PREFERENCE = (
 #: fastdl.beer is last on purpose — its files ignore Range. bbupload is
 #: last with it: its file host honors ranges only via a ?range= query
 #: param, never via the Range header, so the probe reports resumable=False.
-#: hubcdn sits second: its R2 mirror is resumable AND permanent (unsigned
-#: public bucket, no expiry), so it outranks every non-resumable host.
+#: hubcdn sits second: its R2 mirror is resumable AND permanent on a proven
+#: bucket only (unsigned public bucket, no expiry on the proven old bucket;
+#: a freshly minted bucket 403s — DOC-01 2026-11-24), so it outranks every
+#: non-resumable host.
 DOWNLOAD_PREFERENCE = ("pixeldrain", "hubcdn", "fastdl-beer", "hubdrive",
                        "megaup", "bbupload", "1fichier")
 
@@ -1131,13 +1135,14 @@ def _unwrap_hubcdn(saved_url: str, fetch, sleep=None) -> tuple:
     the real host with no wait and no dl_token — the click dance (random
     dl_token + dl_ready cookie poll) is browser UX only, the server 302s
     without it. One pointer fans out to FOUR mirrors: public R2
-    (``pub-*.r2.dev/<32-hex>``, unsigned, Range 206, permanent), Google
+    (``pub-*.r2.dev/<32-hex>``, unsigned, Range 206, permanent on a proven
+    bucket only — DOC-01 2026-11-24: per-bucket, fresh buckets 403), Google
     Drive direct (token rotates between probes, short-lived), Gofile,
     Telegram. Five of the eight buttons share the SAME Google href, so
     hops are deduped by href first (4 hops max per quality, not 8).
 
     Only R2/Google are probe-able files, so only they become candidates
-    (R2 first — permanent beats minted). Gofile/Telegram ride on each
+    (R2 first — a proven-bucket permanent beats minted). Gofile/Telegram ride on each
     candidate as ``mirrors`` so the caller can bank all four destinations
     from one resolve. A page with no buttons and a filesdl countdown is
     the "Preparing Download" shape: reported, never served.
@@ -1556,11 +1561,17 @@ def resolve_copy(saved_url: str, fetch=default_fetch, probe=None) -> dict:
         verdict = probe_fn(cand["url"], cand.get("referer"),
                            cand.get("kind_hint", "playlist"))
         if verdict.get("ok"):
-            # A HubCDN R2 win is permanent (unsigned public bucket, no
-            # expiry — unlike HubCloud FSL's 8 h signature), so it never
-            # needs a re-resolve timer; a Google win is minted per request
-            # and stays temporary. Mirrors ride on the result so the
+            # A HubCDN R2 win is treated as permanent here (unsigned public
+            # bucket, no expiry — unlike HubCloud FSL's 5 h signature), so it
+            # never needs a re-resolve timer; a Google win is minted per
+            # request and stays temporary. Mirrors ride on the result so the
             # caller can bank all four destinations from one resolve.
+            # NOTE 2026-11-24 (DOC-01): measured truth is per-bucket — only
+            # the proven old bucket pub-5703… is permanent; a freshly
+            # minted bucket 403s. The `permanent` flag below still marks
+            # ANY .r2.dev win permanent; the bucket check is an owed
+            # API-lane follow-up (API-11 fixed resolved_cache/backfill,
+            # not this flag) — not changed on this docs branch.
             permanent = (backend == "pixeldrain" or
                          (backend == "hubcdn"
                           and _host_of(cand["url"]).endswith(".r2.dev")))

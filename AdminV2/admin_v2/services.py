@@ -21,6 +21,7 @@ import time
 from datetime import datetime, timezone
 
 from . import security, smart
+from .backup_guard import BackupGuard
 from .errors import ApiError, bad, conflict, forbidden, not_found
 from .live_stores import (
     FLEET_SITES as _LIVE_FLEET_SITES,  # noqa: F401  (same list, live-verified)
@@ -127,6 +128,20 @@ PAUSE_TARGETS = {
     "import_global", "prefetch_global", "source", "section", "category",
     "feature", "broadcast", "domain_checks",
 }
+# Feature pause -> live catalog column. The app reads these flags from
+# the catalog row (the remote-config route AND the press/mint quality
+# gate both read the row directly), so a pause must write the row, not
+# just the panel's own fixture fold. "coins" is the panel spelling of
+# coins_enabled. A feature name with no entry here has no live column:
+# pausing it stays snapshot-only, and the serve-time fold still hides
+# it from remote-config.
+FEATURE_PAUSE_COLUMNS = {
+    "downloads": "feature_downloads",
+    "pure_cinema": "feature_pure_cinema",
+    "chromecast": "feature_chromecast",
+    "quality_gate": "feature_quality_gate",
+    "coins": "coins_enabled",
+}
 TUNING_BOUNDS = {
     "resolver_concurrency": (1, 4), "candidate_cap": (3, 20),
     "cache_ttl_h": (1, 24), "warmup_count": (0, 200),
@@ -152,19 +167,35 @@ def _public_user(row):
 
 
 class Service:
-    def __init__(self, base_dir, totp_key=b"workspace-totp-key-change-at-gate",
+    def __init__(self, base_dir, totp_key=None,
                  live_catalog_path=None, live_ledger_path=None,
                  live_registry_path=None, live_status_dir=None,
                  live_cert_path=None, live_fleet_base_dir=None,
                  live_fleet_runner=None, live=None,
-                 live_host_registry_path=None):
+                 live_host_registry_path=None, backup_guard="default"):
+        # PNL-04 fail-closed: there is no default TOTP key. A previous
+        # build silently fell back to a public literal when no key was
+        # configured, so every TOTP secret would have been wrapped
+        # under a key anyone could read. Refuse to construct without
+        # an explicit key of at least 16 bytes; run.py loads it from
+        # RADD_TOTP_KEY and tests pass an explicit fixture key.
+        if totp_key is None:
+            raise ValueError(
+                "TOTP encryption key is not configured: set RADD_TOTP_KEY "
+                "(base64, at least 16 bytes). The panel refuses to start "
+                "without it; there is no default key.")
+        if not isinstance(totp_key, (bytes, bytearray)) or len(totp_key) < 16:
+            raise ValueError(
+                "TOTP encryption key is invalid: RADD_TOTP_KEY must decode "
+                "to at least 16 bytes. The panel refuses to start without "
+                "it; there is no default key.")
         import os
         self.base_dir = base_dir
         os.makedirs(base_dir, exist_ok=True)
         self.admin_path = os.path.join(base_dir, "admin_v2.db")
         self.catalog_path = os.path.join(base_dir, "catalog_fixture.db")
         self.ledger_path = os.path.join(base_dir, "ledger_fixture.db")
-        self.totp_key = totp_key
+        self.totp_key = bytes(totp_key)
         self.admin = connect(self.admin_path)
         migrate(self.admin)
         self.catalog = init_catalog_fixture(self.catalog_path)
@@ -173,19 +204,30 @@ class Service:
         # Live stores: injected LiveStores, or built from explicit
         # paths. None = no live store configured (fixture behaviour).
         # Workspace tests pass temp copies; the live gate passes the
-        # real paths only after a backup.
+        # real paths only after a backup — and since PNL-08 that is
+        # enforced, not just noted: a BackupGuard ("default" builds
+        # one from RADD_BACKUP_MARKER_DIR / RADD_BACKUP_MAX_AGE_S)
+        # is attached to the LiveStores, and _rw refuses every live
+        # write without a fresh verified backup marker. An injected
+        # `live` carries its own guard (tests inject guard-less
+        # instances); passing backup_guard=None here means "no guard"
+        # and is for fixture/test use only, never live.
         if live is not None:
             self.live = live
         elif any((live_catalog_path, live_ledger_path, live_registry_path,
                   live_status_dir, live_cert_path, live_fleet_base_dir,
                   live_fleet_runner, live_host_registry_path)):
+            guard = backup_guard
+            if guard == "default":
+                guard = BackupGuard.from_env()
             self.live = LiveStores(
                 catalog_path=live_catalog_path, ledger_path=live_ledger_path,
                 registry_path=live_registry_path, status_dir=live_status_dir,
                 cert_path=live_cert_path,
                 fleet_base_dir=live_fleet_base_dir or "/opt/radd-stream/Fast_Fetch",
                 fleet_runner=live_fleet_runner,
-                host_registry_path=live_host_registry_path)
+                host_registry_path=live_host_registry_path,
+                backup_guard=guard)
         else:
             self.live = None
         self._bg_stop = None
@@ -199,6 +241,15 @@ class Service:
 
     def _live_ledger(self):
         return self.live if (self.live is not None and self.live.has_ledger) else None
+
+    def backup_status(self):
+        """Read-only: freshness of the verified backup for each
+        configured live store (PNL-08). {} when no live store is
+        wired. Used by the entry point's startup warning; never
+        raises for a missing dir or bad marker."""
+        if self.live is None:
+            return {}
+        return self.live.backup_status()
 
     def _get_work_any(self, work_id):
         """One work from the real catalog when wired, else the fixture.
@@ -298,16 +349,26 @@ class Service:
     def tuning_consumers(self, actor):
         """Honest labelling per tuning control (OD-04 pattern).
 
-        A read-only grep of the VM Fast_Fetch code on 2026-11-05 found
-        NO consumer for 13 of the 20 controls. Only the ones that ride
-        in remote-config reach the app (VIP prices via monetization,
-        free quality cap, the theme knobs and hero_max via the public
-        config). The rest are stored, not yet applied by the backend —
-        labelled, never pretended."""
+        Re-verified 2026-11-24 against main ef15f2fc: every one of the
+        24 controls now has a consumer, so none is stored-only. The
+        2026-11-05 grep that found "NO consumer for 13 of the 20
+        controls" predates the wiring that landed since: the 11
+        backend knobs are read by Fast_Fetch through
+        panel_feed.tuning_knob / read_tuning_knobs (batch resolver,
+        play route, resolved cache, prefetch pool, play rate limit,
+        catalog sync, domain re-verify), and the other 13 ride the
+        public remote-config / panel feed the app already polls
+        (viewer.py /api/v1/app/remote-config serves theme, tabs and
+        disclaimer via panel_feed, the free cap gates the free
+        listing, and the section caps bound the feed builder).
+        A key with no entry here still answers "stored, not yet
+        applied by the backend" — that is the fail-closed label for
+        a future control, and test_tuning_consumers.py fails if any
+        current key hits it, so a new dead knob breaks the test
+        instead of silently labelling itself honest.
+        """
         self.require_role(actor, write=False)
-        applied = {"vip_monthly_pkr": "remote-config (app reads it)",
-                   "vip_yearly_pkr": "remote-config (app reads it)",
-                   "free_quality_cap": "remote-config (app reads it)",
+        applied = {"free_quality_cap": "remote-config (app reads it)",
                    "theme_mode": "remote-config (app reads it)",
                    "theme_accent": "remote-config (app reads it)",
                    "theme_dynamic_color": "remote-config (app reads it)",
@@ -319,7 +380,18 @@ class Service:
                    "disclaimer_version": "remote-config (app reads it)",
                    "disclaimer_email": "remote-config (app reads it)",
                    "home_sections_max": "panel feed (server applies it)",
-                   "section_cap": "panel feed (server applies it)"}
+                   "section_cap": "panel feed (server applies it)",
+                   "resolver_concurrency": "backend batch resolver (panel_feed.tuning_knob)",
+                   "candidate_cap": "backend play route (panel_feed.tuning_knob)",
+                   "cache_ttl_h": "backend resolved cache (panel_feed.tuning_knob)",
+                   "warmup_count": "backend prefetch pool (panel_feed.tuning_knob)",
+                   "warmup_interval_h": "backend prefetch pool (panel_feed.tuning_knob)",
+                   "rate_limit_play_per_min": "backend play rate limit (panel_feed.tuning_knob)",
+                   "import_cap": "backend catalog sync (panel_feed.tuning_knob)",
+                   "import_concurrency": "backend catalog sync (panel_feed.tuning_knob)",
+                   "prefetch_queue": "backend prefetch pool (panel_feed.tuning_knob)",
+                   "prefetch_concurrency": "backend prefetch pool (panel_feed.tuning_knob)",
+                   "domain_check_interval_min": "backend domain re-verify (panel_feed.tuning_knob)"}
         out = {}
         for name in TUNING_DEFAULTS:
             out[name] = applied.get(name, "stored, not yet applied by the backend")
@@ -1206,18 +1278,34 @@ class Service:
                  NOW()))
             self.admin.commit()
 
-    def _record_versioned_snapshot(self, published_by):
+    def _record_versioned_snapshot(self, published_by, expected_version=None):
         """Bump config_version and write the history snapshot for it.
 
         One helper for every version bump that is not the remote-config
         publish (which has its own guards in _do_publish): the monetization
         publish and a feature pause/resume both need version + snapshot
-        together, never a bare bump. Returns the new version."""
-        row = self._config_row()
-        new_version = row["config_version"] + 1
-        snap = {"config": self._redacted_config(row), "home": self._home_snapshot()}
-        snap["config"]["config_version"] = new_version
+        together, never a bare bump. Returns the new version.
+
+        expected_version is the version this operation already stamped
+        on the live row: pass it through instead of recomputing, so the
+        snapshot and the served row can never disagree about which
+        version they belong to. When it is None the version is allocated
+        fresh from a read taken inside WRITE_LOCK. Callers that pre-stamp
+        the live row hold WRITE_LOCK across the allocate + live write +
+        snapshot (pause/resume/publish/rollback), which serialises panel
+        threads — two concurrent pauses now land N+1 then N+2, not N+1
+        twice. That lock serialises threads only: the live catalog is a
+        separate SQLite DB/connection, so there is still no cross-DB
+        atomicity and the orphan window on an admin-commit failure
+        remains (see pause())."""
         with WRITE_LOCK:
+            if expected_version is None:
+                new_version = self._config_row()["config_version"] + 1
+            else:
+                new_version = expected_version
+            snap = {"config": self._redacted_config(self._config_row()),
+                    "home": self._home_snapshot()}
+            snap["config"]["config_version"] = new_version
             self.admin.execute(
                 "UPDATE app_remote_config_v2 SET config_version=?, updated_by=?, updated_at=? WHERE id=1",
                 (new_version, published_by, NOW()))
@@ -1226,6 +1314,25 @@ class Service:
                 "VALUES (?,?,?,?)", (new_version, json.dumps(snap), published_by, NOW()))
             self.admin.commit()
         return new_version
+
+    def _paused_feature_overlay(self, fields):
+        """Overlay active feature pauses onto outgoing live fields.
+
+        PNL-11 fixup: a pause writes 0 to the live row, but the next
+        publish/rollback re-published the draft value and silently
+        re-enabled the feature while the pause row still said paused —
+        remote-config readers saw OFF while press-time row readers saw
+        ON. Every writer that pushes flag columns to the live row must
+        run its outgoing fields through here first. The draft row and
+        snapshots are never overlaid, so resume still restores the
+        draft value, and publishes are never blocked while paused —
+        unrelated edits go out normally, paused flags just stay 0.
+        Returns a copy; fields with no paused flag pass through."""
+        out = dict(fields)
+        for name, column in FEATURE_PAUSE_COLUMNS.items():
+            if column in out and self.is_paused("feature", name):
+                out[column] = 0
+        return out
 
     def _publish_staged_monetization(self, actor, before, ip=""):
         """The publish itself, in the design's order (§3.1):
@@ -1237,35 +1344,47 @@ class Service:
         back silently, the failure is recorded, and the next publish
         repairs it (re-snapshot + re-audit). Returns the publish status.
         """
-        row = self._config_row()
-        staged = {k: row[k] for k in MONETIZATION_FIELDS}
-        # The version this publish will land at: the snapshot below
-        # bumps to exactly this number, so the served row and the
-        # snapshot agree. Stamped in the same catalog write as the
-        # flags themselves — a flag change is never live unversioned.
-        expected_version = row["config_version"] + 1
-        live = self._live_catalog()
-        if live is not None:
-            # WRITE path: tests run this on a COPY; live use needs a
-            # catalog backup before first use (see handoff).
-            live.save_remote_config(dict(staged), config_version=expected_version)
-        before_version = row["config_version"]
-        try:
-            new_version = self._record_versioned_snapshot(actor["id"])
-            after = self.get_monetization(actor)
-            before_audit = dict(before)
-            before_audit["config_version"] = before_version
-            after_audit = dict(after)
-            after_audit["config_version"] = new_version
-            self.audit(actor["id"], "monetization.save", "app_remote_config", 1,
-                       before_audit, after_audit, ip)
-        except Exception as exc:
-            self._set_monetization_publish_state(
-                "published_but_not_snapshotted",
-                {"error": str(exc),
-                 "config_version": self._config_row()["config_version"]})
-            return {"publish_status": "published_but_not_snapshotted",
-                    "config_version": self._config_row()["config_version"]}
+        # WRITE_LOCK is held across the allocate + live write +
+        # snapshot: the version is allocated once, under the lock, and
+        # passed through to the snapshot instead of being recomputed,
+        # so two concurrent publishes cannot both stamp N+1. The lock
+        # serialises panel threads only — the live catalog is a
+        # separate DB, so a failure after the live write still leaves
+        # the catalog published but not snapshotted (repaired by the
+        # next publish), exactly as before.
+        with WRITE_LOCK:
+            row = self._config_row()
+            staged = {k: row[k] for k in MONETIZATION_FIELDS}
+            # PNL-11 fixup: never let a routine publish re-enable a
+            # feature an active pause turned off. The draft is untouched.
+            staged = self._paused_feature_overlay(staged)
+            # The version this publish will land at: the snapshot below
+            # bumps to exactly this number, so the served row and the
+            # snapshot agree. Stamped in the same catalog write as the
+            # flags themselves — a flag change is never live unversioned.
+            expected_version = row["config_version"] + 1
+            live = self._live_catalog()
+            if live is not None:
+                # WRITE path: tests run this on a COPY; live use needs a
+                # catalog backup before first use (see handoff).
+                live.save_remote_config(dict(staged), config_version=expected_version)
+            before_version = row["config_version"]
+            try:
+                new_version = self._record_versioned_snapshot(actor["id"], expected_version)
+                after = self.get_monetization(actor)
+                before_audit = dict(before)
+                before_audit["config_version"] = before_version
+                after_audit = dict(after)
+                after_audit["config_version"] = new_version
+                self.audit(actor["id"], "monetization.save", "app_remote_config", 1,
+                           before_audit, after_audit, ip)
+            except Exception as exc:
+                self._set_monetization_publish_state(
+                    "published_but_not_snapshotted",
+                    {"error": str(exc),
+                     "config_version": self._config_row()["config_version"]})
+                return {"publish_status": "published_but_not_snapshotted",
+                        "config_version": self._config_row()["config_version"]}
         self._set_monetization_publish_state("ok")
         return {"publish_status": "ok", "config_version": new_version}
 
@@ -1291,7 +1410,8 @@ class Service:
             if k in body and not (0 <= int(body[k]) <= 10_000_000):
                 raise bad("Coin price must be between 0 and 10,000,000.")
         for k in ("maintenance_mode", "feature_downloads", "feature_pure_cinema",
-                  "feature_chromecast", "feature_quality_gate", "coins_enabled"):
+                  "feature_chromecast", "feature_quality_gate", "coins_enabled",
+                  "ads_enabled", "clean_ads_only"):
             if k in body and int(body[k]) not in (0, 1):
                 raise bad("That flag must be 0 or 1.")
         before = self.get_monetization(actor)
@@ -1658,8 +1778,8 @@ class Service:
         snap = json.loads(hist["snapshot_json"])
         cfg = snap["config"]
         row = self._config_row()
-        new_version = row["config_version"] + 1
         # Apply the snapshot as a NEW version; history rows are never edited.
+        # (The new version itself is allocated inside WRITE_LOCK below.)
         allowed = [k for k in cfg if k in MONETIZATION_FIELDS or k in (
             "min_version_code", "latest_version_code", "latest_version_name", "force_update",
             "force_update_message", "maintenance_message", "brand_primary", "brand_accent",
@@ -1671,6 +1791,10 @@ class Service:
                 continue  # tokens are never restored from a redacted snapshot
             values[k] = v
         with WRITE_LOCK:
+            # Allocate the version once, under the lock, from a fresh
+            # read: a concurrent publish/pause cannot stamp the same
+            # version, and the live write below uses this same version.
+            new_version = self._config_row()["config_version"] + 1
             if values:
                 self.admin.execute(
                     "UPDATE app_remote_config_v2 SET %s WHERE id=1"
@@ -1684,18 +1808,22 @@ class Service:
                 "INSERT INTO app_remote_config_history (config_version, snapshot_json, published_by, published_at) "
                 "VALUES (?,?,?,?)", (new_version, json.dumps(new_snap), actor["id"], NOW()))
             self.admin.commit()
-        # The live catalog is the source of truth the app reads: a
-        # rollback that only restores the panel row leaves the app
-        # seeing the pre-rollback prices/flags. Push the restored
-        # monetization fields (the ones the live catalog carries) back
-        # to the live app_remote_config row as well. v2-only fields
-        # (versions, brand, region order) stay panel-only.
-        live = self._live_catalog()
-        if live is not None and values:
-            live_fields = {k: v for k, v in values.items()
-                           if k in MONETIZATION_FIELDS}
-            if live_fields:
-                live.save_remote_config(live_fields, config_version=new_version)
+            # The live catalog is the source of truth the app reads: a
+            # rollback that only restores the panel row leaves the app
+            # seeing the pre-rollback prices/flags. Push the restored
+            # monetization fields (the ones the live catalog carries) back
+            # to the live app_remote_config row as well. v2-only fields
+            # (versions, brand, region order) stay panel-only.
+            live = self._live_catalog()
+            if live is not None and values:
+                live_fields = {k: v for k, v in values.items()
+                               if k in MONETIZATION_FIELDS}
+                # PNL-11 fixup: never let a rollback re-enable a feature
+                # an active pause turned off. The draft/snapshot values
+                # are untouched, so resume still restores them.
+                live_fields = self._paused_feature_overlay(live_fields)
+                if live_fields:
+                    live.save_remote_config(live_fields, config_version=new_version)
         self.audit(actor["id"], "remote_config.rollback", "app_remote_config", 1,
                    {"config_version": row["config_version"]}, {"config_version": new_version}, ip)
         return {"config_version": new_version, "restored_from": body["version"],
@@ -2563,6 +2691,44 @@ class Service:
             "SELECT * FROM pauses WHERE is_paused=1 AND resumed_at IS NULL ORDER BY id DESC").fetchall()
         return {"items": [_row(r) for r in rows]}
 
+    def _write_feature_pause_live(self, target_id, paused, expected_version):
+        """Write one feature flag to the live catalog row (PNL-11).
+
+        A pause is only real when the app sees it, and the app reads the
+        catalog row — the remote-config route AND the press-time quality
+        gate both read the row directly, so the panel's fixture fold
+        alone never reached them. Pausing writes 0; resuming restores
+        the DRAFT value (a pause never changed the draft, so the draft
+        is what the operator last published). Same catalog-first rule
+        as _do_publish (section 3.1): the live write happens before
+        the pause row / version bump, so a failure leaves the pause
+        unrecorded and the version untouched, and the operator gets
+        the real reason instead of a half-paused state. Unknown feature
+        names and a missing live store are no-ops (today's behaviour).
+        """
+        column = FEATURE_PAUSE_COLUMNS.get(str(target_id))
+        if column is None:
+            return
+        live = self._live_catalog()
+        if live is None:
+            return
+        try:
+            if paused:
+                value = 0
+            else:
+                # The draft read/conversion sits inside the try so a
+                # corrupt draft value surfaces as the same ApiError as
+                # a catalog failure instead of escaping raw. Unknown
+                # feature names stay a no-op (stated spec, unchanged).
+                value = int(self._config_row().get(column) or 0)
+            live.save_remote_config({column: value},
+                                    config_version=expected_version)
+        except ApiError:
+            raise
+        except Exception as exc:
+            raise ApiError("internal",
+                           "The live catalog could not be updated: %s" % exc, 500)
+
     def pause(self, actor, body, ip=""):
         self.require_role(actor, write=True)
         self._validate_body(body, {"target_type", "target_id", "reason"})
@@ -2572,19 +2738,46 @@ class Service:
             raise bad("A pause needs a reason.")
         if self.is_paused(body["target_type"], body["target_id"]):
             raise conflict("That target is already paused.")
-        with WRITE_LOCK:
-            cur = self.admin.execute(
-                "INSERT INTO pauses (target_type, target_id, is_paused, reason, paused_by, paused_at) "
-                "VALUES (?,?,1,?,?,?)",
-                (body["target_type"], str(body["target_id"]), scrub_text(body["reason"], 500),
-                 actor["id"], NOW()))
-            self.admin.commit()
-            row = self.admin.execute("SELECT * FROM pauses WHERE id=?", (cur.lastrowid,)).fetchone()
-        self.audit(actor["id"], "pause.create", "pause", row["id"], None, _row(row), ip)
         if body["target_type"] == "feature":
-            # D-4: a live feature pause changes what the app must serve,
-            # so it is versioned like a flag flip (bump + snapshot).
-            self._record_versioned_snapshot(actor["id"])
+            # PNL-11: the flag goes to the live catalog first (section
+            # 3.1) — the app reads the row, so a pause that only bumped
+            # the version never reached it. A failure here raises before
+            # the pause row exists, so the version stays untouched.
+            # WRITE_LOCK is held across the allocate + live write +
+            # pause-row INSERT + snapshot: the version is allocated
+            # once, under the lock, and passed through to the snapshot
+            # instead of being recomputed, so two concurrent pauses
+            # land N+1 then N+2 instead of both stamping N+1. The lock
+            # serialises panel threads only — the live catalog is a
+            # separate DB, so if the INSERT/snapshot then fails after
+            # the live write, the result is live flag 0 + version
+            # stamped with NO pause row and no UI resume path: the
+            # pause was never recorded, so retrying the pause works
+            # (is_paused is false) and re-stamps the same live state.
+            with WRITE_LOCK:
+                expected_version = self._config_row()["config_version"] + 1
+                self._write_feature_pause_live(body["target_id"], True,
+                                               expected_version)
+                cur = self.admin.execute(
+                    "INSERT INTO pauses (target_type, target_id, is_paused, reason, paused_by, paused_at) "
+                    "VALUES (?,?,1,?,?,?)",
+                    (body["target_type"], str(body["target_id"]), scrub_text(body["reason"], 500),
+                     actor["id"], NOW()))
+                self.admin.commit()
+                row = self.admin.execute("SELECT * FROM pauses WHERE id=?", (cur.lastrowid,)).fetchone()
+                # D-4: a live feature pause changes what the app must serve,
+                # so it is versioned like a flag flip (bump + snapshot).
+                self._record_versioned_snapshot(actor["id"], expected_version)
+        else:
+            with WRITE_LOCK:
+                cur = self.admin.execute(
+                    "INSERT INTO pauses (target_type, target_id, is_paused, reason, paused_by, paused_at) "
+                    "VALUES (?,?,1,?,?,?)",
+                    (body["target_type"], str(body["target_id"]), scrub_text(body["reason"], 500),
+                     actor["id"], NOW()))
+                self.admin.commit()
+                row = self.admin.execute("SELECT * FROM pauses WHERE id=?", (cur.lastrowid,)).fetchone()
+        self.audit(actor["id"], "pause.create", "pause", row["id"], None, _row(row), ip)
         return _row(row)
 
     def resume_pause(self, actor, pause_id, ip=""):
@@ -2594,15 +2787,30 @@ class Service:
             raise not_found()
         if row["resumed_at"]:
             raise conflict("That pause is already resumed.")
-        with WRITE_LOCK:
-            self.admin.execute(
-                "UPDATE pauses SET resumed_at=?, resumed_by=? WHERE id=?",
-                (NOW(), actor["id"], pause_id))
-            self.admin.commit()
-        self.audit(actor["id"], "pause.resume", "pause", pause_id, _row(row), {"resumed": True}, ip)
         if row["target_type"] == "feature":
-            # D-4: clearing a feature pause is a versioned change too.
-            self._record_versioned_snapshot(actor["id"])
+            # PNL-11: resume restores the draft value to the live row
+            # first (section 3.1) — a failure here raises before the
+            # pause is marked resumed, so the version stays untouched
+            # and a retry works. Same single-lock allocation as pause():
+            # the version is allocated once under WRITE_LOCK and passed
+            # through to the snapshot instead of being recomputed.
+            with WRITE_LOCK:
+                expected_version = self._config_row()["config_version"] + 1
+                self._write_feature_pause_live(row["target_id"], False,
+                                               expected_version)
+                self.admin.execute(
+                    "UPDATE pauses SET resumed_at=?, resumed_by=? WHERE id=?",
+                    (NOW(), actor["id"], pause_id))
+                self.admin.commit()
+                # D-4: clearing a feature pause is a versioned change too.
+                self._record_versioned_snapshot(actor["id"], expected_version)
+        else:
+            with WRITE_LOCK:
+                self.admin.execute(
+                    "UPDATE pauses SET resumed_at=?, resumed_by=? WHERE id=?",
+                    (NOW(), actor["id"], pause_id))
+                self.admin.commit()
+        self.audit(actor["id"], "pause.resume", "pause", pause_id, _row(row), {"resumed": True}, ip)
         return {"ok": True}
 
     # -- domains ---------------------------------------------------------------

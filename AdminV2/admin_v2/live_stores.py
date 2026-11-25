@@ -31,7 +31,12 @@ Rules:
 - Reads open the real DBs read-only (sqlite URI mode=ro). NEVER write
   to a live DB from the workspace; writes here are only ever called
   against temp copies in tests, and at the live gate only after a
-  backup. Every write method says so in its docstring.
+  backup. Since PNL-08 that backup is ENFORCED in code, not just
+  noted: every write goes through _rw, which refuses (ApiError
+  "backup_required", 409) unless a fresh verified backup marker
+  exists for that store — see admin_v2/backup_guard.py. A LiveStores
+  with backup_guard=None is a fixture/test instance and is never
+  live; the live entry point always passes a real guard.
 - No credential, token, key hash, or transaction id is ever returned
   or logged by this module. Operator display is account_hint only:
   "acct-" + first 8 hex of sha256("radd-payment-hint:v1:" + key_hash),
@@ -77,14 +82,15 @@ PLAN_DAYS = {"vip_monthly": 30, "vip_yearly": 365}
 PLAN_DEFAULT_PKR = {"vip_monthly": 200, "vip_yearly": 1500}
 PAYMENT_METHODS = ("jazzcash", "easypaisa", "raast")
 
-# The 16 real app_remote_config fields the Android app actually reads
+# The 17 real app_remote_config fields the Android app actually reads
 # (viewer.py GET /api/v1/app/remote-config + VipRemoteConfig.kt),
 # plus the six coin pass prices the panel could previously neither
 # show nor edit (admin-panel audit 2026-11-08 §Money).
 REMOTE_CONFIG_FIELDS = [
     "pak_till_id", "pak_jazzcash_number", "pak_easypaisa_number",
     "pak_raast_id", "vip_monthly_pkr", "vip_yearly_pkr",
-    "monetag_zone_id", "adsterra_tag_id", "shrinkme_api_token",
+    "monetag_zone_id", "adsterra_tag_id", "ads_enabled", "clean_ads_only",
+    "shrinkme_api_token",
     "droplink_api_token", "maintenance_mode", "apk_update_url",
     "feature_downloads", "feature_pure_cinema", "feature_chromecast",
     "feature_quality_gate", "coins_enabled",
@@ -96,6 +102,7 @@ _REMOTE_CONFIG_INT_FIELDS = frozenset({
     "vip_monthly_pkr", "vip_yearly_pkr", "maintenance_mode",
     "feature_downloads", "feature_pure_cinema", "feature_chromecast",
     "feature_quality_gate", "coins_enabled",
+    "ads_enabled", "clean_ads_only",
 } | set(COIN_REDEEM_FIELDS))
 ENGINE_SYNC_SITES = frozenset({
     "vegamovies", "rogmovies", "ssrmovies", "7starhd", "katmoviehd",
@@ -554,7 +561,7 @@ class LiveStores:
                  registry_path=None, status_dir=None, cert_path=None,
                  fleet_base_dir="/opt/radd-stream/Fast_Fetch",
                  fleet_log_dir=None, fleet_runner=None,
-                 host_registry_path=None):
+                 host_registry_path=None, backup_guard=None):
         self.catalog_path = catalog_path
         self.ledger_path = ledger_path
         self.registry_path = registry_path
@@ -566,6 +573,10 @@ class LiveStores:
         # the property below derives it from the domain registry's
         # directory, else the fleet dir.
         self._host_registry_path = host_registry_path
+        # Backup precondition (PNL-08): a BackupGuard, or None for
+        # fixture/test instances (never live). The guard is consulted
+        # by _rw before ANY live SQLite write opens.
+        self.backup_guard = backup_guard
         # fleet_runner(cmd, cwd, log_path) -> pid-like int. Injected in
         # tests so no real crawler is ever spawned there.
         self.fleet_runner = fleet_runner or self._default_runner
@@ -582,10 +593,40 @@ class LiveStores:
     def _rw(self, path, what):
         if not path or not os.path.exists(path):
             raise LiveUnavailable("No %s store is configured here." % what)
+        # PNL-08 backup precondition: the single funnel for every
+        # live SQLite write. A guard-less instance is a fixture/test
+        # instance (never live); a guarded one refuses the write
+        # unless a fresh verified backup marker covers this store.
+        # Reads (_ro) are never gated — refusing a read would hide
+        # the very state an operator needs to see.
+        if self.backup_guard is not None:
+            self.backup_guard.require(what, path)
         conn = sqlite3.connect(path, timeout=10.0, check_same_thread=False,
                                isolation_level=None)
         conn.row_factory = sqlite3.Row
         return conn
+
+    def backup_status(self):
+        """Read-only freshness report for each configured live store:
+        {"catalog": {...}, "ledger": {...}} from BackupGuard.status
+        (ok / reason / marker / age_s). Stores with no path configured
+        are omitted. Never raises for a missing dir or bad marker —
+        a missing backup is a report, not a crash."""
+        out = {}
+        for store, path in (("catalog", self.catalog_path),
+                            ("ledger", self.ledger_path)):
+            if not path or not os.path.exists(path):
+                continue
+            if self.backup_guard is None:
+                out[store] = {
+                    "ok": False,
+                    "reason": ("no backup guard is configured on this "
+                               "LiveStores instance (fixture/test instance, "
+                               "never live)"),
+                    "marker": None, "age_s": None}
+            else:
+                out[store] = self.backup_guard.status(store, path)
+        return out
 
     @property
     def has_catalog(self):
@@ -895,7 +936,8 @@ class LiveStores:
         incremented, rows only UPDATED, never deleted).
 
         WRITE path: only ever run against a COPY in tests; at the live
-        gate only after a backup of the catalog DB. Returns counters.
+        gate _rw enforces the backup precondition (PNL-08) before the
+        write opens. Returns counters.
         """
         conn = self._rw(self.catalog_path, "catalog")
         try:
@@ -1343,8 +1385,9 @@ class LiveStores:
         Returns {"id", "status", "changed"}; None when the row does not
         exist. A re-mark writes nothing and reports the status the row
         already holds — the operator's double-click closes nobody twice.
-        Writes run against temp copies in tests; at the live gate only
-        after a backup, like every other ledger write here.
+        Writes run against temp copies in tests; at the live gate _rw
+        enforces the backup precondition (PNL-08), like every other
+        ledger write here.
         """
         if status not in self.REQUEST_TERMINAL_STATUSES:
             raise ValueError("unknown request status: %r" % (status,))
@@ -1715,7 +1758,8 @@ class LiveStores:
     def save_remote_config(self, fields, config_version=None):
         """v1 save-monetization pattern: partial save, validated,
         all-or-nothing, updated_at=time.time(). WRITE path: tests run
-        this on a COPY only; live use needs a catalog backup first.
+        this on a COPY only; live use goes through _rw, which enforces
+        the backup precondition (PNL-08) before the write opens.
 
         config_version stamps the published version onto the served row
         in the same UPDATE, so a flag change is never live without a
@@ -1739,7 +1783,8 @@ class LiveStores:
             if k in fields and not (0 <= int(fields[k]) <= 10_000_000):
                 raise bad("Coin price must be between 0 and 10,000,000.")
         for k in ("maintenance_mode", "feature_downloads", "feature_pure_cinema",
-                  "feature_chromecast", "feature_quality_gate", "coins_enabled"):
+                  "feature_chromecast", "feature_quality_gate", "coins_enabled",
+                  "ads_enabled", "clean_ads_only"):
             if k in fields and int(fields[k]) not in (0, 1):
                 raise bad("That flag must be 0 or 1.")
         conn = self._rw(self.catalog_path, "catalog")
@@ -2345,7 +2390,10 @@ class LiveStores:
         """v1 run-scraper: INSERT admin_fleet_audit 'running' + spawn
         the SAME bounded command v1 uses + background watcher updating
         the audit row. WRITE + spawn path: tests inject a fake runner
-        and use a COPY of the catalog; live use needs a backup first."""
+        and use a COPY of the catalog; live use goes through _rw, which
+        enforces the backup precondition (PNL-08) before the audit row
+        is written — the crawler is never spawned without a fresh
+        verified backup."""
         if site not in FLEET_SITES:
             raise bad("Unknown crawler.")
         if mode not in FLEET_MODES:

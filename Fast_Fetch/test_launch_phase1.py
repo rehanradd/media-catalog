@@ -85,6 +85,12 @@ _V1_READ_ONLY_FLAGS = (
 )
 
 
+# Explicit test-only TOTP key (PNL-04): Service has no default key and
+# refuses to construct without one. Same fixture value as
+# AdminV2/tests/helpers.py TEST_TOTP_KEY; test fixture only, never live.
+_TEST_TOTP_KEY = b"test-only-totp-key-0000"
+
+
 def _fresh_service(live=True):
     """A Service on temp dirs, with an owner actor. live=False wires no live
     catalog (panel-only mode); otherwise a real LiveStores over a temp
@@ -107,7 +113,7 @@ def _fresh_service(live=True):
         conn.close()
         live_stores = LiveStores(catalog_path=catalog_path)
     admin_dir = os.path.join(tmp, "admin")
-    svc = Service(admin_dir, live=live_stores)
+    svc = Service(admin_dir, totp_key=_TEST_TOTP_KEY, live=live_stores)
     owner_id = svc.create_owner("owner", "correct horse battery staple")
     owner = {"id": owner_id, "username": "owner", "role": "owner"}
     return svc, owner, catalog_path
@@ -230,15 +236,19 @@ class Phase1Publish(unittest.TestCase):
             self.owner, {"feature_quality_gate": 1})
         v1 = first["config_version"]
 
-        def _bump_then_fail(published_by):
+        def _bump_then_fail(published_by, expected_version=None):
             from admin_v2.services import WRITE_LOCK, NOW
-            row = self.svc._config_row()
-            new_version = row["config_version"] + 1
+            # PNL-11 fixup: callers pass the version they already
+            # allocated under WRITE_LOCK; honour it instead of
+            # recomputing, so the mock still simulates "the bump
+            # lands, the snapshot insert fails".
+            if expected_version is None:
+                expected_version = self.svc._config_row()["config_version"] + 1
             with WRITE_LOCK:
                 self.svc.admin.execute(
                     "UPDATE app_remote_config_v2 SET config_version=?, "
                     "updated_by=?, updated_at=? WHERE id=1",
-                    (new_version, published_by, NOW()))
+                    (expected_version, published_by, NOW()))
                 self.svc.admin.commit()
             raise RuntimeError("simulated snapshot insert failure")
 

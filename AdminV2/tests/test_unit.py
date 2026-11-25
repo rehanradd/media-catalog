@@ -1,13 +1,19 @@
+import base64
+import inspect
 import os
 import sys
+import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from helpers import bad_checker, good_checker, make_service  # noqa: E402
 from admin_v2 import fixture_app, smart  # noqa: E402
 from admin_v2.errors import ApiError  # noqa: E402
 from admin_v2.store import _seed  # noqa: E402
-from admin_v2.security import check_no_provenance, valid_domain  # noqa: E402
+from admin_v2.security import check_no_provenance, totp_code, valid_domain  # noqa: E402
+from admin_v2.services import Service  # noqa: E402
+import run as run_module  # noqa: E402  (AdminV2/run.py: panel entry point)
 
 
 class TestValidation(unittest.TestCase):
@@ -329,7 +335,7 @@ class TestMigrationsV4V5(unittest.TestCase):
         self.assertEqual(
             [r[0] for r in conn.execute(
                 "SELECT version FROM schema_version ORDER BY version")],
-            [1, 2, 3, 4, 5])
+            [1, 2, 3, 4, 5, 6])
 
     def test_v5_columns_and_coin_defaults(self):
         from admin_v2.store import migrate
@@ -350,6 +356,17 @@ class TestMigrationsV4V5(unittest.TestCase):
             "SELECT coins_enabled FROM app_remote_config_v2 WHERE id=1"
             ).fetchone()[0], 0)
 
+    def test_v6_columns_and_ads_defaults(self):
+        """Migration 6 (PNL-05): a live-like DB gains the ads switches,
+        fail-closed — ads off, clean-ads-only on."""
+        from admin_v2.store import migrate
+        conn = self._live_like_db()
+        migrate(conn)
+        row = conn.execute(
+            "SELECT ads_enabled, clean_ads_only FROM app_remote_config_v2 "
+            "WHERE id=1").fetchone()
+        self.assertEqual(tuple(row), (0, 1))
+
     def test_migrate_is_idempotent(self):
         from admin_v2.store import migrate
         conn = self._live_like_db()
@@ -358,7 +375,7 @@ class TestMigrationsV4V5(unittest.TestCase):
         self.assertEqual(
             [r[0] for r in conn.execute(
                 "SELECT version FROM schema_version ORDER BY version")],
-            [1, 2, 3, 4, 5])
+            [1, 2, 3, 4, 5, 6])
 
     def test_list_scheduled_works_after_v4(self):
         from admin_v2.store import migrate
@@ -569,6 +586,70 @@ class TestBroadcastTargeting(unittest.TestCase):
         consumers = self.svc.tuning_consumers(self.owner)
         self.assertEqual(consumers["disclaimer_text"], "remote-config (app reads it)")
         self.assertEqual(consumers["disclaimer_email"], "remote-config (app reads it)")
+
+
+class TestTotpKeyFailClosed(unittest.TestCase):
+    """PNL-04: no silent fallback to any literal key. Service refuses
+    to construct without an explicit key; run.py refuses to start
+    without RADD_TOTP_KEY. No error message ever carries the key."""
+
+    def test_service_without_key_refused(self):
+        with tempfile.TemporaryDirectory(prefix="adminv2-totp-") as tmp:
+            with self.assertRaises(ValueError) as ctx:
+                Service(tmp)
+            self.assertIn("RADD_TOTP_KEY", str(ctx.exception))
+            self.assertIn("no default", str(ctx.exception).lower())
+
+    def test_service_short_key_refused(self):
+        with tempfile.TemporaryDirectory(prefix="adminv2-totp-") as tmp:
+            with self.assertRaises(ValueError):
+                Service(tmp, totp_key=b"short")
+
+    def test_service_key_default_is_none(self):
+        params = inspect.signature(Service.__init__).parameters
+        self.assertIsNone(params["totp_key"].default)
+
+    def test_service_16_byte_key_accepted(self):
+        with tempfile.TemporaryDirectory(prefix="adminv2-totp-") as tmp:
+            svc = Service(tmp, totp_key=b"1234567890123456")
+            self.assertEqual(svc.totp_key, b"1234567890123456")
+
+    def test_run_key_missing_refused(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(SystemExit) as ctx:
+                run_module._totp_key()
+            self.assertIn("RADD_TOTP_KEY", str(ctx.exception))
+            self.assertIn("no default", str(ctx.exception).lower())
+
+    def test_run_key_invalid_base64_refused_without_echo(self):
+        bad = "!!!not-base64!!!"
+        with mock.patch.dict(os.environ, {"RADD_TOTP_KEY": bad}):
+            with self.assertRaises(SystemExit) as ctx:
+                run_module._totp_key()
+            self.assertNotIn(bad, str(ctx.exception))
+
+    def test_run_key_too_short_refused_without_echo(self):
+        short_b64 = base64.b64encode(b"short").decode()
+        with mock.patch.dict(os.environ, {"RADD_TOTP_KEY": short_b64}):
+            with self.assertRaises(SystemExit) as ctx:
+                run_module._totp_key()
+            self.assertNotIn(short_b64, str(ctx.exception))
+
+    def test_run_key_valid_returns_bytes(self):
+        key_b64 = base64.b64encode(b"1234567890123456").decode()
+        with mock.patch.dict(os.environ, {"RADD_TOTP_KEY": key_b64}):
+            self.assertEqual(run_module._totp_key(), b"1234567890123456")
+
+    def test_totp_round_trip_with_explicit_key(self):
+        # The explicit fixture key from make_service() still wraps and
+        # verifies TOTP end to end; a wrong code is refused.
+        svc, owner, _auditor = make_service()
+        setup = svc.enable_totp_setup(owner)
+        res = svc.login("owner", "correct horse battery staple",
+                        totp=totp_code(setup["secret"]))
+        self.assertIn("session_token", res)
+        with self.assertRaises(ApiError):
+            svc.login("owner", "correct horse battery staple", totp="000000")
 
 
 if __name__ == "__main__":

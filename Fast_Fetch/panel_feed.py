@@ -561,11 +561,17 @@ def read_tuning_knobs(panel_path=None):
     Reads ``tuning_settings`` (id = 1), read-only, the same tolerant
     pattern as :func:`read_theme`: a missing database, table, row or
     column answers the panel's seed default for that knob; a non-integer
-    or out-of-range value answers the nearest bound. Every knob has a
-    consumer now (see the callers): resolver_concurrency caps the batch
-    resolver's workers, candidate_cap caps the play route's candidate
-    prints, cache_ttl_h caps the resolved-cache temporary horizon,
-    warmup_count / warmup_interval_h drive the prefetch pool's sweep,
+    or out-of-range value answers the nearest bound. The tolerance is
+    per knob, not per read: the two quarantine knobs have no panel
+    column (the panel never stored them), so one bulk SELECT over all
+    13 columns would fail on the missing column and answer defaults
+    for every knob — that is exactly what this used to do. Each knob
+    is read on its own now, so a missing column costs only its own
+    default. Every knob has a consumer (see the callers):
+    resolver_concurrency caps the batch resolver's workers,
+    candidate_cap caps the play route's candidate prints, cache_ttl_h
+    caps the resolved-cache temporary horizon, warmup_count /
+    warmup_interval_h drive the prefetch pool's sweep,
     rate_limit_play_per_min is the play bucket, import_cap /
     import_concurrency bound the sync, prefetch_queue /
     prefetch_concurrency bound the pool, domain_check_interval_min
@@ -579,20 +585,8 @@ def read_tuning_knobs(panel_path=None):
     try:
         if not _has_table(conn, "tuning_settings"):
             return out
-        try:
-            row = conn.execute(
-                "SELECT %s FROM tuning_settings WHERE id = 1"
-                % ", ".join(TUNING_KNOBS)).fetchone()
-        except sqlite3.Error:
-            return out
-        if row is None:
-            return out
         for name, (default, lo, hi) in TUNING_KNOBS.items():
-            try:
-                value = int(_theme_col(row, name) or 0)
-            except (TypeError, ValueError):
-                continue
-            out[name] = max(lo, min(hi, value))
+            out[name] = _tuning_int(conn, name, default, lo, hi)
         return out
     finally:
         conn.close()

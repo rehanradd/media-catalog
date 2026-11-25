@@ -8,6 +8,12 @@ Type=oneshot
 User=ubuntu
 Group=ubuntu
 WorkingDirectory=/opt/radd-stream
+# The panel database the probe reads the operator's tuning knob from
+# (panel_feed.tuning_knob: domain_check_interval_min, the interval
+# between domain re-checks). Without it the knob falls back to the
+# shipped 6h and the panel control does nothing for this process —
+# the same value the live API service carries.
+Environment=RADD_ADMIN_V2_DB=/home/ubuntu/admin-v2-workspace-20261105/data-live/admin_v2.db
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
 # No-arg CLI runs probe_all_sites() (domain_resolver.py:1022): cheap and

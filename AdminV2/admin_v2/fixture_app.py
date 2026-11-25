@@ -23,6 +23,7 @@ V1_REMOTE_CONFIG_KEYS = {
     "vip_monthly_pkr", "vip_yearly_pkr", "pak_till_id",
     "pak_jazzcash_number", "pak_easypaisa_number", "pak_raast_id",
     "monetag_zone_id", "adsterra_tag_id",
+    "ads_enabled", "clean_ads_only",
 }
 
 
@@ -58,6 +59,14 @@ def public_remote_config(service):
     for _name in list(_feat):
         if service.is_paused("feature", _name):
             _feat[_name] = False
+    # PNL-05: the ads controls gate what the app is served, the same
+    # way the production remote_config does. Ads off serves no unit id;
+    # clean-ads-only serves Monetag alone and withholds the Adsterra id.
+    # The stored ids stay in the row — only the served copy is gated —
+    # so turning ads back on needs no re-typing. A panel row predating
+    # the columns reads the fail-closed defaults (off / clean-only).
+    _ads_on = bool(cfg.get("ads_enabled", 0))
+    _clean_only = bool(cfg.get("clean_ads_only", 1))
     out = {
         "config_version": config_version,
         "maintenance_mode": bool(cfg["maintenance_mode"]),
@@ -70,8 +79,11 @@ def public_remote_config(service):
             "easypaisa_mobile_number": cfg["pak_easypaisa_number"],
             "raast_instant_id": cfg["pak_raast_id"],
         },
-        "ads": {"monetag_rewarded_zone_id": cfg["monetag_zone_id"],
-                "adsterra_native_banner_id": cfg["adsterra_tag_id"]},
+        "ads": {"enabled": _ads_on,
+                "ads_enabled": _ads_on,
+                "clean_ads_only": _clean_only,
+                "monetag_rewarded_zone_id": cfg["monetag_zone_id"] if _ads_on else "",
+                "adsterra_native_banner_id": cfg["adsterra_tag_id"] if _ads_on and not _clean_only else ""},
         "link_shorteners": {
             "shrinkme": cfg["shrinkme_configured"],
             "droplink": cfg["droplink_configured"],
@@ -113,6 +125,8 @@ def old_app_parse(public_config):
         "pak_raast_id": pays.get("raast_instant_id"),
         "monetag_zone_id": ads.get("monetag_rewarded_zone_id"),
         "adsterra_tag_id": ads.get("adsterra_native_banner_id"),
+        "ads_enabled": ads.get("enabled"),
+        "clean_ads_only": ads.get("clean_ads_only"),
     }
     return {k: v for k, v in flat.items() if k in V1_REMOTE_CONFIG_KEYS}
 

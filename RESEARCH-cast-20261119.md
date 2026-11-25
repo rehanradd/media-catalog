@@ -65,8 +65,9 @@ the app at 21.4.0) for discovery and the picker. Build on the E2 spike
   idle with `idleReason: error`, silently). Our server sends no CORS
   headers; the server already records the answer per link as
   `PlaybackInfo.corsOpen` — cast `corsOpen` links first.
-- **Presigned URLs work only while fresh** (FSL ~8h, FSLv2 ~5h). Never hand
-  the receiver a stored presigned URL; `PlaybackInfo.isExpired` is the
+- **Presigned URLs work only while fresh** (FSL ~5h, FSLv2 ~5h — corrected
+  2026-11-24: fresh FSL mints measured `X-Amz-Expires=18000`, not 28800).
+  Never hand the receiver a stored presigned URL; `PlaybackInfo.isExpired` is the
   check. A kept (loopback) copy can never play on a receiver — the transfer
   must substitute the rendition's live redirector URL.
 - play-services-cast-framework 21.4.0 fits minSdk 21; 22.x/23.x need

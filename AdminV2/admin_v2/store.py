@@ -46,7 +46,8 @@ COIN_REDEEM_DEFAULTS = {
 MONETIZATION_FIELDS = [
     "pak_till_id", "pak_jazzcash_number", "pak_easypaisa_number",
     "pak_raast_id", "vip_monthly_pkr", "vip_yearly_pkr",
-    "monetag_zone_id", "adsterra_tag_id", "shrinkme_api_token",
+    "monetag_zone_id", "adsterra_tag_id", "ads_enabled", "clean_ads_only",
+    "shrinkme_api_token",
     "droplink_api_token", "maintenance_mode", "apk_update_url",
     "feature_downloads", "feature_pure_cinema", "feature_chromecast",
     "feature_quality_gate", "coins_enabled",
@@ -109,6 +110,8 @@ MIGRATIONS = [
       vip_monthly_pkr INTEGER NOT NULL DEFAULT 200,
       vip_yearly_pkr INTEGER NOT NULL DEFAULT 1500,
       monetag_zone_id TEXT DEFAULT '', adsterra_tag_id TEXT DEFAULT '',
+      ads_enabled INTEGER NOT NULL DEFAULT 0,
+      clean_ads_only INTEGER NOT NULL DEFAULT 1,
       shrinkme_api_token TEXT DEFAULT '', droplink_api_token TEXT DEFAULT '',
       maintenance_mode INTEGER NOT NULL DEFAULT 0, apk_update_url TEXT DEFAULT '',
       feature_downloads INTEGER NOT NULL DEFAULT 1,
@@ -299,6 +302,7 @@ def _ensure_v5_columns(conn):
     wanted = [
         ("domain_registry", "last_redirect_to", "TEXT"),
         ("domain_health_checks", "final_domain", "TEXT"),
+        ("app_remote_config_v2", "ads_enabled", "INTEGER NOT NULL DEFAULT 0"),
     ]
     for name, default in COIN_REDEEM_DEFAULTS.items():
         wanted.append(("app_remote_config_v2", name,
@@ -308,6 +312,29 @@ def _ensure_v5_columns(conn):
         if col not in cols:
             conn.execute("ALTER TABLE %s ADD COLUMN %s %s" % (table, col, coltype))
     conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (5)")
+    conn.commit()
+
+
+def _ensure_v6_columns(conn):
+    """Migration 6 (2026-11-24, PNL-05 ads controls): additive columns
+    only, applied idempotently — the v4 lesson: never append to an
+    already-applied migration.
+
+    - app_remote_config_v2 ads_enabled: the ads master switch,
+      DEFAULT 0 (fail-closed: a deployment that never set it shows
+      no ads, the app's own rule in VipRemoteAds).
+    - app_remote_config_v2 clean_ads_only: DEFAULT 1 (standing
+      order: Monetag first, clean ads only).
+    """
+    wanted = [
+        ("app_remote_config_v2", "ads_enabled", "INTEGER NOT NULL DEFAULT 0"),
+        ("app_remote_config_v2", "clean_ads_only", "INTEGER NOT NULL DEFAULT 1"),
+    ]
+    for table, col, coltype in wanted:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(%s)" % table)}
+        if col not in cols:
+            conn.execute("ALTER TABLE %s ADD COLUMN %s %s" % (table, col, coltype))
+    conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (6)")
     conn.commit()
 
 
@@ -332,6 +359,7 @@ def migrate(conn):
                 conn.execute("INSERT INTO schema_version (version) VALUES (?)", (version,))
         conn.commit()
         _ensure_v5_columns(conn)
+        _ensure_v6_columns(conn)
         # CSRF tokens are per-session form secrets, not passwords: they
         # are stored with the session so server-rendered forms can use
         # them. The session token itself is never stored, only hashed.

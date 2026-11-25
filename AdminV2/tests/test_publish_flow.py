@@ -10,7 +10,8 @@ import unittest
 import urllib.parse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from helpers import make_service  # noqa: E402
+from helpers import make_service, TEST_TOTP_KEY  # noqa: E402
+from admin_v2 import fixture_app  # noqa: E402
 from admin_v2.live_stores import LiveStores  # noqa: E402
 from admin_v2.server import AdminApp  # noqa: E402
 from admin_v2.services import Service  # noqa: E402
@@ -51,7 +52,7 @@ class PublishFlowBase(unittest.TestCase):
         conn.commit()
         conn.close()
         self.live = LiveStores(catalog_path=self.catalog_path)
-        self.svc = Service(os.path.join(self.tmp, "admin"), live=self.live)
+        self.svc = Service(os.path.join(self.tmp, "admin"), totp_key=TEST_TOTP_KEY, live=self.live)
         owner_id = self.svc.create_owner("owner", "correct horse battery staple")
         self.owner = {"id": owner_id, "username": "owner", "role": "owner"}
         res = self.svc.login("owner", "correct horse battery staple")
@@ -190,6 +191,24 @@ class TestPublish(PublishFlowBase):
         self.assertEqual(row["config_version"], before + 1)
         self.assertEqual(self.svc._config_row()["config_version"], before + 1)
 
+    def test_monetization_ads_switch_publishes_to_the_catalog(self):
+        """Lane F: the ads switch is a real toggle, not a zone id. The
+        draft flip publishes to the live catalog row the app reads — on
+        and back off — and a catalog predating the column gains it on
+        publish, the way coins_enabled did before it."""
+        self._live_service()
+        before = self.svc._config_row()["config_version"]
+        self.svc.put_monetization(self.owner, {"ads_enabled": 1})
+        row = self._catalog().execute(
+            "SELECT * FROM app_remote_config WHERE id=1").fetchone()
+        self.assertEqual(row["ads_enabled"], 1)
+        self.assertEqual(row["config_version"], before + 1)
+        self.assertEqual(self.svc.get_monetization(self.owner)["ads_enabled"], 1)
+        self.svc.put_monetization(self.owner, {"ads_enabled": 0})
+        row = self._catalog().execute(
+            "SELECT ads_enabled FROM app_remote_config WHERE id=1").fetchone()
+        self.assertEqual(row["ads_enabled"], 0)
+
     def test_save_remote_config_adds_missing_columns_on_old_catalog(self):
         """An old catalog gains the columns being written, the way v1
         _ensure_monetization adds them at read time."""
@@ -281,6 +300,266 @@ class TestFormErrors(PublishFlowBase):
         self.assertEqual(status, 400)
         self.assertIsNone(location)
         self.assertIn("Region order", payload.decode())
+
+
+class TestFeaturePause(PublishFlowBase):
+    """PNL-11: a feature pause must reach the live catalog row the app
+    reads — not just the panel's version bump and fixture fold."""
+
+    def _live_row(self):
+        return self._catalog().execute(
+            "SELECT * FROM app_remote_config WHERE id=1").fetchone()
+
+    def _live_columns(self):
+        return {r[1] for r in self._catalog().execute(
+            "PRAGMA table_info(app_remote_config)")}
+
+    def test_pause_feature_writes_live_flag_and_stamps_version(self):
+        self._live_service()
+        before = self.svc._config_row()["config_version"]
+        p = self.svc.pause(self.owner, {"target_type": "feature",
+                                        "target_id": "downloads",
+                                        "reason": "test pause"})
+        self.assertTrue(self.svc.is_paused("feature", "downloads"))
+        row = self._live_row()
+        self.assertEqual(row["feature_downloads"], 0)
+        self.assertEqual(row["config_version"], before + 1)
+        self.assertEqual(self.svc._config_row()["config_version"], before + 1)
+        # The panel fixture still folds the pause too.
+        flags = fixture_app.public_remote_config(self.svc)["feature_flags"]
+        self.assertFalse(flags["downloads"])
+
+    def test_resume_feature_restores_draft_value(self):
+        self._live_service()
+        # Draft says the gate is ON (put_monetization publishes it live).
+        self.svc.put_monetization(self.owner, {"feature_quality_gate": 1})
+        self.assertEqual(self._live_row()["feature_quality_gate"], 1)
+        p = self.svc.pause(self.owner, {"target_type": "feature",
+                                        "target_id": "quality_gate",
+                                        "reason": "test pause"})
+        self.assertEqual(self._live_row()["feature_quality_gate"], 0)
+        before = self.svc._config_row()["config_version"]
+        self.svc.resume_pause(self.owner, p["id"])
+        row = self._live_row()
+        self.assertEqual(row["feature_quality_gate"], 1)
+        self.assertEqual(row["config_version"], before + 1)
+        self.assertFalse(self.svc.is_paused("feature", "quality_gate"))
+        flags = fixture_app.public_remote_config(self.svc)["feature_flags"]
+        self.assertTrue(flags["quality_gate"])
+
+    def test_resume_feature_restores_draft_off(self):
+        """Resume restores the DRAFT value, not a hardcoded 1: turn the
+        draft off while paused, and the live row must come back 0."""
+        self._live_service()
+        p = self.svc.pause(self.owner, {"target_type": "feature",
+                                        "target_id": "downloads",
+                                        "reason": "test pause"})
+        self.assertEqual(self._live_row()["feature_downloads"], 0)
+        self.svc.admin.execute(
+            "UPDATE app_remote_config_v2 SET feature_downloads=0 WHERE id=1")
+        self.svc.admin.commit()
+        self.svc.resume_pause(self.owner, p["id"])
+        self.assertEqual(self._live_row()["feature_downloads"], 0)
+
+    def test_pause_feature_failure_leaves_version_and_row_untouched(self):
+        """Catalog-first: a catalog the panel cannot write must not
+        half-pause — the version stays put, no pause row exists, and
+        the operator gets the real reason, so a retry works."""
+        self._live_service()
+        before = self.svc._config_row()["config_version"]
+        conn = self._catalog()
+        conn.execute("DROP TABLE app_remote_config")
+        conn.commit()
+        conn.close()
+        with self.assertRaises(Exception) as ctx:
+            self.svc.pause(self.owner, {"target_type": "feature",
+                                        "target_id": "downloads",
+                                        "reason": "test pause"})
+        self.assertIn("live catalog", str(ctx.exception))
+        self.assertEqual(self.svc._config_row()["config_version"], before)
+        self.assertFalse(self.svc.is_paused("feature", "downloads"))
+        self.assertEqual(self.svc.list_pauses(self.owner)["items"], [])
+
+    def test_pause_feature_without_live_catalog_still_works(self):
+        svc, owner, _aud = make_service()
+        before = svc._config_row()["config_version"]
+        p = svc.pause(owner, {"target_type": "feature",
+                              "target_id": "downloads", "reason": "test"})
+        self.assertTrue(svc.is_paused("feature", "downloads"))
+        self.assertEqual(svc._config_row()["config_version"], before + 1)
+        svc.resume_pause(owner, p["id"])
+        self.assertFalse(svc.is_paused("feature", "downloads"))
+
+    def test_pause_unknown_feature_name_is_snapshot_only(self):
+        """A feature name with no live column keeps today's behaviour:
+        version + snapshot, no catalog write at all."""
+        self._live_service()
+        before = self.svc._config_row()["config_version"]
+        self.svc.pause(self.owner, {"target_type": "feature",
+                                    "target_id": "recommendations",
+                                    "reason": "test pause"})
+        self.assertEqual(self._live_row()["feature_downloads"], 1)
+        self.assertEqual(self.svc._config_row()["config_version"], before + 1)
+        self.assertNotIn("config_version", self._live_columns())
+
+    def test_pause_non_feature_target_writes_nothing_live(self):
+        self._live_service()
+        p = self.svc.pause(self.owner, {"target_type": "section",
+                                        "target_id": "movie",
+                                        "reason": "test pause"})
+        self.assertEqual(self._live_row()["feature_downloads"], 1)
+        self.assertNotIn("config_version", self._live_columns())
+        self.svc.resume_pause(self.owner, p["id"])
+
+    def test_pause_then_monetization_save_keeps_live_flag_off(self):
+        """PNL-11 fixup: a routine monetization save while downloads
+        are paused must not re-enable downloads on the live row — the
+        draft keeps the operator's value, the live row keeps the 0."""
+        self._live_service()
+        p = self.svc.pause(self.owner, {"target_type": "feature",
+                                        "target_id": "downloads",
+                                        "reason": "test pause"})
+        self.assertEqual(self._live_row()["feature_downloads"], 0)
+        self.svc.put_monetization(self.owner, {"vip_monthly_pkr": 250})
+        row = self._live_row()
+        self.assertEqual(row["feature_downloads"], 0)
+        self.assertEqual(row["vip_monthly_pkr"], 250)
+        self.assertTrue(self.svc.is_paused("feature", "downloads"))
+        # Even an explicit re-enable in the draft stays overlaid live.
+        self.svc.put_monetization(self.owner, {"feature_downloads": 1})
+        self.assertEqual(self._live_row()["feature_downloads"], 0)
+        self.assertEqual(self.svc._config_row()["feature_downloads"], 1)
+        self.svc.resume_pause(self.owner, p["id"])
+        self.assertEqual(self._live_row()["feature_downloads"], 1)
+
+    def test_pause_then_publish_keeps_live_flag_off(self):
+        """The Publish repair path re-publishes the whole draft: a
+        paused flag must stay 0 there too, and resume restores draft."""
+        self._live_service()
+        p = self.svc.pause(self.owner, {"target_type": "feature",
+                                        "target_id": "downloads",
+                                        "reason": "test pause"})
+        out = self.svc.publish_monetization(self.owner, {"confirm": True})
+        self.assertEqual(out["publish_status"], "ok")
+        self.assertEqual(self._live_row()["feature_downloads"], 0)
+        self.assertTrue(self.svc.is_paused("feature", "downloads"))
+        self.svc.resume_pause(self.owner, p["id"])
+        self.assertEqual(self._live_row()["feature_downloads"], 1)
+
+    def test_pause_then_rollback_keeps_live_flag_off(self):
+        """A rollback restores a snapshot whose flag is 1: while the
+        pause is active the live row must still read 0, and the draft
+        is restored untouched so resume brings the flag back."""
+        self._live_service()
+        self.svc.put_monetization(self.owner, {"feature_quality_gate": 1})
+        v_gate = self.svc._config_row()["config_version"]
+        self.assertEqual(self._live_row()["feature_quality_gate"], 1)
+        p = self.svc.pause(self.owner, {"target_type": "feature",
+                                        "target_id": "quality_gate",
+                                        "reason": "test pause"})
+        self.assertEqual(self._live_row()["feature_quality_gate"], 0)
+        out = self.svc.rollback_remote_config(
+            self.owner, {"version": v_gate, "confirm": True})
+        row = self._live_row()
+        self.assertEqual(row["feature_quality_gate"], 0)
+        self.assertEqual(row["config_version"], out["config_version"])
+        self.assertTrue(self.svc.is_paused("feature", "quality_gate"))
+        self.assertEqual(self.svc._config_row()["feature_quality_gate"], 1)
+        self.svc.resume_pause(self.owner, p["id"])
+        self.assertEqual(self._live_row()["feature_quality_gate"], 1)
+
+    def test_pause_coins_keeps_coins_enabled_off(self):
+        """The one non-obvious mapping: panel feature "coins" is the
+        live column coins_enabled (which the test catalog gains via
+        save_remote_config's missing-column path). Pause, publish
+        while paused, resume — the live column must track the pause,
+        not the draft."""
+        self._live_service()
+        self.svc.put_monetization(self.owner, {"coins_enabled": 1})
+        self.assertEqual(self._live_row()["coins_enabled"], 1)
+        p = self.svc.pause(self.owner, {"target_type": "feature",
+                                        "target_id": "coins",
+                                        "reason": "test pause"})
+        self.assertEqual(self._live_row()["coins_enabled"], 0)
+        self.svc.put_monetization(self.owner, {"vip_monthly_pkr": 300})
+        self.assertEqual(self._live_row()["coins_enabled"], 0)
+        self.assertTrue(self.svc.is_paused("feature", "coins"))
+        self.svc.resume_pause(self.owner, p["id"])
+        self.assertEqual(self._live_row()["coins_enabled"], 1)
+
+    def test_two_serial_pauses_bump_version_twice(self):
+        """The version is allocated once per operation and passed
+        through to the snapshot (never recomputed): two serial feature
+        pauses bump the draft and the live row by exactly 1 each, with
+        no lost or duplicated version."""
+        self._live_service()
+        before = self.svc._config_row()["config_version"]
+        p1 = self.svc.pause(self.owner, {"target_type": "feature",
+                                         "target_id": "downloads",
+                                         "reason": "test pause"})
+        p2 = self.svc.pause(self.owner, {"target_type": "feature",
+                                         "target_id": "quality_gate",
+                                         "reason": "test pause"})
+        self.assertEqual(self.svc._config_row()["config_version"], before + 2)
+        self.assertEqual(self._live_row()["config_version"], before + 2)
+        self.assertEqual(self._live_row()["feature_downloads"], 0)
+        self.svc.resume_pause(self.owner, p1["id"])
+        self.svc.resume_pause(self.owner, p2["id"])
+        self.assertEqual(self._live_row()["feature_downloads"], 1)
+        self.assertEqual(self._live_row()["feature_quality_gate"], 0)
+
+    def test_pause_row_failure_after_live_write_is_retryable(self):
+        """Inverse failure (PNL-11 fixup): the live write succeeds and
+        the pause-row INSERT then fails. The result is live flag 0 +
+        version stamped with NO pause row and no UI resume path — but
+        the pause was never recorded, so retrying the pause works and
+        re-stamps the same live state."""
+        self._live_service()
+        before = self.svc._config_row()["config_version"]
+        real_admin = self.svc.admin
+
+        class _FailPauseInsert:
+            """Delegate everything except the pauses INSERT, which
+            fails the way a mid-pause admin-commit failure would."""
+            def __init__(self, conn):
+                self._conn = conn
+
+            def execute(self, sql, *args, **kwargs):
+                if str(sql).lstrip().upper().startswith("INSERT INTO PAUSES"):
+                    raise sqlite3.OperationalError(
+                        "simulated pause-row failure")
+                return self._conn.execute(sql, *args, **kwargs)
+
+            def commit(self):
+                return self._conn.commit()
+
+        self.svc.admin = _FailPauseInsert(real_admin)
+        try:
+            with self.assertRaises(Exception) as ctx:
+                self.svc.pause(self.owner, {"target_type": "feature",
+                                            "target_id": "downloads",
+                                            "reason": "test pause"})
+            self.assertIn("simulated pause-row failure", str(ctx.exception))
+        finally:
+            self.svc.admin = real_admin
+        # Live row already flipped and stamped; nothing recorded.
+        row = self._live_row()
+        self.assertEqual(row["feature_downloads"], 0)
+        self.assertEqual(row["config_version"], before + 1)
+        self.assertEqual(self.svc._config_row()["config_version"], before)
+        self.assertFalse(self.svc.is_paused("feature", "downloads"))
+        self.assertEqual(self.svc.list_pauses(self.owner)["items"], [])
+        # Retry works: the same pause now records and versions once.
+        p = self.svc.pause(self.owner, {"target_type": "feature",
+                                        "target_id": "downloads",
+                                        "reason": "test pause"})
+        self.assertTrue(self.svc.is_paused("feature", "downloads"))
+        self.assertEqual(self._live_row()["feature_downloads"], 0)
+        self.assertEqual(self.svc._config_row()["config_version"], before + 1)
+        self.assertEqual(self._live_row()["config_version"], before + 1)
+        self.svc.resume_pause(self.owner, p["id"])
+        self.assertEqual(self._live_row()["feature_downloads"], 1)
+
 
 
 if __name__ == "__main__":

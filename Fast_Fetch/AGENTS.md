@@ -2,7 +2,7 @@
 
 > **READ THIS ENTIRE FILE before making any changes.**
 > This is the single source of truth for every AI agent working on this project.
-> Last updated: October 2026 | Session: Antigravity (Claude Opus 4.6)
+> Last updated: 2026-11-24 | Session: Antigravity (Claude Opus 4.6)
 
 ---
 
@@ -37,8 +37,8 @@ rules of the platform where you are working; do not conceal actual behavior.
 |---------|-------|
 | Project Name | `radd-stream` (configurable in `config.py`) |
 | Version | 3.1.0 |
-| GitHub | https://github.com/rehanradd/radd-stream |
-| Main Engine | `Fast_Fetch/fast_fetch.py` (9,331 lines) |
+| GitHub | https://github.com/rehanradd/media-catalog |
+| Main Engine | `Fast_Fetch/fast_fetch.py` |
 | Database | `Fast_Fetch/fast_fetch.db` (SQLite, gitignored) |
 | Config File | `Fast_Fetch/config.py` |
 | Python Min | 3.11+ |
@@ -53,7 +53,7 @@ rules of the platform where you are working; do not conceal actual behavior.
 ## 2. Architecture Overview
 
 The module map (which line range of `fast_fetch.py` does what, per layer) is reference prose, not
-law: `../docs/SPEC_FAST_FETCH_ARCHITECTURE.md`. The law
+law — retired with the SPEC layer (2026-11-17, `09083d43`). The law
 that lives here is §6 — you may not add a layer that breaks it.
 
 ---
@@ -110,7 +110,7 @@ that lives here is §6 — you may not add a layer that breaks it.
       sweep: `python3 -S Fast_Fetch/sweep_public_edge.py --db /path/to/catalog_snapshot.db --probe`
       (it boots the server on a snapshot and asserts no site, no hoster, no upstream host and no
       provenance key reaches the public port, while the operator port still answers with all of
-      it). `API_V2.md` §16.9 is the contract this enforces.
+      it). `Fast_Fetch/api_v2.py` is the contract this enforces.
 
 ---
 
@@ -128,8 +128,7 @@ is judged by pulling ~a dozen real rows that fire on it and looking at them. Tha
 is what split the four, and it is the only admissible test:
 
 The 12-row sample table and the list of mainstream titles the removed tokens were hiding are
-evidence, not law:
-`../docs/SPEC_ADULT_TOKEN_SAMPLING.md`.
+evidence, not law — retired with the SPEC layer (2026-11-17, `09083d43`).
 
 
 **Word-boundary anchors do real work — do not loosen them.** `\bhunters\b` cannot fire
@@ -164,8 +163,7 @@ an agent runs.
 
 ## 10. Current Status & Stats
 
-Row counts, merge batches and crawl state are a **snapshot**, and snapshots rot: they now live in
-`../docs/SPEC_FAST_FETCH_CATALOG_STATE.md`.
+Row counts, merge batches and crawl state are a **snapshot**, and snapshots rot.
 **Re-measure before quoting any number**; the open-item index is
 [`CONTINUITY.md`](CONTINUITY.md).
 
@@ -173,7 +171,7 @@ Row counts, merge batches and crawl state are a **snapshot**, and snapshots rot:
 
 ## 12. TODO — Next Steps
 
-The per-site backlog moved to `../docs/SPEC_FAST_FETCH_TODO.md`.
+The per-site backlog was retired with the SPEC layer (2026-11-17, `09083d43`).
 Open items that gate a release are indexed at the top of [`CONTINUITY.md`](CONTINUITY.md); do not
 track work in this file.
 
@@ -181,10 +179,9 @@ track work in this file.
 
 ## 13. Platform-Specific Notes
 
-Windows / Replit / Codespace / VPS specifics are reference prose:
-`../docs/SPEC_PLATFORM_NOTES.md`. The Oracle measurements behind
-the fleet guardrail are in [`../AGENTS.md`](../AGENTS.md) and
-`../docs/CAPACITY_MEASURED.md`.
+Windows / Replit / Codespace / VPS specifics were reference prose, retired with the SPEC layer
+(2026-11-17, `09083d43`). The Oracle measurements behind
+the fleet guardrail are in [`../AGENTS.md`](../AGENTS.md).
 
 ---
 

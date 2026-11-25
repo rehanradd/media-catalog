@@ -1712,6 +1712,7 @@ SETTINGS_UNAVAILABLE = "the settings row is unavailable"
 _V1_READ_ONLY_FLAGS = frozenset({
     "maintenance_mode", "feature_pure_cinema", "feature_chromecast",
     "feature_downloads", "feature_quality_gate", "coins_enabled",
+    "ads_enabled",
 })
 
 _TEXT = "text"
@@ -1753,6 +1754,16 @@ MONETIZATION_FIELDS = (
     ("vip_yearly_pkr", "VIP Yearly PKR", _MONEY, 1500),
     ("monetag_zone_id", "Monetag Rewarded Video zone ID", _TEXT, ""),
     ("adsterra_tag_id", "Adsterra Native banner ID", _TEXT, ""),
+    # PNL-05: the ads master switch and the clean-ads-only control.
+    # ads_enabled defaults OFF (fail-closed: the app's own rule in
+    # VipRemoteAds is that a deployment that never set the switch shows
+    # nothing — an ad is not a feature the viewer already had). The
+    # owner turns ads on; that flip is the owner-only final ad choice.
+    # clean_ads_only defaults ON (standing order: Monetag first, clean
+    # ads only). Neither default changes what serves today: both zone
+    # ids are empty live, so no ad can fill either way.
+    ("ads_enabled", "Ads master switch (off = no ad unit ids are served)", _FLAG, 0),
+    ("clean_ads_only", "Clean ads only (on = Monetag only, Adsterra withheld)", _FLAG, 1),
     ("shrinkme_api_token", "ShrinkMe API token", _TOKEN, ""),
     ("droplink_api_token", "Droplink API token", _TOKEN, ""),
     # Owner's standing directive, verbatim from MONETIZATION_AND_FLEET_PLAN.md §"Pillars":
@@ -1805,6 +1816,15 @@ MONETIZATION_FIELDS = (
     # knob is a flag, never a coin amount, so `_resolve_coin_knob`'s
     # "a stored 0 means the shipped number" rule does not apply to it.
     ("coins_enabled", "Coins: master switch (off = no grants, no spends)", _FLAG, 0),
+    # Ads master switch (Lane F, 2026-11-23): OFF by default, like the
+    # gate. The app reads it as `ads.ads_enabled` (see `remote_config`
+    # below) and its ad governor refuses every surface while it is off —
+    # before this knob existed the server published no `ads_enabled` key
+    # at all, so the app's switch defaulted false forever and no panel
+    # edit could ever turn an ad on. A zone id alone is inventory, not
+    # permission: the switch is what turns the surfaces on. The knob is
+    # a flag, never an amount, so `_resolve_coin_knob`'s "a stored 0
+    # means the shipped number" rule does not apply to it.
     # The free cap lives on this row (launch plan Phase 0, G-8): the served
     # cap is the catalog value, not `tuning_settings`. A TEXT column is
     # created `DEFAULT ''` (see `_column_ddl`), so a row that predates this
@@ -2482,9 +2502,21 @@ def remote_config(conn):
             "easypaisa": {"mobile_number": shown("pak_easypaisa_number")},
             "raast": {"instant_id": shown("pak_raast_id")},
         },
+        # PNL-05: the ads master switch and the clean-ads-only control
+        # gate what is served, not just what is stored. Ads off serves
+        # no unit id at all (the app reads `enabled` and clears its ad
+        # windows); clean-ads-only serves Monetag alone and withholds
+        # the Adsterra id. Both flags are published alongside the ids so
+        # a client can tell "off" from "unconfigured".
         "ads": {
-            "monetag_rewarded_zone_id": shown("monetag_zone_id"),
-            "adsterra_native_banner_id": shown("adsterra_tag_id"),
+            "enabled": flag("ads_enabled"),
+            "ads_enabled": flag("ads_enabled"),
+            "clean_ads_only": flag("clean_ads_only"),
+            "monetag_rewarded_zone_id": (
+                shown("monetag_zone_id") if flag("ads_enabled") else ""),
+            "adsterra_native_banner_id": (
+                shown("adsterra_tag_id")
+                if flag("ads_enabled") and not flag("clean_ads_only") else ""),
         },
         "engagement": _engagement_public(values),
         "link_shorteners": [
@@ -3697,6 +3729,8 @@ def _config_card(monetization):
     out += toggle("feature_downloads")
     out += toggle("feature_quality_gate")
     out += toggle("coins_enabled")
+    out += toggle("ads_enabled")
+    out += toggle("clean_ads_only")
     out += ('<p class="hint">Feature flags are edited in the v2 panel '
             '(Monetization) so every flip is versioned, snapshotted and '
             'audited. This card shows the live values read-only.</p>')
