@@ -7,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -60,6 +61,8 @@ import com.raddstream.app.ui.theme.RaddInk950
 import com.raddstream.app.ui.theme.RaddMotion
 import com.raddstream.app.ui.theme.PlayerChromeTheme
 import com.raddstream.app.ui.theme.PlayerOnVideo
+import com.raddstream.app.ui.theme.PressHaptics
+import com.raddstream.app.ui.theme.pressScale
 import com.raddstream.app.viewmodel.formatTime
 
 
@@ -90,6 +93,13 @@ internal fun ControlTarget(
     content: @Composable () -> Unit,
 ) {
     val spoken = label
+    // Round 3: the whole bottom row presses with the M3 Expressive
+    // default-effects spring + a light haptic tick (PressFeedback) —
+    // ControlTarget is the one press node every bottom-row button rides,
+    // so wiring it here covers play, volume, the flexible slots,
+    // fullscreen and More at once. Reduced-motion users get the haptic
+    // only, never the scale.
+    val interactionSource = remember { MutableInteractionSource() }
     // Long-press is opt-in per control (the Volume button's level slider). A control
     // without one keeps the plain clickable below — the press the semantics test pins.
     val base = modifier
@@ -100,19 +110,23 @@ internal fun ControlTarget(
             CircleShape,
         )
         .alpha(if (enabled) 1f else 0.4f)
+        .pressScale(interactionSource)
     val pressModifier = if (onLongClick != null) {
         base
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick, role = Role.Button, enabled = enabled)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick, role = Role.Button, enabled = enabled, interactionSource = interactionSource)
             .semantics { contentDescription = spoken }
     } else {
         base
-            .clickable(onClick = onClick, role = Role.Button, enabled = enabled)
+            .clickable(onClick = onClick, role = Role.Button, enabled = enabled, interactionSource = interactionSource)
             .semantics { contentDescription = spoken }
     }
     Box(
         pressModifier,
         contentAlignment = Alignment.Center,
-    ) { content() }
+    ) {
+        PressHaptics(interactionSource)
+        content()
+    }
 }
 
 @Composable

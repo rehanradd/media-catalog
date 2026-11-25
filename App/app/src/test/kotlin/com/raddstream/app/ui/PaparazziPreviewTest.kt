@@ -60,6 +60,7 @@ import com.raddstream.app.ui.screens.Hud
 import com.raddstream.app.ui.screens.MyListEmptyContent
 import com.raddstream.app.ui.screens.MyListLoadedContent
 import com.raddstream.app.ui.screens.TopBar
+import com.raddstream.app.ui.screens.ZoomResetChip
 import com.raddstream.app.ui.screens.SearchContent
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.EpisodeGroup
@@ -1234,6 +1235,19 @@ class PaparazziPreviewTest {
                     onToggleViewMode = {},
                     onLock = {},
                 )
+            }
+        }
+    }
+
+    // Round 3 (P10 render proof): the zoom-reset chip — the visible way
+    // back to Fit while zoomed. The chip itself is the zoomed state's
+    // marker; the two-finger pan is a runtime gesture on the video frame,
+    // which Paparazzi cannot render, and it is test-pinned already.
+    @Test
+    fun playerZoomResetChip() {
+        paparazzi.snapshot {
+            themed {
+                ZoomResetChip(onReset = {})
             }
         }
     }

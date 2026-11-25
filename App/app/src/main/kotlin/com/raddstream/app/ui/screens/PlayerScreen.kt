@@ -27,10 +27,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -60,6 +56,7 @@ import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.style.TextAlign
@@ -769,7 +766,7 @@ private fun PlayerScreenContent(
                         Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Icon(Icons.Default.Check, null, tint = RaddNarrationCheck, modifier = Modifier.size(16.dp))
+                        Icon(painter = painterResource(R.drawable.ic_action_check), contentDescription = null, tint = RaddNarrationCheck, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(8.dp))
                         Text(banner, color = Color.White, fontSize = brandSp(14), maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
@@ -1247,7 +1244,7 @@ private fun styleNativeSubtitles(view: PlayerView, state: PlayerUiState) {
 private fun AudioOnlySurface(title: String, isPlaying: Boolean) {
     Box(Modifier.fillMaxSize().background(RaddPlayerStage), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(Icons.Default.MusicNote, null, tint = RaddCurrent500, modifier = Modifier.size(72.dp))
+            Icon(painter = painterResource(R.drawable.ic_player_music_note), contentDescription = null, tint = RaddCurrent500, modifier = Modifier.size(72.dp))
             Spacer(Modifier.height(12.dp))
             Text(
                 title,
