@@ -1,0 +1,25 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+>
+    <!-- S8 (2027 Settings round 2): the house user glyph — Feather "user"
+         (head + shoulders, as strokes). Same stroke style as the tab icons.
+         Replaces Icons.Default.Person as the Account group icon (ST2 pastel
+         section icon). -->
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M20,21 V19 C20,16.8 18.2,15 16,15 H8 C5.8,15 4,16.8 4,19 V21"
+        android:strokeWidth="2"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"/>
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M16,7 A4,4 0 1,1 8,7 A4,4 0 1,1 16,7 Z"
+        android:strokeWidth="2"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"/>
+</vector>

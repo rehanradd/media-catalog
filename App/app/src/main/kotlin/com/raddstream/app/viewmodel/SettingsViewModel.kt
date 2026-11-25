@@ -30,6 +30,9 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 
 enum class ImageQuality(val label: String) {
     AUTO("Auto"), HIGH("High"), MEDIUM("Medium"), LOW("Battery saver");
@@ -137,6 +140,13 @@ data class SettingsUiState(
     val testMessage: String? = null,
     val testIsError: Boolean = false,
     val prefs: UserPreferences = UserPreferences(),
+    /**
+     * ST6 (2027 Settings round 2): a failed preference load — the supervised
+     * [loadPersistedPrefs] sets this instead of leaving the screen on silent
+     * defaults. Null means loaded (or not yet attempted). The screen shows the
+     * J1 overlay-card error state with Retry while this is non-null.
+     */
+    val loadError: String? = null,
     val statusMessage: String? = null,
     /** The persisted LAN-share opt-in — the same value [com.raddstream.app.share.LanShareRunner] obeys. */
     val lanShareEnabled: Boolean = false,
@@ -419,142 +429,173 @@ class SettingsViewModel @Inject constructor(
      * loader, the offline sweeper and the release selector each read the same stored values,
      * which is what makes a chip here a setting rather than a decoration.
      */
+    /**
+     * ST6 (2027 Settings round 2): the preference load is supervised — one
+     * launch owns all nineteen collectors, so a failing flow cancels the rest
+     * and surfaces [SettingsUiState.loadError] instead of leaving the screen on
+     * silent defaults. Retry re-runs the whole load. Cancellation (a retry, or
+     * the ViewModel going away) is rethrown, never reported as a load failure.
+     */
+    private var prefsLoadJob: Job? = null
+
     private fun loadPersistedPrefs() {
-        viewModelScope.launch {
-            settingsRepository.audioBoostLevel.collect { level ->
-                _uiState.update { it.copy(prefs = it.prefs.copy(audioBoost = AudioBoostUi.offeredLevel(level))) }
-            }
-        }
-        viewModelScope.launch {
-            // The chips show the language in force, not the stored word: a viewer who never
-            // chose still sees their region's default (Desi: Hindi audio, English subtitles),
-            // because that is what the player will actually play. One combine, not three
-            // collectors, so a region change and a language change can never show a half-old
-            // pair — the audio row and the subtitle row always answer the same region.
-            combine(
-                settingsRepository.userRegion,
-                settingsRepository.preferredAudioLanguage,
-                settingsRepository.preferredSubtitleLanguage,
-            ) { region, audio, subtitle ->
-                // F5a: the provenance rides with the effective value, decided by the
-                // same stored-vs-blank rule — a stored word is the viewer's pick,
-                // a blank means the region's default is speaking.
-                Triple(
-                    LanguageDefaults.effectiveAudioLanguage(audio, region)
-                        ?: UserPreferences.AUDIO_LANGUAGE_DEFAULT,
-                    LanguageDefaults.effectiveSubtitleLanguage(subtitle, region)
-                        ?: UserPreferences.SUBTITLE_DEFAULT,
-                    Pair(provenanceOf(audio, region), provenanceOf(subtitle, region)),
-                )
-            }.collect { (audio, subtitle, provenances) ->
+        prefsLoadJob?.cancel()
+        prefsLoadJob = viewModelScope.launch {
+            _uiState.update { it.copy(loadError = null) }
+            try {
+                coroutineScope {
+                    launch {
+                        settingsRepository.audioBoostLevel.collect { level ->
+                            _uiState.update { it.copy(prefs = it.prefs.copy(audioBoost = AudioBoostUi.offeredLevel(level))) }
+                        }
+                    }
+                    launch {
+                        // The chips show the language in force, not the stored word: a viewer who never
+                        // chose still sees their region's default (Desi: Hindi audio, English subtitles),
+                        // because that is what the player will actually play. One combine, not three
+                        // collectors, so a region change and a language change can never show a half-old
+                        // pair — the audio row and the subtitle row always answer the same region.
+                        combine(
+                            settingsRepository.userRegion,
+                            settingsRepository.preferredAudioLanguage,
+                            settingsRepository.preferredSubtitleLanguage,
+                        ) { region, audio, subtitle ->
+                            // F5a: the provenance rides with the effective value, decided by the
+                            // same stored-vs-blank rule — a stored word is the viewer's pick,
+                            // a blank means the region's default is speaking.
+                            Triple(
+                                LanguageDefaults.effectiveAudioLanguage(audio, region)
+                                    ?: UserPreferences.AUDIO_LANGUAGE_DEFAULT,
+                                LanguageDefaults.effectiveSubtitleLanguage(subtitle, region)
+                                    ?: UserPreferences.SUBTITLE_DEFAULT,
+                                Pair(provenanceOf(audio, region), provenanceOf(subtitle, region)),
+                            )
+                        }.collect { (audio, subtitle, provenances) ->
+                            _uiState.update {
+                                it.copy(
+                                    prefs = it.prefs.copy(
+                                        audioLanguage = audio,
+                                        subtitleLang = subtitle,
+                                        audioProvenance = provenances.first,
+                                        subtitleProvenance = provenances.second,
+                                    ),
+                                )
+                            }
+                        }
+                    }
+                    launch {
+                        settingsRepository.imageQualityChoice.collect { choice ->
+                            _uiState.update { it.copy(prefs = it.prefs.copy(imageQuality = ImageQuality.valueOfOrDefault(choice))) }
+                        }
+                    }
+                    launch {
+                        settingsRepository.mobileDataAllowed.collect { allowed ->
+                            _uiState.update { it.copy(prefs = it.prefs.copy(downloadOnMobileData = allowed)) }
+                        }
+                    }
+                    launch {
+                        settingsRepository.dataSaver.collect { enabled ->
+                            _uiState.update { it.copy(prefs = it.prefs.copy(dataSaver = enabled)) }
+                        }
+                    }
+                    launch {
+                        settingsRepository.wifiOnlyDownloads.collect { enabled ->
+                            _uiState.update { it.copy(prefs = it.prefs.copy(wifiOnlyDownloads = enabled)) }
+                        }
+                    }
+                    launch {
+                        settingsRepository.autoDeleteWatched.collect { enabled ->
+                            _uiState.update { it.copy(prefs = it.prefs.copy(autoDeleteWatched = enabled)) }
+                        }
+                    }
+                    launch {
+                        settingsRepository.smartDownloadsEnabled.collect { enabled ->
+                            _uiState.update { it.copy(prefs = it.prefs.copy(smartDownloadsEnabled = enabled)) }
+                        }
+                    }
+                    launch {
+                        settingsRepository.downloadsForYouCapGb.collect { gb ->
+                            _uiState.update { it.copy(prefs = it.prefs.copy(downloadsForYouCapGb = gb)) }
+                        }
+                    }
+                    launch {
+                        settingsRepository.keepTtlHours.collect { hours ->
+                            _uiState.update { it.copy(prefs = it.prefs.copy(keepTtl = KeepTtl.fromHours(hours))) }
+                        }
+                    }
+                    launch {
+                        settingsRepository.dynamicColorEnabled.collect { enabled ->
+                            _uiState.update { it.copy(prefs = it.prefs.copy(dynamicColor = enabled)) }
+                        }
+                    }
+                    // Player defaults (plan §5 step 10): the autoplay switches, the standing
+                    // default quality, and the subtitle size the player sheet's slider also writes.
+                    launch {
+                        settingsRepository.autoplayNext.collect { enabled ->
+                            _uiState.update { it.copy(prefs = it.prefs.copy(autoplayNext = enabled)) }
+                        }
+                    }
+                    launch {
+                        settingsRepository.autoplayPreviews.collect { enabled ->
+                            _uiState.update { it.copy(prefs = it.prefs.copy(autoplayPreviews = enabled)) }
+                        }
+                    }
+                    // PL-10: the auto-PiP switch the player obeys when the viewer leaves mid-title.
+                    launch {
+                        settingsRepository.autoPip.collect { enabled ->
+                            _uiState.update { it.copy(prefs = it.prefs.copy(autoPip = enabled)) }
+                        }
+                    }
+                    launch {
+                        settingsRepository.defaultQuality.collect { band ->
+                            _uiState.update { it.copy(prefs = it.prefs.copy(defaultQuality = band)) }
+                        }
+                    }
+                    launch {
+                        settingsRepository.subtitleStyle.collect { style ->
+                            _uiState.update { it.copy(prefs = it.prefs.copy(subtitleSizePercent = style.sizePercent)) }
+                        }
+                    }
+                    // Collected, not sampled: the region screen this row opens writes the same key, so the
+                    // label a viewer comes back to must already be the one they just chose.
+                    launch {
+                        settingsRepository.userRegion.collect { region ->
+                            _uiState.update { it.copy(userRegion = region) }
+                        }
+                    }
+                    // The disclaimer card shows what the last poll brought in, the same
+                    // way the region row does: a new version the operator publishes
+                    // appears here without the viewer having to reopen the app.
+                    launch {
+                        settingsRepository.disclaimer.collect { disclaimer ->
+                            _uiState.update { it.copy(disclaimer = disclaimer) }
+                        }
+                    }
+                    // Tracking A: the totals switch shows the viewer's own answer, and
+                    // follows it when the first-run dialog is answered while Settings is
+                    // open behind it.
+                    launch {
+                        settingsRepository.analyticsConsent.collect { consent ->
+                            _uiState.update { it.copy(analyticsConsent = consent) }
+                        }
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
                 _uiState.update {
                     it.copy(
-                        prefs = it.prefs.copy(
-                            audioLanguage = audio,
-                            subtitleLang = subtitle,
-                            audioProvenance = provenances.first,
-                            subtitleProvenance = provenances.second,
-                        ),
+                        loadError = "Couldn't load your settings. Your saved choices are " +
+                            "still on this device — try again.",
                     )
                 }
             }
         }
-        viewModelScope.launch {
-            settingsRepository.imageQualityChoice.collect { choice ->
-                _uiState.update { it.copy(prefs = it.prefs.copy(imageQuality = ImageQuality.valueOfOrDefault(choice))) }
-            }
-        }
-        viewModelScope.launch {
-            settingsRepository.mobileDataAllowed.collect { allowed ->
-                _uiState.update { it.copy(prefs = it.prefs.copy(downloadOnMobileData = allowed)) }
-            }
-        }
-        viewModelScope.launch {
-            settingsRepository.dataSaver.collect { enabled ->
-                _uiState.update { it.copy(prefs = it.prefs.copy(dataSaver = enabled)) }
-            }
-        }
-        viewModelScope.launch {
-            settingsRepository.wifiOnlyDownloads.collect { enabled ->
-                _uiState.update { it.copy(prefs = it.prefs.copy(wifiOnlyDownloads = enabled)) }
-            }
-        }
-        viewModelScope.launch {
-            settingsRepository.autoDeleteWatched.collect { enabled ->
-                _uiState.update { it.copy(prefs = it.prefs.copy(autoDeleteWatched = enabled)) }
-            }
-        }
-        viewModelScope.launch {
-            settingsRepository.smartDownloadsEnabled.collect { enabled ->
-                _uiState.update { it.copy(prefs = it.prefs.copy(smartDownloadsEnabled = enabled)) }
-            }
-        }
-        viewModelScope.launch {
-            settingsRepository.downloadsForYouCapGb.collect { gb ->
-                _uiState.update { it.copy(prefs = it.prefs.copy(downloadsForYouCapGb = gb)) }
-            }
-        }
-        viewModelScope.launch {
-            settingsRepository.keepTtlHours.collect { hours ->
-                _uiState.update { it.copy(prefs = it.prefs.copy(keepTtl = KeepTtl.fromHours(hours))) }
-            }
-        }
-        viewModelScope.launch {
-            settingsRepository.dynamicColorEnabled.collect { enabled ->
-                _uiState.update { it.copy(prefs = it.prefs.copy(dynamicColor = enabled)) }
-            }
-        }
-        // Player defaults (plan §5 step 10): the autoplay switches, the standing
-        // default quality, and the subtitle size the player sheet's slider also writes.
-        viewModelScope.launch {
-            settingsRepository.autoplayNext.collect { enabled ->
-                _uiState.update { it.copy(prefs = it.prefs.copy(autoplayNext = enabled)) }
-            }
-        }
-        viewModelScope.launch {
-            settingsRepository.autoplayPreviews.collect { enabled ->
-                _uiState.update { it.copy(prefs = it.prefs.copy(autoplayPreviews = enabled)) }
-            }
-        }
-        // PL-10: the auto-PiP switch the player obeys when the viewer leaves mid-title.
-        viewModelScope.launch {
-            settingsRepository.autoPip.collect { enabled ->
-                _uiState.update { it.copy(prefs = it.prefs.copy(autoPip = enabled)) }
-            }
-        }
-        viewModelScope.launch {
-            settingsRepository.defaultQuality.collect { band ->
-                _uiState.update { it.copy(prefs = it.prefs.copy(defaultQuality = band)) }
-            }
-        }
-        viewModelScope.launch {
-            settingsRepository.subtitleStyle.collect { style ->
-                _uiState.update { it.copy(prefs = it.prefs.copy(subtitleSizePercent = style.sizePercent)) }
-            }
-        }
-        // Collected, not sampled: the region screen this row opens writes the same key, so the
-        // label a viewer comes back to must already be the one they just chose.
-        viewModelScope.launch {
-            settingsRepository.userRegion.collect { region ->
-                _uiState.update { it.copy(userRegion = region) }
-            }
-        }
-        // The disclaimer card shows what the last poll brought in, the same
-        // way the region row does: a new version the operator publishes
-        // appears here without the viewer having to reopen the app.
-        viewModelScope.launch {
-            settingsRepository.disclaimer.collect { disclaimer ->
-                _uiState.update { it.copy(disclaimer = disclaimer) }
-            }
-        }
-        // Tracking A: the totals switch shows the viewer's own answer, and
-        // follows it when the first-run dialog is answered while Settings is
-        // open behind it.
-        viewModelScope.launch {
-            settingsRepository.analyticsConsent.collect { consent ->
-                _uiState.update { it.copy(analyticsConsent = consent) }
-            }
-        }
+    }
+
+    /** ST6: the error overlay's Retry re-runs the supervised preference load. */
+    fun retryLoadPrefs() {
+        loadPersistedPrefs()
     }
 
     /** Open the disclaimer text this install has on file. */
