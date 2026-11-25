@@ -31,6 +31,25 @@ final_url (playback_type "direct", service "5centscdn"), source_url the
 episode page. Nothing here probes a playlist at import time beyond the
 episode-page fetch; the live-play proof is the Session 118 probe above.
 
+FIELD POPULATION + ATTRIBUTION (2026-11-23, scraper-improvement item 7):
+the program page carries far more than title/poster — a full synopsis
+(<div class="synopsis_detail">), a cast panel, Director/Producer/Writer/
+Production House lines — but the importer saved none of it (synopsis
+2.2%, cast 1.2% in the audit). extract_program_metadata now parses all
+of them, plus release_date from the earliest episode air date. Two
+fields the source genuinely does NOT carry: backdrop (og:image is the
+poster; episode stills are not program backdrops) and duration (no
+runtime anywhere on the page) — both stay NULL. Genres stay ["Drama"]:
+the page names no other genre.
+
+EPISODE ATTRIBUTION (same change): the program page also renders a
+"LATEST EPISODES" widget with OTHER programs' episodes (measured live
+2026-11-23: /program/Bano lists Nashtar and Uswah episodes), and the
+old extractor took every /program/<slug>/<id> link on the page — that
+is how 1,546/3,437 releases ended up pointing at the wrong program.
+extract_episode_links now takes the program slug and keeps only that
+program's own episodes.
+
 100% Python Standard Library. Zero external pip packages.
 
 Usage:
@@ -170,11 +189,18 @@ def extract_program_links(homepage_html: str) -> list[str]:
     return list(seen)
 
 
-def extract_episode_links(program_html: str) -> list[dict]:
+def extract_episode_links(program_html: str, program_slug: str | None = None) -> list[dict]:
     """Episode links on a program page: url + label; teasers dropped.
 
     The label is the anchor's own text/title where present; a link whose
     label says "teaser" is a promo, not a playable episode.
+
+    Attribution (2026-11-23): the page also renders a LATEST EPISODES
+    widget with OTHER programs' episodes, so when program_slug is given
+    only links whose /program/<slug>/ segment matches it are kept — the
+    old unfiltered scan attached 1,546/3,437 releases to the wrong
+    program. Callers that do not know the slug (legacy) get the old
+    unfiltered behaviour.
     """
     out: list[dict] = []
     seen: set[str] = set()
@@ -191,6 +217,10 @@ def extract_episode_links(program_html: str) -> list[dict]:
         if "teaser" in full_label.lower():
             continue
         abs_url = urllib.parse.urljoin(DEFAULT_BASE_URL, url)
+        if program_slug:
+            slug_m = re.search(r"/program/([A-Za-z0-9\-]+)/\d+/?$", abs_url, re.I)
+            if not slug_m or slug_m.group(1).lower() != program_slug.lower():
+                continue
         if abs_url in seen:
             continue
         seen.add(abs_url)
@@ -200,6 +230,10 @@ def extract_episode_links(program_html: str) -> list[dict]:
     if not out:
         for m in EPISODE_RE.finditer(program_html):
             abs_url = urllib.parse.urljoin(DEFAULT_BASE_URL, m.group(1))
+            if program_slug:
+                slug_m = re.search(r"/program/([A-Za-z0-9\-]+)/\d+/?$", abs_url, re.I)
+                if not slug_m or slug_m.group(1).lower() != program_slug.lower():
+                    continue
             if abs_url not in seen:
                 seen.add(abs_url)
                 out.append({"url": abs_url, "label": ""})
@@ -236,6 +270,141 @@ def parse_episode_title(episode_html: str, episode_url: str) -> dict:
     return {"title": raw, "episode": ep_num, "air_date": air_date}
 
 
+_HG_MONTHS = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+# Small words that stay lowercase mid-title when a program name is rebuilt
+# from its slug (the page's <h1> is preferred; this is the fallback).
+_HG_SMALL_WORDS = {"ki", "ka", "ke", "pe", "aur", "se", "mein", "main", "ka"}
+
+
+def _clean_program_name(slug: str) -> str:
+    """'aasmanon pe likha' -> 'Aasmanon pe Likha' from a URL slug."""
+    words = urllib.parse.unquote(slug).replace("-", " ").split()
+    cleaned = []
+    for i, word in enumerate(words):
+        low = word.lower()
+        if i > 0 and low in _HG_SMALL_WORDS:
+            cleaned.append(low)
+        else:
+            cleaned.append(word[:1].upper() + word[1:])
+    return " ".join(cleaned)
+
+
+def air_date_to_iso(air_date: str | None) -> str | None:
+    """'8th Nov 2026' -> '2026-11-08'. None when unparseable."""
+    if not air_date:
+        return None
+    m = re.search(
+        r"(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+)\s+(20\d{2})",
+        air_date.strip(),
+    )
+    if not m:
+        return None
+    month = _HG_MONTHS.get(m.group(2).lower()[:3])
+    if not month:
+        return None
+    day = int(m.group(1))
+    if not 1 <= day <= 31:
+        return None
+    return f"{m.group(3)}-{month:02d}-{day:02d}"
+
+
+def _hg_plain_text(html_fragment: str) -> str:
+    """Tags stripped, entities decoded, whitespace collapsed."""
+    text = re.sub(r"<[^>]+>", " ", html_fragment or "")
+    return re.sub(r"\s+", " ", html.unescape(text)).strip()
+
+
+def extract_program_metadata(program_html: str, program_name: str) -> dict:
+    """Synopsis / cast / director / credits from a program page.
+
+    Measured live 2026-11-23 (/program/Bano): the page carries a
+    <div class="synopsis_detail"> with the full story text followed by
+    "Production House: … Producer: … Director: … Writer: …" lines, and a
+    "<Program> Cast" accordion panel whose <ul> lists the cast by name.
+    When the panel is absent, cast falls back to the episode link title
+    attributes ("Bano Episode 39 | Haris Waheed - Hina Tariq - …"),
+    whose names are " - " separated. Returns synopsis, cast_names
+    (comma-joined), director, and raw_meta (JSON of production house /
+    producer / writer) — each None when the page does not carry it.
+    """
+    synopsis = None
+    director = None
+    extras: dict[str, str] = {}
+    syn_m = re.search(
+        r'<div\s+class=["\']synopsis_detail["\'][^>]*>(.*?)</div>\s*</div>',
+        program_html, re.S | re.I,
+    )
+    if syn_m:
+        div_text = _hg_plain_text(syn_m.group(1))
+        # The div opens with an "<h3> Bano synopsis" heading; drop it.
+        heading = re.compile(
+            rf"^{re.escape(program_name)}\s+synopsis\b\s*", re.I)
+        div_text = heading.sub("", div_text)
+        # The credits follow the story in the same div; split there so the
+        # story stays clean and the credit values stay bounded by the div.
+        cut = re.search(r"\bProduction House\s*:", div_text, re.I)
+        if cut:
+            synopsis = div_text[:cut.start()].strip() or None
+            credits_text = div_text[cut.start():]
+        else:
+            synopsis = div_text or None
+            credits_text = ""
+
+        def _credit(label: str) -> str | None:
+            m = re.search(
+                rf"{re.escape(label)}\s*:\s*(.+?)(?=\s+(?:Production House|Producer|Director|Writer)\s*:|\s*$)",
+                credits_text,
+                re.I,
+            )
+            return m.group(1).strip() if m and m.group(1).strip() else None
+
+        director = _credit("Director")
+        for label, key in (("Production House", "production_house"),
+                           ("Producer", "producer"), ("Writer", "writer")):
+            value = _credit(label)
+            if value:
+                extras[key] = value
+    raw_meta = json.dumps(extras) if extras else None
+
+    cast_names = None
+    cast_panel = re.search(
+        r"Cast\s*</a>.*?<ul>(.*?)</ul>", program_html, re.S | re.I)
+    if cast_panel:
+        names = [
+            _hg_plain_text(item)
+            for item in re.findall(r"<li[^>]*>(.*?)</li>", cast_panel.group(1), re.S | re.I)
+        ]
+        names = [n for n in names if n]
+        if names:
+            cast_names = ", ".join(names)
+    if not cast_names:
+        # Fallback: "Episode N | Name One - Name Two - Name Three" in the
+        # episode anchors' title attributes.
+        seen: list[str] = []
+        for title_attr in re.findall(r'title=["\']([^"\']+)["\']', program_html, re.I):
+            seg = title_attr.split("|")
+            if len(seg) < 2:
+                continue
+            for part in seg[1].split(" - "):
+                name = part.strip()
+                if name and name not in seen and "Har Pal Geo" not in name:
+                    seen.append(name)
+            if seen:
+                break
+        if seen:
+            cast_names = ", ".join(seen)
+
+    return {
+        "synopsis": synopsis,
+        "cast_names": cast_names,
+        "director": director,
+        "raw_meta": raw_meta,
+    }
+
+
 def extract_program_data_harpalgeo(
     program_url: str,
     program_html: str,
@@ -247,7 +416,12 @@ def extract_program_data_harpalgeo(
     no playable episode yields None (nothing to store).
     """
     slug = program_url.rstrip("/").split("/")[-1]
-    program_name = urllib.parse.unquote(slug).replace("-", " ").strip()
+    # The page's <h1> carries the program name in its proper case
+    # ("Bano"); the slug is only the fallback ("aasmanon pe likha" is
+    # lowercase in the URL, so a slug-derived title is title-cased).
+    h1_m = re.search(r"<h1[^>]*>(.*?)</h1>", program_html, re.S | re.I)
+    h1_text = _hg_plain_text(h1_m.group(1)) if h1_m else ""
+    program_name = h1_text or _clean_program_name(slug)
     if not program_name:
         return None
 
@@ -258,9 +432,12 @@ def extract_program_data_harpalgeo(
     raw_title = html.unescape(title_m.group(1).strip()) if title_m else program_name
     year_m = re.search(r"\b(19\d{2}|20\d{2})\b", raw_title)
     year = int(year_m.group(1)) if year_m else None
+    # Program metadata (field population, 2026-11-23): synopsis, cast,
+    # director and credits from the program page itself.
+    program_meta = extract_program_metadata(program_html, program_name)
 
     releases = []
-    for ep in extract_episode_links(program_html):
+    for ep in extract_episode_links(program_html, program_slug=slug):
         ep_html = episode_pages.get(ep["url"])
         if not ep_html:
             continue
@@ -294,11 +471,16 @@ def extract_program_data_harpalgeo(
     if not releases:
         return None
     releases.sort(key=lambda r: (r["episode"] or ""))
-    years = [y for y in (parse_episode_title(episode_pages[u], u)["air_date"]
-                         for u in episode_pages) if y]
-    if year is None and years:
-        y_m = re.search(r"20\d{2}", years[-1])
-        year = int(y_m.group(0)) if y_m else None
+    # Year / release date come from this program's OWN episodes only —
+    # the releases list is already slug-filtered, so a foreign episode
+    # page a caller happened to pass cannot leak its dates in.
+    # The program's release date is its first episode's air date — the
+    # earliest air date the source carries for this program — and the
+    # year fallback is that date's year (the program's start year).
+    air_dates = [air_date_to_iso(r.get("air_date")) for r in releases]
+    release_date = min((d for d in air_dates if d), default=None)
+    if year is None and release_date:
+        year = int(release_date[:4])
 
     return {
         "url": program_url,
@@ -310,8 +492,15 @@ def extract_program_data_harpalgeo(
         "seasons": "S01",
         "poster_url": poster_url,
         "backdrop_urls": None,
-        "synopsis": None,
+        "synopsis": program_meta["synopsis"],
         "genres": json.dumps(["Drama"]),
+        "cast_names": program_meta["cast_names"],
+        "director": program_meta["director"],
+        # Backdrop / duration: the source carries neither (see module
+        # docstring) — NULL, not fabricated.
+        "duration": None,
+        "release_date": release_date,
+        "raw_meta": program_meta["raw_meta"],
         "language": "Urdu",
         "source_site": SITE_NAME,
         "is_18_plus": 0,
@@ -463,7 +652,9 @@ def run_harpalgeo_scraper(
             return {"failed": True, "error": f"HTTP {code}", "url": url}
 
         episode_pages: dict[str, str] = {}
-        for ep in extract_episode_links(prog_html):
+        # Only this program's own episodes are fetched — the page's
+        # LATEST EPISODES widget lists other programs' episodes too.
+        for ep in extract_episode_links(prog_html, program_slug=url.rstrip("/").split("/")[-1]):
             if STOP_REQUESTED:
                 break
             e_code, _, e_html = c.get_text(ep["url"], referer=url)
