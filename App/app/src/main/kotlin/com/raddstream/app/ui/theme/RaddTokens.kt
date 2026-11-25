@@ -43,6 +43,8 @@ object RaddTokens {
         val Step48: Dp = 48.dp
         /** Standard page gutter. */
         val Gutter: Dp = RaddSpacing.gutter
+        /** The 34dp clearance the brief requires above the bottom bar (L5). */
+        val BottomClearance: Dp = 34.dp
         /** Between poster cards in a row or grid. */
         val RailGap: Dp = RaddSpacing.railGap
         /** Between home rails. */
