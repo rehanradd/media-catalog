@@ -2,21 +2,27 @@ package com.raddstream.app.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.raddstream.app.data.cache.CacheTaskEntity
+import com.raddstream.app.data.cache.CacheTaskState
 import com.raddstream.app.data.local.FavoritePost
 import com.raddstream.app.data.local.WatchHistoryDao
 import com.raddstream.app.data.local.WatchHistoryEntity
 import com.raddstream.app.network.models.Post
+import com.raddstream.app.network.models.WorkType
+import com.raddstream.app.repository.CacheRepository
 import com.raddstream.app.repository.CatalogRepository
 import com.raddstream.app.repository.FavoritesRepository
 import com.raddstream.app.ui.components.UserWords
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -26,10 +32,82 @@ enum class ListSort(val label: String) {
     UNWATCHED("Unwatched first"),
 }
 
+/**
+ * L1 (round 2): the filter chips that scope the list — All / Movies /
+ * Series / Downloads. The brief's filters, not sorts: sort stays a
+ * secondary control (see [MyListFilterRow]). Movies is the MOVIE work
+ * type; Series is the whole series family (series + seasons + anime +
+ * miniseries + TV specials — [WorkType.isSeriesFamily]); Downloads is
+ * titles with a verified copy on the device (see [downloadedPostIdsFor]).
+ * Anything the wire calls documentary, sport or music video fits neither
+ * Movies nor Series and shows only under All — the chips name the brief's
+ * four scopes, not every type the ledger holds.
+ */
+enum class MyListFilter(val label: String) {
+    ALL("All"),
+    MOVIES("Movies"),
+    SERIES("Series"),
+    DOWNLOADS("Downloads"),
+}
+
+/**
+ * L1 (round 2): the filter as one pure function, so the filter + sort
+ * composition is assertable without a layout. Identity is the post id
+ * for Downloads (a title is downloaded when its post id is in the set —
+ * the same id rule the sort's watched set uses, so a same-name remake
+ * never cross-matches).
+ */
+fun filterMyList(
+    posts: List<Post>,
+    filter: MyListFilter,
+    downloadedPostIds: Set<Int>,
+): List<Post> = when (filter) {
+    MyListFilter.ALL -> posts
+    MyListFilter.MOVIES -> posts.filter {
+        WorkType.fromContentType(it.contentType, it.isAnimated) == WorkType.MOVIE
+    }
+    MyListFilter.SERIES -> posts.filter {
+        WorkType.fromContentType(it.contentType, it.isAnimated).isSeriesFamily
+    }
+    MyListFilter.DOWNLOADS -> posts.filter { it.id in downloadedPostIds }
+}
+
+/**
+ * L2 (round 2): the post ids with a verified copy on the device — the
+ * keeps whose ledger row says COMPLETED (100% of known size, file
+ * verified). A queued, loading, paused or failed keep is not a copy yet;
+ * an expired one is pending deletion. Device downloads (the direct-file
+ * path) carry no post id — only a stream handle Detail matches at the
+ * print level — so they cannot join to a tile and are not in this set;
+ * the badge and the Downloads filter read the keep store, the same
+ * store the Downloads screen's Keep rows come from.
+ */
+fun downloadedPostIdsFor(tasks: List<CacheTaskEntity>): Set<Int> =
+    tasks.filter { it.stateEnum == CacheTaskState.COMPLETED }
+        .mapNotNull { it.releaseId.toInt().takeIf { id -> id > 0 } }
+        .toSet()
+
 data class MyListUiState(
     val favorites: List<Post> = emptyList(),
     val sort: ListSort = ListSort.RECENT,
+    /** L1 (round 2): the active filter chip — All / Movies / Series / Downloads. */
+    val filter: MyListFilter = MyListFilter.ALL,
     val isLoading: Boolean = false,
+    /**
+     * L2 (round 2): the post ids with a verified copy on the device
+     * (see [downloadedPostIdsFor]) — the download badge and the
+     * Downloads filter read this, never a per-tile lookup.
+     */
+    val downloadedPostIds: Set<Int> = emptySet(),
+    /** L3 (round 2): a pull-to-refresh is in flight — the Box's indicator. */
+    val isRefreshing: Boolean = false,
+    /**
+     * L4 (round 2): the last trending/recent load failed on the transport
+     * — the rails settled to nothing and the screen shows the inline retry
+     * instead of silently dropping them. False when a load produced titles
+     * or the server answered empty.
+     */
+    val railsLoadFailed: Boolean = false,
     /**
      * Rows this device still stores and this build may not draw. Counted, never listed: the
      * viewer's list did not shrink, the server's answer about it changed.
@@ -252,9 +330,20 @@ class MyListViewModel @Inject constructor(
     private val favoritesRepository: FavoritesRepository,
     private val watchHistoryDao: WatchHistoryDao,
     private val catalogRepository: CatalogRepository,
+    /** L2 (round 2): the keep store — the badge and the Downloads filter read it. */
+    private val cacheRepository: CacheRepository,
 ) : ViewModel() {
 
     private val sortFlow = MutableStateFlow(ListSort.RECENT)
+    /** L1 (round 2): the active filter chip. */
+    private val filterFlow = MutableStateFlow(MyListFilter.ALL)
+    /** L3 (round 2): a pull-to-refresh is in flight. */
+    private val isRefreshingFlow = MutableStateFlow(false)
+    /** L4 (round 2): the last rail load failed on the transport. */
+    private val railsFailedFlow = MutableStateFlow(false)
+    /** L2 (round 2): the downloaded-copy ids, from the keep store. */
+    private val downloadedIdsFlow: Flow<Set<Int>> =
+        cacheRepository.tasksFlow().map(::downloadedPostIdsFor)
     private val popularFlow = MutableStateFlow<List<Post>>(emptyList())
     /** A4-F5: the second rail's titles — the freshest-first load, beside [popularFlow]. */
     private val recentFlow = MutableStateFlow<List<Post>>(emptyList())
@@ -289,18 +378,20 @@ class MyListViewModel @Inject constructor(
     /** A4-F5: the second rail's latch — same rule as [popularLoaded]: only a load that produced titles latches, so a failed newest load retries on the next emission instead of going quiet. */
     private var recentLoaded = false
 
-    // Six flows, combined as two triples: the typed `combine` overloads this
+    // Nine flows, combined as three triples: the typed `combine` overloads this
     // codebase already uses stop at three, and a six-flow call falls back to
     // the vararg form whose array the lambda cannot destructure — CI proved
     // it (run 42155195902). The nesting changes nothing about the values:
-    // each inner triple re-emits on its own flows, and the outer pair emits
-    // on either half.
+    // each inner triple re-emits on its own flows, and the outer triple emits
+    // on either third. (Round 2: the sort + filter pair and the downloads +
+    // refreshing + rails-failed triple joined the two triples the screen
+    // already had.)
     val uiState: StateFlow<MyListUiState> = combine(
         combine(
             favoritesRepository.getAllFavorites(),
             favoritesRepository.observeRefusedIds(),
-            sortFlow,
-        ) { list, refused, sort -> Triple(list, refused, sort) },
+            combine(sortFlow, filterFlow) { sort, filter -> sort to filter },
+        ) { list, refused, sortAndFilter -> Triple(list, refused, sortAndFilter) },
         combine(
             watchHistoryDao.observeDurations(),
             // A4-F5: the second rail rides beside the trending load — the
@@ -309,7 +400,15 @@ class MyListViewModel @Inject constructor(
             combine(popularFlow, recentFlow) { popular, recent -> popular to recent },
             removedTitleFlow,
         ) { history, popularAndRecent, removedTitle -> Triple(history, popularAndRecent, removedTitle) },
-    ) { (list, refused, sort), (history, popularAndRecent, removedTitle) ->
+        combine(
+            downloadedIdsFlow,
+            isRefreshingFlow,
+            railsFailedFlow,
+        ) { downloadedIds, isRefreshing, railsFailed ->
+            Triple(downloadedIds, isRefreshing, railsFailed)
+        },
+    ) { (list, refused, sortAndFilter), (history, popularAndRecent, removedTitle), (downloadedIds, isRefreshing, railsFailed) ->
+        val (sort, filter) = sortAndFilter
         val (popular, recent) = popularAndRecent
         // The stored rows are filtered here, before anything sorts or maps them, so no later step
         // can be handed the unfiltered list by accident. `is18Plus` is the strict half and is null
@@ -325,6 +424,7 @@ class MyListViewModel @Inject constructor(
         MyListUiState(
             favorites = sorted.map(::myListDisplayPost),
             sort = sort,
+            filter = filter,
             isLoading = false,
             hiddenCount = list.size - visible.size,
             popular = starterShelf(popular),
@@ -332,6 +432,9 @@ class MyListViewModel @Inject constructor(
             removedTitle = removedTitle,
             progressByPostId = myListProgressByPostId(history),
             progressLabelByPostId = myListProgressLabelByPostId(history),
+            downloadedPostIds = downloadedIds,
+            isRefreshing = isRefreshing,
+            railsLoadFailed = railsFailed,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -374,31 +477,13 @@ class MyListViewModel @Inject constructor(
             // nothing) retries on the next emission instead of going quiet
             // for this ViewModel's life, and the settled flag tells the
             // empty state the rail is done arriving either way.
+            // Both rails load through [loadRails] now, so the init collector,
+            // pull-to-refresh and the inline retry all run the same load.
             uiState.collect { state ->
-                if (!state.isLoading && state.favorites.size <= 1 && !popularLoaded) {
-                    val loaded = runCatching {
-                        catalogRepository.browseWorksV2(sort = "trending", limit = 6)?.posts
-                            ?.takeIf { it.isNotEmpty() }
-                            ?: catalogRepository.getPosts(sort = "trending", page = 1, limit = 6).results
-                    }.getOrNull() ?: emptyList()
-                    popularFlow.value = loaded
-                    popularLoaded = loaded.isNotEmpty()
-                    popularSettledFlow.value = true
-                }
-                // A4-F5: the second rail loads in the same pass, from the
-                // server's freshest-first order — the same "newest" sort
-                // Home's rails already ask for (see HomeViewModel: a rail
-                // with no server sort defaults to "newest"). Same 6
-                // candidates, same v2-then-v1 fallback, same poster-only
-                // shelf filter at the state edge.
-                if (!state.isLoading && state.favorites.size <= 1 && !recentLoaded) {
-                    val loaded = runCatching {
-                        catalogRepository.browseWorksV2(sort = "newest", limit = 6)?.posts
-                            ?.takeIf { it.isNotEmpty() }
-                            ?: catalogRepository.getPosts(sort = "newest", page = 1, limit = 6).results
-                    }.getOrNull() ?: emptyList()
-                    recentFlow.value = loaded
-                    recentLoaded = loaded.isNotEmpty()
+                if (!state.isLoading && state.favorites.size <= 1 &&
+                    (!popularLoaded || !recentLoaded)
+                ) {
+                    loadRails()
                 }
             }
         }
@@ -407,6 +492,82 @@ class MyListViewModel @Inject constructor(
     fun setSort(sort: ListSort) {
         sortFlow.value = sort
     }
+
+    /** L1 (round 2): the active filter chip. */
+    fun setFilter(filter: MyListFilter) {
+        filterFlow.value = filter
+    }
+
+    /**
+     * L3 (round 2): pull-to-refresh — revalidate the saved rows (the server
+     * may have refused one since the last visit) and reload the rails. The
+     * rails reload even for a list too big to show the shelf: the load is
+     * bounded (two calls, six rows each) and the shelf gate still decides
+     * what renders.
+     */
+    fun refresh() {
+        viewModelScope.launch {
+            isRefreshingFlow.value = true
+            try {
+                favoritesRepository.revalidateSavedRows()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // The ledger keeps what it held — same rule as init.
+            }
+            loadRails()
+            isRefreshingFlow.value = false
+        }
+    }
+
+    /** L4 (round 2): the inline retry — reload the rails, nothing else. */
+    fun retryRails() {
+        viewModelScope.launch { loadRails() }
+    }
+
+    /** Whether a rail load is already running — the init collector and a retry must never double-load. Both run on Main. */
+    private var railsLoading = false
+
+    /**
+     * L4 (round 2): the two rail loads as one call — trending, then newest —
+     * so the init collector, pull-to-refresh and the inline retry all run
+     * the same load. A rail that already latched is not re-fetched. A load
+     * that fails on the transport sets the failed flag (the screen shows
+     * the retry card); a load the server answers empty settles to no rail,
+     * not an error. Only a load that produced titles latches, so a failed
+     * or empty load retries on the next trigger instead of going quiet for
+     * this ViewModel's life.
+     */
+    private suspend fun loadRails() {
+        if (railsLoading) return
+        railsLoading = true
+        try {
+            popularSettledFlow.value = false
+            val trending = if (popularLoaded) popularFlow.value else loadRail("trending")
+            val fresh = if (recentLoaded) recentFlow.value else loadRail("newest")
+            railsFailedFlow.value = trending == null || fresh == null
+            popularFlow.value = trending ?: emptyList()
+            recentFlow.value = fresh ?: emptyList()
+            if (trending?.isNotEmpty() == true) popularLoaded = true
+            if (fresh?.isNotEmpty() == true) recentLoaded = true
+            popularSettledFlow.value = true
+        } finally {
+            railsLoading = false
+        }
+    }
+
+    /**
+     * One rail load. Null when the transport failed (the caller marks the
+     * rails failed); an empty list when the server answered with nothing.
+     * The v2-then-v1 fallback is the same one the init collector used —
+     * only the failure now survives as a null instead of collapsing to an
+     * empty list.
+     */
+    private suspend fun loadRail(sort: String): List<Post>? = runCatching {
+        catalogRepository.browseWorksV2(sort = sort, limit = 6)?.posts
+            ?.takeIf { it.isNotEmpty() }
+            ?: catalogRepository.getPosts(sort = sort, page = 1, limit = 6).results
+    }.getOrNull()
 
     /**
      * One tap removes the row at once — no held tile, no confirm dialog.
