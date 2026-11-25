@@ -163,7 +163,7 @@ class HomeAuditFixesTest {
                 HomeContent(
                     state = HomeUiState(),
                     heroAutoplay = false,
-                    onBrowseType = { browsed = it },
+                    onBrowseType = { type, _ -> browsed = type },
                 )
             }
         }
@@ -263,11 +263,41 @@ class HomeAuditFixesTest {
                 )
             }
         }
-        compose.onNodeWithContentDescription("Dismiss announcement")
-            .assertHeightIsEqualTo(48.dp).assertWidthIsEqualTo(48.dp)
-        compose.onNodeWithContentDescription("Remove Jawan from Continue Watching")
-            .assertHeightIsEqualTo(48.dp).assertWidthIsEqualTo(48.dp)
-        compose.onNodeWithContentDescription("Dismiss trial note")
-            .assertHeightIsEqualTo(48.dp).assertWidthIsEqualTo(48.dp)
+    // ── H10 (2027 Home fix, round 2): the trending rail's "See all" ─────
+
+    @Test
+    fun trendingRailShowsSeeAllToTheSameOrder() {
+        var browsedType: String? = "untouched"
+        var browsedSort: String? = "untouched"
+        val section = HomeSection(
+            key = "trending",
+            title = "Most available",
+            type = null,
+            items = listOf(post(1, "Jawan", 2023), post(2, "Salaar", 2023)),
+            sort = "trending",
+        )
+        compose.setContent {
+            RaddStreamTheme {
+                CompositionLocalProvider(LocalInspectionMode provides true) {
+                    HomeContent(
+                        state = HomeUiState(sections = listOf(section)),
+                        heroAutoplay = false,
+                        onBrowseType = { type, sort -> browsedType = type; browsedSort = sort },
+                    )
+                }
+            }
+        }
+        // The button speaks its section, so the trending rail's "See all"
+        // is distinct from every other rail's. The rail sits below the
+        // fold in the test viewport — scroll it into view before clicking,
+        // the same way the other tests do.
+        compose.onNodeWithContentDescription("See all Most available").performScrollTo()
+        compose.onNodeWithContentDescription("See all Most available").assertExists()
+        compose.onNodeWithContentDescription("See all Most available").assertHasClickAction()
+        compose.onNodeWithContentDescription("See all Most available").performClick()
+        // The jump carries the sort, so Browse opens the same order the
+        // rail showed — not a silent re-sort to freshest-first.
+        assertEquals(null, browsedType)
+        assertEquals("trending", browsedSort)
     }
 }

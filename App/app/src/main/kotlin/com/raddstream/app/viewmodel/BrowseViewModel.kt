@@ -55,7 +55,9 @@ class BrowseViewModel @Inject constructor(
 ) : ViewModel() {
 
     private val type: String? = (savedStateHandle.get<String>(ARG_TYPE))?.takeIf { it.isNotBlank() && it != "all" }
-    private val _uiState = MutableStateFlow(BrowseUiState(title = titleFor(type)))
+    /** H10: the sort the rail was ordered by — null means no sort (the old behaviour). */
+    private val sort: String? = (savedStateHandle.get<String>(ARG_SORT))?.takeIf { it.isNotBlank() }
+    private val _uiState = MutableStateFlow(BrowseUiState(title = titleFor(type, sort)))
     val uiState = _uiState.asStateFlow()
 
     /**
@@ -74,10 +76,16 @@ class BrowseViewModel @Inject constructor(
                 pagingSourceFactory = {
                     CatalogPagingSource(
                         loadV2 = { cursor, limit ->
-                            catalogRepository.browseWorksV2(type = type, sort = "trending", limit = limit, cursor = cursor)
+                            // H10: the sort rides through — null keeps the
+                            // old "trending" default, "trending" is the
+                            // same order the rail showed.
+                            catalogRepository.browseWorksV2(type = type, sort = sort ?: "trending", limit = limit, cursor = cursor)
                         },
                         loadV1 = { page, limit ->
-                            catalogRepository.getPosts(type = type, page = page, limit = limit)
+                            // H10: the v1 fallback gets the sort too — a
+                            // trending Browse must not silently re-sort to
+                            // freshest-first when the server answers v1.
+                            catalogRepository.getPosts(type = type, sort = sort, page = page, limit = limit)
                         },
                     )
                 },
@@ -107,16 +115,23 @@ class BrowseViewModel @Inject constructor(
 
     private companion object {
         const val ARG_TYPE = "type"
-        fun titleFor(type: String?): String = when (type) {
-            null -> "Recently added"
-            "movie" -> "Movies"
-            "series" -> "Series"
-            // `anime` is a filter, not a stored `content_type`: animation is a flag on
-            // the post, and the server answers the chip from that flag.
-            "anime" -> "Anime"
-            "complete_season" -> "Complete seasons"
-            "ongoing_season" -> "Ongoing seasons"
-            else -> "Catalog"
+        const val ARG_SORT = "sort"
+        // H10: a trending Browse is the "Most copies" rail in full — the
+        // rail's own title, not "Recently added", which is the unsorted
+        // freshest-first list. A typed trending list keeps its type title.
+        fun titleFor(type: String?, sort: String?): String = when {
+            sort == "trending" && type == null -> "Most copies"
+            else -> when (type) {
+                null -> "Recently added"
+                "movie" -> "Movies"
+                "series" -> "Series"
+                // `anime` is a filter, not a stored `content_type`: animation is a flag on
+                // the post, and the server answers the chip from that flag.
+                "anime" -> "Anime"
+                "complete_season" -> "Complete seasons"
+                "ongoing_season" -> "Ongoing seasons"
+                else -> "Catalog"
+            }
         }
     }
 }

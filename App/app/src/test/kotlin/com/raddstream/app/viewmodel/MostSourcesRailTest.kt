@@ -13,8 +13,9 @@ import org.junit.Test
  * D2.2 Shape C: the "Most copies" rail is `sort=trending` on the live
  * `/api/v1/posts` route — no new endpoint, no nginx allow, no Browse call.
  * These pin the rail itself, not the network: five rails in order, only
- * "Most copies" asks for a sort, and only it hides "See all" (Browse takes
- * a type but no sort, so it cannot reproduce that order). The label is
+ * "Most copies" asks for a sort. H10 (2027 Home fix, round 2): Browse
+ * takes a sort now, so the trending rail KEEPS its "See all" — the sort
+ * rides through to Browse instead of silently re-sorting. The label is
  * pinned too: "Trending" would promise popularity data that does not exist
  * — the ledger has no play-count column, so the order is prints + mirrors.
  */
@@ -53,11 +54,14 @@ class MostSourcesRailTest {
     }
 
     @Test
-    fun `only a sorted rail hides see all`() {
+    fun `the trending rail keeps see all now that browse takes a sort`() {
+        // H10: the sort used to hide "See all" (Browse took a type but no
+        // sort, so it could not reproduce that order). Browse takes a sort
+        // now, so the trending rail keeps its — the sort rides through.
         val sections = initialHomeSections()
 
         assertTrue(sections.dropLast(1).all { it.browseEquivalent })
-        assertFalse(sections.last().browseEquivalent)
+        assertTrue(sections.last().browseEquivalent)
     }
 
     @Test

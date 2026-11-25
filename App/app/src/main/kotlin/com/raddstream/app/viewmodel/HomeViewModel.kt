@@ -270,14 +270,15 @@ data class HomeSection(
 
     /**
      * True when Browse can reproduce this rail's order. Browse takes a type
-     * but no sort, so a rail ordered by a server sort has no "See all": the
-     * Browse page would silently re-sort it to freshest-first. A related
-     * rail has no Browse equivalent either — Browse cannot reproduce a
-     * seed's neighbours. A "For you" rail has none either: Browse cannot
-     * reproduce a taste-ranked order, so its "See all" would silently
-     * re-sort the picks to freshest-first.
+     * and a sort — the trending sort is the one Browse reproduces (its v2
+     * path already sorted by trending), so a trending rail has a "See all".
+     * Any other server sort still has none: Browse would silently re-sort
+     * it to freshest-first. A related rail has no Browse equivalent either
+     * — Browse cannot reproduce a seed's neighbours. A "For you" rail has
+     * none either: Browse cannot reproduce a taste-ranked order, so its
+     * "See all" would silently re-sort the picks to freshest-first.
      */
-    val browseEquivalent: Boolean get() = sort == null && relatedWorkId == null && !forYou
+    val browseEquivalent: Boolean get() = (sort == null || sort == "trending") && relatedWorkId == null && !forYou
 
     /**
      * A rail that already has rows and whose newest refresh came back empty-handed. Without

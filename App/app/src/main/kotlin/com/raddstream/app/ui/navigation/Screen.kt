@@ -100,9 +100,19 @@ sealed class Screen(val route: String) {
     /** Session 123: the account screens — the dashboard and the profile. (Coins and check-in were removed 2026-11-17; their routes are gone with them.) */
     object Dashboard : Screen("dashboard")
     object Profile : Screen("profile")
-    object Browse : Screen("browse/{type}") {
+    /**
+     * H10 (2027 Home fix, round 2): Browse takes a sort now, so the
+     * trending rail's "See all" lands on the same order — "browse/all?
+     * sort=trending" — instead of silently re-sorting to freshest-first.
+     * The sort is a query, not a path segment: a sort is a filter on the
+     * list, not a place. Null means "no sort" (the old behaviour), and
+     * the default keeps every existing browse link working.
+     */
+    object Browse : Screen("browse/{type}?sort={sort}") {
         const val ARG_TYPE = "type"
-        fun createRoute(type: String?): String = "browse/${type ?: "all"}"
+        const val ARG_SORT = "sort"
+        fun createRoute(type: String?, sort: String? = null): String =
+            "browse/${type ?: "all"}?sort=${sort ?: ""}"
     }
     object Detail : Screen("detail/{postId}?autoplay={autoplay}&workId={workId}") {
         const val ARG_POST_ID = "postId"

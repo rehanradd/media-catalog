@@ -56,7 +56,7 @@ class ContinueWatchingPlaceholderTest {
         workRef = "work:jawan",
     )
 
-    private fun setHome(state: HomeUiState, onBrowseType: (String?) -> Unit = {}) {
+    private fun setHome(state: HomeUiState, onBrowseType: (String?, String?) -> Unit = { _, _ -> }) {
         compose.setContent {
             RaddStreamTheme {
                 HomeContent(
@@ -104,7 +104,7 @@ class ContinueWatchingPlaceholderTest {
         var browsedType: String? = "untouched"
         setHome(
             HomeUiState(sections = listOf(loadedSection()), hasWatchHistory = true),
-            onBrowseType = { browsedType = it },
+            onBrowseType = { type, _ -> browsedType = type },
         )
 
         // A click on a node below the fold lands off-viewport and never

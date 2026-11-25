@@ -187,7 +187,7 @@ fun HomeScreen(
      * nothing behind it.
      */
     onPlaySomethingClick: (Post) -> Unit = {},
-    onBrowseType: (String?) -> Unit = {},
+    onBrowseType: (String?, String?) -> Unit = { _, _ -> },
     /**
      * A facet chip's jump-off: the genre, industry and/or language to land
      * on Search with already applied. Null means "no filter of that kind".
@@ -372,7 +372,7 @@ internal fun HomeContent(
      * other rail grows a button that plays a title it did not pick.
      */
     onPlaySomething: (() -> Unit)? = null,
-    onBrowseType: (String?) -> Unit = {},
+    onBrowseType: (String?, String?) -> Unit = { _, _ -> },
     onFacetSelected: (genre: String?, industry: String?, language: String?) -> Unit = { _, _, _ -> },
     onSetupServerClick: () -> Unit = {},
     /**
@@ -700,7 +700,7 @@ internal fun HomeContent(
                 }
             } else if (anyVisible && state.hasWatchHistory) {
                 item(key = "startWatching") {
-                    StartWatchingPlaceholder(onBrowse = { onBrowseType(null) })
+                    StartWatchingPlaceholder(onBrowse = { onBrowseType(null, null) })
                     Spacer(Modifier.height(RaddTokens.Space.Sm))
                 }
             }
@@ -771,13 +771,15 @@ internal fun HomeContent(
                             if (section.industry != null) {
                                 onFacetSelected(null, section.industry, null)
                             } else {
-                                onBrowseType(section.type)
+                                onBrowseType(section.type, section.sort)
                             }
                         },
-                        // A sorted rail has no Browse equivalent (Browse takes a
-                        // type but no sort), so "See all" would silently re-sort
-                        // it to freshest-first. Offer it only where the order
-                        // survives the jump.
+                        // H10: a rail ordered by a sort Browse cannot reproduce
+                        // has no "See all" — it would silently re-sort to
+                        // freshest-first. The trending sort IS reproducible
+                        // (Browse takes a sort now), so that rail keeps its
+                        // "See all". Offer it only where the order survives
+                        // the jump.
                         showSeeAll = section.browseEquivalent,
                         onRetry = { onRetrySection(section.key) },
                         // REA #4: the shuffle rides only the "For you" header —
@@ -877,13 +879,15 @@ internal fun HomeContent(
                             if (section.industry != null) {
                                 onFacetSelected(null, section.industry, null)
                             } else {
-                                onBrowseType(section.type)
+                                onBrowseType(section.type, section.sort)
                             }
                         },
-                        // A sorted rail has no Browse equivalent (Browse takes a
-                        // type but no sort), so "See all" would silently re-sort
-                        // it to freshest-first. Offer it only where the order
-                        // survives the jump.
+                        // H10: a rail ordered by a sort Browse cannot reproduce
+                        // has no "See all" — it would silently re-sort to
+                        // freshest-first. The trending sort IS reproducible
+                        // (Browse takes a sort now), so that rail keeps its
+                        // "See all". Offer it only where the order survives
+                        // the jump.
                         showSeeAll = section.browseEquivalent,
                         onRetry = { onRetrySection(section.key) },
                         // REA #4: the shuffle rides only the "For you" header —
@@ -984,7 +988,7 @@ internal fun HomeContent(
                         action = {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Button(
-                                    onClick = { onBrowseType(null) },
+                                    onClick = { onBrowseType(null, null) },
                                     modifier = Modifier.heightIn(min = 48.dp),
                                 ) {
                                     Text("Browse titles")
@@ -1936,8 +1940,9 @@ private fun HomeRailSection(
                     // Robo run 6: every rail's "See all" announced identically.
                     // The button speaks its section, so Movies and Series are
                     // distinct; the painted text stays the short "See all".
-                    // A sorted rail has no Browse equivalent (Browse takes a
-                    // type but no sort), so it gets no "See all" at all.
+                    // H10: a rail ordered by a sort Browse cannot reproduce
+                    // gets no "See all" at all — the trending sort is
+                    // reproducible, so that rail keeps its.
                     // REA #4: the "For you" header also carries the shuffle —
                     // the pool it draws from — beside "See all" when the row
                     // has one; other rails keep the single action they had.
