@@ -17,8 +17,14 @@ Measured on 2026-10-29 (see /tmp/new_site_candidates_20261028.json):
   so the anchor/iframe patterns accept quoted and bare values alike.
 * thebollyflix.gen.in — WP, X-WP-Total 17,827, one bflixcdn.xyz iframe per post;
   the family hops domains, so identity is title+year, never the host.
-* animeworld.live — WP, 596 posts, Hindi-dub episode pages; the player is
+* animeworld.live — WP, 820 posts (550 in Anime/Movies/Series/Cartoon;
+  Blog editorials excluded), Hindi-dub episode pages; the player is
   injected by page script, so only server-rendered iframes/anchors are stored.
+  Measured live 2026-11-23: 34/34 sampled title pages (newest 30 + oldest 4)
+  carry NO server-rendered player at all — only a YouTube trailer iframe and
+  outbound Crunchyroll/Netflix "Watch" links — so the crawl declines every
+  page as no-playable-object. The REST/sitemap enumeration works; staging
+  playable animeworld rows needs a real-browser pass, not a parser tweak.
 
 Every source row is written `status='unverified'` with `is_temporary=0` unless
 the site itself says otherwise: nothing here probes or activates a link. The
@@ -173,6 +179,11 @@ SITES = {
         "base": "https://animeworld.live",
         "db": DATA_DIR / "animeworld.db",
         "sitemaps": ["https://animeworld.live/sitemap_index.xml"],
+        # WP REST proven live 2026-11-23 (X-WP-Total 820, clean pagination,
+        # no edge cache). Categories: Anime 1, Movies 2, Series 3, Cartoon 5;
+        # Blog 17 (270 editorials, no title entries) is excluded, leaving 550.
+        "rest": "https://animeworld.live/wp-json/wp/v2/posts",
+        "rest_categories": "1,2,3,5",
         "display_names": ["Anime World"],
         "exclude": r"/(?:category|tag|author|page|genre|about|contact|dmca|"
                    r"privacy|disclaimer|request|how-to|feed|wp-json|sitemap)",
@@ -336,7 +347,7 @@ def _http_post(url: str, data: dict, referer: str = "",
 
 DOOPLAY_OPTION_RE = re.compile(r"<li\b[^>]*dooplay_player_option[^>]*>", re.I)
 DOOPLAY_ATTR_RE = re.compile(r"data-([a-z]+)=[\"']?([^\"'\s>]+)", re.I)
-TRAILER_HOSTS = ("youtube.com", "youtu.be", "dailymotion.com")
+TRAILER_HOSTS = ("youtube.com", "youtu.be", "youtube-nocookie.com", "dailymotion.com")
 
 
 def _dooplay_player_sources(html: str, page_url: str, cfg: dict) -> list[dict]:
@@ -502,7 +513,12 @@ def _sources_from_html(html: str, page_url: str,
             return
         if src.startswith("//"):
             src = "https:" + src
-        if any(host in src for host in AD_HOSTS) or src in seen:
+        # Trailers are not playable content: the Dooplay path already drops
+        # them (TRAILER_HOSTS), but the generic iframe path banked a YouTube
+        # trailer embed as a "Watch online" source. Measured on animeworld
+        # 2026-11-23: every title page carries only a YouTube trailer iframe,
+        # and banking it would stage trailer-only posts.
+        if any(host in src for host in AD_HOSTS + TRAILER_HOSTS) or src in seen:
             return
         seen.add(src)
         host = urllib.parse.urlsplit(src).hostname or "embed"
@@ -824,7 +840,9 @@ def _seed_rest(cfg: dict, exclude: re.Pattern, seen: set[str],
     rest = cfg.get("rest")
     if not rest:
         return 0
-    url = f"{rest}?per_page=100&page=1&_fields=link"
+    cats = cfg.get("rest_categories")
+    extra = f"&categories={cats}" if cats else ""
+    url = f"{rest}?per_page=100&page=1&_fields=link{extra}"
     status, _final, text, headers = _http_get_full(url)
     if status != 200:
         if verbose:
@@ -839,7 +857,7 @@ def _seed_rest(cfg: dict, exclude: re.Pattern, seen: set[str],
         if page > 1:
             time.sleep(0.3)
             status, _final, text, _headers = _http_get_full(
-                f"{rest}?per_page=100&page={page}&_fields=link")
+                f"{rest}?per_page=100&page={page}&_fields=link{extra}")
             if status != 200:
                 if verbose:
                     print(f"[!] [{site}] REST page {page} -> {status}", flush=True)
