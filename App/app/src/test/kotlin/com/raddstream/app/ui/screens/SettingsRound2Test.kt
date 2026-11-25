@@ -24,13 +24,10 @@ import androidx.compose.ui.unit.sp
 import com.raddstream.app.data.RemoteFeatures
 import com.raddstream.app.ui.theme.RaddChipBorderSoft
 import com.raddstream.app.ui.theme.RaddCurrent500
-import com.raddstream.app.ui.theme.RaddCurrentContainerDark
-import com.raddstream.app.ui.theme.RaddInk850
-import com.raddstream.app.ui.theme.RaddInk900
+import com.raddstream.app.ui.theme.RaddInk750
 import com.raddstream.app.ui.theme.RaddOnCurrentContainer
 import com.raddstream.app.ui.theme.RaddSettingsHelper
 import com.raddstream.app.ui.theme.RaddStreamTheme
-import com.raddstream.app.ui.theme.RaddTideContainerDark
 import com.raddstream.app.ui.theme.contrastRatio
 import com.raddstream.app.viewmodel.SettingsUiState
 import org.junit.Assert.assertEquals
@@ -205,12 +202,10 @@ class SettingsRound2Test {
     @Test
     fun chipSelectedLabelClearsTextBarOnEveryGroupFill() {
         // ST3: the selected chip's label is onPrimaryContainer on the 16%
-        // jade tint composite over each group fill — never under 4.5:1.
+        // jade tint composite over the group fill — never under 4.5:1.
+        // Round 5: one fill now (surfaceContainerHighest, 6.64:1).
         val fills = mapOf(
-            "primaryContainer" to RaddCurrentContainerDark,
-            "tertiaryContainer" to RaddTideContainerDark,
-            "surfaceContainerLow" to RaddInk900,
-            "surfaceContainer" to RaddInk850,
+            "surfaceContainerHighest" to RaddInk750,
         )
         for ((name, fill) in fills) {
             val composite = over(RaddCurrent500, fill, 0.16f)
@@ -224,14 +219,11 @@ class SettingsRound2Test {
 
     @Test
     fun chipBorderClearsComponentBarOnEveryGroupFill() {
-        // ST1: the same border must clear 3:1 on every tonal fill, not just
-        // the old flat card — surfaceContainerHigh is excluded because no
-        // group uses it as a chip-bearing fill.
+        // ST1: the same border must clear 3:1 on the tonal fill, not just
+        // the old flat card. Round 5: one fill now (surfaceContainerHighest,
+        // 3.11:1 with the #7C7C7C border).
         val fills = mapOf(
-            "primaryContainer" to RaddCurrentContainerDark,
-            "tertiaryContainer" to RaddTideContainerDark,
-            "surfaceContainerLow" to RaddInk900,
-            "surfaceContainer" to RaddInk850,
+            "surfaceContainerHighest" to RaddInk750,
         )
         for ((name, fill) in fills) {
             val ratio = contrastRatio(RaddChipBorderSoft, fill)
@@ -244,11 +236,9 @@ class SettingsRound2Test {
 
     @Test
     fun helperTextClearsTextBarOnEveryGroupFill() {
+        // Round 5: one fill now (surfaceContainerHighest, helper 5.53:1).
         val fills = listOf(
-            RaddCurrentContainerDark,
-            RaddTideContainerDark,
-            RaddInk900,
-            RaddInk850,
+            RaddInk750,
         )
         for (fill in fills) {
             assertTrue(
