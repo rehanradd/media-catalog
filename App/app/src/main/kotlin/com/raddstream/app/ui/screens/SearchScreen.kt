@@ -14,7 +14,6 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.rememberSharedContentState
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
@@ -1972,18 +1971,18 @@ internal fun SearchContent(
                                                 // shared element to the Detail hero — key
                                                 // "poster-<workId>", one key per work,
                                                 // shared by source and destination. The
-                                                // state is remembered here (a composable
-                                                // call, so it sits outside the with);
-                                                // the with() only builds the modifier, so
-                                                // no composable ever sits inside it. The
-                                                // scope is the local one above until the
-                                                // infra hoists it to the NavHost at
-                                                // mega-merge time.
+                                                // state is remembered on the scope (a
+                                                // SharedTransitionScope member, not a
+                                                // top-level function); the with() only
+                                                // builds the modifier, so no composable
+                                                // ever sits inside it. The scope is the
+                                                // local one above until the infra hoists
+                                                // it to the NavHost at mega-merge time.
                                                 val sharedContentState =
-                                                    rememberSharedContentState(key = "poster-${post.id}")
+                                                    sharedTransitionScope.rememberSharedContentState(key = "poster-${post.id}")
                                                 val posterModifier = with(sharedTransitionScope) {
                                                     Modifier.weight(1f).sharedElement(
-                                                        state = sharedContentState,
+                                                        sharedContentState = sharedContentState,
                                                         animatedVisibilityScope = animatedVisibilityScope,
                                                     )
                                                 }
