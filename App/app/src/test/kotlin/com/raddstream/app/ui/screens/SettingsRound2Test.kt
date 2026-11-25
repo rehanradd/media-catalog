@@ -14,6 +14,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
@@ -124,7 +125,10 @@ class SettingsRound2Test {
         render()
         typeQuery("zzznope")
         compose.onNodeWithText("No results").assertIsDisplayed()
-        compose.onNodeWithText("Clear search").performClick()
+        // The button sits at the end of the scrollable column — scroll it
+        // into view first (repo pattern: SearchAuditFixesTest/HomeAuditFixesTest).
+        // A bare performClick on a below-fold node silently misses.
+        compose.onNodeWithText("Clear search").performScrollTo().performClick()
         compose.waitForIdle()
         assertEquals("", query.value)
         compose.onNodeWithText("Content preference").assertExists()
@@ -198,8 +202,8 @@ class SettingsRound2Test {
     @Test
     fun chipBorderClearsComponentBarOnEveryGroupFill() {
         // ST1: the same border must clear 3:1 on every tonal fill, not just
-        // the old flat card — surfaceContainerHigh is excluded by design
-        // (2.96:1) and no group uses it.
+        // the old flat card — surfaceContainerHigh is excluded because no
+        // group uses it as a chip-bearing fill.
         val fills = mapOf(
             "primaryContainer" to RaddCurrentContainerDark,
             "tertiaryContainer" to RaddTideContainerDark,

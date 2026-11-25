@@ -1676,17 +1676,25 @@ internal fun SettingsContent(
             // ST6: the load-error overlay — the J1 pattern. The settings stay
             // visible behind the scrim (the column above is dimmed to 0.38),
             // the scrim eats taps, and the card names the failure + offers Retry.
-            // The scrim is invisible to TalkBack (clearAndSetSemantics) — the
-            // card inside it is the announcement, not the veil.
+            // The veil is invisible to TalkBack (clearAndSetSemantics) and the
+            // card is its SIBLING, not its child — clearAndSetSemantics on a
+            // parent hides the whole subtree, card included, so the card would
+            // never be announced (and no test could find its text).
             if (state.loadError != null) {
                 Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.45f))
-                        .clickable(interactionSource = null, indication = null) { }
-                        .clearAndSetSemantics { },
+                    modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
                 ) {
+                    // The veil only: full-screen scrim, eats taps, hidden
+                    // from TalkBack. A sibling of the card, so the card's
+                    // semantics survive.
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.45f))
+                            .clickable(interactionSource = null, indication = null) { }
+                            .clearAndSetSemantics { },
+                    ) { }
                     Surface(
                         shape = RoundedCornerShape(RaddTokens.Radius.Card),
                         color = MaterialTheme.colorScheme.surfaceContainerHighest,
@@ -2269,11 +2277,12 @@ internal fun ChipRow(options: List<String>, selectedIndex: Int, onSelect: (Int) 
     // unselected chips carried bright 1dp outlines, so the unselected
     // state outweighed the selected one. Selected now gets a crisp
     // 1.5dp jade border + 16% jade tint fill with a white label;
-    // unselected softens to #6E6E6E / #B3B3B3. UI audit (Nov 2026,
-    // Settings #1) raised the border #333333 → #6E6E6E: the old border was
-    // 1.38:1 vs the card, under the M3 3:1 component bar. The token is
-    // Settings-only in practice (its one use is this border), so raising
-    // it moves no other screen's chips.
+    // unselected softens to #787878 / #B3B3B3. UI audit (Nov 2026,
+    // Settings #1) raised the border #333333 → #6E6E6E → #787878: the
+    // #333333 border was 1.38:1 vs the card, and #6E6E6E measured 2.94:1
+    // on the round-2 primaryContainer fill — both under the M3 3:1 bar.
+    // The token is Settings-only in practice (its one use is this border),
+    // so raising it moves no other screen's chips.
     // Internal so the review test can pin the height and the selection.
     FlowRow(
         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
