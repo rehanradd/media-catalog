@@ -998,7 +998,8 @@ class DownloadsMockupTest {
             }
         }
         compose.onNodeWithText("1080p").assertIsDisplayed()
-        compose.onNodeWithText("High bitrate · 1.0 GB").assertIsDisplayed()
+        compose.onNodeWithText("High bitrate").assertIsDisplayed()
+        compose.onNodeWithText("1.0 GB").assertIsDisplayed()
         compose.onAllNodes(hasText("1080p…")).assertCountEquals(0)
     }
 
