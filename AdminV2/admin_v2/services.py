@@ -128,6 +128,20 @@ PAUSE_TARGETS = {
     "import_global", "prefetch_global", "source", "section", "category",
     "feature", "broadcast", "domain_checks",
 }
+# Feature pause -> live catalog column. The app reads these flags from
+# the catalog row (the remote-config route AND the press/mint quality
+# gate both read the row directly), so a pause must write the row, not
+# just the panel's own fixture fold. "coins" is the panel spelling of
+# coins_enabled. A feature name with no entry here has no live column:
+# pausing it stays snapshot-only, and the serve-time fold still hides
+# it from remote-config.
+FEATURE_PAUSE_COLUMNS = {
+    "downloads": "feature_downloads",
+    "pure_cinema": "feature_pure_cinema",
+    "chromecast": "feature_chromecast",
+    "quality_gate": "feature_quality_gate",
+    "coins": "coins_enabled",
+}
 TUNING_BOUNDS = {
     "resolver_concurrency": (1, 4), "candidate_cap": (3, 20),
     "cache_ttl_h": (1, 24), "warmup_count": (0, 200),
@@ -1264,18 +1278,34 @@ class Service:
                  NOW()))
             self.admin.commit()
 
-    def _record_versioned_snapshot(self, published_by):
+    def _record_versioned_snapshot(self, published_by, expected_version=None):
         """Bump config_version and write the history snapshot for it.
 
         One helper for every version bump that is not the remote-config
         publish (which has its own guards in _do_publish): the monetization
         publish and a feature pause/resume both need version + snapshot
-        together, never a bare bump. Returns the new version."""
-        row = self._config_row()
-        new_version = row["config_version"] + 1
-        snap = {"config": self._redacted_config(row), "home": self._home_snapshot()}
-        snap["config"]["config_version"] = new_version
+        together, never a bare bump. Returns the new version.
+
+        expected_version is the version this operation already stamped
+        on the live row: pass it through instead of recomputing, so the
+        snapshot and the served row can never disagree about which
+        version they belong to. When it is None the version is allocated
+        fresh from a read taken inside WRITE_LOCK. Callers that pre-stamp
+        the live row hold WRITE_LOCK across the allocate + live write +
+        snapshot (pause/resume/publish/rollback), which serialises panel
+        threads — two concurrent pauses now land N+1 then N+2, not N+1
+        twice. That lock serialises threads only: the live catalog is a
+        separate SQLite DB/connection, so there is still no cross-DB
+        atomicity and the orphan window on an admin-commit failure
+        remains (see pause())."""
         with WRITE_LOCK:
+            if expected_version is None:
+                new_version = self._config_row()["config_version"] + 1
+            else:
+                new_version = expected_version
+            snap = {"config": self._redacted_config(self._config_row()),
+                    "home": self._home_snapshot()}
+            snap["config"]["config_version"] = new_version
             self.admin.execute(
                 "UPDATE app_remote_config_v2 SET config_version=?, updated_by=?, updated_at=? WHERE id=1",
                 (new_version, published_by, NOW()))
@@ -1284,6 +1314,25 @@ class Service:
                 "VALUES (?,?,?,?)", (new_version, json.dumps(snap), published_by, NOW()))
             self.admin.commit()
         return new_version
+
+    def _paused_feature_overlay(self, fields):
+        """Overlay active feature pauses onto outgoing live fields.
+
+        PNL-11 fixup: a pause writes 0 to the live row, but the next
+        publish/rollback re-published the draft value and silently
+        re-enabled the feature while the pause row still said paused —
+        remote-config readers saw OFF while press-time row readers saw
+        ON. Every writer that pushes flag columns to the live row must
+        run its outgoing fields through here first. The draft row and
+        snapshots are never overlaid, so resume still restores the
+        draft value, and publishes are never blocked while paused —
+        unrelated edits go out normally, paused flags just stay 0.
+        Returns a copy; fields with no paused flag pass through."""
+        out = dict(fields)
+        for name, column in FEATURE_PAUSE_COLUMNS.items():
+            if column in out and self.is_paused("feature", name):
+                out[column] = 0
+        return out
 
     def _publish_staged_monetization(self, actor, before, ip=""):
         """The publish itself, in the design's order (§3.1):
@@ -1295,35 +1344,47 @@ class Service:
         back silently, the failure is recorded, and the next publish
         repairs it (re-snapshot + re-audit). Returns the publish status.
         """
-        row = self._config_row()
-        staged = {k: row[k] for k in MONETIZATION_FIELDS}
-        # The version this publish will land at: the snapshot below
-        # bumps to exactly this number, so the served row and the
-        # snapshot agree. Stamped in the same catalog write as the
-        # flags themselves — a flag change is never live unversioned.
-        expected_version = row["config_version"] + 1
-        live = self._live_catalog()
-        if live is not None:
-            # WRITE path: tests run this on a COPY; live use needs a
-            # catalog backup before first use (see handoff).
-            live.save_remote_config(dict(staged), config_version=expected_version)
-        before_version = row["config_version"]
-        try:
-            new_version = self._record_versioned_snapshot(actor["id"])
-            after = self.get_monetization(actor)
-            before_audit = dict(before)
-            before_audit["config_version"] = before_version
-            after_audit = dict(after)
-            after_audit["config_version"] = new_version
-            self.audit(actor["id"], "monetization.save", "app_remote_config", 1,
-                       before_audit, after_audit, ip)
-        except Exception as exc:
-            self._set_monetization_publish_state(
-                "published_but_not_snapshotted",
-                {"error": str(exc),
-                 "config_version": self._config_row()["config_version"]})
-            return {"publish_status": "published_but_not_snapshotted",
-                    "config_version": self._config_row()["config_version"]}
+        # WRITE_LOCK is held across the allocate + live write +
+        # snapshot: the version is allocated once, under the lock, and
+        # passed through to the snapshot instead of being recomputed,
+        # so two concurrent publishes cannot both stamp N+1. The lock
+        # serialises panel threads only — the live catalog is a
+        # separate DB, so a failure after the live write still leaves
+        # the catalog published but not snapshotted (repaired by the
+        # next publish), exactly as before.
+        with WRITE_LOCK:
+            row = self._config_row()
+            staged = {k: row[k] for k in MONETIZATION_FIELDS}
+            # PNL-11 fixup: never let a routine publish re-enable a
+            # feature an active pause turned off. The draft is untouched.
+            staged = self._paused_feature_overlay(staged)
+            # The version this publish will land at: the snapshot below
+            # bumps to exactly this number, so the served row and the
+            # snapshot agree. Stamped in the same catalog write as the
+            # flags themselves — a flag change is never live unversioned.
+            expected_version = row["config_version"] + 1
+            live = self._live_catalog()
+            if live is not None:
+                # WRITE path: tests run this on a COPY; live use needs a
+                # catalog backup before first use (see handoff).
+                live.save_remote_config(dict(staged), config_version=expected_version)
+            before_version = row["config_version"]
+            try:
+                new_version = self._record_versioned_snapshot(actor["id"], expected_version)
+                after = self.get_monetization(actor)
+                before_audit = dict(before)
+                before_audit["config_version"] = before_version
+                after_audit = dict(after)
+                after_audit["config_version"] = new_version
+                self.audit(actor["id"], "monetization.save", "app_remote_config", 1,
+                           before_audit, after_audit, ip)
+            except Exception as exc:
+                self._set_monetization_publish_state(
+                    "published_but_not_snapshotted",
+                    {"error": str(exc),
+                     "config_version": self._config_row()["config_version"]})
+                return {"publish_status": "published_but_not_snapshotted",
+                        "config_version": self._config_row()["config_version"]}
         self._set_monetization_publish_state("ok")
         return {"publish_status": "ok", "config_version": new_version}
 
@@ -1717,8 +1778,8 @@ class Service:
         snap = json.loads(hist["snapshot_json"])
         cfg = snap["config"]
         row = self._config_row()
-        new_version = row["config_version"] + 1
         # Apply the snapshot as a NEW version; history rows are never edited.
+        # (The new version itself is allocated inside WRITE_LOCK below.)
         allowed = [k for k in cfg if k in MONETIZATION_FIELDS or k in (
             "min_version_code", "latest_version_code", "latest_version_name", "force_update",
             "force_update_message", "maintenance_message", "brand_primary", "brand_accent",
@@ -1730,6 +1791,10 @@ class Service:
                 continue  # tokens are never restored from a redacted snapshot
             values[k] = v
         with WRITE_LOCK:
+            # Allocate the version once, under the lock, from a fresh
+            # read: a concurrent publish/pause cannot stamp the same
+            # version, and the live write below uses this same version.
+            new_version = self._config_row()["config_version"] + 1
             if values:
                 self.admin.execute(
                     "UPDATE app_remote_config_v2 SET %s WHERE id=1"
@@ -1743,18 +1808,22 @@ class Service:
                 "INSERT INTO app_remote_config_history (config_version, snapshot_json, published_by, published_at) "
                 "VALUES (?,?,?,?)", (new_version, json.dumps(new_snap), actor["id"], NOW()))
             self.admin.commit()
-        # The live catalog is the source of truth the app reads: a
-        # rollback that only restores the panel row leaves the app
-        # seeing the pre-rollback prices/flags. Push the restored
-        # monetization fields (the ones the live catalog carries) back
-        # to the live app_remote_config row as well. v2-only fields
-        # (versions, brand, region order) stay panel-only.
-        live = self._live_catalog()
-        if live is not None and values:
-            live_fields = {k: v for k, v in values.items()
-                           if k in MONETIZATION_FIELDS}
-            if live_fields:
-                live.save_remote_config(live_fields, config_version=new_version)
+            # The live catalog is the source of truth the app reads: a
+            # rollback that only restores the panel row leaves the app
+            # seeing the pre-rollback prices/flags. Push the restored
+            # monetization fields (the ones the live catalog carries) back
+            # to the live app_remote_config row as well. v2-only fields
+            # (versions, brand, region order) stay panel-only.
+            live = self._live_catalog()
+            if live is not None and values:
+                live_fields = {k: v for k, v in values.items()
+                               if k in MONETIZATION_FIELDS}
+                # PNL-11 fixup: never let a rollback re-enable a feature
+                # an active pause turned off. The draft/snapshot values
+                # are untouched, so resume still restores them.
+                live_fields = self._paused_feature_overlay(live_fields)
+                if live_fields:
+                    live.save_remote_config(live_fields, config_version=new_version)
         self.audit(actor["id"], "remote_config.rollback", "app_remote_config", 1,
                    {"config_version": row["config_version"]}, {"config_version": new_version}, ip)
         return {"config_version": new_version, "restored_from": body["version"],
@@ -2622,6 +2691,44 @@ class Service:
             "SELECT * FROM pauses WHERE is_paused=1 AND resumed_at IS NULL ORDER BY id DESC").fetchall()
         return {"items": [_row(r) for r in rows]}
 
+    def _write_feature_pause_live(self, target_id, paused, expected_version):
+        """Write one feature flag to the live catalog row (PNL-11).
+
+        A pause is only real when the app sees it, and the app reads the
+        catalog row — the remote-config route AND the press-time quality
+        gate both read the row directly, so the panel's fixture fold
+        alone never reached them. Pausing writes 0; resuming restores
+        the DRAFT value (a pause never changed the draft, so the draft
+        is what the operator last published). Same catalog-first rule
+        as _do_publish (section 3.1): the live write happens before
+        the pause row / version bump, so a failure leaves the pause
+        unrecorded and the version untouched, and the operator gets
+        the real reason instead of a half-paused state. Unknown feature
+        names and a missing live store are no-ops (today's behaviour).
+        """
+        column = FEATURE_PAUSE_COLUMNS.get(str(target_id))
+        if column is None:
+            return
+        live = self._live_catalog()
+        if live is None:
+            return
+        try:
+            if paused:
+                value = 0
+            else:
+                # The draft read/conversion sits inside the try so a
+                # corrupt draft value surfaces as the same ApiError as
+                # a catalog failure instead of escaping raw. Unknown
+                # feature names stay a no-op (stated spec, unchanged).
+                value = int(self._config_row().get(column) or 0)
+            live.save_remote_config({column: value},
+                                    config_version=expected_version)
+        except ApiError:
+            raise
+        except Exception as exc:
+            raise ApiError("internal",
+                           "The live catalog could not be updated: %s" % exc, 500)
+
     def pause(self, actor, body, ip=""):
         self.require_role(actor, write=True)
         self._validate_body(body, {"target_type", "target_id", "reason"})
@@ -2631,19 +2738,46 @@ class Service:
             raise bad("A pause needs a reason.")
         if self.is_paused(body["target_type"], body["target_id"]):
             raise conflict("That target is already paused.")
-        with WRITE_LOCK:
-            cur = self.admin.execute(
-                "INSERT INTO pauses (target_type, target_id, is_paused, reason, paused_by, paused_at) "
-                "VALUES (?,?,1,?,?,?)",
-                (body["target_type"], str(body["target_id"]), scrub_text(body["reason"], 500),
-                 actor["id"], NOW()))
-            self.admin.commit()
-            row = self.admin.execute("SELECT * FROM pauses WHERE id=?", (cur.lastrowid,)).fetchone()
-        self.audit(actor["id"], "pause.create", "pause", row["id"], None, _row(row), ip)
         if body["target_type"] == "feature":
-            # D-4: a live feature pause changes what the app must serve,
-            # so it is versioned like a flag flip (bump + snapshot).
-            self._record_versioned_snapshot(actor["id"])
+            # PNL-11: the flag goes to the live catalog first (section
+            # 3.1) — the app reads the row, so a pause that only bumped
+            # the version never reached it. A failure here raises before
+            # the pause row exists, so the version stays untouched.
+            # WRITE_LOCK is held across the allocate + live write +
+            # pause-row INSERT + snapshot: the version is allocated
+            # once, under the lock, and passed through to the snapshot
+            # instead of being recomputed, so two concurrent pauses
+            # land N+1 then N+2 instead of both stamping N+1. The lock
+            # serialises panel threads only — the live catalog is a
+            # separate DB, so if the INSERT/snapshot then fails after
+            # the live write, the result is live flag 0 + version
+            # stamped with NO pause row and no UI resume path: the
+            # pause was never recorded, so retrying the pause works
+            # (is_paused is false) and re-stamps the same live state.
+            with WRITE_LOCK:
+                expected_version = self._config_row()["config_version"] + 1
+                self._write_feature_pause_live(body["target_id"], True,
+                                               expected_version)
+                cur = self.admin.execute(
+                    "INSERT INTO pauses (target_type, target_id, is_paused, reason, paused_by, paused_at) "
+                    "VALUES (?,?,1,?,?,?)",
+                    (body["target_type"], str(body["target_id"]), scrub_text(body["reason"], 500),
+                     actor["id"], NOW()))
+                self.admin.commit()
+                row = self.admin.execute("SELECT * FROM pauses WHERE id=?", (cur.lastrowid,)).fetchone()
+                # D-4: a live feature pause changes what the app must serve,
+                # so it is versioned like a flag flip (bump + snapshot).
+                self._record_versioned_snapshot(actor["id"], expected_version)
+        else:
+            with WRITE_LOCK:
+                cur = self.admin.execute(
+                    "INSERT INTO pauses (target_type, target_id, is_paused, reason, paused_by, paused_at) "
+                    "VALUES (?,?,1,?,?,?)",
+                    (body["target_type"], str(body["target_id"]), scrub_text(body["reason"], 500),
+                     actor["id"], NOW()))
+                self.admin.commit()
+                row = self.admin.execute("SELECT * FROM pauses WHERE id=?", (cur.lastrowid,)).fetchone()
+        self.audit(actor["id"], "pause.create", "pause", row["id"], None, _row(row), ip)
         return _row(row)
 
     def resume_pause(self, actor, pause_id, ip=""):
@@ -2653,15 +2787,30 @@ class Service:
             raise not_found()
         if row["resumed_at"]:
             raise conflict("That pause is already resumed.")
-        with WRITE_LOCK:
-            self.admin.execute(
-                "UPDATE pauses SET resumed_at=?, resumed_by=? WHERE id=?",
-                (NOW(), actor["id"], pause_id))
-            self.admin.commit()
-        self.audit(actor["id"], "pause.resume", "pause", pause_id, _row(row), {"resumed": True}, ip)
         if row["target_type"] == "feature":
-            # D-4: clearing a feature pause is a versioned change too.
-            self._record_versioned_snapshot(actor["id"])
+            # PNL-11: resume restores the draft value to the live row
+            # first (section 3.1) — a failure here raises before the
+            # pause is marked resumed, so the version stays untouched
+            # and a retry works. Same single-lock allocation as pause():
+            # the version is allocated once under WRITE_LOCK and passed
+            # through to the snapshot instead of being recomputed.
+            with WRITE_LOCK:
+                expected_version = self._config_row()["config_version"] + 1
+                self._write_feature_pause_live(row["target_id"], False,
+                                               expected_version)
+                self.admin.execute(
+                    "UPDATE pauses SET resumed_at=?, resumed_by=? WHERE id=?",
+                    (NOW(), actor["id"], pause_id))
+                self.admin.commit()
+                # D-4: clearing a feature pause is a versioned change too.
+                self._record_versioned_snapshot(actor["id"], expected_version)
+        else:
+            with WRITE_LOCK:
+                self.admin.execute(
+                    "UPDATE pauses SET resumed_at=?, resumed_by=? WHERE id=?",
+                    (NOW(), actor["id"], pause_id))
+                self.admin.commit()
+        self.audit(actor["id"], "pause.resume", "pause", pause_id, _row(row), {"resumed": True}, ip)
         return {"ok": True}
 
     # -- domains ---------------------------------------------------------------
