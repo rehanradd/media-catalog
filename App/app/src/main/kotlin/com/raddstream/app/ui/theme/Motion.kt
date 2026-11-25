@@ -5,7 +5,6 @@ import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.core.FiniteAnimationSpec
-import androidx.compose.animation.rememberSharedContentState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -58,8 +57,11 @@ fun Modifier.posterSharedElement(
 ): Modifier {
     if (sharedTransitionScope == null || animatedVisibilityScope == null) return this
     return with(sharedTransitionScope) {
+        // rememberSharedContentState is a member of SharedTransitionScope
+        // (not a top-level function), and the parameter is named
+        // sharedContentState in this Compose version.
         sharedElement(
-            state = rememberSharedContentState(key = key),
+            sharedContentState = rememberSharedContentState(key = key),
             animatedVisibilityScope = animatedVisibilityScope,
         )
     }
