@@ -226,6 +226,45 @@ def sync_sitemap_to_db(client: HDTVBClient, db_path: Path) -> int:
     return len(records)
 
 
+#: Real genres only (field population, 2026-11-23). The info-genre span
+#: mixes real genres with format tags ("300MB Movies", "Dual Audio",
+#: "HD Movies"), language tags ("Hindi Dubbed"), categories ("HollyWood",
+#: "Amazon Prime Video", "Web Series"), slug duplicates ("dual-audio",
+#: "dubbed-movie") and even sponsor tokens ("4rabet") — 1,466 distinct
+#: tokens across 3,731 live rows. Anything not in this map is dropped,
+#: never stored as a genre. Keys are lowercase; values are canonical.
+GENRE_CANONICAL = {
+    "action": "Action", "adventure": "Adventure",
+    "animation": "Animation", "biography": "Biography",
+    "comedy": "Comedy", "crime": "Crime",
+    "documentary": "Documentary", "drama": "Drama",
+    "family": "Family", "fantasy": "Fantasy",
+    "history": "History", "horror": "Horror",
+    "music": "Music", "mystery": "Mystery",
+    "romance": "Romance", "romantic": "Romance",
+    "science fiction": "Science Fiction", "sci-fi": "Sci-Fi",
+    "scifi": "Sci-Fi", "sci fi": "Sci-Fi",
+    "sport": "Sport", "suspense": "Suspense",
+    "thriller": "Thriller", "war": "War",
+}
+
+
+def normalize_hdtvb_genres(raw_text: str | None) -> list[str]:
+    """Split an info-genre span into real genres, canonical casing.
+
+    Each comma piece is split again (a stored token can itself be a
+    comma-joined pair, e.g. "Action, Drama"), matched case-insensitively
+    against GENRE_CANONICAL, and deduplicated in first-seen order.
+    """
+    out: list[str] = []
+    for token in re.split(r"[,/]", str(raw_text or "")):
+        key = token.strip().lower()
+        canon = GENRE_CANONICAL.get(key)
+        if canon and canon not in out:
+            out.append(canon)
+    return out
+
+
 def extract_post_data_hdtvb(
     post_url: str,
     page_html: str,
@@ -283,7 +322,7 @@ def extract_post_data_hdtvb(
     genre_m = re.search(r'class=["\']info-genre["\'][^>]*>(.*?)</span>', page_html, re.I | re.S)
     if genre_m:
         g_text = re.sub(r'<[^>]+>', '', genre_m.group(1)).strip()
-        g_list = [g.strip() for g in g_text.split(',') if g.strip()]
+        g_list = normalize_hdtvb_genres(g_text)
         if g_list:
             genres = json.dumps(g_list)
 
