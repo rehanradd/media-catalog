@@ -1248,7 +1248,7 @@ class PlaybackService : MediaSessionService() {
      * playhead pump's tick — only while playing, so a sample is never taken from a stale
      * position. The log line is the measurement trail: one line per 5 s tick.
      */
-    private fun sampleCoverage(exo: ExoPlayer, positionMs: Long, durationMs: Long) {
+    private fun sampleCoverage(exo: Player, positionMs: Long, durationMs: Long) {
         val bufferedMs = exo.bufferedPosition.takeIf { it >= 0L } ?: positionMs
         val coverage = coverageAheadMs(
             playheadMs = positionMs,
