@@ -102,6 +102,20 @@ class PlayerSessionStore(
         _midPlaybackFailure.value = null
     }
 
+    /**
+     * Player resilience (2026-11-25): how far ahead of the playhead playback can survive
+     * without the network, sampled by the service's playhead pump ([PlaybackCoverage]).
+     * Null until the first sample (no engine, no duration yet). The diagnostics sheet and
+     * the device network-cut proof read this — it is the measured minutes-ahead number,
+     * not a design claim.
+     */
+    private val _coverage = MutableStateFlow<PlaybackCoverage?>(null)
+    val coverage: StateFlow<PlaybackCoverage?> = _coverage.asStateFlow()
+
+    fun setCoverage(coverage: PlaybackCoverage?) {
+        _coverage.value = coverage
+    }
+
     /** The active file ended and continuing needs UI/app involvement (next episode flow). */
     private val _nextEpisode = MutableStateFlow<NextEpisodeAction?>(null)
     val nextEpisode: StateFlow<NextEpisodeAction?> = _nextEpisode.asStateFlow()

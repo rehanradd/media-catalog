@@ -170,6 +170,27 @@ class PlaybackService : MediaSessionService() {
     private var lastLoadedWasLocalCopy = false
 
     /**
+     * Player resilience (2026-11-25): whether a frame has landed for the load now in the
+     * player. A latch, not a state snapshot: [StartDeadline.hasFirstFrame] answers from the
+     * *current* playback state, so a mid-play error arriving while the player is rebuffering
+     * reads as a start error — and the failover machine's RetrySame, the H4 R7 mid-play
+     * report and the silent re-resolve all become unreachable for exactly the errors they
+     * exist for. Set in STATE_READY, reset in [loadRenditionOf] (the single load funnel, so
+     * every hop, retry and re-resolve starts unlanded). The mid-play stall watchdog reads
+     * this too: it must only fire after a frame has actually rendered.
+     */
+    private var firstFrameLanded = false
+
+    /** The mid-play stall watchdog job (see [startMidPlayStallWatchdog]). */
+    private var stallWatchdogJob: Job? = null
+
+    /** The engine-snapshot collector for the load now in the player (coverage sampling). */
+    private var coverageJob: Job? = null
+
+    /** Latest engine snapshot for the active rendition, or null when the engine has none. */
+    private var latestSnapshot: CacheSnapshot? = null
+
+    /**
      * MX #9 — the Cast transfer manager, or null when this device cannot
      * initialise Cast (no Play Services). Built in [onCreate]; the session
      * callbacks below are the only entries that touch it.
@@ -271,6 +292,7 @@ class PlaybackService : MediaSessionService() {
         }
         startAutoQualityTicker()
         startPlayheadPump()
+        startMidPlayStallWatchdog()
         startThermalListener()
     }
 
@@ -828,6 +850,11 @@ class PlaybackService : MediaSessionService() {
         isLocalCopy: Boolean = false,
     ) {
         disarmStartWatchdog()
+        // Player resilience: a new load starts unlanded — the first-frame latch, the stall
+        // watchdog's episode state and the coverage snapshot all belong to the previous load.
+        firstFrameLanded = false
+        latestSnapshot = null
+        startCoverageCollection(rendition)
         val exo = player ?: return
         rendition ?: return
         if (rendition.playback.isExpired(System.currentTimeMillis())) {
@@ -1014,6 +1041,23 @@ class PlaybackService : MediaSessionService() {
                 store.announceDecoderFallback(decision.targetMode)
             }
 
+            is FailoverDecision.ReResolveSame -> {
+                // Player resilience: the signed host URL rotted mid-play. Re-hitting our own
+                // redirector (the load's playUrl) answers a fresh 302 — the only re-resolve
+                // mechanism that exists (PlaybackRecovery) — and the reload resumes at the
+                // same position. The stale expiresAt describes the dead 302 target, not the
+                // fresh one, so the re-resolved copy carries none — the same treatment the
+                // kept-copy path gives a local file. No backoff: the redirector answers in
+                // ~1 s, waiting buys nothing.
+                store.appendFailover(listOf(decision.record))
+                val active = bundle.renditions.getOrNull(decision.index) ?: return
+                val refreshed = active.copy(
+                    playback = active.playback.copy(expiresAt = null, ephemeral = false),
+                )
+                pendingResumeMs = preservePositionMs.takeIf { it > 0 }
+                loadRenditionOf(bundle, refreshed)
+            }
+
             is FailoverDecision.AdvanceBackup -> {
                 // Silent by design: no banner, no "settled on" chip, same rung. Only the
                 // auditable trail records the hop, for the diagnostics sheet.
@@ -1192,6 +1236,120 @@ class PlaybackService : MediaSessionService() {
                 if (position == lastReportedMs) continue
                 lastReportedMs = position
                 store.reportPlayhead(store.activeRendition()?.playback?.playUrl, position, duration)
+                sampleCoverage(exo, position, duration)
+            }
+        }
+    }
+
+    /**
+     * Player resilience: sample how far ahead of the playhead playback can survive without
+     * the network, from the engine snapshot (disk) and the player's own buffer (RAM), and
+     * publish it for the diagnostics sheet and the device network-cut proof. Runs on the
+     * playhead pump's tick — only while playing, so a sample is never taken from a stale
+     * position. The log line is the measurement trail: one line per 5 s tick.
+     */
+    private fun sampleCoverage(exo: ExoPlayer, positionMs: Long, durationMs: Long) {
+        val bufferedMs = exo.bufferedPosition.takeIf { it >= 0L } ?: positionMs
+        val coverage = coverageAheadMs(
+            playheadMs = positionMs,
+            durationMs = durationMs,
+            totalBytes = latestSnapshot?.totalBytes,
+            bytesSaved = latestSnapshot?.bytesSaved ?: 0L,
+            bufferedPositionMs = bufferedMs,
+        )
+        store.setCoverage(coverage)
+        Log.d(
+            "PlaybackService",
+            "coverage: ram=${coverage.ramAheadMs}ms disk=${coverage.diskAheadMs}ms " +
+                "total=${coverage.totalAheadMs}ms bytes=${coverage.bytesSaved}",
+        )
+    }
+
+    /**
+     * Player resilience: keep the engine's snapshot for this rendition warm so the playhead
+     * pump can sample coverage (RAM + disk ahead). The engine's observe is a shared flow per
+     * source key that only stays live while collected, so the pump reading `.value` without
+     * a collector would go stale — this job is the collector. Cancelled on the next load;
+     * silence when there is no engine or no handle (coverage degrades to RAM-only, never to
+     * an invented disk number).
+     */
+    private fun startCoverageCollection(rendition: PlaybackRendition?) {
+        coverageJob?.cancel()
+        coverageJob = null
+        val playback = rendition?.playback ?: return
+        val handle = playback.streamId?.takeIf { it.isNotBlank() } ?: return
+        val url = playback.playUrl?.takeIf { it.isNotBlank() } ?: return
+        val engine = CacheEngineHolder.engine ?: return
+        coverageJob = scope.launch {
+            engine.observe(CacheSessionKey(renditionKey = handle, url = url)).collect { snapshot ->
+                latestSnapshot = snapshot
+            }
+        }
+    }
+
+    /**
+     * Player resilience: the mid-play stall watchdog. A hung loader shows the stuck card
+     * (P12, 5 s) but nothing hops until Media3 errors — a read timeout of 25 s — so a title
+     * whose host died mid-play sits on a spinner for half a minute. This job ticks every
+     * 2 s while a frame has landed: buffering with no current-position or buffered-position
+     * advance for [PlayerBuffering.MID_PLAY_STALL_HOP_MS] (10 s) drives the failover machine
+     * as a mid-play network failure, so it hops to a backup at the same position.
+     *
+     * Guards, each load-bearing: casting off (the receiver fetches, the local player says
+     * nothing); a frame landed (a start stall is the start watchdog's job, not this one);
+     * playWhenReady (a paused viewer is not a stall); BUFFERING state (a READY player is
+     * playing, not stalled); and one fire per stall episode — progress of either position
+     * resets the count and the fired flag, so a hop that lands on another stuck copy fires
+     * again only after fresh progress, and a give-up never re-fires into a loop. The pump
+     * cannot host this: it skips ticks while not `isPlaying`, and `isPlaying` is false
+     * during buffering — exactly when a stall needs watching.
+     */
+    private fun startMidPlayStallWatchdog() {
+        stallWatchdogJob = scope.launch {
+            var lastPositionMs = -1L
+            var lastBufferedMs = -1L
+            var stalledTicks = 0
+            var firedThisEpisode = false
+            while (true) {
+                delay(STALL_WATCHDOG_TICK_MS)
+                if (store.castIsCasting.value) continue
+                val exo = player ?: continue
+                if (!firstFrameLanded) continue
+                if (!exo.playWhenReady) {
+                    stalledTicks = 0
+                    firedThisEpisode = false
+                    continue
+                }
+                if (exo.playbackState != Player.STATE_BUFFERING) {
+                    stalledTicks = 0
+                    firedThisEpisode = false
+                    lastPositionMs = exo.currentPosition.coerceAtLeast(0L)
+                    lastBufferedMs = exo.bufferedPosition.coerceAtLeast(0L)
+                    continue
+                }
+                val position = exo.currentPosition.coerceAtLeast(0L)
+                val buffered = exo.bufferedPosition.coerceAtLeast(0L)
+                if (position != lastPositionMs || buffered != lastBufferedMs) {
+                    stalledTicks = 0
+                    firedThisEpisode = false
+                } else {
+                    stalledTicks += 1
+                }
+                lastPositionMs = position
+                lastBufferedMs = buffered
+                val hopAfterTicks = PlayerBuffering.MID_PLAY_STALL_HOP_MS / STALL_WATCHDOG_TICK_MS
+                if (!firedThisEpisode && stalledTicks >= hopAfterTicks) {
+                    firedThisEpisode = true
+                    stalledTicks = 0
+                    val bundle = store.bundle.value ?: continue
+                    val machine = failover ?: continue
+                    val decision = machine.onFailure(
+                        "playback stalled: no buffered progress for " +
+                            "${PlayerBuffering.MID_PLAY_STALL_HOP_MS / 1_000} s",
+                        beforeFirstFrame = false,
+                    )
+                    applyDecision(bundle, decision, preservePositionMs = position)
+                }
             }
         }
     }
@@ -1352,6 +1510,9 @@ class PlaybackService : MediaSessionService() {
                     // landed, and a later rebuffer is the buffering spinner's
                     // job, not a failed start.
                     disarmStartWatchdog()
+                    // Player resilience: the first-frame latch — a later error is a mid-play
+                    // error even if it arrives while rebuffering (see onPlayerError).
+                    firstFrameLanded = true
                     // The beacon's first frame: the start is over, and any
                     // buffering from here is a stall. The call also closes a
                     // stall that was open, so a rebuffer that ends in READY
@@ -1456,7 +1617,13 @@ class PlaybackService : MediaSessionService() {
             // is kept for the give-up report, because the device test
             // returns no logcat — without it the report only says the
             // start timed out, which is the symptom, not the cause.
-            val beforeFirstFrame = player?.let { !StartDeadline.hasFirstFrame(it.playbackState) } ?: true
+            // Player resilience: read from the first-frame LATCH, not the current state —
+            // hasFirstFrame(state) is only true while READY, so a mid-play error arriving
+            // during a rebuffer used to read as a start error, and RetrySame, the H4 R7
+            // mid-play report and the silent re-resolve were all unreachable for exactly
+            // the errors they exist for. A start error still reads true here: the latch
+            // is false until the first READY of this load.
+            val beforeFirstFrame = !firstFrameLanded
             if (beforeFirstFrame) store.recordStartError(rawSummary)
             val gateRefusal = isGateRefusalError(error)
             // Session 158 (S5): a dead handle (404/403/410 from our own
@@ -1475,8 +1642,10 @@ class PlaybackService : MediaSessionService() {
                 // instead of letting the failover plan burn its budget on copies
                 // the server will refuse again. Only at start: a refusal after
                 // the first frame is a different failure (the rung played once).
-                val exo = player
-                if (exo != null && !StartDeadline.hasFirstFrame(exo.playbackState)) {
+                // Player resilience: the latch, not the state — a mid-play 402 arriving
+                // during a rebuffer is not a start refusal, and the machine's own gate
+                // path (next rank) is the answer for it.
+                if (!firstFrameLanded) {
                     val index = store.activeRenditionIndex.value
                     val active = bundle.renditions.getOrNull(index)
                     val fromBand = active?.let { bandOfRendition(it) }
@@ -1643,6 +1812,12 @@ class PlaybackService : MediaSessionService() {
          * ahead-pass running before the player has re-buffered twice.
          */
         const val PLAYHEAD_PUMP_MS = 5_000L
+
+        /**
+         * Player resilience: how often the mid-play stall watchdog looks for buffered progress.
+         * 2 s, so the 10 s hop threshold is five consecutive stalled ticks.
+         */
+        const val STALL_WATCHDOG_TICK_MS = 2_000L
 
         /** Loads worth measuring: media bytes. Subtitles and metadata would dilute the rate. */
         val MEASURABLE_TRACK_TYPES = setOf(C.TRACK_TYPE_DEFAULT, C.TRACK_TYPE_VIDEO, C.TRACK_TYPE_AUDIO)

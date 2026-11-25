@@ -182,6 +182,22 @@ sealed class FailoverDecision {
     ) : FailoverDecision()
 
     /**
+     * Player resilience (2026-11-25): re-hit our own redirector for the SAME rendition and
+     * resume at the same position, because the signed host URL rotted mid-play. A handle that
+     * played and then 403/404/410s is an expiry until proven otherwise — the redirector
+     * answers a fresh 302 for the same handle (PlaybackRecovery), so the viewer keeps
+     * watching while a fresh signed URL replaces the dead one. One per rendition: a second
+     * failure of the same rendition falls through to the ordinary hop path, so a genuinely
+     * dead handle still hops instead of re-resolving forever. No backoff — the redirector
+     * answers in ~1 s, waiting buys nothing — and it does not touch the retry_same budget:
+     * a re-resolve and a network retry are different kinds of second chance, like the
+     * decoder retries. The service clears the stale expiresAt on the re-resolved copy
+     * (the old stamp describes the dead 302 target, not the fresh one), mirroring the
+     * kept-copy path.
+     */
+    data class ReResolveSame(val index: Int, val record: FailoverRecord) : FailoverDecision()
+
+    /**
      * Switch to another copy of the SAME rung, [streamId], at [playUrl] (our own
      * redirector, one handle swapped for another). Silent by contract: same quality,
      * same position, no banner, no dialog — the viewer keeps watching while a
@@ -296,6 +312,8 @@ class FailoverStateMachine(
     private val softwareRetryUsedByIndex = HashSet<Int>()
     /** Renditions whose one other-decoder-mode retry is already spent (MX idea #3). */
     private val modeFallbackUsedByIndex = HashSet<Int>()
+    /** Renditions whose one silent mid-play re-resolve is already spent (resilience). */
+    private val reResolveUsedByIndex = HashSet<Int>()
     private var ranksBurned = 0
     private val _log = ArrayList<FailoverRecord>()
 
@@ -393,6 +411,14 @@ class FailoverStateMachine(
      * the S5 log shows the player pressing dead handles ~1/sec until the
      * server's per-minute bucket 429'd the session. A dead handle hops to a
      * backup / the next rank at once, whenever it fails.
+     *
+     * Player resilience (2026-11-25): a dead handle AFTER the first frame is an expiry
+     * until proven otherwise, so it gets one silent re-resolve ([FailoverDecision.
+     * ReResolveSame]) before the hop above — the signed host URL rotted mid-play and the
+     * redirector answers a fresh 302 for the same handle. Before the first frame the S2
+     * rule still applies (hop at once: a handle that never played cannot have expired
+     * mid-play), and the re-resolve is once per rendition, so a second dead-handle
+     * failure hops as before.
      *
      * [isRateLimited] marks a 429 from our own redirector (Batch C,
      * 2026-11-14, 429-storm audit): the per-IP play bucket (30/min) is full.
@@ -532,6 +558,23 @@ class FailoverStateMachine(
             val modeRecord = record.copy(action = "switched to the $modeWord decoder and retried")
             _log.add(modeRecord)
             return FailoverDecision.RetryWithOtherDecoderMode(index, targetMode, modeRecord)
+        }
+
+        if (!beforeFirstFrame && isDeadHandle && !isLocalCopyAttempt && index !in reResolveUsedByIndex) {
+            // Player resilience (2026-11-25): a handle that played and then 403/404/410s is
+            // an expiry until proven otherwise — the signed host URL rotted mid-play, and
+            // re-hitting our own redirector answers a fresh 302 for the same handle. One
+            // silent re-resolve at the same position, before any hop: hopping first would
+            // abandon a copy that is still live behind a fresh signature. Never before the
+            // first frame (S2: a start failure hops, never retries the same address — a
+            // handle that never played cannot have expired mid-play), and never for a
+            // local-copy attempt (that retry loads the live link, not the failed copy).
+            // The guard is spent here, so a second failure of the same rendition falls
+            // through to the ordinary hop path below — the handle was genuinely dead.
+            reResolveUsedByIndex.add(index)
+            val reResolveRecord = record.copy(action = "re-resolved the expired link (same position)")
+            _log.add(reResolveRecord)
+            return FailoverDecision.ReResolveSame(index, reResolveRecord)
         }
 
         // Read-modify-write instead of `HashMap.merge`: `merge` is a Java 8 default method and
