@@ -2848,20 +2848,30 @@ private fun DetailScrollEntrance(
 ) {
     val inInspectionMode = LocalInspectionMode.current
     val reduceMotion = rememberReduceMotion()
-    var visible by remember { mutableStateOf(inInspectionMode) }
+    // Round-6 motion, Paparazzi guard: in inspection mode (and for
+    // reduced-motion viewers) the section renders settled, with NO
+    // animation state at all — no animateFloatAsState, no graphicsLayer.
+    // A spring-driven alpha captured mid-flight hid the whole rail in
+    // the first record (detailMovie lost "More Like This"), so the
+    // settled path must not go through an Animatable. The animated
+    // path below is for real devices only.
+    if (inInspectionMode || reduceMotion) {
+        content()
+        return
+    }
+    var visible by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
-        if (inInspectionMode) return@LaunchedEffect
         delay(index * 60L)
         visible = true
     }
     val alpha by animateFloatAsState(
-        targetValue = if (visible || reduceMotion) 1f else 0f,
-        animationSpec = if (reduceMotion) snap() else RaddMotion.defaultEffects(),
+        targetValue = if (visible) 1f else 0f,
+        animationSpec = RaddMotion.defaultEffects(),
         label = "detailScrollEntranceAlpha",
     )
     val offsetY by animateFloatAsState(
-        targetValue = if (visible || reduceMotion) 0f else 24f,
-        animationSpec = if (reduceMotion) snap() else RaddMotion.defaultSpatial(),
+        targetValue = if (visible) 0f else 24f,
+        animationSpec = RaddMotion.defaultSpatial(),
         label = "detailScrollEntranceOffsetY",
     )
     Box(
