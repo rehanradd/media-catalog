@@ -9,14 +9,18 @@ import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
-import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -202,10 +206,9 @@ fun DetailScreen(
     viewModel: DetailViewModel = hiltViewModel(),
     /**
      * Round 6 motion infra: the shared-transition scopes the NavHost
-     * passes in. Null outside navigation (Paparazzi previews, tests) —
-     * sharedElement() calls no-op and the screen renders exactly as
-     * before. Screen branches thread these into their poster/hero
-     * sharedElement() calls; this branch only carries them.
+     * passes in from its SharedTransitionLayout. Null outside navigation
+     * (Paparazzi previews, tests) — sharedElement() calls no-op and the
+     * hero renders exactly as before, with no shared element.
      */
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
@@ -444,6 +447,9 @@ fun DetailScreen(
                     includedPill = null,
                     pageSides = Modifier.padding(horizontal = 16.dp),
                     matchPercent = state.matchPercent,
+                    sharedElementKey = viewModel.sharedElementKey,
+                    sharedTransitionScope = sharedTransitionScope,
+                    animatedVisibilityScope = animatedVisibilityScope,
                 )
                 Spacer(Modifier.height(16.dp))
                 DetailBodySkeleton()
@@ -636,6 +642,9 @@ fun DetailScreen(
                 onSelectQualityBand = viewModel::selectQualityBand,
                 onOpenQualitySheet = viewModel::openQualityBrowseSheet,
                 contentPadding = detailPadding,
+                sharedElementKey = viewModel.sharedElementKey,
+                sharedTransitionScope = sharedTransitionScope,
+                animatedVisibilityScope = animatedVisibilityScope,
             )
         }
     }
@@ -1047,6 +1056,15 @@ internal fun DetailContent(
     onSelectQualityBand: (String) -> Unit = {},
     /** APP-02: the "Video:" row tapped — open the browse sheet. */
     onOpenQualitySheet: () -> Unit = {},
+    /**
+     * Round-6 motion (Nov 2026): the shared-element key + scopes for
+     * the hero — the destination for the Library / Search / Home
+     * posters. Null (the default) in tests and previews: the hero
+     * then renders exactly as before, with no shared element.
+     */
+    sharedElementKey: String? = null,
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
 ) {
     val allPrints = (workPrints + seasons.flatMap { it.episodes.flatMap { e -> e.prints } } + seasons.flatMap { it.packedPrints })
     // The dead end's way out: the similar rail is the last item on the
@@ -1103,6 +1121,9 @@ internal fun DetailContent(
                     pageSides = pageSides,
                     matchPercent = matchPercent,
                     quality = videoQualityText,
+                    sharedElementKey = sharedElementKey,
+                    sharedTransitionScope = sharedTransitionScope,
+                    animatedVisibilityScope = animatedVisibilityScope,
                 )
             }
         }
@@ -1360,6 +1381,12 @@ internal fun DetailContent(
                 // hid the rail from the semantics tree until its 420ms
                 // delay elapsed, so DetailRedesignTest's swipe-to-rail
                 // could not find "More Like This" (Android 45538692963).
+                // Round-6 tried a graphicsLayer entrance instead, but
+                // Paparazzi captures the spring mid-flight (LocalInspectionMode
+                // is false in PaparazziPreviewTest, and the animation clock
+                // does not settle the spring), so the whole rail vanished
+                // from all 7 Detail goldens (records 199 + 205). No
+                // entrance here: the rail renders settled, as before.
                 Column(
                     modifier = Modifier
                         .bringIntoViewRequester(similarBringIntoView)
@@ -1383,6 +1410,35 @@ internal fun DetailContent(
     }
 }
 
+/**
+ * Round-6 motion (Nov 2026): the hero's shared-element modifier —
+ * the destination half of the "poster-<workId>" transition. It is
+ * [Modifier] (a no-op) whenever the key or either scope is missing,
+ * so the hero renders exactly as before until the infra's
+ * SharedTransitionLayout hands the screen its scopes. Both
+ * rememberSharedContentState and sharedElement are members of the
+ * SharedTransitionScope (not top-level imports) — the state is
+ * created on the scope, and sharedElement takes it as
+ * sharedContentState. The remember call lives inside the guard, so
+ * no shared-content state is created while the transition is dormant.
+ */
+@Composable
+private fun heroSharedElementModifier(
+    key: String?,
+    sharedTransitionScope: SharedTransitionScope?,
+    animatedVisibilityScope: AnimatedVisibilityScope?,
+): Modifier {
+    if (key == null || sharedTransitionScope == null || animatedVisibilityScope == null) {
+        return Modifier
+    }
+    return with(sharedTransitionScope) {
+        Modifier.sharedElement(
+            sharedContentState = rememberSharedContentState(key = key),
+            animatedVisibilityScope = animatedVisibilityScope,
+        )
+    }
+}
+
 @Composable
 private fun DetailHeroSection(
     post: PostDetail,
@@ -1395,7 +1451,16 @@ private fun DetailHeroSection(
     matchPercent: Int? = null,
     /** S2 (round 2): the picked quality band for the meta line, null when the title has no quality options. */
     quality: String? = null,
+    /** Round-6 motion: the shared-element key + scopes for the hero image. Null until the infra lands. */
+    sharedElementKey: String? = null,
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
 ) {
+    val heroSharedElement = heroSharedElementModifier(
+        key = sharedElementKey,
+        sharedTransitionScope = sharedTransitionScope,
+        animatedVisibilityScope = animatedVisibilityScope,
+    )
     val backdropUrl = remember(post.backdropList) {
         post.backdropList.firstOrNull { it.isNotBlank() }
     }
@@ -1416,6 +1481,9 @@ private fun DetailHeroSection(
                 includedPill = includedPill,
                 matchPercent = matchPercent,
                 quality = quality,
+                sharedElementKey = sharedElementKey,
+                sharedTransitionScope = sharedTransitionScope,
+                animatedVisibilityScope = animatedVisibilityScope,
             )
         }
         return
@@ -1442,7 +1510,10 @@ private fun DetailHeroSection(
             CatalogImage(
                 url = backdropUrl,
                 contentDescription = null,
-                modifier = Modifier.fillMaxSize(),
+                // Round-6 motion: the hero backdrop is the shared
+                // element's destination — the source poster morphs
+                // into this frame. A no-op until the infra lands.
+                modifier = Modifier.fillMaxSize().then(heroSharedElement),
                 contentScale = ContentScale.Crop,
                 // Audit #9 (Nov 2026): initials only on a failed
                 // backdrop load — the title block over the scrim
@@ -1644,6 +1715,10 @@ private fun PosterHeader(
     matchPercent: Int? = null,
     /** S2 (round 2): the picked quality band for the meta line, null when the title has no quality options. */
     quality: String? = null,
+    /** Round-6 motion: the shared-element key + scopes for the poster. Null until the infra lands. */
+    sharedElementKey: String? = null,
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
 ) {
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         // The poster's own colour, sampled once it loads: a 1dp border in the
@@ -1656,6 +1731,15 @@ private fun PosterHeader(
         // accent sample: it claims no colour from the artwork.
         var posterBitmap by remember(post.id) { mutableStateOf<android.graphics.Bitmap?>(null) }
         val posterAccent = rememberArtworkAccent(posterBitmap)
+        // Round-6 motion: the no-backdrop poster's shared element —
+        // the same key as the backdrop, so whichever hero image is
+        // shown is the transition's destination. A no-op until the
+        // infra lands.
+        val posterSharedElement = heroSharedElementModifier(
+            key = sharedElementKey,
+            sharedTransitionScope = sharedTransitionScope,
+            animatedVisibilityScope = animatedVisibilityScope,
+        )
         Box(
             modifier = Modifier
                 .width(CardGeometry.DETAIL_POSTER_WIDTH_DP.dp)
@@ -1666,7 +1750,8 @@ private fun PosterHeader(
                     width = 1.dp,
                     color = if (posterBitmap != null) posterAccent.copy(alpha = 0.6f) else MaterialTheme.colorScheme.outlineVariant,
                     shape = RoundedCornerShape(12.dp),
-                ),
+                )
+                .then(posterSharedElement),
             contentAlignment = Alignment.Center,
         ) {
             if (!post.posterUrl.isNullOrBlank()) {
@@ -1944,72 +2029,96 @@ internal fun DetailQualitySelector(
     // filters the same way, and the row re-checks, so a stale list can
     // never paint a dead band or a provider page.
     val chips = qualityOptions.filter { it.playsHere && !it.isProviderPage && it.streamId.isNotBlank() }
-    if (chips.isEmpty()) return
     val isAuto = selectedBand == null || selectedBand == LadderForScope.AUTO
     val selection = if (isAuto) {
         stringResource(R.string.detail_quality_auto)
     } else {
         bandDisplayName(selectedBand)
     }
-    Column(
-        modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+    // Round-6 motion: the selector expands / collapses with an
+    // AnimatedVisibility on the expressive spatial + effects specs —
+    // it fades + rises in when quality options arrive, and out when
+    // they empty, instead of popping. While empty the content is not
+    // composed at all, so the "empty hides the selector" contract
+    // (DetailQualitySelectorTest) holds exactly as before. The specs
+    // come from RaddMotion (same M3 Expressive token values);
+    // MaterialTheme.motionScheme exposes no such callables in
+    // material3 1.5.0 (CI 45641979193).
+    AnimatedVisibility(
+        visible = chips.isNotEmpty(),
+        enter = fadeIn(
+            animationSpec = RaddMotion.defaultEffects(),
+        ) + slideInVertically(
+            initialOffsetY = { it / 4 },
+            animationSpec = RaddMotion.defaultSpatial(),
+        ),
+        exit = fadeOut(
+            animationSpec = RaddMotion.defaultEffects(),
+        ) + slideOutVertically(
+            targetOffsetY = { it / 4 },
+            animationSpec = RaddMotion.defaultSpatial(),
+        ),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 48.dp)
-                .clickable(onClick = onOpenQualitySheet, role = Role.Button),
-            verticalAlignment = Alignment.CenterVertically,
+        Column(
+            modifier = modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text(
-                text = "${stringResource(R.string.detail_video_quality)}: $selection",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.weight(1f),
-            )
-            Icon(
-                painterResource(R.drawable.ic_action_chevron_right),
-                contentDescription = null,
-                modifier = Modifier.size(20.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        ScrollingChipRow(
-            contentPadding = PaddingValues(0.dp),
-            fadeHeight = 48.dp,
-        ) {
-            items(chips, key = { it.band }) { option ->
-                val locked = option.band in lockedBands
-                val selected = !isAuto && option.band == selectedBand
-                FilterChip(
-                    selected = selected,
-                    onClick = { onSelectQualityBand(option.band) },
-                    label = { Text(text = bandDisplayName(option.band)) },
-                    modifier = Modifier.heightIn(min = 48.dp),
-                    leadingIcon = if (locked) {
-                        {
-                            Icon(
-                                painterResource(R.drawable.ic_action_lock),
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                            )
-                        }
-                    } else {
-                        null
-                    },
-                    colors = if (locked) {
-                        FilterChipDefaults.filterChipColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                            labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                            // This Compose version names the unselected icon colour
-                            // `iconColor`, not `leadingIconColor` (fails compile — CI 45325377385).
-                            iconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    } else {
-                        raddFilterChipColors()
-                    },
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .clickable(onClick = onOpenQualitySheet, role = Role.Button),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "${stringResource(R.string.detail_video_quality)}: $selection",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
                 )
+                Icon(
+                    painterResource(R.drawable.ic_action_chevron_right),
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            ScrollingChipRow(
+                contentPadding = PaddingValues(0.dp),
+                fadeHeight = 48.dp,
+            ) {
+                items(chips, key = { it.band }) { option ->
+                    val locked = option.band in lockedBands
+                    val selected = !isAuto && option.band == selectedBand
+                    FilterChip(
+                        selected = selected,
+                        onClick = { onSelectQualityBand(option.band) },
+                        label = { Text(text = bandDisplayName(option.band)) },
+                        modifier = Modifier.heightIn(min = 48.dp),
+                        leadingIcon = if (locked) {
+                            {
+                                Icon(
+                                    painterResource(R.drawable.ic_action_lock),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            }
+                        } else {
+                            null
+                        },
+                        colors = if (locked) {
+                            FilterChipDefaults.filterChipColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                // This Compose version names the unselected icon colour
+                                // `iconColor`, not `leadingIconColor` (fails compile — CI 45325377385).
+                                iconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else {
+                            raddFilterChipColors()
+                        },
+                    )
+                }
             }
         }
     }
@@ -2696,6 +2805,13 @@ private fun DetailEntrance(
         delay(index * 60L)
         visible = true
     }
+    // Round-6 motion: the stagger rides the M3 Expressive tokens.
+    // MaterialTheme.motionScheme does NOT expose defaultEffects() /
+    // defaultSpatial() as callables in material3 1.5.0 (CI
+    // 45641979193), so the specs come from RaddMotion, which carries
+    // the same token values (0.8/380 spatial, 1.0/1600 effects) for
+    // call sites outside a MaterialTheme scope — same springs, same
+    // pixels, no double source (Theme.kt, S7).
     AnimatedVisibility(
         visible = visible,
         enter = fadeIn(
@@ -2775,19 +2891,38 @@ internal fun EpisodeRowSection(
                 }
             }
         }
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            contentPadding = PaddingValues(end = 16.dp),
-        ) {
-            items(season.episodes, key = { "episode-${it.numberWithinSeason}" }) { episode ->
-                val progress = episodeProgress[season.number to episode.numberWithinSeason]
-                EpisodeCard(
-                    episode = episode,
-                    isWatched = progress?.watched == true,
-                    isNext = nextEpisode == (season.number to episode.numberWithinSeason),
-                    onPlay = { onPlayEpisode(season.number, episode.numberWithinSeason) },
-                    onDownload = { onDownloadEpisode(season.number, episode.numberWithinSeason) },
-                )
+        // Round-6 motion: the episode row crossfades + slides when the
+        // season chip changes — AnimatedContent on the selected season,
+        // expressive effects + spatial specs. The season is resolved
+        // from the target state inside the content, so the outgoing
+        // row shows the old season and the incoming row the new one.
+        // In inspection mode (Paparazzi) it shows the settled season
+        // with no animation, so no golden moves.
+        AnimatedContent(
+            targetState = selectedSeason,
+            transitionSpec = {
+                (fadeIn(animationSpec = RaddMotion.defaultEffects()) +
+                    slideInVertically(animationSpec = RaddMotion.defaultSpatial()) { it / 4 }) togetherWith
+                    (fadeOut(animationSpec = RaddMotion.defaultEffects()) +
+                        slideOutVertically(animationSpec = RaddMotion.defaultSpatial()) { it / 4 })
+            },
+            label = "episodeRowSeason",
+        ) { targetSeasonNumber ->
+            val targetSeason = seasons.firstOrNull { it.number == targetSeasonNumber } ?: return@AnimatedContent
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(end = 16.dp),
+            ) {
+                items(targetSeason.episodes, key = { "episode-${it.numberWithinSeason}" }) { episode ->
+                    val progress = episodeProgress[targetSeason.number to episode.numberWithinSeason]
+                    EpisodeCard(
+                        episode = episode,
+                        isWatched = progress?.watched == true,
+                        isNext = nextEpisode == (targetSeason.number to episode.numberWithinSeason),
+                        onPlay = { onPlayEpisode(targetSeason.number, episode.numberWithinSeason) },
+                        onDownload = { onDownloadEpisode(targetSeason.number, episode.numberWithinSeason) },
+                    )
+                }
             }
         }
     }
@@ -2820,12 +2955,18 @@ private fun EpisodeCard(
         isWatched -> "Episode ${episode.numberWithinSeason}, watched"
         else -> "Episode ${episode.numberWithinSeason}"
     }
+    // Round-6 motion: the episode card presses like the Play button —
+    // the established pressScale (0.97 + haptic) on the card's own
+    // interaction source, expressive effects spring. The ripple stays.
+    val episodeSource = remember { MutableInteractionSource() }
+    PressHaptics(episodeSource)
     Column(
         modifier = modifier
             .width(160.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.surface)
-            .clickable(onClick = onPlay, role = Role.Button)
+            .clickable(onClick = onPlay, role = Role.Button, interactionSource = episodeSource)
+            .pressScale(episodeSource)
             .semantics { contentDescription = description },
     ) {
         Box(
