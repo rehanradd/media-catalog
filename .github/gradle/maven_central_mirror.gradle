@@ -1,0 +1,74 @@
+// Takes what Gradle would download from Maven Central from Google's mirror,
+// and from Maven Central only what the mirror does not have yet.
+
+def central = ~/^https:\/\/(repo\.maven\.apache\.org|repo1\.maven\.org)\/maven2\/?/
+
+def mirror = 'https://maven-central.storage-download.googleapis.com/maven2/'
+
+def fallback = 'mavenCentralBehindMirror'
+
+def addFallback = { RepositoryHandler repositories ->
+    repositories.maven {
+        name = fallback
+        url = 'https://repo.maven.apache.org/maven2/'
+    }
+}
+
+def toMirror = { RepositoryHandler repositories ->
+    def hasFallback = false
+
+    // all, not configureEach: a configureEach action may not add or move a repository.
+
+    repositories.all { repository ->
+        if (repository.name == fallback) {
+            return
+        }
+
+        if (repository instanceof MavenArtifactRepository) {
+            def url = repository.url.toString()
+
+            if (url =~ central) {
+                // In place, so the order of the repositories stays.
+                repository.url = url.replaceFirst(central, mirror)
+
+                if (!hasFallback) {
+                    hasFallback = true
+                    addFallback(repositories)
+                    return
+                }
+            }
+        }
+
+        // Keep Maven Central last when the build adds a repository later.
+
+        def last = repositories.findByName(fallback)
+
+        if (hasFallback && !repositories.last().is(last)) {
+            repositories.remove(last)
+            repositories.add(last)
+        }
+    }
+}
+
+beforeSettings { settings ->
+    toMirror(settings.buildscript.repositories)
+    toMirror(settings.pluginManagement.repositories)
+    toMirror(settings.dependencyResolutionManagement.repositories)
+}
+
+settingsEvaluated { settings ->
+    // A build without plugin repositories goes to the Gradle Plugin Portal,
+    // which redirects to Maven Central whatever it does not host itself.
+    if (settings.pluginManagement.repositories.isEmpty()) {
+        settings.pluginManagement.repositories { repositories ->
+            maven { url = mirror }
+            addFallback(repositories)
+            gradlePluginPortal()
+        }
+    }
+}
+
+allprojects { project ->
+    toMirror(project.buildscript.repositories)
+    toMirror(project.repositories)
+}

@@ -99,6 +99,7 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
+            ~/.m2/repository/org/robolectric
           key: gradle-${{ runner.os }}-java21-${{ hashFiles('App/gradle/wrapper/gradle-wrapper.properties', 'App/gradle/libs.versions.toml', 'App/**/*.gradle.kts', 'App/**/*.gradle', 'App/settings.gradle.kts') }}
           restore-keys: |
             gradle-${{ runner.os }}-java21-
@@ -132,6 +133,11 @@ jobs:
         run: |
           if [ -z "$GOOGLE_SERVICES_JSON" ]; then echo "GOOGLE_SERVICES_JSON secret is empty" >&2; exit 1; fi
           echo "$GOOGLE_SERVICES_JSON" | base64 -d > App/app/google-services.json
+
+      - name: 🪞 Take what Gradle downloads from Maven Central from its mirror
+        run: |
+          mkdir -p ~/.gradle/init.d
+          cp .github/gradle/maven_central_mirror.gradle ~/.gradle/init.d/
 
       - name: "🏗️🧪 Gradle: debug APK + unit tests (single invocation)"
         working-directory: App
@@ -255,6 +261,7 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
+            ~/.m2/repository/org/robolectric
           key: gradle-${{ runner.os }}-java21-${{ hashFiles('App/gradle/wrapper/gradle-wrapper.properties', 'App/gradle/libs.versions.toml', 'App/**/*.gradle.kts', 'App/**/*.gradle', 'App/settings.gradle.kts') }}
           restore-keys: |
             gradle-${{ runner.os }}-java21-
@@ -284,6 +291,11 @@ jobs:
         run: |
           if [ -z "$GOOGLE_SERVICES_JSON" ]; then echo "GOOGLE_SERVICES_JSON secret is empty" >&2; exit 1; fi
           echo "$GOOGLE_SERVICES_JSON" | base64 -d > App/app/google-services.json
+
+      - name: 🪞 Take what Gradle downloads from Maven Central from its mirror
+        run: |
+          mkdir -p ~/.gradle/init.d
+          cp .github/gradle/maven_central_mirror.gradle ~/.gradle/init.d/
 
       - name: "🔍 Gradle: lintDebug"
         working-directory: App

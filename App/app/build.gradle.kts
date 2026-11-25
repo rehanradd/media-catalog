@@ -403,6 +403,10 @@ android {
 // body — so an in-test Assume cannot catch it. Excluding here is the only place that works.
 // These classes therefore run on an x86_64 CI runner, never on this ARM host.
 tasks.withType<Test>().configureEach {
+    // Route Robolectric's own runtime downloader through Google's Maven
+    // Central mirror (it does not use Gradle's repositories, so the init
+    // script cannot cover it). Keeps the 429 off the test runtime jar.
+    systemProperty("robolectric.dependency.repo.url", "https://maven-central.storage-download.googleapis.com/maven2")
     // Full failure output (2026-11-23): the default SHORT exception format
     // prints only the exception type + one frame, which hid the message of
     // the Paparazzi Renderer.prepare failure for two CI runs. FULL prints
