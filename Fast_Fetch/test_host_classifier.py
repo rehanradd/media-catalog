@@ -1305,5 +1305,93 @@ class TestViewerShapeGate(unittest.TestCase):
         self.assertIsNotNone(_rc.lookup_cache(conn, 12, "download", now=now))
 
 
+class TestIpBoundHosts(unittest.TestCase):
+    """API-01 (F-01): the proven-IP-bound table — 6 hosts, two layers.
+
+    Every expected value traces to the final-origin map (2026-11-23): the
+    same URL answers 200/206 from the Oracle egress and 403/404 from the
+    hatch egress. VOE is /16-bound (`i=` embeds the minting /16); the rest
+    match exact-IP only — no wider scope was measured. Host first, label
+    second, same evidence order as `classify`.
+    """
+
+    # Final URLs as the origin map records them.
+    STREAMTAPE_URL = "https://12345.tapecontent.net/radosgw/abc/token/file.mp4?expires=1893456000"
+    MIXDROP_URL = "https://a.mxcontent.net/v2/xyz.mp4?token=abc"
+    VIDHIDE_URL = "https://x.cdn-centaurus.com/hls2/01/123/abc_n/master.m3u8?t=1&s=2&e=129600"
+    VOE_URL = "https://y.cloudwindow-route.com/engine/hls2/abc/master.m3u8?t=1&s=2&e=14400&i=92.4"
+    PLAYER_URL = "https://cdn30091.asrmo449ddj.com/stream2/cdn/0123456789abcdef0123456789abcdef/sig/index.m3u8"
+    MEGA_URL = "https://gfs123.userstorage.mega.co.nz/dl/TOKEN"
+
+    def test_scope_by_service_label_for_the_six_hosts(self):
+        self.assertEqual(hc.ip_binding_scope(service="mixdrop"), "ip")
+        self.assertEqual(hc.ip_binding_scope(service="pkembed"), "ip")
+        self.assertEqual(hc.ip_binding_scope(service="vidhide"), "ip")
+        self.assertEqual(hc.ip_binding_scope(service="streamtape"), "ip")
+        self.assertEqual(hc.ip_binding_scope(service="voe"), "/16")
+        self.assertEqual(hc.ip_binding_scope(service="1xplayer"), "ip")
+        self.assertEqual(hc.ip_binding_scope(service="mega"), "ip")
+
+    def test_scope_by_final_url_host_for_the_six_hosts(self):
+        self.assertEqual(hc.ip_binding_scope(self.MIXDROP_URL), "ip")
+        self.assertEqual(hc.ip_binding_scope(self.VIDHIDE_URL), "ip")
+        self.assertEqual(hc.ip_binding_scope(self.STREAMTAPE_URL), "ip")
+        self.assertEqual(hc.ip_binding_scope(self.VOE_URL), "/16")
+        self.assertEqual(hc.ip_binding_scope(self.PLAYER_URL), "ip")
+        self.assertEqual(hc.ip_binding_scope(self.MEGA_URL), "ip")
+
+    def test_proven_not_ip_bound_hosts_have_no_scope(self):
+        for service in ("greenmotors", "hubcloud", "hubcloud_10g", "hubcdn",
+                        "pixeldrain", "gdrive", "gdflix", "mediafire",
+                        "themoviebox", "vidrift", "vidmoly"):
+            with self.subTest(service=service):
+                self.assertIsNone(hc.ip_binding_scope(service=service))
+        self.assertIsNone(hc.ip_binding_scope(
+            "https://pixeldrain.com/api/file/s2yMcLkb", "pixeldrain"))
+        self.assertIsNone(hc.ip_binding_scope(
+            "https://dr1.multidownload.click/d/1?token=x", "greenmotors"))
+
+    def test_host_beats_label_and_label_covers_a_rotated_host(self):
+        # A vidrift label cannot unbind an mxcontent URL: the host is evidence.
+        self.assertEqual(
+            hc.ip_binding_scope(self.MIXDROP_URL, "vidrift"), "ip")
+        # A rotated final host keeps the label's verdict.
+        self.assertEqual(
+            hc.ip_binding_scope("https://cdn.example.test/file.mp4", "voe"),
+            "/16")
+        self.assertIsNone(
+            hc.ip_binding_scope("https://cdn.example.test/file.mp4", "vidrift"))
+
+    def test_attacker_suffix_cannot_imitate_a_bound_host(self):
+        self.assertIsNone(hc.ip_binding_scope(
+            "https://mxcontent.net.evil.test/v2/x.mp4"))
+        self.assertIsNone(hc.ip_binding_scope(
+            "https://nottapecontent.net/file.mp4"))
+
+    def test_exact_ip_scope(self):
+        self.assertTrue(hc.ip_matches_scope("ip", "203.0.113.7", "203.0.113.7"))
+        self.assertFalse(hc.ip_matches_scope("ip", "203.0.113.7", "203.0.113.8"))
+        self.assertFalse(hc.ip_matches_scope("ip", "203.0.113.7", ""))
+        self.assertFalse(hc.ip_matches_scope("ip", "", "203.0.113.7"))
+        self.assertFalse(hc.ip_matches_scope("ip", "not-an-ip", "203.0.113.7"))
+
+    def test_sixteen_scope_is_the_first_two_octets(self):
+        self.assertTrue(hc.ip_matches_scope("/16", "92.4.95.252", "92.4.7.19"))
+        self.assertTrue(hc.ip_matches_scope("/16", "92.4.95.252", "92.4.95.252"))
+        self.assertFalse(hc.ip_matches_scope("/16", "92.4.95.252", "93.4.95.252"))
+        self.assertFalse(hc.ip_matches_scope("/16", "92.4.95.252", "92.5.95.252"))
+
+    def test_ipv6_matches_exact_only(self):
+        self.assertTrue(hc.ip_matches_scope(
+            "ip", "2001:DB8::1", "2001:db8:0:0:0:0:0:1"))
+        self.assertFalse(hc.ip_matches_scope(
+            "ip", "2001:db8::1", "2001:db8::2"))
+        # A /16 scope on IPv6 has no octet meaning: exact only.
+        self.assertTrue(hc.ip_matches_scope(
+            "/16", "2001:db8::1", "2001:db8::1"))
+        self.assertFalse(hc.ip_matches_scope(
+            "/16", "2001:db8::1", "2001:db8::2"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

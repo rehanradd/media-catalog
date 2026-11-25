@@ -538,6 +538,111 @@ def backend_of(url: str = "", service: str = "") -> str:
 
 
 # ---------------------------------------------------------------------------
+# IP-bound hosts (API-01, full-project checkup F-01)
+# ---------------------------------------------------------------------------
+# A token minted on one egress 403s from any other, so a banked row for one
+# of these hosts is servable only to the IP it was minted for — never
+# replayed across client IPs. Proven live 2026-11-23 (final-origin map):
+# the same URL answers 200/206 from the Oracle egress and 403/404 from the
+# hatch egress, for all six. VOE is /16-bound (its `i=` embeds the minting
+# IP's /16, 3 mints confirmed); 1xplayer's path literally embeds the
+# minting IP + epoch. The other four are proven bound to *an* IP, with no
+# wider scope measured, so they match exact-IP only — the fail-closed
+# direction (a too-narrow match costs a re-resolve; a too-wide match
+# serves a 403).
+#
+# Two layers, same rule as `classify`: the final-URL HOST is evidence, the
+# service label is the fallback for when the host has rotated. A host is
+# added here only on probe evidence of IP-binding (same URL, two egresses,
+# one 403) — never on suspicion. NOT IP-bound, proven the same way:
+# greenmotors, HubCloud FSL/10g, HubCDN Google, gdrive, pixeldrain,
+# bbupload, aryzap, dramadog, gdflix, mediafire, themoviebox (Referer-bound,
+# not IP-bound).
+#
+# Scope values: "ip" — the exact client IP must match; "/16" — the first
+# two IPv4 octets must match (VOE only, until another host proves it).
+
+#: Service labels whose minted tokens are IP-bound (pkembed is mixdrop's
+#: embed label — same mxcontent.net final host, same binding).
+IP_BOUND_LABELS: Dict[str, str] = {
+    "mixdrop": "ip",
+    "pkembed": "ip",
+    "vidhide": "ip",
+    "streamtape": "ip",
+    "voe": "/16",
+    "1xplayer": "ip",
+    "mega": "ip",
+}
+
+#: Final-URL host suffixes whose minted tokens are IP-bound (matched with
+#: `_host_matches`, so subdomains are covered: `<random>.mxcontent.net`,
+#: `<digits>.tapecontent.net`, `<random>.cloudwindow-route.com`,
+#: `*.cdn-centaurus.com`, `cdn30091.asrmo449ddj.com`,
+#: `gfs<N>.userstorage.mega.co.nz`).
+IP_BOUND_HOSTS: Dict[str, str] = {
+    "mxcontent.net": "ip",
+    "tapecontent.net": "ip",
+    "cloudwindow-route.com": "/16",
+    "cdn-centaurus.com": "ip",
+    "asrmo449ddj.com": "ip",
+    "userstorage.mega.co.nz": "ip",
+}
+
+
+def ip_binding_scope(url: str = "", service: str = "") -> Optional[str]:
+    """The IP-binding scope for a resolved link, or None when it is not
+    IP-bound.
+
+    Host first, label second — the same evidence order as `classify`: a
+    URL whose host is a proven IP-bound CDN is bound whatever its label
+    says (labels lie; the mixdrop family alone files rows under two
+    labels), and a label match covers a mint whose final host has rotated
+    off the table. Returns "ip" (exact-IP match) or "/16" (VOE's proven
+    /16 binding). Pure data lookup, no I/O.
+    """
+    host = _hostname(url)
+    if host:
+        for marker, scope in IP_BOUND_HOSTS.items():
+            if _host_matches(marker, host):
+                return scope
+    label = str(service or "").strip().lower()
+    if label:
+        return IP_BOUND_LABELS.get(label)
+    return None
+
+
+def ip_matches_scope(scope: str, minted_ip: str, client_ip: str) -> bool:
+    """True when `client_ip` is the IP a token minted for `minted_ip` may
+    be served to, under `scope`.
+
+    "ip" needs the exact address; "/16" needs the same first two IPv4
+    octets (VOE). Anything unparseable fails CLOSED — a comparison that
+    cannot be proven is a re-resolve, never a serve. IPv6 has no /16
+    notion here and matches exact only.
+    """
+    minted = str(minted_ip or "").strip()
+    client = str(client_ip or "").strip()
+    if not minted or not client:
+        return False
+    if scope == "/16":
+        m_parts = minted.split(".")
+        c_parts = client.split(".")
+        if len(m_parts) == 4 and len(c_parts) == 4:
+            try:
+                if all(0 <= int(p) <= 255 for p in m_parts[:2] + c_parts[:2]):
+                    return m_parts[:2] == c_parts[:2]
+            except ValueError:
+                return False
+    # Exact match, case-insensitive (IPv6 hex): normalised through
+    # ipaddress so "2001:DB8::1" and "2001:db8:0:0:0:0:0:1" compare equal.
+    try:
+        import ipaddress
+        return (ipaddress.ip_address(minted) == ipaddress.ip_address(client))
+    except ValueError:
+        return minted.lower() == client.lower()
+
+
+# ---------------------------------------------------------------------------
 # Header rules
 # ---------------------------------------------------------------------------
 
