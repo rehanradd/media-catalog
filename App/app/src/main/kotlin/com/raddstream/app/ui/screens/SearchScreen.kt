@@ -142,6 +142,7 @@ import com.raddstream.app.ui.layout.CardGeometry
 import com.raddstream.app.ui.theme.RaddEmphasized
 import com.raddstream.app.ui.theme.RaddMotion
 import com.raddstream.app.ui.theme.RaddTokens
+import com.raddstream.app.ui.theme.posterSharedElement
 import com.raddstream.app.viewmodel.GenreFilter
 import com.raddstream.app.viewmodel.LanguageFilter
 import com.raddstream.app.viewmodel.IndustryFilter
@@ -495,6 +496,8 @@ fun SearchScreen(
                     onSelectGenre = viewModel::selectGenre,
                     onSelectLanguage = viewModel::selectLanguage,
                     onSetYearRange = viewModel::setYearRange,
+                    sharedTransitionScope = sharedTransitionScope,
+                    animatedVisibilityScope = animatedVisibilityScope,
                 )
             } else if (state.visibleRecents.isNotEmpty()) {
                 // A pasted link replaces the results, not the history: the
@@ -1738,6 +1741,11 @@ internal fun SearchContent(
     onSelectGenre: (GenreFilter) -> Unit = {},
     onSelectLanguage: (LanguageFilter) -> Unit = {},
     onSetYearRange: (Int?, Int?) -> Unit = { _, _ -> },
+    // Round 6 motion infra: the shared-transition scopes the NavHost
+    // passes in (via SearchScreen). Null outside navigation (Paparazzi
+    // previews, tests) — the poster shared element no-ops then.
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
 ) {
     // Session 121 (P-12): scrolling the results dismisses the keyboard — the open
     // keyboard covering the top row was the other half of the complaint (the first
@@ -1968,21 +1976,14 @@ internal fun SearchContent(
                                         // shared element to the Detail hero — key
                                         // "poster-<workId>", one key per work,
                                         // shared by source and destination. The
-                                        // state is remembered on the scope (a
-                                        // SharedTransitionScope member, not a
-                                        // top-level function); the with() only
-                                        // builds the modifier, so no composable
-                                        // ever sits inside it. The scope is the
-                                        // local one above until the infra hoists
-                                        // it to the NavHost at mega-merge time.
-                                        val sharedContentState =
-                                            sharedTransitionScope.rememberSharedContentState(key = "poster-${post.workId ?: post.id}")
-                                        val posterModifier = with(sharedTransitionScope) {
-                                            Modifier.weight(1f).sharedElement(
-                                                sharedContentState = sharedContentState,
-                                                animatedVisibilityScope = animatedVisibilityScope,
-                                            )
-                                        }
+                                        // scopes come from the NavHost (via
+                                        // SearchContent params); the infra helper
+                                        // no-ops when either is null.
+                                        val posterModifier = Modifier.weight(1f).posterSharedElement(
+                                            key = "poster-${post.workId ?: post.id}",
+                                            sharedTransitionScope = sharedTransitionScope,
+                                            animatedVisibilityScope = animatedVisibilityScope,
+                                        )
                                         PosterCard(
                                             post = post,
                                             onClick = { onPostClick(post) },
